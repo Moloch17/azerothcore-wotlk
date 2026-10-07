@@ -5050,6 +5050,11 @@ AnimusForge.OutputDir = ""
 #                                 "combat2_packs" (packs of 2-4: casters, linked, fire; one pack at a time)
 #                                 "combat3_survive" (packs that can kill: rest between them, come back after a
 #                                 death from the entrance)
+#                     The party stages (dungeon-curriculum G1-), from combat3_survive with move4_follow's party
+#                     frames merged in:
+#                       party     "group1_roles" (a party of five on the cleared Ragefire Chasm drilling one role an
+#                                 episode: hold every enemy, keep everyone up within mana, kill the tank's target
+#                                 without pulling it, pull one pack at a time)
 #                     Its first version (move1_controls ... move7_follow) was archived on 2026-10-05: definitions
 #                     on the git tag curriculum-movement-v1, learner configs in
 #                     apps/forge/python/configs/archive/movement-v1/.
@@ -5195,6 +5200,8 @@ AnimusForge.Stage.move4_follow.TicksPerDecision = 5
 AnimusForge.Stage.combat1_fight.TicksPerDecision = 5
 AnimusForge.Stage.combat2_packs.TicksPerDecision = 5
 AnimusForge.Stage.combat3_survive.TicksPerDecision = 5
+# ... and the party stages.
+AnimusForge.Stage.group1_roles.TicksPerDecision = 5
 
 #
 #    AnimusForge.HalfBatch
@@ -7208,6 +7215,65 @@ AnimusForge.Curriculum.Combat.NextFurthest = 45.0
 AnimusForge.Curriculum.Combat.NextFightMs = 2000
 AnimusForge.Curriculum.Combat.CorridorWalk = 220.0
 AnimusForge.Curriculum.Combat.CorridorSpacing = 8.0
+
+#
+#    AnimusForge.Curriculum.Roles.*
+#        The roles stage (group1_roles; RolesEncounter, dungeon-curriculum G1): a party of five on the combat stages'
+#        cleared Ragefire Chasm, one role drilled an episode in seat 0 (tank_hold, heal_keep, damage_discipline, pull),
+#        the others a proper party around it (learned, a partner, or the "human" stand-in in StandInShare percent of
+#        the training episodes, never in the drilled seat). Outcome (times w = 1 + Difficulty.TierScale x rung): Clear
+#        per pack (every seat); the drilled seat's lesson, its own -- Hold per enemy on the tank a decision, Keep per
+#        member above half health a decision, Focus per damage-scale share on the tank's target, PullClean per pack
+#        cleared alone (the others PullOthers of it); Survived with no death of the seat's own. Cost (losses divided
+#        by w): Loose per enemy on someone else, PulledOff per enemy the damage dealer took off the tank, KeepLow per
+#        member under 35% or dead, Overheal of healing wasted (x Party.TeammateHealing), PullExtra per second pack in a
+#        fight (the puller in full, the others PullOthers), Death, Away per second dead or beyond AwayYards of a
+#        fight, Clock per second a pack fights. Shaping (faded): Damage per creature health dealt. The ladder (per class
+#        and build of the drilled seat, on its own window): the party's level + LevelBase + rung x LevelsPerTier / 2;
+#        packs of PackSizeFirst, one more every PackGrowEvery rungs up to PackSizeMax; a caster from CasterTier, linked
+#        from LinkedTier, an elite from EliteTier; heal_keep's packs at KeepHealthPct of their health; the pull drill's
+#        camp of CampPacksFirst packs (one more every two rungs, up to CampPacksMax), CampSpacingFirst yards apart at
+#        rung 0 closing to CampSpacingLast at the top. The party stands PartyNearest-PartyFurthest yards round seat 0.
+#        Won: a pack cleared, no wipe, and the drill's measure (WinHold of the enemy-decisions on the tank; nobody
+#        dead; WinFocus of the damage dealer's damage on the tank's target, at most WinPulledSeconds of enemies taken
+#        off it; no second pack in a fight).
+AnimusForge.Curriculum.Roles.Clear = 1.0
+AnimusForge.Curriculum.Roles.Hold = 0.045
+AnimusForge.Curriculum.Roles.Loose = 0.018
+AnimusForge.Curriculum.Roles.Focus = 0.9
+AnimusForge.Curriculum.Roles.PulledOff = 0.012
+AnimusForge.Curriculum.Roles.Keep = 0.0006
+AnimusForge.Curriculum.Roles.KeepLow = 0.0006
+AnimusForge.Curriculum.Roles.Overheal = 0.5
+AnimusForge.Curriculum.Roles.PullClean = 2.0
+AnimusForge.Curriculum.Roles.PullExtra = 1.5
+AnimusForge.Curriculum.Roles.PullOthers = 0.5
+AnimusForge.Curriculum.Roles.Survived = 1.0
+AnimusForge.Curriculum.Roles.Death = 2.0
+AnimusForge.Curriculum.Roles.Away = 0.02
+AnimusForge.Curriculum.Roles.AwayYards = 30.0
+AnimusForge.Curriculum.Roles.Clock = 0.01
+AnimusForge.Curriculum.Roles.Damage = 0.3
+AnimusForge.Curriculum.Roles.MaxTier = 5
+AnimusForge.Curriculum.Roles.LevelBase = -1
+AnimusForge.Curriculum.Roles.LevelsPerTier = 1
+AnimusForge.Curriculum.Roles.PackSizeFirst = 2
+AnimusForge.Curriculum.Roles.PackGrowEvery = 2
+AnimusForge.Curriculum.Roles.PackSizeMax = 4
+AnimusForge.Curriculum.Roles.CasterTier = 1
+AnimusForge.Curriculum.Roles.LinkedTier = 2
+AnimusForge.Curriculum.Roles.EliteTier = 4
+AnimusForge.Curriculum.Roles.KeepHealthPct = 200
+AnimusForge.Curriculum.Roles.CampPacksFirst = 2
+AnimusForge.Curriculum.Roles.CampPacksMax = 4
+AnimusForge.Curriculum.Roles.CampSpacingFirst = 45.0
+AnimusForge.Curriculum.Roles.CampSpacingLast = 25.0
+AnimusForge.Curriculum.Roles.PartyNearest = 2.0
+AnimusForge.Curriculum.Roles.PartyFurthest = 6.0
+AnimusForge.Curriculum.Roles.WinHold = 0.75
+AnimusForge.Curriculum.Roles.WinFocus = 0.6
+AnimusForge.Curriculum.Roles.WinPulledSeconds = 5.0
+AnimusForge.Curriculum.Roles.StandInShare = 20
 
 #
 #    AnimusForge.Curriculum.Owner.*

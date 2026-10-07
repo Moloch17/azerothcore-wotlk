@@ -31,6 +31,7 @@
  *              ─ move3_interact (dungeon-curriculum M3: the named object, levers and doors, a key item; the sight block)
  *              ─ move4_follow (dungeon-curriculum I5: a party keeps with a leader through an empty dungeon)
  *   combat     move3_interact ─ combat1_fight ─ combat2_packs ─ combat3_survive (dungeon-curriculum C1-C3, Ragefire Chasm)
+ *   party      combat3_survive (+ move4_follow's party frames, merged by name) ─ group1_roles (dungeon-curriculum G1)
  *
  * Every movement stage runs 50 ms world ticks (AnimusForge.Stage.<name>.TicksPerDecision in the conf template): the
  * controller's mouse-look facing rule and its heartbeat are checked once a world tick, so a coarser tick would leave
@@ -46,6 +47,7 @@
 
 #include "StageDefinition.h"
 #include "QuestPlanner.h"
+#include "RolesDraw.h"
 #include "Log.h"
 #include "AreaDefines.h"
 #include <algorithm>
@@ -842,6 +844,57 @@ namespace
             .FocusChance = 100,
         });
 
+        // **The party stages** (dungeon-curriculum G1-): parties of five on real dungeon ground, perceived as the
+        // combat stages perceive (the camera, the sight list, the target frame's threat) with the party frames
+        // (PartyFrames revision 2: every member's state, its minimap dot and its target -- the one source of it).
+        //
+        // G1 -- roles (the archived curriculum's stage6 drills, on the combat stages' cleared Ragefire Chasm at its
+        // band, 13-18, every race and class): one role drilled an episode, the drilled role in seat 0 -- its class and
+        // build drawn among those whose spec plays it (StageScenario's DrillRole makeup: a role is read off the build,
+        // and every class drills every role its builds can) -- and a proper party round it, learned seats, partners
+        // from the I7 pool (never seat 0) and the "human" stand-in in a share of the episodes. Pack after pack for the
+        // episode's clock (RolesEncounter):
+        // - tank_hold: the tank holds every enemy (DrillHold);
+        // - heal_keep: the healer keeps everyone up through packs of twice their health, longer than its mana bar
+        //   (DrillKeep);
+        // - damage_discipline: a damage dealer kills the tank's target without taking an enemy off it (DrillFocus);
+        // - pull: the tank pulls one pack of a camp at a time, the packs closer each rung (PullClean, PullExtra).
+        // Each drill's lesson is the drilled seat's own Outcome (the old curriculum held its drills only once they
+        // were), tier-scaled; Clear and Survived every seat's; Death, Away and the clock at full price. A death comes
+        // back alive at the entrance and walks back to the party (I4); the episode ends on its clock alone.
+        //
+        // Seeded from combat3_survive (the seed chain), with move4_follow's party frames merged in by name (the
+        // overseer's ruling: bootstrap.seed_merges, the second source).
+        stages.push_back({
+            .Name = "group1_roles",
+            .Suffix = "_roles",
+            .Extends = "combat3_survive",
+            .Merges = { "move4_follow" },
+            .Summary = "a party of five on a cleared Ragefire Chasm drilling one role an episode: the tank holds every "
+                "enemy, the healer keeps everyone up within its mana, a damage dealer kills the tank's target without "
+                "pulling it, the tank pulls one pack at a time",
+            .Blocks = { Core, Move, Duel, Pet, Gauntlet, Vision, Entities, Map, Sight, PartyFrames, Combat, Goal },
+            .Arenas = {
+                { .Name = "tank_hold", .Weight = 2, .Seats = SeatPlan::Party, .Against = Opposition::Roles,
+                    .PartyGroup = true, .EpisodeSeconds = 240, .ProperParty = true,
+                    .DrillRole = RolesDraw::ROLE_TANK, .Roles = RolesDrill::Hold, .RespawnAtEntrance = true },
+                { .Name = "heal_keep", .Weight = 2, .Seats = SeatPlan::Party, .Against = Opposition::Roles,
+                    .PartyGroup = true, .EpisodeSeconds = 300, .ProperParty = true,
+                    .DrillRole = RolesDraw::ROLE_HEALER, .Roles = RolesDrill::Keep, .RespawnAtEntrance = true },
+                { .Name = "damage_discipline", .Weight = 2, .Seats = SeatPlan::Party, .Against = Opposition::Roles,
+                    .PartyGroup = true, .EpisodeSeconds = 240, .ProperParty = true,
+                    .DrillRole = RolesDraw::ROLE_DAMAGE, .Roles = RolesDrill::Focus, .RespawnAtEntrance = true },
+                { .Name = "pull", .Weight = 2, .Seats = SeatPlan::Party, .Against = Opposition::Roles,
+                    .PartyGroup = true, .EpisodeSeconds = 360, .ProperParty = true,
+                    .DrillRole = RolesDraw::ROLE_TANK, .Roles = RolesDrill::Pull, .RespawnAtEntrance = true },
+            },
+            .MapId = MAP_RAGEFIRE_CHASM,
+            .SpawnPoints = { RagefireEntrance() },
+            .FocusLevelFirst = 13,
+            .FocusLevelLast = 18,
+            .FocusChance = 100,
+        });
+
         return stages;
     }
 
@@ -890,13 +943,17 @@ namespace
             && (arena.Seats == SeatPlan::Party || arena.Seats == SeatPlan::Teams);
         // So is a group running a dungeon: five learned seats and no owner.
         bool const dungeonGroup = arena.Against == Opposition::Instance && arena.Seats == SeatPlan::Party;
-        // And a proper party drilling against pulls (the roles and group stages).
-        bool const drillGroup = arena.ProperParty && pulls && arena.Seats == SeatPlan::Party && !arena.Owner;
+        // And a proper party drilling against pulls (the archived roles and group stages) or on a dungeon's ground
+        // (the roles stage, G1: Opposition::Roles).
+        bool const roles = arena.Against == Opposition::Roles;
+        bool const drillGroup = arena.ProperParty && (pulls || roles) && arena.Seats == SeatPlan::Party
+            && !arena.Owner;
         if (arena.PartyGroup && !raidGroup && !worldGroup && !dungeonGroup && !drillGroup
             && (!arena.Owner || arena.Seats != SeatPlan::Party))
             return "a party group needs an owner and party seats, unless it is a raid, a quest, a dungeon or a drill";
         if (arena.ProperParty && !(drillGroup && arena.PartyGroup))
-            return "a proper party is drawn for a party drill against pulls (a whole dungeon draws its own)";
+            return "a proper party is drawn for a party drill against pulls or on a dungeon's ground (a whole dungeon "
+                "draws its own)";
         if (arena.DrillRole > DRILL_DAMAGE || (arena.DrillRole && !arena.ProperParty))
             return "a drilled role (1 tank, 2 healer, 3 damage) is a proper party's";
         if (arena.Schedule == PullSchedule::Camp && (!arena.ProperParty || !stage.Has(BlockId::Crowd)))
@@ -1128,6 +1185,22 @@ namespace
 
         // The combat stages: one seat on a dungeon's own ground, seeing what it fights (the sight block and the combat
         // block's columns on it) and coming back at the entrance after a death.
+        // The roles stage (G1, RolesEncounter): a proper party of five, grouped, on a dungeon's own ground, drilling
+        // the role its drill is about in seat 0, by sight with the party frames, its dead back at the entrance.
+        if (roles != (arena.Roles != RolesDrill::None))
+            return "a roles drill goes with a party drilling on a cleared dungeon (Opposition::Roles), and only with "
+                "that";
+        if (roles && (arena.Seats != SeatPlan::Party || arena.PartySize || !arena.ProperParty || !arena.PartyGroup
+            || arena.Owner || arena.Schedule != PullSchedule::None || arena.DeathRuns || !arena.RespawnAtEntrance
+            || arena.DrillRole != RolesDraw::DrilledRole(arena.Roles)))
+            return "a roles arena is a proper party of five in a core group, no owner or pull schedule, its drilled "
+                "role the drill's, its dead back at the entrance";
+        if (roles && (!stage.Has(BlockId::Move) || !stage.Has(BlockId::Vision) || !stage.Has(BlockId::Sight)
+            || !stage.Has(BlockId::Combat) || !stage.Has(BlockId::PartyFrames) || !stage.Has(BlockId::Gauntlet)))
+            return "a roles arena is fought by sight with the party frames: the move, vision, sight, combat, party "
+                "frames and gauntlet blocks";
+        if (roles && (arena.MapId ? arena.MapId : stage.MapId) == 0)
+            return "a roles arena is on a dungeon's own map";
         bool const combat = arena.Against == Opposition::Combat;
         if (combat != (arena.Combat != CombatDrill::None))
             return "a combat drill goes with fighting on a cleared dungeon (Opposition::Combat), and only with that";

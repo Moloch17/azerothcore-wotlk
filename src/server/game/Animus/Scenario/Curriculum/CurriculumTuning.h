@@ -1420,6 +1420,79 @@ namespace Animus::Curriculum
             float CorridorSpacing = 8.0f;
         } Combat;
 
+        /// **The roles stage** (Opposition::Roles, RolesEncounter; dungeon-curriculum G1): a party of five on the
+        /// combat stages' cleared Ragefire Chasm, one role drilled an episode -- the drilled role's seat is seat 0
+        /// (StageScenario's DrillRole makeup: its class and build drawn among those whose spec plays it), the others a
+        /// proper party around it, every seat learned or a partner (I7).
+        ///
+        /// **Outcome**, times the rung's w = 1 + Difficulty.TierScale x tier (the archived ladders' tier scale):
+        /// Clear for each pack the party clears (every seat); the drilled seat's lesson, paid only to it --
+        /// DrillHold (tank_hold: Hold per enemy on it, a decision), DrillKeep (heal_keep: Keep per party member above
+        /// half health, a decision), DrillFocus (damage_discipline: Focus per share of the damage scale it put on the
+        /// tank's target), PullClean (pull: a pack cleared with no other pack in the fight; the others PullOthers of
+        /// it); Survived at the episode's end with no death of the seat's own. **Cost**, divided by w where it is a
+        /// loss: the drilled seat's misses (Loose per enemy on someone else; PulledOff per enemy it took off the tank,
+        /// a decision; KeepLow per member under 35% or dead, a decision; Overheal of what its heals wasted), PullExtra
+        /// for a second pack drawn into a fight (the pull drill's puller in full, the others PullOthers of it), Death,
+        /// Away per second dead or away from the fight (beyond AwayYards while it fights, or walking back), and Clock
+        /// per second a pack fights. **Shaping** (faded): Damage per share of a creature's health dealt.
+        ///
+        /// **The ladder** (DifficultyLadder, per class and build of the drilled seat, on its own window): rung t of
+        /// MaxTier puts the packs at the party's level + LevelBase + t x LevelsPerTier / 2, PackSizeFirst creatures
+        /// growing by one every PackGrowEvery rungs up to PackSizeMax, a caster from CasterTier, linked from LinkedTier,
+        /// an elite from EliteTier; heal_keep's packs at KeepHealthPct of their health (a fight longer than a mana bar);
+        /// the pull drill's camp CampPacksFirst packs (one more every two rungs, CampPacksMax at most) standing
+        /// CampSpacingFirst yards apart at rung 0, closing to CampSpacingLast at the top.
+        ///
+        /// **Placement**: the party starts round one of the dungeon's corridor points (the combat stages' Combat.
+        /// CorridorWalk and CorridorSpacing), its members PartyNearest-PartyFurthest yards from seat 0 in its sight; the
+        /// first pack FightNearest-FightFurthest (Combat.*) from seat 0 in its sight, the next ones further on.
+        /// **Won** (the ladder's window and the evaluation's `won`): a pack cleared, no wipe, and the drill's measure:
+        /// the tank holding WinHold of the enemy-decisions; no party member dead; the damage dealer's damage WinFocus on
+        /// the tank's target with at most WinPulledSeconds of enemies taken off it; no second pack in a fight.
+        /// **Death** (I4): Respawn.DelayMs out, then alive at the entrance, walking back. StandInShare percent of the
+        /// training episodes put the "human" stand-in (StandIn.*) in one seat other than the drilled one.
+        struct RolesTuning
+        {
+            float Clear = 1.0f;
+            float Hold = 0.045f;                // per enemy on the drilled tank, a decision (3 x Raid.TankHold)
+            float Loose = 0.018f;               // per enemy on somebody else
+            float Focus = 0.9f;                 // per damage-scale share on the tank's target (3 x Raid.TankTarget)
+            float PulledOff = 0.012f;           // per enemy on the damage dealer, a decision
+            float Keep = 0.0006f;               // per member above half health, a decision (3 x Raid.KeepUp)
+            float KeepLow = 0.0006f;            // per member below 35% or dead, a decision
+            float Overheal = 0.5f;              // per maximum health of healing wasted, x Party.TeammateHealing
+            float PullClean = 2.0f;
+            float PullExtra = 1.5f;
+            float PullOthers = 0.5f;            // the other seats' share of PullClean and PullExtra
+            float Survived = 1.0f;
+            float Death = 2.0f;
+            float Away = 0.02f;                 // per second
+            float AwayYards = 30.0f;
+            float Clock = 0.01f;                // per second a pack fights
+            float Damage = 0.3f;                // shaping, per creature health
+            uint32 MaxTier = 5;
+            int32 LevelBase = -1;
+            uint32 LevelsPerTier = 1;
+            uint32 PackSizeFirst = 2;
+            uint32 PackGrowEvery = 2;
+            uint32 PackSizeMax = 4;
+            uint32 CasterTier = 1;
+            uint32 LinkedTier = 2;
+            uint32 EliteTier = 4;
+            uint32 KeepHealthPct = 200;
+            uint32 CampPacksFirst = 2;
+            uint32 CampPacksMax = 4;
+            float CampSpacingFirst = 45.0f;
+            float CampSpacingLast = 25.0f;
+            float PartyNearest = 2.0f;
+            float PartyFurthest = 6.0f;
+            float WinHold = 0.75f;
+            float WinFocus = 0.6f;
+            float WinPulledSeconds = 5.0f;
+            int32 StandInShare = 20;            // percent of training episodes
+        } Roles;
+
         /// Resurrecting: a seat's own Soulstone or Reincarnation, and revives on allies (companion and party stages).
         struct ResurrectionTuning
         {
@@ -2159,6 +2232,43 @@ namespace Animus::Curriculum
             f("Combat.NextFightMs", tuning.Combat.NextFightMs);
             f("Combat.CorridorWalk", tuning.Combat.CorridorWalk);
             f("Combat.CorridorSpacing", tuning.Combat.CorridorSpacing);
+            f("Roles.Clear", tuning.Roles.Clear);
+            f("Roles.Hold", tuning.Roles.Hold);
+            f("Roles.Loose", tuning.Roles.Loose);
+            f("Roles.Focus", tuning.Roles.Focus);
+            f("Roles.PulledOff", tuning.Roles.PulledOff);
+            f("Roles.Keep", tuning.Roles.Keep);
+            f("Roles.KeepLow", tuning.Roles.KeepLow);
+            f("Roles.Overheal", tuning.Roles.Overheal);
+            f("Roles.PullClean", tuning.Roles.PullClean);
+            f("Roles.PullExtra", tuning.Roles.PullExtra);
+            f("Roles.PullOthers", tuning.Roles.PullOthers);
+            f("Roles.Survived", tuning.Roles.Survived);
+            f("Roles.Death", tuning.Roles.Death);
+            f("Roles.Away", tuning.Roles.Away);
+            f("Roles.AwayYards", tuning.Roles.AwayYards);
+            f("Roles.Clock", tuning.Roles.Clock);
+            f("Roles.Damage", tuning.Roles.Damage);
+            f("Roles.MaxTier", tuning.Roles.MaxTier);
+            f("Roles.LevelBase", tuning.Roles.LevelBase);
+            f("Roles.LevelsPerTier", tuning.Roles.LevelsPerTier);
+            f("Roles.PackSizeFirst", tuning.Roles.PackSizeFirst);
+            f("Roles.PackGrowEvery", tuning.Roles.PackGrowEvery);
+            f("Roles.PackSizeMax", tuning.Roles.PackSizeMax);
+            f("Roles.CasterTier", tuning.Roles.CasterTier);
+            f("Roles.LinkedTier", tuning.Roles.LinkedTier);
+            f("Roles.EliteTier", tuning.Roles.EliteTier);
+            f("Roles.KeepHealthPct", tuning.Roles.KeepHealthPct);
+            f("Roles.CampPacksFirst", tuning.Roles.CampPacksFirst);
+            f("Roles.CampPacksMax", tuning.Roles.CampPacksMax);
+            f("Roles.CampSpacingFirst", tuning.Roles.CampSpacingFirst);
+            f("Roles.CampSpacingLast", tuning.Roles.CampSpacingLast);
+            f("Roles.PartyNearest", tuning.Roles.PartyNearest);
+            f("Roles.PartyFurthest", tuning.Roles.PartyFurthest);
+            f("Roles.WinHold", tuning.Roles.WinHold);
+            f("Roles.WinFocus", tuning.Roles.WinFocus);
+            f("Roles.WinPulledSeconds", tuning.Roles.WinPulledSeconds);
+            f("Roles.StandInShare", tuning.Roles.StandInShare);
             f("Options.JitterDecayMs", tuning.Options.JitterDecayMs);
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);
             f("Owner.TankChance", tuning.Owner.TankChance);

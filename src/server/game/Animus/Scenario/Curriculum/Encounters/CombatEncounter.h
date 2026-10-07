@@ -87,6 +87,10 @@ namespace Animus::Curriculum
         /// The places a seat may start on `map` (CombatDraw::CorridorPoints over its creature spawns), worked out once
         /// per map from `bot` standing at its entrance; empty when it has none.
         [[nodiscard]] std::vector<CombatDraw::Point> const& Corridors(Player* bot, Map* map) const;
+        /// The same worked out afresh (Corridors keeps it a map): the roles stage's party starts on the same ground
+        /// (RolesEncounter). `stage` names the stage in the log line.
+        [[nodiscard]] static std::vector<CombatDraw::Point> FindCorridors(Player* bot, Map* map,
+            CurriculumTuning::CombatTuning const& tuning, char const* stage);
 
     private:
         struct Pack

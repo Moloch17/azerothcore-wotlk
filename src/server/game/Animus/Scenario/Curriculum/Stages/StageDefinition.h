@@ -81,6 +81,9 @@ namespace Animus::Curriculum
         /// Creatures on a cleared dungeon's own ground, fought by a seat that sees them (CombatEncounter, the drill in
         /// ArenaDefinition::Combat) -- the combat stages C1-C3 of the dungeon curriculum.
         Combat,
+        /// A party of five drilling one role on a cleared dungeon's own ground (RolesEncounter, the drill in
+        /// ArenaDefinition::Roles) -- G1 of the dungeon curriculum.
+        Roles,
     };
 
     /// What a combat arena's creatures are (Opposition::Combat, CombatEncounter): the dungeon curriculum's C1-C3.
@@ -90,6 +93,17 @@ namespace Animus::Curriculum
         Fight,          // C1: one creature at a time, the next after each kill
         Packs,          // C2: packs of 2-4 (casters, linked, fire underfoot), the next pack standing further on
         Survive,        // C3: packs that can kill, pull after pull; rest between them, and come back after a death
+    };
+
+    /// What a roles arena drills (Opposition::Roles, RolesEncounter): G1's four, one role's lesson an episode, the
+    /// drilled role in seat 0 (ArenaDefinition::DrillRole).
+    enum class RolesDrill : uint8
+    {
+        None,
+        Hold,           // tank_hold: the tank holds every enemy, pack after pack
+        Keep,           // heal_keep: the healer keeps everyone up through fights longer than its mana bar
+        Focus,          // damage_discipline: a damage dealer kills the tank's target without taking an enemy off it
+        Pull,           // pull: the tank pulls one pack of a camp at a time
     };
 
     /// What kind of ground a marker arena's markers are on (Opposition::Markers only): each movement stage's own.
@@ -440,6 +454,8 @@ namespace Animus::Curriculum
         /// for each creature to go for first -- the drill's taunt and its heals on someone else (C1's `guard`).
         CombatDrill Combat = CombatDrill::None;
         bool Ally = false;
+        /// Opposition::Roles: the role drilled (RolesDrill; its DungeonRole in DrillRole: seat 0's).
+        RolesDrill Roles = RolesDrill::None;
         /// **A death brings the seat back alive at the instance's entrance** (dungeon-curriculum I4; the user,
         /// 2026-10-06: no graveyard, ghost or corpse run): out for Respawn.DelayMs, then alive with full health and
         /// power at the entrance (EntranceRespawn's RespawnClock and RiseAtEntrance), to walk back on the controller.

@@ -19,10 +19,14 @@
 #include "StageScenario.h"
 #include "Baselines.h"
 #include "Camera.h"
+#include "CombatBlock.h"
+#include "EncoderSupport.h"
+#include "EntityActions.h"
 #include "Env.h"
 #include "Log.h"
 #include "Player.h"
 #include "Random.h"
+#include "SeatView.h"
 #include "StandIn.h"
 #include <algorithm>
 #include <cmath>
@@ -100,18 +104,22 @@ void Animus::Curriculum::StageScenario::DrawStandIn(Env& env)
         return;
 
     // Training: StandIn.Share of the episodes (no random number is drawn while it is off, so a stage without the
-    // stand-in builds exactly the episodes it did). Evaluation: every episode of the stand-in arm, none otherwise.
+    // stand-in builds exactly the episodes it did) -- a roles arena's own share, Roles.StandInShare (G1), so the stage
+    // that wants the stand-in has it without the others having it too. Evaluation: every episode of the stand-in arm,
+    // none otherwise.
     StandIn::Tuning const& tuning = _tuning.StandIn;
+    int32 const share = arena.Against == Opposition::Roles ? _tuning.Roles.StandInShare : tuning.Share;
     bool const plays = env.Evaluating ? _evaluationStandIn.load(std::memory_order_relaxed)
-        : tuning.Share > 0 && roll_chance_i(tuning.Share);
+        : share > 0 && roll_chance_i(share);
     if (!plays)
         return;
 
     // Its own seed: an evaluation's from the seed index, so the same index meets the same person in every evaluation.
     uint64 const seed = env.Evaluating ? StandIn::EvaluationSeed(env.EpisodeSeedIndex)
         : (uint64(rand32()) << 32) | uint64(rand32());
-    // Only a party without an owner can be led by it: an owner leads its own party.
-    StandIn::Style const style = StandIn::Draw(seed, tuning, !arena.Owner);
+    // Only a party without an owner can be led by it: an owner leads its own party. Nor a drill's: seat 0 is the
+    // drilled role's (ArenaDefinition::DrillRole), and a leading stand-in would sit there.
+    StandIn::Style const style = StandIn::Draw(seed, tuning, !arena.Owner && !arena.DrillRole);
 
     // A leader sits in seat 0, the group's leader (PartyEncounter::Build). A follower takes a seat whose build plays
     // the role it wants, when there is one, else any; its own random numbers pick among them.
@@ -181,6 +189,31 @@ void Animus::Curriculum::StageScenario::DecideStandIn(Env& env, uint32 seatIndex
         for (uint32 index = 0; index < data.ActiveSeats && !seen.PartyInCombat; ++index)
             if (Player* member = SeatBotInWorld(env, index); member && member->IsAlive())
                 seen.PartyInCombat = member->IsInCombat();
+        // A sight stage's seat fights what it selected (its own selection: CurrentTarget), so a stand-in with nothing
+        // selected while its party fights -- or as it leads on -- clicks the nearest living hostile its camera's last
+        // frame shows, as a player would, through the client's select (G1: it never found a target there before).
+        if (!target && seen.Alive && _stage.Has(BlockId::Sight)
+            && (seen.PartyInCombat || play.Plays.GetStyle().Leads))
+        {
+            Player* const seer = bot;
+            std::array<Unit*, PACK_SLOTS> visible{};
+            uint32 const count = CombatBlock::VisibleEnemies(seat.Seen, [seer](uint64 guid) -> Unit*
+            {
+                Unit* unit = Encoding::UnitThrough(*seer, ObjectGuid(guid));
+                return unit && unit->IsInWorld() && unit->GetMap() == seer->GetMap() ? unit : nullptr;
+            }, visible.data(), PACK_SLOTS);
+            Unit* nearest = nullptr;
+            for (uint32 index = 0; index < count; ++index)
+                if (!nearest || bot->GetExactDist(visible[index]) < bot->GetExactDist(nearest))
+                    nearest = visible[index];
+            if (nearest)
+            {
+                SeatActionResult clicked;
+                EntityActions::Apply(EntityActions::Press::Select, bot, nearest->GetGUID().GetRawValue(), seat.Focus,
+                    clicked);
+                target = nearest;
+            }
+        }
         seen.HasTarget = target != nullptr;
         seen.TargetYards = target ? bot->GetExactDist(target) : 0.0f;
         seen.HasLeader = leader != nullptr;

@@ -50,6 +50,7 @@
 #include "SightEncounter.h"
 #include "InteractEncounter.h"
 #include "CombatEncounter.h"
+#include "RolesEncounter.h"
 #include "CombatBlock.h"
 #include "FollowEncounter.h"
 #include "PartyFollowEncounter.h"
@@ -500,6 +501,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     auto const hasSight = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Sight; };
     auto const hasInteract = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Interact; };
     auto const hasCombat = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Combat; };
+    auto const hasRoles = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Roles; };
     auto const directed = [](ArenaDefinition const& arena) { return arena.Directed; };
 
     // Build order matters: the owner comes before the party group (which it leads) and the pulls (which spawn around
@@ -566,6 +568,10 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     Encounter* combat = nullptr;
     if (_stage.AnyArena(hasCombat))
         combat = add(std::make_unique<CombatEncounter>(*this, envs));
+    // G1's party drills on the same ground: after the party group (PartyEncounter), whose members it places.
+    Encounter* roles = nullptr;
+    if (_stage.AnyArena(hasRoles))
+        roles = add(std::make_unique<RolesEncounter>(*this, envs));
     // After the opponent, which makes the two seats enemies.
     if (_stage.AnyArena(hasFlag))
         flag = add(std::make_unique<FlagEncounter>(*this, envs));
@@ -583,7 +589,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // while the drill around it worked.
     for (Encounter* encounter : std::initializer_list<Encounter*>{ creature, dummy, pulls, instance, quest, gather,
         town, hazards, _owner, _party, opponent, ambush, travel, markers, _follow, _partyFollow, seek, sight,
-        interact, combat, flag,
+        interact, combat, roles, flag,
         director })
         if (encounter)
             _rewardOrder.push_back(encounter);
@@ -606,7 +612,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
                 || (encounter == _partyFollow && hasPartyFollow(arena))
                 || (encounter == seek && hasSeek(arena)) || (encounter == sight && hasSight(arena))
                 || (encounter == interact && hasInteract(arena)) || (encounter == combat && hasCombat(arena))
-                || (encounter == director && directed(arena));
+                || (encounter == roles && hasRoles(arena)) || (encounter == director && directed(arena));
         };
 
         std::vector<Encounter*>& build = _arenaEncounters.emplace_back();
@@ -1627,6 +1633,9 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
         entry["lone_seats"] = definition.Seats == SeatPlan::Teams ? definition.LoneSeats : 0u;
         entry["directed"] = definition.Directed;
         entry["eval_only"] = definition.EvalOnly;
+        // The seat a drill is about (ArenaDefinition::DrillRole: seat 0), which the learner's co-op partners never
+        // play (animus.partners); -1 for an arena that drills no one.
+        entry["drill_seat"] = definition.DrillRole ? 0 : -1;
     }
 
     // Agents beyond the seats: a directed arena's two directors (one a side, after the seats). The learner never
@@ -2728,7 +2737,8 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     if ((firstBuild || (partyFollow && newInstance)) && map->Instanceable())
     {
         if (Arena(env).Against == Opposition::Markers || Arena(env).Against == Opposition::Seek
-            || Arena(env).Against == Opposition::Sight || Arena(env).Against == Opposition::Combat || partyFollow)
+            || Arena(env).Against == Opposition::Sight || Arena(env).Against == Opposition::Combat
+            || Arena(env).Against == Opposition::Roles || partyFollow)
             SpawnArea::ClearMap(lead, partyFollow ? DUNGEON_CLEAR_RADIUS : INSTANCE_CLEAR_RADIUS);
         // M3's Deadmines is wider than the Stockades: from any of its sites to the ship's far end.
         else if (Arena(env).Against == Opposition::Interact)

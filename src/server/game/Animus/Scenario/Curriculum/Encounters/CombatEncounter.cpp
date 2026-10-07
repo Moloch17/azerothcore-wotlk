@@ -149,7 +149,13 @@ std::vector<Animus::Curriculum::CombatDraw::Point> const& Animus::Curriculum::Co
     auto const known = _corridors.find(map->GetId());
     if (known != _corridors.end())
         return known->second;
+    return _corridors.emplace(map->GetId(), FindCorridors(bot, map, _scenario.Tuning().Combat, _scenario.Name()))
+        .first->second;
+}
 
+std::vector<Animus::Curriculum::CombatDraw::Point> Animus::Curriculum::CombatEncounter::FindCorridors(Player* bot,
+    Map* map, CurriculumTuning::CombatTuning const& tuning, char const* stage)
+{
     // The dungeon's own creature spawns, by spawn id (a fixed order, so an evaluation's seed picks the same point).
     std::vector<std::pair<ObjectGuid::LowType, Draw::Point>> spawns;
     for (auto const& [spawnId, data] : sObjectMgr->GetAllCreatureData())
@@ -166,7 +172,6 @@ std::vector<Animus::Curriculum::CombatDraw::Point> const& Animus::Curriculum::Co
     }
 
     // Reached from the entrance (where the seat stands now) by a whole path, within the walk.
-    CurriculumTuning::CombatTuning const& tuning = _scenario.Tuning().Combat;
     std::vector<Draw::Point> kept = Draw::CorridorPoints(candidates, [bot](Draw::Point const& point)
     {
         PathGenerator path(bot);
@@ -176,8 +181,8 @@ std::vector<Animus::Curriculum::CombatDraw::Point> const& Animus::Curriculum::Co
         return path.getPathLength();
     }, tuning.CorridorWalk, tuning.CorridorSpacing);
     LOG_INFO("module.animus", "{}: map {} has {} corridor points of {} creature spawns (within {:.0f} yd of its "
-        "entrance)", _scenario.Name(), map->GetId(), kept.size(), spawns.size(), tuning.CorridorWalk);
-    return _corridors.emplace(map->GetId(), std::move(kept)).first->second;
+        "entrance)", stage, map->GetId(), kept.size(), spawns.size(), tuning.CorridorWalk);
+    return kept;
 }
 
 bool Animus::Curriculum::CombatEncounter::Build(Env& env, Map* map, uint8 /*level*/)
