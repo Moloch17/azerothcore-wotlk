@@ -33,6 +33,7 @@
 #include "RewardLedger.h"
 #include "SeatMemory.h"
 #include "SeatView.h"
+#include "StandIn.h"
 #include "SeatCharacter.h"
 #include "Supplies.h"
 #include "TalentBuilder.h"
@@ -799,6 +800,17 @@ namespace Animus::Curriculum
         /// accept the same offer again every decision (StageScenario::AcceptResurrections).
         std::array<uint32, MAX_SEATS + 1> ResurrectBy{};
         std::array<uint64, MAX_SEATS + 1> ResurrectMs{};
+
+        /// The episode's "human" stand-in (StandIn.h, StageScenario::DrawStandIn): the seat it plays, or -1 for an
+        /// all-bot party; its style and its episode so far; where a wander set out from; the abilities it pressed.
+        struct StandInSeat
+        {
+            int32 Seat = -1;
+            StandIn::Behaviour Plays;
+            float WanderFromX = 0.0f;
+            float WanderFromY = 0.0f;
+            uint32 Presses = 0;
+        } StandInPlay;
     };
 }
 

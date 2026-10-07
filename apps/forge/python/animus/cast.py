@@ -364,12 +364,13 @@ class CastPool:
         (self.run_dir / LEAGUE_FILE).write_text(json.dumps(self.to_json(), indent=2))
 
 
-def league_snapshot(run_dir: Path, source: Path, tag: str) -> Path | None:
-    """Copy `source` (a checkpoint) into <run_dir>/league/<tag>.pt; None when it is already there or missing."""
+def league_snapshot(run_dir: Path, source: Path, tag: str, folder: str = LEAGUE_DIR) -> Path | None:
+    """Copy `source` (a checkpoint) into <run_dir>/<folder>/<tag>.pt (the league's, or the co-op partners' with
+    animus.partners); None when it is already there or missing."""
     source = Path(source)
     if not source.is_file():
         return None
-    league = Path(run_dir) / LEAGUE_DIR
+    league = Path(run_dir) / folder
     league.mkdir(parents=True, exist_ok=True)
     target = league / f"{tag}.pt"
     if target.exists():

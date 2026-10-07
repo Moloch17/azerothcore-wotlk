@@ -20,6 +20,7 @@
 #define ANIMUS_LIB_CURRICULUM_CURRICULUM_TUNING_H
 
 #include "Define.h"
+#include "StandIn.h"
 #include <boost/json/fwd.hpp>
 #include <string>
 
@@ -1442,6 +1443,10 @@ namespace Animus::Curriculum
             float BreakBelow = 0.6f;            // ... breaks crowd control when its health is under this
         } ScriptedPlayers;
 
+        /// The "human" stand-in seat of the party stages (StandIn.h: its styles, and what each value does). Off
+        /// unless StandIn.Share is set.
+        StandIn::Tuning StandIn;
+
         /// Calls f(key, value) for every value, key relative to the tuning prefix (AnimusForge.Curriculum., ...).
         template <typename T, typename F>
         static void Visit(T& tuning, F&& f)
@@ -2032,6 +2037,44 @@ namespace Animus::Curriculum
             f("ScriptedPlayers.ControlMaxMs", tuning.ScriptedPlayers.ControlMaxMs);
             f("ScriptedPlayers.DefensiveBelow", tuning.ScriptedPlayers.DefensiveBelow);
             f("ScriptedPlayers.BreakBelow", tuning.ScriptedPlayers.BreakBelow);
+
+            f("StandIn.Share", tuning.StandIn.Share);
+            f("StandIn.LeadChance", tuning.StandIn.LeadChance);
+            f("StandIn.TankChance", tuning.StandIn.TankChance);
+            f("StandIn.HealerChance", tuning.StandIn.HealerChance);
+            f("StandIn.SlowChance", tuning.StandIn.SlowChance);
+            f("StandIn.PullEarlyChance", tuning.StandIn.PullEarlyChance);
+            f("StandIn.PullEarlyPerMinute", tuning.StandIn.PullEarlyPerMinute);
+            f("StandIn.PullEarlyMinMs", tuning.StandIn.PullEarlyMinMs);
+            f("StandIn.PullEarlyMaxMs", tuning.StandIn.PullEarlyMaxMs);
+            f("StandIn.WanderChance", tuning.StandIn.WanderChance);
+            f("StandIn.WanderPerMinute", tuning.StandIn.WanderPerMinute);
+            f("StandIn.WanderMinMs", tuning.StandIn.WanderMinMs);
+            f("StandIn.WanderMaxMs", tuning.StandIn.WanderMaxMs);
+            f("StandIn.RestChance", tuning.StandIn.RestChance);
+            f("StandIn.RestPerMinute", tuning.StandIn.RestPerMinute);
+            f("StandIn.RestMinMs", tuning.StandIn.RestMinMs);
+            f("StandIn.RestMaxMs", tuning.StandIn.RestMaxMs);
+            f("StandIn.LagChance", tuning.StandIn.LagChance);
+            f("StandIn.LagPerMinute", tuning.StandIn.LagPerMinute);
+            f("StandIn.LagMinMs", tuning.StandIn.LagMinMs);
+            f("StandIn.LagMaxMs", tuning.StandIn.LagMaxMs);
+            f("StandIn.AfkChance", tuning.StandIn.AfkChance);
+            f("StandIn.AfkPerMinute", tuning.StandIn.AfkPerMinute);
+            f("StandIn.AfkMinMs", tuning.StandIn.AfkMinMs);
+            f("StandIn.AfkMaxMs", tuning.StandIn.AfkMaxMs);
+            f("StandIn.RestBelow", tuning.StandIn.RestBelow);
+            f("StandIn.FollowYards", tuning.StandIn.FollowYards);
+            f("StandIn.LagYards", tuning.StandIn.LagYards);
+            f("StandIn.WanderMinYards", tuning.StandIn.WanderMinYards);
+            f("StandIn.WanderMaxYards", tuning.StandIn.WanderMaxYards);
+            f("StandIn.MeleeYards", tuning.StandIn.MeleeYards);
+            f("StandIn.RangedYards", tuning.StandIn.RangedYards);
+            f("StandIn.HealerYards", tuning.StandIn.HealerYards);
+            f("StandIn.FastWaitMs", tuning.StandIn.FastWaitMs);
+            f("StandIn.SlowWaitMs", tuning.StandIn.SlowWaitMs);
+            f("StandIn.FastReactMs", tuning.StandIn.FastReactMs);
+            f("StandIn.SlowReactMs", tuning.StandIn.SlowReactMs);
         }
 
         /// The values of the config keys <prefix><key>, each defaulting to the value above; min/max pairs are
