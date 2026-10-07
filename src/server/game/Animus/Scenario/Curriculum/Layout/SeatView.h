@@ -427,6 +427,25 @@ namespace Animus::Curriculum
         std::array<Teammate, PARTY_MEMBERS> Teammates{};
         Player* Tank = nullptr;
 
+        /// **What a player's UI shows of the rest of its party** (the party frames block; dungeon-curriculum I5): the
+        /// party frames -- always: health, power, alive, in combat, which one leads -- and the minimap's party dots,
+        /// only for members within its radius, as a position relative to the seat. The leader first, then the other
+        /// members in seat order. Filled by the encounter that has a party (PartyFollowEncounter::View).
+        struct PartyFrame
+        {
+            bool Present = false;
+            bool Alive = false;
+            bool Leader = false;
+            bool InCombat = false;
+            float Health = 0.0f;                    // fractions of the maximum
+            float Power = 0.0f;
+            bool DotShown = false;                  // on the minimap: within its radius
+            float DotRight = 0.0f;                  // yards, in the seat's facing frame (heading-up minimap)
+            float DotForward = 0.0f;
+        };
+        std::array<PartyFrame, GROUP_MEMBERS> Frames{};
+        float MinimapYards = 60.0f;
+
         /// The raid the seat's group belongs to, in aggregate: a seat acts on its own group and the spotlight slots,
         /// but it has to know how the rest of the raid is doing. All zero below a party.
         struct RaidView

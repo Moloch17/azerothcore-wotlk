@@ -70,6 +70,10 @@ namespace Animus::Curriculum
         /// corner), stopped beside, with a compass the ladder withholds more and more often (SightEncounter,
         /// ArenaDefinition::Objects and SightPairs) -- M1 controls, redesigned.
         Sight,
+        /// Nothing to fight: a party keeps with a leader walking a dungeon's route from the door, in an emptied
+        /// instance (PartyFollowEncounter) -- M4 follow. The leader is in the owner's slot, moved by the player
+        /// controller; a seat that dies rises at the instance's entrance and walks back (EntranceRespawn).
+        PartyFollow,
     };
 
     /// What kind of ground a marker arena's markers are on (Opposition::Markers only): each movement stage's own.
@@ -208,6 +212,9 @@ namespace Animus::Curriculum
         bool EvalOnly = false;
         /// SeatPlan::Raid: how many seats the raid has (a multiple of GROUP_SEATS up to MAX_SEATS); 0 = MAX_SEATS.
         uint32 RaidSeats = 0;
+        /// SeatPlan::Party: how many learned seats the party has, every episode (1 to GROUP_SEATS); 0 = the party's
+        /// own draw (Party.SizeWeight*, or a whole group). The party follow's four followers beside its leader.
+        uint32 PartySize = 0;
         uint32 EpisodeSeconds = 0;      // episode length; 0 = StageSettings::EpisodeSeconds
         /// Most scripted enemy players that ambush the owner (1 to this many, MAX_AMBUSHERS at most): mid-episode
         /// beside pulls, or from the start against Opposition::Ambush. 0 = none.

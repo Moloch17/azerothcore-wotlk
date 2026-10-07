@@ -28,6 +28,7 @@
  * var/animus-forge/shared/archive/curriculum-v1-2026-10-05/.
  *
  *   movement   move1_controls ─ move2_seek (perception-goals P1: the compass split, a hidden object found by sight)
+ *              ─ move4_follow (dungeon-curriculum I5: a party keeps with a leader through an empty dungeon)
  *
  * Every movement stage runs 50 ms world ticks (AnimusForge.Stage.<name>.TicksPerDecision in the conf template): the
  * controller's mouse-look facing rule and its heartbeat are checked once a world tick, so a coarser tick would leave
@@ -495,6 +496,39 @@ namespace
             .Level = 1,
         });
 
+        // M4 -- follow (dungeon-curriculum Part 2, I5): a party of five -- a leader and four learned followers -- in an
+        // empty Ragefire Chasm or Deadmines (cleared whole, as the Stockades: SpawnArea::ClearMap, and their doors,
+        // levers and chests removed: ObjectPool::ClearOwn), at the dungeon's level band (the dungeon finder's). The
+        // leader walks the dungeon's route from the door through each boss's place in turn, stopping at each; the
+        // followers keep 3-10 yd from it, out of its way, through its doors and drops, waiting when it stops and
+        // regrouping after (PartyFollowEncounter). Deaths are rare here, but a follower that dies rises at the
+        // entrance after Respawn.DelayMs and walks back (I4, EntranceRespawn): the episode never ends on one.
+        //
+        // **The ladder** (the shaping fade's rungs; the stage has no shaping, so the fade is the ladder alone): a
+        // slow, steady leader (walking, long stops), then running, then stopping unannounced, then stopping
+        // unannounced more often and sometimes stepping back first.
+        //
+        // Core and the goal block are the frame; Move the lesson; the camera (with its entity list) and the mental
+        // map how the leader is seen and the way remembered; the party frames block what a player's UI shows of the
+        // party -- the frames, always, and the minimap's dots within its radius. No compass: the leader is not an
+        // objective point. The evaluation plays both dungeons' fixed routes from seeded episodes at the training rung.
+        stages.push_back({
+            .Name = "move4_follow",
+            .Suffix = "_follow",
+            .Extends = "move2_seek",
+            .Summary = "an empty Ragefire Chasm or Deadmines: four followers keep with a leader walking the dungeon's "
+                "route from the door, through its doors and drops, waiting and regrouping when it stops; a death "
+                "rises at the entrance and walks back",
+            .Blocks = { Core, Move, Vision, Map, PartyFrames, Goal },
+            .Arenas = {
+                { .Name = "ragefire", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::PartyFollow,
+                    .PartySize = GROUP_MEMBERS, .EpisodeSeconds = 300, .MapId = MAP_RAGEFIRE_CHASM },
+                { .Name = "deadmines", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::PartyFollow,
+                    .PartySize = GROUP_MEMBERS, .EpisodeSeconds = 300, .MapId = MAP_DEADMINES },
+            },
+            .MapId = MAP_RAGEFIRE_CHASM,
+        });
+
         return stages;
     }
 
@@ -734,6 +768,24 @@ namespace
                 || pair.Spawn == pair.Object)
                 return "a sight pair is a sight arena's: two different points of its SpawnPoints";
 
+        // The party follow (M4): a party of learned followers and a leader in the owner's slot, in a dungeon of its
+        // own (its door is the spawn, its bosses' places the route), nothing to fight; the leader is found by sight,
+        // the minimap and memory, so the camera and the party frames, and never the compass.
+        bool const partyFollow = arena.Against == Opposition::PartyFollow;
+        if (partyFollow && (arena.Seats != SeatPlan::Party || !arena.PartySize || arena.PartySize > GROUP_MEMBERS
+            || arena.Owner || arena.PartyGroup || arena.Pvp || arena.Ambushers > 0
+            || arena.Schedule != PullSchedule::None || arena.Directed || arena.Objective || !arena.MapId))
+            return "a party follow is a party of 1 to GROUP_MEMBERS followers and its leader, on a dungeon's map, "
+                "with nothing to fight";
+        if (partyFollow && (!stage.Has(BlockId::Move) || !stage.Has(BlockId::Vision)
+            || !stage.Has(BlockId::PartyFrames)))
+            return "a party follow is walked with the move block and the leader found with the camera and the party "
+                "frames";
+        if (partyFollow && stage.Has(BlockId::Compass))
+            return "a party follow's leader is no objective point: the compass would point at it";
+        if (arena.PartySize && (arena.Seats != SeatPlan::Party || arena.PartySize > GROUP_SEATS))
+            return "a party size is a party's, 1 to GROUP_SEATS";
+
         if (!seek && !arena.Rooms.empty())
             return "only a seek arena has rooms";
         if (!seek && !sight && !arena.Objects.empty())
@@ -752,7 +804,7 @@ namespace
             return "the moving drill's extra dummies need the pack block's slots";
         // An arena on a map of its own stands on its own ground: the stage's points are on the stage's map. An
         // encounter that finds its own spawn (an instance's door, a quest giver, a node field, an inn) needs none.
-        bool const ownSpawn = instance || life;
+        bool const ownSpawn = instance || life || arena.Against == Opposition::PartyFollow;
         if (arena.MapId && arena.MapId != stage.MapId && arena.SpawnPoints.empty() && !ownSpawn)
             return "an arena on a map of its own needs its own spawn points";
         if (arena.MapId && arena.MapId != stage.MapId && flag)
@@ -811,7 +863,8 @@ namespace
         bool const fights = stage.AnyArena([](ArenaDefinition const& arena)
         {
             return arena.Against != Opposition::Markers && arena.Against != Opposition::Follow
-                && arena.Against != Opposition::Seek && arena.Against != Opposition::Sight;
+                && arena.Against != Opposition::Seek && arena.Against != Opposition::Sight
+                && arena.Against != Opposition::PartyFollow;
         });
         if (fights && !stage.Has(BlockId::Duel))
             return "a stage that fights something needs the duel block";
@@ -844,7 +897,7 @@ uint32 Animus::Curriculum::ArenaDefinition::SeatCount() const
         // A party is the owner and its companions: GROUP_MEMBERS learned seats beside it, which is what this
         // returned when MAX_SEATS was 4 and is what it has to keep returning now that MAX_SEATS is a raid. With no
         // owner it is a whole group of learned seats (the dungeon, 2026-09-30).
-        case SeatPlan::Party:  return Owner ? GROUP_MEMBERS : GROUP_SEATS;
+        case SeatPlan::Party:  return PartySize ? PartySize : Owner ? GROUP_MEMBERS : GROUP_SEATS;
         case SeatPlan::Raid:   return RaidSeats ? RaidSeats : MAX_SEATS;
         case SeatPlan::Teams:  return std::min(TeamSeats, TEAM_SEATS) * TEAM_COUNT + LoneSeats;
         case SeatPlan::Mirror: return 2;
