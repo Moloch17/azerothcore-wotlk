@@ -753,8 +753,10 @@ class TrainingRun:
         self.trainer.set_goal_space(self.stage, [layout.name for layout in self.spec.layouts])
         # The hint block's columns (a dungeon's suggested action) are kept out of both networks, seeded or resumed.
         self.trainer.set_hint_space(self.stage, [layout.name for layout in self.spec.layouts])
-        # Hint imitation ends once the probes beat the script (the sim's wing_hint_off; animus.hint_cutoff).
+        # Hint imitation ends per rung once the probes beat the script there (wing_hint_off_rung; animus.hint_cutoff).
         self.hint_cutoff = HintCutoff(self.spec.episode_info_names, self.trainer.config)
+        self.reference_column = (self.spec.episode_info_names.index("wing_reference")
+                                 if "wing_reference" in self.spec.episode_info_names else None)
         # A seed brings the parent's director adapter whole: its slot columns are made blind (DirectorSets). A resumed
         # run's must already be -- their gradient is masked -- and anything else is a checkpoint to stop on, not fix.
         if self.resume_path:
@@ -2131,9 +2133,14 @@ class TrainingRun:
         present = self.present_column
         keep = np.ones(len(ended), dtype=bool) if present is None else ended[:, present] > 0.0
         keep &= ~partnered.reshape(-1)
+        self.hint_cutoff.observe(ended[keep])
+        # A whole dungeon's reference run (the teacher played every seat: the cutoff's measure) is hint data, not the
+        # policy's: out of the training statistics.
+        reference = self.reference_column
+        if reference is not None:
+            keep &= ended[:, reference] <= 0.5
         self.finished_episodes.extend(ended[keep])
         self.finished_layouts.extend(int(index) for index in ended_layouts[keep])
-        self.hint_cutoff.observe(ended[keep])
         if self.link is not None:
             self.link.observe(ended[keep], ended_layouts[keep])
 

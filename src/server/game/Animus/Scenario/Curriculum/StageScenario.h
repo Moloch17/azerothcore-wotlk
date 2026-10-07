@@ -279,15 +279,17 @@ namespace Animus::Curriculum
         }};
         /// The rung this process's training runs are on now (Instance.WingProbe and the rest).
         [[nodiscard]] uint32 WingRungNow() const { return _wingRung.load(std::memory_order_relaxed); }
-        /// A finished training run of a whole dungeon on rung `rung`: whether it was a probe, whether the teacher
-        /// played a seat in it, and how far it got (the share of the dungeon cleared, 1 when the last boss died).
-        /// Probes step the ladder, and switch hint imitation off (WingHintOff).
-        void NoteWingRun(uint32 rung, bool probe, float progress, bool scripted = false);
+        /// A finished training run of a whole dungeon on rung `rung`: whether it was a probe, whether it was a
+        /// reference run (the teacher played every seat: Instance.WingReferenceShare), and how far it got (the share
+        /// of the dungeon cleared, 1 when the last boss died). Probes step the ladder; probes against the rung's own
+        /// reference runs switch hint imitation off (WingHintOff).
+        void NoteWingRun(uint32 rung, bool probe, float progress, bool reference = false);
         /// **The enforced cutoff** (dungeon-curriculum I6): the first rung whose probes -- the policy alone -- beat the
-        /// script's clear share, from which on hint imitation is off: no hint is written and no scripted seat's press
-        /// is imitated, at that rung and every later one (the old failure: bots copying a script that stood still).
-        /// -1: not yet. Decided once, by NoteWingRun, and never undone (Instance.WingHintOffRung carries it across a
-        /// restart); a cluster's host decides it for every worker (the RUNG broadcast).
+        /// script's clear share **at that rung** (its own reference runs, the teacher playing every seat at the rung's
+        /// levels and wipes), from which on hint imitation is off: no hint is written and no scripted seat's press is
+        /// imitated, at that rung and every later one (the old failure: bots copying a script that stood still); a
+        /// ladder falling back below it has its hints again. -1: not yet. Instance.WingHintOffRung carries it across
+        /// a restart; a cluster's host decides it for every worker (the RUNG broadcast).
         [[nodiscard]] int32 WingHintOffRung() const { return _hintOffRung.load(std::memory_order_relaxed); }
         /// Whether hint imitation is off at `rung`.
         [[nodiscard]] bool WingHintOff(uint32 rung) const
@@ -298,9 +300,12 @@ namespace Animus::Curriculum
         /// The cutoff's rule: a full window of probes clearing more of the dungeon, on average, than the script's runs
         /// (at least a quarter of a window of them) -- strictly more.
         [[nodiscard]] static bool ProbesBeatTheScript(std::vector<float> const& probes,
-            std::vector<float> const& scripted, std::size_t window);
+            std::vector<float> const& reference, std::size_t window);
         /// The hint weight at `rung`: the rung's own, or 0 from the cutoff on.
         [[nodiscard]] float WingHintAt(uint32 rung) const;
+        /// Whether a training run of a whole dungeon at `rung` is drawn as a reference run: Instance.WingReferenceShare
+        /// of them while the support is on and the rung's imitation is not yet off (the cutoff's measure).
+        [[nodiscard]] bool DrawWingReference(uint32 rung) const;
         /// Whether the dungeon teacher plays every seat of a whole dungeon's run, whatever the rung and the support
         /// say: a local `forge run <stage> dungeon N` (the teacher's check), or a teacher-check arena
         /// (ArenaDefinition::Teacher). Never in evaluation.
@@ -596,13 +601,13 @@ namespace Animus::Curriculum
         std::vector<float> _wingProbes;         // the rung's probes' progress, the latest WingRungRuns
         std::vector<float> _wingOthers;         // ... its other training runs'
         std::array<float, WING_RUNGS.size()> _wingSteppedAt{};  // the probes' mean when each rung was stepped onto
-        /// The latest WingRungRuns runs the teacher played a seat in, at any rung: the script's clear share, which the
-        /// probes have to beat for hint imitation to end (WingHintOffRung).
-        std::vector<float> _wingScripted;
+        /// Each rung's latest WingRungRuns reference runs (the teacher playing every seat at the rung): its script's
+        /// clear share, which that rung's probes have to beat for hint imitation to end (WingHintOffRung).
+        std::array<std::vector<float>, WING_RUNGS.size()> _wingReference{};
         std::atomic<int32> _hintOffRung{ -1 };
         /// The local policy is the dungeon teacher's (`forge run <stage> dungeon N`): it plays every seat.
         std::atomic<bool> _teacherRun{ false };
-        std::string _wingTallyScripted;
+        std::string _wingTallyReference;
         /// A cluster worker follows the host's rung and reports its runs instead of stepping (FollowClusterRung);
         /// the runs since its last report, as "rung/probes/others" with comma-separated progress.
         bool _wingFollower = false;

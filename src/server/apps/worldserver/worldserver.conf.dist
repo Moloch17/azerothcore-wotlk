@@ -6338,10 +6338,14 @@ AnimusForge.Curriculum.Instance.WingRungRuns = 40
 AnimusForge.Curriculum.Instance.WingRungTarget = 0.6
 #   the rung a run starts on (the ladder is not saved: a resumed run names the rung it had reached)
 AnimusForge.Curriculum.Instance.WingRungStart = 0
-#   the rung from which hint imitation is off: the first rung whose probes beat the script's clear share (the
-#   teacher's runs), decided by the ladder and never undone; -1 lets the ladder decide (a resumed run names the rung
-#   its log's "hint imitation is off" line gave)
+#   the rung from which hint imitation is off: the first rung whose probes beat the script's clear share at that rung
+#   (its reference runs), decided by the ladder; -1 lets the ladder decide (a resumed run names the rung its log's
+#   "hint imitation is off" line gave)
 AnimusForge.Curriculum.Instance.WingHintOffRung = -1
+#   the share of training runs at each rung that are reference runs while the support is on and the rung's imitation
+#   is not off: the teacher plays every seat at the rung's levels and wipes, and they measure the script's clear share
+#   there -- what the rung's probes must beat for hint imitation to end; never evaluated, never on the ladder
+AnimusForge.Curriculum.Instance.WingReferenceShare = 0.07
 #   the dungeon script's seats and hints on the ladder's rungs: a support, off by default (0), switched on (1) when a
 #   rung has not stepped for a long stretch. Off, the rungs lift the level and spare wipes only
 AnimusForge.Curriculum.Instance.WingSupport = 0

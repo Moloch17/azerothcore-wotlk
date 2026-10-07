@@ -2050,7 +2050,7 @@ Animus::Curriculum::StageScenario::Casting Animus::Curriculum::StageScenario::Dr
     return castings.back();
 }
 
-void Animus::Curriculum::StageScenario::NoteWingRun(uint32 rung, bool probe, float progress, bool scripted)
+void Animus::Curriculum::StageScenario::NoteWingRun(uint32 rung, bool probe, float progress, bool reference)
 {
     // The ladder moves only on what the policy does alone (2026-10-01: "taper off only based on the progress made by
     // the learner"): the probes, against a fixed target (Instance.WingRungTarget) -- the rung's other runs, as the
@@ -2069,21 +2069,27 @@ void Animus::Curriculum::StageScenario::NoteWingRun(uint32 rung, bool probe, flo
         {
             _wingTallyProbes.clear();
             _wingTallyOthers.clear();
-            _wingTallyScripted.clear();
+            _wingTallyReference.clear();
             _wingTallyRung = rung;
         }
-        std::string& tally = probe ? _wingTallyProbes : scripted ? _wingTallyScripted : _wingTallyOthers;
+        std::string& tally = probe ? _wingTallyProbes : reference ? _wingTallyReference : _wingTallyOthers;
         tally += Acore::StringFormat("{}{:.3f}", tally.empty() ? "" : ",", progress);
         return;
     }
 
-    // The script's clear share: the latest runs the teacher played a seat in, whatever their rung -- what the
-    // probes have to beat for hint imitation to end.
-    if (scripted && !probe)
+    // The script's clear share at the rung: its reference runs (the teacher playing every seat at the rung's levels
+    // and wipes) -- what the rung's probes have to beat for hint imitation to end there. Kept per rung, whichever rung
+    // the ladder is on; never mixed into the ladder's own windows.
+    if (reference && !probe)
     {
-        _wingScripted.push_back(progress);
-        if (_wingScripted.size() > window)
-            _wingScripted.erase(_wingScripted.begin());
+        if (rung < _wingReference.size())
+        {
+            std::vector<float>& runs = _wingReference[rung];
+            runs.push_back(progress);
+            if (runs.size() > window)
+                runs.erase(runs.begin());
+        }
+        return;
     }
     if (rung != now)
         return;
@@ -2108,13 +2114,14 @@ void Animus::Curriculum::StageScenario::NoteWingRun(uint32 rung, bool probe, flo
     // **The enforced cutoff** (dungeon-curriculum I6): the policy alone has beaten the script, so imitating the
     // script can only hold it back (the old failure: bots copying a script that stood still). Off from this rung on,
     // for good; never on a script's share measured on fewer than a quarter of a window of runs.
-    if (_hintOffRung.load(std::memory_order_relaxed) < 0 && ProbesBeatTheScript(_wingProbes, _wingScripted, window))
+    int32 const off = _hintOffRung.load(std::memory_order_relaxed);
+    if ((off < 0 || int32(now) < off) && ProbesBeatTheScript(_wingProbes, _wingReference[now], window))
     {
         _hintOffRung.store(int32(now), std::memory_order_relaxed);
         LOG_INFO("module.animus", "{}: hint imitation is off from rung {}: the last {} probes made {:.2f} of the "
-            "dungeon, beating the script's {:.2f} over its last {} runs (keep it on a resume with "
-            "Instance.WingHintOffRung = {})", Name(), now, window, probes, mean(_wingScripted), _wingScripted.size(),
-            now);
+            "dungeon, beating the script's {:.2f} over its last {} reference runs at the rung (keep it on a resume "
+            "with Instance.WingHintOffRung = {})", Name(), now, window, probes, mean(_wingReference[now]),
+            _wingReference[now].size(), now);
     }
 
     uint32 next = now;
@@ -2136,10 +2143,10 @@ void Animus::Curriculum::StageScenario::NoteWingRun(uint32 rung, bool probe, flo
 }
 
 bool Animus::Curriculum::StageScenario::ProbesBeatTheScript(std::vector<float> const& probes,
-    std::vector<float> const& scripted, std::size_t window)
+    std::vector<float> const& reference, std::size_t window)
 {
-    // A full window of probes, and a script's share measured on at least a quarter of one.
-    if (probes.size() < std::max<std::size_t>(1, window) || scripted.size() < std::max<std::size_t>(1, window / 4))
+    // A full window of probes, and the rung's script share measured on at least a quarter of one.
+    if (probes.size() < std::max<std::size_t>(1, window) || reference.size() < std::max<std::size_t>(1, window / 4))
         return false;
     auto const mean = [](std::vector<float> const& values)
     {
@@ -2148,13 +2155,21 @@ bool Animus::Curriculum::StageScenario::ProbesBeatTheScript(std::vector<float> c
             sum += value;
         return sum / float(values.size());
     };
-    return mean(probes) > mean(scripted);
+    return mean(probes) > mean(reference);
 }
 
 float Animus::Curriculum::StageScenario::WingHintAt(uint32 rung) const
 {
     rung = std::min<uint32>(rung, uint32(WING_RUNGS.size()) - 1);
     return WingHintOff(rung) ? 0.0f : WING_RUNGS[rung].Hint;
+}
+
+bool Animus::Curriculum::StageScenario::DrawWingReference(uint32 rung) const
+{
+    CurriculumTuning::InstanceTuning const& tuning = _tuning.Instance;
+    return tuning.WingSupport && tuning.WingReferenceShare > 0.0f && !WingHintOff(rung)
+        && rung < WING_RUNGS.size() && (WING_RUNGS[rung].Hint > 0.0f || WING_RUNGS[rung].Script > 0.0f)
+        && frand(0.0f, 1.0f) < tuning.WingReferenceShare;
 }
 
 bool Animus::Curriculum::StageScenario::TeacherPlays(Env const& env) const
@@ -2173,28 +2188,28 @@ void Animus::Curriculum::StageScenario::SetLocalPolicy(std::string const& policy
 std::string Animus::Curriculum::StageScenario::TakeClusterTally()
 {
     std::lock_guard<std::mutex> guard(_wingLadderLock);
-    if (!_wingFollower || (_wingTallyProbes.empty() && _wingTallyOthers.empty() && _wingTallyScripted.empty()))
+    if (!_wingFollower || (_wingTallyProbes.empty() && _wingTallyOthers.empty() && _wingTallyReference.empty()))
         return {};
     std::string tally = Acore::StringFormat("{}/{}/{}/{}", _wingTallyRung,
         _wingTallyProbes.empty() ? "-" : _wingTallyProbes, _wingTallyOthers.empty() ? "-" : _wingTallyOthers,
-        _wingTallyScripted.empty() ? "-" : _wingTallyScripted);
+        _wingTallyReference.empty() ? "-" : _wingTallyReference);
     _wingTallyProbes.clear();
     _wingTallyOthers.clear();
-    _wingTallyScripted.clear();
+    _wingTallyReference.clear();
     return tally;
 }
 
 void Animus::Curriculum::StageScenario::AddClusterTally(std::string const& tally)
 {
-    // "rung/probes/others[/scripted]": each a comma-separated list of runs' progress, or "-". A worker built before
-    // the scripted list sends three.
+    // "rung/probes/others[/reference]": each a comma-separated list of runs' progress, or "-". A worker built before
+    // the reference list sends three.
     std::size_t const first = tally.find('/');
     std::size_t const second = first == std::string::npos ? std::string::npos : tally.find('/', first + 1);
     if (second == std::string::npos)
         return;
     std::size_t const third = tally.find('/', second + 1);
     uint32 const rung = uint32(std::strtoul(tally.substr(0, first).c_str(), nullptr, 10));
-    auto const each = [&](std::string const& list, bool probe, bool scripted)
+    auto const each = [&](std::string const& list, bool probe, bool reference)
     {
         if (list == "-")
             return;
@@ -2202,7 +2217,7 @@ void Animus::Curriculum::StageScenario::AddClusterTally(std::string const& tally
         while (at < list.size())
         {
             std::size_t const end = std::min(list.find(',', at), list.size());
-            NoteWingRun(rung, probe, std::strtof(list.substr(at, end - at).c_str(), nullptr), scripted);
+            NoteWingRun(rung, probe, std::strtof(list.substr(at, end - at).c_str(), nullptr), reference);
             at = end + 1;
         }
     };

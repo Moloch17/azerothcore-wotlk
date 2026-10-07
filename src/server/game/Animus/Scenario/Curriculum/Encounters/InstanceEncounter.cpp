@@ -220,6 +220,21 @@ void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
         {
             return _scenario.Data(env).WingHintOff ? 1.0f : 0.0f;
         });
+        // The cutoff's rung as the sim has it at the run's end (-1 none), and -2 for a run that is no whole dungeon's
+        // training run (another arena, a drill, an evaluation): the learner holds hint_coef at 0 exactly while the
+        // runs' rung is at or past it.
+        table.Add("wing_hint_off_rung", [this](Env const& env, uint32)
+        {
+            EnvInstance const& fight = _envs[env.Index];
+            if (!Wing(env) || fight.Route.empty() || fight.Drill || fight.Evaluating)
+                return -2.0f;
+            return float(_scenario.WingHintOffRung());
+        });
+        // A reference run: the teacher played every seat (Instance.WingReferenceShare); hint data, not the policy's.
+        table.Add("wing_reference", [this](Env const& env, uint32)
+        {
+            return _envs[env.Index].Reference ? 1.0f : 0.0f;
+        });
         table.Add("wing_scripted", [this](Env const& env, uint32) { return _envs[env.Index].Scripted ? 1.0f : 0.0f; });
         table.Add("wing_level", [this](Env const& env, uint32) { return float(_scenario.Data(env).EpisodeLevel); });
         // Go-Explore: whether the run started from a cell, its arena and row, and the cells it reached (MarkCell).
@@ -279,7 +294,7 @@ void Animus::Curriculum::InstanceEncounter::ResetEpisode(Env& env)
         LOG_INFO("module.animus", "Wing run: env {} {}{}{} rung {} level {} | point {}/{} at the end, {} of {} creatures killed, "
             "{} bosses, last boss {} | {} wipes, {} rises, {} rejoined | {:.0f}s with no progress at the end | {}",
             env.Index, fight.Evaluating ? "eval" : fight.Started ? "train from a cell" : "train",
-            fight.Scripted ? " scripted" : "",
+            fight.Reference ? " reference" : fight.Scripted ? " scripted" : "",
             fight.Probe ? " probe" : "", fight.Rung, fight.Level,
             fight.RouteNext, fight.Route.size(), fight.TrashKills, fight.HostileTotal, fight.BossKills,
             fight.BossDead ? "killed" : "alive", fight.Wipes, fight.Rises, fight.Rejoins,
@@ -292,7 +307,7 @@ void Animus::Curriculum::InstanceEncounter::ResetEpisode(Env& env)
         float const cleared = fight.HostileTotal
             ? float(fight.TrashKills + (fight.BossDead ? 1 : 0)) / float(fight.HostileTotal + 1) : 0.0f;
         _scenario.NoteWingRun(fight.Rung, fight.Probe, fight.BossDead ? 1.0f : std::min(1.0f, cleared),
-            fight.Scripted);
+            fight.Reference);
     }
     fight = EnvInstance();
 }
@@ -360,7 +375,11 @@ void Animus::Curriculum::InstanceEncounter::BeforeLevel(Env& env)
         // The script's seats and hints are a support switched on by hand (Instance.WingSupport): off, the rungs are
         // the levels and the wipes alone. Hint imitation is off from the rung the probes beat the script on.
         bool const supported = (tuning.WingSupport || teacher) && !env.Evaluating && !fight.Probe;
-        data.WingScript = teacher ? 1.0f : supported && !fight.Drill ? rung.Script : 0.0f;
+        // A reference run (Instance.WingReferenceShare): the teacher plays every seat at the rung's levels and wipes,
+        // the script's clear share at the rung -- the measure the rung's probes have to beat (WingHintOffRung).
+        fight.Reference = supported && !teacher && !fight.Drill && !fight.Started
+            && _scenario.DrawWingReference(fight.Rung);
+        data.WingScript = teacher || fight.Reference ? 1.0f : supported && !fight.Drill ? rung.Script : 0.0f;
         data.WingHintOff = _scenario.WingHintOff(fight.Rung);
         data.WingHint = supported ? _scenario.WingHintAt(fight.Rung) : 0.0f;
         auto const [low, high] = DungeonLevels(*fight.Row);

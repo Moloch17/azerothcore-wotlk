@@ -322,6 +322,11 @@ namespace Animus::Curriculum
             /// The rung from which hint imitation is off (StageScenario::WingHintOffRung), as a resumed run reached it:
             /// the probes beat the script's clear share there. -1: not yet, the ladder decides.
             int32 WingHintOffRung = -1;
+            /// The share of training runs of a whole dungeon at each rung that are reference runs while the support is on
+            /// and the rung's imitation is not yet off: the teacher plays every seat at the rung's levels and wipes, its
+            /// presses are hints like any scripted seat's, and the run measures the script's clear share at that rung
+            /// for the cutoff (StageScenario::WingHintOffRung). Training only: never an evaluation, nor the ladder.
+            float WingReferenceShare = 0.07f;
             /// The dungeon script's seats and hints on the ladder's rungs (WingRung::Script, ::Hint): a support, off by
             /// default, switched on when a rung has not stepped for a long stretch. Off, the rungs lift the level and
             /// spare wipes only, and every run learns from its own rewards.
@@ -1716,6 +1721,7 @@ namespace Animus::Curriculum
             f("Instance.WingRungTarget", tuning.Instance.WingRungTarget);
             f("Instance.WingRungStart", tuning.Instance.WingRungStart);
             f("Instance.WingHintOffRung", tuning.Instance.WingHintOffRung);
+            f("Instance.WingReferenceShare", tuning.Instance.WingReferenceShare);
             f("Instance.WingSupport", tuning.Instance.WingSupport);
             f("Instance.WingSupplies", tuning.Instance.WingSupplies);
             f("Instance.WingRungFallback", tuning.Instance.WingRungFallback);

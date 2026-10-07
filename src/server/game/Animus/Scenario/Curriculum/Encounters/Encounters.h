@@ -706,6 +706,8 @@ namespace Animus::Curriculum
             /// run is drawn; and whether it is an evaluation's, which the running route share leaves out.
             uint32 Rung = 0;                    // the ladder's rung the run was drawn on (StageScenario::WING_RUNGS)
             bool Probe = false;                 // no script, no hints: a measure of the policy (Instance.WingProbe)
+            /// The teacher plays every seat: the script's clear share at the rung (Instance.WingReferenceShare).
+            bool Reference = false;
             uint32 WipesAllowed = 1;
             bool Evaluating = false;
             /// The fight under way, for the wipe's log line (Instance.WingTrace): when it began, what had been killed

@@ -1,9 +1,10 @@
 """The dungeon teacher's hints end once the probes beat the script (dungeon-curriculum I6), enforced in code.
 
-The sim decides the cutoff (StageScenario::WingHintOffRung: the first rung whose probes clear more of the dungeon than
-the script's runs) and says so on every ended episode of that rung or a later one (`wing_hint_off`). The learner then
-holds mappo.hint_coef at 0 for the rest of the run, whatever its config asks, so the imitation loss is gone for hints
-and the teacher's own rows alike. And the teacher's check configs load.
+The sim decides the cutoff per rung (StageScenario::WingHintOffRung: the first rung whose probes clear more of the
+dungeon than that rung's reference runs) and says it on every ended training run of a whole dungeon
+(`wing_hint_off_rung`, beside the run's `wing_rung`). The learner holds mappo.hint_coef at 0 exactly while the runs'
+rung is at or past it, whatever its config asks, and imitates again if the ladder falls back below it. And the
+teacher's check configs load.
 """
 
 from pathlib import Path
@@ -20,10 +21,12 @@ CONFIGS = Path(__file__).resolve().parents[1] / "configs"
 NAMES = ("present", "wing_rung", COLUMN, "wing_cleared_share")
 
 
-def episodes(*hint_off: float) -> np.ndarray:
-    rows = np.zeros((len(hint_off), len(NAMES)), dtype=np.float32)
+def episodes(*runs: tuple[int, int]) -> np.ndarray:
+    """Ended runs, each (its rung, the sim's cutoff rung: -1 none, -2 not a whole dungeon's training run)."""
+    rows = np.zeros((len(runs), len(NAMES)), dtype=np.float32)
     rows[:, 0] = 1.0
-    rows[:, 2] = hint_off
+    for i, (rung, cutoff) in enumerate(runs):
+        rows[i, 1], rows[i, 2] = rung, cutoff
     return rows
 
 
@@ -45,24 +48,41 @@ def test_imitation_is_switched_off_once_the_probes_beat_the_script():
 
     cutoff = HintCutoff(NAMES, fake.config)
     assert cutoff.active
-    # Runs on a rung still under the cutoff change nothing.
-    assert not cutoff.observe(episodes(0.0, 0.0))
+    # No cutoff yet, or a rung below it: nothing changes.
+    assert not cutoff.observe(episodes((3, -1), (4, -1)))
+    assert not cutoff.observe(episodes((4, 6)))
     assert fake.config.hint_coef == 1.0 and cutoff.coef() == 1.0
-    # The first ended run that says its rung's imitation is off: hint_coef is 0, and the loss is gone.
-    assert cutoff.observe(episodes(0.0, 1.0))
+    # The runs reach the cutoff rung (HINTOFF 6 at rung 6): hint_coef is 0, and the loss is gone.
+    assert cutoff.observe(episodes((5, 6), (6, 6)))
     assert fake.config.hint_coef == 0.0 and cutoff.coef() == 0.0
     assert MappoTrainer._hint_loss(fake, dist, obs, layout, valid, {}) is None, "still imitating past the cutoff"
+    # ... and every later rung.
+    assert not cutoff.observe(episodes((8, 6)))
+    assert fake.config.hint_coef == 0.0
 
 
-def test_the_cutoff_holds_for_the_rest_of_the_run():
-    """Episodes of another arena (a pull drill, a held-out dungeon) read 0 in the column without meaning "on", and a
-    ladder falling back is the policy failing: neither brings imitation back."""
+def test_a_ladder_falling_back_below_the_cutoff_has_its_hints_again():
+    """hint_coef is 0 exactly for rungs at or past the cutoff: the ladder stepping back below it brings imitation back
+    (the sim writes its hints there again), and stepping on to it again takes it away."""
     config = SimpleNamespace(hint_coef=0.5)
     cutoff = HintCutoff(NAMES, config)
-    cutoff.observe(episodes(1.0))
+    assert cutoff.observe(episodes((7, 7)))
     assert config.hint_coef == 0.0
-    for _ in range(10):
-        assert not cutoff.observe(episodes(0.0, 0.0, 0.0))
+    assert cutoff.observe(episodes((7, 7), (6, 7)))
+    assert config.hint_coef == 0.5 and not cutoff.off
+    # A lower cutoff found on the way back (the probes beat that rung's script too): off again there.
+    assert cutoff.observe(episodes((6, 6)))
+    assert config.hint_coef == 0.0
+
+
+def test_runs_that_are_no_dungeons_training_runs_say_nothing():
+    """Another arena's episode, a drill or an evaluation (-2) moves nothing either way."""
+    config = SimpleNamespace(hint_coef=1.0)
+    cutoff = HintCutoff(NAMES, config)
+    cutoff.observe(episodes((5, 5)))
+    assert config.hint_coef == 0.0
+    for _ in range(5):
+        assert not cutoff.observe(episodes((0, -2), (0, -2)))
     assert config.hint_coef == 0.0 and cutoff.off
 
 
@@ -73,7 +93,7 @@ def test_nothing_to_cut_without_the_column_or_without_imitation():
     assert config.hint_coef == 1.0
     idle = SimpleNamespace(hint_coef=0.0)
     cutoff = HintCutoff(NAMES, idle)
-    assert not cutoff.active and not cutoff.observe(episodes(1.0))
+    assert not cutoff.active and not cutoff.observe(episodes((5, 5)))
     assert idle.hint_coef == 0.0 and not cutoff.off
 
 
@@ -86,6 +106,8 @@ def test_the_trainer_follows_the_cutoff():
     source = inspect.getsource(train)
     assert "HintCutoff(self.spec.episode_info_names, self.trainer.config)" in source
     assert "self.hint_cutoff.observe(ended[keep])" in source
+    # Reference runs (the teacher playing every seat) are hint data, out of the training statistics.
+    assert 'ended[:, reference] <= 0.5' in source
 
 
 def test_the_teacher_check_configs_load():
