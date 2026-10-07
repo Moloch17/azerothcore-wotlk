@@ -109,6 +109,14 @@ def test_the_extraction_covers_the_live_m2_stage_json():
     terms = EXTRACTOR.reward_terms()
     # Deleted with the scripted opponents (91811bba6): the seat of the scripted opponent.
     deleted = {"opponent_seat"}
+    # Deleted with the one-on-one reward (CombatReward::OneOnOne and the single-boss instance mode, the trim of
+    # 2026-10-07): columns whose only writer went with it, so every live stage reported them as 0.
+    deleted |= {"killed", "time_to_kill", "damage_taken", "opener_damage", "pet_summoned", "opponent",
+                "casts_completed", "casts_cancelled", "cast_seconds_wasted", "cancelled_stopped", "cancelled_moved",
+                "cancelled_target", "cancelled_other", "engaged", "engage_time", "target_evade_seconds",
+                "out_of_sight_seconds", "target_unreachable_seconds", "target_teleports", "in_melee_share",
+                "target_on_pet_share", "target_rooted_share", "target_snared_share", "roots_applied",
+                "feign_deaths", "feign_death_resets", "snares_applied"}
     gone = [name for name in recorded["episode_info"] if name not in columns and name not in deleted
             and not (name.startswith("reward_") and name[len("reward_"):] not in terms)]
     assert not gone, f"the extractor misses columns the real build reports: {gone}"

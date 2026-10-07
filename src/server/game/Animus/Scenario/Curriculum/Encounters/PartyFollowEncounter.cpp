@@ -102,7 +102,7 @@ void Animus::Curriculum::PartyFollowEncounter::AddEpisodeInfo(EpisodeInfoTable& 
     };
 
     // The stage's measure: the share of the episode each follower spent within the band of the leader.
-    table.Add("follow_kept_share", [this, seatOf](Env const& env, uint32 seat)
+    table.Add("follow_kept_share", [seatOf](Env const& env, uint32 seat)
     {
         SeatFollow const* follow = seatOf(env, seat);
         return follow && env.EpisodeElapsedMs ? float(follow->InBandMs) / float(env.EpisodeElapsedMs) : 0.0f;

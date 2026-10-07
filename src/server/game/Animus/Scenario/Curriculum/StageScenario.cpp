@@ -890,20 +890,13 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     // An episode that could not be built ends at once and is rebuilt: 1 on that episode's row. How often a stage's
     // resets fail -- a quest the bot refuses, a spot with no objective -- is what it trains on less than it seems.
     _info.Add("build_failed", [this](Env const& env, uint32) { return Data(env).BuildFailed ? 1.0f : 0.0f; });
-    // Fights against something that fights back.
+    // What the seats did against the episode's enemies.
     auto const tally = [this](Env const& env, uint32 index) -> CombatTally const&
     {
         return Data(env).Seats[index].Combat;
     };
 
-    _info.Add("killed", [tally](Env const& env, uint32 index) { return tally(env, index).Killed ? 1.0f : 0.0f; });
     _info.Add("died", [tally](Env const& env, uint32 index) { return tally(env, index).Died ? 1.0f : 0.0f; });
-    _info.Add("time_to_kill", [tally](Env const& env, uint32 index)
-    {
-        CombatTally const& combat = tally(env, index);
-        return float(combat.Killed ? combat.KillTimeMs : env.EpisodeElapsedMs) / 1000.0f;
-    });
-    _info.Add("damage_taken", [tally](Env const& env, uint32 index) { return float(tally(env, index).DamageTaken); });
     _info.Add("health_left", [](Env const& env, uint32 index)
     {
         Player* bot = env.FindBot(index);
@@ -912,11 +905,6 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     _info.Add("stealth_openers", [tally](Env const& env, uint32 index)
     {
         return float(tally(env, index).StealthOpeners);
-    });
-    // The share of the opponent's health stealth openers took in their first seconds (Stealth.OpenerDamage).
-    _info.Add("opener_damage", [tally](Env const& env, uint32 index)
-    {
-        return tally(env, index).OpenerDamage;
     });
     _info.Add("stealth_utility_casts", [tally](Env const& env, uint32 index)
     {
@@ -991,33 +979,6 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     {
         return seat(env, index).PetAtStart ? 1.0f : 0.0f;
     });
-    _info.Add("pet_summoned", [tally](Env const& env, uint32 index)
-    {
-        return tally(env, index).PetSummoned ? 1.0f : 0.0f;
-    });
-    _info.Add("opponent", [this](Env const& env, uint32) { return float(Data(env).OpponentEntry); });
-    _info.Add("casts_completed", [tally](Env const& env, uint32 index)
-    {
-        return float(tally(env, index).CastsCompleted);
-    });
-    _info.Add("casts_cancelled", [tally](Env const& env, uint32 index)
-    {
-        return float(tally(env, index).CastsCancelled);
-    });
-    _info.Add("cast_seconds_wasted", [tally](Env const& env, uint32 index)
-    {
-        return float(tally(env, index).CastMsWasted) / 1000.0f;
-    });
-    _info.Add("cancelled_stopped", [tally](Env const& env, uint32 index)
-    {
-        return float(tally(env, index).CastsStopped);
-    });
-    _info.Add("cancelled_moved", [tally](Env const& env, uint32 index) { return float(tally(env, index).CastsMoved); });
-    _info.Add("cancelled_target", [tally](Env const& env, uint32 index)
-    {
-        return float(tally(env, index).CastsTargetLost);
-    });
-    _info.Add("cancelled_other", [tally](Env const& env, uint32 index) { return float(tally(env, index).CastsOther); });
     _info.Add("consumables_used", [seat](Env const& env, uint32 index)
     {
         return float(seat(env, index).ConsumablesUsed);
@@ -1027,16 +988,9 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
         return float(seat(env, index).SelfResurrections);
     });
 
-    // Why a fight was not won, read off how it ended: which of the two ways it was lost, whether it ever started,
-    // how far the opponent was from dead and the bot from it, the form and power it ended in, and time the
-    // opponent was out of reach (evading) or out of sight.
+    // How an episode ended: whether it timed out, how far the target was from dead and the bot from it, and the form
+    // and power it ended in.
     _info.Add("timed_out", [tally](Env const& env, uint32 index) { return tally(env, index).TimedOut ? 1.0f : 0.0f; });
-    _info.Add("engaged", [tally](Env const& env, uint32 index) { return tally(env, index).Engaged ? 1.0f : 0.0f; });
-    _info.Add("engage_time", [tally](Env const& env, uint32 index)
-    {
-        CombatTally const& combat = tally(env, index);
-        return float(combat.Engaged ? combat.EngageMs : env.EpisodeElapsedMs) / 1000.0f;
-    });
     _info.Add("target_health_left", [this](Env const& env, uint32 index)
     {
         Unit* target = SeatTarget(env, index);
@@ -1064,58 +1018,12 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
         uint32 const maxPower = bot->GetMaxPower(power);
         return maxPower ? float(bot->GetPower(power)) / float(maxPower) : 0.0f;
     });
-    _info.Add("target_evade_seconds", [tally](Env const& env, uint32 index)
-    {
-        return float(tally(env, index).TargetEvadeMs) / 1000.0f;
-    });
-    _info.Add("out_of_sight_seconds", [tally](Env const& env, uint32 index)
-    {
-        return float(tally(env, index).OutOfSightMs) / 1000.0f;
-    });
     // Time the opponent had no path to its victim, and how often it was put back beside it for that.
-    _info.Add("target_unreachable_seconds", [tally](Env const& env, uint32 index)
-    {
-        return float(tally(env, index).UnreachableMs) / 1000.0f;
-    });
-    _info.Add("target_teleports", [tally](Env const& env, uint32 index)
-    {
-        return float(tally(env, index).OpponentTeleports);
-    });
     // Style over the fight (one-on-one arenas, the bot alive): the share of it spent within melee reach of the
     // opponent, and the share the opponent spent attacking the seat's pet or guardian instead of the seat.
-    _info.Add("in_melee_share", [tally](Env const& env, uint32 index)
-    {
-        CombatTally const& combat = tally(env, index);
-        return combat.FightMs ? float(combat.InMeleeMs) / float(combat.FightMs) : 0.0f;
-    });
-    _info.Add("target_on_pet_share", [tally](Env const& env, uint32 index)
-    {
-        CombatTally const& combat = tally(env, index);
-        return combat.FightMs ? float(combat.OnPetMs) / float(combat.FightMs) : 0.0f;
-    });
     // Roots and snares from the bot, its pet or its totems: the share of the fight the opponent spent under them, and
     // how often one went on where there was none.
-    _info.Add("target_rooted_share", [tally](Env const& env, uint32 index)
-    {
-        CombatTally const& combat = tally(env, index);
-        return combat.FightMs ? float(combat.RootedMs) / float(combat.FightMs) : 0.0f;
-    });
-    _info.Add("target_snared_share", [tally](Env const& env, uint32 index)
-    {
-        CombatTally const& combat = tally(env, index);
-        return combat.FightMs ? float(combat.SnaredMs) / float(combat.FightMs) : 0.0f;
-    });
-    _info.Add("roots_applied", [tally](Env const& env, uint32 index) { return float(tally(env, index).RootsApplied); });
     // Feign deaths, and those after which the opponent went home to evade at full health.
-    _info.Add("feign_deaths", [tally](Env const& env, uint32 index) { return float(tally(env, index).FeignDeaths); });
-    _info.Add("feign_death_resets", [tally](Env const& env, uint32 index)
-    {
-        return float(tally(env, index).FeignDeathResets);
-    });
-    _info.Add("snares_applied", [tally](Env const& env, uint32 index)
-    {
-        return float(tally(env, index).SnaresApplied);
-    });
     _info.Add("actions_per_minute", [seat](Env const& env, uint32 index)
     {
         float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
@@ -3551,17 +3459,13 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     CombatTally& tally = seat.Combat;
     tally.PreparationMs += result.PreparationMs;
     if (result.StealthOpener)
-    {
-        tally.StepStealthOpener = true;
         ++tally.StealthOpeners;
-    }
 
     if (!result.StealthUtilityTarget.IsEmpty()
         && std::find(tally.StealthUtilityTargets.begin(), tally.StealthUtilityTargets.end(),
             result.StealthUtilityTarget) == tally.StealthUtilityTargets.end())
     {
         tally.StealthUtilityTargets.push_back(result.StealthUtilityTarget);
-        ++tally.StepStealthUtility;
         ++tally.StealthUtilityCasts;
     }
 

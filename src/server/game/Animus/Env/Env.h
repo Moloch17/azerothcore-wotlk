@@ -38,9 +38,8 @@ namespace Animus
     /// agent, so it must cover Curriculum::MAX_SEATS -- StageScenario asserts that it does.
     constexpr std::size_t MAX_AGENTS = 40;
 
-    /// Most enemy slots an env attributes damage to (Env::Targets): every slot a seat observes
-    /// (Curriculum::PACK_SLOTS, which StageScenario asserts this covers), and the enemy players of the self-play and
-    /// party arenas. Targets past this take damage as usual, they are just not attributed per slot.
+    /// Most enemy slots an env has (Env::Targets): every slot a seat observes (Curriculum::PACK_SLOTS, which
+    /// StageScenario asserts this covers), and the enemy players of the party arenas.
     constexpr std::size_t MAX_TARGETS = 24;
 
     /// Combat totals for one agent. Written only by the map thread that updates the agent's
@@ -56,26 +55,16 @@ namespace Animus
         uint64 MeleeDamage = 0;
         uint64 ShotDamage = 0;
         uint64 SpellDamage = 0;
-        uint32 WhiteHits = 0;
-        uint32 SpecialHits = 0;
         uint64 DamageTaken = 0;         // by the agent, from anything
-        uint64 PetDamageTaken = 0;      // by the agent's pets and guardians, from anything (a pet holding enemies)
         /// Damage the agent dealt itself with no attacker behind it (SELF_DAMAGE): the environment's drowning,
         /// fatigue, lava and falls, and a warlock's Life Tap. Not part of DamageTaken, which is what enemies did.
         uint64 SelfDamage = 0;
-        // Of DamageTaken, what each enemy slot (Env::Targets) dealt, a pet's or totem's counted for its owner's slot.
-        // What crowd control prevents is read from here: an enemy's own damage rate is what holding it out of the
-        // fight saves. Damage from anything not in a target slot is in DamageTaken only.
-        std::array<uint64, MAX_TARGETS> DamageTakenBy{};
         /// Of DamageTaken, what came from something standing on the ground rather than aimed at the agent: a fire
         /// pool, a poison cloud, a consecration (a persistent area aura, or an area aura from its caster). This is
         /// the damage a seat could have walked out of, and until it was counted it was indistinguishable from a
         /// melee swing.
         uint64 HazardDamage = 0;
-        uint64 AllyDamageTaken = 0;     // by the env's allies (Env::Allies), from anything
         uint64 AllyHealing = 0;         // effective healing the agent (or its pets) did on the env's allies
-        std::array<uint64, MAX_ALLIES> AllyDamageTakenBy{};    // the same, per Env::Allies index
-        std::array<uint64, MAX_ALLIES> AllyHealingBy{};
         std::array<uint64, MAX_AGENTS> AgentHealingBy{};    // effective healing on the env's other agents, by agent
         uint64 SelfHealing = 0;         // effective healing the agent (or its pets) did on itself
         uint64 HealingRaw = 0;          // healing the agent cast on itself, its allies and agents, overhealing included
@@ -88,15 +77,6 @@ namespace Animus
         uint64 SelfProtection = 0;
         std::array<uint64, MAX_ALLIES> AllyProtectionBy{};
         std::array<uint64, MAX_AGENTS> AgentProtectionBy{};
-        uint32 CastsCompleted = 0;      // the agent's own cast-time spells that finished casting
-        uint32 CastsCancelled = 0;      // ... that were cut short (moved, stopped, interrupted, died)
-        uint64 CastMsCompleted = 0;     // cast time of the completed casts
-        uint64 CastMsWasted = 0;        // cast time already spent on the cancelled casts
-        // Why cancelled casts were cancelled (they add up to CastsCancelled):
-        uint32 CastsStopped = 0;        // by the caster itself (the stop-casting action)
-        uint32 CastsMoved = 0;          // the caster was moving
-        uint32 CastsTargetLost = 0;     // the cast's unit target died or is gone
-        uint32 CastsOther = 0;          // anything else: interrupts, silences, stuns, form changes, death
         /// The agent's own spells that move it (any cast, instant or not, once it went off): a blink, leap, charge
         /// or jump -- the server moving the body, which the movement stages read to tell walking from blinking --
         /// and a run-speed buff (Sprint, Dash, Aspect of the Cheetah, Travel Form and the like).
@@ -113,18 +93,10 @@ namespace Animus
             MeleeDamage += other.MeleeDamage;
             ShotDamage += other.ShotDamage;
             SpellDamage += other.SpellDamage;
-            WhiteHits += other.WhiteHits;
-            SpecialHits += other.SpecialHits;
             DamageTaken += other.DamageTaken;
-            PetDamageTaken += other.PetDamageTaken;
-            for (std::size_t target = 0; target < MAX_TARGETS; ++target)
-                DamageTakenBy[target] += other.DamageTakenBy[target];
-            AllyDamageTaken += other.AllyDamageTaken;
             AllyHealing += other.AllyHealing;
             for (std::size_t ally = 0; ally < MAX_ALLIES; ++ally)
             {
-                AllyDamageTakenBy[ally] += other.AllyDamageTakenBy[ally];
-                AllyHealingBy[ally] += other.AllyHealingBy[ally];
                 AllyProtectionBy[ally] += other.AllyProtectionBy[ally];
             }
             for (std::size_t agent = 0; agent < MAX_AGENTS; ++agent)
@@ -136,14 +108,6 @@ namespace Animus
             HealingRaw += other.HealingRaw;
             PeriodicHealing += other.PeriodicHealing;
             SelfProtection += other.SelfProtection;
-            CastsCompleted += other.CastsCompleted;
-            CastsCancelled += other.CastsCancelled;
-            CastMsCompleted += other.CastMsCompleted;
-            CastMsWasted += other.CastMsWasted;
-            CastsStopped += other.CastsStopped;
-            CastsMoved += other.CastsMoved;
-            CastsTargetLost += other.CastsTargetLost;
-            CastsOther += other.CastsOther;
             MovementCasts += other.MovementCasts;
             SpeedCasts += other.SpeedCasts;
         }
