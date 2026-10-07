@@ -73,6 +73,12 @@ namespace
         out += char(value & 0xFF);
     }
 
+    void Put16(std::string& out, uint16_t value)
+    {
+        out += char((value >> 8) & 0xFF);
+        out += char(value & 0xFF);
+    }
+
     void Chunk(std::string& out, char const* tag, std::string const& body)
     {
         Put32(out, uint32_t(body.size()));
@@ -80,6 +86,24 @@ namespace
         tagged += body;
         out += tagged;
         Put32(out, uint32_t(crc32(0L, reinterpret_cast<Bytef const*>(tagged.data()), uInt(tagged.size()))));
+    }
+
+    /// The scanlines deflated for an APNG frame: fast, run-length matching (the filtered rows are mostly zero runs);
+    /// empty on failure.
+    std::string Deflate(std::string const& raw)
+    {
+        z_stream stream{};
+        if (deflateInit2(&stream, Z_BEST_SPEED, Z_DEFLATED, 15, 8, Z_RLE) != Z_OK)
+            return {};
+        std::string packed(deflateBound(&stream, uLong(raw.size())), '\0');
+        stream.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(raw.data()));
+        stream.avail_in = uInt(raw.size());
+        stream.next_out = reinterpret_cast<Bytef*>(packed.data());
+        stream.avail_out = uInt(packed.size());
+        int const result = deflate(&stream, Z_FINISH);
+        packed.resize(stream.total_out);
+        deflateEnd(&stream);
+        return result == Z_STREAM_END ? packed : std::string();
     }
 
     /// An RGB PNG of `width` x `height` from its scanlines, each already led by filter byte 0; empty on failure.
@@ -220,6 +244,11 @@ std::string Vi::FramePng(Settings const& settings, uint8_t const* image, uint32_
 
 std::string Vi::CompositePng(Settings const& settings, uint8_t const* image, uint32_t scale, uint8_t const* map)
 {
+    return RgbPng(CompositeRgb(settings, image, scale, map));
+}
+
+Vi::RgbImage Vi::CompositeRgb(Settings const& settings, uint8_t const* image, uint32_t scale, uint8_t const* map)
+{
     scale = std::max<uint32_t>(scale, 1);
     uint32_t const width = settings.Width;
     uint32_t const height = settings.Height;
@@ -276,11 +305,12 @@ std::string Vi::CompositePng(Settings const& settings, uint8_t const* image, uin
     uint32_t const left = outWidth > side + 2 ? outWidth - side - 2 : 0;
     std::vector<std::array<uint8_t, 3>> const inset = map ? MapPanel(map, side) : std::vector<std::array<uint8_t,
         3>>();
-    std::string raw;
-    raw.reserve(std::size_t(outHeight) * (1 + std::size_t(outWidth) * 3));
+    RgbImage out;
+    out.Width = outWidth;
+    out.Height = outHeight;
+    out.Pixels.resize(std::size_t(outHeight) * outWidth * 3);
+    uint8_t* write = out.Pixels.data();
     for (uint32_t y = 0; y < outHeight; ++y)
-    {
-        raw += char(0);
         for (uint32_t x = 0; x < outWidth; ++x)
         {
             std::array<uint8_t, 3> pixel = colours[std::size_t(y / scale) * width + x / scale];
@@ -291,8 +321,106 @@ std::string Vi::CompositePng(Settings const& settings, uint8_t const* image, uin
                     : x >= left && y >= 1 && y - 1 < side ? inset[std::size_t(y - 1) * side + (x - left)] : pixel;
             }
             for (uint8_t c : pixel)
-                raw += char(c);
+                *write++ = c;
+        }
+    return out;
+}
+
+std::string Vi::RgbPng(RgbImage const& picture)
+{
+    std::size_t const stride = std::size_t(picture.Width) * 3;
+    if (picture.Pixels.size() != stride * picture.Height)
+        return {};
+    std::string raw;
+    raw.reserve(std::size_t(picture.Height) * (1 + stride));
+    for (uint32_t y = 0; y < picture.Height; ++y)
+    {
+        raw += char(0);
+        raw.append(reinterpret_cast<char const*>(&picture.Pixels[y * stride]), stride);
+    }
+    return WritePng(picture.Width, picture.Height, raw);
+}
+
+Vi::ApngWriter::ApngWriter(uint32_t width, uint32_t height, uint16_t delayNumerator, uint16_t delayDenominator)
+    : _width(width), _height(height), _delayNumerator(delayNumerator), _delayDenominator(delayDenominator)
+{
+}
+
+bool Vi::ApngWriter::Add(RgbImage const& frame)
+{
+    std::size_t const stride = std::size_t(_width) * 3;
+    if (frame.Width != _width || frame.Height != _height || frame.Pixels.size() != stride * _height || !stride)
+        return false;
+
+    // Filter 2 (Up) for a row the same as the one above -- all zeros, which deflate all but drops -- and 1 (Sub)
+    // otherwise, which zeroes the runs a nearest-pixel scale-up repeats.
+    std::string raw(std::size_t(_height) * (1 + stride), '\0');
+    for (uint32_t y = 0; y < _height; ++y)
+    {
+        uint8_t const* row = &frame.Pixels[y * stride];
+        char* out = &raw[y * (1 + stride)];
+        if (y && std::equal(row, row + stride, row - stride))
+        {
+            out[0] = char(2);
+            continue;
+        }
+        out[0] = char(1);
+        for (std::size_t i = 0; i < stride; ++i)
+            out[1 + i] = char(uint8_t(row[i] - (i >= 3 ? row[i - 3] : 0)));
+    }
+
+    std::string packed = Deflate(raw);
+    if (packed.empty())
+        return false;
+    _packedBytes += packed.size();
+    _packed.push_back(std::move(packed));
+    return true;
+}
+
+std::string Vi::ApngWriter::Finish() const
+{
+    if (_packed.empty())
+        return {};
+
+    std::string png("\x89PNG\r\n\x1a\n", 8);
+    std::string header;
+    Put32(header, _width);
+    Put32(header, _height);
+    header += char(8);  // bit depth
+    header += char(2);  // RGB
+    header += std::string(3, '\0');     // deflate, adaptive filtering, no interlace
+    Chunk(png, "IHDR", header);
+
+    std::string control;
+    Put32(control, uint32_t(_packed.size()));
+    Put32(control, 0);  // loop forever
+    Chunk(png, "acTL", control);
+
+    // fcTL and fdAT share one sequence; the first frame's data is the IDAT, which takes no number.
+    uint32_t sequence = 0;
+    for (std::size_t i = 0; i < _packed.size(); ++i)
+    {
+        std::string frame;
+        Put32(frame, sequence++);
+        Put32(frame, _width);
+        Put32(frame, _height);
+        Put32(frame, 0);    // x offset
+        Put32(frame, 0);    // y offset
+        Put16(frame, _delayNumerator);
+        Put16(frame, _delayDenominator);
+        frame += char(0);   // dispose: none
+        frame += char(0);   // blend: source
+        Chunk(png, "fcTL", frame);
+        if (!i)
+            Chunk(png, "IDAT", _packed[i]);
+        else
+        {
+            std::string data;
+            Put32(data, sequence++);
+            data += _packed[i];
+            Chunk(png, "fdAT", data);
         }
     }
-    return WritePng(outWidth, outHeight, raw);
+    Chunk(png, "IEND", {});
+    return png;
 }
