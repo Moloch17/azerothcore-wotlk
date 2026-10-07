@@ -176,11 +176,6 @@ class ConvergenceConfig:
     # The stage's own measure, if not the evaluation score: an episode info column the per-class plateau reads (M1:
     # "arrived"), at the top rung on a ladder stage. Empty: the score.
     measure: str = ""
-    # The most of a ladder stage's narrow legs that may fall back to ordinary markers at the top rung (evaluation
-    # column fallback_share) while a class converges: above it the class is missing "fallbacks" -- easier legs would
-    # otherwise let it converge without the narrow skill (M3, M4). A convergence signal, not a gate. < 0: the sim's
-    # Markers.FallbackCeiling from stage.json's tuning (the default); 0 turns the signal off.
-    fallback_ceiling: float = -1.0
 
 
 @dataclass
@@ -490,7 +485,7 @@ class StatusConfig:
     """What `forge status` shows for this stage (the user, 2026-10-05: each stage's own most important measures).
 
     `headline` is the stage's measures in the order they are read -- episode info columns or summary fields such as
-    arrived_narrow -- shown with the last evaluation's mean and the last update's training mean, in place of the
+    arrived_at_rung -- shown with the last evaluation's mean and the last update's training mean, in place of the
     general episode columns. Each is summarised whether or not eval.report lists it. `targets` gives a metric the
     bound it is judged against, ">= 0.95" or "<= 18", and the status line says whether the evaluation meets it.
     Targets are a readout, never a gate: convergence alone ends a stage.

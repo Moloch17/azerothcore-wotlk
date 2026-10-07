@@ -47,7 +47,7 @@ from .evaluation import ConvergenceTracker
 from .mappo.trainer import schedule
 
 CONTINUE, ADVANCE = "continue", "advance"
-SIGNALS = ("score", "kl", "entropy", "ladder", "top_rung", "fallbacks")
+SIGNALS = ("score", "kl", "entropy", "ladder", "top_rung")
 TOP_RUNG_SHARE = 0.9  # of a class's training episodes at the top rung, every evaluation interval of the window
 RUNG_SETTLED = 0.5  # rungs a class's training difficulty may drift over the window
 
@@ -69,7 +69,6 @@ class LayoutState:
     entropy: list[float] = field(default_factory=list)  # entropy / ln(allowed actions), likewise
     rung: list[float | None] = field(default_factory=list)  # mean training difficulty, likewise (None: no ladder)
     top: list[float | None] = field(default_factory=list)  # share of training episodes at the top rung (None: none)
-    fallbacks: list[float | None] = field(default_factory=list)  # top-rung evaluation's fallback_share (None: none)
     ladder: bool = False  # a ladder stage's class (it has a top rung): convergence waits for it
     top_scored: bool = False  # the latest evaluation scored it at the top rung
     scores: list[float] = field(default_factory=list)
@@ -85,7 +84,6 @@ class LayoutState:
     rung_count: int = 0
     top_sum: float = 0.0
     top_count: int = 0
-    fallback_ceiling: float = 0.0  # ConvergenceController.fallback_ceiling, copied in
     played: bool = False  # had evaluation rows at some evaluation: a class the run never plays is not waited for
 
     def missing(self, config: TrainConfig, evals_needed: int) -> list[str]:
@@ -118,13 +116,6 @@ class LayoutState:
             if not self.top_scored or (reported and (len(tops) < evals_needed or any(
                     value is None or value < TOP_RUNG_SHARE for value in tops))):
                 out.append("top_rung")
-        ceiling = getattr(self, "fallback_ceiling", 0.0)
-        if ceiling > 0.0:
-            # Too many of the stage's narrow legs fell back to easier ones at the top rung: converging on them would
-            # not be the stage's skill.
-            shares = [value for value in self.fallbacks[-evals_needed:] if value is not None]
-            if any(value > ceiling for value in shares):
-                out.append("fallbacks")
         return out
 
 
@@ -470,10 +461,9 @@ def restore_evaluation_state(tracker: ConvergenceTracker, controller: "Convergen
 class ConvergenceController:
     def __init__(self, config: TrainConfig, layout_names: list[str] | tuple[str, ...] = (),
                  sim_fallback_ceiling: float = 0.0):
+        """`sim_fallback_ceiling` is ignored: tools/resume_check.py still passes it (the fallback signal is gone)."""
         self.config = config
         c = config.convergence
-        # convergence.fallback_ceiling, or the sim's own (stage.json tuning Markers.FallbackCeiling) when it is < 0.
-        self.fallback_ceiling = float(sim_fallback_ceiling) if c.fallback_ceiling < 0.0 else float(c.fallback_ceiling)
         self.evaluating = config.eval.every_env_steps > 0
         # The overall score's tracker decides best.pt and when the learning rate may start to anneal.
         self.tracker = self._tracker(c.patience if self.evaluating else 0)
@@ -621,8 +611,6 @@ class ConvergenceController:
             # an evaluation with none of its episodes there adds no score (it cannot converge on another rung's).
             judged = top_rows.get(name) if state.ladder and top is not None else row
             state.top_scored = judged is not None and judged.get("score") is not None
-            state.fallback_ceiling = self.fallback_ceiling
-            state.fallbacks.append(judged.get("fallback_share") if judged is not None else None)
             if not state.top_scored:
                 continue
             score, stderr = self._judged_score(judged)
@@ -638,7 +626,6 @@ class ConvergenceController:
                     state.tracker.observe(score, env_steps, stderr)
                     state.scores, state.kl, state.entropy = [score], [interval_kl], [interval_entropy]
                     state.rung, state.top = [rung], [interval_top]
-                    state.fallbacks = [state.fallbacks[-1]] if state.fallbacks else []
             elif anneal_ready and not state.missing(self.config, self.config.convergence.window):
                 state.converged = True
                 state.converged_score = score
@@ -785,7 +772,7 @@ class ConvergenceController:
             "layouts": {name: {
                 "tracker": state.tracker.state_dict(),
                 "kl": state.kl, "entropy": state.entropy, "rung": state.rung,
-                "top": state.top, "fallbacks": state.fallbacks, "ladder": state.ladder, "top_scored": state.top_scored,
+                "top": state.top, "ladder": state.ladder, "top_scored": state.top_scored,
                 "scores": state.scores, "converged": state.converged, "converged_score": state.converged_score,
                 "converged_margin": state.converged_margin, "reentries": state.reentries, "played": state.played,
             } for name, state in self.layouts.items()},
@@ -805,7 +792,7 @@ class ConvergenceController:
             if layout is None:
                 continue
             layout.tracker.load_state_dict(saved.get("tracker"))
-            for key in ("kl", "entropy", "rung", "top", "fallbacks", "scores"):
+            for key in ("kl", "entropy", "rung", "top", "scores"):
                 setattr(layout, key, list(saved.get(key, [])))
             layout.ladder = bool(saved.get("ladder", False))
             layout.top_scored = bool(saved.get("top_scored", False))

@@ -60,26 +60,15 @@ def blank_step(decision: int) -> p.Step:
     )
 
 
-def test_travel_failures_are_named_by_how_far_they_wandered():
-    """lost, wedged and spl derive from arrived, distance_travelled and walk_distance: a trip that did not arrive and
-    covered three times its path wandered, one that covered half of it never got going, and spl is success weighted
-    by how much further than the path the seat walked."""
+def test_failed_seeds_are_the_episodes_below_one():
     result = EvalResult(
         policy="learner",
         returns=np.zeros(4),
-        infos=np.array([[1.0, 100.0, 100.0], [0.0, 400.0, 100.0], [0.0, 30.0, 100.0], [1.0, 200.0, 100.0]],
-                       dtype=np.float32),
-        info_names=("arrived", "distance_travelled", "walk_distance"),
+        infos=np.array([[1.0], [0.0], [0.0], [1.0]], dtype=np.float32),
+        info_names=("arrived",),
         layouts=("warrior_dps",) * 4,
         seeds=(0, 1, 2, 3),
     )
-    derived = result.derived()
-    assert derived["lost"].tolist() == [0.0, 1.0, 0.0, 0.0]
-    assert derived["wedged"].tolist() == [0.0, 0.0, 1.0, 0.0]
-    assert derived["spl"].tolist() == pytest.approx([1.0, 0.0, 0.0, 0.5])
-    summary = result.summary(("arrived",))
-    assert summary["lost"] == 0.25 and summary["wedged"] == 0.25
-    assert summary["spl"] == pytest.approx(0.375)
     assert result.failed_seeds("arrived") == [1, 2]
 
 

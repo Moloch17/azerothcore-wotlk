@@ -47,16 +47,9 @@ LIVELOCK_CANCELS = 20
 # (target.metrics, target.layout_metrics); they are not episode info names, so validation allows them by name.
 # clean_kill: the fight was won outright -- the opponent killed and the seat never dead. killed and died are gated
 # apart, and their means cannot say whether the episodes that killed are the ones that did not die.
-# lost / wedged / spl, on a travel stage: how a trip failed. A seat that did not arrive and covered more than
-# LOST_ABOVE times the path it was given wandered (38 of 42 stage1_move failures and 57 of 61 stage2_travel's); one
-# that covered less than WEDGED_BELOW of it never got going. They want opposite fixes and look identical in `arrived`.
-# spl is success weighted by path length -- arrived x path / max(path, covered), the navigation literature's SPL --
-# 1 for a seat that walked exactly the path and 0 for one that did not arrive.
-DERIVED_METRICS = ("livelocked", "clean_kill", "lost", "wedged", "spl")
+DERIVED_METRICS = ("livelocked", "clean_kill")
 # Ratios of sums over an evaluation's episodes (EvalResult.summary), on the movement stages that report the columns.
-RATIO_METRICS = ("arrived_narrow", "fallback_share", "arrived_at_rung")
-LOST_ABOVE = 3.0
-WEDGED_BELOW = 0.5
+RATIO_METRICS = ("arrived_at_rung",)
 
 #: The episode info column an evaluation is scored on by default: the episode's Outcome and Cost terms before any
 #: rung's tier and any role's scale (RewardLedger::Score, peak-play plan W0).
@@ -206,8 +199,7 @@ class EvalResult:
         return sorted({int(seed) for seed, value in zip(self.seeds, values) if value < 1.0})
 
     def derived(self) -> dict[str, np.ndarray]:
-        """Per episode, the DERIVED_METRICS the episode info can give: 1.0 where it holds, else 0.0 (spl, a
-        weighted success, is a fraction)."""
+        """Per episode, the DERIVED_METRICS the episode info can give: 1.0 where it holds, else 0.0."""
         out = {}
         # The share of episodes stuck in a cast/stop loop. A mean of casts_cancelled hides it: the loop is a tail,
         # not a shift (stage4_duel warlock: median 4 cancels, maximum 299), so it is counted per episode.
@@ -217,14 +209,6 @@ class EvalResult:
         killed, died = self.column("killed"), self.column("died")
         if killed is not None and died is not None:
             out["clean_kill"] = ((killed > 0.0) & (died <= 0.0)).astype(np.float64)
-        arrived, covered, path = (self.column("arrived"), self.column("distance_travelled"),
-                                  self.column("walk_distance"))
-        if arrived is not None and covered is not None and path is not None:
-            length = np.maximum(path.astype(np.float64), 1e-6)
-            failed = arrived <= 0.0
-            out["lost"] = (failed & (covered > LOST_ABOVE * length)).astype(np.float64)
-            out["wedged"] = (failed & (covered < WEDGED_BELOW * length)).astype(np.float64)
-            out["spl"] = np.where(arrived > 0.0, length / np.maximum(length, covered), 0.0).astype(np.float64)
         return out
 
     def summary(self, columns: tuple[str, ...], phases: dict[str, tuple[str, ...]] | None = None) -> dict:
@@ -262,12 +246,6 @@ class EvalResult:
             out.update(ratios(rows))
             return out
 
-        # The movement stages' narrow skill, as ratios of sums over the episodes (a mean of per-episode ratios would
-        # weigh a one-leg episode as much as a four-leg one, and has nothing to say for an episode with no such leg):
-        # arrived_narrow, narrow legs stopped on over narrow legs placed as asked; fallback_share, narrow legs that
-        # fell back to an ordinary marker over every narrow leg asked for (MarkerEncounter).
-        narrow, narrow_arrived, fallbacks = (self.column("narrow_legs"), self.column("narrow_arrived"),
-                                             self.column("fallback_legs"))
         # M1's withholding ladder (SightEncounter, perception-goals REDESIGN amendment 7): an evaluation plays every
         # pair with the compass and without, half and half, whatever the rung, so its plain arrival rate is not the
         # rung's. arrived_at_rung is the arrival at the training rung's own mix -- the chance it withholds the
@@ -292,12 +270,6 @@ class EvalResult:
                     out["arrived_at_rung"] = rate_no
                 else:
                     out["arrived_at_rung"] = None
-            if narrow is not None and narrow_arrived is not None:
-                placed = float(narrow[rows].sum())
-                out["arrived_narrow"] = float(narrow_arrived[rows].sum()) / placed if placed > 0 else None
-                if fallbacks is not None:
-                    asked = placed + float(fallbacks[rows].sum())
-                    out["fallback_share"] = float(fallbacks[rows].sum()) / asked if asked > 0 else None
             return out
 
         everything = np.ones(self.episodes, dtype=bool)
