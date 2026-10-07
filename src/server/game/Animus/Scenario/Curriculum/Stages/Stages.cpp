@@ -1031,13 +1031,8 @@ namespace
             return "an instance ladder goes with fighting in an instance, and only with that";
         if (instance && !stage.Has(BlockId::Pack))
             return "an instance needs the pack block";
-        if (instance && arena.Seats != SeatPlan::Party && arena.Seats != SeatPlan::Raid)
-            return "an instance is fought by a party or a raid";
-        if (arena.RaidSeats && (arena.Seats != SeatPlan::Raid || arena.RaidSeats > MAX_SEATS
-            || arena.RaidSeats % GROUP_SEATS))
-            return "RaidSeats is a raid's seat count: a multiple of GROUP_SEATS, up to MAX_SEATS";
-        // A raid is a group of its own, in an instance.
-        bool const raidGroup = arena.Seats == SeatPlan::Raid && instance;
+        if (instance && arena.Seats != SeatPlan::Party)
+            return "an instance is fought by a party";
         // Its members are read through the party frames.
         if (arena.PartyGroup && !stage.Has(BlockId::PartyFrames))
             return "a party group needs the party frames block";
@@ -1046,8 +1041,8 @@ namespace
         // And a proper party drilling on a dungeon's ground (the roles stage, G1: Opposition::Roles).
         bool const roles = arena.Against == Opposition::Roles;
         bool const drillGroup = arena.ProperParty && roles && arena.Seats == SeatPlan::Party;
-        if (arena.PartyGroup && !raidGroup && !dungeonGroup && !drillGroup)
-            return "a party group is a raid, a dungeon's or a drill's";
+        if (arena.PartyGroup && !dungeonGroup && !drillGroup)
+            return "a party group is a dungeon's or a drill's";
         if (arena.ProperParty && !(drillGroup && arena.PartyGroup))
             return "a proper party is drawn for a party drill on a dungeon's ground (a whole dungeon draws its own)";
         if (arena.DrillRole > DRILL_DAMAGE || (arena.DrillRole && !arena.ProperParty))
@@ -1065,9 +1060,8 @@ namespace
             return "a corridor is a run of packs the party trains and is measured on: no drill or held-out run";
         if (arena.LevelFirst > arena.LevelLast || (arena.LevelFirst == 0) != (arena.LevelLast == 0))
             return "a level band is its first and last level, in order";
-        if (arena.StandInShare > 100 || (arena.StandInShare > 0 && arena.Seats != SeatPlan::Party
-            && arena.Seats != SeatPlan::Raid))
-            return "the stand-in's share is a percentage of a party's (or a raid's) training episodes";
+        if (arena.StandInShare > 100 || (arena.StandInShare > 0 && arena.Seats != SeatPlan::Party))
+            return "the stand-in's share is a percentage of a party's training episodes";
         // The seek stage: one seat in a dungeon of rooms, an object to find in one of them, nothing to fight; it finds
         // the object by sight, so it carries the camera and not the compass.
         bool const seek = arena.Against == Opposition::Seek;
@@ -1288,7 +1282,6 @@ uint32 Animus::Curriculum::ArenaDefinition::SeatCount() const
     {
         // A party is a whole group of learned seats (the dungeon, 2026-09-30), or PartySize of them.
         case SeatPlan::Party:  return PartySize ? PartySize : GROUP_SEATS;
-        case SeatPlan::Raid:   return RaidSeats ? RaidSeats : MAX_SEATS;
         case SeatPlan::Solo:   break;
     }
 

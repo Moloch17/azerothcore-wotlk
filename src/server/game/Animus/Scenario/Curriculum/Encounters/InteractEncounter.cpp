@@ -544,8 +544,6 @@ void Animus::Curriculum::InteractEncounter::View(Env const& env, uint32 /*seat*/
         view.NamedEntry = state.NamedEntry;
         view.NamedObject = true;
     }
-    view.MountsAllowed = false;
-    view.GroundMountAllowed = false;
     view.ArriveWithin = _scenario.Arena(env).SeekRadius;
 }
 

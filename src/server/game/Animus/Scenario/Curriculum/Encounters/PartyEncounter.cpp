@@ -45,12 +45,10 @@ void Animus::Curriculum::PartyEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
     {
         return float(_envs[env.Index].Seats[seat].TeammatesDied);
     });
-    // The owner encounter's column where there is one; a party or raid with no owner counts its revives too.
-    if (!table.Contains("revives"))
-        table.Add("revives", [this](Env const& env, uint32 seat)
-        {
-            return float(_scenario.Data(env).Seats[seat].Revives);
-        });
+    table.Add("revives", [this](Env const& env, uint32 seat)
+    {
+        return float(_scenario.Data(env).Seats[seat].Revives);
+    });
     table.Add("teammate_damage_taken", [this](Env const& env, uint32 seat)
     {
         return float(_envs[env.Index].Seats[seat].TeammateDamageTaken);
@@ -194,7 +192,6 @@ bool Animus::Curriculum::PartyEncounter::Build(Env& env, Map* /*map*/, uint8 /*l
         _scenario.SeatBot(env, seat)->SetFaction(lead->GetFaction());
 
     // The party is five learned seats: the first one leads.
-    bool const raid = _scenario.Arena(env).Seats == SeatPlan::Raid;
     Player* leader = lead;
 
     EnvParty& party = _envs[env.Index];
@@ -211,14 +208,6 @@ bool Animus::Curriculum::PartyEncounter::Build(Env& env, Map* /*map*/, uint8 /*l
     }
 
     sGroupMgr->AddGroup(group);
-
-    // More than a party: a raid of RAID_GROUPS groups of GROUP_SEATS, each seat in the group its index says (the
-    // same arithmetic the party block and the spawn rows use). The conversion comes before the members: a raid's
-    // AddMember puts each new member in the first subgroup with room, so joining in seat order is that arithmetic.
-    // (ChangeMembersGroup would do the same, but the forge core saves its subgroup change to the character
-    // database unguarded; AddMember and ConvertToRaid go through the sim-group predicate.)
-    if (raid && data.ActiveSeats > GROUP_SEATS)
-        group->ConvertToRaid();
 
     for (uint32 seat = 0; seat < _scenario.SeatCount(); ++seat)
         if (Player* bot = _scenario.SeatBot(env, seat); bot && bot != leader && !group->AddMember(bot))
@@ -244,7 +233,6 @@ void Animus::Curriculum::PartyEncounter::View(Env const& env, uint32 seatIndex, 
 {
     EnvState const& data = _scenario.Data(env);
     uint32 const seats = _scenario.SeatCount();
-    Player* bot = env.FindBot(seatIndex);
 
     std::array<bool, MAX_SEATS> shown{};
     if (seatIndex < MAX_SEATS)
@@ -263,96 +251,12 @@ void Animus::Curriculum::PartyEncounter::View(Env const& env, uint32 seatIndex, 
             other.L->Profile->Class };
     };
 
-    // The seat's own group fills the first slots: in a party that is everyone, and in a raid it is who the seat
-    // heals, assists and guards without being told.
+    // The seat's own group fills the first slots: a party is one group, everyone but the seat.
     uint32 slot = 0;
     uint32 const groupFirst = GroupFirstSeat(seatIndex);
     for (uint32 seat = groupFirst; seat < groupFirst + GROUP_SEATS && slot < GROUP_MEMBERS; ++seat)
         if (playing(seat))
             fill(slot++, seat);
-
-    // Then the raiders outside it a seat still has to act on, in the order they matter: the raid's living tank, its
-    // most hurt member, and the nearest one. Empty below a raid, where the group is the whole party.
-    slot = GROUP_MEMBERS;
-    uint32 tank = MAX_SEATS;
-    uint32 hurt = MAX_SEATS;
-    uint32 closest = MAX_SEATS;
-    float lowest = 2.0f;
-    float nearest = std::numeric_limits<float>::max();
-    for (uint32 seat = 0; seat < seats && seat < MAX_SEATS; ++seat)
-    {
-        if (!playing(seat))
-            continue;
-
-        Player* other = _scenario.SeatBotInWorld(env, seat);
-        if (!other->IsAlive())
-            continue;
-
-        if (tank == MAX_SEATS && IsTank(data.Seats[seat]))
-            tank = seat;
-
-        float const health = other->GetHealthPct();
-        if (health < lowest)
-        {
-            lowest = health;
-            hurt = seat;
-        }
-
-        if (bot)
-        {
-            float const distance = bot->GetDistance(other);
-            if (distance < nearest)
-            {
-                nearest = distance;
-                closest = seat;
-            }
-        }
-    }
-
-    for (uint32 spotlight : { tank, hurt, closest })
-        if (spotlight < MAX_SEATS && !shown[spotlight] && slot < PARTY_MEMBERS)
-            fill(slot++, spotlight);
-
-    // The rest of the raid in aggregate: the seat cannot act on them one by one, but how many still stand and how
-    // hurt the worst is decides whether it presses on or pulls back.
-    uint32 playingSeats = 0;
-    uint32 alive = 0;
-    uint32 inCombat = 0;
-    uint32 groupSeats = 0;
-    uint32 groupAlive = 0;
-    uint32 tanks = 0;
-    uint32 healers = 0;
-    float lowestHealth = 1.0f;
-    for (uint32 seat = 0; seat < seats && seat < MAX_SEATS; ++seat)
-    {
-        if (!data.Seats[seat].L)
-            continue;
-
-        Player* other = _scenario.SeatBotInWorld(env, seat);
-        if (!other)
-            continue;
-
-        ++playingSeats;
-        bool const ownGroup = GroupFirstSeat(seat) == groupFirst;
-        groupSeats += ownGroup ? 1 : 0;
-        if (!other->IsAlive())
-            continue;
-
-        ++alive;
-        groupAlive += ownGroup ? 1 : 0;
-        inCombat += other->IsInCombat() ? 1 : 0;
-        lowestHealth = std::min(lowestHealth, other->GetHealthPct() / 100.0f);
-        tanks += IsTank(data.Seats[seat]) ? 1 : 0;
-        healers += Heals(data.Seats[seat].Apt) ? 1 : 0;
-    }
-
-    view.Raid.Group = groupFirst / GROUP_SEATS;
-    view.Raid.Alive = playingSeats ? float(alive) / float(playingSeats) : 0.0f;
-    view.Raid.GroupAlive = groupSeats ? float(groupAlive) / float(groupSeats) : 0.0f;
-    view.Raid.InCombat = alive ? float(inCombat) / float(alive) : 0.0f;
-    view.Raid.LowestHealth = lowestHealth;
-    view.Raid.TanksAlive = std::min(1.0f, float(tanks) / float(RAID_GROUPS));
-    view.Raid.HealersAlive = std::min(1.0f, float(healers) / float(RAID_GROUPS));
 
     view.Tank = Tank(env);
 }
@@ -405,18 +309,7 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
         }
     }
 
-    // In a raid the seat's own group is its to keep up in full, and the raiders outside it count together as one
-    // more group would: summed over every seat, a forty-seat wipe charged each seat 39 teammate deaths (about 117)
-    // where a party wipe charges 4, and any engagement looked like a risk no win could repay.
-    bool const raid = data.ActiveSeats > GROUP_SEATS;
     uint32 const groupFirst = GroupFirstSeat(seatIndex);
-    auto const inGroup = [&](uint32 other) { return other >= groupFirst && other < groupFirst + GROUP_SEATS; };
-    uint32 outside = 0;
-    if (raid)
-        for (uint32 other = 0; other < _scenario.SeatCount(); ++other)
-            if (other != seatIndex && !inGroup(other) && data.Seats[other].L && _scenario.SeatBotInWorld(env, other))
-                ++outside;
-    float const outsideWeight = outside ? float(GROUP_MEMBERS) / float(outside) : 1.0f;
 
     // The group's health while the seat fights (group_kept_share): every member of it, the seat too, alive above half
     // or not -- one that has died counts as not.
@@ -430,14 +323,12 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
             seat.GroupKeptMs += mate && mate->IsAlive() && mate->GetHealthPct() > 50.0f ? _scenario.DecisionMs() : 0;
         }
 
-    // Every other seat, not only the ones the observation has slots for: a heal lands on whoever needed it, and a
-    // raider outside the seat's group is still the party's to keep alive.
+    // Every other seat, not only the ones the observation has slots for: a heal lands on whoever needed it.
     for (uint32 teammateSeat = 0; teammateSeat < _scenario.SeatCount(); ++teammateSeat)
     {
         Player* teammate = teammateSeat == seatIndex ? nullptr : _scenario.SeatBotInWorld(env, teammateSeat);
         if (!teammate || !data.Seats[teammateSeat].L)
             continue;
-        float const weight = raid && !inGroup(teammateSeat) ? outsideWeight : 1.0f;
 
         float const health = float(std::max<uint32>(1, teammate->GetMaxHealth()));
         uint64 const taken = env.StepStats[teammateSeat].DamageTaken;
@@ -452,7 +343,7 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
         if (!IsTank(data.Seats[teammateSeat]))
             ledger.Add(RewardTerm::TeammateDamageTaken,
                 -(Protects(apt) ? tuning.TeammateDamageTakenProtector : tuning.TeammateDamageTakenDps)
-                * weight * float(taken) / health);
+                * float(taken) / health);
 
         if (Heals(apt))
             ledger.Add(RewardTerm::TeammateHealing, healDrill * healShare * tuning.TeammateHealing * float(healed)
@@ -469,7 +360,7 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
             seat.ThreatOnTeammates += onTeammate;
             if (IsTank(data.Seats[seatIndex]))
                 ledger.Add(RewardTerm::TeammateThreat,
-                    -tuning.TankLoseTeammate * weight * float(onTeammate) * _scenario.DecisionScale());
+                    -tuning.TankLoseTeammate * float(onTeammate) * _scenario.DecisionScale());
         }
 
         if (teammate->IsAlive())
@@ -478,11 +369,11 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
         {
             seat.TeammateDeathSeen[teammateSeat] = true;
             ++seat.TeammatesDied;
-            ledger.Add(RewardTerm::TeammateDeath, -tuning.TeammateDeath * weight);
+            ledger.Add(RewardTerm::TeammateDeath, -tuning.TeammateDeath);
         }
     }
 
-    RewardRole(env, seatIndex, bot, ledger, raid);
+    RewardRole(env, seatIndex, bot, ledger);
 }
 
 float Animus::Curriculum::PartyEncounter::HealShare(SeatState const& seat) const
@@ -512,11 +403,10 @@ bool Animus::Curriculum::PartyEncounter::InTankingStance(Player const* bot)
     return bot->HasAura(SPELL_RIGHTEOUS_FURY) || bot->HasAura(SPELL_FROST_PRESENCE);
 }
 
-void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, Player* bot, RewardLedger& ledger,
-    bool raid)
+void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, Player* bot, RewardLedger& ledger)
 {
-    // Each role paid for its own part (Raid.*): the tank for what it holds, the healer for its group kept up, in a
-    // raid the damage dealer for its own output, and every seat charged for standing idle in a fight.
+    // Each role paid for its own part (Raid.*): the tank for what it holds, the healer for its group kept up, and
+    // every seat charged for standing idle in a fight.
     CurriculumTuning::RaidTuning const& tuning = _scenario.Tuning().Raid;
     EnvState const& data = _scenario.Data(env);
     SeatParty& seat = _envs[env.Index].Seats[seatIndex];
@@ -581,7 +471,7 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
     // A damage dealer of a party with a tank: paid for the damage it puts on the tank's target, charged for each
     // enemy it has taken off the tank (Raid.TankTarget, Raid.PulledOff). The Deadmines' damage dealers hit whatever
     // was nearest and died with the enemies on them (2026-10-01).
-    if (!tank && !healer && !raid)
+    if (!tank && !healer)
         if (Player* partyTank = Tank(env); partyTank && partyTank != bot && partyTank->IsAlive())
         {
             Unit const* tankTarget = partyTank->GetVictim();
@@ -600,12 +490,12 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
     // A damage dealer or the healer with enemies on it while the party's tank is alive and has not engaged: the pull
     // was opened before the tank was there to take it (Raid.EarlyPull, a cost). A linked pack then turns on whoever
     // opened -- the stage6 parties' damage dealers kept enemies ~8 s a fight (2026-10-03).
-    if (!tank && !raid && onBot)
+    if (!tank && onBot)
         if (Player* partyTank = Tank(env); partyTank && partyTank != bot && partyTank->IsAlive()
             && !partyTank->IsInCombat())
             ledger.Add(RewardTerm::EarlyPull, -drill * tuning.EarlyPull * float(onBot) * scale);
 
-    // The healer keeps its group up, in a party as in a raid: in the Deadmines a level-20 healer cast about five
+    // The healer keeps its group up: in the Deadmines a level-20 healer cast about five
     // heals a run and its party wiped at the first packs (2026-09-30).
     if (healer)
     {
@@ -629,8 +519,6 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
             ledger.Add(keepTerm, -rolePay * drill * _scenario.Tuning().Party.TeammateHealing * tuning.Overheal
                 * float(step.HealingRaw - effective) / float(std::max<uint32>(1, bot->GetMaxHealth())));
     }
-    else if (raid && !IsTank(state))
-        ledger.Add(RewardTerm::DamageDealt, tuning.Output * state.LastStepDamage);
 
     // Idle: in a fight, an enemy in reach, and nothing done -- no press that served or was neutral, no damage, no
     // healing -- for IdleMs.

@@ -556,8 +556,6 @@ float Animus::Curriculum::PartyFollowEncounter::PartyYards(Env const& env, uint3
 void Animus::Curriculum::PartyFollowEncounter::View(Env const& env, uint32 seat, SeatView& view) const
 {
     EnvParty const& party = _envs[env.Index];
-    view.MountsAllowed = false;
-    view.GroundMountAllowed = false;
     if (seat == _scenario.OwnerAgent())
     {
         // The cast leader: the next stop is its objective, as a marker was in the stage it was trained on.

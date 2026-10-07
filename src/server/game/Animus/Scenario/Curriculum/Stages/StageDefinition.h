@@ -37,7 +37,6 @@ namespace Animus::Curriculum
     {
         Solo,           // one seat
         Party,          // one group (1-GROUP_SEATS with a character each episode): a tank, a healer and damage
-        Raid,           // the arena's seats as RAID_GROUPS groups of GROUP_SEATS: a tank and a healer per group
     };
 
     /// What the seats fight.
@@ -146,14 +145,11 @@ namespace Animus::Curriculum
     };
 
     /// Which real-instance ladder an arena climbs (InstanceBosses.cpp): five-man dungeons across the level bands, or
-    /// the ten-, twenty-five- and forty-man raids.
+    /// whole dungeon wings.
     enum class InstanceLadder : uint8
     {
         None,
         Dungeon,
-        Raid10,
-        Raid25,
-        Raid40,
         /// Whole dungeon wings (next-run plan 5.3): from the wing's door to its last boss, the trash alive.
         Wing,
     };
@@ -192,8 +188,6 @@ namespace Animus::Curriculum
         /// a dungeon it has not seen -- so a policy that memorised its own route is told from one that learned to run
         /// dungeons (peak-play W2).
         bool EvalOnly = false;
-        /// SeatPlan::Raid: how many seats the raid has (a multiple of GROUP_SEATS up to MAX_SEATS); 0 = MAX_SEATS.
-        uint32 RaidSeats = 0;
         /// SeatPlan::Party: how many learned seats the party has, every episode (1 to GROUP_SEATS); 0 = the party's
         /// own draw (Party.SizeWeight*, or a whole group). The party follow's four followers beside its leader.
         uint32 PartySize = 0;

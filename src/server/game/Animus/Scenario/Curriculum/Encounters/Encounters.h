@@ -132,7 +132,7 @@ namespace Animus::Curriculum
         };
 
         /// The seat index of teammate slot `slot` (0..PARTY_MEMBERS-1) of `seat`: the other seats in order.
-        /// The first seat of the group `seat` is in: a party is one group, a raid is RAID_GROUPS of them.
+        /// The first seat of the group `seat` is in: a party is one group.
         [[nodiscard]] static uint32 GroupFirstSeat(uint32 seat) { return seat / GROUP_SEATS * GROUP_SEATS; }
         void Disband(Env& env);
         /// In the spec's tanking stance, form or aura: Defensive Stance, Bear or Dire Bear Form, Righteous Fury, Frost
@@ -142,7 +142,7 @@ namespace Animus::Curriculum
         /// Party.HealOffGoal of it.
         [[nodiscard]] float HealShare(SeatState const& seat) const;
         /// Each role paid for its own part, and idling charged (Raid.*).
-        void RewardRole(Env& env, uint32 seatIndex, Player* bot, RewardLedger& ledger, bool raid);
+        void RewardRole(Env& env, uint32 seatIndex, Player* bot, RewardLedger& ledger);
 
         std::vector<EnvParty> _envs;
     };

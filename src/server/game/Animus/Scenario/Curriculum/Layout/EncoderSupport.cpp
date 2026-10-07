@@ -119,9 +119,8 @@ namespace Animus::Curriculum::Encoding
         Player* other = nullptr;
         if (slot == FRIEND_SELF)
             return bot;
-        if (slot == FRIEND_OWNER)
-            other = view.Owner;
-        else if (slot >= FRIEND_TEAMMATE_FIRST && slot < FRIEND_SLOTS)
+        // FRIEND_OWNER names nobody: no stage has an owner.
+        if (slot >= FRIEND_TEAMMATE_FIRST && slot < FRIEND_SLOTS)
             other = view.Teammates[slot - FRIEND_TEAMMATE_FIRST].Bot;
 
         return other && other != bot && other->IsInMap(bot) ? other : nullptr;

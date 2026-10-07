@@ -101,7 +101,7 @@ void Animus::Curriculum::StageScenario::DrawStandIn(Env& env)
     // Evaluation: every episode of the stand-in arm, none otherwise (StandIn::Fields).
     ArenaDefinition const& arena = Arena(env);
     if (!StandIn::Fields(_standIn.load(std::memory_order_relaxed),
-        arena.Seats == SeatPlan::Party || arena.Seats == SeatPlan::Raid, data.ActiveSeats, env.Evaluating,
+        arena.Seats == SeatPlan::Party, data.ActiveSeats, env.Evaluating,
         StandInShare(data.Arena), [](int32 percent) { return roll_chance_i(percent); }))
         return;
 
@@ -149,7 +149,7 @@ void Animus::Curriculum::StageScenario::AddStandInEpisodeInfo()
 {
     if (!_stage.AnyArena([](ArenaDefinition const& arena)
         {
-            return arena.Seats == SeatPlan::Party || arena.Seats == SeatPlan::Raid;
+            return arena.Seats == SeatPlan::Party;
         }))
         return;
 

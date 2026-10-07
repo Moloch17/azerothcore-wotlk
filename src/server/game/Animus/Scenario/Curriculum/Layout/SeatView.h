@@ -312,10 +312,7 @@ namespace Animus::Curriculum
         uint32 EnemyCount = 0;                      // slots in use; 0 between pulls
         uint32 TargetSlot = 0;                      // the selected enemy; target selection updates it
 
-        // Support: the selected friend (FRIEND_SELF, FRIEND_OWNER, FRIEND_TEAMMATE_FIRST + teammate) that positive
-        // single-target spells are cast on, and the rank tier heals with ranks are cast at (0 = highest known). Only
-        // read with the support block; the actions update them.
-        uint32 FriendSlot = FRIEND_SELF;
+        /// The rank tier rankable spells are cast at (0 = the highest known; CoreBlock's rank actions set it).
         uint32 RankTier = 0;
 
         // Gauntlet.
@@ -328,12 +325,6 @@ namespace Animus::Curriculum
         uint32 GauntletSupplies = CONSUMABLE_COUNT; // food and drink stocked, each
         float PullArrival = 0.0f;                   // an unengaged pull comes to the seat in this / 30 s; else 0
         float NextPull = 0.0f;                      // between pulls: the next one spawns in this / 20 s
-
-        // Companion: the player the bot fights for.
-        Player* Owner = nullptr;
-        /// What the owner can do, the same six numbers a teammate is described by. Unset when the scenario has no
-        /// owner: "there is nobody" and "there is somebody who heals nothing" are different things.
-        std::optional<Aptitude> OwnerApt;
 
         // Party: the other learned players, and the party's living tank (may be the bot).
         struct Teammate
@@ -381,21 +372,6 @@ namespace Animus::Curriculum
         std::array<PartyFrame, GROUP_MEMBERS> Frames{};
         float MinimapYards = 60.0f;
 
-        /// The raid the seat's group belongs to, in aggregate: a seat acts on its own group and the spotlight slots,
-        /// but it has to know how the rest of the raid is doing. All zero below a party.
-        struct RaidView
-        {
-            uint32 Group = 0;                       // the seat's group index (0 in a party)
-            float Alive = 0.0f;                     // living seats, as a share of the seats in play
-            float GroupAlive = 0.0f;                // ... of the seat's own group
-            float InCombat = 0.0f;                  // seats in combat, as a share of the living
-            float LowestHealth = 1.0f;              // the most hurt living seat
-            float TanksAlive = 0.0f;                // living tanks / RAID_GROUPS, clamped
-            float HealersAlive = 0.0f;              // living healers / RAID_GROUPS, clamped
-        };
-
-        RaidView Raid;
-
         /// **What the goal names** (M3 interact; the sight block's named row): the kind of thing the seat is to find
         /// or act on -- its semantic class (Vision::Class), its template entry and whether it is a game object, as a
         /// quest's log names its objective -- and how (NamedTask: 1 reach it, 2 use it, 3 use the key item on it; 0
@@ -428,44 +404,14 @@ namespace Animus::Curriculum
         /// far running would have carried it, and the share of the distance to the objective that closed.
         float MoveRate = 0.0f;
         float CloseRate = 0.0f;
-        /// False in an on-foot arena (ArenaDefinition::OnFoot): the mount actions are masked out.
-        bool MountsAllowed = true;
         /// How near counts as arrived, which is not the same number indoors as it is in open country. Carried
         /// on the view so OBS_AT_OBJECTIVE, the masks that ask whether the seat is there yet, and the reward
         /// that pays for arriving all read one answer.
         float ArriveWithin = 6.0f;
-        /// False in an air-only arena (ArenaDefinition::AirOnly): the ground mount is masked, the wings are not.
-        bool GroundMountAllowed = true;
 
-        // Flag match: the seat's flag and the other side's, from the seat's side.
-        enum class FlagState : uint8 { AtBase, Carried, Dropped };
-        struct FlagMatch
-        {
-            bool Active = false;
-            FlagState Own = FlagState::AtBase;      // carried: by the enemy
-            FlagState Enemy = FlagState::AtBase;    // carried: by the seat
-            Position OwnBase;
-            Position EnemyBase;
-            Position OwnDropped;                    // where each lies when dropped
-            Position EnemyDropped;
-            uint32 OwnScore = 0;
-            uint32 EnemyScore = 0;
-            /// The flag the seat could take or return right now, if one is in reach. A real battleground scores a
-            /// pickup only when the player uses the object (BattlegroundWS::EventPlayerClickedOnFlag), so
-            /// standing on it does nothing: this is what ACTION_TAKE_FLAG acts on. Empty when none is in reach,
-            /// and always empty for an arena that plays the flag rules by proximity itself.
-            ObjectGuid Usable;
-        } Flags;
-
-        /// Life outside the fight (WorldBlock). Inactive in every arena that has no life encounter.
+        /// A dungeon's way on (WorldView), as the goal head names it.
         WorldView World;
 
-        // PvP: the enemy player.
-        Player* Opponent = nullptr;
-        bool OpponentHidden = false;                // the bot can neither see nor detect it
-        uint8 OpponentClass = 0;
-        Aptitude OpponentApt;
-        bool Mirror = false;                        // the opponent is a learned agent too
     };
 
     /// What an applied action did, for the scenario's bookkeeping and rewards.

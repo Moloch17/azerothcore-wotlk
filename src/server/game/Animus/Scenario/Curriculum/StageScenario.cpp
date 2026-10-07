@@ -2101,7 +2101,7 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     // How many seats play this episode, and their class/roles: the arena's seats, except in a party, which has 1-4
     // like a player's companions; the rest stay empty: no character, no layout, only the no-op allowed.
     data.ActiveSeats = arena.SeatCount();
-    if (arena.Seats == SeatPlan::Party || arena.Seats == SeatPlan::Raid)
+    if (arena.Seats == SeatPlan::Party)
     {
         // An instance is run by a full group with somebody to hold the pull and somebody to keep them up: a heroic
         // attempted by two or three was lost before it started, and the dungeon stage fielded a full five 40% of the
@@ -2341,7 +2341,7 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
     {
         Position start = SpawnPointFor(env);
-        if (arena.Seats == SeatPlan::Party || arena.Seats == SeatPlan::Raid)
+        if (arena.Seats == SeatPlan::Party)
         {
             // Within a group as a party has always spread; groups themselves step back in rows, so forty seats do
             // not spawn in one line forty spacings long.
@@ -3329,7 +3329,6 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
             view.Enemies[slot] = env.FindTargetUnit(slot);
     }
     view.TargetSlot = seat.TargetSlot;
-    view.FriendSlot = seat.FriendSlot;
     view.RankTier = seat.RankTier;
 
     // The party frames (the party frames block, revision 2: the one source of party-member state): from the seat's
@@ -3495,7 +3494,6 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
 
     seat.TargetSlot = view.TargetSlot;
     seat.StepPreparationMs += result.PreparationMs;
-    seat.FriendSlot = view.FriendSlot;
     seat.RankTier = view.RankTier;
     seat.HealsOnFull += result.HealsOnFull;
     seat.DefensiveCasts += result.DefensiveCasts;
@@ -5142,7 +5140,7 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
     LogDeath(env, seat, bot);
 
     // The combat clock (Output.Clock): every second an engaged enemy lives costs every seat, dead or alive.
-    if (Arena(env).Seats != SeatPlan::Raid && _tuning.Output.Clock > 0.0f)
+    if (_tuning.Output.Clock > 0.0f)
     {
         if (Data(env).StepEngaged)
             seat.Rewards.Add(RewardTerm::CombatClock, -_tuning.Output.Clock * float(_decisionMs) / 1000.0f);

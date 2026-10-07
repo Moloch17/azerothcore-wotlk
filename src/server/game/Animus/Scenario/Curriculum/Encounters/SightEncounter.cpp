@@ -310,8 +310,6 @@ void Animus::Curriculum::SightEncounter::View(Env const& env, uint32 /*seat*/, S
     // The flag on the object itself, as M2 shows it: its own radius and a quarter yard.
     view.ObjectiveRadius = Vision::ObjectiveRadiusFor(sight.Bound);
     view.CompassWithheld = sight.Withheld;
-    view.MountsAllowed = false;
-    view.GroundMountAllowed = false;
     view.ArriveWithin = sight.Radius;
 }
 

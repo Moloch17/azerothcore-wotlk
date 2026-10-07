@@ -102,9 +102,6 @@ namespace
                     || bot->HasStealthAura())
                     return false;
 
-                if (view.Owner && view.Owner->IsInMap(bot) && !view.Owner->getAttackers().empty())
-                    return false;
-
                 for (SeatView::Teammate const& teammate : view.Teammates)
                     if (teammate.Bot && teammate.Bot->IsInMap(bot) && !teammate.Bot->getAttackers().empty())
                         return false;
