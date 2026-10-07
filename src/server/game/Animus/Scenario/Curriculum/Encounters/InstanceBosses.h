@@ -26,36 +26,24 @@
 
 namespace Animus::Curriculum
 {
-    /// One rung of an instance ladder: a real dungeon or raid boss, fought in its own instance by the core's own
-    /// script. The table is data, not code: the entries come from the core's script headers (molten_core.h,
-    /// naxxramas.h, karazhan.h, ...), and nothing here is a position. Where the boss stands comes from its spawn in
-    /// the world database, and where the raid stands comes from the server's own path from the instance entrance
-    /// to it (InstanceEncounter::EngagePoint).
-    ///
-    /// Bosses that need an event, a door sequence, a key, mind control or a vehicle are left out on purpose:
-    /// Majordomo, Ragnaros, Razorgore, Vaelastrasz, Nefarian, the Twin Emperors, C'Thun, Gothik, Thaddius, the Four
-    /// Horsemen, Sapphiron, Kel'Thuzad, Razuvious, the Opera, Chess, Mr. Smite, Chromaggus's door. A row whose
-    /// creature template or spawn the world database lacks is dropped at startup with a log line, never a crash.
+    /// One row of a boss table: a real dungeon boss, fought in its own instance by the core's own script. The table is
+    /// data, not code, and nothing here is a position: where the boss stands comes from its spawn in the world
+    /// database. A row whose creature template or spawn the world database lacks is dropped at startup with a log
+    /// line, never a crash.
     struct BossRow
     {
         uint32 MapId = 0;
         uint32 Entry = 0;                   // the boss creature
-        int32 DataId = -1;                  // the instance script's boss index (SetBossState); -1 = none
         uint8 Level = 60;                   // the seats' level for this rung
         uint8 Difficulty = 0;               // Difficulty: DUNGEON_DIFFICULTY_*, RAID_DIFFICULTY_*MAN_NORMAL
-        /// Creatures around the boss that ARE the encounter and are never cleared as trash: Lucifron's protectors,
-        /// Garr's Firesworn, Moroes's guests.
-        std::vector<uint32> Keep{};
-        /// Leave the trash around the boss standing: the pull to the boss is part of the fight.
-        bool Trash = false;
-        /// The areatrigger_teleport whose target is this boss's way in, where the map has several (Scarlet
-        /// Monastery's four wings); 0 = the map's own entrance (ObjectMgr::GetMapEntranceTrigger).
-        uint32 Entrance = 0;
         char const* Name = "";
     };
 
-    /// The ladder an arena's `Instance` names, in rung order.
+    /// The ladder an arena's `Instance` names, in row order.
     [[nodiscard]] std::vector<BossRow> const& InstanceLadderRows(InstanceLadder ladder);
+
+    /// The bosses of the dungeons the party follow stage walks (Ragefire Chasm, the Deadmines), in route order.
+    [[nodiscard]] std::vector<BossRow> const& FollowBosses();
 
     /// **A dungeon's bosses, by name** (dungeon-curriculum D2, D3: "per boss"): every boss a whole dungeon's route
     /// passes -- side bosses included, the rares and an escort's boss left out -- with the short name its episode info

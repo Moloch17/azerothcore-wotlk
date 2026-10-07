@@ -48,6 +48,7 @@
  */
 
 #include "StageDefinition.h"
+#include "InstanceBosses.h"
 #include "RolesDraw.h"
 #include "Log.h"
 #include "AreaDefines.h"
@@ -1029,6 +1030,9 @@ namespace
         bool const instance = arena.Against == Opposition::Instance;
         if (instance != (arena.Instance != InstanceLadder::None))
             return "an instance ladder goes with fighting in an instance, and only with that";
+        if (instance && (arena.InstanceRow < 0 || std::size_t(arena.InstanceRow)
+            >= InstanceLadderRows(arena.Instance).size()))
+            return "an instance arena runs a row of its ladder";
         if (instance && !stage.Has(BlockId::Pack))
             return "an instance needs the pack block";
         if (instance && arena.Seats != SeatPlan::Party)

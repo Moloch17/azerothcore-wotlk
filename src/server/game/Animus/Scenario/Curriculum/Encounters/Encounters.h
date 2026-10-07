@@ -21,7 +21,6 @@
 
 #include "RouteShortcut.h"
 #include "BotSlot.h"
-#include "DifficultyLadder.h"
 #include "InstanceBosses.h"
 #include "Encounter.h"
 #include "EntranceRespawn.h"
@@ -147,11 +146,10 @@ namespace Animus::Curriculum
         std::vector<EnvParty> _envs;
     };
 
-    /// A real dungeon or raid boss in its own instance (Opposition::Instance, ArenaDefinition::Instance): the
-    /// rung is a row of InstanceBosses, which fixes the map, the level and the difficulty; the seats spawn at the
-    /// instance's front door and are taken to the boss along the server's own path; the boss fights with the core's
-    /// script. Won when the boss dies, lost when every seat is dead, when the script evades, or on the clock. The
-    /// reward is CombatReward::OneOnOne against the boss for every seat, plus progress credit on a lost fight.
+    /// A whole dungeon wing, run by a party (Opposition::Instance, InstanceLadder::Wing): the arena's pinned row of
+    /// InstanceBosses fixes the map, the level and the difficulty; the party starts at the instance's front door with
+    /// the trash alive, and the route to the last boss is its objective. Won when the last boss dies, lost on the last
+    /// wipe or on the clock.
     class InstanceEncounter final : public Encounter
     {
     public:
@@ -229,9 +227,6 @@ namespace Animus::Curriculum
             uint32 MapId = 0;
             uint32 Entry = 0;
             uint32 Tier = 0;
-            bool Counts = false;
-            uint16 Layout = 0;
-            uint8 Spec = 0;
             ObjectGuid Boss;
             uint32 BossHealth = 1;
             float HealthLeft = 1.0f;
@@ -241,7 +236,6 @@ namespace Animus::Curriculum
             bool Wiped = false;
             bool Evaded = false;
             bool Recorded = false;
-            uint32 TrashCleared = 0;
             /// A whole wing (InstanceLadder::Wing): the route from the door to the boss and the next point on it, the
             /// trash killed, the wipes, and the creatures watched for dying.
             std::vector<Position> Route;
@@ -393,7 +387,6 @@ namespace Animus::Curriculum
             std::vector<CellMark> Marks;
         };
 
-        [[nodiscard]] bool Wing(Env const& env) const;
         /// A creature a full clear kills (Instance.WingFullClear): alive, hostile to the party, not a critter, a
         /// civilian, a totem, a pet or a summon, and attackable.
         [[nodiscard]] static bool Hostile(Player const* seat, Creature const* creature);
@@ -466,20 +459,17 @@ namespace Animus::Curriculum
         /// whole dungeon's last boss dead (the `cleared` column, the stand-in split's and the videos' outcome).
         [[nodiscard]] static bool Succeeded(EnvInstance const& fight);
         void NoteDrill(uint32 rung, bool clean);
-        void RewardWing(Env& env, uint32 seat, Player* bot, RewardLedger& ledger);
         /// Instance.WingTrace: follow the fight under way, and log what a wipe ended.
         void TraceWing(Env& env, EnvInstance& fight, bool fighting);
         void LogWipe(Env const& env, EnvInstance const& fight) const;
 
         [[nodiscard]] std::vector<BossRow const*> const& Rows(Env const& env) const;
         [[nodiscard]] Creature* FindBoss(Map* map, BossRow const& row, WorldObject const* anchor) const;
-        [[nodiscard]] Position EngagePoint(Env const& env, Map* map, Player* seat, Creature* boss) const;
         [[nodiscard]] float TierScale(Env const& env) const;
         [[nodiscard]] static bool TimeIsUp(Env const& env);
 
         std::vector<EnvInstance> _envs;
         std::map<InstanceLadder, std::vector<BossRow const*>> _rows;   // per ladder, the rows the database fields
-        DifficultyLadder _ladder;
         /// The pull drill's ladder (Instance.PullRung*): the rung and the newest rung's drills, clean or not.
         std::mutex _drillLock;
         uint32 _drillRung = 0;

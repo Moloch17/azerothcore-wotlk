@@ -144,12 +144,10 @@ namespace Animus::Curriculum
         std::vector<Position> Far{};
     };
 
-    /// Which real-instance ladder an arena climbs (InstanceBosses.cpp): five-man dungeons across the level bands, or
-    /// whole dungeon wings.
+    /// Which real-instance ladder an arena runs (InstanceBosses.cpp): whole dungeon wings.
     enum class InstanceLadder : uint8
     {
         None,
-        Dungeon,
         /// Whole dungeon wings (next-run plan 5.3): from the wing's door to its last boss, the trash alive.
         Wing,
     };
@@ -172,11 +170,11 @@ namespace Animus::Curriculum
         SeatPlan Seats = SeatPlan::Solo;
         Opposition Against = Opposition::Instance;
         bool PartyGroup = false;        // the seats form a core group (PartyEncounter)
-        /// Opposition::Instance: the boss ladder this arena climbs. The rung fixes the map, the seats' level and
+        /// Opposition::Instance: the ladder whose row this arena runs. The row fixes the map, the seats' level and
         /// the difficulty; the stage's MapId and SpawnPoints are not used by this arena.
         InstanceLadder Instance = InstanceLadder::None;
-        /// The ladder's row this arena always runs (Ragefire Chasm, the Deadmines: a stage each); -1 = the class's own
-        /// rung on the ladder.
+        /// The ladder's row this arena always runs (Ragefire Chasm, the Deadmines: a stage each); set for every
+        /// instance arena.
         int8 InstanceRow = -1;
         /// InstanceLadder::Wing: one pull a run instead of the whole dungeon -- the party a little way back along the
         /// route from one pack, the packs before it cleared, the run over when that pack is dead or a second one
