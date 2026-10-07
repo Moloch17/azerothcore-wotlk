@@ -211,11 +211,9 @@ class EvalResult:
             out["clean_kill"] = ((killed > 0.0) & (died <= 0.0)).astype(np.float64)
         return out
 
-    def summary(self, columns: tuple[str, ...], phases: dict[str, tuple[str, ...]] | None = None) -> dict:
+    def summary(self, columns: tuple[str, ...]) -> dict:
         """Score and means of `columns`: overall, per level band, per layout, per arena, per talent build and per
-        difficulty tier, and for each tier but the top one everything up to it, per layout too ("up_to"). With
-        `phases` (eval.phases: a phase's name -> its arenas), per curriculum phase as well: the ship stage is judged
-        phase by phase, so one it lets slip is named rather than averaged away."""
+        difficulty tier, and for each tier but the top one everything up to it, per layout too ("up_to")."""
         present = [c for c in columns if c in self.info_names]
         derived = self.derived()
         episodes = self._episode_of_row()
@@ -274,7 +272,7 @@ class EvalResult:
 
         everything = np.ones(self.episodes, dtype=bool)
         result = {"policy": self.policy, **means(everything), "bands": {}, "layouts": {}, "specs": {},
-                  "castings": {}, "arenas": {}, "phases": {}, "builds": {}, "difficulties": {}, "up_to": {},
+                  "castings": {}, "arenas": {}, "builds": {}, "difficulties": {}, "up_to": {},
                   "categories": {}}
         # By each named category (the seek stage's room and object: found by room, found by object type), under
         # "<column>=<name>"; a name no episode drew is left out.
@@ -329,10 +327,6 @@ class EvalResult:
                 rows = arenas == index
                 if rows.any():
                     result["arenas"][arena] = means(rows)
-            for phase, members in (phases or {}).items():
-                rows = np.isin(arenas, [self.arenas.index(name) for name in members if name in self.arenas])
-                if rows.any():
-                    result["phases"][phase] = means(rows)
         # The creature duel's difficulty tiers (episode info "difficulty"): an evaluation spreads its seeds over them.
         tiers = self.column("difficulty")
         if tiers is not None and len(set(tiers.tolist())) > 1:
@@ -777,7 +771,7 @@ def format_summary(summary: dict, baseline: dict | None, columns: tuple[str, ...
 
     names = ["score", *[c for c in columns if c in summary], *[d for d in DERIVED_METRICS if d in summary]]
     rows = [("all", summary, baseline)]
-    for group in ("bands", "layouts", "arenas", "phases", "builds", "difficulties", "categories"):
+    for group in ("bands", "layouts", "arenas", "builds", "difficulties", "categories"):
         for key, row in summary.get(group, {}).items():
             label = f"tier {key}" if group == "difficulties" else key
             rows.append((label, row, (baseline or {}).get(group, {}).get(key)))

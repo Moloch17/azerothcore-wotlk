@@ -86,10 +86,6 @@ class EvalConfig:
     # follow_route and face_objective forbidden says how much of its arrival rate was the pathfinder's. A name no
     # layout has is refused at startup. Training and the baseline are untouched.
     mask_actions: tuple[str, ...] = ()
-    # Curriculum phases by arena (a phase's name -> the stage's arenas in it): the summary adds a row per phase. The
-    # ship stage sets it, since its gate is each phase within noise of its own stage. An arena the stage does not have
-    # is refused at startup.
-    phases: dict = field(default_factory=dict)
     # Held-out arenas (their name -> seeded episodes), played after every evaluation and reported apart as
     # `heldout_<arena>`: content the stage never trains on (stage.json "eval_only", ArenaDefinition::EvalOnly), so a
     # policy that memorised its own route is told from one that learned. A reading, never a target: nothing about it

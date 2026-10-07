@@ -616,14 +616,6 @@ class TrainingRun:
         self.arena_names = tuple(arena["name"] for arena in (self.stage or {}).get("arenas", ()))
         self.heldout = heldout_arenas(config.eval.heldout, self.stage) if self.stage is not None else {}
         self.heldout_current = False   # whether the latest evaluation played them
-        # eval.phases: a curriculum phase's arenas, for a row per phase in the evaluation summary. A name the stage
-        # has no arena of is a config written for another stage: refused rather than reported as an empty phase.
-        self.phases = {str(phase): tuple(str(name) for name in names)
-                       for phase, names in config.eval.phases.items()}
-        unknown = sorted({name for names in self.phases.values() for name in names} - set(self.arena_names))
-        if self.phases and unknown:
-            raise ValueError(f"eval.phases names arenas {self.stage and self.stage.get('scenario')} does not have: "
-                             f"{unknown} (its arenas: {list(self.arena_names)})")
         # Each layout's action names, so the evaluations' per-episode logs say which actions were taken.
         self.action_names = {name: layout.get("action_names", [])
                              for name, layout in (self.stage or {}).get("layouts", {}).items()}
@@ -1215,7 +1207,7 @@ class TrainingRun:
                                           arenas=self.arena_names,
                                           action_names=self.action_names)
             if self.ranks.leader:
-                summary = result.summary(self.report, self.phases)
+                summary = result.summary(self.report)
                 baseline_path.write_text(json.dumps({"key": key, "summary": summary}, indent=2))
                 self.eval_log.write(self.update, self.env_steps, result, summary, self.tracker)
                 print(f"Baseline {config.eval.baseline}: score {result.score:.4g} over {result.episodes} seeded "
@@ -1269,7 +1261,7 @@ class TrainingRun:
 
         summary, sampled, heldout = None, False, False
         if leader:
-            summary = result.summary(self.report, self.phases)
+            summary = result.summary(self.report)
             improved = controller.observe(summary, self.env_steps)
             self.score_motion(result, summary)
             self.eval_log.write(self.update, self.env_steps, result, summary, tracker)
@@ -1395,7 +1387,7 @@ class TrainingRun:
         if not self.ranks.leader:
             return
         result.policy = "learner_sampled"
-        summary = result.summary(self.report, self.phases)
+        summary = result.summary(self.report)
         fields = [name for name in ("score", "clean_kill", "killed", "died", "timed_out", "arrived")
                   if name in summary]
         # The gap, sampled minus argmax, kept with the sampled row of eval.jsonl: a wide one says the gated policy is
@@ -1409,7 +1401,7 @@ class TrainingRun:
     def evaluate_heldout(self) -> None:
         """eval.heldout: each held-out arena on its own seeds (eval.seed + HELDOUT_SEED_OFFSET), every rank playing
         its share, reported as policy heldout_<arena> in eval.csv and eval.jsonl. A reading only: neither the tracker,
-        the controller nor the league sees it."""
+        the controller sees it."""
         for name, (pin, episodes) in self.heldout.items():
             result = self._evaluate_share(self.learner_actions(), episodes, self.config.eval.seed + HELDOUT_SEED_OFFSET,
                                           arenas=self.arena_names, action_names=self.action_names, arena=pin)
@@ -1418,7 +1410,7 @@ class TrainingRun:
             if not self.ranks.leader:
                 continue
             result.policy = f"heldout_{name}"
-            summary = result.summary(self.report, self.phases)
+            summary = result.summary(self.report)
             self.eval_log.write(self.update, self.env_steps, result, summary, self.tracker)
             shown = ", ".join(f"{column} {summary[column]:.3g}" for column in self.report
                               if isinstance(summary.get(column), (int, float)))
@@ -1429,7 +1421,7 @@ class TrainingRun:
         """eval.arms: the evaluation's own seeds played again beside the plain "all bots" one -- "with_human", the
         sim's human stand-in in one seat of every party, and "with_partners", the fixed co-op partner set in some -- and
         reported apart as policy <arm> in eval.csv and eval.jsonl, with the gap to the plain one. A reading only:
-        neither the tracker, the controller, the league nor the partners' pool sees it."""
+        neither the tracker, the controller nor the partners' pool sees it."""
         config = self.config
         for arm, episodes in config.eval.arms.items():
             if episodes <= 0:
@@ -1456,7 +1448,7 @@ class TrainingRun:
                 continue
             result.policy = arm
             columns = tuple(dict.fromkeys((*self.report, *self.progress.arm_columns(arm))))
-            summary = result.summary(columns, self.phases)
+            summary = result.summary(columns)
             self.eval_log.write(self.update, self.env_steps, result, summary, self.tracker)
             self.progress.arm_evaluated(arm, summary)
             self.progress.write("training", self.update, self.env_steps)

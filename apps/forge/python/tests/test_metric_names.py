@@ -81,14 +81,12 @@ def test_every_metric_a_live_config_names_exists(path):
 
 
 @pytest.mark.parametrize("path", LIVE_YAMLS, ids=lambda path: path.stem)
-def test_heldout_and_phase_arenas_are_the_stages(path):
+def test_heldout_arenas_are_the_stages(path):
     config = TrainConfig.load(path)
     arenas = {arena["name"]: arena for arena in STAGES[path.stem]}
     assert set(config.eval.heldout) <= set(arenas), f"eval.heldout names arenas {path.stem} lacks: {sorted(arenas)}"
     for name in config.eval.heldout:
         assert arenas[name].get("EvalOnly"), f"eval.heldout.{name} is an arena the stage also trains on"
-    for names in config.eval.phases.values():
-        assert set(names) <= set(arenas)
     assert set(config.eval.arms) <= set(ARMS)
 
 
