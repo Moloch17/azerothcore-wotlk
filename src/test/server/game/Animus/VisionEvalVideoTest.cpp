@@ -232,6 +232,7 @@ TEST(VisionEvalVideoTest, OutcomeAndRungFromTheInfoRow)
     EXPECT_EQ(Vi::EvalVideoRungColumn(names), 1);
     EXPECT_EQ(Vi::EvalVideoRungColumn({ "wing_rung_share", "tier" }), 1);
     EXPECT_EQ(Vi::EvalVideoRungColumn({ "damage" }), -1);
+    EXPECT_EQ(Vi::EvalVideoRungColumn({ "at_top_rung", "found" }), -1);
 }
 
 TEST(VisionEvalVideoTest, CompositeFrameIsTheCompositePicture)

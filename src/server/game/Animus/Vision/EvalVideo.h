@@ -55,7 +55,8 @@ namespace Animus::Vision
     /// "ended"; "unfinished" without a row (the evaluation stopped first).
     [[nodiscard]] std::string EvalVideoOutcome(std::vector<std::string> const& names, float const* row);
 
-    /// The column holding the episode's rung: "rung" or "tier", or a name ending "_rung" or "_tier"; -1 for none.
+    /// The column holding the episode's rung: "rung" or "tier", or a name ending "_rung" or "_tier" (not at_top_rung,
+    /// a flag); -1 for none.
     [[nodiscard]] int32_t EvalVideoRungColumn(std::vector<std::string> const& names);
 
     /// Who an episode filmed: written into its sidecar. Taken when the recording starts (after the episode ends, the

@@ -126,6 +126,9 @@ int32_t Vi::EvalVideoRungColumn(std::vector<std::string> const& names)
     for (std::size_t i = 0; i < names.size(); ++i)
     {
         std::string const& name = names[i];
+        // at_top_rung is a flag (the ladder at its top), not a rung.
+        if (name.rfind("at_top", 0) == 0)
+            continue;
         if (name == "rung" || name == "tier" || EndsWith(name, "_rung") || EndsWith(name, "_tier"))
             return int32_t(i);
     }
