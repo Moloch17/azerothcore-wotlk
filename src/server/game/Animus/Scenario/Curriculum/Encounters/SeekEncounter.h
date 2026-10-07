@@ -112,7 +112,6 @@ namespace Animus::Curriculum
             float Travelled = 0.0f;
             uint32 LastStuckMs = 0;
             uint32 LastWallMs = 0;
-            bool Recorded = false;
         };
 
         /// Put the episode's object in `room` of `arena`: a spot on its floor, clear of walls, else its centre; at
