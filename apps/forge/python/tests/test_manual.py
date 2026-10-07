@@ -36,8 +36,8 @@ def documented() -> dict[str, dict]:
 
 
 def test_the_table_covers_every_stage_config():
-    """A stage added without a row is the way the table goes stale next. (configs/archive/ is not globbed: the
-    archived curriculum's rows are history.)"""
+    """A stage added without a row is the way the table goes stale next. (The archived curriculum's configs are
+    not in the tree: its rows are history.)"""
     on_disk = {p.stem for p in CONFIGS.glob("*.yaml")} - {"fast"}
     assert on_disk - set(documented()) == set(), "these configs have no row in the manual's budget table"
 
@@ -49,7 +49,7 @@ def _live_configs() -> list[str]:
 @pytest.mark.parametrize("name", _live_configs())
 def test_the_manual_matches_the_config(name):
     """Each live stage's row (the movement curriculum's table at the head of chapter 4) against its config. The
-    archived curriculum's rows are history and are not checked: their configs are in configs/archive/."""
+    archived curriculum's rows are history and are not checked: their configs are in the tag pre-cleanup-2026-10-07."""
     config = TrainConfig.load(CONFIGS / f"{name}.yaml")
     configured = {"total_env_steps": config.total_env_steps, "every_env_steps": config.eval.every_env_steps,
                   "episodes": config.eval.episodes}

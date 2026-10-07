@@ -24,7 +24,7 @@
  * order a player learns to move -- controls, ground, verticality, water, long routes, riding and flight, company --
  * every one of them movement alone, on the player controller (the move block's keys and mouse), on real terrain. The
  * first curriculum (stage1_move ... stage21_ship) is archived: its definitions on the git tag `curriculum-v1`, its
- * learner configs in apps/forge/python/configs/archive/, its runs in
+ * code and learner configs (deleted from the tree 2026-10-07) on `pre-cleanup-2026-10-07`, its runs in
  * var/animus-forge/shared/archive/curriculum-v1-2026-10-05/.
  *
  *   movement   move1_controls ─ move2_seek (perception-goals P1: the compass split, a hidden object found by sight)

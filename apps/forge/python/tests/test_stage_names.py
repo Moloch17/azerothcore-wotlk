@@ -10,8 +10,9 @@ names that run by the name it had, and rewriting it would destroy the citation. 
 conf templates and docs, is why C++ sources are not scanned at all (their citations are dense, their live names are
 checked by the compiler through Stages.cpp).
 
-**The archived curriculum** (stage1_move ... stage21_ship, archived 2026-10-05: git tag `curriculum-v1`,
-configs/archive/) is cited everywhere -- the manual, comments, the conf template's tuning notes. Its names are
+**The archived curriculum** (stage1_move ... stage21_ship, archived 2026-10-05: tag `curriculum-v1`; the movement
+curriculum before it, tag `curriculum-movement-v1`; their learner configs were deleted from the tree with their
+code on 2026-10-07 and are in the tag `pre-cleanup-2026-10-07`) is cited everywhere -- the manual, comments, the conf template's tuning notes. Its names are
 citations of that curriculum, as a dated line is of a run, and are allowed as such: an archived name is a stray only
 where a value is set from it (a conf template line `AnimusForge.<key> = ...`), since that is a run planned from a
 stage that no longer exists. A name that is neither defined nor archived is a stray everywhere.
@@ -33,7 +34,15 @@ DATED = re.compile(r"20\d\d-\d\d-\d\d|\bat \d+(\.\d+)?M\b")
 # A conf template line that sets a value: the one place an archived name is still a stray.
 SETTING = re.compile(r"^\s*AnimusForge\.\S+\s*=")
 CONFIGS = REPO / "apps" / "forge" / "python" / "configs"
-ARCHIVE = CONFIGS / "archive"
+
+# The archived curricula's stage names, written out: their configs are no longer in the tree (the tags
+# curriculum-v1, curriculum-movement-v1 and pre-cleanup-2026-10-07 keep them).
+ARCHIVED = frozenset("""
+    move1_controls move2_ground move3_vertical move4_water move5_routes move6_mounted move7_follow
+    stage1_move stage2_travel stage3_rotation stage4_duel stage5_pack stage6_roles stage7_group stage8_ragefire
+    stage9_deadmines stage10_raid_pulls stage11_raids stage12_duel_pvp stage13_escape stage14_stealth stage15_arena
+    stage16_flag stage17_warsong stage18_life stage19_world_group stage20_world_shared stage21_ship
+    """.split())
 
 
 def defined_names() -> set[str]:
@@ -48,11 +57,8 @@ def defined_names() -> set[str]:
 
 
 def archived_names() -> set[str]:
-    """The archived curricula's stages: one config each in configs/archive/ (per-class ones included), the first
-    curriculum's and the first movement curriculum's (movement-v1/, git tag curriculum-movement-v1)."""
-    names = {p.stem for p in ARCHIVE.rglob("*.yaml") if TOKEN.fullmatch(p.stem)}
-    assert len(names) >= 15, "configs/archive/ parsed badly"
-    return names
+    """The archived curricula's stages (ARCHIVED): citations, not strays."""
+    return set(ARCHIVED)
 
 
 def scanned_files() -> list[Path]:
@@ -70,7 +76,6 @@ def scanned_files() -> list[Path]:
             files += [p for p in root.rglob("*")
                       if p.is_file() and p.suffix in (".py", ".yaml", ".md", ".dist", ".json", ".cpp", ".h")
                       and "__pycache__" not in p.parts and ".venv" not in p.parts
-                      and ARCHIVE not in p.parents  # the archived curriculum's own files
                       and p.name != "test_stage_names.py"]
     return sorted(files)
 
@@ -129,7 +134,7 @@ def test_an_archived_name_is_a_stray_where_a_value_is_set_from_it(tmp_path):
 
 def test_config_files_are_named_after_stages():
     """Every stage has its learner config in configs/, and every config there is a stage's (fast.yaml is an
-    overlay, archive/ the archived curriculum's)."""
+    overlay)."""
     names = defined_names()
     configs = {p.stem for p in CONFIGS.glob("*.yaml")} - {"fast"}
     assert configs == names, f"configs without a stage or stages without a config: {configs ^ names}"

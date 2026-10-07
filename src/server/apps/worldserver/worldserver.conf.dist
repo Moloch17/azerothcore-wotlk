@@ -5064,11 +5064,10 @@ AnimusForge.OutputDir = ""
 #                                 "dungeon3_deadmines" (the Deadmines from the door to VanCleef at 17-20, doors,
 #                                 levers and the cannon by real presses; the bar: 70% clears, at most one wipe)
 #                     Its first version (move1_controls ... move7_follow) was archived on 2026-10-05: definitions
-#                     on the git tag curriculum-movement-v1, learner configs in
-#                     apps/forge/python/configs/archive/movement-v1/.
+#                     on the git tag curriculum-movement-v1.
 #                     The first curriculum (stage1_move ... stage21_ship) was archived on 2026-10-05 -- its
-#                     definitions on the git tag curriculum-v1, its learner configs in
-#                     apps/forge/python/configs/archive/. Stages that need their own env count set it with
+#                     definitions on the git tag curriculum-v1 (both, with their configs, are on the tag
+#                     pre-cleanup-2026-10-07). Stages that need their own env count set it with
 #                     AnimusForge.Stage.<name>.Envs.
 #        Example:     "move1_controls" - (train a single scenario)
 #        Default:     "" - (the whole curriculum, first stage to last)

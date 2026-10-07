@@ -17,7 +17,7 @@
 #
 # Seeded from the current M1 (its latest.pt, through finetune_from below): the move and compass blocks carry by name
 # (the compass split's remap), the camera trains on M1's dense reward. The first movement curriculum (move1_controls
-# ... move7_follow) is archived: configs/archive/movement-v1/, the definitions on the git tag curriculum-movement-v1.
+# ... move7_follow) is gone from the tree: the definitions on the tag curriculum-movement-v1, its configs on pre-cleanup-2026-10-07.
 
 run_name: move1_controls
 socket: /tmp/animus-forge.sock

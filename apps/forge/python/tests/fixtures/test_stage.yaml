@@ -1,6 +1,6 @@
 # The tiny test stage: a stage config for the tests that run the learner against a fake sim (test_train_run,
 # test_parallel, test_gates). Not a curriculum stage and never trained: it is the hyperparameters of the archived
-# curriculum's base config (configs/archive/stage4_duel.yaml, git tag curriculum-v1) without the commentary, frozen
+# curriculum's base config (stage4_duel.yaml, tag curriculum-v1) without the commentary, frozen
 # here so the tests do not depend on the archive or on whatever the movement stages' base becomes. The tests
 # shrink it further with --set overrides (tiny networks, a few env steps).
 
