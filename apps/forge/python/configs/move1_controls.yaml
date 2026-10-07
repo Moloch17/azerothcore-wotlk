@@ -177,8 +177,11 @@ fade:
 # The noise prices (Repeat, Jitter, Aimless, Effort, Fidget): free until 80% of runs stop beside the object at the
 # rung's mix, then in to full price. Wall and Stuck are not on this ladder (a fixed price from the first step), and
 # neither is the time cost.
+# Off (the noise prices at full price from the first step), so the shaping fade, and the compass withholding with it,
+# starts at once: the ladder waited ~45M steps before the fade could move, with the camera learning nothing
+# (the user, 2026-10-06). M1's movement comes seeded from the old M1, so full prices from the start are cheap.
 costs:
-  enabled: true
+  enabled: false
   rungs: [0.0, 0.25, 0.5, 1.0]
   gate_metric: arrived_at_rung
   gate_value: 0.8
