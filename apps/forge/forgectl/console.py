@@ -11,20 +11,25 @@ log lines that interleave with the reply are dropped; and it works through ssh f
 """
 from __future__ import annotations
 
+import fcntl
 import os
 import pty
 import re
 import select
 import signal
+import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 from . import remote
 from .config import Config, Machine
-from .ui import strip_ansi
+from .home import forgectl_home
+from .ui import Failure, note, strip_ansi
 
 PROMPT = "AC> "
 DETACH_KEYS = b"\x10\x11"  # Ctrl-P Ctrl-Q
+LOCK_TIMEOUT = 90.0   # seconds a send waits for another forgectl that is typing into the same console
 # A log line starts with a colour escape (the logger colours by level); a command's reply is plain text.
 PRIVATE_MODE = re.compile(r"\x1b\[\?[0-9;]*[hl]")  # bracketed paste on/off, which readline writes around a line
 LOG_LINE = re.compile(r"^(?:\x1b\[[0-9;]*m)+")
@@ -107,35 +112,126 @@ def parse_reply(raw: str, line: str) -> ConsoleResult:
     return ConsoleResult(reply, prompt_seen, start is not None, raw)
 
 
-def send(config: Config, machine: Machine, line: str, timeout: float = 20, settle: float = 1.5) -> ConsoleResult:
-    """Type `line` into the machine's worldserver console and return the reply. `timeout` is for the reply."""
-    pid, fd = spawn(attach_argv(config, machine))
-    raw = b""
+class Terminated(SystemExit):
+    """SIGTERM or SIGHUP arrived during a console send. A SystemExit, so it ends the program with 128+signal once the
+    detach in `send`'s `finally` has run (and is not mistaken for a failure of the command)."""
+
+    def __init__(self, signum: int):
+        super().__init__(128 + signum)
+        self.signum = signum
+
+
+class SignalGuard:
+    """For the length of a send, SIGTERM and SIGHUP raise `Terminated` instead of killing the process outright.
+
+    Python does not run `finally` blocks when the default SIGTERM handler ends the process, so without this a kill
+    in the middle of a send would leave a `docker attach` client dangling on the worldserver's console. The detach
+    itself is shielded: a signal during it is held back and raised afterwards, so Ctrl-P Ctrl-Q is never cut short.
+    Only the main thread can install signal handlers; elsewhere the guard does nothing."""
+
+    SIGNALS = (signal.SIGTERM, signal.SIGHUP)
+
+    def __init__(self):
+        self.shielded = False
+        self.pending: int | None = None
+        self.fired = False
+        self.previous: dict = {}
+
+    def _handle(self, signum, frame):
+        if self.shielded:
+            self.pending = signum
+            return
+        if self.fired:
+            return
+        self.fired = True
+        raise Terminated(signum)
+
+    def __enter__(self):
+        if threading.current_thread() is threading.main_thread():
+            self.previous = {number: signal.signal(number, self._handle) for number in self.SIGNALS}
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        for number, handler in self.previous.items():
+            signal.signal(number, handler)
+        if self.pending is not None and exc is None:
+            raise Terminated(self.pending)
+        return False
+
+
+def lock_path(machine: Machine):
+    return forgectl_home() / "locks" / f"{machine.name}.lock"
+
+
+@contextmanager
+def machine_lock(machine: Machine, timeout: float = LOCK_TIMEOUT):
+    """One forgectl at a time types into a machine's console: two at once would interleave their characters. An
+    exclusive flock on ~/.forgectl/locks/<machine>.lock, held for the whole send and released by the kernel if the
+    process dies. Waits up to `timeout` seconds (saying so), then raises Failure."""
+    path = lock_path(machine)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    descriptor = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)   # not inherited by the attach client (close-on-exec)
     try:
-        raw += _drain(fd, settle)  # the screen as it was when we attached, and the connection's own noise
-        if remote_failed(raw):
-            return parse_reply(raw.decode(errors="replace"), line)
-        os.write(fd, (line + "\n").encode())
-        typed = b""
-
-        def finished(chunk: bytes) -> bool:
-            return parse_reply((typed + chunk).decode(errors="replace"), line).prompt_seen
-
         deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            more = _drain(fd, min(1.0, deadline - time.monotonic()), until=None)
-            if not more:
-                if not alive(pid):
-                    break
-                continue
-            typed += more
-            if finished(b""):
-                typed += _drain(fd, 0.4)  # the prompt can arrive a line before the last of the reply
+        announced = False
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 break
-        raw += typed
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    holder = os.pread(descriptor, 200, 0).decode(errors="replace").strip() or "unknown"
+                    raise Failure(f"another forgectl (holder: {holder}) is typing into {machine.name}'s console and "
+                                  f"did not finish within {timeout:.0f} s; nothing was sent. Two runs at once would "
+                                  f"interleave their characters. Try again when it is done (lock file "
+                                  f"{path}).") from None
+                if not announced:
+                    note(f"another forgectl is typing into {machine.name}'s console; waiting up to {timeout:.0f} s "
+                         f"for it (lock file {path}) ...")
+                    announced = True
+                time.sleep(0.2)
+        os.ftruncate(descriptor, 0)
+        os.pwrite(descriptor, f"pid {os.getpid()}".encode(), 0)
+        yield
     finally:
-        detach(pid, fd)
-    return parse_reply(raw.decode(errors="replace"), line)
+        os.close(descriptor)
+
+
+def send(config: Config, machine: Machine, line: str, timeout: float = 20, settle: float = 1.5,
+         lock_timeout: float = LOCK_TIMEOUT) -> ConsoleResult:
+    """Type `line` into the machine's worldserver console and return the reply. `timeout` is for the reply;
+    `lock_timeout` for waiting on another forgectl that is using the same console."""
+    with SignalGuard() as guard, machine_lock(machine, lock_timeout):
+        pid = fd = None
+        raw = b""
+        try:
+            pid, fd = spawn(attach_argv(config, machine))
+            raw += _drain(fd, settle)  # the screen as it was when we attached, and the connection's own noise
+            if not remote_failed(raw):
+                os.write(fd, (line + "\n").encode())
+                typed = b""
+
+                def finished(chunk: bytes) -> bool:
+                    return parse_reply((typed + chunk).decode(errors="replace"), line).prompt_seen
+
+                deadline = time.monotonic() + timeout
+                while time.monotonic() < deadline:
+                    more = _drain(fd, min(1.0, deadline - time.monotonic()), until=None)
+                    if not more:
+                        if not alive(pid):
+                            break
+                        continue
+                    typed += more
+                    if finished(b""):
+                        typed += _drain(fd, 0.4)  # the prompt can arrive a line before the last of the reply
+                        break
+                raw += typed
+            guard.shielded = True   # from here a signal waits for the detach to finish (see SignalGuard)
+        finally:
+            if pid is not None:
+                guard.shielded = True
+                detach(pid, fd)
+        return parse_reply(raw.decode(errors="replace"), line)
 
 
 def remote_failed(raw: bytes) -> bool:

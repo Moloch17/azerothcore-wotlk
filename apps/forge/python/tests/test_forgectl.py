@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import re
 import stat
 import sys
 import textwrap
@@ -17,7 +18,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from forgectl import (  # noqa: E402
-    __main__ as cli, cluster, config as config_module, confsync, console, deploy, logs, remote, stage, testcmd, ui,
+    __main__ as cli, audit, cluster, config as config_module, confsync, console, deploy, logs, remote, stage, testcmd, ui,
     videos)
 from forgectl.config import ConfigError  # noqa: E402
 from forgectl.remote import Result  # noqa: E402
@@ -59,6 +60,21 @@ def fake(monkeypatch):
     executor = FakeExec()
     monkeypatch.setattr(remote, "execute", executor)
     return executor
+
+
+@pytest.fixture(autouse=True)
+def forgectl_home(tmp_path, monkeypatch):
+    """The audit log and the console locks go to a temporary home, never the real ~/.forgectl; and a console that
+    is not a test's own fake is never really attached."""
+    home = tmp_path / "forgectl-home"
+    monkeypatch.setenv("FORGECTL_HOME", str(home))
+    real_spawn = console.spawn
+
+    def guarded(argv):
+        assert argv[0] not in ("ssh", "docker"), f"a test tried to attach a real console: {argv}"
+        return real_spawn(argv)
+    monkeypatch.setattr(console, "spawn", guarded)
+    return home
 
 
 # ---- config ----------------------------------------------------------------------------------------------------------
@@ -241,6 +257,7 @@ tty.setraw(sys.stdin.fileno())
 out = sys.stdout
 def w(s):
     out.write(s); out.flush()
+open(marker + ".up", "w").write("up")
 w("\x1b[0m\x1b[36mPress refused: class 1 noise before we typed\r\n")
 buf = b""
 eof = False
@@ -256,7 +273,9 @@ while True:
     while b"\n" in buf:
         line, _, buf = buf.partition(b"\n")
         line = line.decode()
-        if mode == "silent":
+        if mode == "hang":
+            open(marker + ".typed", "w").write(line)
+        if mode in ("silent", "hang"):
             continue
         w(line + "\r\n")
         w("\x1b[?2004l\r\x1b[?2004h")
@@ -351,6 +370,7 @@ class FakeConsole:
 def sent(monkeypatch):
     recorder = FakeConsole()
     monkeypatch.setattr(console, "send", recorder)
+    monkeypatch.setattr(stage, "existing_run", lambda config, name: stage.ExistingRun(name, False))
     return recorder
 
 
@@ -527,7 +547,7 @@ class ConfStore:
             self.backups.append((address, [l for l in script.splitlines() if l.startswith("cp -p")][0]))
             self.writes.append(address)
             self.texts[address] = body
-            return Result(0)
+            return Result(0, "FORGECTL_WRITE=mv\n")
         return Result(0)
 
 
@@ -572,7 +592,7 @@ def test_sync_fails_when_the_verification_still_differs(cfg, fake, capsys):
 
     def lossy(argv, input):  # the write "succeeds" but the file does not change
         if "cat >" in (input or ""):
-            return Result(0)
+            return Result(0, "FORGECTL_WRITE=mv\n")
         return original(argv, input)
     fake.rules.insert(0, (lambda argv, input: True, lossy))
     assert confsync.run(cfg, check_only=False, yes=True) == 1
@@ -629,6 +649,7 @@ def deployable(cfg, fake, monkeypatch):
         git_calls.append(args)
         return {"rev-parse --abbrev-ref HEAD": "forge", "rev-parse HEAD": SHA}.get(" ".join(args), "")
     monkeypatch.setattr(deploy, "local_git", local_git)
+    monkeypatch.setattr(console, "send", FakeConsole(replies={"forge status": ["Animus Forge is idle"]}))
     return git_calls
 
 
@@ -639,7 +660,8 @@ def test_cluster_build_pushes_pulls_everywhere_and_reports_each_machine(cfg, fak
     assert sorted(cluster_fake.pulled) == ["192.168.0.117", "192.168.0.66", "192.168.0.67", "192.168.0.68"]
     assert cluster_fake.polls["192.168.0.66"] == 3  # waited for the slow one
     out = capsys.readouterr().out
-    assert out.count("ready") >= 4 and "All 4 machines are ready" in out and "stops any stage" in out
+    assert out.count("ready") >= 4 and "All 4 machines are ready" in out
+    assert "every worldserver restarts: no stage is running now" in out
 
 
 def test_a_machine_that_never_gets_ready_is_reported_and_fails_the_build(cfg, fake, deployable, monkeypatch, capsys):
@@ -941,3 +963,664 @@ def test_the_root_shim_runs_the_package():
     shim = Path(__file__).resolve().parents[4] / "forgectl"
     done = remote.execute([sys.executable, str(shim), "--help"], timeout=30)
     assert done.ok and "forgectl operates the forge training cluster" in done.out
+
+
+# ---- the audit log ---------------------------------------------------------------------------------------------------
+
+def audit_lines(home):
+    path = home / "audit.log"
+    return path.read_text().splitlines() if path.exists() else []
+
+
+@pytest.fixture
+def cli_cfg(monkeypatch):
+    real = config_module.load
+    monkeypatch.setattr(cli.config_module, "load", lambda path=None: real(CLUSTER_TOML))
+
+
+def test_a_state_changing_command_leaves_one_audit_line_with_who_what_where_and_how(cli_cfg, sent, forgectl_home):
+    assert cli.main(["stage", "cancel", "--yes"]) == 0
+    (line,) = audit_lines(forgectl_home)
+    assert f"user={audit.username()}" in line and "machines=sarah,spencer,thomas,moloch" in line
+    assert "confirm=--yes" in line and "outcome=done" in line and 'cmd="forgectl stage cancel --yes"' in line
+    assert re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d{4} ", line)
+    assert oct((forgectl_home / "audit.log").stat().st_mode & 0o777) == "0o600"
+
+
+def test_a_person_confirming_a_declined_and_a_failed_command_are_told_apart(cli_cfg, monkeypatch, forgectl_home):
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    recorder = FakeConsole()
+    monkeypatch.setattr(console, "send", recorder)
+    monkeypatch.setattr(ui, "ask", lambda prompt: "y")
+    assert cli.main(["stage", "resume", "move2_seek"]) == 0
+    monkeypatch.setattr(ui, "ask", lambda prompt: "n")
+    assert cli.main(["stage", "resume", "move2_seek"]) == 1
+    monkeypatch.setattr(console, "send", FakeConsole(fail_on=("sarah",)))
+    assert cli.main(["stage", "resume", "move2_seek", "--yes"]) == 1
+    done, declined, failed = audit_lines(forgectl_home)
+    assert "confirm=prompt outcome=done" in done and "machines=sarah" in done
+    assert "confirm=declined outcome=declined" in declined and "machines=-" in declined
+    assert "confirm=--yes outcome=failed" in failed
+
+
+def test_no_terminal_and_no_yes_is_logged_as_declined(cli_cfg, sent, monkeypatch, forgectl_home):
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    assert cli.main(["stage", "resume", "move2_seek"]) == 1
+    assert "outcome=declined" in audit_lines(forgectl_home)[0]
+
+
+def test_read_only_commands_are_not_logged(cli_cfg, sent, fake, monkeypatch, forgectl_home):
+    monkeypatch.setattr(cluster, "run", lambda config, include_out=False: 0)
+    monkeypatch.setattr(stage, "status", lambda config: 0)
+    monkeypatch.setattr(confsync, "run", lambda config, check, yes: 0)
+    monkeypatch.setattr(videos, "run", lambda *a, **k: 0)
+    for argv in (["cluster"], ["status"], ["stage", "status"], ["logs"], ["conf-sync", "--check"],
+                 ["videos", "move2_seek", "--check"], ["videos", "move2_seek", "--dry-run"]):
+        monkeypatch.setattr(logs, "run", lambda *a, **k: 0)
+        assert cli.main(argv) == 0, argv
+    assert not (forgectl_home / "audit.log").exists()
+    for argv in (["conf-sync"], ["videos", "move2_seek", "--yes"]):
+        cli.main(argv)
+    assert len(audit_lines(forgectl_home)) == 2
+
+
+def test_an_unwritable_audit_log_refuses_the_command_before_anything_is_sent(cli_cfg, sent, monkeypatch, tmp_path,
+                                                                             capsys):
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("x")
+    monkeypatch.setenv("FORGECTL_HOME", str(blocker / "home"))
+    assert cli.main(["stage", "cancel", "--yes"]) == 1
+    assert sent.sent == [] and "audit log" in capsys.readouterr().err
+
+
+def test_an_exception_still_leaves_a_failed_line(cli_cfg, monkeypatch, forgectl_home):
+    monkeypatch.setattr(stage, "run", lambda *a, **k: (_ for _ in ()).throw(SystemExit(143)))
+    with pytest.raises(SystemExit):
+        cli.main(["stage", "cancel", "--yes"])
+    assert "outcome=failed" in audit_lines(forgectl_home)[0] and "SystemExit" in audit_lines(forgectl_home)[0]
+
+
+def test_two_runs_append_and_keep_both_lines(cli_cfg, sent, forgectl_home):
+    cli.main(["stage", "pause", "--yes"])
+    cli.main(["stage", "cancel", "--yes"])
+    assert [l.split('cmd="')[1].split('"')[0] for l in audit_lines(forgectl_home)] == [
+        "forgectl stage pause --yes", "forgectl stage cancel --yes"]
+
+
+# ---- build --cluster under a running stage ---------------------------------------------------------------------------
+
+RUNNING = ["Forge: move2_seek | training"]
+IDLE = ["Animus Forge is idle"]
+
+
+@pytest.fixture
+def host_console(monkeypatch):
+    """The host's console as the build sees it; replies["forge status"] is what decides running or idle."""
+    recorder = FakeConsole(replies={"forge status": RUNNING})
+    monkeypatch.setattr(console, "send", recorder)
+    return recorder
+
+
+@pytest.fixture
+def plan_end(monkeypatch):
+    """wait_for_log answers 'Plan ended' and remembers what it was asked."""
+    seen = []
+    monkeypatch.setattr(deploy, "wait_for_log", lambda config, machine, pattern, seconds, since=None:
+                        seen.append((machine.name, pattern)) or "Plan ended: cancelled")
+    return seen
+
+
+def test_a_running_stage_makes_the_cluster_build_refuse_even_with_yes(cfg, fake, deployable, host_console, capsys):
+    cluster_fake = FakeCluster(fake)
+    with pytest.raises(ui.Failure, match="a stage is running.*stage cancel.*--stop-running"):
+        deploy.build(cfg, cluster=True, yes=True, timeout_minutes=5)
+    assert cluster_fake.pulled == [] and ("push", "lan", "forge") not in deployable
+    assert [line for _, line in host_console.sent] == ["forge status"]  # nothing but the read-only status
+
+
+def test_stop_running_cancels_everywhere_waits_for_plan_ended_then_builds(cfg, fake, deployable, host_console,
+                                                                          monkeypatch, capsys):
+    cluster_fake = FakeCluster(fake)
+    ended = []
+    monkeypatch.setattr(deploy, "wait_for_log", lambda config, machine, pattern, seconds, since=None:
+                        ended.append((machine.name, pattern, list(cluster_fake.pulled), len(host_console.sent)))
+                        or "Plan ended: cancelled")
+    assert deploy.build(cfg, cluster=True, yes=True, timeout_minutes=5, stop_running=True) == 0
+    cancels = [name for name, line in host_console.sent if line == "forge cancel"]
+    assert cancels == ["sarah", "spencer", "thomas", "moloch"]
+    assert ended == [("sarah", "Plan ended", [], 5)]  # 1 status + 4 cancels were sent, and nothing was pulled yet
+    assert len(cluster_fake.pulled) == 4
+    out = capsys.readouterr().out
+    assert "--stop-running: cancel the running stage" in out and "wait for 'Plan ended' on sarah" in out
+
+
+def test_stop_running_does_nothing_extra_on_an_idle_host(cfg, fake, deployable, host_console, plan_end):
+    host_console.replies["forge status"] = IDLE
+    FakeCluster(fake)
+    assert deploy.build(cfg, cluster=True, yes=True, timeout_minutes=5, stop_running=True) == 0
+    assert not any(line == "forge cancel" for _, line in host_console.sent) and plan_end == []
+
+
+def test_a_cancel_that_does_not_reach_everyone_builds_nothing(cfg, fake, deployable, plan_end, monkeypatch):
+    monkeypatch.setattr(console, "send", FakeConsole(replies={"forge status": RUNNING}, fail_on=("thomas",)))
+    cluster_fake = FakeCluster(fake)
+    with pytest.raises(ui.Failure, match="cancel was not accepted everywhere"):
+        deploy.build(cfg, cluster=True, yes=True, timeout_minutes=5, stop_running=True)
+    assert cluster_fake.pulled == [] and ("push", "lan", "forge") not in deployable
+
+
+def test_a_console_that_does_not_answer_is_not_taken_for_an_idle_host(cfg, fake, deployable, monkeypatch):
+    monkeypatch.setattr(console, "send", FakeConsole(fail_on=("sarah",)))
+    cluster_fake = FakeCluster(fake)
+    fake.rules.insert(0, (lambda argv, input: "docker ps" in (input or ""), Result(0, "abc123\n")))  # it is up
+    with pytest.raises(ui.Failure, match="cannot tell whether a stage is running"):
+        deploy.build(cfg, cluster=True, yes=True, timeout_minutes=5)
+    assert cluster_fake.pulled == []
+
+
+def test_a_host_whose_worldserver_is_down_can_be_rebuilt(cfg, fake, deployable, monkeypatch):
+    monkeypatch.setattr(console, "send", FakeConsole(fail_on=("sarah",)))
+    cluster_fake = FakeCluster(fake)  # answers the docker ps with nothing: no container is running
+    assert deploy.build(cfg, cluster=True, yes=True, timeout_minutes=5) == 0
+    assert len(cluster_fake.pulled) == 4
+
+
+def test_the_cli_passes_stop_running_and_logs_the_cancel(cfg, fake, deployable, host_console, plan_end, forgectl_home,
+                                                         monkeypatch):
+    real = config_module.load
+    monkeypatch.setattr(cli.config_module, "load", lambda path=None: real(CLUSTER_TOML))
+    FakeCluster(fake)
+    assert cli.main(["build", "--cluster", "--yes"]) == 1
+    assert cli.main(["build", "--cluster", "--yes", "--stop-running"]) == 0
+    refused, done = audit_lines(forgectl_home)
+    assert "outcome=failed" in refused and "confirm=not-reached" in refused and "a stage is running" in refused
+    assert "outcome=done" in done and "stopped the running stage first" in done
+
+
+# ---- stage start shows what it archives ------------------------------------------------------------------------------
+
+def run_at(steps, exists=True, why=""):
+    return lambda config, name: stage.ExistingRun(name, exists, steps, why)
+
+
+def test_start_plan_names_the_run_it_archives_with_its_step_count(cfg, sent, monkeypatch, capsys):
+    monkeypatch.setattr(stage, "existing_run", run_at(178_000_000))
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(ui, "ask", lambda prompt: "y")
+    assert stage.run(cfg, "start", ["move2_seek"], yes=False) == 0  # a person at the prompt needs no flag
+    assert "move2_seek has a run at 178M steps; start archives it" in capsys.readouterr().out
+
+
+def test_yes_will_not_archive_a_big_run_without_archive_ok_and_says_what_it_would_have_archived(
+        cfg, sent, monkeypatch, capsys, forgectl_home):
+    real = config_module.load
+    monkeypatch.setattr(cli.config_module, "load", lambda path=None: real(CLUSTER_TOML))
+    monkeypatch.setattr(stage, "existing_run", run_at(178_000_000))
+    assert cli.main(["stage", "start", "move2_seek", "--yes"]) == 1
+    captured = capsys.readouterr()
+    assert "move2_seek has a run at 178M steps; start archives it" in captured.out
+    assert "--archive-ok" in captured.err and sent.sent == []
+    (line,) = audit_lines(forgectl_home)
+    assert "outcome=failed" in line and "move2_seek has a run at 178M steps; start archives it" in line
+
+
+def test_yes_with_archive_ok_archives_and_the_line_is_in_output_and_audit_log(cfg, sent, monkeypatch, capsys,
+                                                                             forgectl_home):
+    real = config_module.load
+    monkeypatch.setattr(cli.config_module, "load", lambda path=None: real(CLUSTER_TOML))
+    monkeypatch.setattr(stage, "existing_run", run_at(178_000_000))
+    assert cli.main(["stage", "start", "move2_seek", "--yes", "--archive-ok"]) == 0
+    assert "move2_seek has a run at 178M steps; start archives it" in capsys.readouterr().out
+    (line,) = audit_lines(forgectl_home)
+    assert "outcome=done" in line and "confirm=--yes" in line and "178M steps; start archives it" in line
+    assert sent.sent == [("sarah", "forge start move2_seek")]
+
+
+@pytest.mark.parametrize("steps,needs_flag", [(0, False), (999_999, False), (1_000_000, False), (1_000_001, True),
+                                              (None, True)])
+def test_the_threshold_is_more_than_one_million_steps_and_an_unreadable_count_counts_as_big(cfg, sent, monkeypatch,
+                                                                                         steps, needs_flag):
+    monkeypatch.setattr(stage, "existing_run", run_at(steps, why="no env_steps in its metrics.csv"))
+    if needs_flag:
+        with pytest.raises(ui.Failure, match="--archive-ok"):
+            stage.run(cfg, "start", ["move2_seek"], yes=True)
+        assert sent.sent == []
+    else:
+        assert stage.run(cfg, "start", ["move2_seek"], yes=True) == 0
+
+
+def test_no_run_to_archive_needs_no_flag_and_resume_never_looks(cfg, sent, monkeypatch, capsys):
+    monkeypatch.setattr(stage, "existing_run", run_at(None, exists=False))
+    assert stage.run(cfg, "start", ["move2_seek"], yes=True) == 0
+    assert "has no run on sarah; nothing is archived" in capsys.readouterr().out
+    monkeypatch.setattr(stage, "existing_run", lambda config, name: pytest.fail("resume reads no run"))
+    assert stage.run(cfg, "resume", ["move2_seek"], yes=True) == 0
+
+
+def test_an_unreadable_runs_directory_is_treated_as_possibly_big(cfg, fake, monkeypatch):
+    monkeypatch.setattr(console, "send", FakeConsole())
+    fake.when(lambda argv, input: True, Result(255, "", "ssh: No route to host"))
+    with pytest.raises(ui.Failure, match="could not be read"):
+        stage.run(cfg, "start", ["move2_seek"], yes=True)
+
+
+def test_existing_run_reads_the_hosts_runs_directory(cfg, fake):
+    fake.when(on_target("192.168.0.68", "metrics.csv"), Result(0, "exists=1\nsteps=177946624\n"))
+    run = stage.existing_run(cfg, "move2_seek")
+    assert (run.exists, run.steps) == (True, 177_946_624)
+    script = fake.calls[0][1]
+    assert '"$HOME"/animus-forge/var/animus-forge/shared/runs/move2_seek' in script
+    fake.rules.clear()
+    fake.when(lambda argv, input: True, Result(0, "exists=0\n"))
+    assert stage.existing_run(cfg, "move2_seek").exists is False
+    fake.rules.clear()
+    fake.when(lambda argv, input: True, Result(0, "exists=1\nsteps=\n"))
+    assert stage.existing_run(cfg, "move2_seek").steps is None
+
+
+def test_the_run_script_reads_env_steps_by_column_name_on_a_real_shell(tmp_path):
+    runs = tmp_path / "runs"
+    (runs / "full").mkdir(parents=True)
+    (runs / "full" / "metrics.csv").write_text("update,reward,env_steps,x\n1,0.1,100,1\n2,0.2,178000000,2\n")
+    (runs / "headeronly").mkdir()
+    (runs / "headeronly" / "metrics.csv").write_text("update,env_steps\n")
+    (runs / "empty").mkdir()
+    (runs / "nometrics").mkdir()
+    (runs / "nometrics" / "latest.pt").write_text("x")
+
+    def info(name):
+        done = remote.execute(["bash", "-s"], input=stage.run_info_script(str(runs), name))
+        return dict(line.split("=", 1) for line in done.out.splitlines())
+    assert info("full") == {"exists": "1", "steps": "178000000"}
+    assert info("empty") == {"exists": "0"} and info("missing") == {"exists": "0"}  # nothing to archive
+    assert info("headeronly")["steps"] != "0" and not info("headeronly")["steps"].isdigit()
+    assert info("nometrics") == {"exists": "1", "steps": ""}
+
+
+# ---- signals during a console send -----------------------------------------------------------------------------------
+
+SEND_RUNNER = '''
+import sys
+sys.path.insert(0, {apps!r})
+from forgectl import config, console
+fake, marker, settle = sys.argv[1], sys.argv[2], float(sys.argv[3])
+console.attach_argv = lambda cfg, machine: [sys.executable, fake, marker, "hang"]
+cfg = config.load({toml!r})
+console.send(cfg, cfg.host, "forge status", timeout=60, settle=settle)
+print("returned")
+'''
+
+
+def start_send_runner(tmp_path, settle):
+    """A child process running console.send against the fake console (a real pty and a real attach-like client)."""
+    import subprocess
+    fake_script = tmp_path / "fake_console.py"
+    fake_script.write_text(FAKE_CONSOLE)
+    runner = tmp_path / "runner.py"
+    runner.write_text(SEND_RUNNER.format(apps=str(CLUSTER_TOML.parent), toml=str(CLUSTER_TOML)))
+    marker = tmp_path / "marker"
+    child = subprocess.Popen([sys.executable, str(runner), str(fake_script), str(marker), str(settle)],
+                             env={**os.environ, "FORGECTL_HOME": str(tmp_path / "home")}, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True)
+    return child, marker
+
+
+def wait_for(path, seconds=15):
+    deadline = time.time() + seconds
+    while not path.exists() and time.time() < deadline:
+        time.sleep(0.05)
+    assert path.exists(), f"{path.name} never appeared"
+
+
+@pytest.mark.parametrize("signum", [15, 1], ids=["SIGTERM", "SIGHUP"])
+def test_a_signal_while_waiting_for_the_reply_still_detaches_before_the_process_ends(tmp_path, signum):
+    child, marker = start_send_runner(tmp_path, settle=0.3)
+    try:
+        wait_for(tmp_path / "marker.typed")  # the line is typed and the console never answers: the send is waiting
+        child.send_signal(signum)
+        out, err = child.communicate(timeout=20)
+    finally:
+        child.kill()
+    assert child.returncode == 128 + signum and "returned" not in out
+    wait_for(marker)
+    assert marker.read_text() == "detached eof=False"  # Ctrl-P Ctrl-Q reached the console; stdin was never closed
+
+
+@pytest.mark.parametrize("signum", [15, 1], ids=["SIGTERM", "SIGHUP"])
+def test_a_signal_while_attaching_also_detaches(tmp_path, signum):
+    child, marker = start_send_runner(tmp_path, settle=30)   # still in the settle read
+    try:
+        wait_for(tmp_path / "marker.up")
+        child.send_signal(signum)
+        child.communicate(timeout=20)
+    finally:
+        child.kill()
+    assert child.returncode == 128 + signum
+    wait_for(marker)
+    assert marker.read_text() == "detached eof=False"
+
+
+def test_a_signal_during_the_detach_is_held_until_the_detach_is_done():
+    import signal
+    with pytest.raises(console.Terminated) as raised:
+        with console.SignalGuard() as guard:
+            guard.shielded = True
+            os.kill(os.getpid(), signal.SIGTERM)   # arrives "during the detach": nothing happens yet
+            assert guard.pending == signal.SIGTERM
+    assert raised.value.code == 143
+    assert signal.getsignal(signal.SIGTERM) == signal.SIG_DFL   # the previous handlers are back
+
+
+def test_the_guard_raises_once_in_the_body_and_restores_the_handlers():
+    import signal
+    before = signal.getsignal(signal.SIGHUP)
+    with pytest.raises(console.Terminated):
+        with console.SignalGuard():
+            os.kill(os.getpid(), signal.SIGHUP)
+            time.sleep(1)  # the handler runs before this returns
+    assert signal.getsignal(signal.SIGHUP) == before
+
+
+def test_a_terminated_command_still_leaves_its_audit_line(cli_cfg, monkeypatch, forgectl_home):
+    def killed(config, machine, line, timeout=20, settle=1.5):
+        raise console.Terminated(15)
+    monkeypatch.setattr(console, "send", killed)
+    with pytest.raises(SystemExit) as raised:
+        cli.main(["stage", "pause", "--yes"])
+    assert raised.value.code == 143
+    assert "outcome=failed" in audit_lines(forgectl_home)[0] and "Terminated" in audit_lines(forgectl_home)[0]
+
+
+# ---- one forgectl per console at a time ------------------------------------------------------------------------------
+
+def hold_lock(machine):
+    """Take the machine's console lock the way another forgectl run does (another open file: flock conflicts)."""
+    import fcntl
+    path = console.lock_path(machine)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(descriptor, fcntl.LOCK_EX)
+    os.pwrite(descriptor, b"pid 4242", 0)
+    return descriptor
+
+
+def test_a_second_forgectl_waits_then_gives_up_with_a_clear_message_and_sends_nothing(cfg, monkeypatch, capsys,
+                                                                                      forgectl_home):
+    monkeypatch.setattr(console, "spawn", lambda argv: pytest.fail("attached while another run held the console"))
+    holder = hold_lock(cfg.host)
+    try:
+        started = time.monotonic()
+        with pytest.raises(ui.Failure, match=r"another forgectl \(holder: pid 4242\) is typing into sarah's console"
+                                              r".*nothing was sent.*interleave"):
+            console.send(cfg, cfg.host, "forge status", lock_timeout=0.6)
+        assert 0.5 < time.monotonic() - started < 5
+    finally:
+        os.close(holder)
+    assert "waiting up to 1 s" in capsys.readouterr().out
+    assert (forgectl_home / "locks" / "sarah.lock").exists()
+
+
+def test_a_waiting_forgectl_goes_ahead_when_the_first_one_finishes(cfg, fake_console):
+    import threading
+    marker = fake_console("echo")
+    holder = hold_lock(cfg.host)
+    threading.Timer(0.7, lambda: os.close(holder)).start()
+    result = console.send(cfg, cfg.host, "forge status", timeout=10, settle=0.3, lock_timeout=10)
+    assert result.ok and result.lines[0] == "Forge: move2_seek | training"
+
+
+def test_other_machines_do_not_wait_for_each_others_lock(cfg, fake_console):
+    fake_console("echo")
+    holder = hold_lock(cfg.host)
+    try:
+        result = console.send(cfg, cfg.machine("thomas"), "forge status", timeout=10, settle=0.3, lock_timeout=0.5)
+    finally:
+        os.close(holder)
+    assert result.ok
+
+
+def test_two_sends_to_one_console_never_overlap(cfg, fake_console, monkeypatch):
+    import threading
+    fake_console("echo")
+    events, real_spawn, real_detach = [], console.spawn, console.detach
+
+    def spawn(argv):
+        events.append("attach")
+        return real_spawn(argv)
+
+    def detach(pid, fd):
+        real_detach(pid, fd)
+        events.append("detach")
+    monkeypatch.setattr(console, "spawn", spawn)
+    monkeypatch.setattr(console, "detach", detach)
+    results = []
+    threads = [threading.Thread(target=lambda: results.append(
+        console.send(cfg, cfg.host, "forge status", timeout=10, settle=0.4, lock_timeout=30))) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(30)
+    assert events == ["attach", "detach", "attach", "detach"] and all(r.ok for r in results)
+
+
+def test_a_killed_holder_releases_the_lock(cfg, fake_console, tmp_path):
+    import subprocess
+    fake_console("echo")
+    script = ("import fcntl, os, sys, time\n"
+              "fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT)\nfcntl.flock(fd, fcntl.LOCK_EX)\n"
+              "print('held', flush=True)\ntime.sleep(60)\n")
+    path = console.lock_path(cfg.host)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    child = subprocess.Popen([sys.executable, "-c", script, str(path)], stdout=subprocess.PIPE, text=True)
+    try:
+        assert child.stdout.readline().strip() == "held"
+        with pytest.raises(ui.Failure, match="another forgectl"):
+            console.send(cfg, cfg.host, "forge status", lock_timeout=0.3)
+        child.kill()
+        child.wait()
+        assert console.send(cfg, cfg.host, "forge status", timeout=10, settle=0.3, lock_timeout=5).ok
+    finally:
+        child.kill()
+
+
+def test_a_stage_command_reports_a_busy_console_as_that_machines_failure(cfg, monkeypatch, capsys):
+    def busy(config, machine, line, timeout=20, settle=1.5):
+        raise ui.Failure(f"another forgectl is typing into {machine.name}'s console")
+    monkeypatch.setattr(console, "send", busy)
+    assert stage.run(cfg, "cancel", [], yes=True) == 1
+    assert "FAILED another forgectl is typing into sarah's console" in capsys.readouterr().out
+
+
+# ---- conf writes: temporary file, then mv ----------------------------------------------------------------------------
+
+@pytest.fixture
+def conf_box(tmp_path, cfg):
+    """A conf file on this computer, a config whose sarah is local and has it as its conf, and a place for fake
+    docker/mv programs in front of the real ones."""
+    checkout = tmp_path / "checkout"
+    conf = checkout / "env/dist/etc/modules/mod_animus_forge.conf"
+    conf.parent.mkdir(parents=True)
+    conf.write_text("old line\n")
+    conf.chmod(0o640)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    machine = dataclasses.replace(cfg.host, path=str(checkout), local=True)
+    return types_namespace(conf=conf, bin=bin_dir, machine=machine, dir=conf.parent)
+
+
+def types_namespace(**kwargs):
+    import types
+    return types.SimpleNamespace(**kwargs)
+
+
+def run_write(cfg, box, text, stamp="20261007-120000"):
+    script = confsync.write_script(cfg, box.machine, text, stamp)
+    env = {**os.environ, "PATH": f"{box.bin}:{os.environ['PATH']}"}
+    import subprocess
+    return subprocess.run(["bash", "-s"], input=script, capture_output=True, text=True, env=env)
+
+
+def fake_program(box, name, body):
+    path = box.bin / name
+    path.write_text("#!/bin/bash\n" + body + "\n")
+    path.chmod(0o755)
+
+
+def test_the_conf_is_written_to_a_temporary_file_and_moved_into_place(cfg, conf_box):
+    inode_before = conf_box.conf.stat().st_ino
+    done = run_write(cfg, conf_box, "new line\nsecond\n")
+    assert done.returncode == 0 and done.stdout.strip().splitlines()[-1] == "FORGECTL_WRITE=mv"
+    assert conf_box.conf.read_text() == "new line\nsecond\n"
+    assert conf_box.conf.stat().st_ino != inode_before            # a rename, not a rewrite of the live file
+    assert oct(conf_box.conf.stat().st_mode & 0o777) == "0o640"    # the mode survived
+    assert (conf_box.dir / "mod_animus_forge.conf.bak-20261007-120000").read_text() == "old line\n"
+    assert [p.name for p in conf_box.dir.iterdir() if "forgectl-new" in p.name] == []  # no temporary file left
+
+
+def test_the_live_conf_is_never_opened_for_writing_before_the_rename(cfg, conf_box):
+    # the connection drops after the temporary file is written and before the rename: the live conf is the old one
+    script = confsync.write_script(cfg, conf_box.machine, "new line\n", "s1")
+    before_mv = script.split('if [ "$how" = mv ] && ! mv')[0] + "exit 0\n"   # everything up to the rename
+    import subprocess
+    subprocess.run(["bash", "-s"], input=before_mv, capture_output=True, text=True)
+    assert conf_box.conf.read_text() == "old line\n"
+    assert any("forgectl-new" in p.name and p.read_text() == "new line\n" for p in conf_box.dir.iterdir())
+
+
+def test_a_temporary_file_that_does_not_hold_the_new_text_is_never_moved_in(cfg, conf_box):
+    script = confsync.write_script(cfg, conf_box.machine, "new line\n", "s1")
+    tampered = script.replace(confsync.hashlib.sha256(b"new line\n").hexdigest(), "0" * 64)
+    import subprocess
+    done = subprocess.run(["bash", "-s"], input=tampered, capture_output=True, text=True)
+    assert done.returncode == 3 and "was not touched" in done.stderr
+    assert conf_box.conf.read_text() == "old line\n"
+    assert [p.name for p in conf_box.dir.iterdir() if "forgectl-new" in p.name] == []
+
+
+def test_a_failing_mv_falls_back_to_writing_in_place_after_the_temporary_file_was_checked(cfg, conf_box, capsys):
+    fake_program(conf_box, "mv", "echo 'mv: Device or resource busy' >&2; exit 1")
+    inode_before = conf_box.conf.stat().st_ino
+    done = run_write(cfg, conf_box, "new line\n")
+    assert done.returncode == 0 and "FORGECTL_WRITE=in-place-mv-failed" in done.stdout
+    assert conf_box.conf.read_text() == "new line\n" and conf_box.conf.stat().st_ino == inode_before
+    assert [p.name for p in conf_box.dir.iterdir() if "forgectl-new" in p.name] == []
+
+
+def test_a_bind_mounted_conf_file_is_written_in_place_so_the_container_sees_it(cfg, conf_box):
+    fake_program(conf_box, "docker", f'echo "{conf_box.conf.resolve()}"')   # `docker inspect` lists the mounted file
+    fake_program(conf_box, "mv", "echo 'mv must not be used' >&2; exit 9")
+    inode_before = conf_box.conf.stat().st_ino
+    done = run_write(cfg, conf_box, "new line\n")
+    assert done.returncode == 0 and "FORGECTL_WRITE=in-place-bind" in done.stdout
+    assert conf_box.conf.read_text() == "new line\n" and conf_box.conf.stat().st_ino == inode_before
+
+
+def test_a_directory_mount_is_not_mistaken_for_a_file_mount(cfg, conf_box):
+    fake_program(conf_box, "docker", f'echo "{conf_box.dir.parent}"')
+    assert "FORGECTL_WRITE=mv" in run_write(cfg, conf_box, "new line\n").stdout
+
+
+def test_the_output_says_when_the_write_was_in_place(cfg, fake, capsys):
+    for how, words in (("in-place-mv-failed", "mv over the conf failed"), ("in-place-bind", "bind-mounted file"),
+                       ("mv", "")):
+        fake.rules.clear()
+        fake.when(lambda argv, input: True, Result(0, f"FORGECTL_WRITE={how}\n"))
+        confsync.upload(cfg, cfg.machine("spencer"), "x\n", "s1")
+        out = capsys.readouterr().out
+        assert (words in out) if words else out == ""
+        if words:
+            assert "wrote it in place" in out and "spencer" in out
+
+
+def test_a_write_that_does_not_report_or_fails_is_an_error_that_says_the_conf_is_as_it_was(cfg, fake):
+    fake.when(lambda argv, input: True, Result(0, "no marker\n"))
+    with pytest.raises(ui.Failure, match="did not report how it went"):
+        confsync.upload(cfg, cfg.machine("spencer"), "x\n", "s1")
+    fake.rules.clear()
+    fake.when(lambda argv, input: True, Result(3, "", "the temporary file does not hold the new conf"))
+    with pytest.raises(ui.Failure, match="the conf is as it was"):
+        confsync.upload(cfg, cfg.machine("spencer"), "x\n", "s1")
+
+
+def test_the_conf_text_cannot_carry_the_heredoc_marker(cfg):
+    with pytest.raises(ui.Failure, match="heredoc marker"):
+        confsync.write_script(cfg, cfg.machine("spencer"), "a\nFORGECTL_CONF_EOF\n", "s1")
+
+
+# ---- move-host stopping part-way: the mixed-state report -------------------------------------------------------------
+
+def test_a_stop_after_the_confs_were_rewritten_says_mixed_state_and_gives_each_restore_command(moves, monkeypatch,
+                                                                                               capsys):
+    cfg, steps, toml = moves
+    monkeypatch.setattr(deploy, "build", lambda config, **kw: 1)
+    assert deploy.move_host(cfg, "thomas", "move2_seek", yes=True, timeout_minutes=5) == 1
+    out = capsys.readouterr().out
+    assert "STOPPED" in out and "THE CLUSTER IS IN A MIXED STATE" in out
+    assert "still hold the roles they started with (the host is sarah)" in out and "Do not resume" in out
+    stamp = re.search(r"mod_animus_forge\.conf\.bak-(\d{8}-\d{6})", out).group(1)
+    conf = "env/dist/etc/modules/mod_animus_forge.conf"
+    for name, address in (("sarah", "192.168.0.68"), ("spencer", "192.168.0.66"), ("thomas", "192.168.0.67"),
+                          ("moloch", "192.168.0.117")):
+        assert f"  {name}: ~/animus-forge/{conf}.bak-{stamp}" in out
+        user = name
+        assert (f"      restore: ssh {user}@{address} 'cp -p \"$HOME\"/animus-forge/{conf}.bak-{stamp} "
+                f"\"$HOME\"/animus-forge/{conf}'") in out
+    assert 'host = "sarah"' in toml.read_text()
+
+
+def test_a_conf_write_that_fails_part_way_lists_only_the_machines_it_reached(moves, monkeypatch, capsys):
+    cfg, steps, toml = moves
+    calls = []
+
+    def rewrite(config, machine, transform, stamp):
+        calls.append(machine.name)
+        if machine.name == "thomas":
+            raise ui.Failure("thomas: writing the conf failed (unreachable)")
+        return "backup"
+    monkeypatch.setattr(deploy.confsync, "rewrite", rewrite)
+    assert deploy.move_host(cfg, "moloch", None, yes=True, timeout_minutes=5) == 1
+    out = capsys.readouterr().out
+    assert calls == ["sarah", "spencer", "thomas"]
+    assert "MIXED STATE" in out and "The confs of 3 machine(s)" in out
+    assert "  sarah:" in out and "  thomas:" in out and "  moloch:" not in out
+    assert "may have no backup" in out
+
+
+def test_a_stop_before_any_conf_was_touched_is_not_called_a_mixed_state(moves, monkeypatch, capsys):
+    cfg, steps, toml = moves
+    monkeypatch.setattr(deploy, "copy_run", lambda config, old, new, stage: (_ for _ in ()).throw(
+        ui.Failure("copying runs/move2_seek failed")))
+    assert deploy.move_host(cfg, "thomas", "move2_seek", yes=True, timeout_minutes=5) == 1
+    out = capsys.readouterr().out
+    assert "STOPPED" in out and "MIXED STATE" not in out and "restore:" not in out
+
+
+def test_the_restore_command_really_restores_the_conf(cfg, tmp_path):
+    home = tmp_path / "home"
+    conf = home / "animus-forge/env/dist/etc/modules/mod_animus_forge.conf"
+    conf.parent.mkdir(parents=True)
+    conf.write_text("rewritten\n")
+    (conf.parent / "mod_animus_forge.conf.bak-20261007-120000").write_text("original\n")
+    import shlex
+    machine = cfg.machine("spencer")
+    words = shlex.split(confsync.restore_command(cfg, machine, "20261007-120000"))
+    assert words[:2] == ["ssh", "spencer@192.168.0.66"] and len(words) == 3  # the remote command is one argument
+    import subprocess
+    subprocess.run(["bash", "-c", words[2]], env={**os.environ, "HOME": str(home)}, check=True)
+    assert conf.read_text() == "original\n"
+    local = dataclasses.replace(machine, local=True)
+    conf.write_text("rewritten again\n")
+    assert not confsync.restore_command(cfg, local, "20261007-120000").startswith("ssh")
+    subprocess.run(["bash", "-c", confsync.restore_command(cfg, local, "20261007-120000")],
+                   env={**os.environ, "HOME": str(home)}, check=True)
+    assert conf.read_text() == "original\n"
+
+
+def test_the_audit_line_of_a_stopped_move_says_it_was_mixed(moves, monkeypatch, forgectl_home):
+    cfg, steps, toml = moves
+    monkeypatch.setattr(deploy, "build", lambda config, **kw: 1)
+    monkeypatch.setattr(cli.config_module, "load", lambda path=None: cfg)
+    assert cli.main(["cluster", "move-host", "thomas", "move2_seek", "--yes"]) == 1
+    (line,) = audit_lines(forgectl_home)
+    assert "outcome=failed" in line and "stopped in a mixed state" in line
+    assert "machines=sarah,spencer,thomas,moloch" in line

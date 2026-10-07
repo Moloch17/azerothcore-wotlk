@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import cluster, config as config_module, confsync, deploy, logs, stage, testcmd, videos
+from . import audit, cluster, config as config_module, confsync, deploy, logs, stage, testcmd, videos
 from .config import ConfigError
 from .ui import Failure, say
 
@@ -55,6 +55,9 @@ def parser() -> argparse.ArgumentParser:
     sg.add_argument("stages", nargs="*", metavar="stage", help="stage name(s); start needs one; pause and cancel take "
                                                               "none (they act on the whole plan)")
     sg.add_argument("--yes", action="store_true", help="do not ask")
+    sg.add_argument("--archive-ok", action="store_true",
+                    help="start: with --yes, allow archiving an existing run of more than 1M steps (or one whose "
+                         "size cannot be read); without --yes the prompt shows the run and you answer it")
 
     lg = add("logs", "the worldserver and learner logs of a machine, errors and warnings first",
              "forgectl logs thomas --errors")
@@ -68,6 +71,9 @@ def parser() -> argparse.ArgumentParser:
     bd.add_argument("--cluster", action="store_true", help="push to the lan remote, then cluster-pull on every "
                                                           "machine in the cluster, and wait for each to be ready")
     bd.add_argument("--yes", action="store_true", help="do not ask")
+    bd.add_argument("--stop-running", action="store_true",
+                    help="with --cluster: if a stage is running, cancel it on every machine (it saves latest.pt), "
+                         "wait for 'Plan ended', then build; without this a running stage makes the build refuse")
     bd.add_argument("--timeout", type=float, default=60, help="minutes to wait for each machine (default 60)")
 
     cs = add("conf-sync", "copy the host's AnimusForge.Curriculum.* keys to every worker's conf (with backups)",
@@ -101,11 +107,12 @@ def dispatch(args, config) -> int:
     if args.command == "status":
         return stage.status(config)
     if args.command == "stage":
-        return stage.run(config, args.action, args.stages, getattr(args, "yes", False))
+        return stage.run(config, args.action, args.stages, getattr(args, "yes", False),
+                          getattr(args, "archive_ok", False))
     if args.command == "logs":
         return logs.run(config, args.machine, args.errors, args.lines, args.wide)
     if args.command == "build":
-        return deploy.build(config, args.cluster, args.yes, args.timeout)
+        return deploy.build(config, args.cluster, args.yes, args.timeout, stop_running=args.stop_running)
     if args.command == "conf-sync":
         return confsync.run(config, args.check, args.yes)
     if args.command == "test":
@@ -115,21 +122,46 @@ def dispatch(args, config) -> int:
     raise Failure(f"unknown command {args.command}")
 
 
+def changes_state(args) -> bool:
+    """Whether the command can change something (and so is audited): not the read-only ones."""
+    if args.command == "stage":
+        return args.action != "status"
+    if args.command == "build":
+        return True
+    if args.command == "conf-sync":
+        return not args.check
+    if args.command == "cluster":
+        return getattr(args, "cluster_command", None) == "move-host"
+    if args.command == "videos":
+        return not (args.check or args.dry_run)
+    return False
+
+
 def main(argv: list[str] | None = None) -> int:
     main_parser = parser()
     args = main_parser.parse_args(argv)
     if not args.command:
         main_parser.print_help()
         return 2
+    entry, outcome = None, "failed"
     try:
+        if changes_state(args):
+            entry = audit.begin(sys.argv[1:] if argv is None else argv)
         config = config_module.load(args.config)
-        return dispatch(args, config)
-    except (ConfigError, Failure) as problem:
+        code = dispatch(args, config)
+        outcome = "declined" if entry and entry.confirmation == "declined" else "done" if code == 0 else "failed"
+        return code
+    except (ConfigError, Failure, audit.AuditError) as problem:
         print(f"forgectl: error: {problem}", file=sys.stderr)
+        if entry:
+            entry.notes.append(str(problem)[:300])
         return 1
     except KeyboardInterrupt:
         print("forgectl: interrupted", file=sys.stderr)
         return 130
+    finally:
+        if entry:
+            audit.finish(entry, outcome)
 
 
 if __name__ == "__main__":

@@ -16,6 +16,10 @@ that changes a machine (a console command, a build, a conf write) prints a plan 
 never a password (`ssh -o BatchMode=yes`), and a machine that does not answer in time is reported, never waited on
 forever.
 
+**`--yes` is for the human operator's own scripts. An automated assistant that uses it is subject to the permission
+system exactly as before; it must not construct a way around a refusal.** (A refusal here, such as the build under
+a running stage or `--yes` without `--archive-ok`, is the tool doing its job: it is not an obstacle to route around.)
+
 **The cluster file.** The machines, the host, the lan remote and branch, the ports, the container names and the dev
 container are in one tracked file, [`apps/forge/cluster.toml`](../../apps/forge/cluster.toml). To add a worker, add a
 `[[machine]]` block with `in_cluster = true`; to drop one (like eli), set `in_cluster = false`. `--config FILE` or
@@ -81,12 +85,20 @@ entropy and score. If the console does not answer, it prints that and still show
 ## `forgectl stage status|start|resume|pause|cancel [<stage> ...]`
 
 ```
-forgectl stage start move2_seek       fresh run (the previous run of that stage is archived)
+forgectl stage start move2_seek       fresh run (the previous run of that stage is archived; the plan shows its step count)
 forgectl stage resume move2_seek      continue from latest.pt (resume with no name: unpause, or continue where the plan stopped)
 forgectl stage pause                  freeze after the current decision
 forgectl stage cancel                 stop; the learner saves latest.pt, so a cancelled run resumes where it left off
 forgectl stage status                 same as forgectl status without the learner line
 ```
+
+**`start` shows what it archives.** A fresh start moves the stage's existing run (`runs/<stage>/`, if it holds
+anything) to `archive/`. Before it asks, forgectl reads that directory on the host (the last `env_steps` in its
+`metrics.csv`) and puts it in the plan: `move2_seek has a run at 178M steps; start archives it` (or "has no run ...;
+nothing is archived", or "could not be read" if the host or the file does not answer). The same line goes in the audit
+log. A person at the prompt sees it and answers. **`--yes` cannot be asked, so it refuses to archive a run of more
+than 1,000,000 steps (or one whose size could not be read) unless you also pass `--archive-ok`**; the refusal prints
+the line and the audit record carries it. Example: `forgectl stage start move2_seek --yes --archive-ok`.
 
 `start` and `resume` go to the host. **`pause` and `cancel` go to the host and then to every worker's console over
 ssh**, because the host's pause does not reach the workers today. The plan lists each machine before it asks. Each machine's
@@ -97,7 +109,22 @@ optional; if you give one it must be the one running (`pause` and `cancel` act o
 How the console is reached: `docker attach` in a pty (over `ssh -tt` for a worker), typing the line, reading until the
 console prompt `AC> ` comes back (with a timeout), stripping colour codes and the interleaved log lines, and leaving
 with Ctrl-P Ctrl-Q. It never closes the console's input (end-of-file would shut the server down) and attaches with
-`--sig-proxy=false` so a signal to the client cannot reach the server. See
+`--sig-proxy=false` so a signal to the client cannot reach the server.
+
+**One run per console.** Two forgectl runs typing into the same machine's console at once would interleave their
+characters. Each send holds an exclusive `flock` on `~/.forgectl/locks/<machine>.lock` (on the machine forgectl runs
+on, one lock per target machine, so different machines do not wait for each other) from before the attach until after
+the detach. A second run prints "another forgectl is typing into <machine>'s console; waiting up to 90 s", and if the
+first is still going it stops with that machine's `FAILED` line (the lock file holds the holder's pid) and sends
+nothing. The kernel releases the lock if the holder dies. The lock only covers forgectl runs on the same computer: a
+person typing in `docker attach` by hand, or forgectl on another computer, is not excluded.
+
+**Signals.** Python does not run `finally` blocks when the default SIGTERM handler ends the process, which would
+leave a `docker attach` client dangling on the worldserver's console. So during a send forgectl handles SIGTERM and
+SIGHUP itself: it raises, the `finally` sends Ctrl-P Ctrl-Q and waits for the client to leave, and only then does
+forgectl exit (status 128 + the signal number: 143 for SIGTERM, 129 for SIGHUP). A second signal during the detach
+is held back until the detach is done. SIGKILL cannot be handled: if forgectl is killed that way, look for a stray
+`docker attach` on the machine (`pgrep -a -f "docker attach"`). See
 [decision 0001](decisions/0001-control-socket.md) for the proposal to replace this.
 
 ## `forgectl logs [machine] [--errors]`
@@ -125,8 +152,17 @@ spencer  TIMED OUT    60.0 min  no 'ready' line for 012345678 within 60 min (bui
 ```
 
 A machine that fails its pull (`PULL FAILED`, with the last lines of its output), cannot be reached (`UNREACHABLE`) or
-is not ready in time (`TIMED OUT`) is named and the exit code is 1. **A build restarts every worldserver, which stops
-a training stage**: `forgectl stage cancel` first and `forgectl stage resume <stage>` afterwards. After a build, a
+is not ready in time (`TIMED OUT`) is named and the exit code is 1.
+
+**A build restarts every worldserver, which would kill a training stage without its final checkpoint save** (a
+`stage cancel` saves `latest.pt` first). So `build --cluster` first reads the host's `forge status` and **refuses if a
+stage is running, even with `--yes`**, and also if the console does not answer while the worldserver container is up
+(it cannot tell). Two ways forward: `forgectl stage cancel` yourself first, or pass **`--stop-running`**: the plan
+then starts with "cancel the running stage on every machine ... and wait for 'Plan ended'", and after you confirm it
+sends the cancel to the host and every worker (a machine that does not take it stops the build before anything is
+pushed), waits for "Plan ended" on the host, and only then pushes and builds. The audit line says the stage was
+stopped. Afterwards `forgectl stage resume <stage>` continues the run from `latest.pt`. A host whose worldserver
+container is not running at all can be rebuilt without the flag. After a build, a
 change to the curriculum keys still needs `forgectl conf-sync`; then `forgectl cluster` should show one revision.
 
 ## `forgectl conf-sync [--check]`
@@ -145,10 +181,23 @@ All workers match the host.
 
 `--check` only compares (exit 1 if any worker differs, and it lists the first differing, missing and extra keys).
 Without it, for each worker that differs it asks, then backs the conf up as `mod_animus_forge.conf.bak-<timestamp>`,
-replaces the differing values in place, appends missing keys under a comment, removes keys the host does not have,
-writes it over the same file, reads it back and checks the counts and values match. Nothing else in the worker's
+replaces the differing values, appends missing keys under a comment, removes keys the host does not have, and
+writes the result (see below), reads it back and checks the counts and values match. Nothing else in the worker's
 file is touched (its own role, threads, envs). A worker reads its conf at start: restart it (a build does) for the
 change to count. Phase 3 of the human-operable plan removes the need for this command.
+
+**How a conf is written** (here, and for the roles in `move-host`): the text goes to a temporary file in the conf's
+own directory (`mod_animus_forge.conf.forgectl-new.<pid>`, owner and mode copied from the conf), its checksum is
+compared with the text forgectl meant to write, and only then is it `mv`d over the conf. A rename is atomic, so a
+dropped ssh leaves the old conf or the new one, never a truncated one (a failed check leaves the conf untouched and
+removes the temporary file). **The conf may be a single file bind-mounted into the worldserver container** (the
+first-time checklist's inode check is about this): a rename would then give the host a new file while the container
+keeps looking at the old inode. So forgectl asks `docker inspect` whether the conf file itself is a mount, and if it is,
+or if the `mv` fails for any reason (a bind-mounted file is "busy" to a rename from inside the container's view), it
+writes the checked temporary file over the conf in place (the same inode) and **says so in the output**: `spencer: mv
+over the conf failed (bind-mounted file?): wrote it in place instead, after checking the temporary copy`. A directory
+mount is not a problem: the rename is seen. The in-place fallback is the old behaviour, so a dropped ssh in that
+moment can still truncate the conf: the timestamped backup is the way back.
 
 ## `forgectl cluster move-host <machine> [<stage>]`
 
@@ -159,6 +208,12 @@ renamed, not overwritten); (3) sets the roles and host address in every machine'
 rebuilds every machine and waits for each; (5) edits `host = ` in `apps/forge/cluster.toml`, which you then commit and
 push; (6) resumes the stage on the new host and looks for "N worker learners join this run". If a step fails it stops,
 says which steps were done and rolls nothing back; redo the rest by hand from the "underneath" section of cluster.md.
+If it stops after it began rewriting the confs (step 3 or 4) it also prints **THE CLUSTER IS IN A MIXED STATE**: the
+confs on disk may say the new roles while the running worldservers still hold the old ones and not every machine is
+rebuilt. It lists each machine's conf backup path and the exact command that restores it (`ssh user@address 'cp -p
+<backup> <conf>'`, to paste), and says how to finish (`forgectl build --cluster`, then set `host =` in cluster.toml)
+or undo (restore, then `forgectl build --cluster` so the worldservers read the restored confs). Do not resume a stage
+until it is settled. The audit line notes the mixed stop.
 Without `<stage>` no run is copied or resumed. The target must have `in_cluster = true`.
 
 ## `forgectl test [--gpu]`
@@ -188,6 +243,32 @@ Wraps `apps/forge/tools/collect-videos.sh`: each worker's `runs/<stage>/videos/`
 folder under `videos/from-<worker>/`. `--check` lists what each worker would send, `--dry-run` prints the commands.
 Run it on the host, or from another machine with `--on-host`, which runs the script on the host over ssh (the host
 then needs ssh keys to the workers).
+
+## The audit log
+
+Every command that changes something appends one line to `~/.forgectl/audit.log` on the machine it was run from
+(the directory is created, mode 0700; `$FORGECTL_HOME` moves it). Logged: `stage start|resume|pause|cancel`,
+`build`, `conf-sync` (without `--check`), `cluster move-host`, `videos` (without `--check`/`--dry-run`). Not logged:
+`cluster`, `status`, `stage status`, `logs`, `test`, and the `--check`/`--dry-run` forms.
+
+```
+2026-10-07T12:31:08+0100 user=moloch machines=sarah,spencer,thomas,moloch confirm=prompt outcome=done cmd="forgectl stage cancel"
+2026-10-07T12:40:12+0100 user=moloch machines=sarah confirm=--yes outcome=done cmd="forgectl stage start move2_seek --yes" notes="..."
+```
+
+| Field | Values |
+|---|---|
+| time | local time with the UTC offset |
+| `user` | the local user who ran forgectl |
+| `machines` | the machines the command acted on (`-` if it ended before acting: declined, refused) |
+| `confirm` | `--yes` (the flag answered), `prompt` (a person typed `y`), `declined` (a person said no, or there was no terminal and no `--yes`), `not-reached` (it failed or was refused before it asked) |
+| `outcome` | `done` (exit 0), `failed`, `declined` |
+| `cmd` | the command line, as JSON text |
+| `notes` | facts the operator was shown that matter later (the run a `stage start` archives, the error that stopped the command) |
+
+The line is written when the command ends, as one append, so two forgectl runs at once do not interleave. **The log
+is checked before a command that changes something starts: if it cannot be written, the command is refused.** A
+command killed with SIGKILL leaves no line.
 
 ## When something does not work
 
