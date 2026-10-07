@@ -17,22 +17,27 @@
  */
 
 #include "SeekEncounter.h"
+#include "BotFactory.h"
+#include "Camera.h"
 #include "EncoderSupport.h"
 #include "Env.h"
 #include "EnvPool.h"
 #include "EpisodeInfoTable.h"
 #include "GameObject.h"
 #include "Log.h"
-#include "Camera.h"
 #include "Map.h"
+#include "MapVisionWorld.h"
 #include "MarkerEncounter.h"
 #include "ModelIgnoreFlags.h"
+#include "ObjectPool.h"
 #include "Player.h"
 #include "Random.h"
 #include "SeatView.h"
 #include "SeekDraw.h"
+#include "SightDraw.h"
 #include "StageScenario.h"
 #include "StageState.h"
+#include "UnitBody.h"
 #include "UnitDefines.h"
 #include <algorithm>
 #include <cmath>
@@ -47,8 +52,10 @@ namespace
     constexpr float PROBE_DOWN = 4.0f;
     /// Knee height, where a spot's clearance is measured.
     constexpr float KNEE = 0.5f;
+    /// A hallway placement looks for the object on the seat's own storey, within this of its height.
+    constexpr float STOREY_RISE = 4.0f;
     /// The salts of an evaluation's seeded placement draws.
-    enum Salt : uint32 { SALT_TRIANGLE = 1, SALT_A, SALT_B, SALT_FACING, SALT_STRIDE = 8 };
+    enum Salt : uint32 { SALT_TRIANGLE = 1, SALT_A, SALT_B, SALT_FACING, SALT_DOOR_U, SALT_DOOR_V, SALT_STRIDE = 8 };
 
     /// A cell of floor as one key: x and y in `cell`-yard squares, z in storeys of three yards.
     uint64 CellKey(float x, float y, float z, float cell)
@@ -57,6 +64,11 @@ namespace
         uint64 const cy = uint64(uint32(int32(std::floor(y / cell)))) & 0x1FFFFF;
         uint64 const cz = uint64(uint32(int32(std::floor(z / 3.0f)))) & 0x3FFFFF;
         return cx << 43 | cy << 22 | cz;
+    }
+
+    std::array<uint32, Draw::RUNGS> RungSeconds(Animus::Curriculum::CurriculumTuning::SeekTuning const& tuning)
+    {
+        return { tuning.RungSeconds0, tuning.RungSeconds1, tuning.RungSeconds2, tuning.RungSeconds3 };
     }
 }
 
@@ -68,7 +80,7 @@ Animus::Curriculum::SeekEncounter::SeekEncounter(StageScenario& scenario, uint32
 std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::SeekEncounter::RewardTerms() const
 {
     return { RewardTerm::Arrive, RewardTerm::StepCost, RewardTerm::Death, RewardTerm::Stuck, RewardTerm::Wall,
-        RewardTerm::Sighting, RewardTerm::NewGround };
+        RewardTerm::Sighting, RewardTerm::NewGround, RewardTerm::RoomSeen };
 }
 
 std::vector<std::string> Animus::Curriculum::SeekEncounter::RoomNames(ArenaDefinition const& arena)
@@ -89,8 +101,8 @@ std::vector<std::string> Animus::Curriculum::SeekEncounter::ObjectNames(ArenaDef
 
 void Animus::Curriculum::SeekEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
 {
-    // `found` is the stage's measure: stopped beside the object before the clock ran out. The convergence, the shaping
-    // fade and the cost ladder are gated on it (configs/move2_seek.yaml).
+    // `found` is the stage's measure: stopped beside the object before the clock ran out. The convergence and the
+    // shaping fade (whose rungs are the placement ladder's) are gated on it (configs/move2_seek.yaml).
     table.Add("found", [this](Env const& env, uint32) { return _envs[env.Index].Found ? 1.0f : 0.0f; });
     // Per event (animus.episode_means.PER_EVENT): the clock at the arrival, over the episodes that found it.
     table.Add("find_seconds", [this](Env const& env, uint32)
@@ -125,7 +137,8 @@ void Animus::Curriculum::SeekEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
     });
     // The rooms (SeekRoom floors) stepped into before the object was found or the clock ran out: distinct rooms,
     // returns to a room already entered (backtracking), the two together, and the share of entries that were returns
-    // (the revisit rate, per entry). rooms_before_found is per episode that found it.
+    // (the revisit rate, per entry). rooms_before_found is per episode that found it. rooms_looked: the rooms whose
+    // floor a frame showed (RoomSeen's), entered or not.
     table.Add("rooms_entered", [this](Env const& env, uint32) { return float(_envs[env.Index].RoomsEntered); });
     table.Add("rooms_reentered", [this](Env const& env, uint32) { return float(_envs[env.Index].RoomsReentered); });
     table.Add("room_entries", [this](Env const& env, uint32)
@@ -144,12 +157,11 @@ void Animus::Curriculum::SeekEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
         EnvSeek const& seek = _envs[env.Index];
         return seek.Found ? float(seek.RoomsBeforeFound) : 0.0f;
     });
-    // What was hidden where: the room and the object (indexes into stage.json episode_categories), the room's depth
-    // (its rank by walking distance, 0 the nearest), its tier (thirds: `difficulty`, so the evaluation tables split by
-    // it) and whether it is the deepest third (`deep_room`: the evaluation's found_deepest, the P1 gate's reading).
-    // The ladder is the fade's, not the room's: `room_ladder` is 1 - the shaping scale the room was drawn at, and
-    // `at_top_rung` whether the fade was done (an evaluation's always is), so a stage that converges at the top of its
-    // ladder (convergence.top_rung) converges only once the fade is.
+    table.Add("rooms_looked", [this](Env const& env, uint32) { return float(_envs[env.Index].RoomsLooked); });
+    // What was hidden where: the room and the object (indexes into stage.json episode_categories; a hallway object's
+    // room is the one whose opening is nearest it), the room's depth (its rank by walking distance, 0 the nearest), its
+    // tier (thirds: `difficulty`, so the evaluation tables split by it) and whether it is the deepest third
+    // (`deep_room`).
     table.Add("seek_room", [this](Env const& env, uint32) { return float(std::max(0, _envs[env.Index].Room)); });
     table.Add("seek_object", [this](Env const& env, uint32) { return float(_envs[env.Index].ObjectIndex); });
     table.Add("room_depth", [this](Env const& env, uint32) { return _envs[env.Index].Depth; });
@@ -158,11 +170,34 @@ void Animus::Curriculum::SeekEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
     {
         return _envs[env.Index].Tier + 1 >= Draw::TIERS ? 1.0f : 0.0f;
     });
-    table.Add("room_ladder", [this](Env const& env, uint32) { return _envs[env.Index].Ladder; });
+    // **The ladder** (REDESIGN §2): the placement's rung (seek_rung, 0 the hallway to 3 deep) and the ladder's
+    // (room_ladder, as a share of the top: 0, 1/3, 2/3, 1), whether this one was the carry-over from the rung below,
+    // and at_top_rung (the ladder at deep: an evaluation's at the training rung, so it is only at the top when the
+    // fade is), which convergence.top_rung waits for. Per rung, whether the episode placed there (rung_<name>) and
+    // whether it found it (found_<name>, per event over rung_<name>: the status headline's found by rung).
+    table.Add("seek_rung", [this](Env const& env, uint32) { return float(_envs[env.Index].Rung); });
+    table.Add("room_ladder", [this](Env const& env, uint32)
+    {
+        return float(_envs[env.Index].LadderRung) / float(Draw::RUNGS - 1);
+    });
+    table.Add("rung_carried", [this](Env const& env, uint32) { return _envs[env.Index].Carried ? 1.0f : 0.0f; });
     table.Add("at_top_rung", [this](Env const& env, uint32)
     {
-        return _envs[env.Index].Ladder >= 1.0f - 1e-4f ? 1.0f : 0.0f;
+        return _envs[env.Index].LadderRung + 1 >= Draw::RUNGS ? 1.0f : 0.0f;
     });
+    for (uint32 rung = 0; rung < Draw::RUNGS; ++rung)
+    {
+        std::string const name = Draw::RUNG_NAMES[rung];
+        table.Add("rung_" + name, [this, rung](Env const& env, uint32)
+        {
+            return _envs[env.Index].Rung == rung ? 1.0f : 0.0f;
+        });
+        table.Add("found_" + name, [this, rung](Env const& env, uint32)
+        {
+            EnvSeek const& seek = _envs[env.Index];
+            return seek.Rung == rung && seek.Found ? 1.0f : 0.0f;
+        });
+    }
     table.Add("object_fallback", [this](Env const& env, uint32) { return _envs[env.Index].Fallback ? 1.0f : 0.0f; });
     table.Add("distance_travelled", [this](Env const& env, uint32) { return _envs[env.Index].Travelled; });
 }
@@ -178,13 +213,23 @@ void Animus::Curriculum::SeekEncounter::ResetEpisode(Env& env)
     seek.Placed = placed;
 }
 
-void Animus::Curriculum::SeekEncounter::Remove(EnvSeek& seek, Map* map) const
+bool Animus::Curriculum::SeekEncounter::Summon(EnvSeek& seek, Map* map, ArenaDefinition const& arena,
+    Position const& spot, uint32 phase) const
 {
-    if (seek.Placed && map)
-        if (GameObject* object = map->GetGameObject(seek.Object))
-            object->Delete();
-    seek.Placed = false;
-    seek.Object.Clear();
+    SeekObject const& kind = arena.Objects[seek.ObjectIndex];
+    GameObject* object = ObjectPool::Summon(map, kind, spot, phase);
+    if (!object)
+    {
+        LOG_ERROR("module.animus", "{}: the seek object {} ({}) could not be spawned at ({:.1f} {:.1f} {:.1f})",
+            _scenario.Name(), kind.Entry, kind.Kind, spot.GetPositionX(), spot.GetPositionY(), spot.GetPositionZ());
+        return false;
+    }
+    seek.Object = object->GetGUID();
+    seek.Placed = true;
+    seek.Spot = spot;
+    seek.Centre = Position(spot.GetPositionX(), spot.GetPositionY(), spot.GetPositionZ() + kind.Height * 0.5f,
+        spot.GetOrientation());
+    return true;
 }
 
 bool Animus::Curriculum::SeekEncounter::Place(Env const& env, EnvSeek& seek, Map* map, ArenaDefinition const& arena,
@@ -192,7 +237,6 @@ bool Animus::Curriculum::SeekEncounter::Place(Env const& env, EnvSeek& seek, Map
 {
     CurriculumTuning::SeekTuning const& tuning = _scenario.Tuning().Seek;
     SeekRoom const& room = arena.Rooms[uint32(seek.Room)];
-    SeekObject const& kind = arena.Objects[seek.ObjectIndex];
     bool const seeded = env.EpisodeSeedIndex != NO_EPISODE_SEED;
     auto const uniform = [&](uint32 attempt, uint32 salt)
     {
@@ -219,6 +263,21 @@ bool Animus::Curriculum::SeekEncounter::Place(Env const& env, EnvSeek& seek, Map
     float x = room.Centre.first;
     float y = room.Centre.second;
     float z = room.FloorZ;
+    // The doorway rung: just inside the opening, toward the room's centre (SeekDraw::DoorwaySpot), visible from the
+    // hallway when the seat looks in.
+    if (seek.Rung == uint32(Draw::Rung::Doorway))
+        for (uint32 attempt = 0; attempt < std::max<uint32>(1, tuning.Attempts) && !found; ++attempt)
+        {
+            auto const [px, py] = Draw::DoorwaySpot(room, tuning.DoorwayInside, tuning.DoorwayDeeper,
+                tuning.DoorwaySpread, uniform(attempt, SALT_DOOR_U), uniform(attempt, SALT_DOOR_V));
+            float const pz = floorAt(px, py);
+            if (std::fabs(pz - room.FloorZ) > tuning.FloorTolerance || !clear(px, py, pz))
+                continue;
+            x = px;
+            y = py;
+            z = pz;
+            found = true;
+        }
     for (uint32 attempt = 0; attempt < std::max<uint32>(1, tuning.Attempts) && !found; ++attempt)
     {
         auto const [px, py] = Draw::PointIn(room.Floor, uniform(attempt, SALT_TRIANGLE), uniform(attempt, SALT_A),
@@ -240,23 +299,34 @@ bool Animus::Curriculum::SeekEncounter::Place(Env const& env, EnvSeek& seek, Map
     seek.Fallback = !found;
 
     float const facing = uniform(0, SALT_FACING) * TWO_PI;
-    Position const spot(x, y, z, facing);
-    map->LoadGrid(x, y);
-    // No respawn: it is removed at the next reset (Remove). The rotation is the facing's, about the vertical.
-    GameObject* object = map->SummonGameObject(kind.Entry, spot, 0.0f, 0.0f, std::sin(facing * 0.5f),
-        std::cos(facing * 0.5f), 0);
-    if (!object)
-    {
-        LOG_ERROR("module.animus", "{}: the seek object {} ({}) could not be spawned in room {}", _scenario.Name(),
-            kind.Entry, kind.Kind, room.Name);
+    return Summon(seek, map, arena, Position(x, y, z, facing), phase);
+}
+
+bool Animus::Curriculum::SeekEncounter::PlaceInHallway(EnvSeek& seek, Map* map, ArenaDefinition const& arena,
+    Player* bot, Position const& start) const
+{
+    CurriculumTuning::SeekTuning const& tuning = _scenario.Tuning().Seek;
+    std::vector<Position> const& points = arena.SpawnPoints;
+    SeekObject const& kind = arena.Objects[seek.ObjectIndex];
+    SightDraw::Viewing viewing;
+    viewing.EyeRise = Vision::PIVOT_SHARE * Movement::ShapeOf(bot).Height;
+    viewing.CentreRise = kind.Height * 0.5f;
+    viewing.Radius = kind.Radius;
+    viewing.Nearest = tuning.HallwayNearest;
+    viewing.Furthest = tuning.HallwayFurthest;
+    viewing.StoreyRise = STOREY_RISE;
+    viewing.Attempts = std::max<uint32>(1, tuning.Attempts);
+    // In sight of the seat's eye, as M1 places its object: an evaluation's frand is its seed's (the world thread's
+    // random numbers are reseeded before each seeded episode), so it meets the same spots.
+    Vision::MapVisionWorld const world(map, bot->GetPhaseMask());
+    SightDraw::Placement const placement = SightDraw::Place(points, start, false, viewing, world,
+        []() { return frand(0.0f, 1.0f); });
+    if (placement.Point < 0)
         return false;
-    }
-    object->SetPhaseMask(phase, true);
-    seek.Object = object->GetGUID();
-    seek.Placed = true;
-    seek.Spot = spot;
-    seek.Centre = Position(x, y, z + kind.Height * 0.5f, facing);
-    return true;
+    Position const& at = points[uint32(placement.Point)];
+    seek.Room = Draw::NearestOpening(arena.Rooms, at.GetPositionX(), at.GetPositionY());
+    return Summon(seek, map, arena, Position(at.GetPositionX(), at.GetPositionY(), at.GetPositionZ(),
+        frand(0.0f, TWO_PI)), bot->GetPhaseMask());
 }
 
 bool Animus::Curriculum::SeekEncounter::Build(Env& env, Map* map, uint8 /*level*/)
@@ -270,40 +340,79 @@ bool Animus::Curriculum::SeekEncounter::Build(Env& env, Map* map, uint8 /*level*
         return false;
 
     EnvSeek& seek = _envs[env.Index];
-    Remove(seek, map);
+    ObjectPool::Remove(map, seek.Object);
     seek = EnvSeek();
+    // The dungeon's own game objects -- its chests, the Hallow's End pumpkins -- out of the way: the one object in it
+    // is the one to find.
+    ObjectPool::ClearOwn(map);
 
-    // The dungeon's own game objects -- its chests, the Hallow's End pumpkins -- out of the way for a week: the one
-    // object in it is the one to find. Cheap enough to do every reset (a few dozen), and a respawned one goes again.
-    std::vector<GameObject*> own;
-    for (auto const& [spawnId, object] : map->GetGameObjectBySpawnIdStore())
-        if (object && object->IsInWorld() && object->isSpawned())
-            own.push_back(object);
-    for (GameObject* object : own)
-        object->DespawnOrUnsummon(0ms, Seconds(WEEK));
-
-    // The room: the ladder's weights in training and the object uniformly; an evaluation sweeps every (room,
-    // object) pair.
-    std::vector<float> const depths = Draw::Depths(arena.Rooms);
-    if (env.EpisodeSeedIndex != NO_EPISODE_SEED)
+    // The ladder (REDESIGN §2): the fade's rung, the placement's (a tenth of training episodes the rung below), and
+    // the rooms that rung draws from. An evaluation plays the training rung's rooms in turn; the held-out sweep every
+    // (room, object) pair at the top rung.
+    CurriculumTuning::SeekTuning const& tuning = _scenario.Tuning().Seek;
+    bool const seeded = env.EpisodeSeedIndex != NO_EPISODE_SEED;
+    seek.Sweep = arena.EvalOnly;
+    Draw::Rung const ladder = seek.Sweep ? Draw::Rung::Deep : Draw::Rung(SightDraw::Rung(_scenario.ShapingScale()));
+    seek.LadderRung = uint32(ladder);
+    Draw::Rung placed = ladder;
+    if (seek.Sweep && seeded)
     {
         auto const [room, object] = Draw::EvaluationPick(env.EpisodeSeedIndex, uint32(arena.Rooms.size()),
             uint32(arena.Objects.size()));
         seek.Room = int32(room);
         seek.ObjectIndex = object;
-        seek.Ladder = 1.0f;
+    }
+    else if (seeded)
+    {
+        auto const [room, object] = Draw::RungEvaluationPick(env.EpisodeSeedIndex,
+            Draw::EvaluationRooms(arena.Rooms, ladder), uint32(arena.Objects.size()));
+        seek.Room = int32(room);
+        seek.ObjectIndex = object;
     }
     else
     {
-        seek.Ladder = 1.0f - _scenario.ShapingScale();
-        seek.Room = int32(Draw::Pick(Draw::Weights(arena.Rooms, seek.Ladder), frand(0.0f, 1.0f)));
+        placed = Draw::PlacedRung(ladder, frand(0.0f, 1.0f), tuning.CarryShare);
+        std::vector<uint32> const rooms = Draw::RungRooms(arena.Rooms, placed);
+        seek.Room = rooms.empty() ? int32(urand(0, uint32(arena.Rooms.size()) - 1))
+            : int32(rooms[urand(0, uint32(rooms.size()) - 1)]);
         seek.ObjectIndex = urand(0, uint32(arena.Objects.size()) - 1);
     }
-    seek.Depth = depths[uint32(seek.Room)];
-    seek.Tier = Draw::Tier(seek.Depth);
-    seek.Entered.assign(arena.Rooms.size(), false);
+    seek.Rung = uint32(placed);
+    seek.Carried = placed != ladder;
+    // The episode's clock is its placement rung's: short early episodes make the reward come often.
+    env.EpisodeLengthMs = (seek.Sweep ? std::max<uint32>(1, arena.EpisodeSeconds)
+        : Draw::RungSeconds(placed, RungSeconds(tuning))) * IN_MILLISECONDS;
 
-    return Place(env, seek, map, arena, bot->GetPhaseMask());
+    // Facing a random way where the scenario put the seat (a random hallway point, the entrance among them). The
+    // scenario reads the seat's facing from the bot after the encounters are built.
+    Position const& spawn = _scenario.SpawnPointFor(env);
+    Position const start(spawn.GetPositionX(), spawn.GetPositionY(), spawn.GetPositionZ(), frand(0.0f, TWO_PI));
+    BotFactory::TeleportWithinMap(bot, start);
+
+    bool built = false;
+    if (placed == Draw::Rung::Hallway)
+        built = PlaceInHallway(seek, map, arena, bot, start);
+    if (!built)
+    {
+        // A hallway with no point in sight falls back to a front cell's doorway.
+        if (placed == Draw::Rung::Hallway)
+        {
+            std::vector<uint32> const front = Draw::RungRooms(arena.Rooms, Draw::Rung::Doorway);
+            if (!front.empty())
+                seek.Room = int32(front[urand(0, uint32(front.size()) - 1)]);
+            seek.Rung = uint32(Draw::Rung::Doorway);
+            seek.Fallback = true;
+        }
+        built = Place(env, seek, map, arena, bot->GetPhaseMask());
+    }
+    if (seek.Room >= 0 && uint32(seek.Room) < arena.Rooms.size())
+    {
+        seek.Depth = Draw::Depths(arena.Rooms)[uint32(seek.Room)];
+        seek.Tier = Draw::Tier(seek.Depth);
+    }
+    seek.Entered.assign(arena.Rooms.size(), false);
+    seek.Looked.assign(arena.Rooms.size(), false);
+    return built;
 }
 
 bool Animus::Curriculum::SeekEncounter::SelectTarget(Env const& /*env*/, uint32 /*seat*/, Unit*& target)
@@ -316,7 +425,7 @@ bool Animus::Curriculum::SeekEncounter::SelectTarget(Env const& /*env*/, uint32 
 void Animus::Curriculum::SeekEncounter::View(Env const& env, uint32 /*seat*/, SeatView& view) const
 {
     // The objective is the camera's to show (its flag, in line of sight) and nothing else's: the stage has no compass,
-    // and no other block of it reads the point.
+    // and no other block of it reads the point (the goal block gives it no place: ObjectivePlaceKnown).
     EnvSeek const& seek = _envs[env.Index];
     view.HasObjective = seek.Placed && !seek.Found;
     view.Objective = seek.Centre;
@@ -367,13 +476,14 @@ void Animus::Curriculum::SeekEncounter::Reward(Env& env, uint32 seatIndex, Playe
     if (!seek.Placed || seek.Found || !bot->IsAlive())
         return;
 
-    // The costs, read off the controller's counts as the ground course reads them.
+    // The costs, read off the controller's counts as the ground course reads them: on from the first step at their
+    // own fixed price (REDESIGN §2), off the cost ladder.
     uint32 const stuckMs = seat.StuckMs - std::min(seat.StuckMs, seek.LastStuckMs);
     uint32 const wallMs = seat.WallMs - std::min(seat.WallMs, seek.LastWallMs);
     seek.LastStuckMs = seat.StuckMs;
     seek.LastWallMs = seat.WallMs;
     if (stuckMs)
-        ledger.Add(RewardTerm::Stuck, -tuning.Stuck * float(stuckMs) / 1000.0f);
+        ledger.AddFixed(RewardTerm::Stuck, -tuning.Stuck * float(stuckMs) / 1000.0f);
     if (wallMs)
     {
         Movement::ControlState const& held = seat.Controls.Held;
@@ -382,7 +492,7 @@ void Animus::Curriculum::SeekEncounter::Reward(Env& env, uint32 seatIndex, Playe
         float const charge = MarkerEncounter::WallCharge(float(wallMs) / 1000.0f, moved, asked, tuning.Wall,
             tuning.WallSlide);
         if (charge > 0.0f)
-            ledger.Add(RewardTerm::Wall, -charge);
+            ledger.AddFixed(RewardTerm::Wall, -charge);
     }
 
     // What the camera showed, the frame the seat decided on (StageScenario::ObserveSeat counts the flag's pixels):
@@ -396,6 +506,18 @@ void Animus::Curriculum::SeekEncounter::Reward(Env& env, uint32 seatIndex, Playe
         ledger.Add(RewardTerm::Sighting, tuning.Sighting);
     }
 
+    // Looked into a room (REDESIGN §2): the first frame this episode whose cast rays show a room's floor, from the
+    // frame alone and the episode's own list (amendment 6): a mental map kept from an earlier episode, which already
+    // knows the room, takes nothing away.
+    ArenaDefinition const& arena = _scenario.Arena(env);
+    if (!seat.Hits.Rays.empty())
+        for (uint32 room : Draw::NewlyLooked(arena.Rooms, seat.Hits, seek.Looked, tuning.RoomSeenRays))
+        {
+            (void)room;
+            ++seek.RoomsLooked;
+            ledger.Add(RewardTerm::RoomSeen, tuning.RoomSeen);
+        }
+
     // New ground, as shaping: a cell of floor walked onto for the first time.
     float const x = bot->GetPositionX();
     float const y = bot->GetPositionY();
@@ -404,7 +526,6 @@ void Animus::Curriculum::SeekEncounter::Reward(Env& env, uint32 seatIndex, Playe
         ledger.Add(RewardTerm::NewGround, tuning.NewGround);
 
     // The rooms: stepping into one, and coming back to one already entered.
-    ArenaDefinition const& arena = _scenario.Arena(env);
     int32 const room = Draw::RoomAt(arena.Rooms, x, y, z);
     if (room >= 0 && room != seek.LastRoom && uint32(room) < seek.Entered.size())
     {
@@ -456,5 +577,6 @@ bool Animus::Curriculum::SeekEncounter::IsTerminal(Env const& env) const
 void Animus::Curriculum::SeekEncounter::Teardown(Env& env)
 {
     EnvSeek& seek = _envs[env.Index];
-    Remove(seek, env.FindMap());
+    ObjectPool::Remove(env.FindMap(), seek.Object);
+    seek.Placed = false;
 }

@@ -171,6 +171,10 @@ namespace Animus::Curriculum
         /// stage's objective -- Arrive, stopped beside the object -- is never paid as either.
         Sighting,
         NewGround,
+        /// The seek stage's third aid (REDESIGN §2, "looked into a room"): the first frame this episode whose cast rays
+        /// show a room's floor (Seek.RoomSeen), by the episode's own bookkeeping, never the remembered map's
+        /// (amendment 6). Shaping, as the other two.
+        RoomSeen,
         Count
     };
 
@@ -305,6 +309,7 @@ namespace Animus::Curriculum
             case RewardTerm::Facing:
             case RewardTerm::Sighting:
             case RewardTerm::NewGround:
+            case RewardTerm::RoomSeen:
                 return RewardCategory::Shaping;
             case RewardTerm::Count:
                 break;

@@ -83,11 +83,19 @@ def test_the_stage_config_reads_its_own_measures():
     assert config.mappo.gamma == pytest.approx(0.998)
     assert config.mappo.chunk_length >= config.rollout_length
     assert config.mappo.recurrent_size > 0
-    # One pass of the evaluation sweep: every (room, object) pair once.
-    assert config.eval.episodes == 39 * 5
+    # Amendment 9: 78 episodes at the training rung every 10M; the full sweep (every (room, object) pair once) is the
+    # held-out arena, at the stage's end only.
+    assert config.eval.episodes == 78 and config.eval.every_env_steps == 10_000_000
+    assert config.eval.heldout == {"sweep": 39 * 5} and not config.eval.heldout_on_best
+    assert config.eval.heldout_every > 100
+    from animus.train import heldout_due
+    assert not heldout_due(5, config.eval.heldout_every, False, True, config.eval.heldout_on_best)
+    assert heldout_due(5, config.eval.heldout_every, True, False, config.eval.heldout_on_best)
+    assert heldout_due(5, 4, False, True)       # elsewhere a new best still plays them
+    assert not config.mappo.map_vin
     headline = set(config.status.headline)
     assert {"found", "found_deepest", "sight_seconds", "sight_to_arrival", "rooms_before_found",
-            "revisit_rate"} <= headline
+            "revisit_rate", "found_hallway", "found_doorway", "found_room", "found_deep", "seek_rung"} <= headline
     # None of M1's marker targets is left over.
     assert "arrived" not in config.status.targets and set(config.status.targets) <= headline
     assert set(config.eval.report) >= {"found", "find_seconds", "sight_seconds", "rooms_entered", "rooms_reentered"}

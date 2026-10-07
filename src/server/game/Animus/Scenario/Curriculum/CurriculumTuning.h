@@ -1172,12 +1172,22 @@ namespace Animus::Curriculum
         /// floor: within ArriveRise yards of its height). StepCost (Cost, per 50 ms of tuning) prices the time: a
         /// whole 300 s episode costs StepCost x 6000 = 3, as much as finding the object pays, and Death (6) is dearer
         /// than any clock, so dying is never a way out of the search. Stuck, Wall and WallSlide are the ground course's
-        /// noise prices, on the cost ladder.
+        /// noise prices, on from the first step at their own fixed price, off the cost ladder (REDESIGN §2: "wall and
+        /// stuck on from the start"; amendment 8: small next to Arrive, as M1's).
         ///
         /// The training-only aids (Shaping, faded away with the rest): Sighting once, on the first frame the camera
         /// shows the object's flag; NewGround for each NewGroundCell-yard cell of floor first walked onto before it is
-        /// found. Nothing is shaped on the object's distance: it is hidden, and a distance potential would be a compass
-        /// in the reward that vanished at the fade.
+        /// found; RoomSeen once for each room whose floor the camera's frame first shows this episode (at least
+        /// RoomSeenRays of its cast rays hitting the room's floor: "looked into a room", REDESIGN §2), by the episode's
+        /// own bookkeeping and never the remembered map's (amendment 6), so a map kept from before takes nothing away.
+        /// Nothing is shaped on the object's distance: it is hidden, and a distance potential would be a compass in the
+        /// reward that vanished at the fade.
+        ///
+        /// **The ladder** (SeekDraw::Rung): the hallway, a front cell's doorway, a front cell, deep; each rung keeps
+        /// CarryShare of the one below. RungSeconds0-3 are the episodes' lengths by rung (the placement's). A hallway
+        /// object stands on a hallway point HallwayNearest to HallwayFurthest yards from the seat, in sight of its eye
+        /// (SightDraw::Place); a doorway object DoorwayInside yards in from the opening toward the room's centre, up to
+        /// DoorwayDeeper more, up to DoorwaySpread either side.
         ///
         /// Placement: up to Attempts points drawn uniformly over the room's floor polygon, each kept when the floor
         /// below it (vmaps) is within FloorTolerance yards of the room's and nothing solid stands within Clearance
@@ -1191,12 +1201,24 @@ namespace Animus::Curriculum
             float Sighting = 0.5f;
             float NewGround = 0.004f;
             float NewGroundCell = 4.0f;
-            float Stuck = 0.05f;
-            float Wall = 0.03f;
+            float Stuck = 0.02f;                // per second, fixed price
+            float Wall = 0.02f;                 // per second at no movement, fixed price, scaled as WallSlide says
             float WallSlide = 0.5f;
             uint32 Attempts = 24;
             float FloorTolerance = 2.0f;
             float Clearance = 0.8f;
+            float RoomSeen = 0.1f;
+            uint32 RoomSeenRays = 3;
+            float CarryShare = 0.1f;
+            uint32 RungSeconds0 = 90;
+            uint32 RungSeconds1 = 120;
+            uint32 RungSeconds2 = 200;
+            uint32 RungSeconds3 = 300;
+            float HallwayNearest = 8.0f;
+            float HallwayFurthest = 120.0f;
+            float DoorwayInside = 2.0f;
+            float DoorwayDeeper = 1.5f;
+            float DoorwaySpread = 1.0f;
         } Seek;
 
         /// **M1 controls, redesigned** (Opposition::Sight, SightEncounter; perception-goals REDESIGN §1): a real object
@@ -1864,6 +1886,18 @@ namespace Animus::Curriculum
             f("Seek.Attempts", tuning.Seek.Attempts);
             f("Seek.FloorTolerance", tuning.Seek.FloorTolerance);
             f("Seek.Clearance", tuning.Seek.Clearance);
+            f("Seek.RoomSeen", tuning.Seek.RoomSeen);
+            f("Seek.RoomSeenRays", tuning.Seek.RoomSeenRays);
+            f("Seek.CarryShare", tuning.Seek.CarryShare);
+            f("Seek.RungSeconds0", tuning.Seek.RungSeconds0);
+            f("Seek.RungSeconds1", tuning.Seek.RungSeconds1);
+            f("Seek.RungSeconds2", tuning.Seek.RungSeconds2);
+            f("Seek.RungSeconds3", tuning.Seek.RungSeconds3);
+            f("Seek.HallwayNearest", tuning.Seek.HallwayNearest);
+            f("Seek.HallwayFurthest", tuning.Seek.HallwayFurthest);
+            f("Seek.DoorwayInside", tuning.Seek.DoorwayInside);
+            f("Seek.DoorwayDeeper", tuning.Seek.DoorwayDeeper);
+            f("Seek.DoorwaySpread", tuning.Seek.DoorwaySpread);
             f("Controls.Nearest", tuning.Controls.Nearest);
             f("Controls.Furthest", tuning.Controls.Furthest);
             f("Controls.ArriveTolerance", tuning.Controls.ArriveTolerance);

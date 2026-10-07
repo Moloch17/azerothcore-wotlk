@@ -24,6 +24,12 @@ PER_EVENT = {
     "sight_seconds": "sighted",
     "sight_to_arrival": "found_sighted",
     "revisit_rate": "room_entries",
+    # ... and its found rate by the placement's rung (REDESIGN §2: the status headline per rung), over the episodes
+    # placed at each.
+    "found_hallway": "rung_hallway",
+    "found_doorway": "rung_doorway",
+    "found_room": "rung_room",
+    "found_deep": "rung_deep",
     # M1 redesigned (SightEncounter): the arrival rate in the episodes that withheld the compass, and in those that
     # showed it.
     "arrived_no_compass": "compass_withheld",

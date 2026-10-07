@@ -9,17 +9,20 @@
 > `test_stage_ticks.py`), and names the measures `forge status` shows for it (its config's `status.headline` and
 > `status.targets`).
 >
-> `move2_seek` (perception-goals P1, 2026-10-06) extends it: the same Stockades, one real object (a chest, crate,
-> barrel, sack or strongbox) hidden at a random spot of one of its 39 rooms (`ArenaDefinition::Rooms` and `Objects`,
-> SeekEncounter, `Opposition::Seek`), found by sight and stopped beside (3 yd) inside 300 s. It has no compass: the
-> objective's bearing and distance left the move block for the compass block (`BlockId::Compass`, which M1 carries),
-> and the camera's objective flag shows the object only in line of sight. The room draw moves from the rooms seen
-> from the hallway to the deepest as the shaping fade steps.
+> `move2_seek` (perception-goals P1, 2026-10-06; redesigned the same day, REDESIGN §2) extends it: the same
+> Stockades, the seat at a random hallway point, one real object (a chest, crate, barrel, sack or strongbox) placed by
+> a ladder on the shaping fade's rungs -- in the hallway in sight of the spawn, just inside a front cell's opening,
+> anywhere in a front cell, then deep (back rooms, hubs, end rooms; `ArenaDefinition::Rooms` and `Objects`,
+> SeekEncounter, `Opposition::Seek`) -- found by sight and stopped beside (3 yd), in 90, 120, 200 or 300 s by rung.
+> It has no compass: the camera's objective flag shows the object only in line of sight. It carries the mental map
+> (`BlockId::Map`, REDESIGN §3): a 48 x 48 heading-up crop at 2 yd of what its own camera and body have written.
+> Evaluations play 78 episodes at the training rung; the held-out `sweep` arena is the full 195-pair sweep at the top
+> rung, for the stage's end.
 >
 > | Stage | Budget | Eval every | Episodes |
 > |---|---|---|---|
 > | `move1_controls` | 150M | 5M | 512 |
-> | `move2_seek` | 250M | 5M | 195 |
+> | `move2_seek` | 250M | 10M | 78 |
 >
 > **The first movement curriculum** (`move1_controls` ... `move7_follow`: open ground, broken ground, vertical,
 > water, routes, mounted, follow) was archived the same day: definitions on the git tag `curriculum-movement-v1`,

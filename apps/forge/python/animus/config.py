@@ -102,6 +102,9 @@ class EvalConfig:
     # whenever a new best.pt is saved (so best.pt always has a held-out reading beside it). A second dungeon
     # evaluation of hours of sim time is a reading that never steers training; 1 = every evaluation.
     heldout_every: int = 4
+    # Whether a new best.pt also plays them (it does by default, so best.pt always has a held-out reading beside it).
+    # Off for a long held-out arena that is a stage's final measure only (move2_seek's 195-episode sweep).
+    heldout_on_best: bool = True
     # What an evaluation is scored on, and so what best.pt, the league's snapshots and convergence follow: "outcome",
     # the episode's Outcome and Cost terms before any rung's tier (the sim's score_outcome column), or "return", the
     # whole return with its shaping. Scored on the return, a stage whose shaping is turned down reads as getting

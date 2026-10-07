@@ -35,8 +35,9 @@ PURPOSE = {
 # straight-line distance closed over the leg.
 SHAPING = {
     "move1_controls": ("Progress", "Facing"),
-    # M2's training-only aids (the plan's "fading bonuses for the first sighting and for new ground").
-    "move2_seek": ("Sighting", "NewGround"),
+    # M2's training-only aids (the plan's "fading bonuses for the first sighting and for new ground", and REDESIGN
+    # §2's "looked into a room").
+    "move2_seek": ("Sighting", "NewGround", "RoomSeen"),
 }
 
 # Opposition -> the encounter source that pays it.

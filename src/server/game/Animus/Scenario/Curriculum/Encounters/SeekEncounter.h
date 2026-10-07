@@ -32,21 +32,29 @@ namespace Animus::Curriculum
     /// **M2 seek** (Opposition::Seek; perception-goals plan §4, "M2 in detail"): one real object hidden in one of a
     /// dungeon's rooms, found by sight and stopped beside. The seat has no compass: the object is shown only by the
     /// camera's objective flag, on the pixels whose rays pass by it before they hit anything (line of sight), standing
-    /// in for a quest object's glow. Its working memory is the GRU's.
+    /// in for a quest object's glow. Its memory is the GRU's and its mental map's (the map block).
     ///
-    /// Each reset draws a room (SeekDraw::Weights: the shaping fade's rungs move the weights from the rooms seen from
-    /// the hallway to the deepest; every room always possible) and an object (uniformly), and puts the object at a
-    /// random spot of the room's floor with a random orientation: a real gameobject whose display has a collision
-    /// model, so the camera's rays hit it. The objective point the flag marks is the object's centre. The object of
-    /// the episode before is removed first, and so are the map's own game objects (the Stockades' chests and the
-    /// Hallow's End decorations), so the one object in the dungeon is the one to find. An evaluation sweeps every
-    /// (room, object) pair once a pass (SeekDraw::EvaluationPick: 195 episodes) and places the object by its seed
-    /// (SeedUniform).
+    /// **The ladder** (perception-goals REDESIGN §2; SeekDraw::Rung): each reset places by the shaping fade's rung --
+    /// in the hallway in sight of the spawn (SightDraw::Place over the arena's hallway points), just inside a front
+    /// cell's opening, anywhere in a front cell, deep (the back rooms, hubs and end rooms) -- or, Seek.CarryShare of
+    /// the time, the rung below; its episode lasts Seek.RungSeconds of the placement's rung. The seat stands at a
+    /// random hallway point (the arena's spawn points, drawn by the scenario), facing a random way. The object
+    /// (uniformly of the pool) is a real gameobject whose display has a collision model, so the camera's rays hit it,
+    /// turned at random; the objective point the flag marks is its centre. The object of the episode before is
+    /// removed first, and so are the map's own game objects (ObjectPool), so the one object in the dungeon is the one
+    /// to find.
     ///
-    /// Paid: Arrive once, stopped within the arena's SeekRadius of the object (Outcome); StepCost, Death, Stuck and
-    /// Wall (Cost); Sighting and NewGround, the training-only aids (Shaping, faded). Measured: found, the time to the
-    /// first frame with the flag, from there to the arrival, the rooms entered before finding it and the rooms
-    /// re-entered, by room and by object (stage.json episode_categories).
+    /// An evaluation plays at the training rung (amendment 9): seed i places in the rung's i-th room in turn
+    /// (SeekDraw::EvaluationRooms) with the object types cycled, so its found rate is the rung's, which the fade's
+    /// gate reads. The held-out arena (EvalOnly, the stage's "sweep") is every (room, object) pair once a pass
+    /// (SeekDraw::EvaluationPick: 195 episodes) at the top rung, 300 s.
+    ///
+    /// Paid: Arrive once, stopped within the arena's SeekRadius of the object (Outcome); StepCost and Death (Cost);
+    /// Stuck and Wall (Cost, at their own fixed price from the first step: RewardLedger::AddFixed); Sighting,
+    /// NewGround and RoomSeen, the training-only aids (Shaping, faded), each by the episode's own bookkeeping, never
+    /// the remembered map's. Measured: found (overall and by rung), the time to the first frame with the flag, from
+    /// there to the arrival, the rooms looked into, entered before finding it and re-entered, by room and by object
+    /// (stage.json episode_categories).
     class SeekEncounter final : public Encounter
     {
     public:
@@ -77,9 +85,14 @@ namespace Animus::Curriculum
             Position Centre;                // the objective point: its centre, which the flag marks
             int32 Room = -1;
             uint32 ObjectIndex = 0;
+            uint32 Rung = 0;                // the placement's (SeekDraw::Rung)
+            uint32 LadderRung = 0;          // the ladder's, before the carry-over
+            bool Carried = false;           // placed at the rung below the ladder's
+            bool Sweep = false;             // the held-out sweep: every (room, object) pair at the top rung
+            std::vector<bool> Looked;       // rooms whose floor a frame showed this episode (RoomSeen)
+            uint32 RoomsLooked = 0;
             float Depth = 0.0f;
             uint32 Tier = 0;
-            float Ladder = 0.0f;            // 1 - the shaping scale the room was drawn at
             bool Fallback = false;          // placed at the room's centre: no drawn spot passed
             bool Found = false;
             uint32 FoundMs = 0;
@@ -102,10 +115,14 @@ namespace Animus::Curriculum
             bool Recorded = false;
         };
 
-        /// Remove the episode's object, if it is still in `map`.
-        void Remove(EnvSeek& seek, Map* map) const;
-        /// Put the episode's object in `room` of `arena`: a spot on its floor, clear of walls, else its centre.
+        /// Put the episode's object in `room` of `arena`: a spot on its floor, clear of walls, else its centre; at
+        /// the doorway rung, just inside its opening (else on its floor).
         bool Place(Env const& env, EnvSeek& seek, Map* map, ArenaDefinition const& arena, uint32 phase) const;
+        /// ... at the hallway rung: a hallway point in sight of a seat at `start` (SightDraw::Place).
+        bool PlaceInHallway(EnvSeek& seek, Map* map, ArenaDefinition const& arena, Player* bot,
+            Position const& start) const;
+        /// Stand the object of `kind` at `spot` (its base), turned `facing`.
+        bool Summon(EnvSeek& seek, Map* map, ArenaDefinition const& arena, Position const& spot, uint32 phase) const;
 
         std::vector<EnvSeek> _envs;
     };

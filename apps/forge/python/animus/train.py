@@ -291,10 +291,10 @@ def init_from_checkpoint(path: str, prefer: str = "latest") -> Path | None:
 HELDOUT_SEED_OFFSET = 7919
 
 
-def heldout_due(evaluations: int, every: int, final: bool, improved: bool) -> bool:
+def heldout_due(evaluations: int, every: int, final: bool, improved: bool, on_best: bool = True) -> bool:
     """Whether the held-out arenas are played after the `evaluations`-th evaluation: every `every`-th, the stage's
-    last, and one that saved a new best.pt."""
-    return final or improved or evaluations % max(1, every) == 0
+    last, and (with `on_best`, eval.heldout_on_best) one that saved a new best.pt."""
+    return final or (improved and on_best) or evaluations % max(1, every) == 0
 
 
 def heldout_arenas(heldout: dict, stage: dict | None) -> dict[str, tuple[int, int]]:
@@ -1393,7 +1393,7 @@ class TrainingRun:
             sampled_every = config.eval.sampled_every
             sampled = sampled_every > 0 and len(tracker.history) % sampled_every == 0
             heldout = bool(self.heldout) and heldout_due(len(tracker.history), config.eval.heldout_every, final,
-                                                          improved)
+                                                          improved, config.eval.heldout_on_best)
 
         # What the leader decided, carried out on every rank.
         sampled, joined, heldout = self.ranks.broadcast((sampled, joined, heldout))

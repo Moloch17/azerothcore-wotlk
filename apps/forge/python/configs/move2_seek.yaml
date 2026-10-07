@@ -1,12 +1,15 @@
-# M2 -- seek (perception-goals plan §4, "M2 in detail"; the user, 2026-10-06: "M2 seek also happens inside the same
-# Stockades instance. It has to find an object in a room, and that object and room is randomized."). The same empty
-# Stockades and entrance spawn as M1; each episode one real object (a chest, crate, barrel, sack or strongbox) at a
-# random spot of one of the Stockades' 39 rooms. No compass: the camera's objective flag shows the object only in line
-# of sight. Found is stopping within 3 yd of it. Its memory is the GRU's (P1; the mental map is P1b, only if M2 stalls
-# on the deepest rooms).
+# M2 -- seek (perception-goals plan §4, "M2 in detail"; REDESIGN §2; the user, 2026-10-06: "M2 seek also happens
+# inside the same Stockades instance. It has to find an object in a room, and that object and room is randomized.").
+# The same empty Stockades as M1: the seat at a random hallway point (the entrance among them), facing a random way;
+# one real object (a chest, crate, barrel, sack or strongbox) placed by the ladder -- in the hallway in sight of the
+# spawn, just inside a front cell's opening, anywhere in a front cell, then deep (back rooms, hubs, end rooms) -- each
+# rung keeping a tenth of the one below, its episodes 90, 120, 200 and 300 s. No compass: the camera's objective flag
+# shows the object only in line of sight. Found is stopping within 3 yd of it. Its memory is the GRU's and the mental
+# map's (the map block, REDESIGN §3).
 #
-# Seeds from move1_controls (stage.json's seed chain): the move block's columns carry over by name across the compass
-# split (bootstrap), the compass's weights stay behind. M1's hyperparameters otherwise; what differs is below.
+# Seeds from move1_controls (stage.json's seed chain): the move block's columns carry over by name, the camera's
+# encoder carries, the compass's weights stay behind and the mental map starts fresh (its join at zero). M1's
+# hyperparameters otherwise; what differs is below.
 extends: move1_controls.yaml
 run_name: move2_seek
 
@@ -22,34 +25,48 @@ mappo:
   # keeps 0.05) is the step the plan's horizons allow before M4's 0.999, with the critic told where the object is
   # (SeekEncounter::WriteState) to carry the rest.
   gamma: 0.998
-  # The GRU is M2's only memory, so its gradient runs over the whole 128-decision rollout (32 s; the plan's amendment
-  # 5: the ~30 s horizon holds while BPTT is 128 decisions), not M1's 32-decision chunks (8 s). The replay costs about
-  # four times the sequential steps of M1's; measure it in the first updates.
+  # The full 128-decision BPTT window (REDESIGN §2: kept), not M1's 32-decision chunks.
   chunk_length: 128
+  # Two epochs, not M1's four (REDESIGN §2, amendment 10). The profile with the map in (2,048 rows forward and back on
+  # the host's card): the camera 74 ms, the camera and the map 151 ms, so at 128 decisions x 192 envs the encoders
+  # alone take 7.3 s an update at four epochs (3.6 s at two), on a host already learner-bound at four x 3.8 s. Go back
+  # to 4 if the first 10 minutes show the KL or the found rate lagging (approx_kl well under target_kl at two).
+  epochs: 2
   # As M1: a tenth of movement's, so the camera is not pushed to uniform (overseer, 2026-10-06).
   look_entropy_coef: 0.001
   # The camera's update in chunks (overseer, P2 review): the cluster's 8 GB and 16 GB cards need it, and the bench
   # ran out of memory at 192 envs unchunked (live M1 fit at 16 of 21.5 GB without it; the difference is unexplained).
   vision_chunk_rows: 2048
+  # The mental map's value iteration network (REDESIGN §4.4): off; switched on only if M2 stalls at the deep rungs.
+  map_vin: false
 
-# A deterministic sweep over every (room, object) pair (SeekDraw::EvaluationPick): 39 rooms x 5 objects = 195 episodes,
-# each pair once, the object placed by the seed so every checkpoint meets the same spots. The per-room and per-object
-# tables are balanced, and the evaluation is at most 195 episodes of 300 s.
+# Amendment 9: 78 episodes every 10M, at the training rung (each of its rooms in turn, the object types cycled: at the
+# deep rung every room twice), so `found` is the rung's own found rate, which the fade reads. The full sweep -- every
+# (room, object) pair once, 195 episodes at the top rung, 300 s -- is the held-out "sweep" arena, played at the stage's
+# last evaluation only (heldout_every past any stage's evaluations, and not on every new best).
 eval:
-  episodes: 195
-  report: [found, find_seconds, sighted, sight_seconds, sight_to_arrival, rooms_entered, rooms_reentered,
-           revisit_rate, rooms_before_found, objective_visible, room_depth, difficulty, deep_room, object_fallback,
+  every_env_steps: 10000000
+  episodes: 78
+  heldout:
+    sweep: 195
+  heldout_every: 1000
+  heldout_on_best: false
+  report: [found, found_hallway, found_doorway, found_room, found_deep, seek_rung, rung_carried, find_seconds,
+           sighted, sight_seconds, sight_to_arrival, rooms_looked, rooms_entered, rooms_reentered, revisit_rate,
+           rooms_before_found, objective_visible, room_depth, difficulty, deep_room, object_fallback,
            distance_travelled, course_kinks, control_changes_per_minute, wall_seconds, stuck_seconds, died,
-           timed_out, reward_arrive, reward_step_cost, reward_sighting, reward_new_ground, reward_stuck, reward_wall,
-           reward_jitter, reward_effort, reward_repeat]
+           timed_out, reward_arrive, reward_step_cost, reward_sighting, reward_new_ground, reward_room_seen,
+           reward_stuck, reward_wall, reward_jitter, reward_effort, reward_repeat]
 
-# forge status for this stage: did it find the object (overall and in the deepest rooms), how soon it saw it, how soon
-# after seeing it it got there, and how it searched -- rooms walked into before finding it, and how often it went back
-# into one. Found by room and by object are the evaluation's tables (categories seek_room, seek_object). Targets are
-# a readout, never a gate; found_deepest's 0.9 is the plan's development criterion for P1.
+# forge status for this stage: did it find the object, by rung (found_<rung>, each over the episodes placed at it) and
+# in the deepest rooms, the rung it is on, how soon it saw it and got there after, and how it searched -- rooms looked
+# into and walked into before finding it, and how often it went back into one. Found by room and by object are the
+# evaluation's tables (categories seek_room, seek_object). Targets are a readout, never a gate; found_deepest's 0.9 is
+# the plan's development criterion for P1.
 status:
-  headline: [found, found_deepest, find_seconds, sight_seconds, sight_to_arrival, rooms_before_found, revisit_rate,
-             rooms_entered, objective_visible, wall_seconds, timed_out, died]
+  headline: [found, found_hallway, found_doorway, found_room, found_deep, seek_rung, found_deepest, find_seconds,
+             sight_seconds, sight_to_arrival, rooms_looked, rooms_before_found, revisit_rate, objective_visible,
+             wall_seconds, timed_out, died]
   targets:
     # M1's targets are not M2's measures (null drops an inherited key).
     arrived: null
@@ -73,17 +90,19 @@ status:
     died: "<= 0.01"
 
 convergence:
-  # Converged on the stage's own measure, the share of objects found; at the top of its ladder, which is the fade's
-  # end (at_top_rung: the shaping faded, so the deepest rooms are the most drawn).
+  # Converged on the stage's own measure, the share of objects found; at the top of its ladder (at_top_rung: the
+  # ladder at the deep rung, which is the fade's end).
   measure: found
 
-# The aids (Sighting, NewGround) and the room ladder step together: the shaping fades, and the rooms move from those
-# seen from the hallway to the deepest, once 80% of objects are found at the rung.
+# The ladder and the aids (Sighting, NewGround, RoomSeen) step together on the fade's signal (amendment 7): the rung
+# moves on once its own found rate (the evaluation plays the training rung) has plateaued at 80% or more, with the
+# fade's window and regress rules -- a curriculum ladder, not a pass gate: the stage still ends on convergence.
 fade:
   gate_metric: found
   gate_value: 0.8
 
-# Stuck and Wall are priced from the start of M2's cost ladder, as M1's noise prices were: free until 80% are found.
+# Stuck and Wall are charged from the first step at their own small fixed price (Seek.Stuck, Seek.Wall: off this
+# ladder). The other noise prices (jitter, effort, repeats) keep M1's cost ladder, gated on the found rate.
 costs:
   gate_metric: found
   gate_value: 0.8

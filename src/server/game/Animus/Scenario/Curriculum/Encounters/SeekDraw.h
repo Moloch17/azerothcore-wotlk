@@ -19,8 +19,10 @@
 #ifndef ANIMUS_LIB_CURRICULUM_SEEK_DRAW_H
 #define ANIMUS_LIB_CURRICULUM_SEEK_DRAW_H
 
+#include "MentalMap.h"
 #include "StageDefinition.h"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <numeric>
 #include <utility>
@@ -31,9 +33,6 @@
 /// the encounter only supplies the randomness.
 namespace Animus::Curriculum::SeekDraw
 {
-    /// The room ladder's floor: every room's weight is at least this (all rooms are always possible), against the
-    /// 1 the favoured end of the ladder gets.
-    constexpr float WEIGHT_FLOOR = 0.1f;
     /// Depth tiers the rooms fall in for the episode info (`difficulty`): the nearest third, the middle, the
     /// deepest.
     constexpr uint32 TIERS = 3;
@@ -60,17 +59,157 @@ namespace Animus::Curriculum::SeekDraw
         return std::min<uint32>(TIERS - 1, uint32(std::max(0.0f, depth) * float(TIERS)));
     }
 
-    /// **The room ladder** (the shaping fade's rungs, perception-goals §4): `ladder` in [0, 1] is how far the fade has
-    /// come, 1 - the learner's shaping scale (rungs 1, 0.5, 0.25, 0 read 0, 0.5, 0.75, 1). At 0 the rooms seen from the
-    /// hallway are favoured, the nearest at 1 + WEIGHT_FLOOR and the deepest at WEIGHT_FLOOR; at 0.5 every room is as
-    /// likely; at 1 the deepest are favoured as the nearest were. Every room keeps at least WEIGHT_FLOOR.
-    inline std::vector<float> Weights(std::vector<SeekRoom> const& rooms, float ladder)
+    /// **The placement ladder** (perception-goals REDESIGN §2): where the object stands, in the order the difficulty
+    /// comes in -- in the hallway in sight of the spawn, just inside a front cell's opening, anywhere in a front cell,
+    /// and deep (the back rooms, the hubs and the end rooms). The rung follows the shaping fade's (SightDraw::Rung of
+    /// the scale, the same four scales as M1's withholding ladder), so it steps on the fade's signal -- the rung's own
+    /// found rate, its window and regress rules (amendment 7) -- and every rung keeps CarryShare of the one below.
+    enum class Rung : uint8
     {
-        float const t = std::clamp(ladder, 0.0f, 1.0f);
-        std::vector<float> weights = Depths(rooms);
-        for (float& weight : weights)
-            weight = WEIGHT_FLOOR + (1.0f - t) * (1.0f - weight) + t * weight;
-        return weights;
+        Hallway = 0,
+        Doorway = 1,
+        Room = 2,
+        Deep = 3,
+        Count
+    };
+    constexpr uint32 RUNGS = uint32(Rung::Count);
+    constexpr std::array<char const*, RUNGS> RUNG_NAMES = { "hallway", "doorway", "room", "deep" };
+
+    /// The rung a training episode places by: the ladder's, or with probability `carry` (`u` below it) the one below
+    /// (the old skills stay); the first rung has none below.
+    inline Rung PlacedRung(Rung ladder, float u, float carry)
+    {
+        return ladder != Rung::Hallway && u < carry ? Rung(uint8(ladder) - 1) : ladder;
+    }
+
+    /// The rooms a rung draws from, in table order: the front cells (opening onto the hallway, not a hub) for the
+    /// doorway and room rungs, every other room for the deep rung, none for the hallway.
+    inline std::vector<uint32> RungRooms(std::vector<SeekRoom> const& rooms, Rung rung)
+    {
+        std::vector<uint32> out;
+        for (uint32 index = 0; index < rooms.size(); ++index)
+            if ((rung == Rung::Doorway || rung == Rung::Room) ? rooms[index].Front
+                : rung == Rung::Deep && !rooms[index].Front)
+                out.push_back(index);
+        return out;
+    }
+
+    /// The rooms a rung's evaluation goes round (amendment 9: 78 episodes every 10M): the front cells for the doorway
+    /// and room rungs, and every room at the deep rung, the top (each twice in 78). The hallway rung's object stands in
+    /// the hallway, so it goes round every room for the episode info's sake only.
+    inline std::vector<uint32> EvaluationRooms(std::vector<SeekRoom> const& rooms, Rung rung)
+    {
+        if (rung == Rung::Doorway || rung == Rung::Room)
+            return RungRooms(rooms, rung);
+        std::vector<uint32> all(rooms.size());
+        std::iota(all.begin(), all.end(), 0u);
+        return all;
+    }
+
+    /// A rung evaluation's room and object for seed `seed`: the rung's rooms in turn, the object types cycled with
+    /// them (seed mod objects), so 78 seeds meet each of 39 rooms twice with two different objects.
+    inline std::pair<uint32, uint32> RungEvaluationPick(uint32 seed, std::vector<uint32> const& rooms, uint32 objects)
+    {
+        uint32 const room = rooms.empty() ? 0 : rooms[seed % rooms.size()];
+        return { room, seed % std::max<uint32>(1, objects) };
+    }
+
+    /// Just inside a room's opening (the doorway rung): from the opening toward the room's centre, `inside` yards plus
+    /// up to `deeper` more by `u`, and up to `spread` yards either side of that line by `v`.
+    inline std::pair<float, float> DoorwaySpot(SeekRoom const& room, float inside, float deeper, float spread, float u,
+        float v)
+    {
+        auto const [ox, oy] = room.Opening;
+        float dx = room.Centre.first - ox;
+        float dy = room.Centre.second - oy;
+        float const length = std::sqrt(dx * dx + dy * dy);
+        if (length < 1e-3f)
+            return room.Centre;
+        dx /= length;
+        dy /= length;
+        float const along = std::min(length, inside + std::clamp(u, 0.0f, 1.0f) * deeper);
+        float const side = (2.0f * std::clamp(v, 0.0f, 1.0f) - 1.0f) * spread;
+        return { ox + dx * along - dy * side, oy + dy * along + dx * side };
+    }
+
+    inline bool Inside(std::vector<std::pair<float, float>> const& floor, float x, float y);
+
+    /// **Looked into a room** (REDESIGN §2): per room, the frame's cast rays whose hit is a floor (the terrain or a
+    /// model, normal z at least Vision::FLOOR_NORMAL, within Vision::WRITE_REACH of the camera) inside its floor
+    /// polygon, within `rise` of its floor's height. The frame alone: nothing the mental map remembers.
+    inline std::vector<uint32> FloorRays(std::vector<SeekRoom> const& rooms, Vision::FrameHits const& hits,
+        float rise = 4.0f)
+    {
+        std::vector<uint32> counts(rooms.size(), 0);
+        // Each room's bounds, so most rays are turned away by four comparisons.
+        std::vector<std::array<float, 4>> bounds(rooms.size());
+        for (std::size_t index = 0; index < rooms.size(); ++index)
+        {
+            std::array<float, 4>& box = bounds[index];
+            box = { 1e9f, -1e9f, 1e9f, -1e9f };
+            for (auto const& [x, y] : rooms[index].Floor)
+                box = { std::min(box[0], x), std::max(box[1], x), std::min(box[2], y), std::max(box[3], y) };
+        }
+        for (Vision::RayHit const& ray : hits.Rays)
+        {
+            if ((ray.What != Vision::Class::Terrain && ray.What != Vision::Class::Model)
+                || ray.NormalZ < Vision::FLOOR_NORMAL || ray.Distance > Vision::WRITE_REACH)
+                continue;
+            float const x = hits.Camera.X + ray.Dir.X * ray.Distance;
+            float const y = hits.Camera.Y + ray.Dir.Y * ray.Distance;
+            for (std::size_t index = 0; index < rooms.size(); ++index)
+            {
+                std::array<float, 4> const& box = bounds[index];
+                if (x < box[0] || x > box[1] || y < box[2] || y > box[3]
+                    || std::fabs(ray.Z - rooms[index].FloorZ) > rise || !Inside(rooms[index].Floor, x, y))
+                    continue;
+                ++counts[index];
+                break;
+            }
+        }
+        return counts;
+    }
+
+    /// The rooms this frame looks into for the first time this episode -- RoomSeen's, by the episode's own `looked`
+    /// (amendment 6: never the remembered map, so a map kept from before takes no aid away) -- marked in it: at least
+    /// `minRays` of the frame's floor rays on each.
+    inline std::vector<uint32> NewlyLooked(std::vector<SeekRoom> const& rooms, Vision::FrameHits const& hits,
+        std::vector<bool>& looked, uint32 minRays)
+    {
+        std::vector<uint32> out;
+        if (looked.size() != rooms.size())
+            looked.assign(rooms.size(), false);
+        std::vector<uint32> const counts = FloorRays(rooms, hits);
+        for (uint32 index = 0; index < rooms.size(); ++index)
+            if (!looked[index] && counts[index] >= std::max<uint32>(1, minRays))
+            {
+                looked[index] = true;
+                out.push_back(index);
+            }
+        return out;
+    }
+
+    /// The episode's length at a placement rung, seconds: `seconds[rung]`.
+    inline uint32 RungSeconds(Rung rung, std::array<uint32, RUNGS> const& seconds)
+    {
+        return seconds[std::min<uint32>(uint32(rung), RUNGS - 1)];
+    }
+
+    /// The room whose opening is nearest (x, y) (a hallway object's room, for the episode info).
+    inline int32 NearestOpening(std::vector<SeekRoom> const& rooms, float x, float y)
+    {
+        int32 best = -1;
+        float nearest = 0.0f;
+        for (uint32 index = 0; index < rooms.size(); ++index)
+        {
+            float const d = std::hypot(rooms[index].Opening.first - x, rooms[index].Opening.second - y);
+            if (best < 0 || d < nearest)
+            {
+                best = int32(index);
+                nearest = d;
+            }
+        }
+        return best;
     }
 
     /// The index `u` in [0, 1) falls on, each index taking its weight's share; the last for u at or past the total.

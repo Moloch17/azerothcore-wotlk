@@ -96,6 +96,9 @@ namespace Animus::Curriculum
         std::pair<float, float> Centre{};
         float Walk = 0.0f;
         std::vector<std::pair<float, float>> Floor{};
+        /// A front cell: its opening is onto the hallway and it is no hub -- the seek ladder's doorway and room rungs
+        /// draw these, its deep rung the rest (SeekDraw::RungRooms).
+        bool Front = false;
     };
 
     /// **An object the seek stage hides** (ArenaDefinition::Objects): a gameobject_template entry whose display has a

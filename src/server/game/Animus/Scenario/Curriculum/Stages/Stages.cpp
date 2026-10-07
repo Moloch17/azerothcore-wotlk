@@ -177,8 +177,8 @@ namespace
     /// yard of room along each axis. An object stands on the floor the vmaps give at its spot, not at FloorZ.
     std::vector<SeekRoom> StockadeRooms()
     {
-        // In order of walking distance from the spawn (the room ladder ranks them by Walk, not by this order).
-        return {
+        // In order of walking distance from the spawn (their depth ranks them by Walk, not by this order).
+        std::vector<SeekRoom> rooms = {
             // hall_east_1: 260 sq yd, 43 yd from the spawn, opening onto the hallway
             { "hall_east_1", -26.52f, { 84.5f, -5.5f }, { 84.5f, -14.5f }, 43.0f,
                 { { 79.0f, -22.0f }, { 79.5f, -22.0f }, { 84.5f, -21.5f }, { 90.5f, -20.5f },
@@ -333,6 +333,18 @@ namespace
                 { { 166.5f, 144.5f }, { 171.0f, 141.5f }, { 176.0f, 140.0f }, { 176.5f, 140.0f },
                   { 177.5f, 142.0f }, { 177.0f, 143.5f }, { 169.0f, 147.5f }, { 168.0f, 147.0f } } }
         };
+        // The front cells (SeekRoom::Front, the seek ladder's doorway and room rungs): each room opening onto the
+        // hallway but the two hubs -- the four cells along the entrance hallway, its end, and the wings' four cells
+        // each. The back rooms, the hubs and the end rooms are the deep rung's.
+        static char const* const FRONT[] = { "hall_east_1", "hall_west_1", "hall_east_2", "hall_west_2", "hall_end",
+            "east_south_1", "east_north_1", "east_south_2", "east_north_2", "west_south_1", "west_north_1",
+            "west_south_2", "west_north_2" };
+        for (SeekRoom& room : rooms)
+            room.Front = std::any_of(std::begin(FRONT), std::end(FRONT), [&room](char const* name)
+            {
+                return room.Name == name;
+            });
+        return rooms;
     }
 
     /// **The seek stage's objects**: real gameobject_template entries whose displays have collision models in the
@@ -445,31 +457,37 @@ namespace
         });
 
         // M2 -- seek (the user, 2026-10-06: "M2 seek also happens inside the same Stockades instance. It has to find
-        // an object in a room, and that object and room is randomized."; perception-goals plan §4). The same empty
-        // Stockades and the same entrance spawn; each episode one real object -- a chest, crate, barrel, sack or
-        // strongbox -- at a random spot of one of the 39 rooms, with a random orientation. No compass: the camera's
-        // objective flag shows it only in line of sight, standing in for a quest object's glow. Found is stopping
-        // within three yards of it (interaction range). Its memory is the GRU's (P1; the mental map is P1b).
+        // an object in a room, and that object and room is randomized."; perception-goals plan §4, REDESIGN §2). The
+        // same empty Stockades; each episode the seat stands at a random point of the hallways (StockadeHallways, the
+        // entrance among them, as M1), facing a random way, and one real object -- a chest, crate, barrel, sack or
+        // strongbox -- stands where the placement ladder says. No compass: the camera's objective flag shows it only
+        // in line of sight, standing in for a quest object's glow. Found is stopping within three yards of it
+        // (interaction range). Its memory is the GRU's and its mental map's (the map block, REDESIGN §3).
         //
-        // The room ladder is the shaping fade's: the draw moves from the rooms seen from the hallway to the deepest as
-        // the fade steps (SeekDraw::Weights), every room always possible. An evaluation sweeps every (room, object)
-        // pair once: 39 x 5 = 195 episodes.
+        // **The ladder** (SeekDraw::Rung, the shaping fade's rungs): in the hallway in sight of the spawn, just inside
+        // a front cell's opening, anywhere in a front cell, then deep (the back rooms, hubs and end rooms), each rung
+        // keeping a tenth of the one below; episodes of 90, 120, 200 and 300 s by rung (Seek.RungSeconds*). An
+        // evaluation plays 78 episodes at the training rung (each of its rooms in turn, the objects cycled); the held
+        // out "sweep" arena is every (room, object) pair once, 39 x 5 = 195 episodes at the top rung, for the stage's
+        // end (eval.heldout).
         //
-        // **The clock, 300 s**: a greedy sweep from the spawn through every room's centre walks 1,595 yd, 228 s at run
-        // speed (the scan's Dijkstra distances, nearest unvisited room next); a seat that sees into a room from its
-        // door needs less, one that backtracks more. 300 s is 1.3 times the sweep, and is the episode clock's own scale
-        // (EPISODE_TIME_SCALE_MS), so the clock feature never saturates. The deepest room is 231 yd from the spawn,
-        // 33 s straight there.
+        // **The deep rung's clock, 300 s**: a greedy sweep from the entrance through every room's centre walks 1,595
+        // yd, 228 s at run speed (the scan's Dijkstra distances, nearest unvisited room next); a seat that sees into a
+        // room from its door needs less, one that backtracks more. 300 s is 1.3 times the sweep, and is the episode
+        // clock's own scale (EPISODE_TIME_SCALE_MS), so the clock feature never saturates.
         stages.push_back({
             .Name = "move2_seek",
             .Suffix = "_seek",
             .Extends = "move1_controls",
-            .Summary = "the same empty Stockades: one object hidden in one of its 39 rooms, found by sight with no "
-                "compass, and stopped beside",
+            .Summary = "the same empty Stockades: one object in its hallways or one of its 39 rooms, found by sight "
+                "with no compass and stopped beside, deeper each rung",
             .Blocks = { Core, Move, Vision, Map, Goal },
             .Arenas = {
                 { .Name = "rooms", .Weight = 1, .Against = Opposition::Seek, .EpisodeSeconds = 300,
-                    .SpawnPoints = { StockadeEntrance() }, .MapId = MAP_STORMWIND_STOCKADE,
+                    .SpawnPoints = StockadeHallways(), .MapId = MAP_STORMWIND_STOCKADE,
+                    .Rooms = StockadeRooms(), .Objects = SeekObjects(), .SeekRadius = 3.0f },
+                { .Name = "sweep", .Weight = 1, .Against = Opposition::Seek, .EvalOnly = true, .EpisodeSeconds = 300,
+                    .SpawnPoints = StockadeHallways(), .MapId = MAP_STORMWIND_STOCKADE,
                     .Rooms = StockadeRooms(), .Objects = SeekObjects(), .SeekRadius = 3.0f },
             },
             .MapId = MAP_STORMWIND_STOCKADE,

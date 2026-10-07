@@ -6960,11 +6960,16 @@ AnimusForge.Curriculum.Follow.CatchUpSeconds = 2.0
 #        no compass. Arrive (Outcome) is paid on stopping within the arena's radius (3 yd) of the object, on its floor
 #        (within ArriveRise yards of its height). StepCost is per 50 ms (a whole 300 s episode costs 3, what Arrive
 #        pays); Death (6) costs more than any clock. Stuck and Wall are the ground course's noise prices (WallSlide as
-#        MarkerGround's), on the cost ladder. Sighting (the first frame showing the object) and NewGround (each
-#        NewGroundCell-yard cell of floor first walked onto before the object is found) are training-only shaping and
-#        fade with the stage's shaping. The object is placed at one of Attempts uniform points of the room's floor
-#        whose vmap floor is within FloorTolerance yards of the room's and that has Clearance yards of room along each
-#        axis at knee height, else at the room's centre.
+#        MarkerGround's), charged from the first step at their own fixed price, off the cost ladder. Sighting (the
+#        first frame showing the object), NewGround (each NewGroundCell-yard cell of floor first walked onto before the
+#        object is found) and RoomSeen (each room whose floor a frame first shows, RoomSeenRays cast rays or more, by
+#        the episode's own bookkeeping) are training-only shaping and fade with the stage's shaping. The placement
+#        ladder follows the fade's rungs: the hallway (a hallway point HallwayNearest to HallwayFurthest yards off, in
+#        sight of the seat), a front cell's doorway (DoorwayInside yards in from its opening, up to DoorwayDeeper more
+#        and DoorwaySpread either side), a front cell, then deep; each rung keeps CarryShare of the one below, and its
+#        episodes last RungSeconds0 to 3. A room's object is placed at one of Attempts uniform points of its floor whose
+#        vmap floor is within FloorTolerance yards of the room's and that has Clearance yards of room along each axis at
+#        knee height, else at the room's centre.
 AnimusForge.Curriculum.Seek.Arrive = 3.0
 AnimusForge.Curriculum.Seek.StepCost = 0.0005
 AnimusForge.Curriculum.Seek.Death = 6.0
@@ -6972,12 +6977,24 @@ AnimusForge.Curriculum.Seek.ArriveRise = 2.0
 AnimusForge.Curriculum.Seek.Sighting = 0.5
 AnimusForge.Curriculum.Seek.NewGround = 0.004
 AnimusForge.Curriculum.Seek.NewGroundCell = 4.0
-AnimusForge.Curriculum.Seek.Stuck = 0.05
-AnimusForge.Curriculum.Seek.Wall = 0.03
+AnimusForge.Curriculum.Seek.Stuck = 0.02
+AnimusForge.Curriculum.Seek.Wall = 0.02
 AnimusForge.Curriculum.Seek.WallSlide = 0.5
 AnimusForge.Curriculum.Seek.Attempts = 24
 AnimusForge.Curriculum.Seek.FloorTolerance = 2.0
 AnimusForge.Curriculum.Seek.Clearance = 0.8
+AnimusForge.Curriculum.Seek.RoomSeen = 0.1
+AnimusForge.Curriculum.Seek.RoomSeenRays = 3
+AnimusForge.Curriculum.Seek.CarryShare = 0.1
+AnimusForge.Curriculum.Seek.RungSeconds0 = 90
+AnimusForge.Curriculum.Seek.RungSeconds1 = 120
+AnimusForge.Curriculum.Seek.RungSeconds2 = 200
+AnimusForge.Curriculum.Seek.RungSeconds3 = 300
+AnimusForge.Curriculum.Seek.HallwayNearest = 8.0
+AnimusForge.Curriculum.Seek.HallwayFurthest = 120.0
+AnimusForge.Curriculum.Seek.DoorwayInside = 2.0
+AnimusForge.Curriculum.Seek.DoorwayDeeper = 1.5
+AnimusForge.Curriculum.Seek.DoorwaySpread = 1.0
 
 #
 #    AnimusForge.Curriculum.Controls.*
