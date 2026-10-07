@@ -167,7 +167,9 @@ convergence:
 # ladder, not a pass gate: the stage still ends on convergence.
 fade:
   enabled: true
-  rungs: [1.0, 0.5, 0.25, 0.0]
+  # Starts at x0.5 (the compass withheld a quarter of the time): x1 (always shown) was mastered (99.6% arrive, 0.17 yd
+  # stops) and the fade waited on a score plateau to leave it (the user, 2026-10-06: start the fade now).
+  rungs: [0.5, 0.25, 0.0]
   window: 3
   regress_z: 2.0
   give_up: 2
