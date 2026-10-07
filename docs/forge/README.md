@@ -12,7 +12,8 @@ evaluations, decides when a stage is good enough to move on, and exports one sma
 
 **The detail is in [the Animus manual](docs/manual/README.md).** This page is the map.
 
-**Operating it today:** [the training cluster](cluster.md) (machines, deploying, running and moving a stage) and
+**Operating it today:** [forgectl](forgectl.md) (the command line: cluster health, stages, builds, tests),
+[the training cluster](cluster.md) (machines, deploying, running and moving a stage) and
 [the principles](principles.md) (the rules every change is reviewed against, and why). Both were written 2026-10-07 as
 Phase 0 of the human-operable plan; the rest of this manual is being brought up to date (several chapters still
 describe the first curriculum).
