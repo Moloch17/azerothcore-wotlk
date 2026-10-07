@@ -37,11 +37,13 @@ mappo:
   # arriving -- a search failure, not a reach one. The camera turned on 1.7% of decisions (5.5% at 30M) and the look
   # entropy fell 1.08 -> 0.72. A prior toward looking around, never a mask.
   look_entropy_coef: 0.004
-  # Fresh learning at the usual rate: M1's were halved for its last stretch and M2 extends M1. Kept at 3e-4 at the
-  # deploy's resume (2026-10-07): movement's own KL sat at 0.014 (under target) over the doorway stall; the joint
-  # KL's excess was the look heads'.
-  actor_lr: 0.0003
-  critic_lr: 0.0003
+  # 1.5e-4 from the cleanup deploy (2026-10-07), the rate M2 was effectively running at: a convergence bug read every
+  # harder rung as a plateau and annealed the rate from ~30M steps (fixed by ConvergenceController.rebaseline), so the
+  # 3e-4 configured here was really about 3e-4 x 0.41. kl_move read 0.0136 at that reduced rate; at the full 3e-4 expect
+  # ~0.03, over the 0.02 target. The (now correct) anneal lowers it further at the last rung. Revisit if the first
+  # reads show kl_move well under 0.01 and found rising slowly.
+  actor_lr: 0.00015
+  critic_lr: 0.00015
   # The camera's update in chunks (overseer, P2 review): the cluster's 8 GB and 16 GB cards need it, and the bench
   # ran out of memory at 192 envs unchunked (live M1 fit at 16 of 21.5 GB without it; the difference is unexplained).
   vision_chunk_rows: 2048
