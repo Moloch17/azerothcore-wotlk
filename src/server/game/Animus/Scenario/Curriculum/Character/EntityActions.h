@@ -142,8 +142,8 @@ namespace Animus::Curriculum::EntityActions
     };
     [[nodiscard]] Refusal JudgeUnitInteract(UnitFacts const& facts);
 
-    /// The item the seat would use on `object`: one in its bags or inventory whose use spell takes a game object (for
-    /// a game object) or a unit (for a unit); null when it carries none. Its use spell into `spell`.
+    /// The item the seat would use on `object`: one in its bags, inventory or keyring whose use spell takes a game
+    /// object (for a game object) or a unit (for a unit); null when it carries none. Its use spell into `spell`.
     [[nodiscard]] Item* KeyItemFor(Player* bot, WorldObject const* object, SpellInfo const*& spell);
 
     /// What a cast sent as the client sends it came to.
