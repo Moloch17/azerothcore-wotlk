@@ -133,6 +133,21 @@ namespace
     }
 }
 
+namespace
+{
+    MapRunSettings CurrentMapSettings;
+}
+
+Animus::Vision::MapRunSettings const& Animus::Vision::MapCurrent()
+{
+    return CurrentMapSettings;
+}
+
+void Animus::Vision::ConfigureMap(MapRunSettings const& settings)
+{
+    CurrentMapSettings = settings;
+}
+
 uint8_t Animus::Vision::EntityAgeBucket(float seconds)
 {
     uint8_t bucket = 0;

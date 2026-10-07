@@ -119,6 +119,19 @@ namespace Animus::Vision
         uint32_t CoarseTiles = 0;
     };
 
+    /// The process's map settings (AnimusForge.Map.*, set once at startup like the camera's): the caps, and how a
+    /// training seat's map lives across resets (amendment 1) -- kept on the same instance KeepShare of the time, its
+    /// clock moved on by a random 0 to AgeOffsetSeconds when it is, so the model sees stale memory as a shipped bot
+    /// will; else cleared.
+    struct MapRunSettings
+    {
+        MapSettings Caps;
+        float KeepShare = 0.5f;
+        float AgeOffsetSeconds = 600.0f;
+    };
+    [[nodiscard]] MapRunSettings const& MapCurrent();
+    void ConfigureMap(MapRunSettings const& settings);
+
     /// A coarse cell's side, yards (amendment 3: far tiles kept at 8 yd).
     constexpr int32_t COARSE_CELL = 8;
 

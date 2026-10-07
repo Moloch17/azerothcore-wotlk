@@ -60,13 +60,14 @@ namespace
     }
 }
 
-// SPEC is "<12I32s3I", 92 bytes, ending with ImageBytes then LookHeads; the version is 23 (five bytes a pixel).
+// SPEC is "<12I32s4I", 96 bytes, ending with ImageBytes, LookHeads, then MapBytes (protocol 24, the mental map).
 TEST(VisionProtocolTest, SpecCarriesLookHeads)
 {
-    EXPECT_EQ(PROTOCOL_VERSION, 23u);
-    EXPECT_EQ(sizeof(SpecMsg), 92u);
+    EXPECT_EQ(PROTOCOL_VERSION, 24u);
+    EXPECT_EQ(sizeof(SpecMsg), 96u);
     EXPECT_EQ(offsetof(SpecMsg, ImageBytes), 84u);
     EXPECT_EQ(offsetof(SpecMsg, LookHeads), 88u);
+    EXPECT_EQ(offsetof(SpecMsg, MapBytes), 92u);
     EXPECT_EQ(FL::HEADS, 3u);
     EXPECT_EQ(FL::HEAD_SIZES, (std::array<uint32_t, 3>{ 7, 5, 5 }));
 }

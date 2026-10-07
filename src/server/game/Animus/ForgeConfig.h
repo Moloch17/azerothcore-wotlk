@@ -21,6 +21,7 @@
 
 #include "Camera.h"
 #include "Define.h"
+#include "MentalMap.h"
 #include "Position.h"
 #include "StageSettings.h"
 #include <algorithm>
@@ -120,6 +121,11 @@ namespace AnimusForge
         /// runs/<scenario>/camera/ (AnimusForge::Forge::MaybeAuditCamera).
         uint32 VisionAuditInterval = 300;
         uint32 VisionAuditSeats = 4;
+        /// AnimusForge.Map.*: the mental map's caps (MaxTiles fine tiles, CoarseTiles coarse ones an evicted fine
+        /// tile folds into) and how a training seat's map lives across resets (KeepShare, AgeOffsetSeconds;
+        /// perception-goals REDESIGN §3, amendments 1 and 3). The process's, like the camera's
+        /// (Animus::Vision::ConfigureMap).
+        Animus::Vision::MapRunSettings Map;
 
         /// Remote policy only: start the Python learner as a child process once the socket is up.
         bool LearnerAutoStart = true;

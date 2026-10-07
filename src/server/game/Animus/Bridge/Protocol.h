@@ -32,7 +32,9 @@
  *                            block's height x width x 5 (protocol 23; x 4 at 21 and 22), 0 for a stage without one
  *                            (protocol 21); then u32
  *                            LookHeads, the look head's categoricals per agent in ACT (Vision::FreeLook::HEADS, 3)
- *                            with a vision block, 0 without one (protocol 22).
+ *                            with a vision block, 0 without one (protocol 22); then u32 MapBytes, the bytes per
+ *                            agent of each STEP's mental map crops, M below: the map block's 48 x 48 x 6 (13,824), 0
+ *                            for a stage without one (protocol 24).
  *   server -> client  STEP   { u64 decision } then, in order, with E envs, A agents per env,
  *                            O obs dim, S state dim, N actions, K episode info dim:
  *                              f32 obs[E*A*O]         observation after any auto-reset
@@ -68,6 +70,13 @@
  *                                                     Vision::FillNoFrame's pattern (sky, height 0). Absent
  *                                                     when the learner reads it from the device buffers (DEVICE)
  *                              u8  final_image[D*A*I] last image of each ended episode, the same D envs as final_obs
+ *                            and, only in a stage with a map block (M = SPEC's MapBytes > 0; protocol 24):
+ *                              u8  map[E*A*M]         each agent's mental map crop after any auto-reset: 48 x 48 cells
+ *                                                     of 2 yd, heading-up, [row][col][channel], 6 bytes a cell
+ *                                                     (Vision::CropChannel: code, height, visited, age, class,
+ *                                                     frontier); all zeros for an agent with no map. Always on the
+ *                                                     socket, even with DEVICE buffers (G3 has to carry it there)
+ *                              u8  final_map[D*A*M]   last crop of each ended episode, the same D envs as final_obs
  *                            A stage without one sends exactly the protocol 20 STEP (SPEC grows by ImageBytes for
  *                            every stage).
  *   client -> server  ACT    { i32 actions[E*A] } or, from a policy with a goal head,
@@ -160,7 +169,10 @@ namespace AnimusForge
     // 23: identity (perception-goals P2): a camera pixel is five bytes, the class and the entity slot (vision block
     // revision 5), so ImageBytes is height x width x 5; the entity list is a block of float columns. The messages'
     // layout is protocol 22's; a stage without a vision block is byte-identical to it but for the version.
-    constexpr uint32 PROTOCOL_VERSION = 23;
+    // 24: the mental map (perception-goals REDESIGN §3): SPEC ends with MapBytes, and a stage with a map block ends each
+    // STEP with every agent's crop and the ended envs' final crops, after the images. A stage without one has protocol
+    // 23's STEP; every SPEC is four bytes longer.
+    constexpr uint32 PROTOCOL_VERSION = 24;
     constexpr uint32 SCENARIO_NAME_SIZE = 32;
     constexpr uint32 POLICY_NAME_SIZE = 32;
     constexpr uint32 LAYOUT_NAME_SIZE = 48;
@@ -235,9 +247,12 @@ namespace AnimusForge
         /// The look head's categoricals per agent in ACT (ScenarioSpec::LookHeads; 0 without a vision block;
         /// protocol 22). Their sizes are the vision block's manifest's "look" "heads".
         uint32 LookHeads;
+        /// Bytes per agent of each STEP's mental map crops (ScenarioSpec::MapBytes; 0 without a map block; protocol
+        /// 24): the wire's cut, which the learner checks against stage.json's map.
+        uint32 MapBytes;
     };
-    // The learner's SPEC (protocol.py): "<12I32s3I", 92 bytes.
-    static_assert(sizeof(SpecMsg) == 12 * 4 + SCENARIO_NAME_SIZE + 3 * 4 && sizeof(SpecMsg) == 92);
+    // The learner's SPEC (protocol.py): "<12I32s4I", 96 bytes.
+    static_assert(sizeof(SpecMsg) == 12 * 4 + SCENARIO_NAME_SIZE + 4 * 4 && sizeof(SpecMsg) == 96);
 
     struct LayoutMsg
     {

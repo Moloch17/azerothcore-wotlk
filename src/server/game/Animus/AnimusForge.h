@@ -449,6 +449,7 @@ namespace AnimusForge
         std::vector<RankDevice> _rankDevices;
         std::vector<float> _endedObs;
         std::vector<uint8> _endedImage;     // ... and their final camera images (protocol 21)
+        std::vector<uint8> _endedMap;       // ... and their final map crops (protocol 24)
         std::vector<float> _endedState;
         std::vector<float> _endedInfo;
         bool _tickMismatchLogged = false;   // a world tick other than ForgeConfig::TickMs was reported once
@@ -523,6 +524,13 @@ namespace AnimusForge
             uint64 VisionNs = 0;
             uint64 VisionFrames = 0;
             uint64 VisionRays = 0;
+            // The mental map's (Vision::Cost::AddMap) and the STEPs' (Vision::Cost::AddStep).
+            uint64 MapNs = 0;
+            uint64 MapWrites = 0;
+            uint64 MapTiles = 0;
+            uint64 StepBytes = 0;
+            uint64 StepNs = 0;
+            uint64 Steps = 0;
         };
         [[nodiscard]] static ControllerMarks ReadControllerMarks();
         ControllerMarks _rateController;

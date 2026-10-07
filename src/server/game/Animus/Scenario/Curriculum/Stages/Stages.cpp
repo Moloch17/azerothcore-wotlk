@@ -331,7 +331,7 @@ namespace
             .Extends = "move1_controls",
             .Summary = "the same empty Stockades: one object hidden in one of its 39 rooms, found by sight with no "
                 "compass, and stopped beside",
-            .Blocks = { Core, Move, Vision, Goal },
+            .Blocks = { Core, Move, Vision, Map, Goal },
             .Arenas = {
                 { .Name = "rooms", .Weight = 1, .Against = Opposition::Seek, .EpisodeSeconds = 300,
                     .SpawnPoints = { StockadeEntrance() }, .MapId = MAP_STORMWIND_STOCKADE,
@@ -598,6 +598,10 @@ namespace
         for (std::size_t i = 0; i < stage.Blocks.size(); ++i)
             if (std::find(stage.Blocks.begin() + i + 1, stage.Blocks.end(), stage.Blocks[i]) != stage.Blocks.end())
                 return "a block is listed twice";
+
+        // The mental map is written from the camera's frames (perception-goals REDESIGN §3), after them.
+        if (stage.Has(BlockId::Map) && !stage.Has(BlockId::Vision))
+            return "a mental map is written from the camera's frames: it needs the vision block";
 
         // The base only has to exist: seeding maps the base's blocks to this stage's by name (stage.json spans), so a
         // stage may drop base blocks it does not need and several stages may share a base.

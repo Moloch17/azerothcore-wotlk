@@ -35,6 +35,33 @@ namespace Animus::Vision::Cost
         Frames.fetch_add(1, std::memory_order_relaxed);
         Rays.fetch_add(rays, std::memory_order_relaxed);
     }
+
+    /// The mental map's (perception-goals REDESIGN §3, amendment 2: measured in the vision row): thread time writing
+    /// a frame and the body into the map and cropping it, the writes, and the tiles kept (summed over the writes, for
+    /// the mean a seat keeps).
+    inline std::atomic<uint64_t> MapNs{ 0 };
+    inline std::atomic<uint64_t> MapWrites{ 0 };
+    inline std::atomic<uint64_t> MapTiles{ 0 };
+
+    inline void AddMap(uint64_t ns, uint64_t tiles)
+    {
+        MapNs.fetch_add(ns, std::memory_order_relaxed);
+        MapWrites.fetch_add(1, std::memory_order_relaxed);
+        MapTiles.fetch_add(tiles, std::memory_order_relaxed);
+    }
+
+    /// The STEPs sent to the learner (amendment 4: the STEP's size and the sim's send time per decision go in the
+    /// status row): bytes, the sends' wall time, and the STEPs.
+    inline std::atomic<uint64_t> StepBytes{ 0 };
+    inline std::atomic<uint64_t> StepNs{ 0 };
+    inline std::atomic<uint64_t> Steps{ 0 };
+
+    inline void AddStep(uint64_t bytes, uint64_t ns)
+    {
+        StepBytes.fetch_add(bytes, std::memory_order_relaxed);
+        StepNs.fetch_add(ns, std::memory_order_relaxed);
+        Steps.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 #endif

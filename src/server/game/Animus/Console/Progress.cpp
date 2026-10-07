@@ -67,6 +67,19 @@ namespace
                 Acore::StringFormat("per frame (thread time), {:.0f} rays/frame actually cast (at the seats' drawn "
                     "render sizes, before scaling up), {:.1f} frames/decision, {:.2f} ms per decision (every seat)",
                     vision.RaysPerFrame, vision.FramesPerDecision, vision.MsPerDecision) });
+        // The mental map's cost (amendment 2: measured in the vision row) and the STEPs' size and send time
+        // (amendment 4: past ~10% of a decision, the device path is the fix).
+        if (vision.MapUsPerWrite > 0.0)
+            table.AddRow({ "mental map", Acore::StringFormat("{:.0f} us/seat", vision.MapUsPerWrite),
+                Acore::StringFormat("per seat per decision (thread time: the frame's rays and the body written, the "
+                    "crop read), {:.2f} ms per decision (every seat), {:.1f} tiles a seat's map keeps",
+                    vision.MapMsPerDecision, vision.MapTilesPerSeat) });
+        if (vision.StepKiB > 0.0)
+            table.AddRow({ "wire", Acore::StringFormat("{:.2f} ms/decision", vision.SendMsPerDecision),
+                Acore::StringFormat("sending STEPs, {:.1f}% of a decision's wall time{}; {:.1f} MiB a decision, {:.0f} "
+                    "KiB a STEP, {:.1f} KiB an agent ({:.1f} of it the map)", 100.0 * vision.SendShare,
+                    vision.SendShare > 0.1 ? " (past 10%: the device path, G3, is the fix)" : "",
+                    vision.StepMiBPerDecision, vision.StepKiB, vision.AgentKiB, vision.MapKiB) });
         if (vision.FramesPerDecision > 0.0 && vision.AuditInterval)
             table.AddRow({ "camera audit", Acore::StringFormat("{} frames", vision.AuditFrames),
                 Acore::StringFormat("every {} s to {}{}", vision.AuditInterval, vision.AuditDir,

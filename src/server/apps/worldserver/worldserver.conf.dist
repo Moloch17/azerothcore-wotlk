@@ -5462,6 +5462,42 @@ AnimusForge.Vision.AuditInterval = 300
 
 AnimusForge.Vision.AuditSeats = 4
 
+#
+#    AnimusForge.Map.MaxTiles
+#        Description: The mental map (a stage with a map block, perception-goals REDESIGN §3):
+#                     the most 32 x 32-yard tiles a seat's map keeps, the least recently written
+#                     going first. Training's 4096 is about 4 km2; the Stockades is about 60. A
+#                     realm's companion would keep 256 (with CoarseTiles).
+#        Default:     4096 - (1 to 65536)
+
+AnimusForge.Map.MaxTiles = 4096
+
+#
+#    AnimusForge.Map.CoarseTiles
+#        Description: Coarse tiles (8-yard cells, 256 yards a tile) an evicted fine tile is folded
+#                     into rather than forgotten, read where no fine tile is kept. 0 forgets it
+#                     (training).
+#        Default:     0 - (0 to 65536)
+
+AnimusForge.Map.CoarseTiles = 0
+
+#
+#    AnimusForge.Map.KeepShare
+#        Description: The share of a training seat's resets on the same instance that keep its
+#                     map (stale memory, as a shipped bot has); the others start it empty. An
+#                     evaluation always starts it empty.
+#        Default:     0.5 - (0 to 1)
+
+AnimusForge.Map.KeepShare = 0.5
+
+#
+#    AnimusForge.Map.AgeOffsetSeconds
+#        Description: A kept map is this much older at most, drawn uniformly from 0 at each reset
+#                     that keeps it: every look and entity in it ages by the draw.
+#        Default:     600 - (0 to 36000)
+
+AnimusForge.Map.AgeOffsetSeconds = 600
+
 ###################################################################################################
 # LEARNER
 #

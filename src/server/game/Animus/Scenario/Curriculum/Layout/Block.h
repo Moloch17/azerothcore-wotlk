@@ -72,6 +72,9 @@ namespace Animus::Curriculum
         /// What the camera's last frame showed, as a list of the entities in it (perception-goals 1b; no actions).
         /// Right after the vision block, which every stage with one is given it with (CurriculumStages).
         Entities,
+        /// What the seat remembers of the place: its mental map, as one egocentric heading-up crop (perception-goals
+        /// REDESIGN §3; no actions). After the camera, whose frames write it.
+        Map,
         Goal,           // which goal kinds and targets are there, and whether the goal held ended (no actions; last)
         Count
     };

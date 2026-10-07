@@ -44,6 +44,8 @@ class Unit;
 namespace Animus::Vision
 {
     struct SeenList;
+    struct FrameHits;
+    class MentalMap;
 }
 
 namespace Animus::Curriculum
@@ -325,6 +327,15 @@ namespace Animus::Curriculum
         /// **What its camera's last frame showed** (perception-goals 1b, SeatState::Seen): written by the vision
         /// block as it renders, read by the entities block after it. Null for a view without a camera.
         Vision::SeenList* Seen = nullptr;
+        /// **The rays of its camera's last frame, as cast** (SeatState::Hits): written by the vision block in a stage
+        /// with a map, read by the map block after it. Null without a map.
+        Vision::FrameHits* Hits = nullptr;
+        /// **Its mental map** (perception-goals REDESIGN §3, SeatState::Map) and the row its crop goes to (the pool's,
+        /// EnvPool::MapCrop or FinalMapCrop: Vision::CROP_BYTES), written by the map block. MapKept: this episode's
+        /// map was kept from the last (amendment 1). Null for a view without one.
+        Vision::MentalMap* Map = nullptr;
+        uint8* MapRow = nullptr;
+        bool MapKept = false;
         float SubmergedTime = 0.0f;                 // seconds its head has been under, 0 while it is up
         /// How much of its breath the seat has spent, 0 to 1 and past it while drowning: the core's own timer
         /// (WaterBreath.Timer, 180 s by default), run up under water and back down ten times as fast above it. 0

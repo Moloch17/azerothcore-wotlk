@@ -46,8 +46,9 @@ TEST(SeekEncounterTest, TheStageIsDefined)
     Cu::StageDefinition const* stage = Cu::FindStage("move2_seek");
     ASSERT_NE(stage, nullptr);
     EXPECT_EQ(stage->Extends, "move1_controls");
+    // The camera brings its entity list; the mental map follows them (perception-goals REDESIGN §3).
     EXPECT_EQ(stage->Blocks, (std::vector<Cu::BlockId>{ Cu::BlockId::Core, Cu::BlockId::Move, Cu::BlockId::Vision,
-        Cu::BlockId::Entities, Cu::BlockId::Goal }));    // the camera brings its entity list
+        Cu::BlockId::Entities, Cu::BlockId::Map, Cu::BlockId::Goal }));
     EXPECT_EQ(stage->Level, 1);
     ASSERT_EQ(stage->Arenas.size(), 1u);
     Cu::ArenaDefinition const& arena = stage->Arenas[0];

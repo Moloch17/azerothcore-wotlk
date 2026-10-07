@@ -233,6 +233,10 @@ namespace Animus
         /// the ended episodes' last, beside FinalObs. Empty for a stage without a vision block.
         std::vector<uint8> Image;
         std::vector<uint8> FinalImage;
+        /// Per agent, Spec().MapBytes bytes: its mental map's crop (perception-goals REDESIGN §3, protocol 24), beside
+        /// Image; and the ended episodes' last, beside FinalImage. Empty for a stage without a map block.
+        std::vector<uint8> MapCrop;
+        std::vector<uint8> FinalMapCrop;
         std::vector<int32> Actions;
         /// The goal each agent is pursuing, in agent order, as the learner sent it (Curriculum::NO_GOAL for none).
         /// A host fills it before ApplyActions; a policy without goals leaves it alone.
@@ -254,6 +258,11 @@ namespace Animus
         [[nodiscard]] uint8* ImageRows(std::vector<uint8>& image, uint32 e)
         {
             return image.empty() ? nullptr : &image[std::size_t(e) * _spec.AgentsPerEnv * _spec.ImageBytes];
+        }
+        /// Env `e`'s rows of a map array, or null when the stage has no map.
+        [[nodiscard]] uint8* MapRows(std::vector<uint8>& map, uint32 e)
+        {
+            return map.empty() ? nullptr : &map[std::size_t(e) * _spec.AgentsPerEnv * _spec.MapBytes];
         }
 
         struct AgentSlot

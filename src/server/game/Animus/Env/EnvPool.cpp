@@ -78,6 +78,9 @@ Animus::EnvPool::EnvPool(Scenario& scenario, StageSettings const& settings)
     FinalImage.assign(std::size_t(agents) * _spec.ImageBytes, 0);
     Vision::FillNoFrame(Image.data(), uint32(Image.size()));
     Vision::FillNoFrame(FinalImage.data(), uint32(FinalImage.size()));
+    // No map yet: every cell unknown (zeros, the map block's own "nothing").
+    MapCrop.assign(std::size_t(agents) * _spec.MapBytes, 0);
+    FinalMapCrop.assign(std::size_t(agents) * _spec.MapBytes, 0);
     _envSeed.assign(envs, NO_EPISODE_SEED);
     Actions.assign(agents, 0);
     // Two per agent, primary then secondary (Curriculum::GOAL_SLOTS); NO_GOAL until a learner with a goal head
@@ -193,7 +196,7 @@ void Animus::EnvPool::ResetAll()
 
         uint32 const e = env.Index;
         _scenario.Observe(env, &Obs[e * _spec.AgentsPerEnv * _spec.ObsDim], &State[e * _spec.StateDim],
-            &Mask[e * _spec.AgentsPerEnv * _spec.NumActions], ImageRows(Image, e));
+            &Mask[e * _spec.AgentsPerEnv * _spec.NumActions], ImageRows(Image, e), MapRows(MapCrop, e));
         DescribeAgents(env);
     }
 
@@ -264,7 +267,7 @@ void Animus::EnvPool::ObserveEnv(Env& env, bool onMapThread)
         // No mask: nothing acts on the final observation. The next episode does not exist yet -- FinishEnv
         // builds it on the world thread and observes it there.
         _scenario.Observe(env, &FinalObs[e * agentsPerEnv * _spec.ObsDim], &FinalState[e * _spec.StateDim],
-            nullptr, ImageRows(FinalImage, e));
+            nullptr, ImageRows(FinalImage, e), MapRows(FinalMapCrop, e));
         timing.FinalObserveNs += Since(mark);
 
         // The next episode off the world thread when it stays on this map: ObserveMap hands it on (ResetMapEnvs).
@@ -274,7 +277,7 @@ void Animus::EnvPool::ObserveEnv(Env& env, bool onMapThread)
     }
 
     _scenario.Observe(env, &Obs[e * agentsPerEnv * _spec.ObsDim], &State[e * _spec.StateDim],
-        &Mask[e * agentsPerEnv * _spec.NumActions], ImageRows(Image, e));
+        &Mask[e * agentsPerEnv * _spec.NumActions], ImageRows(Image, e), MapRows(MapCrop, e));
     DescribeAgents(env);
     ++timing.Observes;
     timing.ObserveNs += Since(mark);
@@ -313,7 +316,7 @@ void Animus::EnvPool::FinishEnv(Env& env, CollectTiming& timing)
     RecentResets.Add({ CurrentReset.EncounterNs, CurrentReset.RouteNs, CurrentReset.Routes, resetNs });
 
     _scenario.Observe(env, &Obs[e * agentsPerEnv * _spec.ObsDim], &State[e * _spec.StateDim],
-        &Mask[e * agentsPerEnv * _spec.NumActions], ImageRows(Image, e));
+        &Mask[e * agentsPerEnv * _spec.NumActions], ImageRows(Image, e), MapRows(MapCrop, e));
     DescribeAgents(env);
     ++timing.Observes;
     timing.ObserveNs += Since(mark);

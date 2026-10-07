@@ -15,12 +15,18 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "Block.h"
+#include "Layout.h"
+#include "MapBlock.h"
 #include "MentalMap.h"
 #include "gtest/gtest.h"
+#include <boost/json/array.hpp>
+#include <boost/json/object.hpp>
 #include <cmath>
 #include <vector>
 
 namespace Vi = Animus::Vision;
+namespace Cu = Animus::Curriculum;
 
 namespace
 {
@@ -442,4 +448,45 @@ TEST(MentalMapTest, CropBytesRoundTrip)
     Vi::CropCell const floor = CellAt(crop, 21, 24);
     EXPECT_EQ(floor.Code, Vi::MapCode::Floor);
     EXPECT_FLOAT_EQ(floor.Height, -2.0f);
+}
+
+// The map block (the Change): four scalar columns, no actions; its manifest describes the one crop for the learner --
+// 48 x 48 cells of 2 yd, six byte channels, 13,824 bytes an agent on the wire.
+TEST(MentalMapTest, TheMapBlockDescribesItsCrop)
+{
+    Cu::Block const& block = Cu::GetBlock(Cu::BlockId::Map);
+    Cu::Layout layout;
+    EXPECT_EQ(Cu::BlockName(Cu::BlockId::Map), "map");
+    EXPECT_EQ(block.Size(layout).Obs, uint32(Cu::MapBlock::OBS_COUNT));
+    EXPECT_EQ(block.Size(layout).Actions, 0u);
+    EXPECT_EQ(block.Revision(), 1u);
+
+    boost::json::object entry;
+    block.DescribeManifest(layout, entry);
+    boost::json::object const& map = entry.at("map").as_object();
+    EXPECT_EQ(map.at("transport").as_string(), "bytes");
+    EXPECT_EQ(map.at("height").to_number<uint32>(), 48u);
+    EXPECT_EQ(map.at("width").to_number<uint32>(), 48u);
+    EXPECT_DOUBLE_EQ(map.at("cell").to_number<double>(), 2.0);
+    EXPECT_EQ(map.at("channels").to_number<uint32>(), 6u);
+    EXPECT_EQ(map.at("map_bytes").to_number<uint32>(), 13824u);
+    EXPECT_EQ(map.at("codes").to_number<uint32>(), 5u);
+    EXPECT_EQ(map.at("classes").to_number<uint32>(), Vi::CLASS_LIMIT);
+    EXPECT_EQ(map.at("channel_names").as_array().size(), 6u);
+    EXPECT_EQ(map.at("scalars").to_number<uint32>(), uint32(Cu::MapBlock::OBS_COUNT));
+
+    // The scalars of a crop: shares of the cells known, frontier and visited, and whether the map was kept.
+    Vi::MentalMap memory;
+    for (int32_t x = -4; x <= 4; ++x)
+        for (int32_t y = -4; y <= 4; ++y)
+            FloorAt(memory, float(x) + 0.5f, float(y) + 0.5f, 0.0f);
+    memory.WriteBody(0.5f, 0.5f, 0.0f, true);
+    std::vector<uint8_t> const crop = CropOf(memory, 0.0f, 0.0f, 0.0f, 0.0f);
+    float obs[Cu::MapBlock::OBS_COUNT] = {};
+    Cu::MapBlock::Scalars(crop.data(), true, obs);
+    EXPECT_GT(obs[Cu::MapBlock::OBS_KNOWN], 0.0f);
+    EXPECT_LT(obs[Cu::MapBlock::OBS_KNOWN], 0.05f);
+    EXPECT_GT(obs[Cu::MapBlock::OBS_FRONTIER], 0.0f);
+    EXPECT_FLOAT_EQ(obs[Cu::MapBlock::OBS_VISITED], 1.0f / (48.0f * 48.0f));
+    EXPECT_FLOAT_EQ(obs[Cu::MapBlock::OBS_KEPT], 1.0f);
 }

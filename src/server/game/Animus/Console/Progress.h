@@ -171,6 +171,19 @@ namespace AnimusForge
             double RaysPerFrame = 0.0;
             double FramesPerDecision = 0.0;
             double MsPerDecision = 0.0;     // thread time, every seat on every map
+            /// The mental map (perception-goals REDESIGN §3): thread time per seat's write and crop, per decision
+            /// (every seat), and the tiles a seat's map keeps on average.
+            double MapUsPerWrite = 0.0;
+            double MapMsPerDecision = 0.0;
+            double MapTilesPerSeat = 0.0;
+            /// The STEPs (amendment 4): their mean size, bytes sent per decision, the send's wall time per decision and
+            /// its share of a decision's wall time; an agent's row (obs, mask, image and map) and its map's part.
+            double StepKiB = 0.0;
+            double StepMiBPerDecision = 0.0;
+            double SendMsPerDecision = 0.0;
+            double SendShare = 0.0;
+            double AgentKiB = 0.0;
+            double MapKiB = 0.0;
             /// The audit (AnimusForge.Vision.AuditInterval): its interval (0 = off), frames saved since the
             /// scenario started, where they go and the last one written.
             uint32 AuditInterval = 0;

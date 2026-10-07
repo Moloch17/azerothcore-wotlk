@@ -24,6 +24,7 @@
 #include "BotSlot.h"
 #include "Client.h"
 #include "Identity.h"
+#include "MentalMap.h"
 #include "PlayerLink.h"
 #include "ObjectGuid.h"
 #include "Position.h"
@@ -258,6 +259,22 @@ namespace Animus::Curriculum
         /// The entities its camera's last frame showed (perception-goals 1b): written by the vision block, read by
         /// the entities block. Mutable like the camera.
         mutable Vision::SeenList Seen;
+        /// Its camera's last frame's rays as cast (Vision::FrameHits), for the map block: written by the vision block
+        /// in a stage with a map.
+        mutable Vision::FrameHits Hits;
+        /// **Its mental map** (perception-goals REDESIGN §3): written by the map block from its frames and its body.
+        /// Kept across resets on the same instance MapRunSettings::KeepShare of the time, its clock moved on by a
+        /// random offset (amendment 1): the reset rolls MapKeep and MapAgeOffset from the world thread's random
+        /// numbers, and the episode's first observation applies them (MapPending) once the seat's instance is known
+        /// -- a map from another map or instance, or an evaluation's, starts empty. MapMapId and MapInstanceId are
+        /// the instance the map is of; MapKept says this episode's was kept.
+        mutable Vision::MentalMap Map;
+        bool MapPending = false;
+        bool MapKeep = false;
+        float MapAgeOffset = 0.0f;
+        uint32 MapMapId = 0;
+        uint32 MapInstanceId = 0;
+        bool MapKept = false;
         mutable Movement::Client Mover;
         mutable Movement::LinkMemory Link;
         /// The controller's columns: reports refused, ticks pressing into a wall or stuck with a key held, course

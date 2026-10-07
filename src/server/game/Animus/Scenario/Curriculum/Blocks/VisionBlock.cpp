@@ -143,6 +143,8 @@ void Animus::Curriculum::VisionBlock::Observe(SeatView const& view, float* obs, 
     // Nothing seen until this decision's frame says otherwise.
     if (view.Seen)
         view.Seen->Count = 0;
+    if (view.Hits)
+        view.Hits->Rays.clear();
     Player* bot = view.Bot;
     Map* map = bot && bot->IsInWorld() ? bot->GetMap() : nullptr;
     if (!map)
@@ -193,7 +195,7 @@ void Animus::Curriculum::VisionBlock::Observe(SeatView const& view, float* obs, 
     // The image into the seat's byte row (none: the scalars alone, and no pixel cast), the scalars into the columns.
     thread_local Vi::FrameSlots slots;
     uint32 const rays = Vi::Render(settings, pose, camera, world, sight.View(),
-        view.HasObjective ? &objective : nullptr, view.Image, obs, nullptr, view.ObjectiveRadius, &slots);
+        view.HasObjective ? &objective : nullptr, view.Image, obs, nullptr, view.ObjectiveRadius, &slots, view.Hits);
 
     // The frame's entity list for the entities block: slot s's entity, as the gather saw it.
     if (Vi::SeenList* seen = view.Seen)

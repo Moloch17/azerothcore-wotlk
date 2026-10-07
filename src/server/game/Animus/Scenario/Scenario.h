@@ -69,6 +69,9 @@ namespace Animus
         /// Per agent, the look head's choices ACT carries after the actions and goals (Vision::FreeLook::HEADS) when
         /// the stage has a vision block, else 0: ACT is then protocol 21's (camera-vision.FREELOOK.md C).
         uint32 LookHeads = 0;
+        /// Per agent, the bytes of its mental map's crop (Vision::CROP_BYTES) when the stage has a map block, else 0:
+        /// the STEP's map section (perception-goals REDESIGN §3, protocol 24).
+        uint32 MapBytes = 0;
         std::vector<LayoutSpec> Layouts;    // empty = one layout named after the scenario, ObsDim x NumActions
     };
 
@@ -133,8 +136,9 @@ namespace Animus
 
         /// obs: [AgentsPerEnv * ObsDim], state: [StateDim], mask: [AgentsPerEnv * NumActions]. `mask` is null for an
         /// ended episode's final observation, which needs no actions: skip the (costly) cast checks then. image:
-        /// [AgentsPerEnv * Spec().ImageBytes] each agent's camera image, null when ImageBytes is 0.
-        virtual void Observe(Env& env, float* obs, float* state, uint8* mask, uint8* image) = 0;
+        /// [AgentsPerEnv * Spec().ImageBytes] each agent's camera image, null when ImageBytes is 0. map:
+        /// [AgentsPerEnv * Spec().MapBytes] each agent's mental map crop, null when MapBytes is 0.
+        virtual void Observe(Env& env, float* obs, float* state, uint8* mask, uint8* image, uint8* map) = 0;
 
         /// layout: [AgentsPerEnv] index into Spec().Layouts of each agent's current layout. Called after Observe,
         /// and for an ended episode before its reset. Constant within an episode.

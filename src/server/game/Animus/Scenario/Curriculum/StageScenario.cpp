@@ -440,6 +440,8 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     _spec.ImageBytes = _stage.Has(BlockId::Vision) ? Vision::ImageBytes(Vision::Current()) : 0;
     // ... and its look head's choices come back with the actions (free look, protocol 22).
     _spec.LookHeads = _stage.Has(BlockId::Vision) ? Vision::FreeLook::HEADS : 0;
+    // The mental map's crop travels as bytes too, in a section of its own (perception-goals REDESIGN §3, protocol 24).
+    _spec.MapBytes = _stage.Has(BlockId::Map) ? Vision::CROP_BYTES : 0;
     _data.resize(settings.Envs);
 
     // The encounters any of the stage's arenas uses, in build order.
@@ -1677,6 +1679,13 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
                 GetBlock(id).DescribeManifest(layout, manifest);
                 block["entities"] = manifest["entities"];
             }
+            // The mental map's crop: its shape and channels, for the learner's map encoder (REDESIGN §3).
+            if (id == BlockId::Map)
+            {
+                boost::json::object manifest;
+                GetBlock(id).DescribeManifest(layout, manifest);
+                block["map"] = manifest["map"];
+            }
             // Its columns by name, where the block names them: a seed follows a column that moved (bootstrap).
             boost::json::array names;
             GetBlock(id).DescribeColumns(layout, names);
@@ -2233,6 +2242,20 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
             {
                 return std::min(frand(0.0f, total), std::nextafter(total, 0.0f));
             });
+    // Each seat's mental map: kept across this reset KeepShare of the time in training, older by a random offset
+    // (amendment 1); never in an evaluation, which starts every seat's map empty so its scores compare. Applied at the
+    // episode's first observation, once the seat's instance is known (ObserveSeat).
+    if (_stage.Has(BlockId::Map))
+    {
+        Vision::MapRunSettings const& maps = Vision::MapCurrent();
+        for (SeatState& seat : data.Seats)
+        {
+            seat.MapPending = true;
+            seat.MapKept = false;
+            seat.MapKeep = !env.Evaluating && maps.KeepShare > 0.0f && frand(0.0f, 1.0f) < maps.KeepShare;
+            seat.MapAgeOffset = seat.MapKeep ? frand(0.0f, std::max(0.0f, maps.AgeOffsetSeconds)) : 0.0f;
+        }
+    }
     for (RewardLedger& director : data.DirectorRewards)
         director.ResetEpisode();
     // No resurrection offer is in flight into a new episode, and the clock it was taken on has restarted.
@@ -3764,16 +3787,21 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
         Encoding::StartCallBeastCooldown(bot);
 }
 
-void Animus::Curriculum::StageScenario::Observe(Env& env, float* obs, float* state, uint8* mask, uint8* image)
+void Animus::Curriculum::StageScenario::Observe(Env& env, float* obs, float* state, uint8* mask, uint8* image,
+    uint8* map)
 {
-    // An agent's image row, or none for a stage without a camera.
+    // An agent's image row, or none for a stage without a camera; its map row, or none without a map.
     auto const imageRow = [this, image](uint32 agent)
     {
         return image ? image + std::size_t(agent) * _spec.ImageBytes : nullptr;
     };
+    auto const mapRow = [this, map](uint32 agent)
+    {
+        return map ? map + std::size_t(agent) * _spec.MapBytes : nullptr;
+    };
     for (uint32 seat = 0; seat < _seatCount; ++seat)
         ObserveSeat(env, seat, obs + seat * _spec.ObsDim, mask ? mask + seat * _spec.NumActions : nullptr,
-            imageRow(seat));
+            imageRow(seat), mapRow(seat));
     // The seats have paid the goals they reached into this decision's reward; the row is the pool's again.
     Data(env).StepReward = nullptr;
 
@@ -3781,9 +3809,11 @@ void Animus::Curriculum::StageScenario::Observe(Env& env, float* obs, float* sta
     {
         ObserveDirector(env, side, obs + (_seatCount + side) * _spec.ObsDim,
             mask ? mask + (_seatCount + side) * _spec.NumActions : nullptr);
-        // A director has no camera.
+        // A director has no camera, and no map.
         if (uint8* row = imageRow(_seatCount + side))
             Vision::FillNoFrame(row, _spec.ImageBytes);
+        if (uint8* row = mapRow(_seatCount + side))
+            std::fill(row, row + _spec.MapBytes, uint8(0));
     }
 
     // The owner's row: a seat's observation when it is played through it, else an empty row that allows only
@@ -3794,12 +3824,14 @@ void Animus::Curriculum::StageScenario::Observe(Env& env, float* obs, float* sta
         float* row = obs + agent * _spec.ObsDim;
         uint8* maskRow = mask ? mask + agent * _spec.NumActions : nullptr;
         if (CastOwnerActive(env))
-            ObserveSeat(env, agent, row, maskRow, imageRow(agent));
+            ObserveSeat(env, agent, row, maskRow, imageRow(agent), mapRow(agent));
         else
         {
             std::fill(row, row + _spec.ObsDim, 0.0f);
             if (uint8* pixels = imageRow(agent))
                 Vision::FillNoFrame(pixels, _spec.ImageBytes);
+            if (uint8* cells = mapRow(agent))
+                std::fill(cells, cells + _spec.MapBytes, uint8(0));
             if (maskRow)
             {
                 std::fill(maskRow, maskRow + _spec.NumActions, uint8(0));
@@ -3947,13 +3979,15 @@ uint32 Animus::Curriculum::StageScenario::SideSeats(Env const& env, uint32 side,
 }
 
 void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, float* obs, uint8* mask,
-    uint8* image)
+    uint8* image, uint8* map)
 {
     std::fill(obs, obs + _spec.ObsDim, 0.0f);
     // The image row starts as no frame, as the observation row starts zeroed: a seat that renders nothing this
-    // decision (no character, no map) sends "nothing seen".
+    // decision (no character, no map) sends "nothing seen"; its map row, every cell unknown.
     if (image)
         Vision::FillNoFrame(image, _spec.ImageBytes);
+    if (map)
+        std::fill(map, map + _spec.MapBytes, uint8(0));
     if (mask)
     {
         std::fill(mask, mask + _spec.NumActions, 0);
@@ -3982,8 +4016,30 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
     if (seat.Memory.Actions() != seat.L->NumActions)
         seat.Memory.Reset(seat.L->NumActions);
     seat.Memory.Observe(bot, target, env.EpisodeElapsedMs);
+    // The mental map at the episode's first look (amendment 1): kept, older by the reset's offset, when the reset
+    // rolled it and the seat is on the instance it is of; else started afresh.
+    if (_stage.Has(BlockId::Map) && bot && seat.MapPending)
+    {
+        seat.MapPending = false;
+        bool const same = seat.MapMapId == bot->GetMapId() && seat.MapInstanceId == bot->GetInstanceId();
+        seat.MapKept = seat.MapKeep && same && seat.Map.Tiles() > 0;
+        if (seat.MapKept)
+            seat.Map.Advance(seat.MapAgeOffset);
+        else
+            seat.Map.Clear();
+        seat.Map.Configure(Vision::MapCurrent().Caps);
+        seat.MapMapId = bot->GetMapId();
+        seat.MapInstanceId = bot->GetInstanceId();
+    }
     SeatView view = ViewSeat(env, seatIndex, bot, target);
     view.NearestHazard = seat.NearestHazard;
+    if (_stage.Has(BlockId::Map))
+    {
+        view.Hits = &seat.Hits;
+        view.Map = &seat.Map;
+        view.MapRow = map;
+        view.MapKept = seat.MapKept;
+    }
     view.Option = &seat.Option;
 
     // Each goal held, read off the world as it now is: reached (paid now, into this decision's reward) or no longer

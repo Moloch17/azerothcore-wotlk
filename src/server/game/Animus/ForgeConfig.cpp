@@ -309,6 +309,14 @@ void AnimusForge::ForgeConfig::Load()
             LOG_ERROR("server.loading", "AnimusForge.Vision.RenderSizes: {}", error);
         VisionAuditInterval = uint32(ranged("AnimusForge.Vision.AuditInterval", 300.0f, 0.0f, 86400.0f));
         VisionAuditSeats = uint32(ranged("AnimusForge.Vision.AuditSeats", 4.0f, 1.0f, 64.0f));
+
+        // The mental map (perception-goals REDESIGN §3): its caps and its persistence across resets.
+        Animus::Vision::MapRunSettings const maps;
+        Map.Caps.MaxTiles = uint32(ranged("AnimusForge.Map.MaxTiles", float(maps.Caps.MaxTiles), 1.0f, 65536.0f));
+        Map.Caps.CoarseTiles = uint32(ranged("AnimusForge.Map.CoarseTiles", float(maps.Caps.CoarseTiles), 0.0f,
+            65536.0f));
+        Map.KeepShare = ranged("AnimusForge.Map.KeepShare", maps.KeepShare, 0.0f, 1.0f);
+        Map.AgeOffsetSeconds = ranged("AnimusForge.Map.AgeOffsetSeconds", maps.AgeOffsetSeconds, 0.0f, 36000.0f);
     }
 
     // Human play (human-play-data plan 2.6): off unless a file is named and its share is above 0.

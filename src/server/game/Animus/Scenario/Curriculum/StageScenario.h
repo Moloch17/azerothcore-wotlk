@@ -142,7 +142,7 @@ namespace Animus::Curriculum
         /// through ApplySeatAction: looking is free, and nothing that prices or tallies an action sees it (R1).
         void ApplyLook(Env& env, int32 const* look) override;
         [[nodiscard]] std::pair<uint32, uint32> CameraRenderSize(Env const& env, uint32 agent) const override;
-        void Observe(Env& env, float* obs, float* state, uint8* mask, uint8* image) override;
+        void Observe(Env& env, float* obs, float* state, uint8* mask, uint8* image, uint8* map) override;
         void AgentLayouts(Env const& env, uint16* layout) const override;
         void AgentPresence(Env const& env, uint8* present) const override;
         void AgentKinematics(Env const& env, float* kinematics) const override;
@@ -446,7 +446,7 @@ namespace Animus::Curriculum
         /// aimless presses, effort and fidgeting.
         void SettleIntent(Env& env, SeatState& seat, Player* bot, Unit* target);
         void SettleDeath(Env& env, SeatState& seat, Player* bot);
-        void ObserveSeat(Env& env, uint32 seat, float* obs, uint8* mask, uint8* image);
+        void ObserveSeat(Env& env, uint32 seat, float* obs, uint8* mask, uint8* image, uint8* map);
         /// The row of the agent commanding `side`: what it sees of its side, the enemy and the standing order,
         /// and which calls it may make (DirectorLayout).
         void ObserveDirector(Env& env, uint32 side, float* obs, uint8* mask);

@@ -158,6 +158,8 @@ void AnimusForge::Forge::OnStartup()
     _config.Load();
     // The camera's settings before any layout is built: its width and height are the vision block's size.
     Animus::Vision::Configure(_config.Vision);
+    // The mental map's caps and persistence (perception-goals REDESIGN §3), for every seat a map block gives one.
+    Animus::Vision::ConfigureMap(_config.Map);
     // The render sizes, each with its share of the draw.
     std::string renderSizes;
     float weightSum = 0.0f;
@@ -1234,6 +1236,12 @@ AnimusForge::Forge::ControllerMarks AnimusForge::Forge::ReadControllerMarks()
     marks.VisionNs = Animus::Vision::Cost::Ns.load(std::memory_order_relaxed);
     marks.VisionFrames = Animus::Vision::Cost::Frames.load(std::memory_order_relaxed);
     marks.VisionRays = Animus::Vision::Cost::Rays.load(std::memory_order_relaxed);
+    marks.MapNs = Animus::Vision::Cost::MapNs.load(std::memory_order_relaxed);
+    marks.MapWrites = Animus::Vision::Cost::MapWrites.load(std::memory_order_relaxed);
+    marks.MapTiles = Animus::Vision::Cost::MapTiles.load(std::memory_order_relaxed);
+    marks.StepBytes = Animus::Vision::Cost::StepBytes.load(std::memory_order_relaxed);
+    marks.StepNs = Animus::Vision::Cost::StepNs.load(std::memory_order_relaxed);
+    marks.Steps = Animus::Vision::Cost::Steps.load(std::memory_order_relaxed);
     marks.Refused.reserve(Movement::PlayerLink::Refused.size());
     for (auto const& count : Movement::PlayerLink::Refused)
         marks.Refused.push_back(count.load(std::memory_order_relaxed));
@@ -2122,6 +2130,24 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
         _vision.RaysPerFrame = frames > 0.0 ? delta(marks.VisionRays, last.VisionRays) / frames : 0.0;
         _vision.FramesPerDecision = ticks ? frames / double(ticks) : 0.0;
         _vision.MsPerDecision = ticks ? delta(marks.VisionNs, last.VisionNs) / 1e6 / double(ticks) : 0.0;
+        double const writes = delta(marks.MapWrites, last.MapWrites);
+        _vision.MapUsPerWrite = writes > 0.0 ? delta(marks.MapNs, last.MapNs) / 1e3 / writes : 0.0;
+        _vision.MapMsPerDecision = ticks ? delta(marks.MapNs, last.MapNs) / 1e6 / double(ticks) : 0.0;
+        _vision.MapTilesPerSeat = writes > 0.0 ? delta(marks.MapTiles, last.MapTiles) / writes : 0.0;
+        double const steps = delta(marks.Steps, last.Steps);
+        _vision.StepKiB = steps > 0.0 ? delta(marks.StepBytes, last.StepBytes) / 1024.0 / steps : 0.0;
+        _vision.StepMiBPerDecision = ticks ? delta(marks.StepBytes, last.StepBytes) / 1048576.0 / double(ticks)
+            : 0.0;
+        _vision.SendMsPerDecision = ticks ? delta(marks.StepNs, last.StepNs) / 1e6 / double(ticks) : 0.0;
+        _vision.SendShare = ticks && seconds > 0.0 ? _vision.SendMsPerDecision / (seconds * 1000.0 / double(ticks))
+            : 0.0;
+        if (_pool)
+        {
+            Animus::ScenarioSpec const& wire = _pool->Spec();
+            _vision.AgentKiB = double(wire.ObsDim * sizeof(float) + wire.NumActions + wire.ImageBytes + wire.MapBytes)
+                / 1024.0;
+            _vision.MapKiB = double(wire.MapBytes) / 1024.0;
+        }
         std::vector<std::pair<uint64, std::string>> refused;
         double refusedTotal = 0.0;
         for (std::size_t reason = 1; reason < marks.Refused.size(); ++reason)
@@ -2673,6 +2699,7 @@ bool AnimusForge::Forge::SendSpec(uint32 rank)
     msg.KinematicsDim = Animus::Kinematics::SAMPLE_DIM;
     msg.ImageBytes = spec.ImageBytes;
     msg.LookHeads = spec.LookHeads;
+    msg.MapBytes = spec.MapBytes;
 
     uint32 const layoutCount = uint32(spec.Layouts.size());
     std::vector<LayoutMsg> layouts(layoutCount);
@@ -2855,7 +2882,8 @@ bool AnimusForge::Forge::SendStep(uint32 group)
             return false;
         Chunk const none{ nullptr, 0 };
 
-        if (!_server.Send(MsgType::Step,
+        auto const sendMark = std::chrono::steady_clock::now();
+        std::vector<Chunk> const chunks =
             {
                 { &header, sizeof(header) },
                 device ? none : chunk(_pool->Obs),
@@ -2875,8 +2903,18 @@ bool AnimusForge::Forge::SendStep(uint32 group)
                 // are in the device buffers), then the ended envs' last, as final_obs.
                 device || _pool->Image.empty() ? none : chunk(_pool->Image),
                 _pool->FinalImage.empty() ? none : endedBytes(_pool->FinalImage, _endedImage),
-            }))
+                // The mental map's crops (protocol 24), only in a stage with a map block: every env's, then the ended
+                // envs' last. Always on the socket (the device buffers carry no map yet: G3's).
+                _pool->MapCrop.empty() ? none : chunk(_pool->MapCrop),
+                _pool->FinalMapCrop.empty() ? none : endedBytes(_pool->FinalMapCrop, _endedMap),
+            };
+        if (!_server.Send(MsgType::Step, chunks))
             return false;
+        std::size_t bytes = 0;
+        for (Chunk const& part : chunks)
+            bytes += part.Size;
+        Animus::Vision::Cost::AddStep(bytes, uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - sendMark).count()));
     }
     return true;
 }
