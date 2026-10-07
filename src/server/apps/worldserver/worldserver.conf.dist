@@ -6359,8 +6359,9 @@ AnimusForge.Curriculum.Instance.WingClock = 0.002
 AnimusForge.Curriculum.Instance.WingWaypointYards = 30
 #   the difficulty ladder: each rung fixes the level lift and the wipes to spare; WingProbe of training runs are
 #   probes (a run started from a Go-Explore cell is never one) and only they measure the policy: once
-#   WingRungRuns probes have made WingRungTarget of the dungeon on average it steps down, and back up if the probes
-#   fall below WingRungFallback of what they made when the rung was stepped onto; a cluster's host decides for all
+#   WingRungRuns probes have made WingRungTarget of the dungeon on average it steps down; it never steps back on a score (a harder rung scores
+#   lower by design), and warns in `forge status` and the log when the probes stay under a floor for three reads; a
+#   cluster's host decides for all
 AnimusForge.Curriculum.Instance.WingProbe = 0.2
 AnimusForge.Curriculum.Instance.WingRungRuns = 40
 AnimusForge.Curriculum.Instance.WingRungTarget = 0.6
@@ -6368,7 +6369,6 @@ AnimusForge.Curriculum.Instance.WingRungTarget = 0.6
 AnimusForge.Curriculum.Instance.WingRungStart = 0
 #   food and drink each seat brings into a whole dungeon
 AnimusForge.Curriculum.Instance.WingSupplies = 60
-AnimusForge.Curriculum.Instance.WingRungFallback = 0.5
 #   log a line for each wipe in a whole dungeon: where, what was fighting the party, who died in what order
 AnimusForge.Curriculum.Instance.WingTrace = 1
 #   per second for each hostile creature on the party beyond WingCrowdFree (a pack): a pull run into the next

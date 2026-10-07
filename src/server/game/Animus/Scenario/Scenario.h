@@ -224,6 +224,8 @@ namespace Animus
         virtual void AddClusterTally(std::string const& /*tally*/) { }
         [[nodiscard]] virtual int32 ClusterRung() const { return -1; }
         virtual void FollowClusterRung(uint32 /*rung*/) { }
+        /// The rung of the cluster's dungeon ladder that has collapsed (WingLadder's alarm, the host's), or -1.
+        [[nodiscard]] virtual int32 ClusterLadderCollapsed() const { return -1; }
 
         /// Once at shutdown: remove bots (without saving) and targets.
         virtual void Teardown(Env& env) = 0;

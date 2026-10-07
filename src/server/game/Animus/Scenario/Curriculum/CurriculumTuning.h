@@ -326,13 +326,13 @@ namespace Animus::Curriculum
             /// The difficulty ladder (StageScenario::WING_RUNGS): each rung fixes the level lift and the wipes to
             /// spare. WingProbe of training runs are probes, and only they measure the policy (a run started from a
             /// Go-Explore cell is never one): once WingRungRuns probes at a rung have made, on average, WingRungTarget
-            /// of the dungeon (the share of its creatures killed, 1 for a clear), the ladder steps down; if the probes
-            /// on a rung fall below WingRungFallback of what they made when it was stepped onto, it steps back up.
-            /// Nothing on a clock. In a cluster the host's ladder decides for every machine, from all their runs.
+            /// of the dungeon (the share of its creatures killed, 1 for a clear), the ladder steps down. It never steps
+            /// back on a score (a harder rung scores lower by design); WingLadder warns when the probes stay under a
+            /// floor for three reads. Nothing on a clock. In a cluster the host's ladder decides for every machine,
+            /// from all their runs.
             float WingProbe = 0.2f;
             uint32 WingRungRuns = 40;
             float WingRungTarget = 0.6f;
-            float WingRungFallback = 0.5f;
             uint32 WingRungStart = 0;           // the rung a run starts on (a resumed run names the one it reached)
             uint32 WingSupplies = 60;           // food and drink each seat brings into a whole dungeon
             /// Log a line for each wipe: where, what was fighting the party, and who died in what order.
@@ -1803,7 +1803,6 @@ namespace Animus::Curriculum
             f("Instance.WingRungTarget", tuning.Instance.WingRungTarget);
             f("Instance.WingRungStart", tuning.Instance.WingRungStart);
             f("Instance.WingSupplies", tuning.Instance.WingSupplies);
-            f("Instance.WingRungFallback", tuning.Instance.WingRungFallback);
             f("Instance.WingTrace", tuning.Instance.WingTrace);
             f("Instance.WingCrowd", tuning.Instance.WingCrowd);
             f("Instance.WingCrowdFree", tuning.Instance.WingCrowdFree);

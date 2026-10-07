@@ -2008,7 +2008,12 @@ wipes with them:
 `Instance.WingProbe` (20%) of training runs are probes (a run started from a Go-Explore cell is never one). Only they
 measure the policy. Once `WingRungRuns` (40) probes on a rung have made, on average, `WingRungTarget` (0.6) of the
 dungeon -- the share of its creatures killed, 1 for a clear -- the ladder steps down a rung. The target is fixed:
-measured against the rung's other runs, it crept up from 0.71 to 0.82 on rung 0 as they did. Nothing moves on a clock.
+measured against the rung's other runs, it crept up from 0.71 to 0.82 on rung 0 as they did. Nothing moves on a clock,
+and the ladder never steps back on a score: a harder rung scores lower by design. It raises an alarm instead: for each
+40 fresh probes on a rung (above the first) the sim reads their mean, and three reads in a row under
+max(0.1, 0.25 x the mean that earned the rung) print a WARNING in the run log and a `WARNING dungeon ladder` row in
+`forge status`, once, until a read recovers. It is computed in the sim's ladder (`WingLadder`), the one the host
+decides with, so a cluster has a single alarm.
 In a cluster the host's ladder is every machine's: workers send their runs in their PROGRESS reports (`wing=`), and the
 host sends the rung (`RUNG <n>`). The ladder is not saved with the policy; a resumed run names the rung it had reached
 in `WingRungStart`. Every step is logged ("the dungeon ladder steps"); `wing_rung` and `wing_probe` are in the episode

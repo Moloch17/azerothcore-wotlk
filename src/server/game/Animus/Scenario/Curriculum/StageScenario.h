@@ -29,6 +29,7 @@
 #include "StageDefinition.h"
 #include "StageSettings.h"
 #include "StageState.h"
+#include "WingLadder.h"
 #include <algorithm>
 #include <atomic>
 #include <array>
@@ -274,7 +275,7 @@ namespace Animus::Curriculum
             { 0, 0 },
         }};
         /// The rung this process's training runs are on now (Instance.WingProbe and the rest).
-        [[nodiscard]] uint32 WingRungNow() const { return _wingRung.load(std::memory_order_relaxed); }
+        [[nodiscard]] uint32 WingRungNow() const { return _wingLadder.Rung(); }
         /// A finished training run of a whole dungeon on rung `rung`: whether it was a probe, and how far it got (the
         /// share of the dungeon cleared, 1 when the last boss died). Probes step the ladder.
         void NoteWingRun(uint32 rung, bool probe, float progress);
@@ -283,6 +284,7 @@ namespace Animus::Curriculum
         void AddClusterTally(std::string const& tally) override;
         [[nodiscard]] int32 ClusterRung() const override { return int32(WingRungNow()); }
         void FollowClusterRung(uint32 rung) override;
+        [[nodiscard]] int32 ClusterLadderCollapsed() const override { return _wingLadder.CollapsedRung(); }
         /// The decision interval, in ms of game time.
         [[nodiscard]] uint32 DecisionMs() const { return _decisionMs; }
 
@@ -550,11 +552,8 @@ namespace Animus::Curriculum
         std::vector<ExploreStart> _exploreStarts;
         /// The running route share of training runs of a whole dungeon (NoteWingRun); runs on several map threads may
         /// lose a step to each other, which a running average does not mind.
-        std::atomic<uint32> _wingRung{ 0 };
+        WingLadder _wingLadder;
         std::mutex _wingLadderLock;
-        std::vector<float> _wingProbes;         // the rung's probes' progress, the latest WingRungRuns
-        std::vector<float> _wingOthers;         // ... its other training runs'
-        std::array<float, WING_RUNGS.size()> _wingSteppedAt{};  // the probes' mean when each rung was stepped onto
         /// A cluster worker follows the host's rung and reports its runs instead of stepping (FollowClusterRung);
         /// the runs since its last report, as "rung/probes/others" with comma-separated progress.
         bool _wingFollower = false;

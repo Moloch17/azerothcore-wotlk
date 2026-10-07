@@ -328,11 +328,11 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     _spawnMapId(stage.MapId ? stage.MapId : settings.SpawnMapId),
     _spawnPoint(stage.MapId && !stage.SpawnPoints.empty() ? stage.SpawnPoints.front() : settings.SpawnPosition),
     _seatCount(stage.SeatCount()), _level(settings.Level),
-    _decisionScale(float(settings.DecisionMs) / REWARD_TUNING_MS), _decisionMs(settings.DecisionMs)
-{
+    _decisionScale(float(settings.DecisionMs) / REWARD_TUNING_MS), _decisionMs(settings.DecisionMs),
     // The ladder is not saved with the policy: a run resumed from a checkpoint names the rung it had reached.
-    _wingRung.store(std::min<uint32>(_tuning.Instance.WingRungStart, uint32(WING_RUNGS.size()) - 1),
-        std::memory_order_relaxed);
+    _wingLadder(uint32(WING_RUNGS.size()), _tuning.Instance.WingRungRuns, _tuning.Instance.WingRungTarget,
+        _tuning.Instance.WingRungStart)
+{
 
     if (MapEntry const* mapEntry = sMapStore.LookupEntry(_spawnMapId))
         _continent = !mapEntry->Instanceable();
@@ -2084,12 +2084,11 @@ void Animus::Curriculum::StageScenario::NoteWingRun(uint32 rung, bool probe, flo
 {
     // The ladder moves only on what the policy does alone (2026-10-01: "taper off only based on the progress made by
     // the learner"): the probes, against a fixed target (Instance.WingRungTarget) -- the rung's other runs, as the
-    // reference, crept up from 0.71 to 0.82 on rung 0 and took the target with them.
-    CurriculumTuning::InstanceTuning const& tuning = _tuning.Instance;
+    // reference, crept up from 0.71 to 0.82 on rung 0 and took the target with them. It never steps back on a score
+    // (WingLadder); its collapse alarm is the host's, here.
     std::lock_guard<std::mutex> guard(_wingLadderLock);
-    uint32 const now = _wingRung.load(std::memory_order_relaxed);
+    uint32 const now = _wingLadder.Rung();
     progress = std::clamp(progress, 0.0f, 1.0f);
-    std::size_t const window = std::max<uint32>(1, tuning.WingRungRuns);
     // A worker reports its runs to the host, whose ladder is the cluster's.
     if (_wingFollower)
     {
@@ -2106,42 +2105,14 @@ void Animus::Curriculum::StageScenario::NoteWingRun(uint32 rung, bool probe, flo
         return;
     }
 
-    if (rung != now)
-        return;
-
-    std::vector<float>& runs = probe ? _wingProbes : _wingOthers;
-    runs.push_back(progress);
-    if (runs.size() > window)
-        runs.erase(runs.begin());
-    if (!probe || _wingProbes.size() < window)
-        return;
-
-    auto const mean = [](std::vector<float> const& values)
-    {
-        float sum = 0.0f;
-        for (float value : values)
-            sum += value;
-        return values.empty() ? 0.0f : sum / float(values.size());
-    };
-    float const probes = mean(_wingProbes);
-    float const others = mean(_wingOthers);
-
-    uint32 next = now;
-    if (now + 1 < WING_RUNGS.size() && probes >= tuning.WingRungTarget)
-        next = now + 1;
-    else if (now > 0 && probes < tuning.WingRungFallback * _wingSteppedAt[now])
-        next = now - 1;
-    if (next == now)
-        return;
-
-    LOG_INFO("module.animus", "{}: the dungeon ladder steps {} from rung {} to {}: the last {} probes made {:.2f} of "
-        "the dungeon (target {:.2f}; the rung's other runs {:.2f})", Name(), next > now ? "down" : "back up", now, next,
-        window, probes, tuning.WingRungTarget, others);
-    if (next > now)
-        _wingSteppedAt[next] = probes;
-    _wingRung.store(next, std::memory_order_relaxed);
-    _wingProbes.clear();
-    _wingOthers.clear();
+    WingLadder::Result const result = _wingLadder.Note(rung, probe, progress);
+    if (result.Moved)
+        LOG_INFO("module.animus", "{}: the dungeon ladder steps down from rung {} to {}: the last {} probes made {:.2f} "
+            "of the dungeon (target {:.2f}; the rung's other runs {:.2f})", Name(), result.Moved->From,
+            result.Moved->To, std::max<uint32>(1, _tuning.Instance.WingRungRuns), result.Moved->Probes,
+            _tuning.Instance.WingRungTarget, result.Moved->Others);
+    if (result.Alarm)
+        LOG_WARN("module.animus", "{}: {}", Name(), *result.Alarm);
 }
 
 std::string Animus::Curriculum::StageScenario::TakeClusterTally()
@@ -2185,9 +2156,9 @@ void Animus::Curriculum::StageScenario::FollowClusterRung(uint32 rung)
     std::lock_guard<std::mutex> guard(_wingLadderLock);
     _wingFollower = true;
     uint32 const next = std::min<uint32>(rung, uint32(WING_RUNGS.size()) - 1);
-    if (next != _wingRung.load(std::memory_order_relaxed))
+    if (next != _wingLadder.Rung())
         LOG_INFO("module.animus", "{}: the host puts the dungeon ladder on rung {}", Name(), next);
-    _wingRung.store(next, std::memory_order_relaxed);
+    _wingLadder.Follow(next);
 }
 
 float Animus::Curriculum::StageScenario::Weight(Layout const& layout, uint8 spec) const

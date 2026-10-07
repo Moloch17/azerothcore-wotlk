@@ -634,6 +634,11 @@ void AnimusForge::ProgressMonitor::ReportTraining(ForgeConfig const& config, Sim
         if (collapsed && *collapsed >= 0.0)
             table.AddRow({ "  WARNING ladder", Acore::StringFormat("rung {}", int32(*collapsed)),
                 "collapsed: its gate metric under the floor for 3 evaluations (see the run log)" });
+        // The dungeon ladder's collapse alarm (WingLadder, the host's: a cluster has one): its rung while the probes
+        // have stayed under the floor for three reads.
+        if (sim.WingLadderCollapsed >= 0)
+            table.AddRow({ "  WARNING dungeon ladder", Acore::StringFormat("rung {}", sim.WingLadderCollapsed),
+                "collapsed: the probes under the floor for 3 reads; it does not step back by itself (see the run log)" });
         // The classes the stage never fields, by design (its config's status.excluded): "death_knight=reason;...".
         // Their absence from the measures above is a decision, not a failure.
         for (std::string const& entry : split(progress->Text("status_excluded"), ';'))

@@ -2169,6 +2169,8 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
         sim.EpisodeMeans = _pool->LastEpisodeMeans();
         sim.EpisodeMeansCount = _pool->LastEpisodeMeansCount();
     }
+    if (_scenario)
+        sim.WingLadderCollapsed = _scenario->ClusterLadderCollapsed();
 
     // Rates over the time since the last periodic report; a status in between shows the rate so far.
     double const seconds = std::chrono::duration<double>(now - _rateTime).count();
