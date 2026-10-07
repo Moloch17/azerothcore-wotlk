@@ -370,58 +370,6 @@ namespace Animus::Curriculum
             float PullRungTarget = 0.7f;
         } Instance;
 
-        /// Life outside the fight (the quest, gather and town stages): what the world around the seat is made of,
-        /// and what it is paid for. The outcome terms scale with the band's tier (Difficulty.TierScale).
-        struct LifeTuning
-        {
-            float StepCost = 0.0002f;           // per decision, as the travel stages charge
-            float Progress = 2.0f;              // potential shaping on the distance to the waypoint, once per approach
-            float Wasted = 0.1f;                // a press that did nothing (an interact with nothing in reach)
-            float Death = 5.0f;                 // divided by the band's tier scale
-            float QuestAccepted = 1.0f;
-            /// Per objective of the quest, spread over its count (a kill of five pays a fifth), times the tier scale:
-            /// a quest of two objectives pays twice what one of one pays. It was per quest, so an objective unit of a
-            /// three-objective quest of ten paid 0.1 -- less than the fight for it cost.
-            float QuestCredit = 3.0f;
-            float QuestTurnIn = 10.0f;          // times the tier scale
-            float QuestTimeout = 3.0f;          // the clock without a turn-in, less what was done, over the tier scale
-            /// Per decision a complete quest is not handed in (45% of completed quests never were): the turn-in is
-            /// the point, and walking off with a finished quest costs. Per 50 ms of tuning, as every per-decision
-            /// term is (DecisionScale): a whole 600 s episode holding one costs 3.6, well under the turn-in's 10.
-            /// It was 0.002, which at 250 ms decisions charged 24 an episode -- a deliver quest is complete the
-            /// moment it is taken, and the trial's quest arena lost 10 an episode to it (2026-09-30).
-            float CompleteHeld = 0.0003f;
-            /// Training only: a quest item's source that dies without dropping it has its loot rolled again, up to
-            /// this many times, until it does -- the kill is what the seat must learn to pay for, not the drop
-            /// chance. 0 turns it off; evaluation never rolls again.
-            uint32 DropRerolls = 50;
-            /// Quest credit a seat takes in a place another group holds (WorldCoordinator), per share of the quest:
-            /// the price of poaching. Small: the zone is shared, and a place held by nobody is fair. Against the
-            /// credit itself (QuestCredit 3.0 per share, times a tier scale of 1 or more) it takes back a twelfth
-            /// at most, so credit in a held place still pays -- going elsewhere is better when elsewhere will do,
-            /// but staying out of a place with anyone in it, or out of a fight shared with them, is never the
-            /// cheapest policy. A claim lapses ClaimHoldMs after its group stops working the place, so only a
-            /// place someone is actually working is held. It was 0.5 (a sixth) until the plan's review.
-            float Poach = 0.25f;
-            /// How long a group holds a place it works (ms), and how near counts as working it (yards).
-            uint32 ClaimHoldMs = 30000;
-            float ClaimRadius = 25.0f;
-            float GatherNode = 2.0f;            // per node gathered, times the tier scale
-            float GatherSkillUp = 0.5f;         // per skill point gained
-            float TownSold = 2.0f;              // for the starting junk's whole vendor value, pro rata
-            float TownRepaired = 2.0f;
-            float TownStocked = 2.0f;
-            float TownEquipped = 3.0f;          // per upgrade put on
-            float TownDone = 5.0f;              // sold, repaired, stocked and dressed before the clock
-            float SenseRange = 100.0f;          // yards the seat's world features reach
-            float ObjectiveRadius = 60.0f;      // the world's creatures this close to a quest objective's place come along
-            uint32 ObjectiveSpawns = 24;        // ... up to this many per place (and around a gather ground)
-            float NodeRadius = 150.0f;          // the nodes this close to the gather ground are the field
-            uint32 NodeSpawns = 24;
-            float TownRadius = 80.0f;           // the traders this close to the inn are the town
-            uint32 TownCopperPerLevelSquared = 25;  // the seat's purse: level squared times this (level 20: 1 gold)
-        } Life;
-
         /// Cast-time spells, from the duel stage on.
         struct CastingTuning
         {
@@ -485,43 +433,6 @@ namespace Animus::Curriculum
             float Secondary = 0.002f;
         } Goals;
 
-        /// The director's orders (TeamOrder), in every arena that has one.
-        struct OrderTuning
-        {
-            /// Per decision a seat spends fighting the enemy its director called, while one is called and alive.
-            ///
-            /// Compliance shaping, and the plan is right that an order should end up being followed because
-            /// following it wins fights rather than because it pays. But an advisory channel that correlates
-            /// with nothing cannot bootstrap into that: stage19_duo_led ran 30M steps with the order paying
-            /// nothing, and order_focus_kept sat at chance (0.45 -> 0.42, no trend) while the director's own
-            /// entropy fell 0.17 nats. Seats ignored the call, so the director's actions changed nothing in the
-            /// world, so its advantage was noise and it never left exploration. This is the same job
-            /// Goals.Match does for the goal head -- keep the channel from collapsing into nothing -- and it
-            /// should be annealed towards zero once order_focus_kept holds up without it.
-            ///
-            /// Paid per decision rather than once on arrival, unlike Goals.Match: holding a called target is
-            /// the behaviour wanted, not a place to reach, and paying once per call would pay a side afresh
-            /// every time its director changed its mind.
-            ///
-            /// Small because a per-decision term accumulates over a whole fight. At 0.01 it earned 5.01 an
-            /// episode, 23.7% of the stage's gross reward, level with the kill (5.23) and the death (-5.27)
-            /// and 70 times goal_match (0.07): a seat paid more for staying on the called target than for
-            /// winning would tunnel on it past every reason to switch. This is the mistake Goals.Match's own
-            /// comment records -- paying to sit in a state made standing at range the stage's second largest
-            /// earner. At 0.001 full compliance is worth about 0.5 an episode, a tenth of the kill: enough to
-            /// break the tie between fighting whoever and fighting the one called, and never enough to outbid
-            /// the fight itself.
-            float Focus = 0.001f;
-            /// Paid once to a seat that arrives where its director sent it (TeamRally::Point), never per
-            /// decision, and not again for PlaceCooldownMs. A transition with a cooldown cannot be farmed by
-            /// stepping back and forth across the edge of the radius, which is exactly what a per-decision
-            /// payment would buy -- the per-decision version of the focus nudge reached 23.7% of gross before
-            /// it was cut.
-            float PlaceMatch = 0.02f;
-            float PlaceRadius = 8.0f;           // yards: close enough to count as arrived
-            uint32 PlaceCooldownMs = 10000;
-        } Order;
-
         /// Getting away: the stages about breaking off a fight that cannot be won.
         struct EvadeTuning
         {
@@ -557,28 +468,6 @@ namespace Animus::Curriculum
             float OpenerDamage = 2.0f;
             uint32 OpenerWindowMs = 6000;
         } Stealth;
-
-        /// What the director's own calls mean in yards.
-        struct DirectorTuning
-        {
-            /// How far a place sits off its anchor, at each ring. The whole point of naming a ring rather
-            /// than a distance is that these two numbers are all that changes between an arena and a
-            /// continent: the thirteen place actions mean the same thing at any scale.
-            float PlaceNearYards = 20.0f;
-            float PlaceFarYards = 60.0f;
-            /// How often the director's clock gives it a turn (decisions; 10 is 2.5 s). Events give it one at once:
-            /// a member down or newly below a quarter of its health, a new enemy in the fight, the focus dead.
-            uint32 ClockDecisions = 10;
-            /// Below this share of its health a member counts as badly hurt, for the event.
-            float LowHealth = 0.25f;
-            /// A member order stands this long (decisions; 8 is 2 s) before the same source can replace it for
-            /// free: one replaced sooner costs the director OrderChurn, on top of OrderChange for any live order it
-            /// replaces. Not a rule -- nothing stops the call -- so the director learns to let orders stand; the
-            /// raid director gave each member about 9,500 orders an episode at the start of stage12.
-            uint32 OrderHoldDecisions = 8;
-            float OrderChange = 0.01f;
-            float OrderChurn = 0.03f;
-        } Director;
 
         /// Looking after itself and its friends, in every stage.
         struct SupportTuning
@@ -711,174 +600,6 @@ namespace Animus::Curriculum
             float IntentSlackYards = 0.5f;
         } Actions;
 
-        /// Packs and the gauntlet's pull after pull.
-        struct PullTuning
-        {
-            int32 LinkedChance = 70;            // percent of pulls whose members aggro together
-            int32 EliteChance = 15;             // gauntlet: a single elite instead of a pack
-            int32 HigherLevelChance = 25;       // gauntlet: a pack 1-3 levels above (1 below level 20, 2 below 30)
-            int32 PartyEliteChance = 50;        // party: per pack member
-            uint32 NextPullMinMs = 8000;        // gauntlet: the break between pulls
-            uint32 NextPullMaxMs = 20000;
-            float RecoverFraction = 0.5f;       // owner stages: health and mana the dead stand up with after a pull
-            // Rewards.
-            float DamageDealt = 2.0f;           // fraction of the pull's total health
-            float DamageTaken = 1.0f;           // pack: fraction of the bot's health
-            float GauntletDamageTaken = 1.5f;   // gauntlet on: surviving many pulls matters more than any one
-            float Approach = 0.5f;
-            float StealthOpener = 0.5f;
-            float StealthUtility = 0.05f;
-            float Interrupt = 0.3f;
-            /// An interrupt is paid by what it prevented, as a multiple of Interrupt: a heal undoes damage already
-            /// dealt, an area spell would have hit everyone, a long cast was a large part of the caster's output.
-            /// Never below 1 -- the flat term is how a class finds interrupting at all, and paying only for heals
-            /// risks the behaviour never appearing to be shaped (stage 2: the classes that interrupt found it
-            /// through the flat term).
-            float InterruptHeal = 3.0f;
-            float InterruptArea = 2.0f;
-            float InterruptLong = 1.5f;
-            float Kill = 0.5f;
-            float StepCost = 0.0002f;           // per decision
-            /// Owner arenas (stages 4, 5, 8), win-first as the solo gauntlet: each pull cleared pays Clear plus
-            /// FastPull times 1 - its time since engaged / 60 s, both x OwnerClearScale, and HealthKept times the
-            /// seat's own health kept through it; the seat's death costs GauntletDeath and the owner's Owner.Death. At
-            /// 2 + 2 (doubled), 2 and 5 against an owner's death of 6, a pull cleared was worth more than the owner's
-            /// life, and the seat's own health as much as guarding it.
-            float Clear = 2.5f;
-            float FastPull = 0.5f;
-            float HealthKept = 0.5f;
-            float GauntletDeath = 10.0f;
-            /// A single pack is won or lost, as the duel is: the clear outweighs finishing it untouched, and dying or
-            /// running out of time costs as much as the clear pays. Clear and HealthKept had the pack worth 2 + 2, so
-            /// keeping health paid as much as winning, and a death cost only 3.
-            float PackClear = 10.0f;
-            float FastClear = 1.0f;             // pack: times the episode fraction left after engaging
-            float PackHealthKept = 0.5f;        // pack: times the health kept through the pack
-            float PackDeath = 10.0f;
-            /// Pack: the top rung of the single pack's ladder (PullsEncounter's PACK_RUNGS, 0-5), climbed per
-            /// class/role with the Difficulty.* rates. 0 keeps every pack on the first rung.
-            uint32 MaxTier = 5;
-            float Timeout = 10.0f;              // pack: the clock ran out with the pack and the seat both alive
-            float TimeoutFloor = 0.5f;          // pack: the share of it charged whatever the pull's progress
-            /// A timeout charged only at the end is 150 s away when the kiting starts: the discount leaves about a
-            /// fifth of it, against a whole death now, so running out the clock looked safe. A fight engaged longer
-            /// than OvertimeGraceMs is charged as it drags on, and a death in overtime is charged the overtime left,
-            /// so dying never ends it more cheaply than the timeout would.
-            float Overtime = 0.1f;              // pack: per second of a fight past OvertimeGraceMs since it was engaged
-            uint32 OvertimeGraceMs = 60000;
-            /// Pack: crowd control priced as the damage it prevents, in the seat's own maximum healths, so it is in
-            /// the currency DamageTaken is already charged in and the two weights are comparable. The divisor is
-            /// *current* health, floored at ControlHealthFloor of the maximum: preventing a hit matters more the less
-            /// health there is to lose, which is what makes control a survival tool rather than a damage discount.
-            /// Priced at half DamageTaken: the damage a held enemy would have dealt is estimated from what it dealt
-            /// while loose, not observed, and the health floor can multiply it fivefold, so control is paid less than
-            /// the damage it is credited with preventing. Measured at 0 through 2026-09-18 (stage2_pack at 30M:
-            /// control_prevented 0.03 healths a fight, reward_control 0.00 -- nothing was controlled because nothing
-            /// paid for it).
-            float SinglePackControl = 0.5f;
-            float SinglePackControlMax = 1.0f;  // ... at most this per pull, a guard rather than a shaping knob
-            float ControlHealthFloor = 0.2f;
-            float ControlFallbackDps = 0.02f;   // maximum healths per second, for an enemy that never got to act
-            uint32 ControlRateMinMs = 3000;     // free-to-act time before an enemy's own measured rate is trusted
-            /// Pack: control time extends the overtime grace, up to this much, so holding an add is not charged as
-            /// dragging the fight out -- with the grace alone, the overtime charge took back what the control paid.
-            /// 0 leaves the grace alone. Bounded on purpose: Overtime exists to stop kiting the clock, and an
-            /// unbounded pause would hand that back.
-            uint32 ControlGraceMaxMs = 15000;
-            float Stall = 0.08f;                // pack: per second not engaged once StallGraceMs are gone
-            uint32 StallGraceMs = 15000;
-            uint32 PreparationRefundMaxMs = 15000;  // pack: as the duel's
-            float Spacing = 0.1f;               // pack: per second a ranged spec is hit in melee reach (0.03 left
-                                                // casters in melee 70-80% of pack fights, 2026-09-28; 0.1 with the
-                                                // duel's, 2026-10-02)
-            /// A camp (PullSchedule::Camp, the pull drill): per second, for each pack fighting beyond the first; paid
-            /// for each pack killed with no other pack in its fight (times the rung's scale); and the grace between
-            /// packs, from the last fight, before standing about is charged as Stall (not while eating or drinking).
-            float CampExtraPack = 0.15f;
-            float CampCleanPack = 2.0f;
-            uint32 CampRestMs = 25000;
-            /// A gauntlet alone (no owner) is won by lasting: pull after pull until the episode ends, and a death ends
-            /// it with every pull left unfought. Clear 2 + FastPull 2 and HealthKept 2 had each pull worth up to 6
-            /// against a death at 5, so a seat could trade its life for a fast pull. As the single pack: the clear
-            /// outweighs finishing it fast or untouched, and a death costs two clears besides the pulls it forfeits.
-            /// Stall and Spacing apply to its pulls as to a single pack's (Stall from each pull's spawn). Owner stages
-            /// keep Clear, FastPull, HealthKept and GauntletDeath.
-            float SoloGauntletClear = 5.0f;
-            float SoloGauntletFastPull = 1.0f;  // times 1 - time since the pull engaged / 60 s
-            float SoloGauntletHealthKept = 0.5f;
-            float SoloGauntletDeath = 10.0f;
-            /// Paid when a pull is engaged, times the seat's health fraction the decision before, or the lower of its
-            /// health and mana fractions if it uses mana: entering a fight ready is what resting between pulls is for.
-            float SoloGauntletReadiness = 0.5f;
-            /// Lasting to the end wins only with this many pulls cleared: a gauntlet is endured by fighting it, not
-            /// by staying away from it.
-            uint32 SoloGauntletWinPulls = 5;
-            uint32 GauntletSupplies = 7;        // solo gauntlet: food and drink stocked, each
-            /// Solo gauntlet: per second per pack member kept out of the fight once the pull is engaged -- stunned,
-            /// incapacitated, asleep, polymorphed, feared, or rooted out of melee reach and not casting -- other than
-            /// the seat's target, while another member is alive. It stops when the control breaks, so controlling an
-            /// add and hitting it pays nothing. At most SoloGauntletControlMax per pull: a fight isn't worth dragging
-            /// out for it.
-            float SoloGauntletControl = 0.02f;
-            float SoloGauntletControlMax = 1.5f;
-            /// Solo gauntlet pacing. A pull nobody has engaged comes to the seat ArriveMinMs-ArriveMaxMs after it
-            /// spawns, so resting has a clock; each pull cleared brings the next one sooner (ArriveShrinkMs, down to
-            /// ArriveFloorMs) and shortens the break before it (NextPullShrinkMs, down to NextPullFloorMs).
-            uint32 ArriveMinMs = 20000;
-            uint32 ArriveMaxMs = 40000;
-            uint32 ArriveShrinkMs = 1500;
-            uint32 ArriveFloorMs = 10000;
-            uint32 NextPullShrinkMs = 1000;
-            uint32 NextPullFloorMs = 4000;
-            /// Gauntlets (stages 3-5, 8): what the per-hit terms -- damage dealt, damage taken, kills, approach --
-            /// are multiplied by. A plan pays at the end of a pull or an episode (the clear, surviving, readiness,
-            /// control), and dense terms paid every decision drown those out: a seat that opens on the nearest enemy
-            /// and never stops earns most of what a careful one does, minutes sooner. Below 1 the outcome is what the
-            /// stage is about; 1 leaves the single pack's balance alone.
-            float GauntletDenseScale = 0.5f;
-            float OwnerClearScale = 2.0f;       // owner stages: kills and clears count this many times
-            /// Owner arenas keep what the solo gauntlet teaches: readiness paid when a pull is engaged (the lower of
-            /// health and mana), crowd control that keeps an add out of the fight (per enemy-second, capped per pull),
-            /// and a win: lasting to the end with the owner never dead, no wipe and OwnerWinPulls pulls cleared,
-            /// counted as the kill so clean_kill is the gauntlet won beside the owner.
-            float OwnerReadiness = 1.0f;        // was 0.5: parties still pulled ~3 times an episode with someone low
-            float OwnerControl = 0.02f;
-            float OwnerControlMax = 1.5f;
-            uint32 OwnerWinPulls = 5;
-        } Pulls;
-
-        /// The owner of the companion and party stages (a cast agent: the learner plays it from a frozen checkpoint).
-        struct OwnerTuning
-        {
-            int32 LevelSpread = 2;              // its level: the bot's plus or minus this
-            int32 TankChance = 25;              // percent tanks, healers, the rest damage dealers
-            int32 HealerChance = 25;
-            // Rewards added to the pulls'.
-            float DamageTakenDps = 1.0f;        // damage dealers: the owner's damage taken, fraction of its health
-            float DamageTakenProtector = 2.0f;  // tanks and healers exist to prevent it
-            float TankOwnerDamageShare = 0.25f; // a tank owner is hit by design: its damage taken counts this much
-            /// Any role: effective healing and protection on the owner, as a fraction of its health. 3, above
-            /// Party.TeammateHealing's 2: the owner is the one whose death costs the most (Death 15 against
-            /// TeammateDeath 3), and at equal pay the party stage's healers tripled their teammate healing while their
-            /// owner healing fell back to its start (2026-09-28).
-            float Healing = 3.0f;
-            float TankDamageRefund = 0.5f;      // tanks: soften the pulls' damage taken
-            float TankHold = 0.006f;            // tanks: per enemy on the tank, per decision (was a tenth of TankLose)
-            float TankLose = 0.02f;             // tanks: per enemy on the owner, per decision
-            float PulledThreat = 0.004f;        // damage dealers and healers beside a TANK owner: per enemy on
-                                                // the bot, per decision; not charged beside any other owner
-            float SoloFight = 0.01f;            // per decision in combat while the owner is not
-            // Staying close: in-game testing of the four-phase models found companions trailing about 16 yards
-            // where a player keeps 3-6 (2026-09-29). Near is now the band a player keeps, far starts where a
-            // player would call it lost, and a moving owner charges every yard it is trailed by past the band.
-            float FollowFar = 0.004f;           // per decision out of combat beyond FollowFarDistance
-            float FollowNear = 0.002f;          // per decision out of combat within FollowNearDistance
-            float FollowFarDistance = 15.0f;
-            float FollowNearDistance = 6.0f;
-            float FollowTrail = 0.001f;         // per decision and yard past FollowNearDistance while the owner moves
-            float Death = 15.0f;                // per owner death, every seat: more than the seat's own (GauntletDeath)
-        } Owner;
-
         /// Durative actions (SeatOption): how long each may run before the seat has to choose again. They end on
         /// their own conditions too, and any other action the policy takes cancels them.
         struct OptionTuning
@@ -913,21 +634,6 @@ namespace Animus::Curriculum
             /// worse than standing in fire.
             float Max = 3.0f;
         } Hazards;
-
-        /// The rotation drill (Opposition::Dummy, DummyEncounter): output against targets that do not fight back.
-        struct DummyTuning
-        {
-            float HealthScale = 20.0f;          // a dummy's health, times its level's own: it outlives the episode
-            float HittingHealthScale = 4.0f;    // the one that hits back: a long fight, but one that can be won
-            float Damage = 1.0f;                // per the dummy's own (unscaled) health dealt: a kill's worth of output
-            float Kill = 2.0f;                  // the hitting dummy killed
-            float Death = 3.0f;
-            float Bleed = 0.012f;               // the bleeding drill: share of the seat's health lost a second, average
-            float Hurt = 0.3f;                  // ... per second, per share of the seat's health missing
-            float Resource = 0.5f;              // at the end, per share of the mana bar kept
-            uint32 AddEveryMs = 15000;          // the moving drill: another dummy about this often
-            uint32 MaxAdds = 2;
-        } Dummy;
 
         /// The movement stages' markers (Opposition::Markers, MarkerEncounter): a place to stop on, then the next.
         ///
@@ -984,189 +690,6 @@ namespace Animus::Curriculum
             float FallbackCeiling = 0.2f;
             uint32 FallbackMinLegs = 50;
         } Markers;
-
-        /// The ground stage's markers (MarkerCourse::Ground, M2): broken ground with something in the way -- a face
-        /// too steep, a fence line, a rock field, a wood -- so the straight line is often not the way. Arrive,
-        /// StepCost, Death and Progress are Markers.*; Progress is shaped on the route (the route planner's distance,
-        /// a training signal only), and there is no Facing term (the marker's bearing is not the way here).
-        ///
-        /// The ladder (Rungs rungs) moves the furthest distance from DistanceFirst to DistanceLast (the nearest is
-        /// DistanceMin) and the detour -- the walking way over the straight line -- from DetourFirst to DetourLast:
-        /// a marker's detour is at least the rung's and at most DetourSpan more (the floor let go after half the
-        /// placement attempts, so ground without one still builds; the `detour` column says what was got). The stop
-        /// radius is Radius at every rung (M1 has taught the stop).
-        ///
-        /// The costs, noise prices on the cost ladder: Stuck per second of a movement key held with the body getting
-        /// nowhere for a second or more (the controller's stuck_seconds), Wall per second pressing into a wall
-        /// (wall_seconds).
-        struct MarkerGroundTuning
-        {
-            uint32 MarkersMin = 2;
-            uint32 MarkersMax = 4;
-            uint32 Rungs = 6;
-            float DistanceMin = 20.0f;
-            float DistanceFirst = 40.0f;
-            float DistanceLast = 120.0f;
-            float DetourFirst = 1.0f;
-            float DetourLast = 1.6f;
-            float DetourSpan = 0.25f;
-            float Radius = 1.0f;
-            float Stuck = 0.05f;                // per second
-            float Wall = 0.03f;                 // per second, scaled by how blocked the seat was (WallSlide)
-            /// The controller's wall seconds count every tick a step met a wall, a slide along it too, which is the
-            /// right way round a corner's inside. So Wall is charged only for the part of the decision's ground not
-            /// covered: nothing while the unit moved at least WallSlide of what its held keys ask, rising to the full
-            /// price at no movement (MarkerEncounter::WallCharge).
-            float WallSlide = 0.5f;
-        } MarkerGround;
-
-        /// The vertical stage's markers (MarkerCourse::Vertical, M3): up and down. By the arena's ground: above the
-        /// seat from a cliff foot or a terrace (the way up a ramp, a stair or a jump), below it from a ledge top (the
-        /// drop the shortcut, the way round the safe one; ArenaDefinition::Ledges), or on another floor of a building
-        /// (ArenaDefinition::Indoors). No interactions and no closed doors: a marker whose way the controller cannot
-        /// walk -- a closed door is a wall to it -- is never placed (TravelPlaceRules::ControllerReach).
-        ///
-        /// The ladder (Rungs rungs) moves the height window from [HeightMinFirst, HeightMaxFirst] to
-        /// [HeightMinLast, HeightMaxLast] yards (above for a climb, the drop for a ledge, either way indoors) and the
-        /// furthest distance from DistanceFirst to DistanceLast (the nearest DistanceMin). A ledge's way round takes
-        /// no drop deeper than SafeDrop. FallDamage is charged per share of the seat's health a fall took (a Cost,
-        /// always at full price): what a drop costs is the seat's to learn, and the deep ones kill (Death).
-        struct MarkerVerticalTuning
-        {
-            uint32 MarkersMin = 2;
-            uint32 MarkersMax = 4;
-            uint32 Rungs = 6;
-            float DistanceMin = 10.0f;
-            float DistanceFirst = 30.0f;
-            float DistanceLast = 80.0f;
-            float HeightMinFirst = 1.0f;
-            float HeightMaxFirst = 6.0f;
-            float HeightMinLast = 15.0f;
-            float HeightMaxLast = 45.0f;
-            float Radius = 1.0f;
-            float SafeDrop = 6.0f;
-            float FallDamage = 2.0f;            // per share of maximum health a fall took
-            /// Rooms: the share of legs whose marker is a storey or two up (by the stairs, UpstairsRise yards over
-            /// the seat at most); the rest are down or on the seat's own floor. Stairs are the commonest vertical
-            /// move a player makes, so they are asked for, not left to where a spawn lands.
-            float RoomUpShare = 0.5f;
-            float UpstairsRise = 12.0f;
-        } MarkerVertical;
-
-        /// The water stage's markers (MarkerCourse::Water, M4). By the arena's ground: a marker across water (Water:
-        /// a crossing whose dry way round is the longer one, so swimming is a choice with a price either way), on a
-        /// lakebed (Underwater: arriving is stopping there, swimming, within the radius and ArriveRise of it), or a
-        /// chain of lakebeds (Underwater and Checkpoints: ChainMin to ChainMax of them, longer than a breath).
-        ///
-        /// The ladder (Rungs rungs) moves the furthest distance from DistanceFirst to DistanceLast (the nearest
-        /// DistanceMin) and a lakebed's depth window from [DepthMinFirst, DepthMaxFirst] to [DepthMinLast,
-        /// DepthMaxLast] yards. Drowning is charged per share of the seat's health the water took (a Cost at full
-        /// price); a drowned seat's death is Markers.Death.
-        struct MarkerWaterTuning
-        {
-            uint32 MarkersMin = 2;
-            uint32 MarkersMax = 3;
-            uint32 ChainMin = 4;
-            uint32 ChainMax = 6;
-            uint32 Rungs = 6;
-            float DistanceMin = 15.0f;
-            float DistanceFirst = 30.0f;
-            float DistanceLast = 90.0f;
-            float DepthMinFirst = 3.0f;
-            float DepthMaxFirst = 8.0f;
-            /// The top rung's window is what the lakes hold (map tiles, 2026-10-05, every water sample 15-90 yd from
-            /// the spawns): Stonebull's bed is 32.1 yd at its deepest, p90 26.9, p95 28.5; Elune'ara's 61.8, p90
-            /// 42.3. [18, 30] is 12% of uniform draws round Stonebull and 8% round Elune'ara, so the placer's 192
-            /// tries find one; the first rung's [3, 8] is 7% and 15%.
-            float DepthMinLast = 18.0f;
-            float DepthMaxLast = 30.0f;
-            float Radius = 2.0f;
-            float ArriveRise = 3.0f;            // a swimmer over a lakebed marker floats a little above it
-            float Drowning = 2.0f;              // per share of maximum health the water took
-        } MarkerWater;
-
-        /// The routes stage's markers (MarkerCourse::Routes, M5): one long trip an episode across mixed ground, where
-        /// the way is not visible from the start -- round lakes, through canyons, out of a dead end. Planned whole
-        /// by the RoutePlanner (TravelPlaceRules::LongRoute) and walked or swum by the controller end to end.
-        ///
-        /// The ladder (Rungs rungs) moves the trip's straight distance from [NearestFirst, FurthestFirst] to
-        /// [NearestLast, FurthestLast] yards and its detour -- the way over the straight line -- from DetourFirst to
-        /// DetourLast, each trip within DetourSpan above the rung's and never over DetourCap. Stopped within Radius.
-        /// The costs are the ground course's (Stuck, Wall) and the vertical one's (FallDamage). `revisits` counts
-        /// RevisitCell-yard cells the seat came back to after RevisitSeconds away: a seat retracing its steps.
-        struct MarkerRoutesTuning
-        {
-            uint32 Rungs = 6;
-            float NearestFirst = 150.0f;
-            float FurthestFirst = 250.0f;
-            float NearestLast = 400.0f;
-            float FurthestLast = 600.0f;
-            float DetourFirst = 1.3f;
-            float DetourLast = 2.4f;
-            float DetourSpan = 0.6f;
-            float DetourCap = 3.0f;
-            float Radius = 2.0f;
-            float RevisitCell = 10.0f;
-            float RevisitSeconds = 10.0f;
-        } MarkerRoutes;
-
-        /// The mounted stage's markers (MarkerCourse::Mounted, M6): a trip worth mounting for. On the ground
-        /// (a ride: the route planner's way, the controller's walk of it) the straight distance moves from
-        /// [RideNearestFirst, RideFurthestFirst] to [RideNearestLast, RideFurthestLast] yards over the Rungs rungs,
-        /// its way at most RideMaxDetour times the line; in a flying arena (ArenaDefinition::Flying, on a map that
-        /// flies) from [FlightNearestFirst, FlightFurthestFirst] to [FlightNearestLast, FlightFurthestLast], placed on
-        /// ground anywhere -- or, in an air-only arena, only where the ground route does not reach (Travel.AirDetour),
-        /// the ground mount masked. Arriving is stopping on it as everywhere: landed, dismounted or not, within Radius.
-        /// Mounting is a cast, interrupted by moving and by damage, as a player's is. The costs are the ground and
-        /// vertical courses' (Stuck, Wall, FallDamage: a dismount in the air is a fall).
-        struct MarkerMountedTuning
-        {
-            uint32 Rungs = 6;
-            float RideNearestFirst = 150.0f;
-            float RideFurthestFirst = 250.0f;
-            float RideNearestLast = 300.0f;
-            float RideFurthestLast = 500.0f;
-            float RideMaxDetour = 1.8f;
-            float FlightNearestFirst = 200.0f;
-            float FlightFurthestFirst = 350.0f;
-            float FlightNearestLast = 500.0f;
-            float FlightFurthestLast = 900.0f;
-            float Radius = 2.5f;
-            /// A flight marker has at least this much open sky over it (no overhang, no cave a flyer cannot enter
-            /// from above).
-            float SkyOpen = 10.0f;
-        } MarkerMounted;
-
-        /// The follow stage (Opposition::Follow, M7): keep within [BandMin, BandMax] yards of a moving leader. The
-        /// leader walks trips of the rung's length on the ground (TripNearest to the rung's TripFurthest, from
-        /// TripFurthestFirst to TripFurthestLast over Rungs rungs), at a walk on the rungs below WalkRungs; from
-        /// CastFromRung up a CastShare percent of training episodes give it to a frozen checkpoint (the learner's
-        /// cast.agents.leader -- an M6 policy that rides, swims and jumps as it likes) and the rest keep the script.
-        /// Evaluations always keep the script: the yardstick does not move.
-        ///
-        /// Paid to the follower: Kept per second in the band (FollowKept, Outcome), Lost per second past LostYards
-        /// (Cost), Aggro per hostile creature newly attacking it (Cost), Progress (Shaping) on closing to the band,
-        /// and the ground courses' Stuck, Wall and FallDamage. An episode counts as won on the ladder when the
-        /// in-band share is at least WinShare. A catch-up is coming back into the band after CatchUpSeconds out.
-        struct FollowTuning
-        {
-            float BandMin = 3.0f;
-            float BandMax = 10.0f;
-            float LostYards = 30.0f;
-            float Kept = 0.02f;                 // per second in the band
-            float Lost = 0.02f;                 // per second past LostYards
-            float Aggro = 0.5f;                 // per hostile creature newly attacking the follower
-            float Progress = 1.0f;              // over closing LostYards to the band
-            uint32 Rungs = 6;
-            float TripNearest = 30.0f;
-            float TripFurthestFirst = 60.0f;
-            float TripFurthestLast = 200.0f;
-            uint32 WalkRungs = 2;
-            uint32 CastFromRung = 4;
-            int32 CastShare = 50;               // percent of training episodes at or above CastFromRung
-            float WinShare = 0.8f;
-            float CatchUpSeconds = 2.0f;
-        } Follow;
 
         /// **Death in an instance** (dungeon-curriculum I4; EntranceRespawn): a seat that dies is out for DelayMs, then
         /// stands up alive, at full health and power, at the instance's entrance (the map's entrance trigger), and
@@ -1508,118 +1031,6 @@ namespace Animus::Curriculum
             float Clock = 0.03f;
         } Output;
 
-        /// Where death runs on (ArenaDefinition::DeathRuns, DeathBlock): the corpse run. Dying stays costed by the
-        /// arena's own death term; nothing here pays for dying.
-        struct DeathTuning
-        {
-            float TimeDead = 0.002f;            // per decision dead or a ghost: the clock keeps running
-            float DiedAgain = 3.0f;             // died within DiedAgainMs of rising
-            uint32 DiedAgainMs = 30000;
-            float SafeRise = 0.5f;              // rose with no hostile creature within its aggro radius + 5 yd
-            float SpiritHealer = 1.0f;          // took the spirit healer's resurrection and its sickness
-        } Death;
-
-        /// Getting to a place (travel arenas): how far it is, and what arriving pays.
-        struct TravelTuning
-        {
-            float ObjectiveMin = 60.0f;         // ground: yards from the start (by path, reachable on foot)
-            float ObjectiveMax = 320.0f;
-            /// On foot (ArenaDefinition::OnFoot): shorter, because the lesson is how well the seat covers
-            /// ground with what it has rather than whether a ride is worth summoning. Long enough that a
-            /// speed cooldown pays for itself and short enough that the trip is not simply a wait.
-            /// Inside a building the whole trip is shorter than an outdoor one's first step: an inn is twenty to
-            /// thirty yards across, and FootMin alone would put every objective through an outside wall.
-            float IndoorMin = 8.0f;
-            float IndoorMax = 40.0f;
-            float FootMin = 40.0f;
-            float FootMax = 160.0f;
-            float FlyingMin = 350.0f;           // flying arenas: yards from the start
-            float FlyingMax = 700.0f;
-            /// Which trips the ground arenas ask for, by how much longer the walking way round is than the
-            /// straight line. Drawn uniformly, real detours were the tail -- 51% of stage1_move's trips and 82%
-            /// of stage6_travel's had a dry detour under 1.15 -- and a policy taught on straight lines learns to
-            /// hold forward. Each episode draws a band first (DetourEasyShare of them under DetourEasy,
-            /// DetourMidShare between DetourEasy and DetourHard, the rest from DetourHard up to the generator's
-            /// ceiling of 1.8) and looks for an objective in it, settling for any band only once half its
-            /// attempts have found nothing. Water, indoor and flying arenas draw no band: each asks for its own
-            /// kind of trip.
-            float DetourEasy = 1.15f;
-            float DetourHard = 1.4f;
-            float DetourEasyShare = 0.4f;
-            float DetourMidShare = 0.35f;
-            /// Air-only arenas (ArenaDefinition::AirOnly): a place is accepted only when the ground route to it
-            /// is missing or longer than AirDetour times the straight line, so the wings are the way and not a
-            /// slower option; and arriving there means standing within AirArriveRise yards of the objective's
-            /// own height, or the foot of the cliff six yards under a plateau's edge would count.
-            float AirDetour = 2.5f;
-            float AirArriveRise = 10.0f;
-            /// Potential shaping: what closing the whole trip pays, spread over its length (per 100 yd on a trip
-            /// shorter than that). It used to be per 100 yd whatever the trip, so a 700 yd flight paid 4.3 for
-            /// progress against 3.0 for arriving, and rewards.py's own audit said so every twenty-five updates.
-            float Progress = 1.0f;
-            float Arrive = 3.0f;
-            float FastArrive = 6.0f;            // times the fraction of the walk the trip saved (mounting)
-            float DamageTaken = 1.0f;           // fraction of the bot's health (falls, what it rode past)
-            float Death = 3.0f;
-            float StepCost = 0.0002f;           // per decision
-            /// Room to move. Charged per second, scaled by how far inside ClearanceMargin the seat is, and
-            /// capped per episode at ClearanceMax so it can never approach what arriving is worth (Arrive 3.0).
-            /// The margin is deliberately wider than a doorway: the seat should prefer the middle of a corridor,
-            /// not refuse a door.
-            /// Routing. A route is re-planned when the seat has wandered RouteStray yards from the corner it
-            /// was walking to, or when RouteRefresh seconds have passed -- movement first, for the same reason
-            /// the ground probe refreshes on movement first. RouteCorner is how near counts as having reached
-            /// one, and wants to be wider than a decision's travel (1.75 yd at run speed) so a corner cannot be
-            /// stepped over and walked back to.
-            float RouteStray = 25.0f;
-            float RouteRefresh = 5.0f;
-            float RouteCorner = 5.0f;
-            float Clearance = 0.08f;            // per second hard against the wall
-            float ClearanceMargin = 1.5f;       // yards; closer than this is charged
-            float ClearanceMax = 0.6f;          // most an episode may lose to it
-            /// Ledge arenas (ArenaDefinition::Ledges): how far the objective is, how far below the seat it sits,
-            /// and how much longer the way round on foot has to be than the straight line for the drop to be the
-            /// shortcut. LedgeDropMax runs past the lethal fall on purpose: with Slow Fall or Levitate it is free,
-            /// without them the seat learns what it costs.
-            float LedgeMin = 20.0f;
-            float LedgeMax = 120.0f;
-            float LedgeDetour = 2.0f;
-            float LedgeDropMin = 5.0f;
-            float LedgeDropMax = 80.0f;
-            /// Dive arenas (ArenaDefinition::Underwater): how far the objective is and how much water stands over
-            /// it. DiveDepthMax runs past what one breath reaches on purpose, as LedgeDropMax runs past the lethal
-            /// fall: with Unending Breath or Water Breathing the dive is free, without them the seat learns to come
-            /// up for air, or what not coming up costs.
-            float DiveMin = 20.0f;
-            float DiveMax = 120.0f;
-            float DiveDepthMin = 6.0f;
-            float DiveDepthMax = 40.0f;
-            /// Chain arenas (ArenaDefinition::Checkpoints): how far on the next objective is drawn from where the
-            /// seat reached the last. Short legs, so a chain of lakebeds is many small dives and the seat is under
-            /// water for most of the clock unless it chooses not to be.
-            float ChainMin = 30.0f;
-            float ChainMax = 60.0f;
-        } Travel;
-
-        /// The flag match (Warsong Gulch's rules between two seats).
-        struct FlagTuning
-        {
-            float BaseMin = 100.0f;             // yards between the bases, by path
-            float BaseMax = 180.0f;
-            uint32 CapturesToWin = 3;
-            uint32 RespawnMs = 15000;           // the dead stand up at their base after this (a graveyard wave)
-            uint32 DroppedReturnMs = 10000;     // a dropped flag goes home on its own after this
-            float TouchDistance = 4.0f;         // yards to pick up, return or capture
-            float Capture = 5.0f;
-            float Pickup = 1.0f;
-            float Return = 1.0f;
-            float CarrierKill = 1.5f;           // killing the one carrying the seat's flag
-            float Lost = 3.0f;                  // the other side captured the seat's flag
-            float Progress = 0.5f;              // potential shaping toward the seat's current objective, per 100 yd
-            float Death = 1.0f;
-            float StepCost = 0.0002f;           // per decision
-        } Flag;
-
         /// The "human" stand-in seat of the party stages (StandIn.h: a frozen learned partner in one seat, its style
         /// leading or following, in the role it wants). Off unless StandIn.Share (or an arena's own share) is set.
         StandIn::Tuning StandIn;
@@ -1757,33 +1168,6 @@ namespace Animus::Curriculum
             f("Instance.PullRungStart", tuning.Instance.PullRungStart);
             f("Instance.PullRungRuns", tuning.Instance.PullRungRuns);
             f("Instance.PullRungTarget", tuning.Instance.PullRungTarget);
-            f("Life.StepCost", tuning.Life.StepCost);
-            f("Life.Progress", tuning.Life.Progress);
-            f("Life.Wasted", tuning.Life.Wasted);
-            f("Life.Death", tuning.Life.Death);
-            f("Life.QuestAccepted", tuning.Life.QuestAccepted);
-            f("Life.QuestCredit", tuning.Life.QuestCredit);
-            f("Life.QuestTurnIn", tuning.Life.QuestTurnIn);
-            f("Life.QuestTimeout", tuning.Life.QuestTimeout);
-            f("Life.CompleteHeld", tuning.Life.CompleteHeld);
-            f("Life.DropRerolls", tuning.Life.DropRerolls);
-            f("Life.Poach", tuning.Life.Poach);
-            f("Life.ClaimHoldMs", tuning.Life.ClaimHoldMs);
-            f("Life.ClaimRadius", tuning.Life.ClaimRadius);
-            f("Life.GatherNode", tuning.Life.GatherNode);
-            f("Life.GatherSkillUp", tuning.Life.GatherSkillUp);
-            f("Life.TownSold", tuning.Life.TownSold);
-            f("Life.TownRepaired", tuning.Life.TownRepaired);
-            f("Life.TownStocked", tuning.Life.TownStocked);
-            f("Life.TownEquipped", tuning.Life.TownEquipped);
-            f("Life.TownDone", tuning.Life.TownDone);
-            f("Life.SenseRange", tuning.Life.SenseRange);
-            f("Life.ObjectiveRadius", tuning.Life.ObjectiveRadius);
-            f("Life.ObjectiveSpawns", tuning.Life.ObjectiveSpawns);
-            f("Life.NodeRadius", tuning.Life.NodeRadius);
-            f("Life.NodeSpawns", tuning.Life.NodeSpawns);
-            f("Life.TownRadius", tuning.Life.TownRadius);
-            f("Life.TownCopperPerLevelSquared", tuning.Life.TownCopperPerLevelSquared);
 
             f("Casting.TimeWasted", tuning.Casting.TimeWasted);
             f("Casting.TimeCompleted", tuning.Casting.TimeCompleted);
@@ -1838,11 +1222,6 @@ namespace Animus::Curriculum
             f("Goals.SecondaryShare", tuning.Goals.SecondaryShare);
             f("Goals.Secondary", tuning.Goals.Secondary);
 
-            f("Order.Focus", tuning.Order.Focus);
-            f("Order.PlaceMatch", tuning.Order.PlaceMatch);
-            f("Order.PlaceRadius", tuning.Order.PlaceRadius);
-            f("Order.PlaceCooldownMs", tuning.Order.PlaceCooldownMs);
-
             f("Evade.BrokeContact", tuning.Evade.BrokeContact);
             f("Evade.BreakCooldownMs", tuning.Evade.BreakCooldownMs);
             f("Evade.EscapeMs", tuning.Evade.EscapeMs);
@@ -1852,102 +1231,17 @@ namespace Animus::Curriculum
             f("Stealth.OpenerDamage", tuning.Stealth.OpenerDamage);
             f("Stealth.OpenerWindowMs", tuning.Stealth.OpenerWindowMs);
 
-            f("Director.PlaceNearYards", tuning.Director.PlaceNearYards);
-            f("Director.PlaceFarYards", tuning.Director.PlaceFarYards);
-            f("Director.ClockDecisions", tuning.Director.ClockDecisions);
-            f("Director.OrderHoldDecisions", tuning.Director.OrderHoldDecisions);
-            f("Director.OrderChange", tuning.Director.OrderChange);
-            f("Director.OrderChurn", tuning.Director.OrderChurn);
-            f("Director.LowHealth", tuning.Director.LowHealth);
-
             f("Support.SelfHealing", tuning.Support.SelfHealing);
             f("Support.HealingMana", tuning.Support.HealingMana);
             f("Support.HealingManaWithReadiness", tuning.Support.HealingManaWithReadiness);
             f("Support.BuffCoverage", tuning.Support.BuffCoverage);
             f("Support.PetReady", tuning.Support.PetReady);
 
-            f("Pulls.LinkedChance", tuning.Pulls.LinkedChance);
-            f("Pulls.EliteChance", tuning.Pulls.EliteChance);
-            f("Pulls.HigherLevelChance", tuning.Pulls.HigherLevelChance);
-            f("Pulls.PartyEliteChance", tuning.Pulls.PartyEliteChance);
-            f("Pulls.NextPullMinMs", tuning.Pulls.NextPullMinMs);
-            f("Pulls.NextPullMaxMs", tuning.Pulls.NextPullMaxMs);
-            f("Pulls.RecoverFraction", tuning.Pulls.RecoverFraction);
-            f("Pulls.DamageDealt", tuning.Pulls.DamageDealt);
-            f("Pulls.DamageTaken", tuning.Pulls.DamageTaken);
-            f("Pulls.GauntletDamageTaken", tuning.Pulls.GauntletDamageTaken);
-            f("Pulls.Approach", tuning.Pulls.Approach);
-            f("Pulls.StealthOpener", tuning.Pulls.StealthOpener);
-            f("Pulls.StealthUtility", tuning.Pulls.StealthUtility);
-            f("Pulls.Interrupt", tuning.Pulls.Interrupt);
-            f("Pulls.InterruptHeal", tuning.Pulls.InterruptHeal);
-            f("Pulls.InterruptArea", tuning.Pulls.InterruptArea);
-            f("Pulls.InterruptLong", tuning.Pulls.InterruptLong);
-            f("Pulls.Kill", tuning.Pulls.Kill);
-            f("Pulls.StepCost", tuning.Pulls.StepCost);
-            f("Pulls.Clear", tuning.Pulls.Clear);
-            f("Pulls.FastPull", tuning.Pulls.FastPull);
-            f("Pulls.HealthKept", tuning.Pulls.HealthKept);
-            f("Pulls.GauntletDeath", tuning.Pulls.GauntletDeath);
-            f("Pulls.PackClear", tuning.Pulls.PackClear);
-            f("Pulls.FastClear", tuning.Pulls.FastClear);
-            f("Pulls.PackHealthKept", tuning.Pulls.PackHealthKept);
-            f("Pulls.PackDeath", tuning.Pulls.PackDeath);
-            f("Pulls.MaxTier", tuning.Pulls.MaxTier);
-            f("Pulls.Timeout", tuning.Pulls.Timeout);
-            f("Pulls.TimeoutFloor", tuning.Pulls.TimeoutFloor);
-            f("Pulls.Overtime", tuning.Pulls.Overtime);
-            f("Pulls.OvertimeGraceMs", tuning.Pulls.OvertimeGraceMs);
-            f("Pulls.SinglePackControl", tuning.Pulls.SinglePackControl);
-            f("Pulls.SinglePackControlMax", tuning.Pulls.SinglePackControlMax);
-            f("Pulls.ControlHealthFloor", tuning.Pulls.ControlHealthFloor);
-            f("Pulls.ControlFallbackDps", tuning.Pulls.ControlFallbackDps);
-            f("Pulls.ControlRateMinMs", tuning.Pulls.ControlRateMinMs);
-            f("Pulls.ControlGraceMaxMs", tuning.Pulls.ControlGraceMaxMs);
-            f("Pulls.Stall", tuning.Pulls.Stall);
-            f("Pulls.StallGraceMs", tuning.Pulls.StallGraceMs);
-            f("Pulls.PreparationRefundMaxMs", tuning.Pulls.PreparationRefundMaxMs);
-            f("Pulls.Spacing", tuning.Pulls.Spacing);
-            f("Pulls.CampExtraPack", tuning.Pulls.CampExtraPack);
-            f("Pulls.CampCleanPack", tuning.Pulls.CampCleanPack);
-            f("Pulls.CampRestMs", tuning.Pulls.CampRestMs);
-            f("Pulls.SoloGauntletClear", tuning.Pulls.SoloGauntletClear);
-            f("Pulls.SoloGauntletFastPull", tuning.Pulls.SoloGauntletFastPull);
-            f("Pulls.SoloGauntletHealthKept", tuning.Pulls.SoloGauntletHealthKept);
-            f("Pulls.SoloGauntletDeath", tuning.Pulls.SoloGauntletDeath);
-            f("Pulls.SoloGauntletReadiness", tuning.Pulls.SoloGauntletReadiness);
-            f("Pulls.SoloGauntletWinPulls", tuning.Pulls.SoloGauntletWinPulls);
-            f("Pulls.GauntletSupplies", tuning.Pulls.GauntletSupplies);
-            f("Pulls.SoloGauntletControl", tuning.Pulls.SoloGauntletControl);
-            f("Pulls.SoloGauntletControlMax", tuning.Pulls.SoloGauntletControlMax);
-            f("Pulls.ArriveMinMs", tuning.Pulls.ArriveMinMs);
-            f("Pulls.ArriveMaxMs", tuning.Pulls.ArriveMaxMs);
-            f("Pulls.ArriveShrinkMs", tuning.Pulls.ArriveShrinkMs);
-            f("Pulls.ArriveFloorMs", tuning.Pulls.ArriveFloorMs);
-            f("Pulls.NextPullShrinkMs", tuning.Pulls.NextPullShrinkMs);
-            f("Pulls.NextPullFloorMs", tuning.Pulls.NextPullFloorMs);
-            f("Pulls.GauntletDenseScale", tuning.Pulls.GauntletDenseScale);
-            f("Pulls.OwnerClearScale", tuning.Pulls.OwnerClearScale);
-            f("Pulls.OwnerReadiness", tuning.Pulls.OwnerReadiness);
-            f("Pulls.OwnerControl", tuning.Pulls.OwnerControl);
-            f("Pulls.OwnerControlMax", tuning.Pulls.OwnerControlMax);
-            f("Pulls.OwnerWinPulls", tuning.Pulls.OwnerWinPulls);
-
             f("Options.RestMaxMs", tuning.Options.RestMaxMs);
             f("Options.HoldInterruptMs", tuning.Options.HoldInterruptMs);
             f("Hazards.Damage", tuning.Hazards.Damage);
             f("Hazards.Standing", tuning.Hazards.Standing);
             f("Hazards.Max", tuning.Hazards.Max);
-            f("Dummy.HealthScale", tuning.Dummy.HealthScale);
-            f("Dummy.HittingHealthScale", tuning.Dummy.HittingHealthScale);
-            f("Dummy.Damage", tuning.Dummy.Damage);
-            f("Dummy.Kill", tuning.Dummy.Kill);
-            f("Dummy.Death", tuning.Dummy.Death);
-            f("Dummy.Bleed", tuning.Dummy.Bleed);
-            f("Dummy.Hurt", tuning.Dummy.Hurt);
-            f("Dummy.Resource", tuning.Dummy.Resource);
-            f("Dummy.AddEveryMs", tuning.Dummy.AddEveryMs);
-            f("Dummy.MaxAdds", tuning.Dummy.MaxAdds);
             f("Markers.Arrive", tuning.Markers.Arrive);
             f("Markers.StepCost", tuning.Markers.StepCost);
             f("Markers.Death", tuning.Markers.Death);
@@ -1970,89 +1264,6 @@ namespace Animus::Curriculum
             f("Markers.RouteMaxDrop", tuning.Markers.RouteMaxDrop);
             f("Markers.FallbackCeiling", tuning.Markers.FallbackCeiling);
             f("Markers.FallbackMinLegs", tuning.Markers.FallbackMinLegs);
-            f("MarkerGround.MarkersMin", tuning.MarkerGround.MarkersMin);
-            f("MarkerGround.MarkersMax", tuning.MarkerGround.MarkersMax);
-            f("MarkerGround.Rungs", tuning.MarkerGround.Rungs);
-            f("MarkerGround.DistanceMin", tuning.MarkerGround.DistanceMin);
-            f("MarkerGround.DistanceFirst", tuning.MarkerGround.DistanceFirst);
-            f("MarkerGround.DistanceLast", tuning.MarkerGround.DistanceLast);
-            f("MarkerGround.DetourFirst", tuning.MarkerGround.DetourFirst);
-            f("MarkerGround.DetourLast", tuning.MarkerGround.DetourLast);
-            f("MarkerGround.DetourSpan", tuning.MarkerGround.DetourSpan);
-            f("MarkerGround.Radius", tuning.MarkerGround.Radius);
-            f("MarkerGround.Stuck", tuning.MarkerGround.Stuck);
-            f("MarkerGround.Wall", tuning.MarkerGround.Wall);
-            f("MarkerGround.WallSlide", tuning.MarkerGround.WallSlide);
-            f("MarkerVertical.MarkersMin", tuning.MarkerVertical.MarkersMin);
-            f("MarkerVertical.MarkersMax", tuning.MarkerVertical.MarkersMax);
-            f("MarkerVertical.Rungs", tuning.MarkerVertical.Rungs);
-            f("MarkerVertical.DistanceMin", tuning.MarkerVertical.DistanceMin);
-            f("MarkerVertical.DistanceFirst", tuning.MarkerVertical.DistanceFirst);
-            f("MarkerVertical.DistanceLast", tuning.MarkerVertical.DistanceLast);
-            f("MarkerVertical.HeightMinFirst", tuning.MarkerVertical.HeightMinFirst);
-            f("MarkerVertical.HeightMaxFirst", tuning.MarkerVertical.HeightMaxFirst);
-            f("MarkerVertical.HeightMinLast", tuning.MarkerVertical.HeightMinLast);
-            f("MarkerVertical.HeightMaxLast", tuning.MarkerVertical.HeightMaxLast);
-            f("MarkerVertical.Radius", tuning.MarkerVertical.Radius);
-            f("MarkerVertical.SafeDrop", tuning.MarkerVertical.SafeDrop);
-            f("MarkerVertical.FallDamage", tuning.MarkerVertical.FallDamage);
-            f("MarkerVertical.RoomUpShare", tuning.MarkerVertical.RoomUpShare);
-            f("MarkerVertical.UpstairsRise", tuning.MarkerVertical.UpstairsRise);
-            f("MarkerWater.MarkersMin", tuning.MarkerWater.MarkersMin);
-            f("MarkerWater.MarkersMax", tuning.MarkerWater.MarkersMax);
-            f("MarkerWater.ChainMin", tuning.MarkerWater.ChainMin);
-            f("MarkerWater.ChainMax", tuning.MarkerWater.ChainMax);
-            f("MarkerWater.Rungs", tuning.MarkerWater.Rungs);
-            f("MarkerWater.DistanceMin", tuning.MarkerWater.DistanceMin);
-            f("MarkerWater.DistanceFirst", tuning.MarkerWater.DistanceFirst);
-            f("MarkerWater.DistanceLast", tuning.MarkerWater.DistanceLast);
-            f("MarkerWater.DepthMinFirst", tuning.MarkerWater.DepthMinFirst);
-            f("MarkerWater.DepthMaxFirst", tuning.MarkerWater.DepthMaxFirst);
-            f("MarkerWater.DepthMinLast", tuning.MarkerWater.DepthMinLast);
-            f("MarkerWater.DepthMaxLast", tuning.MarkerWater.DepthMaxLast);
-            f("MarkerWater.Radius", tuning.MarkerWater.Radius);
-            f("MarkerWater.ArriveRise", tuning.MarkerWater.ArriveRise);
-            f("MarkerWater.Drowning", tuning.MarkerWater.Drowning);
-            f("MarkerRoutes.Rungs", tuning.MarkerRoutes.Rungs);
-            f("MarkerRoutes.NearestFirst", tuning.MarkerRoutes.NearestFirst);
-            f("MarkerRoutes.FurthestFirst", tuning.MarkerRoutes.FurthestFirst);
-            f("MarkerRoutes.NearestLast", tuning.MarkerRoutes.NearestLast);
-            f("MarkerRoutes.FurthestLast", tuning.MarkerRoutes.FurthestLast);
-            f("MarkerRoutes.DetourFirst", tuning.MarkerRoutes.DetourFirst);
-            f("MarkerRoutes.DetourLast", tuning.MarkerRoutes.DetourLast);
-            f("MarkerRoutes.DetourSpan", tuning.MarkerRoutes.DetourSpan);
-            f("MarkerRoutes.DetourCap", tuning.MarkerRoutes.DetourCap);
-            f("MarkerRoutes.Radius", tuning.MarkerRoutes.Radius);
-            f("MarkerRoutes.RevisitCell", tuning.MarkerRoutes.RevisitCell);
-            f("MarkerRoutes.RevisitSeconds", tuning.MarkerRoutes.RevisitSeconds);
-            f("MarkerMounted.Rungs", tuning.MarkerMounted.Rungs);
-            f("MarkerMounted.RideNearestFirst", tuning.MarkerMounted.RideNearestFirst);
-            f("MarkerMounted.RideFurthestFirst", tuning.MarkerMounted.RideFurthestFirst);
-            f("MarkerMounted.RideNearestLast", tuning.MarkerMounted.RideNearestLast);
-            f("MarkerMounted.RideFurthestLast", tuning.MarkerMounted.RideFurthestLast);
-            f("MarkerMounted.RideMaxDetour", tuning.MarkerMounted.RideMaxDetour);
-            f("MarkerMounted.FlightNearestFirst", tuning.MarkerMounted.FlightNearestFirst);
-            f("MarkerMounted.FlightFurthestFirst", tuning.MarkerMounted.FlightFurthestFirst);
-            f("MarkerMounted.FlightNearestLast", tuning.MarkerMounted.FlightNearestLast);
-            f("MarkerMounted.FlightFurthestLast", tuning.MarkerMounted.FlightFurthestLast);
-            f("MarkerMounted.Radius", tuning.MarkerMounted.Radius);
-            f("MarkerMounted.SkyOpen", tuning.MarkerMounted.SkyOpen);
-            f("Follow.BandMin", tuning.Follow.BandMin);
-            f("Follow.BandMax", tuning.Follow.BandMax);
-            f("Follow.LostYards", tuning.Follow.LostYards);
-            f("Follow.Kept", tuning.Follow.Kept);
-            f("Follow.Lost", tuning.Follow.Lost);
-            f("Follow.Aggro", tuning.Follow.Aggro);
-            f("Follow.Progress", tuning.Follow.Progress);
-            f("Follow.Rungs", tuning.Follow.Rungs);
-            f("Follow.TripNearest", tuning.Follow.TripNearest);
-            f("Follow.TripFurthestFirst", tuning.Follow.TripFurthestFirst);
-            f("Follow.TripFurthestLast", tuning.Follow.TripFurthestLast);
-            f("Follow.WalkRungs", tuning.Follow.WalkRungs);
-            f("Follow.CastFromRung", tuning.Follow.CastFromRung);
-            f("Follow.CastShare", tuning.Follow.CastShare);
-            f("Follow.WinShare", tuning.Follow.WinShare);
-            f("Follow.CatchUpSeconds", tuning.Follow.CatchUpSeconds);
             f("Respawn.DelayMs", tuning.Respawn.DelayMs);
             f("Respawn.RejoinYards", tuning.Respawn.RejoinYards);
             f("PartyFollow.BandMin", tuning.PartyFollow.BandMin);
@@ -2209,86 +1420,10 @@ namespace Animus::Curriculum
             f("Roles.WinPulledSeconds", tuning.Roles.WinPulledSeconds);
             f("Roles.StandInShare", tuning.Roles.StandInShare);
             f("Options.JitterDecayMs", tuning.Options.JitterDecayMs);
-            f("Owner.LevelSpread", tuning.Owner.LevelSpread);
-            f("Owner.TankChance", tuning.Owner.TankChance);
-            f("Owner.HealerChance", tuning.Owner.HealerChance);
-            f("Owner.DamageTakenDps", tuning.Owner.DamageTakenDps);
-            f("Owner.DamageTakenProtector", tuning.Owner.DamageTakenProtector);
-            f("Owner.TankOwnerDamageShare", tuning.Owner.TankOwnerDamageShare);
-            f("Owner.Healing", tuning.Owner.Healing);
-            f("Owner.TankDamageRefund", tuning.Owner.TankDamageRefund);
-            f("Owner.TankHold", tuning.Owner.TankHold);
-            f("Owner.TankLose", tuning.Owner.TankLose);
-            f("Owner.PulledThreat", tuning.Owner.PulledThreat);
-            f("Owner.SoloFight", tuning.Owner.SoloFight);
-            f("Owner.FollowFar", tuning.Owner.FollowFar);
-            f("Owner.FollowNear", tuning.Owner.FollowNear);
-            f("Owner.FollowTrail", tuning.Owner.FollowTrail);
-            f("Owner.FollowFarDistance", tuning.Owner.FollowFarDistance);
-            f("Owner.FollowNearDistance", tuning.Owner.FollowNearDistance);
-            f("Owner.Death", tuning.Owner.Death);
 
             f("Resurrection.GraceMs", tuning.Resurrection.GraceMs);
             f("Resurrection.ReviveAlly", tuning.Resurrection.ReviveAlly);
             f("Output.Clock", tuning.Output.Clock);
-            f("Death.TimeDead", tuning.Death.TimeDead);
-            f("Death.DiedAgain", tuning.Death.DiedAgain);
-            f("Death.DiedAgainMs", tuning.Death.DiedAgainMs);
-            f("Death.SafeRise", tuning.Death.SafeRise);
-            f("Death.SpiritHealer", tuning.Death.SpiritHealer);
-
-            f("Travel.ObjectiveMin", tuning.Travel.ObjectiveMin);
-            f("Travel.ObjectiveMax", tuning.Travel.ObjectiveMax);
-            f("Travel.FootMin", tuning.Travel.FootMin);
-            f("Travel.IndoorMin", tuning.Travel.IndoorMin);
-            f("Travel.IndoorMax", tuning.Travel.IndoorMax);
-            f("Travel.FootMax", tuning.Travel.FootMax);
-            f("Travel.FlyingMin", tuning.Travel.FlyingMin);
-            f("Travel.FlyingMax", tuning.Travel.FlyingMax);
-            f("Travel.DetourEasy", tuning.Travel.DetourEasy);
-            f("Travel.DetourHard", tuning.Travel.DetourHard);
-            f("Travel.DetourEasyShare", tuning.Travel.DetourEasyShare);
-            f("Travel.DetourMidShare", tuning.Travel.DetourMidShare);
-            f("Travel.AirDetour", tuning.Travel.AirDetour);
-            f("Travel.AirArriveRise", tuning.Travel.AirArriveRise);
-            f("Travel.Progress", tuning.Travel.Progress);
-            f("Travel.Arrive", tuning.Travel.Arrive);
-            f("Travel.FastArrive", tuning.Travel.FastArrive);
-            f("Travel.DamageTaken", tuning.Travel.DamageTaken);
-            f("Travel.Death", tuning.Travel.Death);
-            f("Travel.StepCost", tuning.Travel.StepCost);
-            f("Travel.RouteStray", tuning.Travel.RouteStray);
-            f("Travel.RouteRefresh", tuning.Travel.RouteRefresh);
-            f("Travel.RouteCorner", tuning.Travel.RouteCorner);
-            f("Travel.Clearance", tuning.Travel.Clearance);
-            f("Travel.ClearanceMargin", tuning.Travel.ClearanceMargin);
-            f("Travel.ClearanceMax", tuning.Travel.ClearanceMax);
-            f("Travel.LedgeMin", tuning.Travel.LedgeMin);
-            f("Travel.LedgeMax", tuning.Travel.LedgeMax);
-            f("Travel.LedgeDetour", tuning.Travel.LedgeDetour);
-            f("Travel.LedgeDropMin", tuning.Travel.LedgeDropMin);
-            f("Travel.LedgeDropMax", tuning.Travel.LedgeDropMax);
-            f("Travel.DiveMin", tuning.Travel.DiveMin);
-            f("Travel.DiveMax", tuning.Travel.DiveMax);
-            f("Travel.DiveDepthMin", tuning.Travel.DiveDepthMin);
-            f("Travel.DiveDepthMax", tuning.Travel.DiveDepthMax);
-            f("Travel.ChainMin", tuning.Travel.ChainMin);
-            f("Travel.ChainMax", tuning.Travel.ChainMax);
-
-            f("Flag.BaseMin", tuning.Flag.BaseMin);
-            f("Flag.BaseMax", tuning.Flag.BaseMax);
-            f("Flag.CapturesToWin", tuning.Flag.CapturesToWin);
-            f("Flag.RespawnMs", tuning.Flag.RespawnMs);
-            f("Flag.DroppedReturnMs", tuning.Flag.DroppedReturnMs);
-            f("Flag.TouchDistance", tuning.Flag.TouchDistance);
-            f("Flag.Capture", tuning.Flag.Capture);
-            f("Flag.Pickup", tuning.Flag.Pickup);
-            f("Flag.Return", tuning.Flag.Return);
-            f("Flag.CarrierKill", tuning.Flag.CarrierKill);
-            f("Flag.Lost", tuning.Flag.Lost);
-            f("Flag.Progress", tuning.Flag.Progress);
-            f("Flag.Death", tuning.Flag.Death);
-            f("Flag.StepCost", tuning.Flag.StepCost);
 
             f("StandIn.Share", tuning.StandIn.Share);
             f("StandIn.LeadChance", tuning.StandIn.LeadChance);

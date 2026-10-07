@@ -81,33 +81,10 @@ Animus::Curriculum::CurriculumTuning Animus::Curriculum::CurriculumTuning::Load(
     ClampPercent(prefix, "Party.ClassicChance", tuning.Party.ClassicChance);
     ClampRolePair(prefix, "Party.RoleTankChance", tuning.Party.RoleTankChance, "Party.RoleHealerChance",
         tuning.Party.RoleHealerChance);
-    ClampPercent(prefix, "Pulls.LinkedChance", tuning.Pulls.LinkedChance);
-    ClampPercent(prefix, "Pulls.EliteChance", tuning.Pulls.EliteChance);
-    ClampPercent(prefix, "Pulls.HigherLevelChance", tuning.Pulls.HigherLevelChance);
-    ClampPercent(prefix, "Pulls.PartyEliteChance", tuning.Pulls.PartyEliteChance);
     ClampPercent(prefix, "StandIn.Share", tuning.StandIn.Share);
     ClampPercent(prefix, "StandIn.LeadChance", tuning.StandIn.LeadChance);
     ClampRolePair(prefix, "StandIn.TankChance", tuning.StandIn.TankChance, "StandIn.HealerChance",
         tuning.StandIn.HealerChance);
-    ClampRolePair(prefix, "Owner.TankChance", tuning.Owner.TankChance, "Owner.HealerChance", tuning.Owner.HealerChance);
-    tuning.Owner.LevelSpread = std::max(0, tuning.Owner.LevelSpread);
-
-    auto const order = [](uint32& low, uint32& high) { if (low > high) std::swap(low, high); };
-    order(tuning.Pulls.NextPullMinMs, tuning.Pulls.NextPullMaxMs);
-    order(tuning.Pulls.ArriveMinMs, tuning.Pulls.ArriveMaxMs);
-    tuning.Pulls.GauntletSupplies = std::max<uint32>(1, tuning.Pulls.GauntletSupplies);
-
-    auto const orderYards = [](float& low, float& high)
-    {
-        low = std::max(0.0f, low);
-        high = std::max(0.0f, high);
-        if (low > high)
-            std::swap(low, high);
-    };
-    orderYards(tuning.Travel.ObjectiveMin, tuning.Travel.ObjectiveMax);
-    orderYards(tuning.Travel.FlyingMin, tuning.Travel.FlyingMax);
-    orderYards(tuning.Flag.BaseMin, tuning.Flag.BaseMax);
-    tuning.Flag.CapturesToWin = std::max<uint32>(1, tuning.Flag.CapturesToWin);
 
     tuning.Party.SizeWeight1 = std::max(0, tuning.Party.SizeWeight1);
     tuning.Party.SizeWeight2 = std::max(0, tuning.Party.SizeWeight2);

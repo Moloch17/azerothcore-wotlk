@@ -106,196 +106,89 @@ for every key with a default and no warning, so an undocumented one quietly keep
 
 | Key | Default | | Key | Default |
 |---|---|---|---|---|
-| `Characters.HighLevelFirst` | 61 | | `Pulls.LinkedChance` | 70 |
-| `Characters.HighLevelChance` | 50 | | `Pulls.EliteChance` | 15 |
-| `Characters.NoisyTalentChance` | 30 | | `Pulls.HigherLevelChance` | 25 |
-| `Characters.RandomTalentChance` | 10 | | `Pulls.PartyEliteChance` | 50 |
-| `Characters.TalentNoisePoints` | 5 | | | |
-| `Characters.PetOutChance` | 50 | | | |
-| `Characters.ReuseEpisodes` | 4 | | | |
-| `Party.SizeWeight1` | 20 | | | |
-| `Party.SizeWeight2` | 20 | | | |
-| `Party.SizeWeight3` | 20 | | `Pulls.NextPullMinMs` | 8000 |
-| `Party.SizeWeight4` | 40 | | `Pulls.NextPullMaxMs` | 20000 |
-| `Party.ClassicChance` | 50 | | | |
-| `Party.RoleTankChance` | 25 | | | |
-| `Party.RoleHealerChance` | 25 | | | |
-| `Party.TeammateDamageTakenDps` | 0.5 | | | |
-| `Party.TeammateDamageTakenProtector` | 1.0 | | | |
-| `Party.TeammateHealing` | 2.0 | | | |
-| `Party.TankLoseTeammate` | 0.02 | | | |
-| `Party.TeammateDeath` | 3.0 | | `Pulls.RecoverFraction` | 0.5 |
-| `Raid.HealthPerGroup` | 1.0 | | `Raid.DamagePerGroup` | 0.15 |
-| `Raid.TankHold` | 0.015 | | `Raid.KeepUp` | 0.0002 |
-| `Raid.Output` | 0.5 | | `Raid.Idle` | 0.001 |
-| `Raid.IdleMs` | 4000 | | `Raid.IdleReach` | 40.0 |
-| `Duel.DamageDealt` | 2.0 | | `Pulls.DamageDealt` | 2.0 |
-| `Duel.DamageTaken` | 1.0 | | `Pulls.DamageTaken` | 1.0 |
-| `Duel.Approach` | 0.5 | | `Pulls.GauntletDamageTaken` | 1.5 |
-| `Duel.StealthOpener` | 0.5 | | `Pulls.Approach` | 0.5 |
-| `Duel.StealthUtility` | 0.05 | | `Pulls.StealthOpener` | 0.5 |
-| `Duel.StepCost` | 0.0002 | | `Pulls.StealthUtility` | 0.05 |
-| `Duel.Kill` | 10.0 | | `Pulls.Interrupt` | 0.3 |
-| `Duel.FastKill` | 1.0 | | `Pulls.Kill` | 0.5 |
-| `Duel.HealthKept` | 0.5 | | `Pulls.StepCost` | 0.0002 |
-| `Duel.Death` | 10.0 | | `Pulls.Clear` | 2.5 |
-| `Duel.MeleeRange` | 3.5 | | `Pulls.FastPull` | 0.5 |
-| `Duel.RangedRange` | 25.0 | | `Pulls.HealthKept` | 0.5 |
-| `Casting.TimeWasted` | 0.03 | | `Pulls.GauntletDeath` | 10.0 |
-| `Casting.TimeCompleted` | 0.03 | | `Pulls.OwnerClearScale` | 2.0 |
-| | | | `Pulls.OwnerReadiness` | 1.0 |
-| | | | `Pulls.OwnerControl` | 0.02 |
-| | | | `Pulls.OwnerControlMax` | 1.5 |
-| | | | `Pulls.OwnerWinPulls` | 5 |
-| `Resurrection.GraceMs` | 20000 | | `Pulls.PackClear` | 10.0 |
-| `Resurrection.ReviveAlly` | 1.5 | | `Pulls.FastClear` | 1.0 |
-| `Output.Clock` | 0.03 | | | |
-| `Death.TimeDead` | 0.002 | | `Death.DiedAgain` | 3.0 |
-| `Death.DiedAgainMs` | 30000 | | `Death.SafeRise` | 0.5 |
-| `Death.SpiritHealer` | 1.0 | | | |
-| `Duel.Timeout` | 10.0 | | `Pulls.PackHealthKept` | 0.5 |
-| `Duel.TimeoutFloor` | 0.5 | | `Pulls.TimeoutFloor` | 0.5 |
-| `Duel.Stall` | 0.08 | | `Difficulty.StretchChance` | 10 |
-| `Casting.Cancel` | 0.05 | | `Pulls.PackDeath` | 10.0 |
-| | | | `Pulls.MaxTier` | 5 |
-| | | | `Pulls.Timeout` | 10.0 |
-| | | | `Pulls.Overtime` | 0.1 |
-| | | | `Pulls.OvertimeGraceMs` | 60000 |
-| | | | `Pulls.Stall` | 0.08 |
-| | | | `Pulls.StallGraceMs` | 15000 |
-| | | | `Pulls.PreparationRefundMaxMs` | 15000 |
-| | | | `Pulls.Spacing` | 0.1 |
-| | | | `Pulls.SoloGauntletClear` | 5.0 |
-| | | | `Pulls.SoloGauntletFastPull` | 1.0 |
-| | | | `Pulls.SoloGauntletHealthKept` | 0.5 |
-| | | | `Pulls.SoloGauntletDeath` | 10.0 |
-| | | | `Pulls.SoloGauntletReadiness` | 0.5 |
-| | | | `Pulls.SoloGauntletWinPulls` | 5 |
-| | | | `Pulls.GauntletSupplies` | 7 |
-| | | | `Pulls.SoloGauntletControl` | 0.02 |
-| | | | `Pulls.SoloGauntletControlMax` | 1.5 |
-| | | | `Pulls.ArriveMinMs` | 20000 |
-| | | | `Pulls.ArriveMaxMs` | 40000 |
-| | | | `Pulls.ArriveShrinkMs` | 1500 |
-| | | | `Pulls.ArriveFloorMs` | 10000 |
-| | | | `Pulls.NextPullShrinkMs` | 1000 |
-| | | | `Pulls.NextPullFloorMs` | 4000 |
-| `Goals.Reached` | 0.05 | | | |
-| `Goals.Switch` | 0.15 | | | |
-| `Order.Focus` | 0.001 | | | |
-| `Pulls.GauntletDenseScale` | 0.5 | | | |
-| `Support.SelfHealing` | 0.5 | | | |
-| `Support.PetReady` | 0.3 | | | |
-| `Support.BuffCoverage` | 0.3 | | | |
-| `Actions.RepeatMs` | 1000 | | | |
-| `Actions.MoveRepeatMs` | 300 | | | |
-| `Actions.StopCastMinMs` | 500 | | | |
-| `Actions.RecastAfterStopMs` | 2000 | | | |
-| `Characters.LowLevelLast` | 20 | | | |
-| `Characters.LowLevelChance` | 15 | | | |
-| `Duel.Stall` | 0.08 | | | |
-| `Duel.StallGraceMs` | 15000 | | | |
-| `Duel.PreparationRefundMaxMs` | 15000 | | | |
-| `Duel.Spacing` | 0.1 | | | |
-| `Actions.Repeat` | 0.03 | | | |
-| `Actions.RepeatWindowMs` | 10000 | | | |
-| `Actions.RepeatFree` | 3 | | | |
-| `Actions.Jitter` | 0.05 | | | |
-| `Actions.ModeLockMs` | 5000 | | | |
-| `Difficulty.MaxTier` | 6 | | | |
-| `Difficulty.EliteTier` | 4 | | | |
-| `Difficulty.LevelsPerTier` | 1 | | | |
-| `Difficulty.RaiseAbove` | 0.9 | | | |
-| `Difficulty.LowerBelow` | 0.6 | | | |
-| `Difficulty.Window` | 200 | | | |
-| `Difficulty.ReviewChance` | 25 | | | |
-| `Difficulty.TierScale` | 0.25 | | | |
-| `Instance.EngageYards` | 35 | | | |
-| `Instance.TrashRadius` | 60 | | | |
-| `Instance.MaxTierScale` | 6 | | | |
-| `Instance.BossProgress` | 5.0 | | | |
-| `Instance.Timeout` | 10.0 | | | |
-| `Instance.Stall` | 0.08 | | `Instance.StallGraceMs` | 15000 |
-| `Life.StepCost` | 0.0002 | | | |
-| `Life.Progress` | 2.0 | | | |
-| `Life.Wasted` | 0.1 | | | |
-| `Life.Death` | 5.0 | | | |
-| `Life.QuestAccepted` | 1.0 | | | |
-| `Life.QuestCredit` | 3.0 | | | |
-| `Life.QuestTurnIn` | 10.0 | | | |
-| `Life.QuestTimeout` | 3.0 | | | |
-| `Life.CompleteHeld` | 0.0003 | | `Life.DropRerolls` | 50 |
-| `Life.GatherNode` | 2.0 | | | |
-| `Life.GatherSkillUp` | 0.5 | | | |
-| `Life.TownSold` | 2.0 | | | |
-| `Life.TownRepaired` | 2.0 | | | |
-| `Life.TownStocked` | 2.0 | | | |
-| `Life.TownEquipped` | 3.0 | | | |
-| `Life.TownDone` | 5.0 | | | |
-| `Life.SenseRange` | 100.0 | | | |
-| `Life.ObjectiveRadius` | 60.0 | | | |
-| `Life.ObjectiveSpawns` | 24 | | | |
-| `Life.NodeRadius` | 150.0 | | | |
-| `Life.NodeSpawns` | 24 | | | |
-| `Life.TownRadius` | 80.0 | | | |
-| `Life.TownCopperPerLevelSquared` | 25 | | | |
+| `Characters.HighLevelFirst` | 61 | | `Raid.DamagePerGroup` | 0.15 |
+| `Characters.HighLevelChance` | 50 | | `Raid.KeepUp` | 0.0002 |
+| `Characters.NoisyTalentChance` | 30 | | `Raid.Idle` | 0.001 |
+| `Characters.RandomTalentChance` | 10 | | `Raid.IdleReach` | 40.0 |
+| `Characters.TalentNoisePoints` | 5 | | `Difficulty.StretchChance` | 10 |
+| `Characters.PetOutChance` | 50 | | `Instance.StallGraceMs` | 15000 |
+| `Characters.ReuseEpisodes` | 4 | | |  |
+| `Party.SizeWeight1` | 20 | | |  |
+| `Party.SizeWeight2` | 20 | | |  |
+| `Party.SizeWeight3` | 20 | | |  |
+| `Party.SizeWeight4` | 40 | | |  |
+| `Party.ClassicChance` | 50 | | |  |
+| `Party.RoleTankChance` | 25 | | |  |
+| `Party.RoleHealerChance` | 25 | | |  |
+| `Party.TeammateDamageTakenDps` | 0.5 | | |  |
+| `Party.TeammateDamageTakenProtector` | 1.0 | | |  |
+| `Party.TeammateHealing` | 2.0 | | |  |
+| `Party.TankLoseTeammate` | 0.02 | | |  |
+| `Party.TeammateDeath` | 3.0 | | |  |
+| `Raid.HealthPerGroup` | 1.0 | | |  |
+| `Raid.TankHold` | 0.015 | | |  |
+| `Raid.Output` | 0.5 | | |  |
+| `Raid.IdleMs` | 4000 | | |  |
+| `Duel.DamageDealt` | 2.0 | | |  |
+| `Duel.DamageTaken` | 1.0 | | |  |
+| `Duel.Approach` | 0.5 | | |  |
+| `Duel.StealthOpener` | 0.5 | | |  |
+| `Duel.StealthUtility` | 0.05 | | |  |
+| `Duel.StepCost` | 0.0002 | | |  |
+| `Duel.Kill` | 10.0 | | |  |
+| `Duel.FastKill` | 1.0 | | |  |
+| `Duel.HealthKept` | 0.5 | | |  |
+| `Duel.Death` | 10.0 | | |  |
+| `Duel.MeleeRange` | 3.5 | | |  |
+| `Duel.RangedRange` | 25.0 | | |  |
+| `Casting.TimeWasted` | 0.03 | | |  |
+| `Casting.TimeCompleted` | 0.03 | | |  |
+| `Resurrection.GraceMs` | 20000 | | |  |
+| `Resurrection.ReviveAlly` | 1.5 | | |  |
+| `Output.Clock` | 0.03 | | |  |
+| `Duel.Timeout` | 10.0 | | |  |
+| `Duel.TimeoutFloor` | 0.5 | | |  |
+| `Duel.Stall` | 0.08 | | |  |
+| `Casting.Cancel` | 0.05 | | |  |
+| `Goals.Reached` | 0.05 | | |  |
+| `Goals.Switch` | 0.15 | | |  |
+| `Support.SelfHealing` | 0.5 | | |  |
+| `Support.PetReady` | 0.3 | | |  |
+| `Support.BuffCoverage` | 0.3 | | |  |
+| `Actions.RepeatMs` | 1000 | | |  |
+| `Actions.MoveRepeatMs` | 300 | | |  |
+| `Actions.StopCastMinMs` | 500 | | |  |
+| `Actions.RecastAfterStopMs` | 2000 | | |  |
+| `Characters.LowLevelLast` | 20 | | |  |
+| `Characters.LowLevelChance` | 15 | | |  |
+| `Duel.Stall` | 0.08 | | |  |
+| `Duel.StallGraceMs` | 15000 | | |  |
+| `Duel.PreparationRefundMaxMs` | 15000 | | |  |
+| `Duel.Spacing` | 0.1 | | |  |
+| `Actions.Repeat` | 0.03 | | |  |
+| `Actions.RepeatWindowMs` | 10000 | | |  |
+| `Actions.RepeatFree` | 3 | | |  |
+| `Actions.Jitter` | 0.05 | | |  |
+| `Actions.ModeLockMs` | 5000 | | |  |
+| `Difficulty.MaxTier` | 6 | | |  |
+| `Difficulty.EliteTier` | 4 | | |  |
+| `Difficulty.LevelsPerTier` | 1 | | |  |
+| `Difficulty.RaiseAbove` | 0.9 | | |  |
+| `Difficulty.LowerBelow` | 0.6 | | |  |
+| `Difficulty.Window` | 200 | | |  |
+| `Difficulty.ReviewChance` | 25 | | |  |
+| `Difficulty.TierScale` | 0.25 | | |  |
+| `Instance.EngageYards` | 35 | | |  |
+| `Instance.TrashRadius` | 60 | | |  |
+| `Instance.MaxTierScale` | 6 | | |  |
+| `Instance.BossProgress` | 5.0 | | |  |
+| `Instance.Timeout` | 10.0 | | |  |
+| `Instance.Stall` | 0.08 | | |  |
+| `Options.RestMaxMs` | 30000 | | |  |
+| `Options.HoldInterruptMs` | 10000 | | |  |
+| `Options.JitterDecayMs` | 2500 | | |  |
 
-| Key | Default | | Key | Default |
-|---|---|---|---|---|
-| `Options.RestMaxMs` | 30000 | | | |
-| `Options.HoldInterruptMs` | 10000 | | | |
-| `Options.JitterDecayMs` | 2500 | | | |
-
-| Key | Default | | Key | Default |
-|---|---|---|---|---|
-| `Owner.LevelSpread` | 2 | | | |
-| `Owner.TankChance` | 25 | | | |
-| `Owner.HealerChance` | 25 | | | |
-| `Owner.DamageTakenDps` | 1.0 | | | |
-| `Owner.DamageTakenProtector` | 2.0 | | | |
-| `Owner.TankOwnerDamageShare` | 0.25 | | | |
-| `Owner.Healing` | 3.0 | | | |
-| `Owner.TankDamageRefund` | 0.5 | | | |
-| `Owner.TankHold` | 0.006 | | | |
-| `Owner.TankLose` | 0.02 | | | |
-| `Owner.PulledThreat` | 0.004 | | | |
-| `Owner.SoloFight` | 0.01 | | | |
-| `Owner.FollowFar` | 0.004 | | | |
-| `Owner.FollowNear` | 0.002 | | | |
-| `Owner.FollowFarDistance` | 15.0 | | | |
-| `Owner.FollowNearDistance` | 6.0 | | | |
-| `Owner.Death` | 15.0 | | | |
-
-| Key | Default | | Key | Default |
-|---|---|---|---|---|
-| `Travel.ObjectiveMin` | 60.0 | | `Flag.BaseMin` | 100.0 |
-| `Travel.ObjectiveMax` | 320.0 | | `Flag.BaseMax` | 180.0 |
-| `Travel.FlyingMin` | 350.0 | | `Flag.CapturesToWin` | 3 |
-| `Travel.FlyingMax` | 700.0 | | `Flag.RespawnMs` | 15000 |
-| `Travel.Progress` | 1.0 | | `Flag.DroppedReturnMs` | 10000 |
-| `Travel.Arrive` | 3.0 | | `Flag.TouchDistance` | 4.0 |
-| `Travel.FastArrive` | 6.0 | | `Flag.Capture` | 5.0 |
-| `Travel.DamageTaken` | 1.0 | | `Flag.Pickup` | 1.0 |
-| `Travel.Death` | 3.0 | | `Flag.Return` | 1.0 |
-| `Travel.StepCost` | 0.0002 | | `Flag.CarrierKill` | 1.5 |
-| `Travel.DetourEasy` | 1.15 | | `Flag.Lost` | 3.0 |
-| `Travel.DetourHard` | 1.4 | | `Flag.Progress` | 0.5 |
-| `Travel.DetourEasyShare` | 0.4 | | `Flag.Death` | 1.0 |
-| `Travel.DetourMidShare` | 0.35 | | `Flag.StepCost` | 0.0002 |
-| `Travel.AirDetour` | 2.5 | | | |
-| `Travel.AirArriveRise` | 10.0 | | | |
-| `Travel.LedgeMin` | 20.0 | | | |
-| `Travel.LedgeMax` | 120.0 | | | |
-| `Travel.LedgeDetour` | 2.0 | | | |
-| `Travel.LedgeDropMin` | 5.0 | | | |
-| `Travel.LedgeDropMax` | 80.0 | | | |
-| `Travel.DiveMin` | 20.0 | | | |
-| `Travel.DiveMax` | 120.0 | | | |
-| `Travel.DiveDepthMin` | 6.0 | | | |
-| `Travel.DiveDepthMax` | 40.0 | | | |
-
-Arena weights: `Arena.<stage>.<arena>.Weight`, defaulting to the definition's weight. Arena ladder pin:
-`Arena.<stage>.<arena>.MaxRung`, defaulting to the definition's (`-1`: the ladder climbs to `Pulls.MaxTier`).
+Arena weights: `Arena.<stage>.<arena>.Weight`, defaulting to the definition's weight.
 
 ## 8.3 Wire protocol (version 8)
 

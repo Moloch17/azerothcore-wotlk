@@ -6336,59 +6336,6 @@ AnimusForge.Curriculum.Instance.PullRungRuns = 100
 AnimusForge.Curriculum.Instance.PullRungTarget = 0.7
 
 #
-#    AnimusForge.Curriculum.Life.*
-#        Life outside the fight (the quest, gather and town stages): the seat alone in a copy of the world's own
-#        zone -- its quest givers, creatures, nodes and traders summoned into the env's phase from the spawn tables
-#        -- with what it does kept on the character in memory. The outcome terms scale with the band's tier.
-
-#   per decision
-AnimusForge.Curriculum.Life.StepCost = 0.0002
-#   potential shaping on the distance to where the episode wants the seat next, paid once over an approach
-AnimusForge.Curriculum.Life.Progress = 2.0
-#   a press that did nothing in the world (an interact with nothing in reach, a buy that bought nothing)
-AnimusForge.Curriculum.Life.Wasted = 0.1
-#   divided by the tier scale
-AnimusForge.Curriculum.Life.Death = 5.0
-#   the quest: taking it, its objective counts as they land (times the tier scale), the turn-in (times the tier
-#   scale), and the clock running out without it (less what was done, over the tier scale)
-AnimusForge.Curriculum.Life.QuestAccepted = 1.0
-AnimusForge.Curriculum.Life.QuestCredit = 3.0
-AnimusForge.Curriculum.Life.QuestTurnIn = 10.0
-AnimusForge.Curriculum.Life.QuestTimeout = 3.0
-#   per decision a complete quest is not handed in
-AnimusForge.Curriculum.Life.CompleteHeld = 0.0003
-#   training only: a quest item's source that dies without it rolls its loot again, up to this many times (0: off)
-AnimusForge.Curriculum.Life.DropRerolls = 50
-#   quest credit a seat takes in a place another group holds (the world coordinator's claims), per share of the
-#   quest: the price of poaching in a zone shared with other groups
-AnimusForge.Curriculum.Life.Poach = 0.25
-#   how long a group holds a place it works (ms), and how near counts as working it (yards)
-AnimusForge.Curriculum.Life.ClaimHoldMs = 30000
-AnimusForge.Curriculum.Life.ClaimRadius = 25
-#   gathering: per node looted (times the tier scale), per skill point gained
-AnimusForge.Curriculum.Life.GatherNode = 2.0
-AnimusForge.Curriculum.Life.GatherSkillUp = 0.5
-#   the town: the starting junk's vendor value realised (pro rata), the gear repaired, food and drink restocked, each
-#   upgrade put on, and all of it done before the clock
-AnimusForge.Curriculum.Life.TownSold = 2.0
-AnimusForge.Curriculum.Life.TownRepaired = 2.0
-AnimusForge.Curriculum.Life.TownStocked = 2.0
-AnimusForge.Curriculum.Life.TownEquipped = 3.0
-AnimusForge.Curriculum.Life.TownDone = 5.0
-#   yards the seat's world features reach
-AnimusForge.Curriculum.Life.SenseRange = 100.0
-#   the world's creatures this close to a quest objective's place (or a gather ground) are summoned, up to this many
-AnimusForge.Curriculum.Life.ObjectiveRadius = 60.0
-AnimusForge.Curriculum.Life.ObjectiveSpawns = 24
-#   the nodes this close to the gather ground are the field, up to this many
-AnimusForge.Curriculum.Life.NodeRadius = 150.0
-AnimusForge.Curriculum.Life.NodeSpawns = 24
-#   the traders this close to the inn are the town
-AnimusForge.Curriculum.Life.TownRadius = 80.0
-#   the seat's purse in a town episode: level squared times this, in copper (level 20: 1 gold)
-AnimusForge.Curriculum.Life.TownCopperPerLevelSquared = 25
-
-#
 #    AnimusForge.Curriculum.Casting.*
 #        Cast-time spells, from the duel stage on.
 
@@ -6440,32 +6387,21 @@ AnimusForge.Curriculum.Goals.Secondary = 0.002
 #   Small because a per-decision term adds up over a fight: at 0.01 it earned 5.01 an episode, 23.7% of gross and
 #   level with the kill and the death, which would buy tunnel vision on the called target. At 0.001 full compliance
 #   is worth about 0.5, a tenth of the kill
-AnimusForge.Curriculum.Order.Focus = 0.001
 #   every arena whose director may name a place: paid once to a seat that arrives where it was sent, and not
 #   again for PlaceCooldownMs. Never per decision -- a per-decision payment for standing in the right spot is
 #   the shape that made the focus nudge 23.7% of gross before it was cut, and it could be farmed by stepping
 #   over the edge of the radius and back
-AnimusForge.Curriculum.Order.PlaceMatch = 0.02
 #   yards: close enough to the called place to count as having arrived
-AnimusForge.Curriculum.Order.PlaceRadius = 8
 #   milliseconds before the same seat can be paid for arriving again
-AnimusForge.Curriculum.Order.PlaceCooldownMs = 10000
 #   how far a called place sits off its anchor, at each ring. These two numbers are all that changes between
 #   an arena and a continent: the director's thirteen place actions mean the same thing at any scale
-AnimusForge.Curriculum.Director.PlaceNearYards = 20
-AnimusForge.Curriculum.Director.PlaceFarYards = 60
 #   how often the director's clock gives it a turn to speak (decisions; 10 is 2.5 s). Events give it one at once: a
 #   member down or newly badly hurt, a new enemy in the fight, the focus dead. A turn allows four calls for a group
 #   and eight for a raid, until the director holds
-AnimusForge.Curriculum.Director.ClockDecisions = 10
 #   below this share of its health a member counts as badly hurt, for the director's event
-AnimusForge.Curriculum.Director.LowHealth = 0.25
 #   a member order stands this many decisions before the same source can replace it for free; one replaced sooner costs
 #   the director OrderChurn, and any live order it replaces costs OrderChange. Nothing stops the call: it learns to
 #   let orders stand
-AnimusForge.Curriculum.Director.OrderHoldDecisions = 8
-AnimusForge.Curriculum.Director.OrderChange = 0.01
-AnimusForge.Curriculum.Director.OrderChurn = 0.03
 AnimusForge.Curriculum.Support.SelfHealing = 0.5
 #   per fraction of the mana pool spent on healing. Healing is worth what it restores for what it costs, and the cost
 #   was never priced: an effective heal of 3% of a health bar cost the same as one of 20%, so choosing a cheaper rank
@@ -6560,155 +6496,6 @@ AnimusForge.Curriculum.Actions.IntentSlackYards = 0.5
 AnimusForge.Curriculum.Actions.ModeLockMs = 5000
 
 #
-#    AnimusForge.Curriculum.Pulls.*
-#        Packs and the gauntlet's pull after pull.
-
-#   percent of pulls whose members aggro together
-AnimusForge.Curriculum.Pulls.LinkedChance = 70
-#   gauntlet: a single elite instead of a pack
-AnimusForge.Curriculum.Pulls.EliteChance = 15
-#   gauntlet: a pack 1-3 levels above the bot (at most 1 below level 20, 2 below 30)
-AnimusForge.Curriculum.Pulls.HigherLevelChance = 25
-#   party: per pack member
-AnimusForge.Curriculum.Pulls.PartyEliteChance = 50
-#   gauntlet: the break between pulls
-AnimusForge.Curriculum.Pulls.NextPullMinMs = 8000
-AnimusForge.Curriculum.Pulls.NextPullMaxMs = 20000
-#   owner stages: health and mana the dead stand up with after a pull
-AnimusForge.Curriculum.Pulls.RecoverFraction = 0.5
-#   fraction of the pull's total health
-AnimusForge.Curriculum.Pulls.DamageDealt = 2.0
-#   pack: fraction of the bot's health
-AnimusForge.Curriculum.Pulls.DamageTaken = 1.0
-#   gauntlet on: surviving many pulls matters more than any one
-AnimusForge.Curriculum.Pulls.GauntletDamageTaken = 1.5
-AnimusForge.Curriculum.Pulls.Approach = 0.5
-AnimusForge.Curriculum.Pulls.StealthOpener = 0.5
-AnimusForge.Curriculum.Pulls.StealthUtility = 0.05
-AnimusForge.Curriculum.Pulls.Interrupt = 0.3
-#   an interrupt is paid Interrupt times what it stopped, from the spell's own properties: a heal undoes damage
-#   already dealt, an area spell would have hit everyone, a long cast was a large part of the caster's output. Never
-#   below 1 -- the flat term is how a class finds interrupting at all, and if only heals paid the behaviour might
-#   never appear to be shaped
-AnimusForge.Curriculum.Pulls.InterruptHeal = 3.0
-AnimusForge.Curriculum.Pulls.InterruptArea = 2.0
-AnimusForge.Curriculum.Pulls.InterruptLong = 1.5
-AnimusForge.Curriculum.Pulls.Kill = 0.5
-#   per decision
-AnimusForge.Curriculum.Pulls.StepCost = 0.0002
-#   owner stages (the solo gauntlet has SoloGauntlet*), win-first: each pull cleared, and FastPull times
-#   1 - its time since engaged / 60 s, both x OwnerClearScale; HealthKept times the seat's own health kept through it;
-#   GauntletDeath per seat death (the owner's is Owner.Death)
-AnimusForge.Curriculum.Pulls.Clear = 2.5
-AnimusForge.Curriculum.Pulls.FastPull = 0.5
-AnimusForge.Curriculum.Pulls.HealthKept = 0.5
-AnimusForge.Curriculum.Pulls.GauntletDeath = 10.0
-#   A single pack (stage5_pack) is won or lost, as the duel is: the clear outweighs finishing it untouched,
-#   and dying or running out of time costs as much as the clear pays. With the gauntlet's Clear and HealthKept
-#   the pack was worth 2 + 2, so keeping health paid as much as winning, and a death cost only 3.
-AnimusForge.Curriculum.Pulls.PackClear = 10.0
-#   pack: times the episode fraction left after engaging
-AnimusForge.Curriculum.Pulls.FastClear = 1.0
-#   pack: times the fraction of the bot's health not lost
-AnimusForge.Curriculum.Pulls.PackHealthKept = 0.5
-AnimusForge.Curriculum.Pulls.PackDeath = 10.0
-#   pack: the clock ran out with the pack and the seat both alive; the episode ends as a lost fight
-#   pack: the single pack's top ladder rung (0-5: 2, 3, 4 creatures with a caster, two casters, an elite, an elite a
-#   level above), climbed per class and role at the Difficulty.* rates; 0 keeps every pack on the first rung
-AnimusForge.Curriculum.Pulls.MaxTier = 5
-#   pack: the clock running out, charged times the share of the pull still standing, as the duel's is
-AnimusForge.Curriculum.Pulls.Timeout = 10.0
-#   pack: the share of it charged whatever the pull's progress
-AnimusForge.Curriculum.Pulls.TimeoutFloor = 0.5
-#   pack: per second a fight goes on past OvertimeGraceMs after it was engaged, and a death in overtime is charged the
-#   overtime left; a timeout alone, 150 s away, is too discounted to stop kiting out the clock
-AnimusForge.Curriculum.Pulls.Overtime = 0.1
-AnimusForge.Curriculum.Pulls.OvertimeGraceMs = 60000
-#   pack: crowd control paid as the damage it prevents, not as time held. Each add kept out of the fight is credited
-#   its own measured damage rate over the decision, divided by the seat's health now (floored at ControlHealthFloor of
-#   its maximum), so a prevented hit is worth more the less health there is to lose -- the same currency DamageTaken is
-#   charged in, which is why the two weights are comparable and control no longer loses to the overtime clock.
-#   Half DamageTaken: what a held add would have dealt is estimated, not observed, and the health floor can multiply
-#   it fivefold, so control is paid less than the damage it is credited with preventing. Measured at 0 until
-#   2026-09-18 (stage9_pack at 30M: control_prevented 0.03 healths a fight, reward_control 0.00 -- nothing was
-#   controlled because nothing paid for it).
-AnimusForge.Curriculum.Pulls.SinglePackControl = 0.5
-#   ... at most this much a pull, a guard against a sim quirk rather than a shaping knob
-AnimusForge.Curriculum.Pulls.SinglePackControlMax = 1.0
-#   the health divisor's floor, as a fraction of maximum health, so control's value cannot run away near death
-AnimusForge.Curriculum.Pulls.ControlHealthFloor = 0.2
-#   what an add that never got to act is assumed to have prevented, in maximum healths per second: a pack sapped
-#   before it swings has no measured rate of its own, and pre-pull control is the most valuable kind
-AnimusForge.Curriculum.Pulls.ControlFallbackDps = 0.02
-#   how long an add must be loose before its own measured rate is trusted over the pull's mean (ms)
-AnimusForge.Curriculum.Pulls.ControlRateMinMs = 3000
-#   pack: the overtime grace grows by the wall time at least one add was held, up to this much (ms), so holding an add
-#   is not charged as dragging the fight out: with the grace alone, the overtime charge took back what the control
-#   paid. 0 leaves the grace alone. Bounded on purpose -- Overtime is what stops kiting the clock, and an unbounded
-#   pause would hand that back
-AnimusForge.Curriculum.Pulls.ControlGraceMaxMs = 15000
-#   pack: per second the pack has not been engaged once StallGraceMs of the episode are gone
-AnimusForge.Curriculum.Pulls.Stall = 0.08
-AnimusForge.Curriculum.Pulls.StallGraceMs = 15000
-#   pack: the grace grows by the time spent starting buffs, forms, stances, stealth and pet summons out of combat (each
-#   its cast time, at least a global cooldown), up to this much (ms). Counted per pull, not per episode: a gauntlet
-#   seat that prepared once used to earn the full refund on every pull after it
-AnimusForge.Curriculum.Pulls.PreparationRefundMaxMs = 15000
-#   pack: per second a ranged spec is hit by a pack member in melee reach
-AnimusForge.Curriculum.Pulls.Spacing = 0.1
-#   camp (the pull drill: two to four packs standing apart): per second, for each pack fighting beyond the first
-AnimusForge.Curriculum.Pulls.CampExtraPack = 0.15
-#   camp: each pack killed with no other pack in its fight (times the rung's scale)
-AnimusForge.Curriculum.Pulls.CampCleanPack = 2.0
-#   camp: between packs, from the last fight, before standing about is charged as Stall (ms; not while eating or
-#   drinking)
-AnimusForge.Curriculum.Pulls.CampRestMs = 25000
-#   solo gauntlet (pull after pull, no owner; won by lasting to the end with SoloGauntletWinPulls cleared): each pull
-#   cleared, instead of Clear ...
-AnimusForge.Curriculum.Pulls.SoloGauntletClear = 5.0
-#   ... plus this times 1 - the pull's time since engaged / 60 s, instead of FastPull ...
-AnimusForge.Curriculum.Pulls.SoloGauntletFastPull = 1.0
-#   ... and this times the health kept through the pull, instead of HealthKept
-AnimusForge.Curriculum.Pulls.SoloGauntletHealthKept = 0.5
-#   solo gauntlet: a death, instead of GauntletDeath (it also forfeits every pull left)
-AnimusForge.Curriculum.Pulls.SoloGauntletDeath = 10.0
-#   solo gauntlet: engaging a pull pays this times the health fraction (the lower of health and mana for mana users)
-#   the decision before: entering a fight ready is what resting between pulls is for
-AnimusForge.Curriculum.Pulls.SoloGauntletReadiness = 0.5
-#   solo gauntlet: lasting to the end is a win only with this many pulls cleared (fewer is a timeout)
-AnimusForge.Curriculum.Pulls.SoloGauntletWinPulls = 5
-#   solo gauntlet: food and drink stocked, each
-AnimusForge.Curriculum.Pulls.GauntletSupplies = 7
-#   solo gauntlet: per second per pack member kept out of the engaged fight by crowd control (stunned, incapacitated,
-#   asleep, polymorphed, feared, or rooted out of melee reach and not casting), other than the seat's target, while
-#   another member is alive ...
-AnimusForge.Curriculum.Pulls.SoloGauntletControl = 0.02
-#   ... up to this much per pull
-AnimusForge.Curriculum.Pulls.SoloGauntletControlMax = 1.5
-#   solo gauntlet: a pull nobody engaged comes to the seat this long after it spawned (ms) ...
-AnimusForge.Curriculum.Pulls.ArriveMinMs = 20000
-AnimusForge.Curriculum.Pulls.ArriveMaxMs = 40000
-#   ... less this per pull cleared, down to ArriveFloorMs
-AnimusForge.Curriculum.Pulls.ArriveShrinkMs = 1500
-AnimusForge.Curriculum.Pulls.ArriveFloorMs = 10000
-#   solo gauntlet: the break before the next pull shrinks by this per pull cleared, down to NextPullFloorMs (ms)
-AnimusForge.Curriculum.Pulls.NextPullShrinkMs = 1000
-AnimusForge.Curriculum.Pulls.NextPullFloorMs = 4000
-#   gauntlets: what the per-hit terms (damage dealt and taken, kills, approach) are multiplied by there. A plan pays
-#   at the end of a pull or an episode -- the clear, surviving, readiness, control -- and dense terms paid every
-#   decision drown those out. 1 leaves the single pack's balance alone
-AnimusForge.Curriculum.Pulls.GauntletDenseScale = 0.5
-#   owner stages: kills and clears count this many times
-AnimusForge.Curriculum.Pulls.OwnerClearScale = 2.0
-#   owner stages keep the solo gauntlet's lessons: readiness paid when a pull is engaged (times the lower of health and
-#   mana), crowd control per enemy-second an add is kept out of the fight (up to OwnerControlMax a pull), and a win --
-#   the episode lasted with the owner never dead, no wipe and OwnerWinPulls pulls cleared -- counted as the kill
-AnimusForge.Curriculum.Pulls.OwnerReadiness = 1.0
-AnimusForge.Curriculum.Pulls.OwnerControl = 0.02
-AnimusForge.Curriculum.Pulls.OwnerControlMax = 1.5
-AnimusForge.Curriculum.Pulls.OwnerWinPulls = 5
-
-#
 #    AnimusForge.Curriculum.Options.*
 #        Description: How long a durative action may run before the seat has to choose again (ms). One press of
 #                     one stands for many decisions: resting until health and mana are back, or holding an
@@ -6737,25 +6524,6 @@ AnimusForge.Curriculum.Hazards.Standing = 0.15
 #   at most this much an episode, both hazard terms together. Melee have to stand in melee: a hazard under the enemy
 #   is a real trade, and an uncapped charge teaches a seat to leave the fight, which is worse than standing in fire
 AnimusForge.Curriculum.Hazards.Max = 3.0
-#
-#    AnimusForge.Curriculum.Dummy.*
-#        The rotation drill (stage3_rotation, DummyEncounter): the kit against the duel pool's creatures with their
-#        health scaled to outlive the episode. Output is paid against the dummy's own health (Damage per kill's
-#        worth), mana kept at the end per share of the bar (Resource). The hitting dummy (HittingHealthScale) can be
-#        killed (Kill); the bleeding drill takes Bleed of the seat's health a second, on average, and charges Hurt
-#        per second per share of the seat's health missing.
-AnimusForge.Curriculum.Dummy.HealthScale = 20.0
-AnimusForge.Curriculum.Dummy.HittingHealthScale = 4.0
-AnimusForge.Curriculum.Dummy.Damage = 1.0
-AnimusForge.Curriculum.Dummy.Kill = 2.0
-AnimusForge.Curriculum.Dummy.Death = 3.0
-AnimusForge.Curriculum.Dummy.Bleed = 0.012
-AnimusForge.Curriculum.Dummy.Hurt = 0.3
-AnimusForge.Curriculum.Dummy.Resource = 0.5
-#   the moving drill: another dummy to switch to about every AddEveryMs, up to MaxAdds
-AnimusForge.Curriculum.Dummy.AddEveryMs = 15000
-AnimusForge.Curriculum.Dummy.MaxAdds = 2
-
 #
 #    AnimusForge.Curriculum.Markers.*
 #        The movement stages' markers (MarkerEncounter; move1_controls): a place on open ground to stop on, then
@@ -6800,160 +6568,6 @@ AnimusForge.Curriculum.Markers.RouteMaxDrop = 20.0
 #   across FallbackMinLegs legs is named once in the log and in `forge status`
 AnimusForge.Curriculum.Markers.FallbackCeiling = 0.2
 AnimusForge.Curriculum.Markers.FallbackMinLegs = 50
-
-#
-#    AnimusForge.Curriculum.MarkerGround.*
-#        The ground stage's markers (move2_ground): broken ground with something in the way. Arrive, StepCost, Death
-#        and Progress are the Markers.* values; Progress is shaped on the route planner's distance (a training
-#        signal only) and there is no Facing term. The ladder (Rungs rungs) moves the furthest marker from
-#        DistanceFirst to DistanceLast yards (the nearest is DistanceMin) and the detour -- the walking way over the
-#        straight line -- from DetourFirst to DetourLast, each marker within DetourSpan above the rung's (the floor
-#        is let go after half the placement attempts; the `detour` column reports what was got). Every rung stops
-#        within Radius yards. Stuck (per second of a movement key held with the body getting nowhere for a second or
-#        more) and Wall (per second pressing into a wall) are noise prices on the learner's cost ladder. A slide along
-#        a wall is not pressing into it: Wall is charged only for the decision's ground not covered -- nothing while
-#        the unit moved at least WallSlide of what its held keys ask, the full price at no movement.
-AnimusForge.Curriculum.MarkerGround.MarkersMin = 2
-AnimusForge.Curriculum.MarkerGround.MarkersMax = 4
-AnimusForge.Curriculum.MarkerGround.Rungs = 6
-AnimusForge.Curriculum.MarkerGround.DistanceMin = 20.0
-AnimusForge.Curriculum.MarkerGround.DistanceFirst = 40.0
-AnimusForge.Curriculum.MarkerGround.DistanceLast = 120.0
-AnimusForge.Curriculum.MarkerGround.DetourFirst = 1.0
-AnimusForge.Curriculum.MarkerGround.DetourLast = 1.6
-AnimusForge.Curriculum.MarkerGround.DetourSpan = 0.25
-AnimusForge.Curriculum.MarkerGround.Radius = 1.0
-AnimusForge.Curriculum.MarkerGround.Stuck = 0.05
-AnimusForge.Curriculum.MarkerGround.Wall = 0.03
-AnimusForge.Curriculum.MarkerGround.WallSlide = 0.5
-
-#
-#    AnimusForge.Curriculum.MarkerVertical.*
-#        The vertical stage's markers (move3_vertical): up and down -- above the seat from a cliff foot or terrace,
-#        below it from a ledge top (the drop the shortcut, the way round no deeper than SafeDrop), or on another floor
-#        of a building. No interactions and no closed doors: a marker whose way the player controller cannot walk
-#        (every rise a step or a jump; a closed door is a wall) is never placed. The ladder (Rungs rungs) moves the
-#        height window from [HeightMinFirst, HeightMaxFirst] to [HeightMinLast, HeightMaxLast] yards and the furthest
-#        distance from DistanceFirst to DistanceLast (the nearest DistanceMin); every rung stops within Radius yards.
-#        FallDamage is charged per share of the seat's health a fall took (a Cost at full price).
-AnimusForge.Curriculum.MarkerVertical.MarkersMin = 2
-AnimusForge.Curriculum.MarkerVertical.MarkersMax = 4
-AnimusForge.Curriculum.MarkerVertical.Rungs = 6
-AnimusForge.Curriculum.MarkerVertical.DistanceMin = 10.0
-AnimusForge.Curriculum.MarkerVertical.DistanceFirst = 30.0
-AnimusForge.Curriculum.MarkerVertical.DistanceLast = 80.0
-AnimusForge.Curriculum.MarkerVertical.HeightMinFirst = 1.0
-AnimusForge.Curriculum.MarkerVertical.HeightMaxFirst = 6.0
-AnimusForge.Curriculum.MarkerVertical.HeightMinLast = 15.0
-AnimusForge.Curriculum.MarkerVertical.HeightMaxLast = 45.0
-AnimusForge.Curriculum.MarkerVertical.Radius = 1.0
-AnimusForge.Curriculum.MarkerVertical.SafeDrop = 6.0
-AnimusForge.Curriculum.MarkerVertical.FallDamage = 2.0
-#   rooms: RoomUpShare of the legs ask for a marker a storey or two up the stairs (at most UpstairsRise yards over
-#   the seat, the floor found under the storey above it); the rest are down or on the seat's own floor
-AnimusForge.Curriculum.MarkerVertical.RoomUpShare = 0.5
-AnimusForge.Curriculum.MarkerVertical.UpstairsRise = 12.0
-
-#
-#    AnimusForge.Curriculum.MarkerWater.*
-#        The water stage's markers (move4_water): across water (a crossing whose dry way round is the longer one, both
-#        ways ones the player controller makes), on a lakebed (arriving is stopping there, swimming, within Radius
-#        and ArriveRise of it), or a chain of ChainMin to ChainMax lakebeds, longer than a breath. MarkersMin to
-#        MarkersMax markers otherwise. The ladder (Rungs rungs) moves the furthest distance from DistanceFirst to
-#        DistanceLast yards (the nearest DistanceMin) and a lakebed's depth window from [DepthMinFirst,
-#        DepthMaxFirst] to [DepthMinLast, DepthMaxLast] yards. Drowning is charged per share of the seat's health the
-#        water took (a Cost at full price).
-AnimusForge.Curriculum.MarkerWater.MarkersMin = 2
-AnimusForge.Curriculum.MarkerWater.MarkersMax = 3
-AnimusForge.Curriculum.MarkerWater.ChainMin = 4
-AnimusForge.Curriculum.MarkerWater.ChainMax = 6
-AnimusForge.Curriculum.MarkerWater.Rungs = 6
-AnimusForge.Curriculum.MarkerWater.DistanceMin = 15.0
-AnimusForge.Curriculum.MarkerWater.DistanceFirst = 30.0
-AnimusForge.Curriculum.MarkerWater.DistanceLast = 90.0
-AnimusForge.Curriculum.MarkerWater.DepthMinFirst = 3.0
-AnimusForge.Curriculum.MarkerWater.DepthMaxFirst = 8.0
-#   the top window is what the lakes hold: Stonebull's bed is 32.1 yd at its deepest (p90 26.9, p95 28.5), and
-#   [18, 30] is 12% of uniform draws round it (8% round Lake Elune'ara), enough for the placer's 192 tries
-AnimusForge.Curriculum.MarkerWater.DepthMinLast = 18.0
-AnimusForge.Curriculum.MarkerWater.DepthMaxLast = 30.0
-AnimusForge.Curriculum.MarkerWater.Radius = 2.0
-AnimusForge.Curriculum.MarkerWater.ArriveRise = 3.0
-AnimusForge.Curriculum.MarkerWater.Drowning = 2.0
-
-#
-#    AnimusForge.Curriculum.MarkerRoutes.*
-#        The routes stage's markers (move5_routes): one long trip an episode across mixed ground, the way not visible
-#        from the start, planned whole by the route planner and walked or swum by the player controller end to end.
-#        The ladder (Rungs rungs) moves the straight distance from [NearestFirst, FurthestFirst] to [NearestLast,
-#        FurthestLast] yards and the detour (the way over the straight line) from DetourFirst to DetourLast, each trip
-#        within DetourSpan above the rung's and never over DetourCap; stopped within Radius yards. Costs: Stuck, Wall
-#        (MarkerGround.*) and FallDamage (MarkerVertical.*). `revisits` counts RevisitCell-yard cells the seat came back
-#        to after RevisitSeconds away.
-AnimusForge.Curriculum.MarkerRoutes.Rungs = 6
-AnimusForge.Curriculum.MarkerRoutes.NearestFirst = 150.0
-AnimusForge.Curriculum.MarkerRoutes.FurthestFirst = 250.0
-AnimusForge.Curriculum.MarkerRoutes.NearestLast = 400.0
-AnimusForge.Curriculum.MarkerRoutes.FurthestLast = 600.0
-AnimusForge.Curriculum.MarkerRoutes.DetourFirst = 1.3
-AnimusForge.Curriculum.MarkerRoutes.DetourLast = 2.4
-AnimusForge.Curriculum.MarkerRoutes.DetourSpan = 0.6
-AnimusForge.Curriculum.MarkerRoutes.DetourCap = 3.0
-AnimusForge.Curriculum.MarkerRoutes.Radius = 2.0
-AnimusForge.Curriculum.MarkerRoutes.RevisitCell = 10.0
-AnimusForge.Curriculum.MarkerRoutes.RevisitSeconds = 10.0
-
-#
-#    AnimusForge.Curriculum.MarkerMounted.*
-#        The mounted stage's markers (move6_mounted): a trip worth mounting for. A ride's straight distance moves from
-#        [RideNearestFirst, RideFurthestFirst] to [RideNearestLast, RideFurthestLast] yards over Rungs rungs, its way
-#        at most RideMaxDetour times the line; a flight's (a flying arena, a map that flies) from [FlightNearestFirst,
-#        FlightFurthestFirst] to [FlightNearestLast, FlightFurthestLast], air-only arenas only where the ground route
-#        does not reach (Travel.AirDetour); the ground mount is not masked there, only useless (ground_mount_on_air_leg
-#        reports it). Arriving is stopping on it, landed, within Radius.
-#        Mounting is a cast a move or a hit interrupts. Costs: Stuck, Wall (MarkerGround.*), FallDamage
-#        (MarkerVertical.*; a dismount in the air is a fall).
-AnimusForge.Curriculum.MarkerMounted.Rungs = 6
-AnimusForge.Curriculum.MarkerMounted.RideNearestFirst = 150.0
-AnimusForge.Curriculum.MarkerMounted.RideFurthestFirst = 250.0
-AnimusForge.Curriculum.MarkerMounted.RideNearestLast = 300.0
-AnimusForge.Curriculum.MarkerMounted.RideFurthestLast = 500.0
-AnimusForge.Curriculum.MarkerMounted.RideMaxDetour = 1.8
-AnimusForge.Curriculum.MarkerMounted.FlightNearestFirst = 200.0
-AnimusForge.Curriculum.MarkerMounted.FlightFurthestFirst = 350.0
-AnimusForge.Curriculum.MarkerMounted.FlightNearestLast = 500.0
-AnimusForge.Curriculum.MarkerMounted.FlightFurthestLast = 900.0
-AnimusForge.Curriculum.MarkerMounted.Radius = 2.5
-#   a flight marker has at least SkyOpen yards of open sky over it (no overhang, no cave a flyer cannot enter)
-AnimusForge.Curriculum.MarkerMounted.SkyOpen = 10.0
-
-#
-#    AnimusForge.Curriculum.Follow.*
-#        The follow stage (move7_follow): keep within [BandMin, BandMax] yards of a moving leader. The leader is moved
-#        by the player controller and reports as a client: a script's keys (Seek over the route planner's corners)
-#        walking trips of TripNearest to the rung's furthest (TripFurthestFirst to TripFurthestLast over Rungs rungs),
-#        at a walk below WalkRungs; from CastFromRung up, CastShare percent of training episodes give it to a frozen
-#        checkpoint (the learner's cast.agents.leader). Evaluations keep the script. Paid: Kept per second in the band
-#        (Outcome), Lost per second past LostYards and Aggro per hostile newly attacking the follower (Costs),
-#        Progress on closing to the band (Shaping); Aggro is dormant until hostiles are spawned into the env's phase
-#        (the user's decision). A ladder episode is won at WinShare of the time in band; a
-#        catch-up is coming back into the band after CatchUpSeconds out.
-AnimusForge.Curriculum.Follow.BandMin = 3.0
-AnimusForge.Curriculum.Follow.BandMax = 10.0
-AnimusForge.Curriculum.Follow.LostYards = 30.0
-AnimusForge.Curriculum.Follow.Kept = 0.02
-AnimusForge.Curriculum.Follow.Lost = 0.02
-AnimusForge.Curriculum.Follow.Aggro = 0.5
-AnimusForge.Curriculum.Follow.Progress = 1.0
-AnimusForge.Curriculum.Follow.Rungs = 6
-AnimusForge.Curriculum.Follow.TripNearest = 30.0
-AnimusForge.Curriculum.Follow.TripFurthestFirst = 60.0
-AnimusForge.Curriculum.Follow.TripFurthestLast = 200.0
-AnimusForge.Curriculum.Follow.WalkRungs = 2
-AnimusForge.Curriculum.Follow.CastFromRung = 4
-AnimusForge.Curriculum.Follow.CastShare = 50
-AnimusForge.Curriculum.Follow.WinShare = 0.8
-AnimusForge.Curriculum.Follow.CatchUpSeconds = 2.0
 
 #
 #    AnimusForge.Curriculum.Respawn.*
@@ -7219,45 +6833,6 @@ AnimusForge.Curriculum.Roles.WinPulledSeconds = 5.0
 AnimusForge.Curriculum.Roles.StandInShare = 20
 
 #
-#    AnimusForge.Curriculum.Owner.*
-#        The owner of the companion and party stages (a cast agent, played from a frozen checkpoint).
-
-#   its level: the bot's plus or minus this
-AnimusForge.Curriculum.Owner.LevelSpread = 2
-#   percent tanks, healers, the rest damage dealers
-AnimusForge.Curriculum.Owner.TankChance = 25
-AnimusForge.Curriculum.Owner.HealerChance = 25
-#   damage dealers: the owner's damage taken, fraction of its health
-AnimusForge.Curriculum.Owner.DamageTakenDps = 1.0
-#   tanks and healers exist to prevent it
-AnimusForge.Curriculum.Owner.DamageTakenProtector = 2.0
-#   a tank owner is hit by design: its damage taken counts this much
-AnimusForge.Curriculum.Owner.TankOwnerDamageShare = 0.25
-#   any role: effective healing on the owner, plus what the bot's absorbs soaked and its damage reductions
-#   prevented there, as a fraction of the owner's health
-AnimusForge.Curriculum.Owner.Healing = 3.0
-#   tanks: soften the pulls' damage taken
-AnimusForge.Curriculum.Owner.TankDamageRefund = 0.5
-#   tanks: per enemy on the tank, per decision
-AnimusForge.Curriculum.Owner.TankHold = 0.006
-#   tanks: per enemy on the owner, per decision
-AnimusForge.Curriculum.Owner.TankLose = 0.02
-#   damage dealers and healers, and only beside a tank owner: per enemy on the bot, per decision. Beside an owner
-#   that does not tank, holding the enemies is the bot's job and is not charged
-AnimusForge.Curriculum.Owner.PulledThreat = 0.004
-#   per decision in combat while the owner is not
-AnimusForge.Curriculum.Owner.SoloFight = 0.01
-#   per decision out of combat beyond FollowFarDistance
-AnimusForge.Curriculum.Owner.FollowFar = 0.004
-#   per decision out of combat within FollowNearDistance
-AnimusForge.Curriculum.Owner.FollowNear = 0.002
-AnimusForge.Curriculum.Owner.FollowFarDistance = 15.0
-AnimusForge.Curriculum.Owner.FollowNearDistance = 6.0
-#   per decision and yard the companion trails a moving owner past FollowNearDistance (up to 20)
-AnimusForge.Curriculum.Owner.FollowTrail = 0.001
-AnimusForge.Curriculum.Owner.Death = 15.0
-
-#
 #    AnimusForge.Curriculum.Resurrection.*
 #        Resurrecting: a seat's own Soulstone or Reincarnation, and revives on allies (companion
 #        and party stages). Nobody is revived automatically while a resurrection is possible.
@@ -7274,21 +6849,6 @@ AnimusForge.Curriculum.Resurrection.ReviveAlly = 1.5
 #        (dead ones too), in every arena but a raid's.
 
 AnimusForge.Curriculum.Output.Clock = 0.03
-
-#
-#    AnimusForge.Curriculum.Death.*
-#        Where death runs on (open-world quest arenas): a dead seat releases, runs back to its
-#        corpse and rises there, takes the spirit healer, or accepts a friend's resurrection.
-
-#   per decision dead or a ghost
-AnimusForge.Curriculum.Death.TimeDead = 0.002
-#   died again within DiedAgainMs (ms) of rising
-AnimusForge.Curriculum.Death.DiedAgain = 3.0
-AnimusForge.Curriculum.Death.DiedAgainMs = 30000
-#   rose with no hostile creature within its aggro radius + 5 yd
-AnimusForge.Curriculum.Death.SafeRise = 0.5
-#   took the spirit healer's resurrection and its sickness
-AnimusForge.Curriculum.Death.SpiritHealer = 1.0
 
 #
 #    AnimusForge.Curriculum.Evade.*
@@ -7341,109 +6901,6 @@ AnimusForge.Curriculum.StandIn.LeadChance = 50
 #   percent of styles that want to tank, and to heal (the rest deal damage); a build that cannot deals damage
 AnimusForge.Curriculum.StandIn.TankChance = 34
 AnimusForge.Curriculum.StandIn.HealerChance = 33
-
-#   Travel arenas. Ground: a place this many yards away by path
-AnimusForge.Curriculum.Travel.ObjectiveMin = 60.0
-AnimusForge.Curriculum.Travel.ObjectiveMax = 320.0
-#   travel arenas made on foot (stage1_move): yards from the start, by path. Shorter than the mounted range because
-#   the lesson is how well the seat covers ground with what it has -- Sprint, Dash, Travel Form, Aspect of the
-#   Cheetah, and not stopping -- rather than whether a ride is worth summoning. Long enough that a speed cooldown
-#   pays for itself, short enough that the trip is not simply a wait
-AnimusForge.Curriculum.Travel.FootMin = 40
-AnimusForge.Curriculum.Travel.FootMax = 160
-#   flying arenas: yards from the start
-AnimusForge.Curriculum.Travel.FlyingMin = 350.0
-AnimusForge.Curriculum.Travel.FlyingMax = 700.0
-#   which trips the ground arenas ask for, by how much longer the walking way round is than the straight line:
-#   each episode draws a band first -- DetourEasyShare of them under DetourEasy, DetourMidShare between DetourEasy
-#   and DetourHard, the rest from DetourHard up to the generator's ceiling of 1.8 -- and looks for an objective in
-#   it. Drawn uniformly, real detours were the tail (51% of stage1_move's trips and 82% of stage2_travel's had a
-#   dry detour under 1.15), and a policy taught on straight lines learns to hold forward. Water, indoor and flying
-#   arenas draw no band
-AnimusForge.Curriculum.Travel.DetourEasy = 1.15
-AnimusForge.Curriculum.Travel.DetourHard = 1.4
-AnimusForge.Curriculum.Travel.DetourEasyShare = 0.4
-AnimusForge.Curriculum.Travel.DetourMidShare = 0.35
-#   air-only arenas (stage2_travel's flight_air): a place is accepted only when the ground route to it is missing
-#   or longer than AirDetour times the straight line, so the wings are the way and not a slower option; and
-#   arriving there means standing within AirArriveRise yards of the objective's own height, or the foot of the
-#   cliff six yards under a plateau's edge would count
-AnimusForge.Curriculum.Travel.AirDetour = 2.5
-AnimusForge.Curriculum.Travel.AirArriveRise = 10.0
-#   ledge arenas (stage1_move): the objective is LedgeMin to LedgeMax yards away and LedgeDropMin to
-#   LedgeDropMax yards below the seat, its way round on foot complete but at least LedgeDetour times the straight
-#   line, and the straight line crosses one edge the seat can drop off. LedgeDropMax runs past the lethal fall on
-#   purpose: with Slow Fall or Levitate the drop is free, without them the seat learns what it costs
-AnimusForge.Curriculum.Travel.LedgeMin = 20.0
-AnimusForge.Curriculum.Travel.LedgeMax = 120.0
-AnimusForge.Curriculum.Travel.LedgeDetour = 2.0
-AnimusForge.Curriculum.Travel.LedgeDropMin = 5.0
-AnimusForge.Curriculum.Travel.LedgeDropMax = 80.0
-#   dive arenas (stage1_move): the objective is DiveMin to DiveMax yards away on a lakebed under
-#   DiveDepthMin to DiveDepthMax yards of water. DiveDepthMax runs past what one breath reaches on purpose: with
-#   Unending Breath or Water Breathing the dive is free, without them the seat learns to come up for air
-AnimusForge.Curriculum.Travel.DiveMin = 20.0
-AnimusForge.Curriculum.Travel.DiveMax = 120.0
-AnimusForge.Curriculum.Travel.DiveDepthMin = 6.0
-AnimusForge.Curriculum.Travel.DiveDepthMax = 40.0
-#   chain arenas (stage1_move's chain): reaching an objective draws the next one ChainMin to ChainMax yards on from
-#   where the seat stands, of the arena's own kind, until the clock runs out
-AnimusForge.Curriculum.Travel.ChainMin = 30.0
-AnimusForge.Curriculum.Travel.ChainMax = 60.0
-#   indoor arenas (stage1_move): yards from the start, by path. Shorter than anything outdoors because it is
-#   a trip across a room -- the far end of an inn is nearer than the first march range of an open-country probe
-AnimusForge.Curriculum.Travel.IndoorMin = 8.0
-AnimusForge.Curriculum.Travel.IndoorMax = 40.0
-#   potential shaping: what closing the whole trip pays, spread over its length -- per 100 yd on a trip shorter
-#   than that -- and taken back for leaving. Per 100 yd whatever the trip, a 700 yd flight paid more for progress
-#   than for arriving
-AnimusForge.Curriculum.Travel.Progress = 1.0
-AnimusForge.Curriculum.Travel.Arrive = 3.0
-#   times the fraction of the walk the trip saved: 0 on foot, ~0.3 mounted over
-#   a few hundred yards. This is what pays for a mount, so it has to be worth
-#   more than the cast time costs
-AnimusForge.Curriculum.Travel.FastArrive = 6.0
-#   fraction of the bot's health (falls, what it rode past)
-AnimusForge.Curriculum.Travel.DamageTaken = 1.0
-AnimusForge.Curriculum.Travel.Death = 3.0
-#   per decision
-AnimusForge.Curriculum.Travel.StepCost = 0.0002
-#   room to move, charged by the second while the seat is inside ClearanceMargin yards of the nearest edge of
-#   walkable space, and capped per episode by ClearanceMax. Never a mask: a doorway is narrower than any margin
-#   worth keeping in the open, so forbidding closeness would forbid doorways
-AnimusForge.Curriculum.Travel.Clearance = 0.08
-AnimusForge.Curriculum.Travel.ClearanceMargin = 1.5
-AnimusForge.Curriculum.Travel.ClearanceMax = 0.6
-#   routing. The way to the objective is re-planned when the seat has strayed RouteStray yards from the corner it
-#   was walking to, or after RouteRefresh seconds -- movement first, because at seven yards a second a clock alone
-#   goes stale inside the first corner. RouteCorner is how near counts as having reached one, and wants to be
-#   wider than a decision's travel (1.75 yd at run speed) so a corner cannot be stepped over and walked back to
-AnimusForge.Curriculum.Travel.RouteStray = 25.0
-AnimusForge.Curriculum.Travel.RouteRefresh = 5.0
-AnimusForge.Curriculum.Travel.RouteCorner = 5.0
-
-#   Flag match (Warsong Gulch's rules). Yards between the bases, by path
-AnimusForge.Curriculum.Flag.BaseMin = 100.0
-AnimusForge.Curriculum.Flag.BaseMax = 180.0
-AnimusForge.Curriculum.Flag.CapturesToWin = 3
-#   the dead stand up at their base after this (a graveyard wave)
-AnimusForge.Curriculum.Flag.RespawnMs = 15000
-#   a dropped flag goes home on its own after this
-AnimusForge.Curriculum.Flag.DroppedReturnMs = 10000
-#   yards to pick up, return or capture
-AnimusForge.Curriculum.Flag.TouchDistance = 4.0
-AnimusForge.Curriculum.Flag.Capture = 5.0
-AnimusForge.Curriculum.Flag.Pickup = 1.0
-AnimusForge.Curriculum.Flag.Return = 1.0
-#   killing the one carrying the seat's flag
-AnimusForge.Curriculum.Flag.CarrierKill = 1.5
-#   the other side captured the seat's flag
-AnimusForge.Curriculum.Flag.Lost = 3.0
-#   potential shaping toward the seat's current objective, per 100 yd
-AnimusForge.Curriculum.Flag.Progress = 0.5
-AnimusForge.Curriculum.Flag.Death = 1.0
-#   per decision
-AnimusForge.Curriculum.Flag.StepCost = 0.0002
 
 ###################################################################################################
 
