@@ -42,8 +42,12 @@ fi
 echo "STEP build unit_tests (-j$JOBS)"
 nice -n 15 cmake --build "$B" --target unit_tests -j"$JOBS" > "$B.build.log" 2>&1
 build_rc=$?
-grep -E " error:" "$B.build.log" | head -10 | sed 's/^/BUILD_ERROR /'
-[ $build_rc -eq 0 ] || { echo "BUILD_FAILED $build_rc (see $B.build.log)"; exit 1; }
+# The build's own link of unit_tests is expected to fail here (the step below repeats it), so only compiler errors,
+# not linker errors, count as a failed build. A stale binary is never run after a compile error.
+grep -E " error:" "$B.build.log" | grep -vE "ld\.lld|linker command failed" | head -10 | sed 's/^/BUILD_ERROR /'
+if [ $build_rc -ne 0 ] && grep -E " error:" "$B.build.log" | grep -qvE "ld\.lld|linker command failed"; then
+  echo "BUILD_FAILED $build_rc (see $B.build.log)"; exit 1
+fi
 
 # The container's clang is version 18 and its resource directory has no compiler-rt libraries (libclang_rt.profile,
 # which the instrumented link needs); llvm-17's does. So the unit_tests link line is run again with
