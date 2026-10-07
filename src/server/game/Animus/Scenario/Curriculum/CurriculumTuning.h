@@ -1172,6 +1172,63 @@ namespace Animus::Curriculum
             float CatchUpSeconds = 2.0f;
         } Follow;
 
+        /// **Death in an instance** (dungeon-curriculum I4; EntranceRespawn): a seat that dies is out for DelayMs, then
+        /// stands up alive, at full health and power, at the instance's entrance (the map's entrance trigger), and
+        /// plays on: no graveyard, ghost or corpse run, no teleport to the party, no end to the episode. It walks
+        /// back on the controller. It has rejoined once it is within RejoinYards of the party's leader (or of the
+        /// living party's centroid when the leader is down).
+        struct RespawnTuning
+        {
+            uint32 DelayMs = 10000;
+            float RejoinYards = 15.0f;
+        } Respawn;
+
+        /// **The party follow** (Opposition::PartyFollow, M4 move4_follow; dungeon-curriculum I5): a party of
+        /// followers keeps with a leader walking a dungeon's route from the door to its last boss, stopping at each
+        /// boss's place for StopSeconds of the rung. The leader is in the owner's slot, moved by the player controller:
+        /// the script's keys (the route planner's corners toward the next stop -- a script, never a bot input) or, a
+        /// CastShare percent of training episodes, a frozen checkpoint's (the learner's cast.agents.leader).
+        ///
+        /// **The ladder** (the shaping fade's rungs, SightDraw::Rung): the leader walks below WalkRungs; from
+        /// SuddenFromRung it also stops where nobody expects it, for SuddenStopMinMs-SuddenStopMaxMs, every
+        /// SuddenGapMin-SuddenGapMax seconds; from BackStepFromRung some of those stops step back BackStepYards first.
+        ///
+        /// Paid to each follower: Kept per second within [BandMin, BandMax] yards of the leader (FollowKept,
+        /// Outcome); Regroup at each stop of the leader's of at least RegroupMinStopMs, once, on coming into the band,
+        /// times 1 - seconds/RegroupWindow (Outcome: the leader's stops are the leader's, so it cannot be farmed);
+        /// Lost per second past LostYards and Blocking per second within BlockYards ahead of a moving leader, inside
+        /// BlockHalfAngle degrees of its facing (Costs); Death per death (Cost); Stuck and Wall at their own fixed
+        /// price (Seek.*: off the cost ladder). The minimap shows party members within MinimapYards.
+        struct PartyFollowTuning
+        {
+            float BandMin = 3.0f;
+            float BandMax = 10.0f;
+            float LostYards = 40.0f;
+            float Kept = 0.02f;
+            float Lost = 0.02f;
+            float Regroup = 0.5f;
+            float RegroupWindow = 20.0f;
+            uint32 RegroupMinStopMs = 2000;
+            float Blocking = 0.05f;
+            float BlockYards = 2.5f;
+            float BlockHalfAngle = 45.0f;
+            float Death = 3.0f;
+            float MinimapYards = 60.0f;
+            uint32 WalkRungs = 1;
+            uint32 SuddenFromRung = 2;
+            uint32 BackStepFromRung = 3;
+            float StopSecondsFirst = 8.0f;
+            float StopSecondsLast = 3.0f;
+            uint32 SuddenStopMinMs = 1000;
+            uint32 SuddenStopMaxMs = 4000;
+            float SuddenGapMin = 12.0f;
+            float SuddenGapMax = 30.0f;
+            float BackStepYards = 4.0f;
+            int32 BackStepChance = 30;
+            uint32 GiveUpMs = 6000;
+            int32 CastShare = 0;
+        } PartyFollow;
+
         /// The seek stage (Opposition::Seek, M2: SeekEncounter): one real object in one of the Stockades' rooms, found
         /// by sight. Arrive (Outcome) is paid once, on stopping within the arena's SeekRadius of the object (on its
         /// floor: within ArriveRise yards of its height). StepCost (Cost, per 50 ms of tuning) prices the time: a
@@ -1883,6 +1940,34 @@ namespace Animus::Curriculum
             f("Follow.CastShare", tuning.Follow.CastShare);
             f("Follow.WinShare", tuning.Follow.WinShare);
             f("Follow.CatchUpSeconds", tuning.Follow.CatchUpSeconds);
+            f("Respawn.DelayMs", tuning.Respawn.DelayMs);
+            f("Respawn.RejoinYards", tuning.Respawn.RejoinYards);
+            f("PartyFollow.BandMin", tuning.PartyFollow.BandMin);
+            f("PartyFollow.BandMax", tuning.PartyFollow.BandMax);
+            f("PartyFollow.LostYards", tuning.PartyFollow.LostYards);
+            f("PartyFollow.Kept", tuning.PartyFollow.Kept);
+            f("PartyFollow.Lost", tuning.PartyFollow.Lost);
+            f("PartyFollow.Regroup", tuning.PartyFollow.Regroup);
+            f("PartyFollow.RegroupWindow", tuning.PartyFollow.RegroupWindow);
+            f("PartyFollow.RegroupMinStopMs", tuning.PartyFollow.RegroupMinStopMs);
+            f("PartyFollow.Blocking", tuning.PartyFollow.Blocking);
+            f("PartyFollow.BlockYards", tuning.PartyFollow.BlockYards);
+            f("PartyFollow.BlockHalfAngle", tuning.PartyFollow.BlockHalfAngle);
+            f("PartyFollow.Death", tuning.PartyFollow.Death);
+            f("PartyFollow.MinimapYards", tuning.PartyFollow.MinimapYards);
+            f("PartyFollow.WalkRungs", tuning.PartyFollow.WalkRungs);
+            f("PartyFollow.SuddenFromRung", tuning.PartyFollow.SuddenFromRung);
+            f("PartyFollow.BackStepFromRung", tuning.PartyFollow.BackStepFromRung);
+            f("PartyFollow.StopSecondsFirst", tuning.PartyFollow.StopSecondsFirst);
+            f("PartyFollow.StopSecondsLast", tuning.PartyFollow.StopSecondsLast);
+            f("PartyFollow.SuddenStopMinMs", tuning.PartyFollow.SuddenStopMinMs);
+            f("PartyFollow.SuddenStopMaxMs", tuning.PartyFollow.SuddenStopMaxMs);
+            f("PartyFollow.SuddenGapMin", tuning.PartyFollow.SuddenGapMin);
+            f("PartyFollow.SuddenGapMax", tuning.PartyFollow.SuddenGapMax);
+            f("PartyFollow.BackStepYards", tuning.PartyFollow.BackStepYards);
+            f("PartyFollow.BackStepChance", tuning.PartyFollow.BackStepChance);
+            f("PartyFollow.GiveUpMs", tuning.PartyFollow.GiveUpMs);
+            f("PartyFollow.CastShare", tuning.PartyFollow.CastShare);
             f("Seek.Arrive", tuning.Seek.Arrive);
             f("Seek.StepCost", tuning.Seek.StepCost);
             f("Seek.Death", tuning.Seek.Death);

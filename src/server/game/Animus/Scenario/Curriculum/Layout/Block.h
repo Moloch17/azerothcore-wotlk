@@ -80,6 +80,10 @@ namespace Animus::Curriculum
         /// or use, use an item on, assist, focus -- sent as the client sends them. After the entities block, which
         /// writes the memory it reads.
         Sight,
+        /// What a player's UI shows of its party (dungeon-curriculum I5; no actions): the party frames -- each
+        /// member's health, power, alive, in combat, the leader -- and the minimap's party dots, a position only for a
+        /// member within the minimap's radius. Only the stages that declare it (move4_follow on).
+        PartyFrames,
         Goal,           // which goal kinds and targets are there, and whether the goal held ended (no actions; last)
         Count
     };
