@@ -7,6 +7,8 @@ from __future__ import annotations
 import dataclasses
 import os
 import re
+import signal
+import subprocess
 import stat
 import sys
 import textwrap
@@ -967,9 +969,14 @@ def test_the_root_shim_runs_the_package():
 
 # ---- the audit log ---------------------------------------------------------------------------------------------------
 
-def audit_lines(home):
+def all_audit_lines(home):
     path = home / "audit.log"
     return path.read_text().splitlines() if path.exists() else []
+
+
+def audit_lines(home):
+    """The result lines (one per finished command); the intent lines are all_audit_lines minus these."""
+    return [line for line in all_audit_lines(home) if " kind=result " in line]
 
 
 @pytest.fixture
@@ -985,6 +992,39 @@ def test_a_state_changing_command_leaves_one_audit_line_with_who_what_where_and_
     assert "confirm=--yes" in line and "outcome=done" in line and 'cmd="forgectl stage cancel --yes"' in line
     assert re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d{4} ", line)
     assert oct((forgectl_home / "audit.log").stat().st_mode & 0o777) == "0o600"
+
+
+def test_every_state_changing_command_writes_an_intent_line_before_its_result(cli_cfg, sent, forgectl_home):
+    assert cli.main(["stage", "cancel", "--yes"]) == 0
+    intent, result = all_audit_lines(forgectl_home)
+    assert " kind=intent " in intent and " kind=result " in result
+    assert "machines=sarah,spencer,thomas,moloch" in intent and "confirm=--yes" in intent
+    assert "outcome" not in intent and 'cmd="forgectl stage cancel --yes"' in intent
+
+
+def test_an_intent_line_without_yes_says_the_prompt_is_pending(cli_cfg, sent, monkeypatch, forgectl_home):
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(ui, "ask", lambda prompt: "n")
+    assert cli.main(["stage", "resume", "move2_seek"]) == 1
+    intent, result = all_audit_lines(forgectl_home)
+    assert " kind=intent " in intent and "confirm=prompt-pending" in intent and "machines=sarah" in intent
+    assert "confirm=declined outcome=declined" in result
+
+
+def test_a_command_killed_after_its_intent_line_still_shows_the_intent(forgectl_home):
+    """SIGKILL leaves no result line (nothing runs) but the intent was already on disk."""
+    script = (
+        "import os, signal, sys\n"
+        f"sys.path.insert(0, {str(CLUSTER_TOML.parents[0])!r})\n"
+        "from forgectl import __main__ as cli, config as config_module\n"
+        f"real = config_module.load\n"
+        f"cli.config_module.load = lambda path=None: real({str(CLUSTER_TOML)!r})\n"
+        "cli.dispatch = lambda args, config: os.kill(os.getpid(), signal.SIGKILL)\n"
+        "cli.main(['stage', 'cancel', '--yes'])\n")
+    done = subprocess.run([sys.executable, "-c", script], env={**os.environ, "FORGECTL_HOME": str(forgectl_home)})
+    assert done.returncode == -signal.SIGKILL
+    (line,) = all_audit_lines(forgectl_home)
+    assert " kind=intent " in line and "confirm=--yes" in line and 'cmd="forgectl stage cancel --yes"' in line
 
 
 def test_a_person_confirming_a_declined_and_a_failed_command_are_told_apart(cli_cfg, monkeypatch, forgectl_home):
@@ -1029,6 +1069,12 @@ def test_an_unwritable_audit_log_refuses_the_command_before_anything_is_sent(cli
     blocker = tmp_path / "not-a-directory"
     blocker.write_text("x")
     monkeypatch.setenv("FORGECTL_HOME", str(blocker / "home"))
+    assert cli.main(["stage", "cancel", "--yes"]) == 1
+    assert sent.sent == [] and "audit log" in capsys.readouterr().err
+
+
+def test_an_intent_line_that_cannot_be_written_refuses_the_command(cli_cfg, sent, monkeypatch, forgectl_home, capsys):
+    monkeypatch.setattr(audit, "append", lambda line: (_ for _ in ()).throw(OSError("disk full")))
     assert cli.main(["stage", "cancel", "--yes"]) == 1
     assert sent.sent == [] and "audit log" in capsys.readouterr().err
 

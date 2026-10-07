@@ -246,29 +246,35 @@ then needs ssh keys to the workers).
 
 ## The audit log
 
-Every command that changes something appends one line to `~/.forgectl/audit.log` on the machine it was run from
+Every command that changes something appends two lines to `~/.forgectl/audit.log` (an intent line when it starts, a result line when it ends) on the machine it was run from
 (the directory is created, mode 0700; `$FORGECTL_HOME` moves it). Logged: `stage start|resume|pause|cancel`,
 `build`, `conf-sync` (without `--check`), `cluster move-host`, `videos` (without `--check`/`--dry-run`). Not logged:
 `cluster`, `status`, `stage status`, `logs`, `test`, and the `--check`/`--dry-run` forms.
 
 ```
-2026-10-07T12:31:08+0100 user=moloch machines=sarah,spencer,thomas,moloch confirm=prompt outcome=done cmd="forgectl stage cancel"
-2026-10-07T12:40:12+0100 user=moloch machines=sarah confirm=--yes outcome=done cmd="forgectl stage start move2_seek --yes" notes="..."
+2026-10-07T12:31:07+0100 kind=intent user=moloch machines=sarah,spencer,thomas,moloch confirm=prompt-pending cmd="forgectl stage cancel"
+2026-10-07T12:31:08+0100 kind=result user=moloch machines=sarah,spencer,thomas,moloch confirm=prompt outcome=done cmd="forgectl stage cancel"
+2026-10-07T12:40:11+0100 kind=intent user=moloch machines=sarah confirm=--yes cmd="forgectl stage start move2_seek --yes"
+2026-10-07T12:40:12+0100 kind=result user=moloch machines=sarah confirm=--yes outcome=done cmd="forgectl stage start move2_seek --yes" notes="..."
 ```
+
+An `intent` line with no `result` line after it (the same command line, later in the file) is a command that did not
+finish: killed with SIGKILL, or the computer lost power. Look at the machines it names.
 
 | Field | Values |
 |---|---|
 | time | local time with the UTC offset |
+| `kind` | `intent` (written at the start, before anything is touched) or `result` (written when the command ends) |
 | `user` | the local user who ran forgectl |
-| `machines` | the machines the command acted on (`-` if it ended before acting: declined, refused) |
-| `confirm` | `--yes` (the flag answered), `prompt` (a person typed `y`), `declined` (a person said no, or there was no terminal and no `--yes`), `not-reached` (it failed or was refused before it asked) |
-| `outcome` | `done` (exit 0), `failed`, `declined` |
+| `machines` | intent: the machines the command is expected to touch (`conf-sync` names every worker, though only the out-of-sync ones are written). result: the machines it acted on (`-` if it ended before acting: declined, refused) |
+| `confirm` | intent: `--yes` or `prompt-pending`. result: `--yes` (the flag answered), `prompt` (a person typed `y`), `declined` (a person said no, or there was no terminal and no `--yes`), `not-reached` (it failed or was refused before it asked) |
+| `outcome` | (result lines only) `done` (exit 0), `failed`, `declined` |
 | `cmd` | the command line, as JSON text |
 | `notes` | facts the operator was shown that matter later (the run a `stage start` archives, the error that stopped the command) |
 
-The line is written when the command ends, as one append, so two forgectl runs at once do not interleave. **The log
-is checked before a command that changes something starts: if it cannot be written, the command is refused.** A
-command killed with SIGKILL leaves no line.
+Each line is one append, so two forgectl runs at once do not interleave. **The intent line is the check: if it cannot
+be written, the command is refused** and nothing is sent. A command killed with SIGKILL leaves its intent line and no
+result line; SIGTERM and SIGHUP during a console send still leave a result (`failed`, noted).
 
 ## When something does not work
 

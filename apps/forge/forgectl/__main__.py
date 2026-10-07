@@ -137,6 +137,21 @@ def changes_state(args) -> bool:
     return False
 
 
+def planned_machines(args, config) -> list:
+    """The machines a state-changing command is expected to touch (the intent line; the result line has the ones it did)."""
+    if args.command == "stage":
+        return [config.host] + (config.workers if args.action in ("pause", "cancel") else [])
+    if args.command == "build":
+        return list(config.cluster) if args.cluster else [m for m in config.machines if m.local] or [config.host]
+    if args.command == "conf-sync":
+        return list(config.workers)
+    if args.command == "cluster":
+        return list(config.cluster)
+    if args.command == "videos":
+        return [*config.workers, *([config.host] if args.on_host else [])]
+    return []
+
+
 def main(argv: list[str] | None = None) -> int:
     main_parser = parser()
     args = main_parser.parse_args(argv)
@@ -146,8 +161,10 @@ def main(argv: list[str] | None = None) -> int:
     entry, outcome = None, "failed"
     try:
         if changes_state(args):
-            entry = audit.begin(sys.argv[1:] if argv is None else argv)
+            entry = audit.begin(sys.argv[1:] if argv is None else argv, getattr(args, "yes", False))
         config = config_module.load(args.config)
+        if entry:
+            audit.intent(entry, planned_machines(args, config))
         code = dispatch(args, config)
         outcome = "declined" if entry and entry.confirmation == "declined" else "done" if code == 0 else "failed"
         return code
