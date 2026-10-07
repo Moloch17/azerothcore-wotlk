@@ -22,8 +22,8 @@ STAGES_CPP = REPO / "src" / "server" / "game" / "Animus" / "Scenario" / "Curricu
 COMPILE_DB = Path(os.environ.get("ANIMUS_COMPILE_DB", "/azerothcore/var/build/obj/compile_commands.json"))
 # The movement curriculum as rebuilt (2026-10-05): M1, and M2 seek (perception-goals P1, 2026-10-06); later stages
 # add themselves here as they land.
-# M3 interact (dungeon-curriculum M3, 2026-10-06) after them.
-MOVEMENT = ["move1_controls", "move2_seek", "move3_interact"]
+# M3 interact and M4 follow (dungeon-curriculum, 2026-10-06) after them.
+MOVEMENT = ["move1_controls", "move2_seek", "move3_interact", "move4_follow"]
 
 LOG_STUB = """#pragma once
 #define LOG_ERROR(category, ...) ((void)0)

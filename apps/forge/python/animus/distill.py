@@ -20,8 +20,17 @@ import torch
 
 from .bootstrap import DIRECTOR_LAYOUT
 
-from .mappo.networks import LayoutActor, MASKED_LOGIT, load_actor_state, seat_sets_of, vision_of
+from .mappo.networks import (LayoutActor, MASKED_LOGIT, load_actor_state, seat_sets_of, vision_image_bytes,
+                              vision_look_heads, vision_of, with_map_vin)
 from .stages import Span, arena_names, arena_state_span, block_spans, revised_blocks
+
+#: The blocks the camera's encoder reads (VisionEncoder, its MapEncoder, the entity list and SightEntities): a frozen
+#: actor with a camera reads them only at the revision and width it was trained on.
+CAMERA_BLOCKS = ("vision", "map", "entities", "sight")
+#: What a camera's image has to agree on for one encoder to read another sim's bytes (vision_of's description).
+IMAGE_KEYS = ("height", "width", "channels", "classes", "class_channel", "class_limit", "bytes_per_pixel",
+              "image_bytes")
+MAP_KEYS = ("height", "width", "channels", "codes", "classes", "map_bytes")
 
 
 @dataclass
@@ -43,6 +52,11 @@ class Teacher:
     num_actions: int  # the teacher's padded action count
     layouts: dict[int, LayoutMap]  # the stage's layout index -> its map; layouts the teacher lacks are absent
     recurrent_size: int = 0  # the teacher's own memory, carried between its decisions like the student's
+    # The camera row the teacher's encoder reads -- its image, then its map crop when it has one -- as the leading
+    # bytes of the stage's own row (Step.image); 0 without a camera.
+    camera_bytes: int = 0
+    # Its free look's heads (LookHead; the ACT's look section, protocol 22), () without one.
+    look_heads: tuple[int, ...] = ()
 
 
 def _index_pairs(student: dict[str, tuple[Span, Span]] | None, teacher: dict[str, tuple[Span, Span]] | None,
@@ -68,8 +82,13 @@ def _index_pairs(student: dict[str, tuple[Span, Span]] | None, teacher: dict[str
     return obs_s, obs_t, act_s, act_t
 
 
-def build_teacher(checkpoint: dict, spec, stage: dict | None, device: torch.device) -> Teacher:
-    """A frozen actor from `checkpoint`, mapped onto the stage's layouts (spec.layouts, stage.json `stage`)."""
+def frozen_actor(checkpoint: dict, device) -> LayoutActor:
+    """A checkpoint's actor rebuilt as it was trained -- its layouts, memory, goal head, director, seat sets and camera
+    (VisionEncoder with its MapEncoder, entity list, SightEntities and look head, all from the checkpoint's own
+    stage.json) -- loaded with its weights by name, frozen, on `device`. Refused, never started fresh: weights the
+    rebuilt actor has no place for or lacks (load_actor_state), a camera block vision_of cannot read (from before
+    revision 5, a malformed map or sight list), and camera weights without the stage.json that describes them.
+    `actor.frozen_vision` is the camera's description (vision_of), None without one."""
     t_spec = checkpoint["spec"]
     t_layouts = [(entry["obs_dim"], entry["num_actions"]) for entry in t_spec["layouts"]]
     mappo = checkpoint["config"].get("mappo", {})
@@ -93,25 +112,86 @@ def build_teacher(checkpoint: dict, spec, stage: dict | None, device: torch.devi
                 if t_stage and "director" in t_stage and DIRECTOR_LAYOUT in t_names else None)
     # And a stage's seat sets, when its actor was trained with them (mappo.seat_sets), from its own stage.json.
     seat_sets = seat_sets_of(t_stage, t_names) if mappo.get("seat_sets", False) else None
-    # A teacher with a camera (VisionEncoder) is not distilled from in the camera's naive slice: its image columns
-    # would have to be mapped onto the student's camera, which nothing here does yet.
-    if (vision_of(t_stage, t_names) is not None
-            or any(key.startswith("vision.") for key in checkpoint["trainer"]["actor"])):
-        raise ValueError("distillation from a teacher with a camera (a vision block) is not supported yet")
+    # Its camera, from its own stage.json, with the map's value iteration network as its own run had it.
+    vision = with_map_vin(vision_of(t_stage, t_names), bool(mappo.get("map_vin", False)))
+    if vision is None and any(key.startswith("vision.") for key in checkpoint["trainer"]["actor"]):
+        raise ValueError("the checkpoint's actor has a camera (vision.* weights) but no stage.json describes it")
     actor = LayoutActor(t_layouts, hidden, foresight_outputs, recurrent_size, goal_count, goal_targets, slow_size,
                         bool(mappo.get("foresight_feedback", False)), bool(mappo.get("goal_lookahead", False)),
                         director=director, goal_slots=int(mappo.get("goal_slots", 1) or 1), seat_sets=seat_sets,
-                        entity_attention=bool(mappo.get("entity_attention", False)) and seat_sets is not None)
+                        entity_attention=bool(mappo.get("entity_attention", False)) and seat_sets is not None,
+                        vision=vision)
     load_actor_state(actor, checkpoint["trainer"]["actor"])
     actor.to(device).eval()
     for param in actor.parameters():
         param.requires_grad_(False)
+    actor.frozen_vision = vision
+    return actor
+
+
+def check_camera(t_stage: dict | None, stage: dict | None, name: str, t_camera: dict | None,
+                 camera: dict | None) -> None:
+    """Refuse a teacher whose layout `name` has a camera the stage's same layout cannot feed exactly as the teacher was
+    fed: no camera there, another image (size, classes, bytes), another look, a map crop it reads and the stage lacks
+    or crops otherwise, or a block its encoder reads (CAMERA_BLOCKS) missing, at another revision or another width.
+    A block the stage has and the teacher never had (an M1 partner in an M2 party: the map, the sight list) stays out
+    of its view, as any such block does; its camera row is then the leading bytes of the stage's (Teacher.camera_bytes:
+    the image comes first, the map after it)."""
+    if t_camera is None:
+        return
+    where = f"teacher layout {name}"
+    if camera is None:
+        raise ValueError(f"{where}: the teacher has a camera and the stage's layout has none")
+    for key in IMAGE_KEYS:
+        if t_camera[key] != camera[key]:
+            raise ValueError(f"{where}: the camera's image {key} is {t_camera[key]}, the stage's {camera[key]}")
+    if tuple(t_camera["look"]) != tuple(camera["look"]):
+        raise ValueError(f"{where}: the free look's heads are {list(t_camera['look'])}, the stage's "
+                         f"{list(camera['look'])}")
+    if t_camera.get("map") is not None:
+        if camera.get("map") is None:
+            raise ValueError(f"{where}: the teacher reads a mental map and the stage's layout has none")
+        for key in MAP_KEYS:
+            if t_camera["map"][key] != camera["map"][key]:
+                raise ValueError(f"{where}: the map crop's {key} is {t_camera['map'][key]}, the stage's "
+                                 f"{camera['map'][key]}")
+    t_spans, spans = block_spans(t_stage, name) or {}, block_spans(stage, name) or {}
+    revised = revised_blocks(t_stage, stage, name)
+    for block in CAMERA_BLOCKS:
+        if block not in t_spans:
+            continue
+        if block not in spans:
+            raise ValueError(f"{where}: the teacher's camera reads its {block} block, which the stage's layout lacks")
+        if block in revised:
+            old, new = revised[block]
+            raise ValueError(f"{where}: the {block} block is revision {old} for the teacher, {new} in the stage")
+        (_, t_obs), (_, t_act) = t_spans[block]
+        (_, s_obs), (_, s_act) = spans[block]
+        if (t_obs, t_act) != (s_obs, s_act):
+            raise ValueError(f"{where}: the {block} block is {t_obs}+{t_act} columns (obs+actions) for the teacher, "
+                             f"{s_obs}+{s_act} in the stage")
+
+
+def build_teacher(checkpoint: dict, spec, stage: dict | None, device: torch.device) -> Teacher:
+    """A frozen actor from `checkpoint` (frozen_actor), mapped onto the stage's layouts (spec.layouts, stage.json
+    `stage`). A teacher with a camera is checked against the stage's (check_camera): it reads the stage's camera rows
+    and sends its own look."""
+    t_spec = checkpoint["spec"]
+    t_layouts = [(entry["obs_dim"], entry["num_actions"]) for entry in t_spec["layouts"]]
+    t_names = [entry["name"] for entry in t_spec["layouts"]]
+    t_stage = checkpoint.get("stage")
+    actor = frozen_actor(checkpoint, device)
+    t_vision = actor.frozen_vision
+    s_vision = vision_of(stage, [layout.name for layout in spec.layouts]) if t_vision is not None else None
 
     layouts = {}
     for index, layout in enumerate(spec.layouts):
         if layout.name not in t_names:
             continue
         t_index = t_names.index(layout.name)
+        if t_vision is not None:
+            check_camera(t_stage, stage, layout.name, t_vision[t_index],
+                         s_vision[index] if s_vision is not None else None)
         # A block the teacher has at another revision means other things in its columns: it is not mapped, so the
         # teacher reads it as absent rather than as what it used to be.
         revised = revised_blocks(t_stage, stage, layout.name)
@@ -129,13 +209,19 @@ def build_teacher(checkpoint: dict, spec, stage: dict | None, device: torch.devi
 
         layouts[index] = LayoutMap(t_index, tensor(obs_s), tensor(obs_t), tensor(act_s), tensor(act_t))
 
+    camera_bytes = vision_image_bytes(t_vision)
+    if camera_bytes and layouts and camera_bytes > vision_image_bytes(s_vision):
+        raise ValueError(f"the teacher's camera reads {camera_bytes} bytes a row, the stage's camera sends "
+                         f"{vision_image_bytes(s_vision)}")
     return Teacher(
         name=t_spec.get("scenario", "?"),
         actor=actor,
         obs_dim=max(obs for obs, _ in t_layouts),
         num_actions=max(actions for _, actions in t_layouts),
         layouts=layouts,
-        recurrent_size=recurrent_size,
+        recurrent_size=int(actor.recurrent_size),
+        camera_bytes=camera_bytes,
+        look_heads=vision_look_heads(t_vision),
     )
 
 
@@ -163,6 +249,13 @@ class Distiller:
         if unknown:
             raise ValueError(f"distill.teachers: the stage has no arena {', '.join(unknown)} ({', '.join(names)})")
         self.arena_first, self.arena_count = span
+        # A teacher with a camera is not distilled from: the update's KL reads a teacher on its observations alone,
+        # and a camera's advice without its images would be a blind actor's. (The cast and the co-op partners play
+        # such checkpoints with their images: animus.cast.)
+        seeing = sorted(arena for arena, teacher in teachers.items() if teacher.actor.vision is not None)
+        if seeing:
+            raise ValueError(f"distillation from a teacher with a camera (a vision block) is not supported yet "
+                             f"(arenas {', '.join(seeing)})")
         self.teachers = {names.index(arena): teacher for arena, teacher in teachers.items()}
         self.coef = 0.0
 

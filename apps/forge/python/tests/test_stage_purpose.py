@@ -31,6 +31,10 @@ PURPOSE = {
     # M3 interact (dungeon-curriculum M3, 2026-10-06): the right object reached or its lock given the key (Arrive), the
     # switch rung's door opened by the seat's own lever press (DoorOpened), a decoy taken (WrongObject), and the time.
     "move3_interact": ("Arrive", "DoorOpened", "WrongObject", "StepCost"),
+    # M4 follow (dungeon-curriculum I5, 2026-10-06): keep with the leader through the dungeon -- FollowKept per second
+    # in the band, Regroup on coming back to it after each of the leader's stops -- and Death, each one a price the
+    # episode goes on past (I4).
+    "move4_follow": ("FollowKept", "Regroup", "Death"),
 }
 
 # Stage -> the terms it pays that must stay Shaping (they fade): a nudge mistaken for the lesson is the failure this
@@ -52,6 +56,7 @@ ENCOUNTER = {
     "Seek": "Encounters/SeekEncounter.cpp",
     "Sight": "Encounters/SightEncounter.cpp",
     "Interact": "Encounters/InteractEncounter.cpp",
+    "PartyFollow": "Encounters/PartyFollowEncounter.cpp",
     "Travel": "Encounters/TravelEncounter.cpp",
     "Creature": "Encounters/CreatureEncounter.cpp",
     "Dummy": "Encounters/DummyEncounter.cpp",

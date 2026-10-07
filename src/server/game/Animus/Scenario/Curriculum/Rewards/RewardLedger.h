@@ -180,6 +180,11 @@ namespace Animus::Curriculum
         /// the object the goal names -- stopped beside or pressed, each decoy once (Interact.WrongObject, Cost).
         DoorOpened,
         WrongObject,
+        /// The party follow (M4, PartyFollowEncounter): back in the band of the leader after it stopped, sooner paying
+        /// more (Outcome: the stops are the leader's, so it cannot be farmed); standing in a moving leader's way
+        /// (Cost).
+        Regroup,
+        Blocking,
         Count
     };
 
@@ -232,6 +237,8 @@ namespace Animus::Curriculum
             case RewardTerm::FollowKept:
             // The interact stage's door opened by its lever (M3).
             case RewardTerm::DoorOpened:
+            // The party follow's regroup at the leader's stops (2026-10-06).
+            case RewardTerm::Regroup:
                 return RewardCategory::Outcome;
             // What the outcome costs: deaths (the seat's, a teammate's, the owner's; a wipe is paid as deaths), the
             // flag lost, the clock run out, the step cost a stage charges for time, the corpse run.
@@ -263,6 +270,7 @@ namespace Animus::Curriculum
             case RewardTerm::Aggro:
             // A decoy taken for the named object (M3).
             case RewardTerm::WrongObject:
+            case RewardTerm::Blocking:
                 return RewardCategory::Cost;
             case RewardTerm::DamageDealt:
             case RewardTerm::DamageTaken:

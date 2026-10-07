@@ -147,6 +147,8 @@ std::string_view Animus::Curriculum::RewardTermName(RewardTerm term)
         case RewardTerm::RoomSeen:              return "room_seen";
         case RewardTerm::DoorOpened:            return "door_opened";
         case RewardTerm::WrongObject:           return "wrong_object";
+        case RewardTerm::Regroup:               return "regroup";
+        case RewardTerm::Blocking:              return "blocking";
         case RewardTerm::Count:                 break;
     }
 

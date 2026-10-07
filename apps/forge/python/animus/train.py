@@ -37,6 +37,7 @@ import yaml
 
 from .bootstrap import DIRECTOR_LAYOUT, seed_merges, seed_trainer
 from .cast import EXPLOITER_MEMBER, LEAGUE, LEAGUE_DIR, Cast, league_snapshot
+from .partners import PARTNERS_DIR, Partners, partner_snapshot, with_partners_chooser
 from .config import TrainConfig
 from .distill import Distiller, auto_teachers, build_teacher
 from .env import ClusterEnv, ForgeEnv
@@ -833,6 +834,7 @@ class TrainingRun:
             "explained_variance", "actor_grad_norm", "critic_grad_norm", "epochs_run", "allowed_actions",
             "approx_kl_move", "epochs_done", "minibatches_done",
             "lr_scale", "shaping_scale", "cost_scale", "frozen_layouts", "cast_rows", "cast_fallback_rows", "cast_members", "cast_hardest_win_rate",
+            "partner_rows", "partner_fallback_rows", "partner_members", "partner_episodes",
             "elapsed_seconds", "update_compute_seconds", "distill_coef", "distill_kl", "distill_rows",
             # Action hints (mappo.hint_coef): the imitation loss, the greedy action's agreement, the sim's weight.
             "hint_loss", "hint_match", "hint_weight", "scripted_share",
@@ -976,6 +978,7 @@ class TrainingRun:
         further parents; either way the parents teach a distilled run (self.distiller)."""
         config, spec = self.config, self.spec
         self.cast: Cast | None = None
+        self.partners: Partners | None = None
         self.last_snapshot_env_steps = 0
         # Every checkpoint this setup reads from the runs directory, for the followers (async_sync.Hub).
         self.shared_files: list[Path] = []
@@ -1101,6 +1104,39 @@ class TrainingRun:
         league = self.run_dir / LEAGUE
         if league.is_dir():
             self.shared_files += sorted(league.iterdir())
+
+        # Co-op partners in party seats (animus.partners): earlier stages' policies and this run's snapshots.
+        partners = config.cast.partners
+        names = spec.episode_info_names
+        self.partner_members = partners.members(config.runs_dir, config.run_name)
+        self.partner_eval_members = partners.eval_members(config.runs_dir, config.run_name)
+        # The party's outcome a member is scored by: the configured column, else `won` (a stage without the outcome
+        # column), else nothing is scored and the draw stays even.
+        score_name = partners.score if partners.score in names else "won"
+        self.partner_score_column = names.index(score_name) if score_name in names else None
+        self.last_partner_snapshot_env_steps = self.env_steps
+        if partners.enabled:
+            self.partners = Partners(partners, spec, self.stage, self.run_dir, self.trainer.rollout_device,
+                                     self.partner_members, seed=config.seed + 7)
+            if self.partners.rule is None:
+                print("cast.partners is on but the stage has no party or raid arena: no partners play", flush=True)
+            else:
+                print(f"Co-op partners (share {partners.share:.0%}, up to {partners.max_partners} a party, scored on "
+                      f"{partners.score}): {', '.join(m.name for m in self.partners.pool.active()) or 'nobody yet'}"
+                      + (f"; missing {', '.join(self.partners.pool.missing)}" if self.partners.pool.missing else "")
+                      + (f"; unusable {', '.join(self.partners.pool.unusable)}" if self.partners.pool.unusable
+                         else "")
+                      + "".join(f"; {m.name} {m.actor.resident_bytes() / 2**20:.1f} MB of weights"
+                                for m in self.partners.pool.active() if m.actor is not None)
+                      + (f"; at most {partners.resident_members} on the device" if partners.resident_members
+                         else ""), flush=True)
+                if self.ranks.leader:
+                    self.partners.pool.write()
+        self.shared_files += [Path(path) for path in dict.fromkeys(self.partner_members + self.partner_eval_members)
+                              if Path(path).is_file()]
+        partner_dir = self.run_dir / PARTNERS_DIR
+        if partner_dir.is_dir():
+            self.shared_files += sorted(partner_dir.iterdir())
         # The human data, for a follower on another machine (served only from under the runs directory).
         for path in (config.style.dataset, config.style.reference):
             if path:
@@ -1334,6 +1370,31 @@ class TrainingRun:
         if self.hub is not None and league.is_dir():
             self.hub.share(shared_listing(Path(self.config.runs_dir), sorted(league.iterdir())))
 
+    def maybe_partner_snapshot(self, source: Path | None = None, tag: str = "") -> bool:
+        """Every cast.partners.snapshot_every_env_steps the current networks join the co-op partners (animus.partners),
+        or `source` now (an improved best.pt, as `tag`). Whether a member joined, on every rank."""
+        partners = self.config.cast.partners
+        if self.partners is None or partners.snapshot_every_env_steps <= 0:
+            return False
+        if source is None:
+            if self.env_steps - self.last_partner_snapshot_env_steps < partners.snapshot_every_env_steps:
+                return False
+            self.last_partner_snapshot_env_steps = self.env_steps
+            source = self.run_dir / "latest.pt"
+            self._save(source)
+            tag = f"step_{self.env_steps}"
+        joined = self.ranks.leader and partner_snapshot(self.run_dir, source, tag) is not None
+        if self.ranks.broadcast(joined):
+            self.partners.pool.reload()
+            if self.ranks.leader:
+                self.partners.pool.write()
+                partner_dir = self.run_dir / PARTNERS_DIR
+                if self.hub is not None:
+                    self.hub.share(shared_listing(Path(self.config.runs_dir), sorted(partner_dir.iterdir())))
+                print(f"Partners: {tag} joined ({len(self.partners.pool.active())} members)", flush=True)
+            return True
+        return False
+
     def evaluate(self, final: bool = False) -> None:
         """Score the networks on the seeds (and the baseline once per run); the next training STEP becomes current.
         With data-parallel learners every rank plays its share of the seeds and the leader scores them all. `final`:
@@ -1349,7 +1410,7 @@ class TrainingRun:
                                       opponents=self.opponents, arenas=self.arena_names,
                                       action_names=self.action_names, trace_episodes=config.eval.trace_episodes,
                                       collect_motion=self.spec.kinematics_dim == motion.SAMPLE_DIM)
-        if self.cast is not None:
+        if self.cast is not None or self.partners is not None:
             self._reset_far_side()
         self.last_eval_env_steps = self.env_steps
 
@@ -1395,15 +1456,24 @@ class TrainingRun:
             heldout = bool(self.heldout) and heldout_due(len(tracker.history), config.eval.heldout_every, final,
                                                           improved, config.eval.heldout_on_best)
 
+        # The evaluation arms beside this one (eval.arms): due every eval.arms_every evaluations and on the last.
+        arms = leader and bool(config.eval.arms) and (final or len(tracker.history) % config.eval.arms_every == 0)
+
         # What the leader decided, carried out on every rank.
-        sampled, joined, heldout = self.ranks.broadcast((sampled, joined, heldout))
+        sampled, joined, heldout, arms, improved_best = self.ranks.broadcast(
+            (sampled, joined, heldout, arms, leader and improved))
         if joined and not leader:
             self.cast.pool.reload()
+        # An improved best.pt joins the co-op partners too (their own folder, apart from the league's).
+        if improved_best:
+            self.maybe_partner_snapshot(self.best_path, f"best_{self.env_steps}")
         if sampled:
             self.evaluate_sampled(summary)
         self.heldout_current = heldout
         if heldout:
             self.evaluate_heldout()
+        if arms:
+            self.evaluate_arms(summary)
 
         self.apply_holds()
         if leader:
@@ -1466,7 +1536,7 @@ class TrainingRun:
         result = self._evaluate_share(self._acting(False), config.eval.episodes, config.eval.seed,
                                       opponents=self.opponents, arenas=self.arena_names,
                                       action_names=self.action_names)
-        if self.cast is not None:
+        if self.cast is not None or self.partners is not None:
             self._reset_far_side()
         if not self.ranks.leader:
             return
@@ -1489,7 +1559,7 @@ class TrainingRun:
         for name, (pin, episodes) in self.heldout.items():
             result = self._evaluate_share(self.learner_actions(), episodes, self.config.eval.seed + HELDOUT_SEED_OFFSET,
                                           arenas=self.arena_names, action_names=self.action_names, arena=pin)
-            if self.cast is not None:
+            if self.cast is not None or self.partners is not None:
                 self._reset_far_side()
             if not self.ranks.leader:
                 continue
@@ -1500,6 +1570,61 @@ class TrainingRun:
                               if isinstance(summary.get(column), (int, float)))
             print(f"Held out {name}: score {result.score:.4g} +/- {result.stderr:.2g} over {result.episodes} "
                   f"episodes in {result.seconds:.0f} s" + (f"; {shown}" if shown else ""), flush=True)
+
+    def evaluate_arms(self, plain: dict | None) -> None:
+        """eval.arms: the evaluation's own seeds played again beside the plain "all bots" one -- "with_human", the
+        sim's human stand-in in one seat of every party, and "with_partners", the fixed co-op partner set in some -- and
+        reported apart as policy <arm> in eval.csv and eval.jsonl, with the gap to the plain one. A reading only:
+        neither the tracker, the controller, the league nor the partners' pool sees it."""
+        config = self.config
+        for arm, episodes in config.eval.arms.items():
+            if episodes <= 0:
+                continue
+            choose, options = self.learner_actions(), {}
+            arm_partners = None
+            if arm == "with_human":
+                options["stand_in"] = True
+            elif arm == "with_partners":
+                arm_partners = self.eval_partners()
+                if arm_partners is None:
+                    continue
+                choose, options["excluded"] = with_partners_chooser(choose, arm_partners)
+            result = self._evaluate_share(choose, episodes, config.eval.seed, arenas=self.arena_names,
+                                          action_names=self.action_names, **options)
+            if self.cast is not None or self.partners is not None:
+                self._reset_far_side()
+            if not self.ranks.leader:
+                continue
+            result.policy = arm
+            columns = tuple(dict.fromkeys((*self.report, *self.progress.arm_columns(arm))))
+            summary = result.summary(columns, self.phases)
+            self.eval_log.write(self.update, self.env_steps, result, summary, self.tracker)
+            self.progress.arm_evaluated(arm, summary)
+            self.progress.write("training", self.update, self.env_steps)
+            shown = ", ".join(
+                f"{column} {summary[column]:.3g}"
+                + (f" (all bots {plain[column]:.3g})" if isinstance((plain or {}).get(column), (int, float)) else "")
+                for column in columns if isinstance(summary.get(column), (int, float)))
+            print(f"Arm {arm}: score {result.score:.4g} +/- {result.stderr:.2g} (all bots "
+                  f"{(plain or {}).get('score', float('nan')):.4g}) over {result.episodes} episodes in "
+                  f"{result.seconds:.0f} s" + (f"; {shown}" if shown else ""), flush=True)
+
+    def eval_partners(self) -> Partners | None:
+        """The "with_partners" arm's fixed partner set (cast.partners.eval_partners, else its stage and path members),
+        argmax, in every party, its draws seeded from the evaluation's seed and this rank; None without one."""
+        partners = self.config.cast.partners
+        if not self.partner_eval_members:
+            print("eval.arms.with_partners: cast.partners names no partner (stages, paths or eval_partners); skipped",
+                  flush=True)
+            return None
+        arm = Partners(partners, self.spec, self.stage, self.run_dir, self.trainer.rollout_device,
+                       self.partner_eval_members, seed=self.config.eval.seed * 1000 + self.ranks.rank, share=1.0,
+                       deterministic=True, snapshots=False)
+        if not arm.enabled:
+            print(f"eval.arms.with_partners: no partner to play (missing {', '.join(arm.pool.missing) or 'none'}, "
+                  f"or the stage has no party); skipped", flush=True)
+            return None
+        return arm
 
     def send_replay(self, result: EvalResult) -> None:
         """Send the sim the seeds this evaluation lost, for training resets to rebuild (protocol REPLAY)."""
@@ -1574,7 +1699,11 @@ class TrainingRun:
 
     def _reset_far_side(self) -> None:
         """Every env starts afresh (after an evaluation): the cast's members redrawn and memories gone, and the
-        exploiter's."""
+        exploiter's, and the co-op partners'."""
+        if self.partners is not None:
+            self.partners.reset_all()
+        if self.cast is None:
+            return
         self.cast.reset_all()
         if self.exploit is not None and self.exploit.active:
             self.exploit.clear(np.ones(self.spec.num_envs, dtype=bool))
@@ -1619,6 +1748,9 @@ class TrainingRun:
             if self.cast is not None and self.cast.pool is not None and (joined := self.cast.pool.reload()):
                 print(f"League: {joined} member(s) from the leader joined ({len(self.cast.pool.active())} active)",
                       flush=True)
+            if self.partners is not None and (joined := self.partners.pool.reload()):
+                print(f"Partners: {joined} member(s) from the leader joined ({len(self.partners.pool.active())} "
+                      f"active)", flush=True)
 
     def drain_update(self) -> None:
         """Finish any overlapped update, so the networks are whole: before an evaluation, a checkpoint or a restart.
@@ -1658,7 +1790,10 @@ class TrainingRun:
                 self.acting.clear(cleared)
                 if self.cast is not None:
                     self.cast.clear(cleared)
-        pipelined = len(self.env.groups) > 1 and self.cast is None
+                if self.partners is not None:
+                    self.partners.clear(cleared)
+        # A cast or partners act on whole decisions: such a run is never pipelined (half-batch is off for it).
+        pipelined = len(self.env.groups) > 1 and self.cast is None and self.partners is None
         groups = self.env.groups if pipelined else [(0, envs)]
         sent: dict[str, np.ndarray | None] = {}
 
@@ -1795,6 +1930,7 @@ class TrainingRun:
         if self.link is not None:
             self.link.steps_since += self.config.rollout_length * self.run_envs * agents
         self.maybe_league_snapshot()
+        self.maybe_partner_snapshot()
         # How far through its budget the stage is, for the arenas whose weights change over it (WeightFinal), and
         # the shaping and cost ladders' scales. Sent while the sim waits for this rollout's last ACT, as WEIGHTS is.
         if hasattr(self.env, "set_stage_progress"):
@@ -1887,7 +2023,9 @@ class TrainingRun:
         if self.cast is not None:
             cast_rows = self.cast.rows(part)
             if cast_rows.any():
-                actions = self.cast.act(part, actions, cast_rows)
+                # Its rows' look too (protocol 22): a frozen actor with a camera reads its rows' images and turns
+                # its own camera; one without holds it.
+                actions, look = self.cast.act_and_look(part, actions, cast_rows, look)
                 present = present & ~cast_rows
                 # The exploiter's episodes: the far side is its to play (animus.exploit); the league skipped them.
                 if self.exploit is not None and self.exploit.active:
@@ -1897,6 +2035,12 @@ class TrainingRun:
                         if look is not None and self.exploit.look is not None:
                             look = look.copy()
                             look[mine] = self.exploit.look[mine]
+        # A co-op partner's row (animus.partners) likewise takes its frozen actor's action and is no sample.
+        if self.partners is not None:
+            partner_rows = self.partners.rows(part)
+            if partner_rows.any():
+                actions, look = self.partners.act_and_look(part, actions, partner_rows, look)
+                present = present & ~partner_rows
         goal, goal_log_prob, goal_chosen, slow_before, slow_value, goal_slots = (
             goals if goals is not None else (None, None, None, None, None, None))
         # The obs, state and mask may be views of the sim's device buffers (protocol 15), which the sim overwrites
@@ -1966,18 +2110,24 @@ class TrainingRun:
         final_state, final_obs = part.final_state[done], part.final_obs[done]
         final_image = part.final_image[done] if getattr(part, "final_image", None) is not None else None
 
+        # A co-op partner's rows are not the policy's episodes: out of the statistics and the self-imitation scores.
+        partnered = (self.partners.ended_rows(done) if self.partners is not None
+                     else np.zeros((int(done.sum()), spec.agents_per_env), dtype=bool))
+
         # Self-imitation keeps the best of them by outcome: each ended env's mean over its seats present.
         if self.sil_score_column is not None:
             info = part.episode_info[done]
             present = (info[..., self.present_column] > 0.0 if self.present_column is not None
                        else np.ones(info.shape[:-1], dtype=bool))
+            present = present & ~partnered
             scores = (info[..., self.sil_score_column] * present).sum(axis=-1) / np.maximum(present.sum(axis=-1), 1)
             self.buffer.ended_episodes.append((self.buffer.cursor, np.flatnonzero(done) + rows.start, scores))
 
         ended = part.episode_info[done].reshape(-1, spec.episode_info_dim)
         ended_layouts = ended_layout.reshape(-1)
         present = self.present_column
-        keep = slice(None) if present is None else ended[:, present] > 0.0
+        keep = np.ones(len(ended), dtype=bool) if present is None else ended[:, present] > 0.0
+        keep &= ~partnered.reshape(-1)
         self.finished_episodes.extend(ended[keep])
         self.finished_layouts.extend(int(index) for index in ended_layouts[keep])
         if self.link is not None:
@@ -1995,6 +2145,9 @@ class TrainingRun:
         if self.cast is not None:
             self.cast.observe_ended(part, self.won_column)
             self.cast.clear(part.done)
+        if self.partners is not None:
+            self.partners.observe_ended(part, self.partner_score_column, self.present_column)
+            self.partners.clear(part.done)
         cleared = np.zeros(spec.num_envs, dtype=bool)
         cleared[rows] = done
         self.acting.clear(cleared)
@@ -2077,6 +2230,7 @@ class TrainingRun:
             "cost_scale": self.cost_scale_now,
             "frozen_layouts": len(self.frozen),
             **(self.cast.stats() if self.cast is not None else {"cast_rows": 0.0, "cast_fallback_rows": 0.0}),
+            **(self.partners.stats() if self.partners is not None else {}),
             **({"distill_coef": self.distiller.coef} if self.distiller is not None else {}),
             **(self.explore.summary() if self.explore is not None else {}),
             **(self.exploit.stats() if self.exploit is not None else {}),
@@ -2256,7 +2410,7 @@ class TrainingRun:
     def run(self) -> int:
         """The whole run; returns the process exit code."""
         self.step = self.env.reset()
-        if self.cast is not None:
+        if self.cast is not None or self.partners is not None:
             self._reset_far_side()
         self.progress.write("training", self.update, self.env_steps)
         if self.ranks.broadcast(self.evaluating and self.config.eval.at_start and not self.tracker.history):

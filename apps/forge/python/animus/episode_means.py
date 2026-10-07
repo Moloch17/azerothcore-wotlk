@@ -45,6 +45,12 @@ PER_EVENT = {
     "right_distinguish": "rung_distinguish",
     "right_switch": "rung_switch",
     "right_key": "rung_key",
+    # M4 follow (PartyFollowEncounter): the regroups over the leader's stops each follower was counted for, their time
+    # over the regroups; the rejoins after a rise at the entrance (I4) over the rises, their time over the rejoins.
+    "regroup_share": "regroup_stops",
+    "regroup_seconds": "regroups",
+    "rejoined": "rises",
+    "rejoin_seconds": "rejoins",
 }
 
 

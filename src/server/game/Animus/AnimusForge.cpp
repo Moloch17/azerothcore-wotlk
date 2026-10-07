@@ -2801,6 +2801,8 @@ bool AnimusForge::Forge::ApplyMode(ModeMsg const& mode)
         return false;
 
     bool const opponentsOnly = (mode.Flags & MODE_FLAG_SCRIPTED_OPPONENTS) != 0;
+    // The "with the human stand-in" arm: set before the evaluation's first episodes are built, cleared by training.
+    _pool->SetEvaluationStandIn(mode.Mode == 1 && (mode.Flags & MODE_FLAG_STAND_IN) != 0);
     _pool->SetEvaluation(mode.Mode == 1, mode.SeedBase, mode.Episodes, baseline, opponentsOnly, mode.FirstSeed);
 
     if (mode.Mode == 1)

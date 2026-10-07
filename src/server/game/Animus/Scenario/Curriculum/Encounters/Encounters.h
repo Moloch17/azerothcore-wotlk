@@ -616,6 +616,11 @@ namespace Animus::Curriculum
 
         InstanceEncounter(StageScenario& scenario, uint32 envs);
 
+        /// The level range a dungeon is run at: the dungeon finder's target range for its map and difficulty.
+        [[nodiscard]] static std::pair<uint32, uint32> DungeonLevels(BossRow const& row);
+        /// The world database's spawn of a row's boss (the first on its map), or null.
+        [[nodiscard]] static CreatureData const* FindSpawn(BossRow const& row);
+
         [[nodiscard]] std::vector<RewardTerm> RewardTerms() const override;
         void AddEpisodeInfo(EpisodeInfoTable& table) override;
         void ResetEpisode(Env& env) override;
@@ -861,15 +866,12 @@ namespace Animus::Curriculum
         /// The drill's pack dead with the fight over, or another creature fighting the party.
         void UpdateDrill(Env& env, EnvInstance& fight);
         void NoteDrill(uint32 rung, bool clean);
-        /// The level range a dungeon is run at: the dungeon finder's target range for its map and difficulty.
-        [[nodiscard]] static std::pair<uint32, uint32> DungeonLevels(BossRow const& row);
         void RewardWing(Env& env, uint32 seat, Player* bot, RewardLedger& ledger);
         /// Instance.WingTrace: follow the fight under way, and log what a wipe ended.
         void TraceWing(Env& env, EnvInstance& fight, bool fighting);
         void LogWipe(Env const& env, EnvInstance const& fight) const;
 
         [[nodiscard]] std::vector<BossRow const*> const& Rows(Env const& env) const;
-        [[nodiscard]] static CreatureData const* FindSpawn(BossRow const& row);
         [[nodiscard]] Creature* FindBoss(Map* map, BossRow const& row, WorldObject const* anchor) const;
         [[nodiscard]] Position EngagePoint(Env const& env, Map* map, Player* seat, Creature* boss) const;
         [[nodiscard]] float TierScale(Env const& env) const;
