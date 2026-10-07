@@ -161,6 +161,8 @@ void AnimusForge::Forge::OnStartup()
     Animus::Vision::Configure(_config.Vision);
     // The mental map's caps and persistence (perception-goals REDESIGN §3), for every seat a map block gives one.
     Animus::Vision::ConfigureMap(_config.Map);
+    // Entity memory's cap (dungeon-curriculum I2), for every seat a sight block gives one.
+    Animus::Vision::ConfigureMemory(_config.Memory);
     // The render sizes, each with its share of the draw.
     std::string renderSizes;
     float weightSum = 0.0f;

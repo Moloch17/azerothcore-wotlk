@@ -17,6 +17,7 @@
  */
 
 #include "EncoderSupport.h"
+#include "EntityActions.h"
 #include <atomic>
 #include "ObjectAccessor.h"
 #include "CharmInfo.h"
@@ -128,6 +129,22 @@ namespace Animus::Curriculum::Encoding
 
     Unit* SupportTarget(SeatView const& view)
     {
+        // A sight stage's friend is the client's own (dungeon-curriculum I1): the focus when it is a living friend,
+        // else the selection when it is one, else the seat itself -- the client's self-cast.
+        if (view.L && view.L->Has(BlockId::Sight))
+        {
+            Player* bot = view.Bot;
+            auto const friendly = [bot](Unit* unit)
+            {
+                return unit && unit->IsInWorld() && unit->GetMap() == bot->GetMap() && unit->IsAlive()
+                    && bot->IsFriendlyTo(unit);
+            };
+            if (Unit* focus = view.Focus ? UnitThrough(*bot, *view.Focus) : nullptr; friendly(focus))
+                return focus;
+            if (friendly(view.Target))
+                return view.Target;
+            return bot;
+        }
         if (!view.L || !view.L->Has(BlockId::Support))
             return view.Bot;
 
@@ -416,12 +433,29 @@ namespace Animus::Curriculum::Encoding
         // player, then cast. A cast the core then refuses has cost the form, which is what it costs a player too.
         if (SpellInfo const* current = FormToDropFor(bot, info))
             bot->RemoveAurasDueToSpell(current->Id);
-        Spell* spell = new Spell(bot, info, TRIGGERED_NONE);
-        if (SpellCastResult const cast = spell->prepare(&targets); cast != SPELL_CAST_OK)
+        if (view.L && view.L->Has(BlockId::Sight))
         {
-            NotePressRefused(bot, info, info->IsPositive() ? friendUnit : target, uint32(cast));
-            result.RefusedCast = uint32(cast);
-            return false;
+            // A sight stage casts as the client does (dungeon-curriculum I1): CMSG_CAST_SPELL through the session's
+            // handler, which runs every check the client's cast meets; its refusal is read back.
+            EntityActions::CastOutcome const sent = EntityActions::CastThroughClient(bot, info, targets,
+                view.Port ? *view.Port : EntityActions::SessionPort());
+            if (!sent.Sent)
+            {
+                uint32 const cast = sent.Failed ? sent.Failed - 1 : uint32(SPELL_FAILED_UNKNOWN);
+                NotePressRefused(bot, info, info->IsPositive() ? friendUnit : target, cast);
+                result.RefusedCast = cast;
+                return false;
+            }
+        }
+        else
+        {
+            Spell* spell = new Spell(bot, info, TRIGGERED_NONE);
+            if (SpellCastResult const cast = spell->prepare(&targets); cast != SPELL_CAST_OK)
+            {
+                NotePressRefused(bot, info, info->IsPositive() ? friendUnit : target, uint32(cast));
+                result.RefusedCast = uint32(cast);
+                return false;
+            }
         }
 
         ++result.SpellCasts;

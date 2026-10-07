@@ -46,6 +46,12 @@ namespace Animus::Vision
     struct SeenList;
     struct FrameHits;
     class MentalMap;
+    class EntityMemory;
+}
+
+namespace Animus::Curriculum::EntityActions
+{
+    class ClientPort;
 }
 
 namespace Animus::Curriculum
@@ -336,6 +342,19 @@ namespace Animus::Curriculum
         Vision::MentalMap* Map = nullptr;
         uint8* MapRow = nullptr;
         bool MapKept = false;
+        /// **Its entity memory** (dungeon-curriculum I2, SeatState::Recall): written by the entities block from the
+        /// frame's list, read by the sight block. RecallKept: this episode's was kept from the last. Null for a view
+        /// without a sight block.
+        Vision::EntityMemory* Recall = nullptr;
+        bool RecallKept = false;
+        /// **What each of the sight block's slots named at its last observation** (SeatState::SightGuids): the raw
+        /// GUID a press on the slot acts on, 0 an empty slot; and the seat's client focus (SeatState::Focus), the
+        /// friend its beneficial spells go to. Null for a view without a sight block.
+        std::array<uint64, SIGHT_SLOTS>* SightGuids = nullptr;
+        ObjectGuid* Focus = nullptr;
+        /// Where the sight block's presses and a sight stage's casts go: null for the seat's session's handlers
+        /// (EntityActions::SessionPort); a test's recorder otherwise.
+        EntityActions::ClientPort* Port = nullptr;
         float SubmergedTime = 0.0f;                 // seconds its head has been under, 0 while it is up
         /// How much of its breath the seat has spent, 0 to 1 and past it while drowning: the core's own timer
         /// (WaterBreath.Timer, 180 s by default), run up under water and back down ten times as fast above it. 0
@@ -531,6 +550,11 @@ namespace Animus::Curriculum
         // What a world press did (WorldBlock): the life encounters read these for their rewards and columns.
         uint32 Interactions = 0;
         uint32 Wasted = 0;                          // a press that did nothing in the world
+        /// The sight block's presses (EntityActions): a selection, an assist or a focus taken, and a press refused
+        /// before it was sent or by the server's cast checks (EntityActions::Refusal, 0 none), priced as
+        /// Actions.Aimless.ActRefused.
+        uint32 Selections = 0;
+        uint8 ActRefused = 0;
         uint32 CorpsesLooted = 0;
         uint32 NodesLooted = 0;
         uint32 ItemsLooted = 0;
