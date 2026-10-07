@@ -75,6 +75,11 @@ namespace Animus::Curriculum
         /// What the seat remembers of the place: its mental map, as one egocentric heading-up crop (perception-goals
         /// REDESIGN §3; no actions). After the camera, whose frames write it.
         Map,
+        /// What the seat sees and remembers, and acting on it (dungeon-curriculum I1 and I2): the frame's visible
+        /// entities and the most relevant remembered ones, as one list, and pointer presses on it -- select, interact
+        /// or use, use an item on, assist, focus -- sent as the client sends them. After the entities block, which
+        /// writes the memory it reads.
+        Sight,
         Goal,           // which goal kinds and targets are there, and whether the goal held ended (no actions; last)
         Count
     };
@@ -218,6 +223,11 @@ namespace Animus::Curriculum
     /// features were trained, so a seeded policy reads them as it did. Not a cap: eight attackers read 2.
     constexpr float ENEMY_COUNT_SCALE = 4.0f;
     constexpr uint32 CROWD_SLOTS = 4;       // enemies past the pack's slots, observed one by one (CrowdBlock)
+    /// The sight block's list (SightBlock): the camera's visible entities (Vision::ENTITY_SLOTS) and as many of the
+    /// most relevant remembered ones not visible now; a press names a slot of it.
+    constexpr uint32 SIGHT_VISIBLE_SLOTS = 32;
+    constexpr uint32 SIGHT_RECALLED_SLOTS = 32;
+    constexpr uint32 SIGHT_SLOTS = SIGHT_VISIBLE_SLOTS + SIGHT_RECALLED_SLOTS;
     /// Positions the movement block remembers of where the seat has been (MovementTrail), one a second.
     constexpr uint32 TRAIL_SAMPLES = 8;
     constexpr uint32 STABLE_SLOTS = 4;      // a hunter's stabled beasts

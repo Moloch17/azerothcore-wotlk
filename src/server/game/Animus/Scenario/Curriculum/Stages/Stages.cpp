@@ -774,6 +774,15 @@ namespace
         // The mental map is written from the camera's frames (perception-goals REDESIGN §3), after them.
         if (stage.Has(BlockId::Map) && !stage.Has(BlockId::Vision))
             return "a mental map is written from the camera's frames: it needs the vision block";
+        // Entity memory is written from the camera's entity list, by the entities block before the sight block reads
+        // it (dungeon-curriculum I2).
+        if (stage.Has(BlockId::Sight))
+        {
+            auto const entities = std::find(stage.Blocks.begin(), stage.Blocks.end(), BlockId::Entities);
+            auto const sight = std::find(stage.Blocks.begin(), stage.Blocks.end(), BlockId::Sight);
+            if (!stage.Has(BlockId::Vision) || entities == stage.Blocks.end() || sight < entities)
+                return "the sight block reads what the camera's entity list wrote: it needs the vision block, after it";
+        }
 
         // The base only has to exist: seeding maps the base's blocks to this stage's by name (stage.json spans), so a
         // stage may drop base blocks it does not need and several stages may share a base.

@@ -6537,6 +6537,8 @@ AnimusForge.Curriculum.Actions.Aimless.TauntOffRole = 0.15
 AnimusForge.Curriculum.Actions.Aimless.TankModeOffRole = 0.04
 #   a press that failed for something the seat controls: facing, range, sight, a cast on the move, power
 AnimusForge.Curriculum.Actions.Aimless.CastFailed = 0.02
+#   a sight block press the world refused: an entity gone or out of reach, the wrong kind, no key item
+AnimusForge.Curriculum.Actions.Aimless.ActRefused = 0.02
 #   every aspect, stance, form or presence changed; every food or drink consumed
 AnimusForge.Curriculum.Actions.ModeSwitch = 0.01
 AnimusForge.Curriculum.Actions.SupplySpent = 0.02

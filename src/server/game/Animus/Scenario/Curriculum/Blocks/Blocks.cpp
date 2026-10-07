@@ -42,6 +42,7 @@
 #include "PartyBlock.h"
 #include "PetBlock.h"
 #include "PvpBlock.h"
+#include "SightBlock.h"
 #include "SupportBlock.h"
 #include "TravelBlock.h"
 #include "VisionBlock.h"
@@ -138,6 +139,7 @@ Animus::Curriculum::Block const& Animus::Curriculum::GetBlock(BlockId id)
     static VisionBlock const vision;
     static EntitiesBlock const entities;
     static MapBlock const map;
+    static SightBlock const sight;
     static GoalBlock const goal;
 
     // In BlockId order.
@@ -145,7 +147,7 @@ Animus::Curriculum::Block const& Animus::Curriculum::GetBlock(BlockId id)
     {
         &core, &move, &compass, &duel, &pack, &gauntlet, &companion, &party, &pvp, &context, &hostiles, &pet,
         &travel, &flag, &support, &order, &world, &forecast, &crowd, &hint, &death, &vision, &entities, &map,
-        &goal
+        &sight, &goal
     };
 
     return *blocks[std::size_t(id)];
