@@ -33,10 +33,12 @@ came from a failure name it.
 10. **Ladders are curriculum, not pass gates.** A ladder steps on its gate metric alone; it never waits on another
     ladder or a score plateau (`require_plateau: false`), and a ladder whose rungs are difficulty never steps back on
     the score, because a harder rung always scores lower. It raises a warning if its rung collapses instead.
+    Stage-level convergence is re-baselined at every gate-stepped rung, since each rung scores differently: the best
+    score, the plateau the learning rate anneals from and each class's convergence start over at the new rung.
     *Why:* M1 waited about 20M steps on a plateau with its gate long met; M2 was held at its easiest rung for 55M
     steps by a regression rule that read every harder rung as a failure.
 11. **A stage ends on convergence signals alone.** Step budgets are ceilings. A gate-stepped stage can converge only at
-    its top rung.
+    its top rung, and only on a plateau of that rung's own scores, never against the best of an easier one.
 12. **No stage ends at the first death.** Wipes are scored and play goes on.
 13. **Real content over synthetic arenas:** the real Stockades, Ragefire Chasm and Deadmines.
 14. **No scripted teachers, baselines or imitation.** Every behaviour is discovered by the learner; comparisons and

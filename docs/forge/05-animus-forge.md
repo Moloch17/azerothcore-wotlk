@@ -592,6 +592,15 @@ A new best score saves `best.pt`.
   slow climb hidden by noise keeps training). The plateau is when the learning rates start to anneal
   (`lr_hold_until_plateau`); it does not end the stage by itself.
 - `patience: 0` (a fast run) never plateaus: the rates stay at full and the stage trains to `total_env_steps`.
+- **A gate-stepped ladder re-baselines all of this at every rung** (`ConvergenceController.rebaseline`). Its rungs are
+  harder by design, so the score and the stage's measure fall at each step; read against the best of the easy rung they
+  judged a plateau at every step (M2, 2026-10-07: the rates annealed to 0.41 with two rungs still to learn) and could
+  call a class converged on reaching the top. At each forward step the overall tracker, the plateau (`lr_scale` back to
+  1), the best summary and every class's tracker, scores, `converged` flag, score, margin and re-entries start over;
+  KL, entropy, rung and league windows, which hold no score, are kept. Until its last rung a gate-stepped fade
+  allows neither a plateau nor a converged class. A checkpoint carries the rung it was last re-baselined at
+  (`baselined`); one saved before that, above rung 0, is dropped the same way on resume. Plateau-stepped ladders (M1,
+  the cost ladders) are untouched.
 
 ### The convergence rule (`stage.py`)
 
