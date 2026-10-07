@@ -228,6 +228,9 @@ void Animus::Curriculum::PartyFollowEncounter::BeforeLevel(Env& env)
         }
     data.DungeonDifficulty = 0;
     data.RaidDifficulty = 0;
+    // One faction's races for the whole party, the leader too (BuildSeat honours EpisodeTeam): a party of both would
+    // read each other as hostile players in the camera and the entities block.
+    data.EpisodeTeam = uint8(urand(TEAM_ALLIANCE, TEAM_HORDE)) + 1;
     if (AreaTriggerTeleport const* entrance = sObjectMgr->GetMapEntranceTrigger(mapId))
     {
         data.EpisodeSpawn.Relocate(entrance->target_X, entrance->target_Y, entrance->target_Z,
@@ -261,10 +264,7 @@ bool Animus::Curriculum::PartyFollowEncounter::Build(Env& env, Map* map, uint8 l
     // The route: the door, then each boss's place in the dungeon's order. The bosses themselves were cleared with the
     // rest of the instance; their places are the dungeon's way through.
     uint32 const mapId = map->GetId();
-    for (BossRow const& row : InstanceLadderRows(InstanceLadder::Dungeon))
-        if (row.MapId == mapId)
-            if (CreatureData const* spawn = InstanceEncounter::FindSpawn(row))
-                party.Stops.emplace_back(spawn->posX, spawn->posY, spawn->posZ, spawn->orientation);
+    party.Stops = RouteStops(mapId);
     if (party.Stops.empty())
     {
         LOG_ERROR("module.animus", "{}: map {} has no boss places for the party follow's route", _scenario.Name(),
@@ -285,6 +285,21 @@ bool Animus::Curriculum::PartyFollowEncounter::Build(Env& env, Map* map, uint8 l
     party.LegStuckMs = _scenario.Data(env).Seats[_scenario.OwnerAgent()].StuckMs;
     ScheduleSudden(env, party);
     return true;
+}
+
+std::vector<Position> Animus::Curriculum::PartyFollowEncounter::RouteStops(uint32 mapId)
+{
+    // The spawn table is fixed after startup, and finding a boss's spawn walks all of it: once per map.
+    std::lock_guard<std::mutex> lock(_routesLock);
+    auto const known = _routes.find(mapId);
+    if (known != _routes.end())
+        return known->second;
+    std::vector<Position>& stops = _routes[mapId];
+    for (BossRow const& row : InstanceLadderRows(InstanceLadder::Dungeon))
+        if (row.MapId == mapId)
+            if (CreatureData const* spawn = InstanceEncounter::FindSpawn(row))
+                stops.emplace_back(spawn->posX, spawn->posY, spawn->posZ, spawn->orientation);
+    return stops;
 }
 
 Player* Animus::Curriculum::PartyFollowEncounter::Leader(Env const& env) const

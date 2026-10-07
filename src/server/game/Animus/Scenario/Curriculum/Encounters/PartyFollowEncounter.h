@@ -26,6 +26,8 @@
 #include "Position.h"
 #include "RoutePlanner.h"
 #include <array>
+#include <map>
+#include <mutex>
 #include <vector>
 
 namespace Animus::Curriculum
@@ -155,6 +157,9 @@ namespace Animus::Curriculum
         };
 
         [[nodiscard]] Player* Leader(Env const& env) const;
+        /// The dungeon's route on `mapId`: each boss's place (InstanceBosses' Dungeon rows, the world database's
+        /// spawns), in the dungeon's order, found once per map.
+        [[nodiscard]] std::vector<Position> RouteStops(uint32 mapId);
         /// Yards from seat `seat` to the party: to the leader while it is alive, else to the living others' centroid;
         /// negative with nobody to be with.
         [[nodiscard]] float PartyYards(Env const& env, uint32 seat, Player const* bot) const;
@@ -167,6 +172,8 @@ namespace Animus::Curriculum
         void RespawnFollowers(Env& env, EnvParty& party);
 
         std::vector<EnvParty> _envs;
+        std::mutex _routesLock;
+        std::map<uint32, std::vector<Position>> _routes;
     };
 }
 
