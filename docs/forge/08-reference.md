@@ -31,7 +31,7 @@ Every key can also be set from the environment: `AC_` plus the key in upper snak
 | `AnimusForge.Learner.Args` | `""` | Extra arguments for every learner (`--set key=value ...`) |
 | `AnimusForge.Learner.TorchThreads` | `0` | CPU threads for the learner's torch (`--set torch_threads`); 0 = torch's default |
 | `AnimusForge.Learner.LogFile` | `""` = `<LogsDir>/animus-learner.log` | Learner output |
-| `AnimusForge.Bench.Scenario` | `"stage4_duel"` | What `forge bench` times without a name |
+| `AnimusForge.Bench.Scenario` | `""` | What `forge bench` times without a name |
 | `AnimusForge.Bench.Policy` | `"random"` | Local policy the sim-only trials play (the only one) |
 | `AnimusForge.Bench.Threads` | `"4, 8, 12, 16"` | `MapUpdate.Threads` values tried |
 | `AnimusForge.Bench.Envs` | `"64, 128, 192"` | `AnimusForge.Envs` values tried |

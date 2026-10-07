@@ -6022,8 +6022,8 @@ AnimusForge.Progress.Interval = 0
 
 #
 #    AnimusForge.Curriculum.Arena.<stage>.<arena>.MaxRung
-#        Description: Hold one arena's pack ladder at a rung instead of letting it climb, e.g.
-#                     AnimusForge.Curriculum.Arena.<stage>.hazards.MaxRung = 0 for the bottom rung.
+#        Description: Hold one arena's ladder at a rung instead of letting it climb, e.g.
+#                     AnimusForge.Curriculum.Arena.<stage>.<arena>.MaxRung = 0 for the bottom rung.
 #                     Binds training and evaluation alike. A drill uses it so the thing being drilled is
 #                     the only thing that varies; -1 lets the ladder climb to Pulls.MaxTier as usual.
 #        Default:     the stage definition's (-1 for every arena: the ladder climbs)

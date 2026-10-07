@@ -24,10 +24,8 @@ character it was handed. The (class, role) pair is still the unit everything is 
 ladder, the sampling weights and the evaluation seed spread all key on it, so a paladin's healing is scored apart
 from its tanking. Ten things do the playing; eighteen are watched.
 
-Nothing controls a seat. Team stages add a **director** -- one agent a side that calls a target, a posture, a
-rally point and whose turn the next interrupt is -- but what it emits is advice a seat reads and weighs, not a
-lever: the `Order` block has thirteen observations and no actions. A seat under a director still chooses every
-action it takes. See [4.12](04-curriculum.md#412-team-play-and-the-director).
+Nothing controls a seat: it chooses every action it takes. (The first curriculum's team stages had a director whose
+advice a seat read and weighed; it was removed with them, git tag `curriculum-v1`.)
 
 Rewards are dense because a dungeon clear is too rare a signal to learn from. They pay for damage dealt, effective
 healing, kills, interrupts, resurrections and protecting allies. They penalise damage taken, deaths and losing threat.
@@ -111,11 +109,10 @@ observation vector and action list it gets. The layout is built by placing the s
 `pack`, ...) one after another. The layout's **manifest** records everything the layout's meaning depends on. A
 model only works on a server that builds the same manifest.
 
-**Stage and arena.** A **stage** is a scenario the learner trains (`stage5_pack`). It extends an earlier stage and
-inherits that stage's trained weights. An **arena** is one situation a stage's episodes can be: a duel, a pack, a
-party, an ambush, a trip or a flag match, each drawn by weight. A drill is an arena of the stage it serves: `stage1_move`
-mixes seven terrains, `stage9_deadmines` the party, tanking and triage, and `stage21_ship`, the stage that ships, sixteen
-arenas from all five phases.
+**Stage and arena.** A **stage** is a scenario the learner trains (`combat2_packs`). It extends an earlier stage and
+inherits that stage's trained weights. An **arena** is one situation a stage's episodes can be: a hallway to cross, a
+pack to pull, a dungeon wing to clear, each drawn by weight. A drill is an arena of the stage it serves
+(`dungeon1_pulls` drills one Ragefire pack a run).
 
 **Decision.** One step of the environment, and `AnimusForge.DecisionMs` of game time (250 ms by default). For each
 decision, every env scores the last transition, resets if the episode ended, observes, receives an action per seat
