@@ -675,6 +675,10 @@ namespace Animus::Curriculum
             /// close, out of sight, a cast time pressed on the move, short of power. Offered rather than masked, so
             /// the seat learns to put each right before it presses (2026-10-04).
             float AimlessCastFailed = 0.02f;
+            /// A sight block press the world refused (dungeon-curriculum I1, EntityActions::Refusal): an entity gone or
+            /// out of reach, a thing the press does not take, no key item, a cast refused. Offered, never masked: a
+            /// press on a remembered entity is the world's to judge.
+            float AimlessActRefused = 0.02f;
             /// Every aspect, stance, form or presence changed, justified or not: a change has to be worth something.
             float ModeSwitch = 0.01f;
             /// Every food or drink consumed: a supply spent at full health is gone when it is needed.
@@ -1629,6 +1633,7 @@ namespace Animus::Curriculum
             f("Actions.Aimless.TauntOffRole", tuning.Actions.AimlessTauntOffRole);
             f("Actions.Aimless.TankModeOffRole", tuning.Actions.AimlessTankModeOffRole);
             f("Actions.Aimless.CastFailed", tuning.Actions.AimlessCastFailed);
+            f("Actions.Aimless.ActRefused", tuning.Actions.AimlessActRefused);
             f("Actions.ModeSwitch", tuning.Actions.ModeSwitch);
             f("Actions.SupplySpent", tuning.Actions.SupplySpent);
             f("Actions.ConsumeFullPct", tuning.Actions.ConsumeFullPct);

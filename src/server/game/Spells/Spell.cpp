@@ -17,6 +17,7 @@
 
 #include "Spell.h"
 #include "AnimusHooks.h"
+#include "CastWatch.h"
 #include "Forge.h"
 #include "ArenaSpectator.h"
 #include "BattlefieldMgr.h"
@@ -4680,6 +4681,8 @@ void Spell::SendCastResult(Player* caster, SpellInfo const* spellInfo, uint8 cas
     WorldPacket data(SMSG_CAST_FAILED, 1 + 4 + 1);
     WriteCastResultInfo(data, caster, spellInfo, castCount, result, customError);
 
+    // Forge: a sim seat's press that sent this cast through the handler reads the refusal back (CastWatch).
+    Animus::Movement::NoteCastFailed(caster->GetSession(), data);
     caster->SendDirectMessage(&data);
 }
 

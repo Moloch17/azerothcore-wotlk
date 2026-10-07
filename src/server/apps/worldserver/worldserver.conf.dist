@@ -5521,6 +5521,16 @@ AnimusForge.Map.KeepShare = 0.5
 
 AnimusForge.Map.AgeOffsetSeconds = 600
 
+#
+#    AnimusForge.Memory.MaxEntities
+#        Description: Entity memory (a stage with a sight block, dungeon-curriculum I2): the most
+#                     entities a seat remembers -- what each was, where and how it was last seen --
+#                     the least recently seen going first. Training's is 64; a realm may keep more.
+#                     Kept across resets with the map (AnimusForge.Map.KeepShare, AgeOffsetSeconds).
+#        Default:     64 - (1 to 1024)
+
+AnimusForge.Memory.MaxEntities = 64
+
 ###################################################################################################
 # LEARNER
 #
@@ -6550,6 +6560,8 @@ AnimusForge.Curriculum.Actions.Aimless.TauntOffRole = 0.15
 AnimusForge.Curriculum.Actions.Aimless.TankModeOffRole = 0.04
 #   a press that failed for something the seat controls: facing, range, sight, a cast on the move, power
 AnimusForge.Curriculum.Actions.Aimless.CastFailed = 0.02
+#   a sight block press the world refused: an entity gone or out of reach, the wrong kind, no key item
+AnimusForge.Curriculum.Actions.Aimless.ActRefused = 0.02
 #   every aspect, stance, form or presence changed; every food or drink consumed
 AnimusForge.Curriculum.Actions.ModeSwitch = 0.01
 AnimusForge.Curriculum.Actions.SupplySpent = 0.02
