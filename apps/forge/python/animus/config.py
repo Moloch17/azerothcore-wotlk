@@ -93,7 +93,7 @@ class EvalConfig:
     # Held-out arenas (their name -> seeded episodes), played after every evaluation and reported apart as
     # `heldout_<arena>`: content the stage never trains on (stage.json "eval_only", ArenaDefinition::EvalOnly), so a
     # policy that memorised its own route is told from one that learned. A reading, never a target: nothing about it
-    # moves best.pt, the league or convergence (peak-play W2). {} = none.
+    # moves best.pt or convergence (peak-play W2). {} = none.
     heldout: dict = field(default_factory=dict)
     # How often the held-out arenas are played: every this many evaluations, and always on the stage's last one and
     # whenever a new best.pt is saved (so best.pt always has a held-out reading beside it). A second dungeon
@@ -102,7 +102,7 @@ class EvalConfig:
     # Whether a new best.pt also plays them (it does by default, so best.pt always has a held-out reading beside it).
     # Off for a long held-out arena that is a stage's final measure only (move2_seek's 195-episode sweep).
     heldout_on_best: bool = True
-    # What an evaluation is scored on, and so what best.pt, the league's snapshots and convergence follow: "outcome",
+    # What an evaluation is scored on, and so what best.pt and convergence follow: "outcome",
     # the episode's Outcome and Cost terms before any rung's tier (the sim's score_outcome column), or "return", the
     # whole return with its shaping. Scored on the return, a stage whose shaping is turned down reads as getting
     # worse, and a ladder that steps reads as learning or collapse (peak-play plan W0).
@@ -111,7 +111,7 @@ class EvalConfig:
     # its seeded episodes, played on the evaluation's own seeds after it every `arms_every` evaluations (and on the
     # stage's last), and reported apart as policy <arm> in eval.csv / eval.jsonl, and in forge status as
     # <metric>_<arm> for any status.headline metric so named (clear_rate_with_human). A reading, never a target:
-    # nothing about an arm moves best.pt, the league or convergence.
+    # nothing about an arm moves best.pt or convergence.
     #   with_human: the "human" stand-in (the sim's StandIn.*) in one seat of every party; its row is not scored.
     #   with_partners: cast.partners' fixed set (eval_partners) in some seats of every party; their rows not scored.
     arms: dict = field(default_factory=dict)
@@ -146,7 +146,7 @@ class ConvergenceConfig:
 
     A class has converged when, over the last `window` evaluations, its score has plateaued (the margin below), its
     LR-normalised approx_kl per update has stayed under `kl`, its entropy over ln(allowed actions) has a slope within
-    `entropy_slope` (and sits above entropy_floor.fraction when one is set), and its ladder rung or league win rate
+    `entropy_slope` (and sits above entropy_floor.fraction when one is set), and its ladder rung
     has settled. The stage advances when every class the run plays has converged, or at total_env_steps.
     """
 
@@ -349,32 +349,6 @@ class ExploreConfig:
 
 
 @dataclass
-class ExploitConfig:
-    """Exploiters for the PvP stages (animus.exploit, peak-play plan W6): a second learner in the same run, seeded
-    from a league snapshot, playing the far side of `share` of the cast episodes against the main. Once it wins
-    `join_at` of them over its last `window` (at least `min_episodes`) it joins the league, tagged, drawn at
-    cast.exploiter_floor at least; a budget of `budget_env_steps` spent without that retires it. The next starts
-    `every_env_steps` after. Never in evaluation, best.pt or the main's convergence. Needs cast.opponents: league."""
-
-    enabled: bool = False
-    share: float = 0.25
-    budget_env_steps: int = 50_000_000
-    join_at: float = 0.6
-    min_episodes: int = 200
-    window: int = 200
-    every_env_steps: int = 0
-    log_every: int = 10
-
-    def __post_init__(self) -> None:
-        if not 0.0 < self.share <= 1.0:
-            raise ValueError(f"exploit.share: expected a share within (0, 1], got {self.share!r}")
-        if not 0.5 <= self.join_at <= 1.0:
-            raise ValueError(f"exploit.join_at: expected a win rate within [0.5, 1], got {self.join_at!r}")
-        if self.min_episodes < 1 or self.window < 1 or self.budget_env_steps < 1:
-            raise ValueError("exploit.min_episodes, window and budget_env_steps: expected at least 1")
-
-
-@dataclass
 class EntropyFloorConfig:
     """Keep exploration from collapsing, measured against how many actions were actually legal.
 
@@ -421,7 +395,7 @@ class PartnerConfig:
     Members are drawn per episode by how badly the party does with them: each member's party outcome (`score`, the
     live seats' mean of that episode info column) is averaged over `rate_window` episodes, normalised across the pool
     (the best member 1, the worst 0; a member not yet met counts as the worst, so it is met), and weighted
-    (1 - normalised)^2 + floor -- the co-op mirror of the league's prioritised fictitious self-play, so the partners
+    (1 - normalised)^2 + floor -- prioritised fictitious self-play weights, so the partners
     the party carries worst are met most and none is forgotten."""
 
     # Earlier stages by name, each as the policy the stage ended with ({runs_dir}/<name>/latest.pt, else its best.pt:
@@ -494,32 +468,14 @@ class PartnerConfig:
 
 @dataclass
 class CastConfig:
-    """Frozen checkpoints in the seats a script used to play (animus.cast): the far side of self-play arenas and
-    any agent the stage declares cast (stage.json `cast`). The evaluation never runs them: the far side of a seeded
-    evaluation is the learner's own."""
+    """Frozen checkpoints in the seats the stage declares cast (stage.json `cast`, animus.cast), and the co-op
+    partners (animus.partners). The evaluation never runs a cast agent: the far side of a seeded evaluation is the
+    learner's own."""
 
-    # Who plays the opponent seats in training: "" = the live policy (plain self-play); "auto" = the seed chain's
-    # parent best.pt; "league" = the parent plus this run's own snapshots (<run_dir>/league/); or a checkpoint path
-    # with {runs_dir} and {run_name} filled in.
-    opponents: str = ""
-    # The league's first member when it should not be the seed chain's parent: a stage whose parent is a PvE policy
-    # (the flag stage extends triage) names the last PvP stage's best.pt here, with {runs_dir} filled in.
-    parent: str = ""
-    opponent_share: float = 0.5  # share of self-play episodes whose far side is cast, drawn per env at episode start
     # stage.json `cast` entries by name -> checkpoint path, e.g. {owner: "{runs_dir}/stage5_pack/best.pt"}.
     agents: dict = field(default_factory=dict)
-    deterministic: bool = False  # training samples: an argmax opponent is one the policy learns to exploit
-    league_size: int = 8
-    snapshot_every_env_steps: int = 5_000_000  # latest.pt joins the league on this clock; best.pt on every improvement
-    rate_window: int = 200  # fights per member behind its win-rate average
-    floor: float = 0.05  # minimum draw weight, so no member is forgotten
-    retire_above: float = 0.85  # a member the live policy beats this often over a full window is retired
-    keep_newest: int = 2  # never retired or pruned
-    exploiter_floor: float = 0.15  # the least share of the draw each exploiter in the league gets (animus.exploit)
-    # League members whose frozen weights stay on the device at once (0 = all of them); the rest wait on the host
-    # (animus.cast.Residency), as cast.partners.resident_members.
-    resident_members: int = 0
-    # Co-op partners in party seats (animus.partners), apart from the league's opponents.
+    deterministic: bool = False  # training samples their actions; a cast agent need not take the argmax
+    # Co-op partners in party seats (animus.partners).
     partners: PartnerConfig = field(default_factory=PartnerConfig)
 
     def resolved_agents(self, runs_dir: str, run_name: str) -> dict[str, str]:
@@ -708,7 +664,6 @@ class TrainConfig:
     style: StyleConfig = field(default_factory=StyleConfig)
     status: StatusConfig = field(default_factory=StatusConfig)
     explore: ExploreConfig = field(default_factory=ExploreConfig)
-    exploit: ExploitConfig = field(default_factory=ExploitConfig)
 
     def __post_init__(self) -> None:
         # Anything else would read as "best" (animus.train.init_from_checkpoint), which a typo must not do quietly.
