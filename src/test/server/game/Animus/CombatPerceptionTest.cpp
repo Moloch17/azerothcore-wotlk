@@ -653,6 +653,10 @@ TEST(CombatStagesTest, TheStagesLayouts)
     layout.Blocks = c1->Blocks;
     EXPECT_EQ(Sight::Width(layout), uint32(Sight::SIGHT_FEATURES) + uint32(Combat::COMBAT_SLOT_FEATURES));
 
+    // No stage shows the party frames twice (the validation refuses PartyFrames beside the combat block).
+    for (Cu::StageDefinition const& stage : Cu::CurriculumStages())
+        EXPECT_FALSE(stage.Has(Id::PartyFrames) && stage.Has(Id::Combat)) << stage.Name;
+
     // M1 and M2: neither the combat block nor the sight list (their layouts are pinned in SightBlockTest).
     for (char const* name : { "move1_controls", "move2_seek" })
     {

@@ -951,6 +951,10 @@ namespace
             if (!stage.Has(BlockId::Vision) || entities == stage.Blocks.end() || sight < entities)
                 return "the sight block reads what the camera's entity list wrote: it needs the vision block, after it";
         }
+        // Two party-frame blocks would show the same frames twice (M4's PartyFrames, the combat block's own): until
+        // PartyFrames takes the combat block's extra party fields (G1), a stage has one or the other.
+        if (stage.Has(BlockId::PartyFrames) && stage.Has(BlockId::Combat))
+            return "the party frames are the party frames block's or the combat block's, not both";
         // The combat block's per-target columns ride on the sight list (dungeon-curriculum I3).
         if (stage.Has(BlockId::Combat))
         {
