@@ -43,7 +43,7 @@ namespace Animus::Curriculum
     {
         Core = 0,           // the character, its spells, trinkets and talents
         Move = 1,           // where it puts its feet, with no reference to a target: bearings and facing
-        /// Where the objective is: whether there is one, its bearing, its distance and the detour to it (no actions).
+        /// Where the objective is: whether there is one, its bearing and its distance, straight-line (no actions).
         /// Split from the move block (perception-goals P1): M1 carries it, M2 seek finds its objective by sight.
         Compass = 2,
         Duel = 3,           // movement, auto-attack, pets, stopping casts and forms, the opponent's position
