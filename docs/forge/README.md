@@ -1,98 +1,87 @@
-# mod-animus-forge
+# The forge: documentation map
 
-Animus Forge trains World of Warcraft 3.3.5a bots that play every class, in every build it has. It is an AzerothCore module for the
-**forge core** (the `forge` branch of [azerothcore-wotlk](https://github.com/Moloch17/azerothcore-wotlk)), a headless
-simulator that runs faster than real time, together with a Python MAPPO learner in [`python/`](python/).
+The forge is a fork of AzerothCore (branch `forge` of `Moloch17/azerothcore-wotlk`) that runs as a headless,
+faster-than-real-time simulator for training World of Warcraft 3.3.5a bots, plus a Python MAPPO learner that trains one
+policy per class through a curriculum of stages. The sim is C++ under `src/server/game/Animus`, built into the
+worldserver; the learner is Python under `apps/forge/python/animus`; `forgectl` and `forge.sh` operate it.
 
-The sim runs many environments in parallel, each its own dungeon instance, and turns every seat into a new character
-each episode. It trades observations for actions with the learner over a Unix socket, one decision at a time. The
-learner trains one policy for all ten classes through a curriculum of stages, scores it on seeded
-evaluations, decides when a stage is good enough to move on, and exports one small `.amdl` model per class.
-[mod-animus](https://github.com/Moloch17/animus) plays those models on an ordinary realm.
+These documents are written so that a person can review and refactor the whole project without an assistant. Every claim
+cites `path:line`; anything not verified is marked `UNVERIFIED`. The reference documents describe what the code does,
+not what comments say, and each ends with its observed issues.
 
-**The detail is in [the Animus manual](docs/manual/README.md).** This page is the map.
+## Start here
 
-**Operating it today:** [forgectl](forgectl.md) (the command line: cluster health, stages, builds, tests),
-[the training cluster](cluster.md) (machines, deploying, running and moving a stage),
-[the deploy gate](deploy-gate.md) (the ordered checks before a build goes to the cluster, with the tools) and
-[the principles](principles.md) (the rules every change is reviewed against, and why). They were written 2026-10-07 as
-Phase 0 of the human-operable plan; the rest of this manual is being brought up to date (several chapters still
-describe the first curriculum).
-
-## The pieces
-
-| Piece | What it does | Manual |
-|---|---|---|
-| Forge core | Fixed-tick, headless AzerothCore: no clients, no bot persistence, a simulated clock | [2](docs/manual/02-forge-core.md) |
-| The curriculum layer, `src/` | Stages, blocks, encounters, rewards, characters, env pools and bots. Was animus-lib, a separate repository; folded in here | [3](docs/manual/03-animus-lib.md), [4](docs/manual/04-curriculum.md) |
-| This module, `src/` | Plans of stages, the `forge` console commands, the lock-step bridge, the learner process, progress reports, export | [5A](docs/manual/05-animus-forge.md#part-a-the-module) |
-| The learner, `python/` | MAPPO, seeding from earlier stages, distillation, seeded evaluation, the convergence rule that ends a stage, `.amdl` export | [5B](docs/manual/05-animus-forge.md#part-b-the-learner) |
-| [mod-animus](https://github.com/Moloch17/animus) | Class companions on a stock realm | [6](docs/manual/06-animus.md) |
-
-## The curriculum
-
-One line of stages, each seeded from the one before it. Every stage trains one policy per class, covering every
-build that class has.
-
-```
-move ─ indoor ─ jump ─ dive ─ dodge ─ travel ─ flight   the feet: ground, rooms, ledges, lakebeds, fire, the mount, the air
-     ─ duel ─ pack ─ gauntlet ─ endurance                alone, against things that fight back
-     ─ pvp ─ evade ─ hide ─ stealth                      against people: self-play, then not being caught
-     ─ companion ─ party ─ tanking ─ triage              beside others, nobody commanding yet
-     ─ flag ─ warsong ─ duo_led ─ crossroads             an objective, a director, and everything at once
-```
-
-Twelve stages in a line -- movement, combat, party, dungeons -- in the order they are trained (`move1_controls` to
-`dungeon3_deadmines`), all of them the default queue. No stage has a pass gate: each ends when its convergence signals say so, and the
-queue moves on.
-
-**It starts with the feet.** The first two stages have nothing to kill in them: a seat steers itself now, and
-where it puts its feet is not something only some stages are about — so everything after them inherits legs that
-already work, rather than learning to fight and to walk at the same time.
-
-Then the kit against dummies, a duel, packs, a gauntlet of pulls and a life of quests; an owner to protect (played by
-an earlier policy), a directed party, dungeons, a group questing and the raids; and a PvP phase from self-play
-through escaping and stealth to arena teams, the flag, Warsong and a shared, contested world. It is one line rather than a tree because a branch ends in several checkpoints and
-everything a leaf teaches is discarded unless the stage exported from is downstream of it. See
-[chapter 4](docs/manual/04-curriculum.md).
-
-## Quick start (Docker)
-
-```bash
-git clone -b forge git@github.com:Moloch17/azerothcore-wotlk.git animus-forge-core
-cd animus-forge-core
-git clone git@github.com:Moloch17/animus-forge.git modules/mod-animus-forge
-./forge.sh            # build and start everything, then attach to the console (detach: Ctrl+P Ctrl+Q)
-```
-
-Everything the module needs is in `src/`; there is no library to fetch. The first start builds the images, the
-worldserver and the Python venv, so it takes a while. GPU passthrough, native builds and the settings worth reviewing first are in
-[Operations 7.1](docs/manual/07-operations.md#71-setting-up-the-training-host-docker).
-
-Then, on the worldserver console:
-
-| Command | What it does |
+| Document | What it is |
 |---|---|
-| `forge run <stage> random 256` | Play the random policy with no learner, to check that the stage builds and steps |
-| `forge fast` | The whole pipeline on an easy profile, minutes per stage, into `<OutputDir>/fast/` |
-| `forge start` | Train the curriculum stage by stage; each ends when every class has converged or at its budget, and the queue moves on |
-| `forge status` | Rates, ETAs, evaluation scores against the baseline, warnings |
-| `forge pause`, `resume`, `cancel`, `skip` | Control a run. The learner saves on cancel and skip |
-| `forge export <stage>` | Write the `.amdl` models and their manifests for mod-animus |
-| `forge bench` | Find this machine's fastest map thread and env counts |
+| [01-overview.md](01-overview.md) | what the forge is, the pieces, the twelve stages, a glossary of the core ideas |
+| [principles.md](principles.md) | the rules the project is built to, and the review checklist |
+| [reference/00-architecture.md](reference/00-architecture.md) | the whole system: processes, tick, decision loop, observation/action path, lifecycle, cluster, threading |
+| [reference/01-forge-core-delta.md](reference/01-forge-core-delta.md) | exactly how the fork differs from upstream AzerothCore, file by file, with merge risks |
 
-Every command is in [5.7](docs/manual/05-animus-forge.md#57-console-commands). Monitoring, restarts, halted stages,
-deployment and troubleshooting are in [chapter 7](docs/manual/07-operations.md). TensorBoard runs on
-http://localhost:16006.
+## Operating it
 
-## Repository
+| Document | What it is |
+|---|---|
+| [07-operations.md](07-operations.md) | first start, the console commands, running and stopping stages, run directories, troubleshooting |
+| [forgectl.md](forgectl.md) | the command line for the cluster (status, stages, builds, conf sync, tests) |
+| [cluster.md](cluster.md) | the machines, ports, how code and runs move between them |
+| [deploy-gate.md](deploy-gate.md) | the ordered checks before a build goes to the cluster |
+| [decisions/0001-control-socket.md](decisions/0001-control-socket.md) | proposal to replace console typing with a control socket |
+| [06-animus.md](06-animus.md) | the boundary with the separate mod-animus realm module (not in this tree) |
+| [02-forge-core.md](02-forge-core.md) | short pointer from the old "forge core" chapter to the delta document |
+
+## Reference (C++ sim)
+
+| Document | What it is |
+|---|---|
+| [reference/cpp-runtime.md](reference/cpp-runtime.md) | env pool, bots, bridge, console and learner-process code in depth |
+| [reference/cpp-movement.md](reference/cpp-movement.md) | the player controller and its link to the server |
+| [reference/cpp-vision.md](reference/cpp-vision.md) | the camera, mental map, entity memory, GPU renderer, evaluation videos |
+| [reference/cpp-blocks.md](reference/cpp-blocks.md) | observation/action blocks |
+| [reference/cpp-layout-character.md](reference/cpp-layout-character.md) | layouts, the seat encoder, character building (class, talents, gear) |
+| [reference/cpp-rewards-routing.md](reference/cpp-rewards-routing.md) | the reward ledger, route planning and fields |
+| [reference/cpp-encounters.md](reference/cpp-encounters.md) | encounters: seek, interact, combat, party, roles, dungeons, ladders |
+| [reference/cpp-stagescenario.md](reference/cpp-stagescenario.md) | `StageScenario` and the stage definitions |
+| [reference/cpp-tuning-keys.md](reference/cpp-tuning-keys.md) | the `AnimusForge.Curriculum.*` tuning values |
+
+## Reference (Python learner, data, tests)
+
+| Document | What it is |
+|---|---|
+| [reference/py-learner.md](reference/py-learner.md) | training loop, evaluation, convergence, seeding, export, run files |
+| [reference/py-mappo.md](reference/py-mappo.md) | networks, trainer, buffer |
+| [reference/py-human-and-misc.md](reference/py-human-and-misc.md) | the human-capture tools and smaller modules |
+| [reference/protocol.md](reference/protocol.md) | the wire protocol, version 25 |
+| [reference/file-formats.md](reference/file-formats.md) | `.amdl`, `stage.json`, manifests, run files |
+| [reference/metrics.md](reference/metrics.md) | metric and episode-info column names |
+| [reference/config-keys.md](reference/config-keys.md) | every `Forge.*` and `AnimusForge.*` key |
+| [reference/config-yaml.md](reference/config-yaml.md) | the learner's per-stage yaml |
+| [reference/tests.md](reference/tests.md) | what is tested where, and what is not |
+| [reference/tools-and-ops.md](reference/tools-and-ops.md) | `apps/forge/tools`, forgectl internals, scripts |
+| [reference/stages.md](reference/stages.md) | the twelve stages, one section each |
+| [reference/known-issues.md](reference/known-issues.md) | the collected list of bugs, debts and dead ends |
+| [reference/glossary.md](reference/glossary.md) | terms |
+
+## Old chapters (stale, being replaced)
+
+These describe the first curriculum (deleted 2026-10-07, git tags `curriculum-v1` and `pre-cleanup-2026-10-07`) and the
+period when the sim was a separate module. They are kept until the reference documents above replace them; do not
+trust them over the code.
+
+[03-animus-lib.md](03-animus-lib.md), [04-curriculum.md](04-curriculum.md), [05-animus-forge.md](05-animus-forge.md),
+[08-reference.md](08-reference.md).
+
+## Repository layout (verified 2026-10-07)
 
 | Path | Contents |
 |---|---|
-| `src/` | The module (C++, namespace `AnimusForge`) |
-| `python/animus/` | The learner package, with one config per stage in `python/configs/` and its tests in `python/tests/` |
-| `conf/mod_animus_forge.conf.dist` | Every `AnimusForge.*` key, documented. [8.1](docs/manual/08-reference.md#81-configuration-keys) lists them |
-| `docs/manual/` | The Animus manual |
-
-Settings come from config files only (`AnimusForge.*` keys, or `AC_ANIMUS_FORGE_*` in the environment), never from
-worldserver flags. Training output goes to `AnimusForge.OutputDir` (`/azerothcore/var/animus-forge` in Docker).
+| `src/server/apps/worldserver/ForgeMain.cpp` | the only `main()` |
+| `src/server/game/Forge/` | `ForgeCore` (playtest flag, `HasClients`, tick override) |
+| `src/server/game/Animus/` | the sim: env pool, bots, bridge, scenarios, blocks, encounters, movement, vision, GPU |
+| `src/server/scripts/Commands/cs_forge.cpp` | the `forge` console commands |
+| `src/test/server/game/Animus/` | the sim's unit tests (GTest) |
+| `apps/forge/python/` | the learner (`animus/`), per-stage yaml (`configs/`), tests |
+| `apps/forge/forgectl/`, `./forgectl` | the cluster command line |
+| `apps/forge/tools/`, `apps/forge/patches/` | helper scripts, obsolete patches for the realm module |
+| `apps/forge/cluster.toml` | the machines |
+| `forge.sh`, `docker-compose*.yml`, `apps/docker/forge-worldserver.sh` | running it in containers |
