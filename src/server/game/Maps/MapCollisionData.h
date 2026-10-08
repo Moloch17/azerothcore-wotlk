@@ -50,6 +50,11 @@ public:
     /// when the segment meets none (the bots' camera, nothing else).
     bool GetSurfaceHit(float x1, float y1, float z1, float x2, float y2, float z2, float& distance,
         float& normalZ) const;
+    /// Whether any solid of the tree (WMOs and M2s alike: ModelIgnoreFlags::Nothing, as GetSurfaceHit casts) lies on
+    /// the segment, stopping at the first the traversal finds. Not isInLineOfSight: that one is gated by the LOS
+    /// config and the disable table, and would disagree with the camera's pixels (the bots' entity sensor, nothing
+    /// else).
+    bool AnyHit(float x1, float y1, float z1, float x2, float y2, float z2) const;
     bool GetAreaAndLiquidData(float x, float y, float z, Optional<uint8> reqLiquidType, VMAP::AreaAndLiquidData& data) const;
 protected:
     // _staticTree is a shared_ptr as it will point to a parent maps static tree (if exists) to save on memory
@@ -65,6 +70,9 @@ public:
     /// game object model hit.
     bool GetSurfaceHit(uint32 phasemask, float x1, float y1, float z1, float x2, float y2, float z2, float& distance,
         float& normalZ, GameObjectModel const** model = nullptr) const;
+    /// StaticVMapCollisionData::AnyHit's, for the game objects of `phasemask` (DynamicMapTree::isInLineOfSight, any
+    /// hit, ModelIgnoreFlags::Nothing): whether any enabled collision model lies on the segment.
+    bool AnyHit(uint32 phasemask, float x1, float y1, float z1, float x2, float y2, float z2) const;
 };
 
 class MMapData

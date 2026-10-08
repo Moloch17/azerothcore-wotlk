@@ -20,6 +20,7 @@
 #include "DisableMgr.h"
 #include "MapCollisionData.h"
 #include "MapTree.h"
+#include "ModelIgnoreFlags.h"
 #include "ModelInstance.h"
 #include "VMapFactory.h"
 #include "VMapMgr2.h"
@@ -166,6 +167,19 @@ bool StaticVMapCollisionData::GetSurfaceHit(float x1, float y1, float z1, float 
     return true;
 }
 
+bool StaticVMapCollisionData::AnyHit(float x1, float y1, float z1, float x2, float y2, float z2) const
+{
+    if (!_staticTree)
+        return false;
+    G3D::Vector3 const pos1 = VMAP::VMapMgr2::convertPositionToInternalRep(x1, y1, z1);
+    G3D::Vector3 const pos2 = VMAP::VMapMgr2::convertPositionToInternalRep(x2, y2, z2);
+    float const length = (pos2 - pos1).magnitude();
+    if (!(length > 1e-6f) || !std::isfinite(length))
+        return false;
+    // StaticMapTree::isInLineOfSight is the first-hit traversal with no gating of its own.
+    return !_staticTree->isInLineOfSight(pos1, pos2, VMAP::ModelIgnoreFlags::Nothing);
+}
+
 float StaticVMapCollisionData::getHeight(float x, float y, float z, float maxSearchDist) const
 {
 #if defined(ENABLE_VMAP_CHECKS)
@@ -244,6 +258,17 @@ bool DynamicVMapCollisionData::GetSurfaceHit(uint32 phasemask, float x1, float y
     distance = reach;
     normalZ = FacingNormalZ(normal, dir);
     return true;
+}
+
+bool DynamicVMapCollisionData::AnyHit(uint32 phasemask, float x1, float y1, float z1, float x2, float y2,
+    float z2) const
+{
+    G3D::Vector3 const startPos(x1, y1, z1);
+    G3D::Vector3 const endPos(x2, y2, z2);
+    float const length = (endPos - startPos).magnitude();
+    if (!(length > 1e-6f) || !std::isfinite(length))
+        return false;
+    return !DynamicMapTree::isInLineOfSight(x1, y1, z1, x2, y2, z2, phasemask, VMAP::ModelIgnoreFlags::Nothing);
 }
 
 namespace
