@@ -1,7 +1,7 @@
 # The MAPPO package: overview, build, parameters, shapes
 
 Purpose and scope. This is the entry document for `apps/forge/python/animus/mappo/`: the actor and critic networks, the
-rollout buffer, the MAPPO trainer, self-imitation and the value normaliser. It says how the networks are built from a
+rollout buffer, the MAPPO trainer and the value normaliser. It says how the networks are built from a
 `stage.json`, lists every state-dict key of the live M2 stage and reconciles the counts (actor 153, critic 80), derives
 the tensor shapes at every boundary, and tabulates every switchable feature. The detail is split:
 
@@ -10,7 +10,7 @@ the tensor shapes at every boundary, and tabulates every switchable feature. The
 | this file (`py-mappo.md`) | map table, build from stage.json, parameter inventory, shape chains, feature switches, issues |
 | [py-mappo-networks.md](py-mappo-networks.md) | every class of `mappo/networks.py` |
 | [py-mappo-trainer.md](py-mappo-trainer.md) | `MappoConfig`, rollout path, graphs, the update, the slow goal update, save/load |
-| [py-mappo-buffer.md](py-mappo-buffer.md) | `buffer.py` (storage, GAE variants), `sil.py`, `valuenorm.py` |
+| [py-mappo-buffer.md](py-mappo-buffer.md) | `buffer.py` (storage, GAE variants), `valuenorm.py` |
 | [py-human-and-misc.md](py-human-and-misc.md) | `animus/human/*` and the remaining top-level modules |
 
 Related: [00-architecture.md](00-architecture.md), [py-learner.md](py-learner.md) (train.py, stage.py, config.py),
@@ -31,7 +31,6 @@ golden file `apps/forge/python/tests/golden/learner_update.json`.
 | `apps/forge/python/animus/mappo/networks.py` | 2382 | all network classes, the stage.json readers (`vision_of`, `seat_sets_of`), image/map decoders, sampling helpers |
 | `apps/forge/python/animus/mappo/trainer.py` | 2053 | `MappoConfig`, `MappoTrainer` (rollout path, CUDA/HIP graphs, PPO update, slow goal update, checkpoint state) |
 | `apps/forge/python/animus/mappo/buffer.py` | 398 | `RolloutBuffer`, GAE, foresight targets, span GAE |
-| `apps/forge/python/animus/mappo/sil.py` | 110 | self-imitation replay (`SelfImitation`) and its two loss functions |
 | `apps/forge/python/animus/mappo/valuenorm.py` | 46 | `ValueNorm`, the running return normaliser |
 
 ## What the package is, in one paragraph
@@ -66,7 +65,7 @@ Call chain (`train.py:502-531`, also used by `tools/resume_check.py` and `tests/
    - `LayoutActor(...)` (`networks.py:1971`) with `hidden`, foresight, recurrent size, goal kinds/targets,
      slow size, foresight feedback, lookahead, slots, seat sets, attention and `vision`;
    - `LayoutCritic(...)` (`networks.py:2262`), given the actor's `VisionEncoder` so the critic reads it by reference;
-   - `SelfImitation` if `sil_coef > 0`, `ValueNorm` if `use_value_norm`;
+   - `ValueNorm` if `use_value_norm`;
    - optimizers (`reset_optimizers`, `trainer.py:740`);
    - **rollout copies**: `copy.deepcopy((actor, critic))` moved to `rollout_device`, a `ValueNorm` copy, and the list
      of (trained tensor, rollout tensor) pairs for in-place sync (`_pair_tensors`, `trainer.py:703`).
@@ -249,7 +248,6 @@ Config keys are `MappoConfig` fields (`trainer.py:41`) unless stated. "Live yaml
 |---|---|---|---|
 | Seat sets (`EntitySets`) | `mappo.seat_sets` (false); `mappo.entity_attention` (false) | false, set explicitly in `move1_controls.yaml:57` and `combat1_fight.yaml:53`; every other stage inherits it. Never on. | `EntitySets` and `_attach_entity_sets`; pointer heads for slot-naming actions; `_graphs_off_reason` disables rollout graphs when on (`trainer.py:893`); `stage.json` `layouts.<n>.sets` is still written by the sim ([cpp-stagescenario.md](cpp-stagescenario.md)); `export` tests `test_export_seat_sets.py` |
 | Map VIN | `mappo.map_vin` (false) | false in `move2_seek.yaml:51` and `combat1_fight.yaml:91` | `MapValueIteration`, `with_map_vin`; adds `vision.map.vin.*` params; zero-initialised output so a seeded policy is unchanged |
-| Self-imitation | `sil_coef` (0), `sil_value_coef` (0.01), `sil_episodes` (16), `sil_batch` (4) | `0.0` explicitly in `group2_corridor.yaml:31`; default elsewhere. **Cannot be turned on in any live stage**: `MappoTrainer.__init__` raises if `image_bytes` and `sil_coef > 0` (`trainer.py:627`) and every live stage has a camera | `sil.py`, `trainer._sil_*`, `train.py:782` (score column, memory bound) |
 | Style reward | `style.enabled` (false), `style.dataset`, `style.reference`, ... (`config.StyleConfig`, `config.py:271`) | `style: enabled: false` in `move1_controls.yaml:208` and `combat1_fight.yaml:172` | `style.py`, `human/motion.py`; the realism columns work with `style.reference` alone |
 | Go-Explore | `explore.enabled` (false), `share`, `table_size`, `max_cells`, `depth_weight` (`config.ExploreConfig`, `config.py:321`) | `true`, `share 0.5` in `dungeon2_ragefire.yaml:35`; inherited by `dungeon3_deadmines` (no `explore` key there, checked); `false` in `group2_corridor.yaml:36`, inherited by `dungeon1_pulls` | `explore.py`, `ForgeEnv.set_explore_starts`, the wing episode-info columns |
 | Rank sync | `rank_sync` ("gradients"), `weight_sync_every` (1) | not in any yaml. Injected by the worldserver: `LearnerProcess.cpp:138` passes `mappo.rank_sync=` the config's `DistSync` or "weights". The live cluster value is UNVERIFIED (per-machine conf, `ForgeConfig.h:212`) | `parallel.py` ("gradients", "weights"), `async_sync.py` ("async") |
@@ -285,9 +283,6 @@ block (`trainer.py:620`).
 9. `fixtures/seek_spec.json` is protocol 24 and `tiny_case` hardcodes `version=24` (`test_golden_update.py:79`) while
    `PROTOCOL_VERSION` is 25 (`protocol.py:14`). UNVERIFIED whether protocol 25 changed the SPEC layout the fixture
    mirrors; see [protocol.md](protocol.md).
-10. `SelfImitation` (and the SIL branch of the update) is unreachable on live stages (feature table above); the
-    `MappoConfig` comment "on in the wing stages" (`trainer.py:147`) is stale, and `group2_corridor.yaml:31` writes
-    `sil_coef: 0.0` as if it were a decision.
 11. The module docstring of `networks.py` (`:1-19`) says an adapter + trunk + head of one layout "is a plain MLP too
     (see
     animus.export)"; with the camera and the GRU this is no longer true, and `export.py:440-449` refuses a camera

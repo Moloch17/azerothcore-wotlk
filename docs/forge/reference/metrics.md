@@ -281,7 +281,7 @@ Per-class convergence signals (stage.py, `ClassState.missing`): `score` (plateau
 Listed in file-formats.md ("metrics.csv"). The measures the sim and operators read: `env_steps_per_sec`, `reward_per_decision`, `entropy` (against `allowed_actions`: the mean legal actions per decision), `value_loss`, `policy_loss`, `approx_kl`
 (joint) and `approx_kl_move` (movement part), `clip_frac`, `explained_variance`, `actor/critic_grad_norm`, `lr_scale`, `shaping_scale` and `cost_scale` (current ladder scales), `ladder_collapsed` (the fade's rung while its gate has collapsed, else -1),
 `ladder_stalled` (the rung whose gate metric has sat flat, else -1), `frozen_layouts`, the partner/stand-in counters (`partner_rows`, `stand_in_episodes`, `stand_in_unfielded`), `look_*` (look entropy and shares of turning/pitching/zooming and the zoom
-commands), goal-head and foresight stats, optional style and self-imitation stats.
+commands), goal-head and foresight stats, optional style stats.
 `approx_kl` handling: a stall warning prints when `approx_kl / lr_scale` stays under 0.0015 for 10 updates (train.py:STALL_KL, never acts).
 
 ## 7. progress.json status measures

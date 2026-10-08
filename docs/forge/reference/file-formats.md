@@ -140,8 +140,8 @@ Columns are fixed at start (train.py:785-855): `update, env_steps, env_steps_per
 actor_grad_norm, critic_grad_norm, epochs_run, allowed_actions, approx_kl_move, epochs_done, minibatches_done, lr_scale, shaping_scale, cost_scale,
 ladder_collapsed, ladder_stalled, frozen_layouts, cast_rows, cast_fallback_rows, partner_rows, partner_fallback_rows, partner_members,
 partner_episodes, stand_in_episodes, stand_in_unfielded, elapsed_seconds, update_compute_seconds, distill_coef, distill_kl, distill_rows`, then
-optional groups: style (`style_reward, style_scale, style_disc_human, style_disc_bot, style_gp, style_disc_loss, style_reward_<context>`), self-imitation
-(`sil_*`), explore (`explore_cells, explore_deepest`), goal head (`goal_swap_action_change, hindsight_loss, hindsight_rows, goal_entropy,
+optional groups: style (`style_reward, style_scale, style_disc_human, style_disc_bot, style_gp, style_disc_loss, style_reward_<context>`),
+explore (`explore_cells, explore_deepest`), goal head (`goal_swap_action_change, hindsight_loss, hindsight_rows, goal_entropy,
 goal_kept_share, goal_<i>_share, goal_targeted_share`), look head (`look_entropy, look_turning, look_pitching, look_zooming`, and the five
 `LOOK_COMMANDS` shares), slow goal loop (`slow_policy_loss, slow_value_loss, slow_approx_kl, goal_reached_share, lookahead_loss, lookahead_brier,
 lookahead_brier_base, lookahead_duration_error, goal_best_by_lookahead`) and foresight (`foresight_loss, forecast_health_8_error,

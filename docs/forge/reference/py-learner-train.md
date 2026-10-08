@@ -96,7 +96,7 @@ returned
    Async: leader creates `Hub`, a follower `Link`, takes the leader's counters and sets `evaluating = False`.
 10. `trainer.sync_rollout()`; `RolloutBuffer` (and a spare when `overlap_updates`); `acting_state`; the SIL note;
     the `ThreadPoolExecutor(max_workers=1)` for overlapped updates.
-11. Build the metrics `columns` (fixed list at `:806-816` plus conditional groups: style, sil, explore, goals, look,
+11. Build the metrics `columns` (fixed list at `:806-816` plus conditional groups: style, explore, goals, look,
     slow goals, foresight), `RunLogger` (leader), `EvalLog`, `ProgressWriter`, cached baseline score,
     `progress.restore_evaluation`, and column indexes for `present`, `difficulty`, `at_top_rung`. `apply_holds()`.
 
@@ -257,7 +257,7 @@ Top level: `run_name`, `runs_dir`, `layouts_dir`, `socket`, `cluster_sims`, `clu
 `rollout_length`, `log_every`, `checkpoint_every`, `checkpoint_env_steps`, `keep_checkpoints`, `overlap_updates`,
 `train_device`, `rollout_device`, `torch_threads`, `init_from`, `seed_from`, `merge_from`, `finetune_from`, and the
 sections `mappo` (rank_sync, recurrent_size, seat_sets, map_vin, gamma, gae_lambda, reference_decision_ms,
-foresight_*, goal_*, slow_goal_*, sil_*, weight_sync_every, entropy_coef, ...), `eval`, `convergence`, `fade`, `costs`,
+foresight_*, goal_*, slow_goal_*, weight_sync_every, entropy_coef, ...), `eval`, `convergence`, `fade`, `costs`,
 `entropy_floor`, `layout_sampling`, `distill`, `cast`, `style`, `status`, `explore`. Defaults:
 [py-learner-config.md](py-learner-config.md).
 

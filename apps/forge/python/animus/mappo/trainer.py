@@ -13,7 +13,6 @@ from torch import nn
 
 from ..device import host
 from ..parallel import Ranks
-from .sil import SelfImitation, sil_policy_loss, sil_value_loss
 from .buffer import RolloutBuffer
 from .networks import (LayoutActor, LayoutCritic, SharedInputDense, _carry_sequence, _per_layout, load_actor_state,
                        per_layout, per_layout_host, sample_logits, skip_distribution_checks, goal_pair,
@@ -141,14 +140,6 @@ class MappoConfig:
     # relabelled goal was never the behaviour's, so the ratio would mean nothing). Needs goal_slots > 1 (the goal
     # block's achieved columns).
     hindsight_coef: float = 0.0
-    # **Self-imitation** (Oh et al. 2018, peak-play W5; animus.mappo.sil): the sil_episodes best episodes by outcome
-    # score kept (their tails in the rollout each ended in), sil_batch of them replayed every minibatch, and
-    # sil_coef * max(R - V, 0) * -log pi(a|s) added to the actor's loss, sil_value_coef * max(R - V, 0)^2 / 2 to the
-    # critic's. 0 is off (the default); on in the wing stages.
-    sil_coef: float = 0.0
-    sil_value_coef: float = 0.01
-    sil_episodes: int = 16
-    sil_batch: int = 4
     # **Seat sets** (peak-play W4): every seat layout's entities -- enemies, teammates, friends, the crowd -- read as
     # sets through encoders shared by every slot and class, and the actions that name a slot scored by its encoding
     # (EntitySets; stage.json layouts.<name>.sets). Off: the networks are exactly as before. Turning it on makes the
@@ -624,8 +615,6 @@ class MappoTrainer:
         self.image_bytes = vision_image_bytes(vision)
         # The free look's heads (protocol 22, vision_look_heads): () without them, and no look head.
         self.look_heads = vision_look_heads(vision)
-        if self.image_bytes and config.sil_coef > 0.0:
-            raise ValueError("mappo.sil_coef with a camera: self-imitation keeps no images yet (camera-vision)")
         # Data-parallel learners (animus.parallel.Ranks): gradients and statistics reduced across them; alone, none.
         self.ranks = ranks if ranks is not None else Ranks()
         self.state_dim = state_dim
@@ -668,10 +657,6 @@ class MappoTrainer:
                                    self.recurrent_size, self.goal_targets,
                                    self.goal_slots, self.seat_sets, config.entity_attention,
                                    self.vision, self.actor.vision).to(self.train_device)
-        # Self-imitation's replay of the best episodes (sil_coef > 0), and the per-decision discount its returns use
-        # (the run's own, set by animus.train; mappo.gamma until then).
-        self.sil = SelfImitation(config.sil_episodes) if config.sil_coef > 0.0 else None
-        self.sil_gamma = config.gamma
         self.value_norm = (ValueNorm(beta=config.value_norm_beta).to(self.train_device)
                            if config.use_value_norm else None)
 
@@ -1502,47 +1487,6 @@ class MappoTrainer:
                              "memories")
         return self._update_recurrent(buffer, auxiliary, sync)
 
-    # ------------------------------------------------------------------ self-imitation
-
-    def _sil_batch(self):
-        """sil_batch of the kept tails, on the train device ((host, data)), or None with none kept."""
-        host = self.sil.batch(self.config.sil_batch)
-        if host is None:
-            return None
-        return host, {name: torch.as_tensor(value, device=self.train_device) for name, value in host.items()}
-
-    def _sil_inputs(self, host: dict, data: dict):
-        steps, envs, agents = data["actions"].shape
-        rows = envs * agents
-        obs = data["obs"].reshape(-1, data["obs"].shape[-1])
-        layout = data["layout"].reshape(-1)
-        goal = data["goal"].reshape(-1) if self.goal_count else None
-        groups = per_layout_host(host["layout"], len(self.layouts), self.train_device)
-        # A tail is one episode, from the memory its first decision was taken with: nothing is cleared on the way.
-        dones = torch.zeros((steps, rows), dtype=torch.bool)
-        return steps, envs, agents, rows, obs, layout, goal, groups, dones
-
-    def _sil_log_probs(self, host: dict, data: dict) -> tuple[torch.Tensor, torch.Tensor]:
-        """The actor's log probability of each kept decision [L, n, A], and which are samples of the policy."""
-        steps, envs, agents, rows, obs, layout, goal, groups, dones = self._sil_inputs(host, data)
-        encoded = self.actor.encode(obs, layout, groups).reshape(steps, rows, -1)
-        carried = self.actor.carry(encoded, data["memory"].reshape(rows, -1), dones)
-        features = carried.reshape(-1, carried.shape[-1])
-        dist = self.actor.action_distribution(features, layout, data["mask"].reshape(-1, data["mask"].shape[-1]),
-                                              goal, groups, obs)
-        log_probs = dist.log_prob(data["actions"].reshape(-1)).reshape(steps, envs, agents)
-        counted = data["samples"].to(torch.float32)
-        return log_probs, counted
-
-    def _sil_values(self, host: dict, data: dict) -> torch.Tensor:
-        """The critic's value of each kept decision [L, n, A], on its own (normalised) scale."""
-        steps, envs, agents, rows, obs, layout, goal, groups, dones = self._sil_inputs(host, data)
-        state = (data["state"][:, :, None, :].expand(steps, envs, agents, data["state"].shape[-1])
-                 .reshape(-1, data["state"].shape[-1]))
-        encoded = self.critic.encode(state, obs, layout, goal, groups).reshape(steps, rows, -1)
-        carried = self.critic.carry(encoded, data["critic_memory"].reshape(rows, -1), dones)
-        return self.critic.values_of(carried).reshape(steps, -1, agents)
-
     def _normalise_advantages(self, advantages: torch.Tensor, layout: torch.Tensor) -> torch.Tensor:
         """Centre and scale the advantages, within each layout when there are enough rows of it.
 
@@ -1623,14 +1567,6 @@ class MappoTrainer:
         foresight = self.foresight_outputs > 0 and buffer.foresight >= self.foresight_outputs
         if foresight:
             stats["foresight_loss"] = 0.0
-
-        # Self-imitation keeps this rollout's best ended episodes (here, in the update's own thread, which alone
-        # touches the replay).
-        sil_stats: dict[str, float] = {}
-        if self.sil is not None:
-            sil_stats = {"sil_collected": float(self.sil.collect(buffer, self.sil_gamma)), **self.sil.stats()}
-            if self.goal_count and self.sil.tails and "goal" not in self.sil.tails[0]:
-                self.sil.tails.clear()
 
         # The host copy stays at hand: each minibatch's layout groups and GRU pieces are cut from it, so neither has to
         # be read back from the device.
@@ -1844,20 +1780,6 @@ class MappoTrainer:
                                                          + hindsight_loss.detach())
                     auxiliary_stats["hindsight_rows"] = auxiliary_stats.get("hindsight_rows", 0.0) + relabelled_rows
 
-                sil = self._sil_batch() if self.sil is not None else None
-                if sil is not None:
-                    sil_host, sil_data = sil
-                    with torch.no_grad():
-                        sil_expected = self._sil_values(sil_host, sil_data)
-                    sil_log_probs, sil_counted = self._sil_log_probs(sil_host, sil_data)
-                    sil_target = (self.value_norm.normalize(sil_data["returns"]) if self.value_norm is not None
-                                  else sil_data["returns"])
-                    sil_policy, sil_better = sil_policy_loss(sil_target, sil_expected, sil_log_probs, sil_counted)
-                    actor_loss = actor_loss + cfg.sil_coef * sil_policy
-                    auxiliary_stats["sil_policy_loss"] = (auxiliary_stats.get("sil_policy_loss", 0.0)
-                                                          + sil_policy.detach())
-                    auxiliary_stats["sil_better_share"] = auxiliary_stats.get("sil_better_share", 0.0) + sil_better
-
                 if distill_rows:
                     # Already a mean over the sequence's taught decisions (Distiller.sequence_loss divides by
                     # rows_taught), exactly as the flat path's is over a minibatch's. Both paths add it as it comes:
@@ -1908,13 +1830,6 @@ class MappoTrainer:
                 value_loss = (errors * counted).sum() / weight
 
                 critic_loss = cfg.value_coef * value_loss
-                if sil is not None:
-                    sil_predicted = self._sil_values(sil_host, sil_data)
-                    sil_value = sil_value_loss(sil_target, sil_predicted, sil_counted)
-                    critic_loss = critic_loss + cfg.sil_value_coef * sil_value
-                    auxiliary_stats["sil_value_loss"] = (auxiliary_stats.get("sil_value_loss", 0.0)
-                                                         + sil_value.detach())
-
                 self.critic_opt.zero_grad()
                 critic_loss.backward()
                 if cfg.rank_sync == "gradients":
@@ -1983,7 +1898,6 @@ class MappoTrainer:
         stats["minibatches_done"] = float(updates)
         stats.update(self._goal_stats(data))
         stats.update(self._look_stats(data))
-        stats.update(sil_stats)
         auxiliary_stats = _host_stats(auxiliary_stats)
         # The forecasts' quality: sums over every minibatch with their counts (_foresight_quality).
         for name in [n for n in auxiliary_stats if n.startswith("forecast_") and not n.endswith("_n")]:
@@ -2001,9 +1915,6 @@ class MappoTrainer:
             if relabelled > 0.0:
                 stats["hindsight_rows"] = relabelled
                 stats["hindsight_loss"] = hindsight / max(1, updates)
-        # Self-imitation: per minibatch, as the PPO terms are.
-        for name in [key for key in auxiliary_stats if key.startswith("sil_")]:
-            stats[name] = float(auxiliary_stats.pop(name)) / max(1, updates)
         stats.update({name: value / auxiliary_updates for name, value in auxiliary_stats.items()})
         # What the update itself cost, as the flat path reports it.
         # After the epochs, not before: the rollout acted through these statistics, and its stored log_probs are

@@ -321,8 +321,7 @@ Tests: `test_recurrent.py::test_critic_*`.
 - Checkpoint contents (`train.save_checkpoint`, `train.py:170`): `trainer.state_dict()` = `actor`, `critic`,
   `value_norm`,
   `actor_opt`, `critic_opt`, optional `vision_opt`; plus `config`, `spec`, `update`, `env_steps` and `extra`
-  (`style`, `explore`, controller and tracker state, `train.py:1124-1127`). Not saved: `slow_opt`, the self-imitation
-  replay, the rollout copies.
+  (`style`, `explore`, controller and tracker state, `train.py:1124-1127`). Not saved: `slow_opt`, the rollout copies.
 
 ## Observed issues
 

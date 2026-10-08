@@ -66,7 +66,7 @@ person reviewing and refactoring the forge without an assistant.
 | `py-mappo.md` | how the networks are built from stage.json; the parameter inventory; shapes |
 | `py-mappo-networks.md` | every network class |
 | `py-mappo-trainer.md` | the MAPPO trainer: losses, rollout graphs, schedules, save and load |
-| `py-mappo-buffer.md` | the rollout buffer, self-imitation, value normalisation |
+| `py-mappo-buffer.md` | the rollout buffer, value normalisation |
 | `py-human-and-misc.md` | the human-capture and parity tools; the smaller learner modules |
 | `config-keys.md` | every non-Curriculum `AnimusForge.*` key (a generated table) |
 | `config-yaml.md` | every learner yaml field and the 12 live yamls' inheritance |

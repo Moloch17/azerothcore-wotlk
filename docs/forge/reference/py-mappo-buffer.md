@@ -1,6 +1,6 @@
-# `mappo/buffer.py`, `mappo/sil.py`, `mappo/valuenorm.py`
+# `mappo/buffer.py`, `mappo/valuenorm.py`
 
-Purpose and scope. Rollout storage and advantage estimation, the self-imitation replay, and the return normaliser.
+Purpose and scope. Rollout storage and advantage estimation, and the return normaliser.
 Overview: [py-mappo.md](py-mappo.md); the consumer is [py-mappo-trainer.md](py-mappo-trainer.md).
 
 ## Map table
@@ -8,11 +8,10 @@ Overview: [py-mappo.md](py-mappo.md); the consumer is [py-mappo-trainer.md](py-m
 | Path | Lines | Role |
 |---|---|---|
 | `apps/forge/python/animus/mappo/buffer.py` | 398 | `compute_gae`, `compute_foresight`, `compute_span_gae`, `decisions_left`, `RolloutBuffer` |
-| `apps/forge/python/animus/mappo/sil.py` | 110 | `SelfImitation`, `sil_policy_loss`, `sil_value_loss` |
 | `apps/forge/python/animus/mappo/valuenorm.py` | 46 | `ValueNorm` |
 
 Tests: `test_gae.py` (hand values, truncation, termination), `slow_gae_reference.py` (a reference used by
-`test_two_clock.py`), `test_span_gae.py`, `test_two_clock.py`, `test_foresight.py`, `test_sil.py`, `test_masking.py`
+`test_two_clock.py`), `test_span_gae.py`, `test_two_clock.py`, `test_foresight.py`, `test_masking.py`
 (`test_value_norm_follows_a_drifting_return_scale`),
 `test_vision_bytes.py::test_the_rollout_buffer_keeps_the_images_as_bytes`,
 `test_mental_map.py::test_the_buffer_keeps_camera_rows_with_their_map_as_bytes`,
@@ -68,29 +67,13 @@ Methods: `add_decision` (`:214`) records a step; `add_outcome` (`:272`) records 
 (`:287`) runs GAE (always), span GAE for the slow clock (if `slow_goal` and `slow_goal` size > 0; also narrows
 `goal_chosen` to `chosen & valid`), and the foresight targets (if `foresight` and `last_foresight` given), including the
 observation targets (`obs_targets`: per target a column per layout, `ahead` decisions, `window` = "at any point");
-`sequences()` (`:371`) returns the dict the update replays; `reset()` (`:365`) zeros the cursor and creates
-`ended_episodes` (set by the rollout, `train.py:1938`, for SIL); `mean_reward()`.
+`sequences()` (`:371`) returns the dict the update replays; `reset()` (`:365`) zeros the cursor;
+`mean_reward()`.
 Two buffers alternate when updates are overlapped (`train.py:798`). Memory per step is dominated by `obs`
 (`E*A*obs_dim*4` bytes) and `image` (`E*A*54784` bytes for M2).
-Quirks: `ended_episodes` exists only after `reset()` (the SIL code uses `getattr(..., ())`); `goal_chosen` is rewritten
+Quirks: `goal_chosen` is rewritten
 inside `finish`; the line `# Kept where the sim put them when it put them on the device.` (`buffer.py:13`) is a comment
 for a constant that no longer exists.
-
-## `SelfImitation` (`sil.py:25`)
-
-Keeps the `episodes` best ended episodes by outcome score, each as its tail inside the current rollout (the decisions
-from
-the previous done to the end), with Monte Carlo returns (`_keep :49`: discounted rewards to the episode end; bootstraps
-from `final_values` if cut short, zero if terminated), the stored memories at the tail's first decision, and
-`TAIL_KEYS = obs, mask, layout, actions, samples, state` (+ `goal` if goals). `collect(buffer, gamma)` consumes
-`buffer.ended_episodes` (floor = lowest kept score once full); `batch(count)` draws `count` tails padded to the longest;
-`nbytes` bounds memory (printed at start, `train.py:793`); `stats()`. Losses (module functions): policy
-`-(gap * log pi * counted).sum()/n` with `gap = max(R - V, 0)` detached (`:99`), value `0.5 * max(R - V, 0)^2` (`:107`).
-Config: `sil_coef`, `sil_value_coef`, `sil_episodes`, `sil_batch`. RNG seeded 0, not by the run seed. **Not
-checkpointed.** **Cannot run with a camera** (tails hold no images; `trainer.py:627`), i.e. on no live stage.
-Tests: `test_sil.py` (three tests, CPU).
-Reviewer notes: the whole module (110 lines) plus `_sil_*` in the trainer is dead for the live curriculum; principle 17
-says delete rather than gate.
 
 ## `ValueNorm` (`valuenorm.py:9`)
 
@@ -109,5 +92,3 @@ of the flat vector ([py-human-and-misc.md](py-human-and-misc.md), `async_sync`).
 
 1. Stale comment at `buffer.py:13`.
 2. `compute_gae` has no handling of the `valid` mask; correctness depends on invalid rows being excluded downstream.
-3. `RolloutBuffer.ended_episodes` only exists after `reset()`.
-4. `SelfImitation` is unreachable live (see above) and unseeded by the run seed.

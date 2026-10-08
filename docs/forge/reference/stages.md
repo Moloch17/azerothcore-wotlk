@@ -155,7 +155,7 @@ The layout pin test covers all twelve (`LiveLayoutPinTest.LiveStageLayoutsAreUnc
 | `combat2_packs` | 0.999 | 2 | 3e-4 | 0.001 | 128 | |
 | `combat3_survive` | 0.999 | 2 | 3e-4 | 0.001 | 128 | |
 | `group1_roles` | 0.999 | 2 | 3e-4 | 0.001 | 128 | |
-| `group2_corridor` | 0.999 | 2 | 3e-4 | 0.001 | 128 | `sil_coef: 0.0`, `goal_entropy_final_fraction: 0.5`, `explore.enabled: false` |
+| `group2_corridor` | 0.999 | 2 | 3e-4 | 0.001 | 128 | `goal_entropy_final_fraction: 0.5`, `explore.enabled: false` |
 | `dungeon1_pulls` | 0.998 | 2 | 3e-4 | 0.001 | 128 | |
 | `dungeon2_ragefire` | 0.999 | 2 | 3e-4 | 0.001 | 128 | `explore.enabled: true, share 0.5` |
 | `dungeon3_deadmines` | 0.999 (inherited) | 2 | 3e-4 | 0.001 | 128 | |

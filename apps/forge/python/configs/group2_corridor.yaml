@@ -27,8 +27,6 @@ total_env_steps: 500000000
 mappo:
   # A corridor of four pulls takes 10-15 minutes: the longer horizon.
   gamma: 0.999
-  # Never self-imitation: it keeps no camera images.
-  sil_coef: 0.0
   # The goal head keeps exploring through the party stages (the archived stage6's lesson: its choices locked in early).
   goal_entropy_final_fraction: 0.5
 

@@ -15,7 +15,7 @@ caller is `TrainingRun` in `train.py` ([py-learner.md](py-learner.md)).
 
 Tests: `test_golden_update.py` (CPU update numbers), `test_update_stats.py` (+ `update_stats_reference.json`),
 `test_recurrent.py`, `test_masking.py`, `test_goals.py`, `test_goal_queue.py`, `test_two_clock.py`, `test_free_look.py`,
-`test_vision_encoder.py`, `test_sil.py`, `test_normalisation.py`, `test_rollout_graph.py` (GPU),
+`test_vision_encoder.py`, `test_normalisation.py`, `test_rollout_graph.py` (GPU),
 `test_rollout_graph_log.py` (CPU), `test_tick_split.py` (discounts), `test_span_gae.py`, `test_gae.py`.
 
 ## `MappoConfig` (`trainer.py:41-198`): every field, its default and who reads it
@@ -50,7 +50,6 @@ The yaml section is `mappo:` (`TrainConfig.mappo`, `config.py:657`); unknown key
 | `rank_sync`, `weight_sync_every` | "gradients", 1 | `update()` (`:1469`); also `train.py:549` (async), `async_sync.Link` |
 | `goal_count`, `goal_targets`, `goal_every_decisions`, `goal_slots` | 0, 1, 16, 1 | goal head; the goal clock `age % goal_every_decisions == 0` |
 | `hindsight_coef` | 0.0 | hindsight imitation term (needs `goal_slots > 1`) |
-| `sil_coef`, `sil_value_coef`, `sil_episodes`, `sil_batch` | 0, 0.01, 16, 4 | self-imitation (refused with a camera) |
 | `seat_sets`, `entity_attention` | False, False | `seat_sets` selects whether `trainer_inputs` builds descriptors |
 | `foresight_coef`, `foresight_horizons_seconds`, `foresight_time_scale_seconds` | 0, (5,30), 60 | foresight head and loss |
 | `foresight_obs_targets`, `foresight_feedback` | False, False | extra targets (`FORESIGHT_OBS_TARGETS`, `:203`); feedback of detached predictions |
@@ -138,7 +137,7 @@ parameters every `weight_sync_every` updates (`:1479-1490`) and syncs the rollou
 
 `_update_recurrent` (`:1603-2025`), step by step:
 
-1. Stats accumulators. If SIL is on: `sil.collect(buffer, sil_gamma)`.
+1. Stats accumulators.
 2. `host = buffer.sequences()` -> device tensors `data` (`:1637`). With hindsight, `achieved` is recomputed on the
    device
    from the observations (`_achieved_of`, `:1126`). If `chunk_length` applies, arrays are re-cut with `chunked` (`:25`).
@@ -165,10 +164,8 @@ parameters every `weight_sync_every` updates (`:1479-1490`) and syncs the rollou
 | look entropy | `- look_entropy_coef() * look_entropy` over rows with a camera (`:1787`) | `look_entropy_coef` |
 | foresight | smooth-L1 on the discounted-return horizons, squared error on the episode-left share and on the observation targets, masked by `foresight_valid` (`:1793-1799`) | `foresight_coef` |
 | hindsight | `-mean log pi(a | achieved goal)` over relabelled rows (`:1841`) | `hindsight_coef` |
-| SIL policy | `sil_coef * sil_policy_loss(...)` (`:1856`) | `sil_coef` (unreachable with a camera) |
 | distillation | `distill_loss` as returned (already a mean) (`:1865`) | `auxiliary.coef` |
 | value (critic) | `max((V - R)^2, (V_clipped - R)^2)` mean, with `V_clipped = V_old + clamp(V - V_old, +-value_clip)`, all in normalised units (`:1906-1908`) | `value_coef` |
-| SIL value | `sil_value_coef * 0.5 * mean(max(R - V, 0)^2)` (`:1914`) | `sil_value_coef` |
 
    Actor backward; `vision_grad_actor` recorded; gradients averaged across ranks (rank_sync "gradients"); clipped by
    `max_grad_norm` over `_actor_parameters()` (all actor parameters except the slow loop's and the camera's); step
@@ -184,7 +181,7 @@ Reported statistics (`stats`): `policy_loss, value_loss, entropy` (actions only)
 `goal_entropy` (if goals), `look_entropy`, `vision_grad_{norm,actor,critic}`, `foresight_loss` and
 `forecast_*` qualities, `explained_variance`, `epochs_run`, `epochs_done` (a duplicate of `epochs_run`, `:1979-1982`),
 `minibatches_done`, `goal_<k>_share`, `goal_targeted_share`, `goal_kept_share`, `goal_swap_action_change`, `look_*`
-shares, `hindsight_*`, `sil_*`, `update_compute_seconds`, `weight_sync_seconds`. Names are consumed by metrics/CSV
+shares, `hindsight_*`, `update_compute_seconds`, `weight_sync_seconds`. Names are consumed by metrics/CSV
 ([metrics.md](metrics.md)).
 
 Per-layout statistics: `layout_stats[i] = {entropy, approx_kl, rows}` per layout (action entropy only), read by
@@ -229,11 +226,6 @@ collectives line up (`:1285-1292`). It uses the fast features detached, under `n
 for features through `_encode_vision` and `actor.encode(..., vision_embedding=seen, image=image)`.
 Config keys: `slow_goal_*`, `lookahead_coef`, `goal_*`, `epochs`, `clip`, `value_coef`, `max_grad_norm`.
 
-## Self-imitation hooks (`_sil_*`, `:1507-1544`)
-
-`_sil_batch` draws `sil_batch` kept tails; `_sil_log_probs` replays the actor over a tail from its stored memory;
-`_sil_values` the critic. They do not pass images, which is why a camera is refused (`:627`). Not checkpointed.
-
 ## Checkpoint state (`:2027-2053`)
 
 `state_dict()`: `actor`, `critic`, `value_norm`, `actor_opt`, `critic_opt`, `vision_opt` (if present). **`slow_opt` is
@@ -256,7 +248,6 @@ what the failure looks like; torch raises on a group size mismatch).
 8. `reset_optimizers` also resets `layout_stats` and `frozen_layouts` (`:750-751`): it is called only from `__init__`
    (checked by grep), so a stage restart never resets Adam state in the live code even though the docstring says "after
    a restart".
-9. `MappoConfig.sil_*` comment "on in the wing stages" is stale; SIL cannot run with a camera.
 10. The CPU path of the update leaves `_masked_stats` False (`:637`) so hindsight uses picked rows there and masked
     arithmetic on CUDA: two code paths with one test for equivalence (`test_update_stats.py` runs the masked path on
     CPU through the flag).
