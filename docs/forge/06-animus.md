@@ -33,7 +33,6 @@ chapter: UNVERIFIED here.)
   only to a module checkout of that older shape. UNVERIFIED whether it applies to the current mod-animus.
 - `apps/forge/patches/amdl8-check/`: `prep.py`, `run.py`, `bench.py`, `golden.cpp` to compare that reader's logits with
   the learner's (its README).
-- `apps/forge/patches/mod-animus-movement.patch`: first line says `OBSOLETE (player-controller, 2026-10-05) ... do not apply`.
 - `forge fieldworld <all|map id> [rebake]` (`cs_forge.cpp` help) bakes layered fields "for a realm's companions
   (mod-animus)", written to `<Probe.Dir>/world`, "never read by the forge itself".
 

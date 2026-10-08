@@ -82,6 +82,6 @@ The reference documents above replace them; they remain in git history
 | `src/server/scripts/Commands/cs_forge.cpp` | the `forge` console commands |
 | `apps/forge/python/` | the learner (`animus/`), per-stage yaml (`configs/`) |
 | `apps/forge/forgectl/`, `./forgectl` | the cluster command line |
-| `apps/forge/tools/`, `apps/forge/patches/` | helper scripts, obsolete patches for the realm module |
+| `apps/forge/tools/`, `apps/forge/patches/` | helper scripts, a patch and check harness for the realm module |
 | `apps/forge/cluster.toml` | the machines |
 | `forge.sh`, `docker-compose*.yml`, `apps/docker/forge-worldserver.sh` | running it in containers |

@@ -100,6 +100,7 @@ still open.
   seat sets, the map value-iteration network, the style reward; distillation and `.amdl` export cannot run on camera policies.
 - Tools and patches: `spec_builds/generate.py` (writes to a path that does not exist), `forge_classes.py`,
   `rename_runs.py`, `mod-animus-movement.patch` (marked OBSOLETE in its first line), `apps/forge/patches/` as a whole.
+  (2026-10-08: `forge_classes.py`, `rename_runs.py`, `spec_builds/` and `mod-animus-movement.patch` were deleted.)
 - Documentation: the generators for the Stockade and Deadmines data tables live in gitignored plan folders (the tables
   cannot be regenerated); `camera-vision.GPU.md` is cited on 65 lines in 44 files and is not in the tree; `AGENTS.md`
   has no forge pointer and there is no root README; many comments name deleted stages.

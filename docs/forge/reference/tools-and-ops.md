@@ -36,13 +36,7 @@ build. Related: [config-keys.md](config-keys.md), [tests.md](tests.md) (there ar
 | `apps/forge/tools/sim_metrics.py` | 586 | extracts the metric names a stage's sim produces from the C++ |
 | `apps/forge/tools/stage_json_diff.py` | 256 | diff of two `stage.json` files |
 | `apps/forge/tools/gen_config_reference.py` | 422 | regenerates the key table of [config-keys.md](config-keys.md) |
-| `apps/forge/tools/forge_classes.py` | 247 | per-class parallel training servers (first-curriculum era) |
-| `apps/forge/tools/rename_runs.py` | 112 | moves run directories to renumbered stage names (2026-09 era) |
-| `apps/forge/tools/spec_builds/builds.py` | 302 | data: standard talent builds and glyphs |
-| `apps/forge/tools/spec_builds/generate.py` | 60 | writes `SpecBuilds.cpp` from `builds.py` |
-| `apps/forge/tools/spec_builds/validate.py` | 92 | checks builds against the client's DBC files |
 | `apps/forge/patches/mod-animus-amdl8.patch` | 840 | patch for the `mod-animus` module (model format version 8/9 reader) |
-| `apps/forge/patches/mod-animus-movement.patch` | 1585 | patch for the `mod-animus` module (player-controller movement) |
 | `apps/forge/patches/amdl8-check/{README.md,prep.py,run.py,bench.py,golden.cpp}` | 1, 44, 38, 34, 157 | harness that checks the module's model reader against the learner's golden vectors |
 | `docker-compose.yml` | 284 | services `ac-database`, `ac-worldserver`, `ac-dev-server`, stock profile services |
 | `docker-compose.cluster.yml` | 25 | host-network override for cluster machines |
@@ -129,7 +123,7 @@ From `.gitignore` (excerpt): `/conf/*` except `conf/dist`, `/modules/*` except l
   `apps/forge/probes` by `cluster-pull.sh` (`cluster-pull.sh:32-45`). Nothing in this repository pushes it; how new
   probe data is
   produced and pushed is UNVERIFIED (no tool found; `forge fieldstage` bakes it per ForgeConfig.h comment).
-- Patches: `.gitignore` ignores `*.patch`, yet the two `apps/forge/patches/*.patch` files are tracked
+- Patches: `.gitignore` ignores `*.patch`, yet the `apps/forge/patches/*.patch` file is tracked
   (`git ls-files apps/forge/patches` lists them): they were force-added; a new patch there would not be picked up by
   `git add -A`.
 
@@ -203,9 +197,6 @@ Safety column: "reads" = never writes outside stdout (or a named output); "write
 | `gen_config_reference.py` | regenerate the key table in [config-keys.md](config-keys.md) | `--check`, `--stdout` | reads conf.dist and sources; writes only between its two marker lines | writes one docs file |
 | `collect-videos.sh` | copy workers' `runs/<stage>/videos` PNGs, JSON and HTML by `ssh ... find ... \| tar` into `runs/<stage>/videos/from-<worker>/` | `[--dry-run \| --check] [--workers "u@h ..."] [--remote-dir D] [--runs-dir D] <stage>` | default workers list includes sarah (the host) and omits eli (`collect-videos.sh:23`) | `--dry-run` prints; `--check` read-only ssh; default writes the local run folder |
 | `cluster-pull.sh` | on one machine: `git pull --ff-only <origin user@host>:git/animus-forge.git forge`; clone or pull `apps/forge/probes` from `animus-probes.git` (`main`); touch `env/dist/.forge-build`; `docker compose up -d --force-recreate ac-worldserver` | `[user@host]` | modifies the checkout, probe data and containers of the machine it runs on | writes; moves an existing non-git `probes/` to `probes.before-clone` |
-| `forge_classes.py` | one training server per class, `ANIMUS_FORGE_PARALLEL` at a time, via generated compose files `env/instances/<class>.yml` | `run CLASS...`, `status`; env `ANIMUS_FORGE_INSTANCE` for `attach\|stop\|logs`, `ANIMUS_FORGE_CLASS_QUEUE` | docker compose, `var/animus-forge/<class>` | starts containers |
-| `rename_runs.py` | rename run directories from first-curriculum names to the renumbered ones | `<animus-forge dir> [--apply]` | moves directories (dry run by default) | writes with `--apply` |
-| `spec_builds/{builds,generate,validate}.py` | author the talent-build data; validate against DBC; generate `SpecBuilds.cpp` | `validate.py <dbc dir>`; `generate.py` | see Observed issues | `generate.py` writes a C++ file |
 | `patches/amdl8-check/*` | compare the in-game model reader (`mod-animus` `MlpPolicy`) to the learner's golden vectors; time a decision | `prep.py <dir>`, `run.py <dir> [Model dir]`, `bench.py <dir>` | needs `modules/mod-animus` and `var/syntax-build-animus/compile_commands.json` | writes in `<dir>` |
 
 ## forgectl code map
@@ -250,14 +241,6 @@ Config keys forgectl itself reads: none of the `AnimusForge.*` keys except `Clus
 
 ## Observed issues
 
-- `apps/forge/tools/spec_builds/generate.py:16` writes to `parents[2]/src/Scenario/Curriculum/Character`, i.e.
-  `apps/forge/src/...`, which does not exist; the real file is
-  `src/server/game/Animus/Scenario/Curriculum/Character/SpecBuilds.cpp`. `generate.py` also reads `TalentBuilder.cpp`
-  from there for the licence header. The generator is stale (module-era paths); `SpecBuilds.cpp` is now edited by hand
-  or the tool needs a path fix.
-- `forge_classes.py` and `rename_runs.py` refer to the archived first curriculum (`stage1_move` ... `stage29_*`); the
-  docstring of `forge_classes.py` cites `docs/manual/07-operations.md`; there is no `docs/manual` (only `docs/forge`).
-  They are candidates for deletion (principle 17: dead code is deleted).
 - `collect-videos.sh:23` lists sarah in its default workers although sarah is the host; with `forgectl videos` run on
   the host this copies the host's own videos onto themselves (`from-sarah/`). UNVERIFIED whether that is wanted.
 - `cluster.toml` repeats ports (7700-7702) that also live in each machine's conf; they are not read from the conf, so a

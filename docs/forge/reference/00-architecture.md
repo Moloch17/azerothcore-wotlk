@@ -458,8 +458,7 @@ The plain bools `_decisionTick` and `_applyTick` are read by map tasks without a
   run (`LearnerRanks > 1`, `DistWorld <= 1`) passes no `rank_sync` and the learner's yaml default applies. UNVERIFIED: that
   default's value.
 - `GpuVision::Renderer::Forget` has no production caller (known; deploy-gate "Before the dungeon stages").
-- Apparent stale artefact: `apps/forge/patches/mod-animus-movement.patch` is marked OBSOLETE in its first line;
-  `mod-animus-amdl8.patch` patches block files (`SupportBlock`, `HostilesBlock`, ...) that no longer exist in this tree.
+- Apparent stale artefact: `mod-animus-amdl8.patch` patches block files (`SupportBlock`, `HostilesBlock`, ...) that no longer exist in this tree.
 
 ## 11. Reviewer notes
 

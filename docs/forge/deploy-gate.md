@@ -205,7 +205,7 @@ AC_ANIMUS_FORGE_OUTPUT_DIR=/azerothcore/var/animus-forge/gate ./forge.sh --build
 
 (`forgectl build` is the same build with a plan and a wait for `ready`; R3 above is its first use. Not run in the
 session that wrote this page. `AnimusForge.*` keys can be set in a container's environment as `AC_...`
-variables (`forge_classes.py`'s docstring); if `docker-compose.yml` does not pass this one through, set
+variables (AzerothCore's config reads `AC_`-prefixed environment variables); if `docker-compose.yml` does not pass this one through, set
 `AnimusForge.OutputDir = /azerothcore/var/animus-forge/gate` in the dev machine's own `mod_animus_forge.conf`
 instead. `--build` recreates the dev machine's worldserver container: cancel anything it is training first.
 The first thing to check is that `var/animus-forge/gate/layouts/` fills and `var/animus-forge/shared/` does not change.)
