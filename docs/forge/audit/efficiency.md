@@ -512,4 +512,175 @@ With the reason, so nobody spends a week on them.
 - **`torch_threads`.** The GPU learner's CPU work is Python and copies on a few threads; `torch_threads: 4` against
   `Learner.Cpus` 16 is not where the time is.
 
+## 5. Measurement plan
+
+Ordered by how much each answer changes what to do next. Nothing here was run by this audit unless it says so; steps 2-12
+need the GPU, a build, a live sim or another machine. "Stop the plan" means `forgectl stage cancel` (a profile on the
+dev GPU while a learner trains on it is meaningless).
+
+1. **Cycle decomposition on every machine (no GPU; done for the dev host in this audit).** Parse each learner's
+   `update N | steps S | R sps | rollout 3.20s compute 4.90s` line and its metrics.csv: wall per update from
+   `elapsed_seconds`, rollout = rows / `env_steps_per_sec`, wait = `update_seconds`. Script A in the appendix reproduces
+   the table in U1 (residual 0.0 s). For the workers, `ssh <machine> 'grep -a "^update" ~/animus-forge/env/dist/logs/animus-learner.log | tail -200'`
+   and compare `rollout` with `compute`. **Confirms U1** if compute exceeds rollout; **sizes epochs per machine**.
+2. **Profile one live-shaped update on the GPU (U2, U3, U4, U5, U6, U7).** Stop the plan. In the dev container with the
+   GPU, make a layouts directory holding `layouts/move2_seek/*_seek.json` plus `runs/move2_seek/stage.json`, then run
+   script B (the profile wrapper in the appendix, CUDA activity on) with 192 envs, `overlap_updates=false`,
+   `mappo.vision_chunk_rows=2048`, 3 updates. Read: (a) total CUDA time against `update_compute_seconds`; (b) kernels
+   matching `embedding_dense_backward`, `radix_sort`, `index_put`, `scatter` and their sum; (c) elementwise
+   (`copy`, `cat`, `where`, `permute`) against GEMM time; (d) `Memcpy HtoD` at the start; (e) distinct matmul shapes with
+   `record_shapes=True`; (f) the wrapper timings for `_encode_vision`/`_backward_vision` with `torch.cuda.synchronize()`.
+   **Confirms U2** if the embedding-backward family is at least 10% of the update, **U5** if elementwise exceeds GEMM,
+   **U6** if the first events are a 1.7 GB host-to-device copy of more than 0.15 s, **U7** if several hundred distinct
+   shapes appear. This also settles the open 7.6 s: what the update spends beyond the encoders.
+3. **The chunk and epoch matrix (U1, U3a).** Same script as step 2 without the profiler:
+   `python -m animus.bench_learner --config configs/move2_seek.yaml --spec spec.json --layouts <dir> --envs 192 --sim-ms 0 --updates 4 --set overlap_updates=false --set mappo.vision_chunk_rows=0|2048|6144 --set mappo.epochs=1|2`.
+   Its last lines give `update work` seconds and `peak device memory`. **Confirms U3a** if `6144` fits and is about 35-40%
+   faster on the encoder part; **U1's arithmetic** if epochs 1 halves `update work`.
+4. **Sim-only speed and the camera's share (S1, S2, S5).** In the console, `forge bench move2_seek` (it times the sim at
+   every `AnimusForge.Bench.Threads` x `Bench.Envs` with policy random; set `Bench.Threads = "8, 12, 16"`,
+   `Bench.Envs = "96, 192"`). Then restart with `AnimusForge.Vision.RenderSizes = "32x16"` and repeat: the difference is
+   the cost of the other three sizes' rays; with the map unchanged the remainder bounds the map and game costs. During a
+   run, `forge status` shows the vision row (`Vision::Cost`: frame ns, rays, map ns, STEP bytes) and `forge tasks` the
+   slowest map tasks. **Gives** the per-seat frame and map milliseconds that this audit could only estimate.
+5. **Where the map threads spend cycles (S1, S2, S3).** Owner-run, because the classifier blocks `docker exec` on the live
+   worldserver: `perf record -F 499 -g -p $(pgrep -x worldserver) -- sleep 30` then
+   `perf report --no-children --sort symbol | head -60` in the worldserver container (RelWithDebInfo has symbols). **Confirms
+   S1** if `std::_Hashtable::find` under `MentalMap::WriteFrame` is above 10% of map-thread cycles, **S2** if
+   `GetLiquidHit` (via `ModelLiquid`) is a visible fraction of `GetSurfaceHit` on a map without WMO liquid, **S3** if
+   `MentalMap::Crop` exceeds the frame cast.
+6. **Real-map caster rate.** `forge camera diff 34 <x> <y> <z> 64` at a Stockade hallway point while the forge is idle
+   (map 34; it prints one-thread CPU ms a frame and M rays/s, `Gpu/VisionDiff.cpp:456-458`). **Settles** the unconfirmed
+   "170-600 M rays/s": a BIH-traced frame at 8,192 rays that takes 30 us would be 270 M rays/s.
+7. **Pinning A/B/C (S6).** Three restarts of the dev host with the same stage: A `MapUpdate.Cpus = "0-15"`,
+   `Learner.Cpus = "16-31"` (today); B `MapUpdate.Cpus = "0-7,16-23"` (the V-cache CCD, `MapUpdate.Threads = 16`),
+   `Learner.Cpus = "8-15,24-31"`; C as B with `Threads = 12`. Compare the learner log's `rollout` seconds over 20 updates
+   (the sim half) and `forge bench`. **Decides** whether the V-cache and SMT placement matter.
+8. **Epoch A/B for quality (U1).** Two arms from the same `latest.pt`: `mappo.epochs` 2 and 1, same stage, 30 to 45
+   minutes of wall, read `found` per rung from `eval.jsonl` and `found` in `metrics.csv` against `elapsed_seconds`.
+9. **Dungeon-stage costs (D2, D3).** After the first dungeon run: `forge status` (reset parts, p50/p95 resets, route
+   plans), the learner's `rollout` against `compute`, and the `eval.jsonl` gaps. The M-stage conclusions (update-bound,
+   resets small) must be re-checked for stages whose resets build instances and whose evaluations take hours.
+10. **Config and cadence audit (O1).** On every machine: `python3 -c "import json;s=json.load(open('<runs>/<stage>/spec.json'));print(s['decision_ticks'],s['tick_ms'],s['env_groups'],s['num_envs'])"`
+    and `grep -nE "TicksPerDecision|HalfBatch|\.Envs|Cpus" env/dist/etc/modules/mod_animus_forge.conf`. **Confirms O1** if two
+    machines differ, or if the host's conf lacks the stage ticks `conf.dist` sets.
+11. **Build time (O2).** `docker logs --timestamps ac-animus-forge-worldserver | grep -nE "Configuring|Compiling|Linking|ready"`
+    on each machine for the last deploy; `ccache -s` inside the container (hit rate, cache size); `ninja -C var/build -t
+    commands | wc -l` after touching `CurriculumTuning.h` to count what a tuning edit rebuilds. Time a build with
+    `FORGE_CTYPE=Release` and with LTO off on the slowest machine.
+12. **Startup and resume.** `deploy-gate.md:79` quotes 5 minutes to the first update after a resume. From the learner log
+    and `Server.log` timestamps: worldserver start to "ready", learner spawn to `Connecting`, `seeding` to the first
+    `update` line (checkpoint load, rollout-graph capture, MIOpen/TunableOp first-shape work). UNKNOWN until read.
+
+## 6. Where the time goes, as best the evidence allows
+
+### One update cycle on the dev host (M2, 24,576 own steps, 192 envs x 128 decisions)
+
+| Part | Time | Basis |
+|---|---|---|
+| Whole cycle | **11.3 s** (2.17k own steps/s) | VERIFIED, metrics, 2021 updates |
+| Update compute (8 gradient steps, 456 us a row) | **11.2 s**; equals the cycle in every window | VERIFIED |
+| Rollout (128 decisions, 43.8 ms each) | 4.8-5.8 s (8.2 s in updates 1000-1400) | VERIFIED; hidden behind the update |
+| Sim and actor idle, waiting on the update | 5.4-6.3 s, about 49% of the cycle | VERIFIED |
+| Evaluations, checkpoints, restarts | 300 s of 21,662 s (1.4%) | VERIFIED |
+| Camera and map encoders inside the update | 3.6 s by the 2026-10-06 profile (32%); 78% on the CPU proxy | Old GPU figure; CPU proxy VERIFIED; current GPU split UNKNOWN |
+| `embedding_dense_backward` | 38% of the CPU update; GPU share UNKNOWN (code comment: two thirds of the map encoder) | CPU VERIFIED |
+| Elementwise decode chain (`copy_`, `cat`) | 17.5% on the CPU proxy | CPU VERIFIED |
+| GEMMs (`mm`, `addmm`) | 16.4% on the CPU proxy; the network has 10.4 M parameters | CPU VERIFIED |
+| Buffer upload (1.76 GB) | 0.2-0.4 s | ESTIMATE |
+| GRU, trunk, heads, optimiser, foresight, goal terms | UNKNOWN (the rest of the 7.6 s) | needs step 2 |
+
+### One rollout decision on the dev host (192 envs, 43.8 ms)
+
+| Part | Time | Basis |
+|---|---|---|
+| Whole decision | 43.8 ms (5.6 s / 128) | VERIFIED |
+| Same stage family without a camera | 4.9 ms (stage8_duel) and 6.2 ms (stage1_move) a decision | `PLAN.md:1313` (the plan marks its own figures from one window inflated) |
+| Socket receive of the 13.4 MB STEP | 0.9 ms | measured, CPU, Unix socketpair |
+| `decode_step` and camera concatenation | 2.45 ms | measured, CPU |
+| Copies into the pinned buffer and the rollout buffer | 0.4 ms | measured, CPU (cache-hot; more in practice) |
+| Actor and critic inference with camera and map, 192 rows, one graph replay | UNKNOWN; about 3-6 ms by scaling the 151 ms / 2,048-row figure (ESTIMATE) | needs step 2 |
+| Sim half: frame, map write, crop, controller, game tick, reward, resets | the remainder, about 35 ms wall if lock-stepped, i.e. about 2.9 ms of thread time a step on 16 threads (ESTIMATE; half-batch overlaps the halves) | needs steps 4 and 5 |
+| of which resets | 3.7% of steps end an episode; at 0.77-4 ms each this is 0.03-0.15 ms a step | ESTIMATE from `PLAN.md:562`, `:1336` |
+
+What the pictures say together: the camera stage's rollout costs about 7 to 9 times a non-camera stage's decision, and
+its update costs about 19 times per row (456 us against about 24 us for the duel stage's update of 0.58 s on the same
+24,576 rows, `PLAN.md:1324-1325`, itself the wall there), and the update is the part that sets the pace. The sim-side findings (S1-S4, R2) are second-order today and
+become the pace-setters once the update is below the rollout; the order of work is the update first, then the sim.
+
+## 7. Appendix: what was run
+
+All on the dev machine, CPU only, read-only on the live run's files, nothing started on the cluster or the GPU. The
+dev container is `claude-syntax` (`HIP_VISIBLE_DEVICES=""`, `/azerothcore/apps/forge/python/.venv/bin/python`); the
+worktree was linked at `/tmp/wt`; scratch scripts lived in `/tmp` (not in the repository).
+
+1. **Cycle decomposition** (script A below) over `metrics-before-20261007-110448.csv` and `metrics.csv`: the table in U1.
+2. **`bench_learner` on CPU**, 8 envs, `rollout_length=16`, `mappo.chunk_length=16`, `torch_threads=8`,
+   `overlap_updates=false`, with the live `spec.json`/`stage.json` of `move2_seek`: 128 rows per update took 0.31 s of
+   update work (2.4 ms a row) and 0.10-0.12 s of rollout (8 envs a decision). This is the CPU-learner cost (spencer-class
+   machines): about 60 s of update for 24,576 rows at 8 threads, before any slower CPU.
+3. **Update profile**, 16 envs x 32 decisions (script B, CPU activity): the table in U2. Encoder wrappers in the same run:
+   `_encode_vision` 1.11 s, `_backward_vision` 2.26 s of an update total of 4.35 s over 3 updates (78%).
+4. **Embedding micro-benchmark** (script C): 2.1 M indices, 24 x 6 table.
+5. **Encoder call counter**: patched `VisionEncoder.forward`; 72 rollout calls and 18 update calls over 2 rollouts of 16
+   decisions: two per decision.
+6. **STEP decode benchmark**: `encode_step` of a live-spec STEP then `decode_step`, a `socketpair` send/`recv_into`, and
+   numpy copies: the R2 figures.
+7. **Checkpoint sizes**: `torch.load` of `latest.pt` (123 MB): actor 5,212,042 and critic 5,197,460 parameters and buffers.
+8. **Topology and cache**: `lscpu`, `thread_siblings_list`, `cache/index3/size`.
+9. **Logs**: `animus-learner.log` greps for non-finite pushes, joins, trades; `Server.log` for vision lines (the periodic
+   report goes to the console only).
+
+Script A (cycle decomposition, any run directory):
+
+```python
+import csv, statistics as st
+rows = list(csv.DictReader(open("metrics.csv")))
+f = lambda r, k: float(r[k]) if r.get(k) not in (None, "") else float("nan")
+OWN = 24576   # rollout_length * envs * agents of this learner
+for lo, hi in ((0, 200), (200, 600), (600, 1000), (1000, 1400), (1400, 1800)):
+    part = rows[lo:hi]
+    wall, roll, wait, comp = [], [], [], []
+    for a, b in zip(part, part[1:]):
+        d = f(b, "elapsed_seconds") - f(a, "elapsed_seconds")
+        if 0 < d < 100:
+            wall.append(d); roll.append(OWN / f(b, "env_steps_per_sec"))
+            wait.append(f(b, "update_seconds")); comp.append(f(b, "update_compute_seconds"))
+    print(lo, hi, "wall", st.median(wall), "rollout", st.median(roll), "wait", st.median(wait),
+          "compute", st.median(c for c in comp if c == c), "e2e", OWN / st.median(wall))
+```
+
+Script B (update profile; for the GPU use `ProfilerActivity.CUDA` too, `sort_by="cuda_time_total"`, 192 envs, and
+`torch.cuda.synchronize()` inside any timing wrapper):
+
+```python
+import sys, os
+sys.path.insert(0, "/tmp/wt/apps/forge/python"); os.chdir("/tmp/wt/apps/forge/python")
+from torch.profiler import profile, ProfilerActivity
+from animus.mappo import trainer as T
+orig, n = T.MappoTrainer.update, {"i": 0}
+def patched(self, buffer, auxiliary=None, sync=True):
+    n["i"] += 1
+    if n["i"] != 2:
+        return orig(self, buffer, auxiliary, sync)
+    with profile(activities=[ProfilerActivity.CPU]) as prof:
+        out = orig(self, buffer, auxiliary, sync)
+    print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=28, max_name_column_width=60))
+    return out
+T.MappoTrainer.update = patched
+if __name__ == "__main__":        # bench_learner spawns the fake sim, so the guard is required
+    from animus import bench_learner
+    sys.argv = ["bench_learner", "--config", "configs/move2_seek.yaml", "--spec", "/tmp/spec_m2.json",
+                "--layouts", "/tmp/lay", "--envs", "16", "--sim-ms", "0", "--updates", "2",
+                "--set", "rollout_length=32", "--set", "mappo.chunk_length=32", "--set", "torch_threads=8",
+                "--set", "overlap_updates=false", "--set", "mappo.vision_chunk_rows=128"]
+    bench_learner.main()
+```
+
+(`/tmp/lay/move2_seek/` held the run's `*_seek.json` layout manifests and its `runs/move2_seek/stage.json`; the older
+`layouts/move2_seek/stage.json` lacks the map block and makes the fake sim refuse the spec.)
+
+Script C (embedding backward alternatives): 2,097,152 random class indices (80% in {0,1,2}), a 24 x 6 table, 8 threads;
+`F.embedding(...).backward(g)` against `index_add_`, a one-hot matmul, `bincount` per dimension and per-class masked sums
+`torch.stack([g[idx == c].sum(0) for c in range(24)])`, all checked equal to the reference to 1e-3; results in U2.
 <!-- END -->
