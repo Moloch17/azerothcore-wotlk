@@ -186,8 +186,7 @@ The `forge pause` command is not cluster-aware; `forge cancel` on the host ends 
 - `Runtime.hip:38-47` (device library): `Init(device)` makes a new stream whenever `device` differs from the last one and
   never destroys the old; `UploadRows` calls `Init` each STEP, so ranks on different GPUs would create a stream per STEP.
   Latent while `Gpu.Observe = 0`.
-- `AnimusForge.cpp:2527-2530`: receive limit is the max of ACT/MODE/WEIGHTS/REPLAY/EXPLORE sizes for the *current* rank
-  slice; a legitimate larger message is a protocol error that drops all learners.
+- `AnimusForge.cpp:2508-2530`: the receive limit is computed from the whole pool's action array (`_pool->Actions`) plus goals and look, not the rank's slice, so it is generous; a message above it is a protocol error that drops all learners.
 - The C++ side has no unit test for `SendSpec`/`SendStep` byte layout; only the static_asserts (`Protocol.h:260,314`) and
   Python's `test_spec_matches_cpp_layout` / `test_mode_matches_cpp_layout` (`test_protocol.py:74,85`) pin it.
 
