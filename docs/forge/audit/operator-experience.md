@@ -656,3 +656,259 @@ calls the same `forgectl stage ...` path with its prompt.
 
 **Effort.** 3-4 days py, after status JSON, runs index and events exist; it is the last item of the roadmap because it
 only displays what the earlier items produce.
+
+## 3. Roadmap
+
+Rules the order follows: do the cheap, no-rebuild things first (every C++ change costs a rebuild of all machines,
+and the cluster fingerprint includes the source; principle 18 says build the whole approved plan, then rebuild once),
+so all the C++ goes in **one batch**; Python can ship at any time because forgectl runs on the operator's computer and
+the learner only restarts with a stage. "py" = forgectl or learner Python; "conf" = compose or `.conf` only.
+
+| Phase | Items | Kind | Effort | Depends on | Relief |
+|---|---|---|---|---|---|
+| 0. Today | OX-01 `restart: unless-stopped` and docker log rotation; log routing step 1 (2.3); classify refusals in `forgectl stage` (OX-08); parallel console visits (OX-26); fix stale docs and help strings that need no C++ (OX-24 docs part); rehearse a worker reboot once and write down what rejoins | conf, py, docs | 1-2 days | nothing | Reboots stop costing a manual rejoin; the console becomes readable; refusals stop looking like success |
+| 1. Python batch | `forgectl status --json` from files (2.2); learner writes `run.json` (2.4); `forgectl runs` list/show/tail/compare; `forgectl watch` + notify sinks (2.5, 2.6 level 1 without auto-resume); `forgectl doctor` and `config check` (2.7); `forgectl logs --since/--grep/--follow/--where`; `runs prune --dry-run` (5.4); `forgectl look run` and `point` (2.9) | py | 8-10 days | Phase 0 (rotation, routing) is independent; `watch` needs the status JSON; `doctor` reuses the existing tools | Alerts overnight; one place for a run's story; one answer to "can I start?" |
+| 2. The one C++ batch | OX-15 `Refuse` helper; OX-10 and OX-11 confirmations; OX-20 guards and help rows; OX-19 command logging with origin; logger split and per-episode caps (2.3 step 2); `ladder.json` persistence and fingerprint exclusion (OX-03); `PAUSE`/`RESUME` cluster orders (OX-09); worker sends tuning key list (OX-12); tracked-tuning load (2.7 step 2); control socket stage 1 then 2 (2.1); structured `status`, `events.jsonl`, `plan.wait` | C++ (+ GTests) | 10-14 days | OX-15 before the socket's `ok` flag means anything; the structured status before the socket's `status`; one rebuild and `resume` of every machine at the end | The console and socket tell the truth; a resume cannot silently reset a ladder; no more key syncing |
+| 3. On top | forgectl socket client (keep `console.py` as fallback); `chain` runner (2.8); armed auto-resume (2.6); dashboard (2.10); optional `look bot` | py (+ small C++) | 8-10 days | Phase 1 and 2 | Unattended multi-stage weeks; a view for the owner |
+
+**What to do first, in order of relief per hour.**
+
+1. `restart: unless-stopped` + log rotation + log routing step 1 (Phase 0, an afternoon). Biggest immediate relief.
+2. The watcher with notifications (Phase 1). Turns "check the cluster" into "get told".
+3. Persist the wing rung (Phase 2, a small slice that can ship alone if a rebuild is already planned). A silent
+   correctness hazard for D1-D3, the stages that matter next.
+4. `doctor` and `config check` (Phase 1). Prevents the failures that cost days (an empty conf, a drifted key).
+5. Tracked tuning (Phase 2). Removes the hand-sync permanently.
+6. The control socket (Phase 2). The cleanest fix, but after 1-5 the console is tolerable, so it can wait for the batch.
+
+**Pure Python (can start now, no cluster rebuild):** everything in Phases 0, 1 and 3 except `look bot`. **Needs C++:**
+the Phase 2 list; of it, the cheapest standalone slices are OX-15, OX-10/11, OX-19 and OX-20 (each under a day).
+
+## 4. A day in the life
+
+The example is an overnight stage: start `move3_interact` in the evening, collect it in the morning, then deploy a fix
+and resume. Times are illustrative; the steps are what the code requires today.
+
+### 4.1 Today
+
+1. 18:00. `forgectl cluster`: 5 s sample, a table. Reads the "No refused lines" footer. Checks `git rev` column for
+   `*`. `forgectl conf-sync --check` (a separate command, because nothing else says the confs differ). Disk: reads a
+   column and compares with 30 GB from memory or from `deploy-gate.md`.
+2. 18:10. `forgectl stage start move3_interact`. Reads the archive line. Answers `y`. forgectl types `forge start ...`
+   into the host's console through `docker attach` and reads the reply by guessing the prompt. The reply is shown;
+   the exit status is 0 whether or not the sim accepted it (OX-08).
+3. 18:20. `forgectl status`. The table includes a learner line scraped from the log. If the learner has not started
+   yet, "no update line yet". Repeats until it moves.
+4. 18:40. Goes to bed. No alert is configured (OX-02).
+5. 03:00. A worker's machine loses power. Its container does not come back (OX-01). The host keeps training with the
+   others, nobody knows.
+6. 07:30. `forgectl cluster`: one machine `UNREACHABLE`. ssh to it after it is back; `./forge.sh`; waits; `forgectl
+   cluster`. Whether its learner is back in the weight exchange: unknown (UNVERIFIED).
+7. 07:45. `forgectl status`: the stage converged at 04:10; the plan ended and the sim has been idle for 3.5 hours.
+   The log scroll is thousands of `Wing wipe` and `Seat died` lines (OX-05); the finish is a few lines in the middle.
+8. 08:00. Wants to know how this run compares with the previous: opens `eval.csv` of both, or runs `run_snapshot.py`
+   twice and `--compare` by hand. `RUNLOG.md` is edited by hand.
+9. 09:00. Finds a bug in the new stage's reward; fixes the C++. `forgectl test`, `forgectl build --cluster
+   --stop-running`: cancels (host and every worker console, serially), pushes, rebuilds. ~1 h.
+10. 10:30. `forgectl conf-sync --check`: a worker differs by a key typed during the night; sync, restart that worker.
+11. 11:00. `forgectl stage resume move3_interact`. For a dungeon stage the sim's wing rung would be lost here, and
+    the operator would edit `Instance.WingRungStart` on every machine and restart them all (OX-03); whether M3 has a
+    sim-side ladder of its own is UNVERIFIED. Then `forgectl cluster` again to see the workers re-joined.
+
+### 4.2 After the proposed changes
+
+1. 18:00. `forgectl doctor --stage move3_interact`: one screen, ok/warn/fail (2.7). Fixes the single warning it names.
+2. 18:10. `forgectl chain run movement` (or `forgectl stage start move3_interact`). The plan includes the archive line
+   and the doctor result; `y`. The reply is a structured `ok` with the host's text; the exit status is the sim's.
+3. 18:15. `forgectl watch --arm movement`. Phone: "movement: move3_interact started on 4 machines".
+4. 18:40. Goes to bed. The dashboard (`http://127.0.0.1:8099`) is open on the second monitor if wanted.
+5. 03:00. Power loss on a worker. Docker brings the container back at boot, it reconnects, the host re-orders it
+   (2.6). Phone, 03:02: "worker_lost moloch"; 03:09: "worker_back moloch (rejoined move3_interact)". Nobody woke up.
+6. 04:10. Phone: "move3_interact converged at 96.4M steps, advanced, headline met". The chain starts `move4_follow`
+   after its doctor check. Phone: "movement: move4_follow started".
+7. 07:30. `forgectl runs`: both runs, state, steps, best score. `forgectl runs show move3_interact`: rung history,
+   checkpoints with scores, events, the alarms. `forgectl runs compare move3_interact:previous move3_interact` at equal
+   steps. `forgectl runs note move3_interact "reward fix pending"` replaces the hand-written log.
+8. 07:45. The console, if opened, shows replies and plan events; the per-seat flood is in `Seats.log` (2.3).
+9. 09:00. Fix, `forgectl test`, `forgectl build --cluster --stop-running`. The cancel goes to the host and fans out
+   (one reply naming each worker), `plan.wait` returns when it ended. The tuning is tracked, so the only conf check is
+   `doctor`'s "tracked tuning identical on 4".
+10. 11:00. `forgectl stage resume move3_interact` (or `forgectl chain resume`): the sim reads `ladder.json`, the learner
+    reads `latest.pt`, both on the same rung (OX-03). `forgectl watch` sees `plan training` and clears its alerts.
+
+The difference is not speed; it is that the operator is told instead of looking, and that the tool says whether a
+command worked.
+
+## 5. Other ways to make the forge work better
+
+### 5.1 Reproducibility and seeds
+
+- Evaluation is seeded and reproducible by design: the same `--seed` (default 1000, `config.py:69`) and `--episodes`
+  give the same characters and opponents (`evaluate.py` docstring). Record the seed in `run.json` (2.4).
+- Training reproducibility: the learner has a `seed: int = 1` field (`config.py:596`); a repository-wide search for
+  `manual_seed` in `animus/` found no call, so whether and where training RNGs are seeded is UNVERIFIED. A multi-thread
+  sim with asynchronous cluster learners will not be bitwise reproducible; the useful promise is "same revision,
+  same config, same seed, statistically equivalent". Say that in the docs and do not chase bitwise equality.
+- What is cheap and worth it: `run.json` records revision, config hash, tuning-file hash, fingerprint, seed, parent
+  checkpoint and every resume; `forgectl runs show` prints it. That answers "what exactly was this run" two months
+  later.
+
+### 5.2 Regression evaluation on every build
+
+`forgectl test` covers code (GTests, pytest, `forgectl test --gpu`). It does not answer "did this build make the bots
+worse". `animus.evaluate` scores a checkpoint on seeded episodes against a running sim (`evaluate.py`, needs
+`Policy = remote` and `Learner.AutoStart = 0`). Design: after `build --cluster`, `forgectl regress` picks the frozen
+`best.pt` of the last finished stage per stage family, runs `animus.evaluate` with a fixed seed and episode count on one
+idle machine (the dev machine), and compares with a stored result (`apps/forge/golden/regress/<stage>.json`, written
+by the same command with `--update` and reviewed in a commit; `tests/golden` and `test_golden_update.py` already show
+the repository's convention for golden data). It prints "within noise" when the difference is under the stderr sum
+(the rule in `run_snapshot.py`). Principle 14 holds: the evaluated policy is the learner's, no scripted baseline. Run
+it before the resume of a long stage, in `doctor`'s "stage change" row, and nightly on an idle machine if one exists.
+Effort 3 days py; needs an idle sim (the dev machine). Whether the evaluation is stable enough across a rebuild to be
+a gate is UNVERIFIED until it has been run twice on one build.
+
+### 5.3 Experiment tracking
+
+Do not add a tracking service. The run directory plus `run.json`, TensorBoard (already served per machine) and
+`forgectl runs compare` are the tracker. What is missing is a place for the human's reasoning: `forgectl runs note
+<run> "text"` appends a timestamped line to `runs/<stage>/notes.md` (and the run's `run.json` links the git revision),
+which replaces `RUNLOG.md` (not written by any code in the repository, UNVERIFIED who writes it).
+
+### 5.4 Checkpoint retention and cleanup
+
+Today: `keep_checkpoints = 5` numbered files per run (`config.py:606`); `latest.pt`, `best.pt`, `best_rung*.pt` never
+pruned (`runs.py`); `archive/` never pruned; camera frames and videos accumulate; sizes unknown (UNVERIFIED; measure
+first with `forgectl runs du`). Proposed policy, applied only by `forgectl runs prune` after a dry run and a prompt:
+
+| Item | Keep | Delete after |
+|---|---|---|
+| live run | everything | - |
+| archived run that finished and advanced | `best.pt`, `best_rung*.pt`, `latest.pt`, `finished.json`, `eval.*`, `metrics.csv`, `run.json`, `config.yaml` | the numbered checkpoints, `tb/`, camera frames immediately; videos after 30 days |
+| archived run cancelled or crashed | the same as above, plus the newest 2 numbered checkpoints | everything else after 14 days |
+| a stage's parent checkpoint (the one a later stage seeds from, principle 15) | always, by name, in `models/` registry (5.5) | never automatically |
+| `archive/` older than 90 days with no registry entry | list for the owner | owner confirms |
+
+Disk-low alert at 30 GB (2.5). `runs prune` moves to a trash directory first and empties it on a second run a day later.
+
+### 5.5 Model export and registry
+
+`forge export` writes `.amdl` files into `AnimusForge.ModelDir` (`export.py`; the format has a version, `AMDL_VERSION`),
+and "the exported files are copied to a server by hand". Nothing records which run, checkpoint or revision a model came
+from, and `forge clean exports` deletes them all (OX-10). Design: `forgectl models export <stage> [--checkpoint
+best|latest]` calls `forge export`, then writes `models/<stage>/<run_id>/manifest.json` (sha256 of each `.amdl`, stage,
+run id, checkpoint name, update, evaluation score and stderr, git revision, `AMDL_VERSION`, layout revisions) and keeps
+the files. `forgectl models list` shows them; `forgectl models diff a b` compares manifests. Putting a model on the live
+realm stays a manual step by the owner (principle 19); the registry only makes "what is running there" answerable.
+Effort 2 days py. Open point: how `mod-animus` picks up models is outside this repository (its own checkout), so the
+publish step is UNVERIFIED and deliberately not automated.
+
+### 5.6 Documentation hooks
+
+- Generate the command reference from the command table. `HandleHelp` is a hand-written list (`cs_forge.cpp:231-290`)
+  that has drifted (OX-20, OX-24). Make the table the single source: help text, the command table of
+  `docs/forge/reference/cpp-runtime-console.md` and `forgectl`'s known console commands are produced from it by a small script and checked by a
+  GTest ("every registered subcommand has a help row") and a `forgectl docs check` (links to existing pages: four
+  reference pages are linked and absent today).
+- `forgectl --help` already has an example per command; add `forgectl help <topic>` that prints the relevant
+  `forgectl.md` section, so the operator does not leave the terminal.
+- A one-page "operator's card" (`docs/forge/operator-card.md`): ten commands, the three alarms that matter, where logs
+  are, what to do when. Written after Phase 1, from what the tools actually print.
+
+### 5.7 Scheduling across heterogeneous machines
+
+The cluster has unequal machines (the status example shows 2,134, 648, 1,124 and 418 steps per second; an 8-thread
+i7-6700K and a 24-thread Xeon). Each worker runs its own learner and only weights cross the network
+(`cluster.md`; `LearnerProcess.cpp:256`), so a slow machine does not stall the others in lock-step; how a very slow
+one affects the averaged weights (staleness) is UNVERIFIED. Do not build a scheduler. Do:
+(a) report per-machine steps/s and share of the total in the status (2.2), and raise `worker_slow` when a machine runs
+under a quarter of the median for an hour (a machine thrashing, not a slow one);
+(b) use `forge bench` per machine to set `AnimusForge.Envs` and `MapUpdate.Threads` (`forge bench apply` exists) and
+record the result in `cluster.toml` comments, so a rebuilt machine gets its numbers back;
+(c) an `in_cluster` switch per stage is already enough to keep a machine out of a stage (`cluster.toml`).
+
+### 5.8 The weekly and overnight workflow
+
+A written routine beats a clever tool for a single operator. Proposed, to put in the operator's card:
+
+| When | Do |
+|---|---|
+| Friday evening | `forgectl doctor`; `forgectl chain run <week's chain>`; `forgectl watch --arm`; check the phone gets a test notification |
+| Saturday-Sunday | nothing; read alerts only |
+| Monday morning | `forgectl runs`; `forgectl runs show` for what finished; `forgectl runs compare`; `forgectl runs note`; decide the next chain |
+| Weekly | `forgectl runs prune --dry-run`; `forgectl cluster` disk columns; `git log` of `apps/forge/tuning`; export and register models if a stage advanced |
+| Before any deploy | `deploy-gate.md`, but its pre-flight page is `forgectl doctor` |
+| Monthly | rehearse a worker reboot and a rollback on the weakest worker (R1 in the deploy gate) |
+
+## 6. Risks and what not to build
+
+**Do not build.**
+
+- **A scheduler or orchestrator** (Slurm, Ray, Kubernetes, a job queue service). Four machines and one operator; the
+  chain file plus roles in `cluster.toml` is enough.
+- **A tracking service** (MLflow, W&B) or a run database. Directories, JSON and CSV are queryable by `forgectl`; a
+  database adds a thing to keep alive.
+- **A web UI that changes state**, accounts, roles or login. The dashboard is read-only and loopback; one operator.
+- **A TCP or HTTP control listener in v1**, TLS, a REST API. Unix socket + ssh. Revisit only if a second computer needs
+  to drive the cluster without ssh.
+- **A general runtime-tuning command** (`forge set key value`). Tuning goes through the fingerprint; a value changed on
+  one machine at runtime breaks the "every machine identical" guarantee the cluster is built on. Tracked files and a
+  restart are right. Runtime-settable: log level and trace toggles only.
+- **Self-healing that changes things**: no auto-rebuild, no auto conf edit, no auto start of a fresh stage, no
+  auto-rollback. Auto-resume only when armed, with a budget.
+- **A Prometheus/Grafana/alertmanager stack, a chat bot or chat-ops.** One webhook and desktop notifications cover it.
+- **A rewrite of the console or `forgectl` in another language.** forgectl is stdlib Python that works and has tests.
+- **Bitwise reproducibility work.**
+
+**Risks.**
+
+| Risk | Why it matters | Mitigation |
+|---|---|---|
+| The C++ batch is big and every machine must rebuild (source hash in the fingerprint) | A mistake costs a day of cluster time | One batch, GTests for each slice, the deploy gate, land OX-15 and OX-19 first because they are small |
+| Control socket becomes a new door | It can stop a run | Off by default, Unix 0660, same authority as the console, logged with peer credentials, no TCP |
+| Alarm fatigue | A noisy watcher is ignored, which is worse than none | Dedupe, quiet periods, `min_severity`, two-check rule for worker loss, a weekly review of what fired |
+| Auto-resume hides a real bug | A crash loop burns GPU hours | Armed only, budget 2 per 6 h, refuses wing-ladder stages until OX-03 is fixed, always notifies |
+| Tracked tuning changes semantics for live machines | A pulled file changes a running worker's fingerprint only at restart, so a pull on a running worker is harmless; but a machine conf that still holds a Curriculum key now fails at start | `config check` first; error names the key |
+| A schema that ossifies | Every consumer depends on it | Additive-only rule, version integer, one JSON Schema file with a test |
+| Docs rot again | The help text, the reference and 0001 already disagree | Generate from the table, `forgectl docs check`, review rule: a console change updates the table in the same commit |
+| Bus factor of one | The owner is the operator | The operator's card and `doctor` exist so the next person does not need the owner's memory; they are part of the work, not an extra |
+| Over-investing before the curriculum is stable | Stages M3-D3 have not trained (`known-issues.md` C3); tools built around them may churn | Phase 0 and 1 are generic; hold the chain runner and dashboard until two stages have run end to end |
+
+## 7. Unverified items and decisions needed
+
+**Unverified (not checkable from the repository):**
+
+1. The deployed per-machine `worldserver.conf` (`Logger.module`, `Appender.*`), and so whether `Server.log` really is
+   nearly empty, and why (OX-05; owner question 1).
+2. Whether `AC_LOGGER_*` / `AC_APPENDER_*` environment overrides work for the keys in section 2.3 (the core's
+   `AC_<KEY>` mechanism is general).
+3. Which logger prints the calendar and guild messages (their source is not in `Animus/`).
+4. Whether a rebooted worker's own learner rejoins the cross-machine weight exchange (2.6); how a very slow worker
+   affects averaged weights (5.7).
+5. Whether the forge's databases hold an administrator account for a SOAP login (2.1).
+6. The owner and mode of a socket created inside the container, as seen from the host's ssh user (2.1); whether the
+   machines have a Python 3 for a relay (forgectl needs 3.11 only on the operator's computer).
+7. Whether `docker` starts at boot on every machine (2.6).
+8. What the dispatcher prints as "help" after a plan-command refusal that returns `false` (OX-15).
+9. Whether `forge cancel` on the host already stops the workers' learners, making the per-worker console visit in
+   `forgectl stage cancel` redundant (OX-09); `cpp-runtime-console.md` says "workers get `STOP`".
+10. Who writes `RUNLOG.md`; where `forge camera snapshot` writes relative paths; how often the camera audit runs.
+11. Whether the learner logs during a long evaluation (the `learner_silent` threshold, 2.5).
+12. Feasibility of `forge camera dump <env>` with GPU observation writing (2.9).
+13. Whether training is seeded at all (5.1) and whether evaluation is stable across a rebuild (5.2).
+14. Disk use of `archive/`, camera frames and videos (5.4).
+
+**Decisions needed from the owner.**
+
+1. What do the deployed `Logger.module` and `Appender.*` say on the four machines (decides whether routing is a conf
+   fix or needs the logger split first)?
+2. Is anything meant to start a plan on boot? If not, may the worldserver service become `restart: unless-stopped`?
+3. Does a SOAP administrator account exist, and do you want SOAP as a stopgap while the socket is built?
+4. Control socket: Unix socket only (recommended), or also the opt-in LAN listener with a token (0001's open question)?
+5. Is the `DifficultyLadder` score-based step-down intended (`known-issues.md` A2)? It decides whether a "collapsed
+   rung" alert can fire for the combat stages and how to word it.
+6. Which notification channel: phone push (ntfy or similar), e-mail, desktop, or all; and which machine runs the
+   watcher (the dev machine is proposed)?
+7. Is armed auto-resume wanted at all, and with what budget? (Default proposed: off.)
+8. Tracked tuning: one global file first with per-stage overlays later (proposed), or per-stage from the start?
+9. Retention: may archived runs lose their numbered checkpoints and `tb/` immediately, and videos after 30 days?
+10. May `RUNLOG.md` be replaced by `forgectl runs note`?
