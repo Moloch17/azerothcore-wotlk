@@ -107,6 +107,51 @@ namespace
         return true;
     }
 
+    /// One source file as the cheap pre-check sees it: its name below the data directory, size and modification time.
+    struct FileStat
+    {
+        std::string Name;
+        uint64_t Size = ~0ull;      // ~0 for a file that cannot be stat'ed
+        int64_t TimeNs = 0;
+    };
+
+    FileStat StatFile(Fs::path const& root, std::string const& name)
+    {
+        FileStat stat;
+        stat.Name = name;
+        std::error_code ec;
+        uint64_t const size = Fs::file_size(root / name, ec);
+        if (ec)
+            return stat;
+        auto const time = Fs::last_write_time(root / name, ec);
+        if (ec)
+            return stat;
+        stat.Size = size;
+        stat.TimeNs = int64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(time.time_since_epoch()).count());
+        return stat;
+    }
+
+    /// FNV-1a 64 over the stats in name order: name, size, time.
+    uint64_t DigestOf(std::vector<FileStat> stats)
+    {
+        std::sort(stats.begin(), stats.end(), [](FileStat const& a, FileStat const& b) { return a.Name < b.Name; });
+        uint64_t hash = 0xcbf29ce484222325ull;
+        for (FileStat const& stat : stats)
+        {
+            hash = Sc::Fnv1a(reinterpret_cast<uint8_t const*>(stat.Name.data()), stat.Name.size(), hash);
+            hash = Sc::Fnv1a(reinterpret_cast<uint8_t const*>(&stat.Size), sizeof(stat.Size), hash);
+            hash = Sc::Fnv1a(reinterpret_cast<uint8_t const*>(&stat.TimeNs), sizeof(stat.TimeNs), hash);
+        }
+        return hash;
+    }
+
+    std::string TileMapName(uint32_t mapId, int32_t x, int32_t y)
+    {
+        char name[16];
+        std::snprintf(name, sizeof(name), "%03u%02d%02d.map", mapId, x, y);
+        return name;
+    }
+
     /// LiquidType.dbc: entry -> Type (0 water, 1 ocean, 2 magma, 3 slime). The file is WDBC: a 20-byte header (magic,
     /// records, fields, record size, string block size) then fixed records of uint32 fields; field 0 is the id and
     /// field 3 the type (LiquidTypefmt "nxxix...").
@@ -204,7 +249,68 @@ namespace
         std::vector<uint16_t> Holes;        // 256 words, or empty
         std::vector<float> Level;           // 128 x 128, or empty
         std::vector<uint8_t> Kind;
+        std::vector<Sc::BlockRange> Blocks;         // 256 ground height ranges of a non-flat tile, or empty
+        std::vector<Sc::BlockRange> LiquidBlocks;   // 256 liquid level ranges, or empty
+        float DataMax = 0.0f;                       // the highest height of the arrays (FlatHeight when flat)
+        float LiquidMin = 0.0f;
+        float LiquidMax = 0.0f;
     };
+
+    /// The culling ranges of a tile's height arrays (V9 then V8): per 8 x 8 block of cells the lowest and highest of
+    /// its 9 x 9 corners and 8 x 8 centres, edges shared with the next block included.
+    void HeightBlocks(std::vector<float> const& heights, std::vector<Sc::BlockRange>& blocks, float& low, float& high)
+    {
+        float const* v9 = heights.data();
+        float const* v8 = v9 + Sc::TERRAIN_V9 * Sc::TERRAIN_V9;
+        blocks.assign(Sc::TERRAIN_BLOCK_COUNT, Sc::BlockRange{ Sc::BLOCK_EMPTY_MIN, Sc::BLOCK_EMPTY_MAX });
+        low = Sc::BLOCK_EMPTY_MIN;
+        high = Sc::BLOCK_EMPTY_MAX;
+        for (uint32_t bx = 0; bx < Sc::TERRAIN_BLOCKS_SIDE; ++bx)
+            for (uint32_t by = 0; by < Sc::TERRAIN_BLOCKS_SIDE; ++by)
+            {
+                Sc::BlockRange& block = blocks[bx * Sc::TERRAIN_BLOCKS_SIDE + by];
+                uint32_t const x0 = bx * Sc::TERRAIN_BLOCK_CELLS;
+                uint32_t const y0 = by * Sc::TERRAIN_BLOCK_CELLS;
+                for (uint32_t x = x0; x <= x0 + Sc::TERRAIN_BLOCK_CELLS; ++x)
+                    for (uint32_t y = y0; y <= y0 + Sc::TERRAIN_BLOCK_CELLS; ++y)
+                    {
+                        float const h = v9[std::size_t(x) * Sc::TERRAIN_V9 + y];
+                        block.Min = std::min(block.Min, h);
+                        block.Max = std::max(block.Max, h);
+                    }
+                for (uint32_t x = x0; x < x0 + Sc::TERRAIN_BLOCK_CELLS; ++x)
+                    for (uint32_t y = y0; y < y0 + Sc::TERRAIN_BLOCK_CELLS; ++y)
+                    {
+                        float const h = v8[std::size_t(x) * Sc::TERRAIN_CELLS + y];
+                        block.Min = std::min(block.Min, h);
+                        block.Max = std::max(block.Max, h);
+                    }
+                low = std::min(low, block.Min);
+                high = std::max(high, block.Max);
+            }
+    }
+
+    /// ... and of a tile's liquid: the levels of the cells that have liquid (an empty block stays empty).
+    void LiquidBlocks(std::vector<float> const& level, std::vector<uint8_t> const& kind,
+        std::vector<Sc::BlockRange>& blocks, float& low, float& high)
+    {
+        blocks.assign(Sc::TERRAIN_BLOCK_COUNT, Sc::BlockRange{ Sc::BLOCK_EMPTY_MIN, Sc::BLOCK_EMPTY_MAX });
+        low = Sc::BLOCK_EMPTY_MIN;
+        high = Sc::BLOCK_EMPTY_MAX;
+        for (uint32_t x = 0; x < Sc::TERRAIN_CELLS; ++x)
+            for (uint32_t y = 0; y < Sc::TERRAIN_CELLS; ++y)
+            {
+                std::size_t const cell = std::size_t(x) * Sc::TERRAIN_CELLS + y;
+                if (kind[cell] == Sc::TERRAIN_LIQUID_NONE)
+                    continue;
+                Sc::BlockRange& block = blocks[(x / Sc::TERRAIN_BLOCK_CELLS) * Sc::TERRAIN_BLOCKS_SIDE
+                    + y / Sc::TERRAIN_BLOCK_CELLS];
+                block.Min = std::min(block.Min, level[cell]);
+                block.Max = std::max(block.Max, level[cell]);
+                low = std::min(low, level[cell]);
+                high = std::max(high, level[cell]);
+            }
+    }
 
     template <typename T>
     bool Take(std::vector<uint8_t> const& file, std::size_t& at, T* out, std::size_t count)
@@ -255,6 +361,8 @@ namespace
             {
                 flat = true;
                 tile.Rec.Flags |= Sc::TERRAIN_FLAT;
+                tile.Rec.MinHeight = height.GridHeight;
+                tile.DataMax = height.GridHeight;
             }
             else
             {
@@ -284,6 +392,7 @@ namespace
                     error = path + ": truncated height data";
                     return false;
                 }
+                HeightBlocks(tile.Heights, tile.Blocks, tile.Rec.MinHeight, tile.DataMax);
             }
         }
 
@@ -368,6 +477,7 @@ namespace
                 if (any)
                 {
                     tile.Rec.Flags |= Sc::TERRAIN_LIQUID;
+                    LiquidBlocks(level, kind, tile.LiquidBlocks, tile.LiquidMin, tile.LiquidMax);
                     tile.Level = std::move(level);
                     tile.Kind = std::move(kind);
                 }
@@ -385,6 +495,8 @@ namespace
         bool Tiled = false;
         std::map<uint32_t, uint32_t> LiquidTypes;
         std::vector<TerrainTile> Terrain;   // sorted by (TileX, TileY)
+        std::vector<std::string> ModelNames;    // the model files read (below vmaps/), in a fixed order
+        std::vector<FileStat> Stats;        // each source file, stat'ed just before it was read
         uint64_t Hash = 0;
     };
 
@@ -397,11 +509,13 @@ namespace
 
         std::vector<uint8_t> file;
         Fs::path const dbc = root / "dbc" / "LiquidType.dbc";
+        source.Stats.push_back(StatFile(root, "dbc/LiquidType.dbc"));
         if (!ReadFile(dbc, file, error) || !ParseLiquidTypes(file, dbc.string(), source.LiquidTypes, error))
             return false;
         hash.AddFile("LiquidType.dbc", file);
 
         std::string const treeName = VMAP::VMapMgr2::getMapFileName(mapId);
+        source.Stats.push_back(StatFile(root, "vmaps/" + treeName));
         if (!ReadFile(root / "vmaps" / treeName, file, error))
         {
             error = "no vmap tree for map " + std::to_string(mapId) + ": " + error;
@@ -415,6 +529,7 @@ namespace
                 std::string const name = VMAP::StaticMapTree::getTileFileName(mapId, x, y);
                 if (Fs::exists(root / "vmaps" / name, ec))
                 {
+                    source.Stats.push_back(StatFile(root, "vmaps/" + name));
                     if (!ReadFile(root / "vmaps" / name, file, error))
                         return false;
                     hash.AddFile(name, file);
@@ -447,6 +562,12 @@ namespace
                 models.insert(source.Models[i].name);
         for (std::string const& name : models)
         {
+            // An M2 spawn's name ends in a NUL: the file the operating system opens (and the hash covers) is the one
+            // the name names up to it. The model list the scene keeps names that file.
+            std::string const file_name((name + ".vmo").c_str());
+            if (source.ModelNames.empty() || source.ModelNames.back() != file_name)
+                source.ModelNames.push_back(file_name);
+            source.Stats.push_back(StatFile(root, "vmaps/" + file_name));
             if (!ReadFile(root / "vmaps" / (name + ".vmo"), file, error))
                 return false;
             hash.AddFile(name + ".vmo", file);
@@ -455,11 +576,11 @@ namespace
         for (int32_t x = 0; x < 64; ++x)
             for (int32_t y = 0; y < 64; ++y)
             {
-                char name[16];
-                std::snprintf(name, sizeof(name), "%03u%02d%02d.map", mapId, x, y);
+                std::string const name = TileMapName(mapId, x, y);
                 Fs::path const path = root / "maps" / name;
                 if (!Fs::exists(path, ec))
                     continue;
+                source.Stats.push_back(StatFile(root, "maps/" + name));
                 if (!ReadFile(path, file, error))
                     return false;
                 hash.AddFile(name, file);
@@ -632,6 +753,67 @@ bool SceneBaker::SourceIdentity(std::string const& dataDir, uint32_t mapId, uint
     if (!OpenSource(dataDir, mapId, false, source, error))
         return false;
     hash = source.Hash;
+    return true;
+}
+
+bool SceneBaker::SourceDigest(std::string const& dataDir, uint32_t mapId, std::string const& modelNames,
+    uint64_t& digest, std::string& error)
+{
+    Fs::path const root(dataDir);
+    std::vector<FileStat> stats;
+    stats.push_back(StatFile(root, "dbc/LiquidType.dbc"));
+    std::string const treeName = VMAP::VMapMgr2::getMapFileName(mapId);
+    stats.push_back(StatFile(root, "vmaps/" + treeName));
+    std::error_code ec;
+    for (uint32_t x = 0; x < 64; ++x)
+        for (uint32_t y = 0; y < 64; ++y)
+        {
+            std::string const name = VMAP::StaticMapTree::getTileFileName(mapId, x, y);
+            if (Fs::exists(root / "vmaps" / name, ec))
+                stats.push_back(StatFile(root, "vmaps/" + name));
+        }
+    for (std::size_t at = 0; at < modelNames.size();)
+    {
+        std::string const name(modelNames.c_str() + at);
+        stats.push_back(StatFile(root, "vmaps/" + name));
+        at += name.size() + 1;
+    }
+    for (int32_t x = 0; x < 64; ++x)
+        for (int32_t y = 0; y < 64; ++y)
+        {
+            std::string const name = TileMapName(mapId, x, y);
+            if (Fs::exists(root / "maps" / name, ec))
+                stats.push_back(StatFile(root, "maps/" + name));
+        }
+    // A source file that cannot be stat'ed is never a match: the content hash then reports it.
+    for (FileStat const& stat : stats)
+        if (stat.Size == ~0ull)
+        {
+            error = "cannot stat " + stat.Name;
+            return false;
+        }
+    digest = DigestOf(std::move(stats));
+    return true;
+}
+
+bool SceneBaker::RefreshDigest(std::string const& scenePath, uint64_t digest, std::string& error)
+{
+    // Eight bytes in place: the digest is outside the checksum, so nothing else in the file changes, and a write that
+    // is torn or lost leaves a digest that matches nothing, which the next start answers with the content hash again.
+    std::fstream stream(scenePath, std::ios::binary | std::ios::in | std::ios::out);
+    if (!stream)
+    {
+        error = "cannot open " + scenePath + " for writing";
+        return false;
+    }
+    stream.seekp(std::streamoff(offsetof(Sc::SceneHeader, SourceFilesDigest)));
+    stream.write(reinterpret_cast<char const*>(&digest), sizeof(digest));
+    stream.flush();
+    if (!stream)
+    {
+        error = "cannot write " + scenePath;
+        return false;
+    }
     return true;
 }
 
@@ -834,12 +1016,24 @@ bool SceneBaker::BakeMap(std::string const& dataDir, uint32_t mapId, std::string
     std::vector<float> heights;
     std::vector<uint16_t> holes;
     std::vector<uint8_t> liquidBytes;
+    std::vector<Sc::BlockRange> blocks;
+    std::vector<Sc::BlockRange> liquidBlocks;
+    float heightMin = Sc::BLOCK_EMPTY_MIN;
+    float heightMax = Sc::BLOCK_EMPTY_MAX;
+    float levelMin = Sc::BLOCK_EMPTY_MIN;
+    float levelMax = Sc::BLOCK_EMPTY_MAX;
     for (TerrainTile& tile : source.Terrain)
     {
+        if (tile.Rec.Flags & Sc::TERRAIN_HEIGHTS)
+        {
+            heightMin = std::min(heightMin, tile.Rec.MinHeight);
+            heightMax = std::max(heightMax, tile.DataMax);
+        }
         if (!tile.Heights.empty())
         {
             tile.Rec.HeightIndex = uint32_t(heights.size() / Sc::TERRAIN_HEIGHT_FLOATS);
             heights.insert(heights.end(), tile.Heights.begin(), tile.Heights.end());
+            blocks.insert(blocks.end(), tile.Blocks.begin(), tile.Blocks.end());
             ++report.TerrainHeightTiles;
         }
         if (!tile.Holes.empty())
@@ -853,12 +1047,16 @@ bool SceneBaker::BakeMap(std::string const& dataDir, uint32_t mapId, std::string
             tile.Rec.LiquidIndex = uint32_t(liquidBytes.size() / Sc::TERRAIN_LIQUID_BYTES);
             Put(liquidBytes, tile.Level.data(), tile.Level.size());
             Put(liquidBytes, tile.Kind.data(), tile.Kind.size());
+            liquidBlocks.insert(liquidBlocks.end(), tile.LiquidBlocks.begin(), tile.LiquidBlocks.end());
+            levelMin = std::min(levelMin, tile.LiquidMin);
+            levelMax = std::max(levelMax, tile.LiquidMax);
             ++report.TerrainLiquidTiles;
         }
         index.push_back(tile.Rec);
     }
     report.TerrainTiles = uint32_t(index.size());
 
+    std::vector<uint8_t> modelBytes;
     Sc::SceneHeader header;
     header.MapId = mapId;
     header.BakerVersion = SceneBaker::BAKER_VERSION;
@@ -877,6 +1075,20 @@ bool SceneBaker::BakeMap(std::string const& dataDir, uint32_t mapId, std::string
     header.LiquidTriCount = report.LiquidTriangles;
     header.LiquidNodeCount = report.LiquidNodes;
     header.TerrainTileCount = report.TerrainTiles;
+    header.TerrainHeightMin = heightMin <= heightMax ? heightMin : 0.0f;
+    header.TerrainHeightMax = heightMin <= heightMax ? heightMax : 0.0f;
+    header.TerrainLiquidMin = levelMin <= levelMax ? levelMin : 0.0f;
+    header.TerrainLiquidMax = levelMin <= levelMax ? levelMax : 0.0f;
+    {
+        std::string models;
+        for (std::string const& name : source.ModelNames)
+        {
+            models += name;
+            models.push_back('\0');
+        }
+        modelBytes.assign(models.begin(), models.end());
+    }
+    header.SourceFilesDigest = DigestOf(source.Stats);
     header.SourceSpawnCount = report.Spawns;
     header.SourceM2Count = report.M2Spawns;
 
@@ -892,6 +1104,9 @@ bool SceneBaker::BakeMap(std::string const& dataDir, uint32_t mapId, std::string
     AddSection(file, header, Sc::SLOT_TERRAIN_HEIGHTS, heights);
     AddSection(file, header, Sc::SLOT_TERRAIN_LIQUID, liquidBytes);
     AddSection(file, header, Sc::SLOT_TERRAIN_HOLES, holes);
+    AddSection(file, header, Sc::SLOT_TERRAIN_BLOCKS, blocks);
+    AddSection(file, header, Sc::SLOT_TERRAIN_LIQUID_BLOCKS, liquidBlocks);
+    AddSection(file, header, Sc::SLOT_SOURCE_MODELS, modelBytes);
     Align(file);
     std::memcpy(file.data(), &header, sizeof(header));
     report.Checksum = Sc::ChecksumOf(file.data(), file.size());

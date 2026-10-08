@@ -56,6 +56,14 @@ namespace Animus::Vision
         /// Loaded for the terrain grids the scene's footprint and terrain tiles overlap (a ray leaves the world
         /// there); with heights and liquid where the map has a .map file of the tile.
         [[nodiscard]] TerrainTile Tile(int32_t tileX, int32_t tileY) const;
+        /// The heights of all the terrain, from the header (clips a terrain cast to where the ground can be).
+        [[nodiscard]] TerrainExtent const& Extent() const { return _extent; }
+        /// Whether the grid is inside the scene's footprint (what Tile(...).Loaded says, for one comparison).
+        [[nodiscard]] bool GridLoaded(int32_t tileX, int32_t tileY) const
+        {
+            return _header && tileX >= _tileLow[0] && tileX <= _tileHigh[0] && tileY >= _tileLow[1]
+                && tileY <= _tileHigh[1];
+        }
         /// As GridTerrainData reads it: the cell's four corners and centre (a hole is not Solid), its liquid level.
         [[nodiscard]] TerrainCell Cell(int32_t tileX, int32_t tileY, int32_t cellX, int32_t cellY, bool liquid) const;
 
@@ -63,6 +71,9 @@ namespace Animus::Vision
         [[nodiscard]] bool HasLiquid() const { return _header && (_header->Flags & Scene::HAS_MODEL_LIQUID) != 0; }
         [[nodiscard]] Scene::SceneHeader const& Header() const { return *_header; }
         [[nodiscard]] std::size_t FileBytes() const { return _bytes; }
+        /// The model files the bake read (SLOT_SOURCE_MODELS: names below vmaps/, each NUL-ended), for the cheap
+        /// identity check.
+        [[nodiscard]] std::string const& SourceModels() const { return _sourceModels; }
 
         /// The raw arrays, for the bake check and the brute-force verification.
         [[nodiscard]] Scene::TriGeom const* Triangles() const { return _tris; }
@@ -70,6 +81,9 @@ namespace Animus::Vision
         [[nodiscard]] uint8_t const* Kinds() const { return _kinds; }
         [[nodiscard]] Scene::TriGeom const* LiquidTriangles() const { return _liqTris; }
         [[nodiscard]] uint8_t const* LiquidKinds() const { return _liqKinds; }
+
+        /// The terrain index (TerrainTileCount records), for the verification.
+        [[nodiscard]] Scene::TerrainRec const* TerrainRecords() const { return _terrain; }
 
         /// The terrain record of tile (tileX, tileY), or null.
         [[nodiscard]] Scene::TerrainRec const* FindTerrain(int32_t tileX, int32_t tileY) const;
@@ -89,6 +103,15 @@ namespace Animus::Vision
         float const* _terrainHeights = nullptr;
         uint16_t const* _terrainHoles = nullptr;
         uint8_t const* _terrainLiquid = nullptr;
+        Scene::BlockRange const* _terrainBlocks = nullptr;
+        Scene::BlockRange const* _terrainLiquidBlocks = nullptr;
+        bool _hasGround = false;       // some terrain tile has heights
+        std::string _sourceModels;
+        std::vector<float> _superGround;        // lowest, highest per 4 x 4 blocks, 16 a height tile (derived)
+        std::vector<float> _superLiquid;        // ... per liquid tile
+        TerrainExtent _extent;
+        std::vector<float> _tileGroundMax;      // the highest height of each non-flat terrain record
+        std::vector<float> _tileLiquidRange;    // lowest, highest liquid level per terrain record (empty: +-FLT_MAX)
         std::vector<int32_t> _tileGrid;    // terrain record per tile of the footprint, or -1
         int32_t _tileLow[2] = {};
         int32_t _tileHigh[2] = {};

@@ -44,6 +44,8 @@ namespace Animus::Vision
         bool Baked = false;             // false: an existing file was valid and is loaded as it was
         std::string Reason;             // why it was baked: "no scene file", "source data changed", ...
         double Seconds = 0.0;           // the bake's, or the load and check's
+        std::string Check;              // how a kept file was found current: "file times", "content hash (refreshed)"
+        double IdentitySeconds = 0.0;   // the part of Seconds spent on the identity check (not the load)
         uint32_t Triangles = 0;
         uint32_t Nodes = 0;
         uint32_t TerrainTiles = 0;

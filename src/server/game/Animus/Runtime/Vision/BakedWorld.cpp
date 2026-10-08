@@ -276,6 +276,19 @@ bool Animus::Vision::BakedWorld::Load(std::string const& path, std::string& erro
         || !section(Sc::SLOT_TERRAIN_HOLES, holeTiles * 256, sizeof(uint16_t), terrainHoles)
         || !section(Sc::SLOT_TERRAIN_LIQUID, liquidTiles * Sc::TERRAIN_LIQUID_BYTES, 1, terrainLiquid))
         return fail("a terrain section is missing, misplaced or the wrong size");
+    void const* terrainBlocks = nullptr;
+    void const* terrainLiquidBlocks = nullptr;
+    if (!section(Sc::SLOT_TERRAIN_BLOCKS, heightTiles * Sc::TERRAIN_BLOCK_COUNT, sizeof(Sc::BlockRange), terrainBlocks)
+        || !section(Sc::SLOT_TERRAIN_LIQUID_BLOCKS, liquidTiles * Sc::TERRAIN_BLOCK_COUNT, sizeof(Sc::BlockRange),
+            terrainLiquidBlocks))
+        return fail("a terrain block section is missing, misplaced or the wrong size");
+    {
+        Sc::SectionEntry const& models = header->Sections[Sc::SLOT_SOURCE_MODELS];
+        if (models.Bytes && (models.Offset < Sc::HEADER_BYTES || models.Offset + models.Bytes > _bytes))
+            return fail("the source model list is misplaced");
+        if (models.Bytes)
+            _sourceModels.assign(reinterpret_cast<char const*>(base + models.Offset), std::size_t(models.Bytes));
+    }
     if (!ValidNodes(static_cast<Sc::Node const*>(nodes), header->NodeCount, header->TriCount)
         || !ValidNodes(static_cast<Sc::Node const*>(liqNodes), header->LiquidNodeCount, header->LiquidTriCount))
         return fail("the BVH is inconsistent");
@@ -292,6 +305,72 @@ bool Animus::Vision::BakedWorld::Load(std::string const& path, std::string& erro
     _terrainHeights = static_cast<float const*>(terrainHeights);
     _terrainHoles = static_cast<uint16_t const*>(terrainHoles);
     _terrainLiquid = static_cast<uint8_t const*>(terrainLiquid);
+    _terrainBlocks = static_cast<Sc::BlockRange const*>(terrainBlocks);
+    _terrainLiquidBlocks = static_cast<Sc::BlockRange const*>(terrainLiquidBlocks);
+    _hasGround = false;
+    _extent = TerrainExtent();
+    for (uint32_t i = 0; i < header->TerrainTileCount; ++i)
+        _hasGround = _hasGround || (recs[i].Flags & Sc::TERRAIN_HEIGHTS) != 0;
+    _extent.Known = true;
+    _extent.HasGround = _hasGround;
+    _extent.HasLiquid = (header->Flags & Sc::HAS_TERRAIN_LIQUID) != 0;
+    _extent.GroundMin = header->TerrainHeightMin;
+    _extent.GroundMax = header->TerrainHeightMax;
+    _extent.LiquidMin = header->TerrainLiquidMin;
+    _extent.LiquidMax = header->TerrainLiquidMax;
+    // The coarser level above the blocks: 4 x 4 super-blocks of 4 x 4 blocks to a tile (derived here, not stored).
+    auto const supers = [&](Sc::BlockRange const* blocks, uint64_t tiles, std::vector<float>& out)
+    {
+        out.assign(std::size_t(tiles) * Sc::TERRAIN_SUPER_COUNT * 2, 0.0f);
+        for (uint64_t tile = 0; tile < tiles; ++tile)
+            for (uint32_t sx = 0; sx < Sc::TERRAIN_SUPERS_SIDE; ++sx)
+                for (uint32_t sy = 0; sy < Sc::TERRAIN_SUPERS_SIDE; ++sy)
+                {
+                    float low = Sc::BLOCK_EMPTY_MIN;
+                    float high = Sc::BLOCK_EMPTY_MAX;
+                    for (uint32_t bx = 0; bx < Sc::TERRAIN_SUPER_BLOCKS; ++bx)
+                        for (uint32_t by = 0; by < Sc::TERRAIN_SUPER_BLOCKS; ++by)
+                        {
+                            Sc::BlockRange const& range = blocks[tile * Sc::TERRAIN_BLOCK_COUNT
+                                + (sx * Sc::TERRAIN_SUPER_BLOCKS + bx) * Sc::TERRAIN_BLOCKS_SIDE
+                                + sy * Sc::TERRAIN_SUPER_BLOCKS + by];
+                            low = std::min(low, range.Min);
+                            high = std::max(high, range.Max);
+                        }
+                    std::size_t const at = (std::size_t(tile) * Sc::TERRAIN_SUPER_COUNT
+                        + sx * Sc::TERRAIN_SUPERS_SIDE + sy) * 2;
+                    out[at] = low;
+                    out[at + 1] = high;
+                }
+    };
+    supers(_terrainBlocks, heightTiles, _superGround);
+    supers(_terrainLiquidBlocks, liquidTiles, _superLiquid);
+    // Each liquid tile's lowest and highest level, from its blocks.
+    _tileLiquidRange.assign(std::size_t(header->TerrainTileCount) * 2, 0.0f);
+    _tileGroundMax.assign(header->TerrainTileCount, 0.0f);
+    for (uint32_t i = 0; i < header->TerrainTileCount; ++i)
+    {
+        if ((recs[i].Flags & Sc::TERRAIN_HEIGHTS) && !(recs[i].Flags & Sc::TERRAIN_FLAT))
+        {
+            float high = Sc::BLOCK_EMPTY_MAX;
+            for (uint32_t b = 0; b < Sc::TERRAIN_BLOCK_COUNT; ++b)
+                high = std::max(high,
+                    _terrainBlocks[std::size_t(recs[i].HeightIndex) * Sc::TERRAIN_BLOCK_COUNT + b].Max);
+            _tileGroundMax[i] = high;
+        }
+        float low = Sc::BLOCK_EMPTY_MIN;
+        float high = Sc::BLOCK_EMPTY_MAX;
+        if (recs[i].LiquidIndex != Sc::TERRAIN_NONE)
+            for (uint32_t b = 0; b < Sc::TERRAIN_BLOCK_COUNT; ++b)
+            {
+                Sc::BlockRange const& range
+                    = _terrainLiquidBlocks[std::size_t(recs[i].LiquidIndex) * Sc::TERRAIN_BLOCK_COUNT + b];
+                low = std::min(low, range.Min);
+                high = std::max(high, range.Max);
+            }
+        _tileLiquidRange[std::size_t(i) * 2] = low;
+        _tileLiquidRange[std::size_t(i) * 2 + 1] = high;
+    }
 
     // The grids the footprint overlaps: u runs down as x runs up.
     bool const liquid = header->LiquidTriCount != 0;
@@ -376,11 +455,46 @@ Animus::Vision::TerrainTile Animus::Vision::BakedWorld::Tile(int32_t tileX, int3
         && tileY <= _tileHigh[1];
     if (!tile.Loaded)
         return tile;
+    // A tile of the footprint with no terrain file has no ground and no liquid: nothing to range.
+    tile.Ranged = true;
     if (Sc::TerrainRec const* rec = FindTerrain(tileX, tileY))
     {
         tile.Heights = (rec->Flags & Sc::TERRAIN_HEIGHTS) != 0;
         tile.MaxHeight = rec->MaxHeight;
         tile.Liquid = (rec->Flags & Sc::TERRAIN_LIQUID) != 0;
+        if (tile.Heights)
+        {
+            tile.MinHeight = rec->MinHeight;
+            if (rec->Flags & Sc::TERRAIN_FLAT)
+            {
+                tile.GroundMax = rec->FlatHeight;
+                tile.Flat = true;
+                tile.FlatHeight = rec->FlatHeight;
+            }
+            else
+            {
+                tile.V9 = _terrainHeights + std::size_t(rec->HeightIndex) * Sc::TERRAIN_HEIGHT_FLOATS;
+                tile.V8 = tile.V9 + Sc::TERRAIN_V9 * Sc::TERRAIN_V9;
+                if (rec->Flags & Sc::TERRAIN_HOLES)
+                    tile.Holes = _terrainHoles + std::size_t(rec->HoleIndex) * 256;
+                tile.GroundBlocks = reinterpret_cast<float const*>(
+                    _terrainBlocks + std::size_t(rec->HeightIndex) * Sc::TERRAIN_BLOCK_COUNT);
+                tile.GroundMax = _tileGroundMax[std::size_t(rec - _terrain)];
+                tile.GroundSupers = _superGround.data() + std::size_t(rec->HeightIndex) * Sc::TERRAIN_SUPER_COUNT * 2;
+            }
+        }
+        if (tile.Liquid)
+        {
+            std::size_t const index = std::size_t(rec - _terrain) * 2;
+            tile.LiquidMin = _tileLiquidRange[index];
+            tile.LiquidMax = _tileLiquidRange[index + 1];
+            tile.LiquidBlocks = reinterpret_cast<float const*>(
+                _terrainLiquidBlocks + std::size_t(rec->LiquidIndex) * Sc::TERRAIN_BLOCK_COUNT);
+            uint8_t const* liquidBase = _terrainLiquid + std::size_t(rec->LiquidIndex) * Sc::TERRAIN_LIQUID_BYTES;
+            tile.Level = reinterpret_cast<float const*>(liquidBase);
+            tile.Kind = liquidBase + Sc::TERRAIN_CELLS * Sc::TERRAIN_CELLS * sizeof(float);
+            tile.LiquidSupers = _superLiquid.data() + std::size_t(rec->LiquidIndex) * Sc::TERRAIN_SUPER_COUNT * 2;
+        }
     }
     return tile;
 }
@@ -388,60 +502,5 @@ Animus::Vision::TerrainTile Animus::Vision::BakedWorld::Tile(int32_t tileX, int3
 Animus::Vision::TerrainCell Animus::Vision::BakedWorld::Cell(int32_t tileX, int32_t tileY, int32_t cellX,
     int32_t cellY, bool liquid) const
 {
-    TerrainCell cell;
-    if (cellX < 0 || cellY < 0 || cellX >= int32_t(Sc::TERRAIN_CELLS) || cellY >= int32_t(Sc::TERRAIN_CELLS))
-        return cell;
-    Sc::TerrainRec const* rec = FindTerrain(tileX, tileY);
-    if (!rec)
-        return cell;
-
-    if (rec->Flags & Sc::TERRAIN_HEIGHTS)
-    {
-        if (rec->Flags & Sc::TERRAIN_FLAT)
-        {
-            cell.Solid = true;
-            for (float& corner : cell.Corner)
-                corner = rec->FlatHeight;
-            cell.Centre = rec->FlatHeight;
-        }
-        else
-        {
-            bool hole = false;
-            if (rec->Flags & Sc::TERRAIN_HOLES)
-            {
-                // GridTerrainData::isHole: 16 x 16 words, each four bits a side of two-by-two cells.
-                static uint16_t const horizontal[4] = { 0x1111, 0x2222, 0x4444, 0x8888 };
-                static uint16_t const vertical[4] = { 0x000F, 0x00F0, 0x0F00, 0xF000 };
-                int32_t const cellRow = cellX / 8;
-                int32_t const cellCol = cellY / 8;
-                std::size_t const word = std::size_t(rec->HoleIndex) * 256 + std::size_t(cellRow * 16 + cellCol);
-                hole = (_terrainHoles[word] & horizontal[(cellY - cellCol * 8) / 2] & vertical[cellX % 8 / 2]) != 0;
-            }
-            if (!hole)
-            {
-                float const* v9 = _terrainHeights + std::size_t(rec->HeightIndex) * Sc::TERRAIN_HEIGHT_FLOATS;
-                float const* v8 = v9 + Sc::TERRAIN_V9 * Sc::TERRAIN_V9;
-                std::size_t const base = std::size_t(cellX) * Sc::TERRAIN_V9 + std::size_t(cellY);
-                cell.Solid = true;
-                cell.Corner[0] = v9[base];
-                cell.Corner[1] = v9[base + Sc::TERRAIN_V9];
-                cell.Corner[2] = v9[base + 1];
-                cell.Corner[3] = v9[base + Sc::TERRAIN_V9 + 1];
-                cell.Centre = v8[std::size_t(cellX) * Sc::TERRAIN_CELLS + std::size_t(cellY)];
-            }
-        }
-    }
-    if (liquid && (rec->Flags & Sc::TERRAIN_LIQUID))
-    {
-        uint8_t const* base = _terrainLiquid + std::size_t(rec->LiquidIndex) * Sc::TERRAIN_LIQUID_BYTES;
-        std::size_t const index = std::size_t(cellX) * Sc::TERRAIN_CELLS + std::size_t(cellY);
-        uint8_t const kind = base[Sc::TERRAIN_CELLS * Sc::TERRAIN_CELLS * sizeof(float) + index];
-        if (kind != Sc::TERRAIN_LIQUID_NONE)
-        {
-            std::memcpy(&cell.Level, base + index * sizeof(float), sizeof(float));
-            cell.Liquid = true;
-            cell.Deadly = kind == Sc::TERRAIN_LIQUID_DEADLY;
-        }
-    }
-    return cell;
+    return CellFromTile(Tile(tileX, tileY), cellX, cellY, liquid);
 }

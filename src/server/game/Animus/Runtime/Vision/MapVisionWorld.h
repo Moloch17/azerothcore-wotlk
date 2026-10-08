@@ -59,6 +59,8 @@ namespace Animus::Vision
         [[nodiscard]] bool StaticAnyHit(Vec3 from, Vec3 to) const override;
         [[nodiscard]] bool DynamicAnyHit(Vec3 from, Vec3 to) const override;
         [[nodiscard]] TerrainTile Tile(int32_t tileX, int32_t tileY) const override;
+        [[nodiscard]] TerrainExtent const& Extent() const override;
+        [[nodiscard]] bool GridLoaded(int32_t tileX, int32_t tileY) const override;
         [[nodiscard]] TerrainCell Cell(int32_t tileX, int32_t tileY, int32_t cellX, int32_t cellY,
             bool liquid) const override;
         [[nodiscard]] Movement::Liquid LiquidAt(float x, float y, float z) const override;

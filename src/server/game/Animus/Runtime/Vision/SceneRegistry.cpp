@@ -63,13 +63,40 @@ bool Animus::Vision::SceneRegistry::Ensure(std::string const& dataDir, std::stri
         else if (header.BakerVersion != SceneBaker::BAKER_VERSION)
             report.Reason = "baked by baker version " + std::to_string(header.BakerVersion) + ", this is "
                 + std::to_string(SceneBaker::BAKER_VERSION);
-        else if (!SceneBaker::SourceIdentity(dataDir, mapId, source, identityError))
+        else
         {
-            error = where + ": cannot read the map's source data in " + dataDir + ": " + identityError;
-            return false;
+            // The cheap check first: the size and time of every source file against the digest the scene recorded. A
+            // match is taken as current; anything else falls to the content hash, which decides (and, when the data is
+            // the same after all, refreshes the digest). See SceneBaker::SourceDigest.
+            auto const identityStart = std::chrono::steady_clock::now();
+            uint64_t digest = 0;
+            bool const haveDigest = SceneBaker::SourceDigest(dataDir, mapId, scene->SourceModels(), digest,
+                identityError);
+            if (haveDigest && header.SourceFilesDigest == digest)
+                report.Check = "file times";
+            else if (!SceneBaker::SourceIdentity(dataDir, mapId, source, identityError))
+            {
+                error = where + ": cannot read the map's source data in " + dataDir + ": " + identityError;
+                return false;
+            }
+            else if (header.SourceHash != source)
+                report.Reason = "the extracted map data changed since it was baked";
+            else
+            {
+                report.Check = "content hash";
+                std::string refreshError;
+                if (haveDigest && SceneBaker::RefreshDigest(path, digest, refreshError))
+                {
+                    report.Check += " (digest refreshed)";
+                    auto reloaded = std::make_unique<BakedWorld>();
+                    if (reloaded->Load(path, loadError))
+                        scene = std::move(reloaded);
+                }
+                else if (haveDigest)
+                    report.Check += " (digest not refreshed: " + refreshError + ")";
+            }
+            report.IdentitySeconds = SecondsSince(identityStart);
         }
-        else if (header.SourceHash != source)
-            report.Reason = "the extracted map data changed since it was baked";
     }
 
     if (report.Reason.empty())

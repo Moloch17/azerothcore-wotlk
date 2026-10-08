@@ -35,7 +35,7 @@ namespace Animus::Vision::Scene
     static_assert(std::endian::native == std::endian::little, "scene files are little-endian");
 
     constexpr uint32_t MAGIC = 0x43534241;          // "ABSC"
-    constexpr uint32_t VERSION = 2;
+    constexpr uint32_t VERSION = 3;
     constexpr uint32_t HEADER_BYTES = 512;
     constexpr uint32_t SECTION_ALIGN = 16;
     constexpr uint32_t MAX_LEAF = 4;                // triangles in a leaf, at most
@@ -67,6 +67,9 @@ namespace Animus::Vision::Scene
         SLOT_TERRAIN_HEIGHTS,   // floats: per height-bearing, non-flat tile, V9 (129 x 129) then V8 (128 x 128)
         SLOT_TERRAIN_LIQUID,    // per liquid tile: float Level[128 * 128], then uint8 Kind[128 * 128]
         SLOT_TERRAIN_HOLES,     // uint16 [256] per tile with holes (the map file's hole words)
+        SLOT_TERRAIN_BLOCKS,    // BlockRange [256] per height-bearing, non-flat tile (v3): ground heights per block
+        SLOT_TERRAIN_LIQUID_BLOCKS, // BlockRange [256] per liquid tile (v3): liquid levels per block
+        SLOT_SOURCE_MODELS,     // bytes (v3): the source model files read below vmaps/, each NUL-ended
         SLOT_COUNT = 16
     };
 
@@ -93,6 +96,15 @@ namespace Animus::Vision::Scene
     };
 
     constexpr uint32_t TERRAIN_CELLS = 128;
+    /// The tile's culling hierarchy (v3): 16 x 16 blocks of 8 x 8 cells, block (bx, by) at index bx * 16 + by with
+    /// bx = cellX / 8 and by = cellY / 8 (the same axes as the cells).
+    constexpr uint32_t TERRAIN_BLOCK_CELLS = 8;
+    constexpr uint32_t TERRAIN_BLOCKS_SIDE = TERRAIN_CELLS / TERRAIN_BLOCK_CELLS;
+    constexpr uint32_t TERRAIN_BLOCK_COUNT = TERRAIN_BLOCKS_SIDE * TERRAIN_BLOCKS_SIDE;
+    /// The reader derives one level above them (not stored): 4 x 4 super-blocks of 4 x 4 blocks to a tile.
+    constexpr uint32_t TERRAIN_SUPER_BLOCKS = 4;
+    constexpr uint32_t TERRAIN_SUPERS_SIDE = TERRAIN_BLOCKS_SIDE / TERRAIN_SUPER_BLOCKS;
+    constexpr uint32_t TERRAIN_SUPER_COUNT = TERRAIN_SUPERS_SIDE * TERRAIN_SUPERS_SIDE;
     constexpr uint32_t TERRAIN_V9 = 129;
     constexpr uint32_t TERRAIN_NONE = 0xFFFFFFFFu;
     constexpr uint8_t TERRAIN_LIQUID_NONE = 0;
@@ -104,14 +116,27 @@ namespace Animus::Vision::Scene
         int32_t TileX;
         int32_t TileY;
         uint32_t Flags;
-        float MaxHeight;            // the tile's highest point, as the map file's height header has it
+        float MaxHeight;            // the tile's highest point, as the map file's height header has it (the walk's
+                                    // tile test: unchanged since v1)
         float FlatHeight;           // the height of a flat tile
         uint32_t HeightIndex;       // tile number in SLOT_TERRAIN_HEIGHTS, or TERRAIN_NONE
         uint32_t HoleIndex;         // tile number in SLOT_TERRAIN_HOLES, or TERRAIN_NONE
         uint32_t LiquidIndex;       // tile number in SLOT_TERRAIN_LIQUID, or TERRAIN_NONE
-        uint32_t Reserved;
+        float MinHeight;            // v3: the tile's lowest point of its height arrays (FlatHeight for a flat tile)
     };
     static_assert(sizeof(TerrainRec) == 36);
+
+    /// The lowest and highest height (or liquid level) over a block's cells, with the cells' shared edges: every
+    /// corner of its 9 x 9 vertices and centre of its 8 x 8 cells, holes included (a bound, so conservative). A
+    /// block with no liquid reads Min = FLT_MAX, Max = -FLT_MAX (BLOCK_EMPTY_*), which no range overlaps.
+    struct BlockRange
+    {
+        float Min;
+        float Max;
+    };
+    static_assert(sizeof(BlockRange) == 8);
+    constexpr float BLOCK_EMPTY_MIN = 3.4028234663852886e38f;
+    constexpr float BLOCK_EMPTY_MAX = -3.4028234663852886e38f;
 
     constexpr std::size_t TERRAIN_HEIGHT_FLOATS = TERRAIN_V9 * TERRAIN_V9 + TERRAIN_CELLS * TERRAIN_CELLS;
     constexpr std::size_t TERRAIN_LIQUID_BYTES = TERRAIN_CELLS * TERRAIN_CELLS * (sizeof(float) + 1);
@@ -146,12 +171,18 @@ namespace Animus::Vision::Scene
         uint64_t SourceHash = 0;            // FNV-1a 64 over the contents of every source file the bake read
         uint32_t TerrainTileCount = 0;
         uint32_t Reserved2 = 0;
-        uint8_t Reserved1[128] = {};
+        float TerrainHeightMin = 0.0f;      // v3: the lowest / highest ground height of any height-bearing tile
+        float TerrainHeightMax = 0.0f;      // (from the arrays; a flat tile's FlatHeight); 0, 0 with none
+        float TerrainLiquidMin = 0.0f;      // v3: the lowest / highest level of any terrain liquid cell; 0, 0 with none
+        float TerrainLiquidMax = 0.0f;
+        uint64_t SourceFilesDigest = 0;     // v3: FNV-1a 64 over the (name, size, mtime ns) of every source file
+        uint8_t Reserved1[104] = {};
         SectionEntry Sections[SLOT_COUNT] = {};
     };
     static_assert(sizeof(SceneHeader) == HEADER_BYTES, "the scene header is 512 bytes");
     static_assert(offsetof(SceneHeader, Checksum) == 104, "the checksum sits at byte 104");
     static_assert(offsetof(SceneHeader, SourceHash) == 112, "the source hash sits at byte 112");
+    static_assert(offsetof(SceneHeader, SourceFilesDigest) == 144, "the source files digest sits at byte 144");
     static_assert(offsetof(SceneHeader, Sections) == 256, "the section table starts at byte 256");
 
     /// A triangle as the tracer reads it: vertex 0 and the two edges from it, world space.
@@ -196,16 +227,22 @@ namespace Animus::Vision::Scene
         return hash;
     }
 
-    /// The file's checksum: FNV-1a 64 over every byte, the header's checksum field taken as zero.
+    /// The file's checksum: FNV-1a 64 over every byte, the header's checksum field and its source files digest taken
+    /// as zero. The digest is the one thing a file carries that differs between machines holding the same extraction
+    /// (it holds file times), so it stays out of the checksum the cluster compares.
     [[nodiscard]] inline uint64_t ChecksumOf(uint8_t const* file, std::size_t bytes)
     {
-        constexpr std::size_t at = offsetof(SceneHeader, Checksum);
-        if (bytes < at + sizeof(uint64_t))
+        constexpr std::size_t first = offsetof(SceneHeader, Checksum);
+        constexpr std::size_t second = offsetof(SceneHeader, SourceFilesDigest);
+        static_assert(first + sizeof(uint64_t) <= second);
+        if (bytes < second + sizeof(uint64_t))
             return 0;
         uint8_t const zero[sizeof(uint64_t)] = {};
-        uint64_t hash = Fnv1a(file, at);
+        uint64_t hash = Fnv1a(file, first);
         hash = Fnv1a(zero, sizeof(zero), hash);
-        return Fnv1a(file + at + sizeof(uint64_t), bytes - at - sizeof(uint64_t), hash);
+        hash = Fnv1a(file + first + sizeof(uint64_t), second - first - sizeof(uint64_t), hash);
+        hash = Fnv1a(zero, sizeof(zero), hash);
+        return Fnv1a(file + second + sizeof(uint64_t), bytes - second - sizeof(uint64_t), hash);
     }
 }
 

@@ -92,6 +92,17 @@ Animus::Vision::TerrainTile Animus::Vision::MapVisionWorld::Tile(int32_t tileX, 
     return _scene ? _scene->Tile(tileX, tileY) : TerrainTile();
 }
 
+Animus::Vision::TerrainExtent const& Animus::Vision::MapVisionWorld::Extent() const
+{
+    static TerrainExtent const unknown;
+    return _scene ? _scene->Extent() : unknown;
+}
+
+bool Animus::Vision::MapVisionWorld::GridLoaded(int32_t tileX, int32_t tileY) const
+{
+    return _scene && _scene->GridLoaded(tileX, tileY);
+}
+
 Animus::Vision::TerrainCell Animus::Vision::MapVisionWorld::Cell(int32_t tileX, int32_t tileY, int32_t cellX,
     int32_t cellY, bool liquid) const
 {
