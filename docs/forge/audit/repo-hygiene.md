@@ -41,8 +41,9 @@ lines the forge added to upstream files. The debt is elsewhere:
 5. **Image and tree weight.** `.dockerignore` does not exclude the in-tree 15 GB `.venv`, 3.1 GB `probes/` or 580 MB
    `models/`, and `Dockerfile.dev-server` does `COPY apps`. The dev image also installs a MySQL server, two compilers
    and a full Boost, from an unpinned base.
-6. **Exposure is LAN-only but unauthenticated.** Cluster ports bind every interface with no authentication beyond an
-   integrity fingerprint, and the control socket's line buffer is unbounded.
+6. **Exposure is LAN-only but unauthenticated, and one port is code execution.** Cluster ports bind every interface
+   with no authentication beyond an integrity fingerprint; the default learner sync hub on 7702 unpickles whatever any
+   peer sends (`async_sync.py:111`).
 7. **Documentation drift.** Two of the eight numbered manual chapters (1,253 lines) still describe
    `modules/mod-animus-forge/src`; `AGENTS.md` says nothing about the forge; comments cite gitignored plan files.
 
@@ -69,8 +70,8 @@ Effort: S under a day, M a few days, L a week or more. "Risk of fixing" is the c
 | R-14 | Docker | Dev image: unpinned `ubuntu:24.04` and apt, `mysql-server` inside the image, gcc and clang, `libboost-all-dev`, passwordless sudo | `Dockerfile.dev-server:10,35-44,87` | Low | S | Low |
 | R-15 | Python | torch unpinned (`>=2.4`, version var empty); dev venv has 2.9.1+rocm6.4 while `blas.py` measured 2.10+rocm7.0 and 2.13+rocm7.1 on cluster cards | `pyproject.toml:12`; `animus-venv.sh:31`; `docker-compose.yml:140`; `blas.py:6-8` | Med | S | Med |
 | R-16 | Python | The venv lives in the source tree with container-absolute paths, so a host python cannot use it, and the cluster is set up by copying the tree | `.venv/pyvenv.cfg`; `animus-venv.sh:6-9`; `game/CMakeLists.txt:58-60` | Med | M | Med |
-| R-17 | Safety | Cluster control port 7700 binds all interfaces, no authentication, unbounded line buffer; `REGISTER` lets a peer name the address the host's learner dials | `ClusterLink.cpp:127,164-180,287-291` | Med | M | Low |
-| R-18 | Safety | Data port (`tcp://` listener) binds all interfaces by default; gloo 7702 and its ephemeral ports are unauthenticated | `LockstepServer.cpp:73`; `docker-compose.cluster.yml:10` | Med | M | Low |
+| R-17 | Safety | Cluster control port 7700 and worker data port 7701 bind all interfaces with no authentication; unbounded line buffer; `REGISTER` lets a peer name the address the host's learner dials; first connection to 7701 becomes "the learner" | `ClusterLink.cpp:127,164-180,287-291`; `LockstepServer.cpp:73-75`; `AnimusForge.cpp:1332` | Med | M | Low |
+| R-18 | Safety | Default cluster sync (`async`) runs a hub on `0.0.0.0:7702` that `pickle.loads` unauthenticated bytes (unbounded length): remote code execution for any LAN peer, in a container with a read-write source mount; checkpoints then `torch.load(weights_only=False)` | `async_sync.py:24-25,99-111,212`; `worldserver.conf.dist:5769`; `train.py:358,950`; `docker-compose.yml:51,151` | High | M | Med |
 | R-19 | Modules | `MODULES_FOLDED_INTO_CORE` names the dead `mod-animus-forge`, and the build still installs its `.conf.dist` from the stale checkout | `modules/CMakeLists.txt:20-29,374-393` | Med | S | Med |
 | R-20 | Config | The real per-machine config is `modules/mod_animus_forge.conf`, described in code as "left from the module days"; two files can hold a key | `ForgeMain.cpp:354-360`; `cluster.toml:17`; `ForgeCommands.cpp:119-127` | Med | M | Med |
 | R-21 | Core | `MapUpdater::ParallelFor` has no caller; `SetMapUpdateInterval` is a no-op still called | `MapUpdater.h:85`; `MapMgr.h:101`; `World.cpp:205` | Low | S | Low |
@@ -733,3 +734,174 @@ keeps the diff small for a merge. After the merge in section 1, upstream's chang
 8. Remove the dead core additions in section 1.5 (a build is needed; batch with the next C++ change, principle 18).
 9. Shorten `CurriculumTuning.h`'s history comments when it is split (F2).
 
+## 6. Safety and secrets
+
+### 6.1 What was searched, and what was found
+
+Searched the tracked tree (excluding `deps/`, `data/sql/` and upstream's `src/` test fixtures) for: private-key
+headers, AWS key ids, GitHub tokens (`ghp_`), Slack tokens (`xox`), OpenAI-style keys (`sk-`); the words `password`,
+`passwd`, `secret`, `token`, `api key` followed by `:` or `=`; private IPv4 ranges; home directories; e-mail addresses.
+**No credential, token or key was found.** What was found, with values deliberately not repeated:
+
+| Kind | Where | Note |
+|---|---|---|
+| Private LAN IPv4 addresses (six machines) and ssh login names | `apps/forge/cluster.toml:31-72`; `docs/forge/cluster.md:10-21,36`; `docs/forge/deploy-gate.md:23`; `tests/test_forgectl.py` (about 40 lines, e.g. `:85-87,156,216-244,528-529,557-558,578`), `test_dungeon_stages.py:228-236`; `apps/forge/tools/cluster-pull.sh:10,24` (the `lan` remote's login and path) | RFC 1918 addresses are not routable, but together with logins and `lan` they describe the owner's network. If `origin` is public this is an information leak of low value (UNVERIFIED visibility of `Moloch17/azerothcore-wotlk`) |
+| The owner's full name | `docs/forge/deploy-gate.md:17` | as the deploy owner of record |
+| The owner's e-mail address | not found in the tracked tree | the grep of `apps/forge`, `docs/forge`, `src/server/game/Animus`, `forge.sh` for e-mail patterns returned only a test fixture address at a reserved domain |
+| Default database credentials | `docker-compose.yml:30-32,65`, `docker-compose.cluster.yml:20-22`: the fallback is a fixed word when `DOCKER_DB_ROOT_PASSWORD` is unset (`conf/dist/env.docker:18` leaves it empty); `worldserver.conf.dist:143` upstream default `acore;acore` | the application connects to MySQL as `root` (`docker-compose.yml:30-32`), not a least-privilege account. The database port is published to loopback only (`:63`), which is the real protection |
+| Passwordless sudo for the container user | `Dockerfile.dev-server:86-87` | stock; the container also gets `seccomp=unconfined`, `/dev/kfd` and `/dev/dri` (`docker-compose.yml:48-52`) |
+| Home directory of the owner in tests | `test_forgectl.py:853-854` | `/home/x/...` synthetic |
+
+### 6.2 What listens, and who can reach it
+
+| Surface | Bind | Authentication | Evidence | Reachable from |
+|---|---|---|---|---|
+| Console (stdin) | none (terminal) | the docker socket's owner | `ForgeMain.cpp:491`: only if stdin is a terminal; `docker-compose.yml:120-124` | anyone who can `docker attach` = root on the machine |
+| SOAP | `127.0.0.1:7878`, `SOAP.Enabled = 0` | account name and password, answered from the in-memory snapshot (`AccountMgr.cpp:271`) | `ForgeMain.cpp:475-485`; `worldserver.conf.dist:477,484` | nothing by default |
+| Remote Access (telnet) | **compiled, never started**: `RemoteAccess/RASession.cpp` is collected by the apps glob, `ForgeMain.cpp` never creates the listener; the dist keeps `Ra.IP = "0.0.0.0"`, `Ra.Enable = 0` | login prompt (`RASession.cpp:63-65`) | `worldserver.conf.dist:448,455` | nothing (dead surface) |
+| ToCloud9 sidecar (`libsidecar`) | the stub library is linked into `game` (`game/CMakeLists.txt` `libsidecar`), `USE_REAL_LIBSIDECAR 0` (`conf/dist/config.cmake:110`); `ForgeMain.cpp` has no `Init` call | none | `sToCloud9Sidecar->` call sites in `Map.cpp`, `Battleground.cpp`, `TradeHandler.cpp`, `Item.cpp`, `ObjectGuid.cpp`, `InstanceScript.cpp`, `InstanceSaveMgr.cpp` | nothing |
+| World listener (8085), auth (3724) | not opened by the sim; the stock `ac-authserver` (profile `stock`) publishes `${DOCKER_AUTH_EXTERNAL_PORT:-13724}:3724` on **all interfaces** (`docker-compose.yml:199`) | stock | | only if someone starts `--profile stock` |
+| Cluster control, TCP 7700 (host) | `INADDR_ANY` (`ClusterLink.cpp:127`) | **none**: a peer sends `REGISTER`, `FINGERPRINT`, `CAPS`, `PROGRESS` text lines | `ClusterLink.cpp:225-227,287-330` | the LAN (host-network mode, `docker-compose.cluster.yml:15`) |
+| Cluster data, TCP 7701 (worker sim) | `tcp://0.0.0.0:<DataPort>` (`AnimusForge.cpp:1332`; `LockstepServer.cpp:73`) | **none**: the lockstep protocol starts with `HELLO { u32 version }` (`Protocol.h:26`) | `LockstepServer.cpp:54-83` | the LAN; whoever connects first is "the learner" and supplies the actions |
+| Weight exchange, TCP 7702 (`AnimusForge.Cluster.DistPort`), default sync mode `async` | **`socket.create_server(("0.0.0.0", port))`** (`async_sync.py:212`) answering **`pickle.loads` of whatever arrives** (`async_sync.py:99-111`), 8-byte length prefix, no cap | **none**; the module header says "Length-prefixed pickles on a plain TCP connection, on a trusted LAN" (`async_sync.py:24-25`) | `worldserver.conf.dist:5758-5769` (`Cluster.Sync = "async"`); `docker-compose.cluster.yml:2-4,10-11` | the LAN. In `weights` mode the same port is torch.distributed (gloo, no authentication) plus its ephemeral ports |
+| TensorBoard 16006 | loopback in both modes (`docker-compose.yml:149`; `FORGE_LOCAL_ONLY` `forge-worldserver.sh:82-86`) | none | | the machine |
+| MySQL 13306 | `127.0.0.1` (`docker-compose.yml:63`) | root password, default fixed word | | the machine |
+
+Findings:
+
+- **R-17: the control port has no authentication and an unbounded line buffer.** `ReadLines` (`ClusterLink.cpp:164-180`)
+  appends everything it receives to `peer.In` and only extracts text at newlines; a peer that sends bytes without a
+  newline grows the host's memory without limit. `REGISTER <port> <advertise>` (`:287-291`) lets any peer name the
+  address (`advertise`) that becomes the worker's "sim" the host's learner will dial (`tcp://<advertise>:<port>`,
+  `:290`). The fingerprint (`:301-320`) is an integrity check against build mismatch: it is deterministic from public
+  inputs (the sources, protocol number, field-file counts and the curriculum settings), so it is not a secret. The
+  gap is small on a private network, which is where `docker-compose.cluster.yml:10-11` says the ports belong; the
+  document never says the host must firewall the three ports from everything else, and no firewall rule is in the
+  repository (UNVERIFIED on all five machines).
+- **R-17 (cont.): the data port accepts whoever connects first.** The worker's lockstep listener accepts one client
+  (`listen(_listener, 1)`, `LockstepServer.cpp:75`); a LAN peer that connects before the host's learner replaces the
+  learner for the run (it can send arbitrary actions) or, if it is late, is refused. This is a denial-of-training more
+  than a data risk, since nothing sensitive crosses the link.
+- **R-18 (raised): an unauthenticated remote-code-execution endpoint on the default cluster path.** In the default
+  `async` mode the host's learner runs a hub on `0.0.0.0:7702` that calls `pickle.loads` on the bytes of any
+  connection (`async_sync.py:99-111,212`). Unpickling attacker-chosen bytes runs attacker-chosen code, in the learner
+  process, which owns the GPU and runs in a container with `seccomp=unconfined` and the source tree bind-mounted
+  read-write (`docker-compose.yml:51,151`), i.e. a persistent foothold in the repository checkout. The length prefix is
+  trusted as well, so a single 8-byte header can ask for an arbitrarily large allocation. The module's own comment
+  accepts the risk for "a trusted LAN"; the owner should decide whether the LAN is that (Q-3). Fix in rising order of
+  effort: bind the hub to the cluster interface only; add an HMAC over each frame with a shared secret read from the
+  conf; replace the pickle with a fixed-schema frame (`numpy` arrays and JSON), which is all the traffic is. Rank
+  checkpoints fetched through the same link are then read with `torch.load(..., weights_only=False)` at five sites
+  (`train.py:358,950`, `cast.py:38`, `evaluate.py:67`, `export.py:890`), another unpickle of a file that crossed the
+  network (`fetch_shared`, called at `train.py:725`); `weights_only=True` is enough for state dicts if the checkpoint
+  holds
+  only tensors and plain containers (UNVERIFIED that the checkpoint format qualifies).
+- **The sealed database is a safety feature**: after startup the pools drop writes (`DatabaseWorkerPool.cpp`), so a
+  compromised learner or peer cannot change the character or auth database through the sim; the console and SOAP
+  logins come from memory (`AccountMgr::LoadSnapshot`, which keeps the SRP6 verifiers in process memory). Playtest mode
+  disables this (`ForgeMain.cpp:461`).
+- **Nothing else needs fixing in this area.** There is no `.env` in the tree (ignored), no docker socket mount, and no
+  tracked key.
+
+## 7. Cleanup plan
+
+Rules the phases follow: principle 18 (one cluster rebuild per plan, so every C++, CMake or fingerprint change waits
+and batches), principle 19 (nothing ships to the realm), the owner's note that nothing here may be built or run by an
+audit. "Safe today" means text, ignore rules, Python tooling and documents: no worldserver rebuild, and a running
+cluster is not affected (a `git pull` on a worker while its learner runs is the one trap: stop the stage first, as the
+deploy gate says).
+
+### Phase A: safe today (no build, no cluster rebuild)
+
+| Step | Findings | Effort |
+|---|---|---|
+| A1. `.dockerignore`: add `apps/forge/python/.venv`, `apps/forge/probes`, `apps/forge/models`, `apps/forge/python/runs`, `**/__pycache__`, `.git` | R-13 | S |
+| A2. Python: pin `torch` in `ANIMUS_TORCH_VERSION` for each machine class and write the pins in `cluster.md` and `pyproject.toml` comment; add a `pip freeze` lock for the dev venv (a file only, not enforced yet) | R-15 | S |
+| A3. Update the stale facts in docs: `cluster.md:13` (device lines now in the shared anchor), `deploy-gate.md:31` (forgectl is merged), `01-forge-core-delta.md:11-13` (494 commits, new base), add the headless-session finding to the delta document; correct the A4 entry of `known-issues.md` (lazy imports are not the hazard; process starts are) | R-03, R-22, section 4.2 | S |
+| A4. Rewrite or delete chapters `03-animus-lib.md` and `05-animus-forge.md`; add a forge section and the `docs/forge/README.md` pointer to `AGENTS.md`, and a root `README.md` | R-22, R-23 | M |
+| A5. Delete `mod-animus-movement.patch`, `tools/rename_runs.py`, the duplicate fixture (point `test_golden_update.py:42` at one file), the five stale un-ignores in `.gitignore`; decide the amdl8 patch and `forge-parallel-core.PLAN.md` (move or delete) | R-26, R-27 | S |
+| A6. Fix operator-facing Python text: `train.py:3`, `export.py:3,101`, `bench_learner.py:3` examples; decide `evaluate.py --baseline` | R-24, R-32 | S |
+| A7. Put the missing source of truth in the tree: `camera-vision.GPU.md` (or the 65 citations removed), the table-generator scripts (`rooms.py`, `table.py`, `sites.py`) under `apps/forge/tools/` | R-25 | M |
+| A8. Add a fork CI workflow (section 3.8), inert until pushed; remove `FUNDING.yml`, `.coderabbit.yml` if unwanted | R-11, R-35 | M |
+| A9. Define `claude-syntax` as a compose service in a profile (or rename the config to the existing dev service); add `llvm-17` or remove the relink | R-12 | S |
+| A10. Network: add a firewall note and the exact `ufw`/`nft` rules to `cluster.md`; bind-address check by hand on the five machines | R-17, R-18 | S |
+| A11. Housekeeping: prune merged `worktree-agent-*` branches and worktrees in the owner's repository | section 2.1 | S |
+
+### Phase B: needs a build and a cluster rebuild (batch with the next C++ change)
+
+| Step | Findings | Note |
+|---|---|---|
+| B1. Python+C++ together: authenticate the cluster links. A shared secret in the conf; HMAC the `async_sync` frames; reject frames above a size; drop `pickle` for a fixed-schema frame; bind 7700/7701/7702 to the cluster interface; cap `ReadLines` | R-17, R-18 | changes the wire protocol: bump `PROTOCOL_VERSION`, every machine at once |
+| B2. Widen the fingerprint: hash `Forge/`, `ForgeMain.cpp`, `ClientMovement.cpp`, `Maps/`, `Time/`, `CMakeLists`, the build type, the flags, the torch version and the presence of `libforge-gpu.so`; fail loudly if `ForgeSourceHash.h` is missing | R-06, R-07 | every machine rebuilds once; the first build after it cannot join an old host |
+| B3. Resolve the build-type contradiction (`forge-worldserver.sh:24` vs `env.ac:19`) and set `CAPPS_BUILD=world-only` in `env.ac` | R-08, R-10 | measure link time before and after on the slowest machine |
+| B4. Resolve the GPU architecture rule: either `--offload-arch=native` as the Dockerfile comment says, or set `FORGE_GPU_ARCHS` per machine class in the override files | R-09 | |
+| B5. Delete the dead core additions (section 1.5), the forge `PCQueue::Reset`, `ParallelFor`, `SetMapUpdateInterval` and its caller; fix `AnimusForge.cpp:67` to fail rather than say "unhashed" | R-01, R-21 | trivial code, one cluster rebuild |
+| B6. Replace `m_simSession` with upstream's `_headless` (after the merge) | R-05 | removes 2 conflict hunks and 3 files from the delta |
+| B7. Fold `modules/mod_animus_forge.conf` into `worldserver.conf` or rename it, and delete `MODULES_FOLDED_INTO_CORE` with the dead checkout | R-19, R-20 | `forgectl conf-sync`, `cluster.toml:17` and the tests change together |
+| B8. The upstream merge itself (section 1.6): after B5 and B6, it is smaller | R-01 to R-05 | |
+| B9. Console help text in C++ (`ForgeConfig.h:60`, `ForgeCommands.cpp:506`) | R-24 | |
+
+### Phase C: needs a decision from the owner
+
+See the questions below. They are: cadence and timing of the upstream merge; whether to keep `Forge.Playtest`; whether
+the realm tooling (`human/`, the amdl8 patch, `fieldworld`) stays in this repository; whether the LAN is trusted; the
+fingerprint's reach; `-march=native` against a portable baseline; header wording and `AUTHORS`; upstream pull
+requests; the e2e suite; fork CI and a self-hosted runner.
+
+## 8. Questions for the owner
+
+1. **Q-1 Merge now or later?** The fork is 494 commits behind and the gap grows by about 90 a week (206 on 2026-09-15,
+   494 on 2026-10-07). The easy merge
+   is the one before `Spell.cpp` and `Unit.cpp` drift further. Do you want a first merge before the next plan (it needs
+   one cluster rebuild), and who starts it (R-01 to R-05)?
+2. **Q-2 How wide should the cluster fingerprint be?** Today it ignores every in-place core edit, the compiler flags,
+   the Python learner and the torch version (R-06, R-07). Widening it costs one rebuild per machine and makes a stale
+   worker impossible to start; do you want that, or is "the deploy gate catches it" the intended control?
+3. **Q-3 Is the cluster LAN trusted?** Today any host that reaches 7700 to 7702 can run code in the learner (R-17,
+   R-18). Is a shared secret or an interface bind acceptable work, or is the firewall on each machine the control? Are
+   the five machines' firewalls configured (UNVERIFIED)?
+4. **Q-4 Is `Forge.Playtest` still wanted?** The notes record the playtest as abandoned on 2026-10-05; the code is 48
+   lines in 9 files and `principles.md` still lists it as the one gate (R-30).
+5. **Q-5 What happens to the realm tooling?** The `human/` package (17 modules), `mod-animus-amdl8.patch`,
+   `amdl8-check/`, `forge fieldworld` and the 580 MB of first-curriculum models are all for a realm module the notes
+   call
+   parked. Keep, move to the module's repository, or delete?
+6. **Q-6 Is upstream's e2e suite wanted back?** If not, the 27 modify/delete conflicts can be silenced with a merge
+   driver or a sparse checkout; if yes, the Go suite has to be reintroduced.
+7. **Q-7 Send the bug fixes upstream?** Section 1.4 lists seven groups of fixes (64-bit timers, scheduler diff, BIH
+   hardening,
+   LFG and guid locking, update-list assert). The standing rule is no pull requests unless asked; this is the asking.
+8. **Q-8 Header wording.** 198 files say "Animus Forge project, based on AzerothCore"; upstream tooling expects the
+   AzerothCore line; `AUTHORS` has no forge entry. Which to keep (R-31)?
+9. **Q-9 What does each cluster machine actually run?** torch version and ROCm/CUDA per machine, GPU architecture,
+   whether `libforge-gpu.so` exists on each, Python version. The tracked files record three torch builds and an NVIDIA
+   card beside the RDNA4 ones (`blas.py:3-8`) and cannot say which is where (R-09, R-15).
+10. **Q-10 Where is the `claude-syntax` container defined?** It is the test runner of the deploy gate and nothing in the
+    repository creates it (R-12). May a compose service replace it?
+11. **Q-11 Reproducibility.** Is bit-reproducibility across machines wanted (evaluation seeds, regression of a stage on
+    another machine)? If yes, `-march=native` needs a portable baseline or `-ffp-contract=off` for the sim (R-07), at a
+    cost in speed that someone must measure.
+12. **Q-12 The per-machine config.** May `modules/mod_animus_forge.conf` move into `worldserver.conf` (or take a name
+    that is not a dead module's), and may the dead `modules/mod-animus-forge` checkout be removed with its build
+    special case (R-19, R-20)? How should the forge coexist with `mod-animus` in one `modules/` directory (UNVERIFIED
+    guard)?
+13. **Q-13 Fork CI.** Is a GitHub workflow acceptable, with a hosted runner for compile and CPU tests, or only a
+    self-hosted runner for GPU tests (section 3.8)?
+14. **Q-14 `forge-parallel-core.PLAN.md`.** It opens by describing a design the code no longer has. Keep it as history
+    in
+    `docs/forge/decisions/`, or delete it (R-27)?
+15. **Q-15 Is the repository public?** `origin` is `Moloch17/azerothcore-wotlk`. If public, the LAN layout, logins and
+    the owner's name in `cluster.toml`, `cluster.md`, `deploy-gate.md` and `test_forgectl.py` should move out (R-29).
+
+## Appendix: reproducing the numbers
+
+| Claim | Command (read-only) |
+|---|---|
+| Upstream is 494 commits ahead | `git fetch upstream` then `git rev-list --count forge..upstream/master` |
+| 119 forge-edited upstream files; 41 also edited upstream; 78 not | `git diff --name-only 37de65eb0 forge -- . ':!src/server/game/Animus' ':!apps/forge' ':!docs' ':!src/test' ':!e2e' ':!.agents'`, then the same pathspec on `37de65eb0 upstream/master`, `comm -12` and `comm -23` of the sorted lists |
+| The dry-run merge | `git merge-tree --write-tree --name-only --messages forge upstream/master` (the tree it prints is `54dd8dc6ad4d949d069e250fda55bb92c936361c`); inspect with `git show 54dd8dc6ad4d949d069e250fda55bb92c936361c:<path>` |
+| No forge blob above 635 KB | `git rev-list --objects 37de65eb0..forge` piped to `git cat-file --batch-check='%(objecttype) %(objectname) %(objectsize) %(rest)'`, sorted by size |
+| Code-style status | `python3 apps/codestyle/codestyle-cpp.py` from the repository root |
+| Header counts | `grep -rL "AzerothCore Project" src/server/game/Animus ...` and `grep -rl "This file is part of the Animus Forge" src` |
+| Dead symbols | `grep -rw <symbol> src --include=*.cpp --include=*.h` |
+| Import cycles | AST walk over `apps/forge/python/animus/**/*.py` (top-level and function-level imports) |
