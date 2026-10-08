@@ -46,6 +46,7 @@ SAMPLES = {
     13: {"ms": 13, "player": 77, "kind": 1, "class_": 11, "race": 4, "level": 60, "map": 1, "zone": 141,
          "mount": 0, "form": 3, "in_combat": 1, "move_revision": 2, "model": b"druid_travel"},
     14: {"ms": 14, "player": 77, "kind": 1, "sent": 1200, "kept": 1188},
+    15: {"ms": 15, "map": 36, "instance": 7, "diff_ms": 53},
     51: {"ms": 51, "owner": 11, "companion": 77, "command": 2, "arg": 0},
     52: {"ms": 52, "owner": 11, "companion": 77, "rating": -1, "reason": 5},
 }
@@ -263,9 +264,10 @@ def test_format3_player_and_companion_moves_read_back(tmp_path):
                                        server_ms=5000 + 100 * i)))
     tallies = [w.record(14, {"ms": 2300, "player": player, "kind": 0, "sent": 13, "kept": 12}),
                w.record(14, {"ms": 2300, "player": companion, "kind": 1, "sent": 14, "kept": 12})]
+    ticks = [w.record(15, {"ms": 1000 + 50 * i, "map": 1, "instance": 0, "diff_ms": 50 + i % 3}) for i in range(24)]
     path = tmp_path / "move-1.bin"
     path.write_bytes(w.header("move", fmt=r.FORMAT_VERSION) + b"".join(w.record(13, m) for m in movers)
-                     + b"".join(moves) + b"".join(tallies))
+                     + b"".join(moves) + b"".join(tallies) + b"".join(ticks))
     stats = r.FileStats(path)
     batch = r.read_all(path, stats)
     assert stats.malformed == 0 and stats.header["format"] == r.FORMAT_VERSION == 3
@@ -278,6 +280,8 @@ def test_format3_player_and_companion_moves_read_back(tmp_path):
     tally = {int(row["player"]): row for row in batch.get(r.MOVE_TALLY)}
     assert (int(tally[companion]["sent"]) - int(tally[companion]["kept"]), int(tally[companion]["kind"])) == (2, 1)
     assert (int(tally[player]["sent"]) - int(tally[player]["kept"]), int(tally[player]["kind"])) == (1, 0)
+    updates = batch.get(r.MAP_UPDATE)
+    assert len(updates) == 24 and list(updates["diff_ms"][:4]) == [50, 51, 52, 50] and int(updates["map"][0]) == 1
     state = batch.get(r.MOVER_STATE)
     assert len(state) == 2
     them = {int(row["player"]): row for row in state}
