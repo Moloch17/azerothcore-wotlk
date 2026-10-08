@@ -226,6 +226,37 @@ def depth_rgb(depth):
     return np.stack([depth] * 3, axis=2)
 
 
+def new_only(args, root, new_dir, out):
+    """No old snapshots (yet): each pose's new frame on its own (kind, depth, height), a contact sheet, the timings."""
+    new = json.loads((new_dir / "new_timing.json").read_text())
+    small = font(13)
+    rows, lines = [], ["| pose | median us | min us | us/ray | trace alone us |", "|---|---|---|---|---|"]
+    for name, timing in new["poses"].items():
+        kind = read(new_dir / f"newcam-{name}-kind.ppm")
+        depth = read(new_dir / f"newcam-{name}-depth.pgm")
+        height = read(new_dir / f"newcam-{name}-height.pgm")
+        trio = [panel(kind, f"{name} kind", small), panel(depth_rgb(depth), "depth", small),
+                panel(depth_rgb(height), "height (grey at the feet)", small)]
+        solo = Image.new("RGB", (sum(p.width for p in trio) + 16, trio[0].height), (20, 20, 20))
+        x = 0
+        for p in trio:
+            solo.paste(p, (x, 0))
+            x += p.width + 8
+        solo.save(new_dir / f"newcam-{name}.png", optimize=True)
+        rows.append(solo)
+        lines.append(f"| {name} | {timing['median_us']:.0f} | {timing['min_us']:.0f} | "
+                     f"{timing['us_per_ray']:.3f} | {timing['trace_alone_us']:.0f} |")
+    sheet = Image.new("RGB", (rows[0].width, sum(r.height for r in rows)), (20, 20, 20))
+    y = 0
+    for r in rows:
+        sheet.paste(r, (0, y))
+        y += r.height
+    out.mkdir(exist_ok=True)
+    sheet.save(out / "contact-sheet.png", optimize=True)
+    (out / "summary.md").write_text(f"map {args.map}, new camera only (no old snapshots)\n\n" + "\n".join(lines) + "\n")
+    print("\n".join(lines))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("root", nargs="?", default="var/baked-camera-compare")
@@ -239,9 +270,12 @@ def main():
     scene = Path(args.scene) if args.scene else root / "data" / "scenes" / f"{args.map:03d}.scene"
     tris = load_scene_triangles(scene) if scene.exists() else None
     old_dir, new_dir = root / args.old, root / args.new
+    out = root / args.out
+    if not (old_dir / "old_console.json").exists():
+        new_only(args, root, new_dir, out)
+        return
     old = json.loads((old_dir / "old_console.json").read_text())
     new = json.loads((new_dir / "new_timing.json").read_text())
-    out = root / args.out
     out.mkdir(exist_ok=True)
     small, normal = font(13), font(15)
     metrics, rows, sheet_rows = {}, [], []
