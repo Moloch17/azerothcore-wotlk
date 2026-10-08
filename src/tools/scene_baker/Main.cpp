@@ -18,6 +18,7 @@
 #include "SceneBaker.h"
 #include "BakedWorld.h"
 #include "Bench.h"
+#include "SceneRegistry.h"
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -30,6 +31,9 @@ namespace
         std::printf(
             "usage:\n"
             "  %1$s bake <data dir> <map id> [out file]    bake <data dir>/scenes/<map>.scene from vmaps/, maps/ and dbc/\n"
+            "  %1$s ensure <data dir> <scene dir> <map id>...\n"
+            "                                              what the worldserver does at startup: load each scene if it\n"
+            "                                              is whole and current, else bake it (and say why)\n"
             "  %1$s info <scene file>                      print a scene's header\n"
             "  %1$s bench <scene> <poses.txt> <out dir> [reps]\n"
             "                                              render each pose (name x y z yawDeg pitchDeg zoom a line)\n"
@@ -70,6 +74,27 @@ int main(int argc, char** argv)
             (unsigned long long)report.FileBytes, (unsigned long long)report.Checksum,
             (unsigned long long)report.SourceHash, report.Seconds);
         return 0;
+    }
+
+    if (command == "ensure" && argc >= 5)
+    {
+        int failed = 0;
+        for (int i = 4; i < argc; ++i)
+        {
+            uint32_t const mapId = uint32_t(std::strtoul(argv[i], nullptr, 10));
+            Animus::Vision::SceneEnsure result;
+            if (!Animus::Vision::SceneRegistry::Instance().Ensure(argv[2], argv[3], mapId, result, error))
+            {
+                std::printf("map %u FAILED: %s\n", mapId, error.c_str());
+                ++failed;
+                continue;
+            }
+            std::string const how = result.Baked ? "baked (" + result.Reason + ")" : "loaded";
+            std::printf("map %u %s: %u triangles, %u nodes, %u terrain tiles, %llu bytes, checksum %016llx, "
+                "%.3f s\n", mapId, how.c_str(), result.Triangles, result.Nodes, result.TerrainTiles,
+                (unsigned long long)result.Bytes, (unsigned long long)result.Checksum, result.Seconds);
+        }
+        return failed ? 1 : 0;
     }
 
     if (command == "info" && argc >= 3)

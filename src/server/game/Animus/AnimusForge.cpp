@@ -163,8 +163,8 @@ void AnimusForge::Forge::PrepareScenes()
             continue;
         }
         if (result.Baked)
-            LOG_INFO("module.animus", "Scene map {} baked ({}): {} triangles, {} BVH nodes, {} terrain tiles, {} bytes, "
-                "{:.2f} s{} -> {}", mapId, result.Reason, result.Triangles, result.Nodes, result.TerrainTiles,
+            LOG_INFO("module.animus", "Scene map {} baked ({}): {} triangles, {} BVH nodes, {} terrain tiles, "
+                "{} bytes, {:.2f} s{} -> {}", mapId, result.Reason, result.Triangles, result.Nodes, result.TerrainTiles,
                 result.Bytes, result.Seconds, result.Seconds > 30.0 ? " (SLOW: a first start bakes every map once)"
                 : "", result.Path);
         else

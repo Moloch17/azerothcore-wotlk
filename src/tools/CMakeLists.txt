@@ -174,6 +174,7 @@ foreach(TOOL_NAME ${TOOLS_BUILD_LIST})
         ${ANIMUS_VISION_DIR}/BakedWorld.cpp
         ${ANIMUS_VISION_DIR}/SceneBaker.cpp
         ${ANIMUS_VISION_DIR}/SceneBvh.cpp
+        ${ANIMUS_VISION_DIR}/SceneRegistry.cpp
         ${ANIMUS_VISION_DIR}/VisionCaster.cpp)
     # The same flag as the game library: the baker's bytes are compared between machines (decision 0020).
     set_source_files_properties(

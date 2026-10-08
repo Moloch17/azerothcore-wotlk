@@ -690,7 +690,8 @@ bool SceneBaker::BakeMap(std::string const& dataDir, uint32_t mapId, std::string
                         liquidSource.Heights.assign(h, h + heights);
                     uint8_t const* flags = liquid->GetFlagsStorage();
                     if (tiles && flags)
-                        liquidSource.Flags.assign(flags, flags + std::size_t(liquidSource.TilesX) * liquidSource.TilesY);
+                        liquidSource.Flags.assign(flags,
+                            flags + std::size_t(liquidSource.TilesX) * liquidSource.TilesY);
                     if (liquidSource.Heights.empty())
                         group.HasLiquid = false;
                 }

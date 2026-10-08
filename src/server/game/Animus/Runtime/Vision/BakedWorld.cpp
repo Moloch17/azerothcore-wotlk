@@ -21,7 +21,6 @@
 #include <cstdio>
 #include <limits>
 #include <cstring>
-#include <utility>
 #include <string>
 
 namespace
@@ -311,6 +310,11 @@ bool Animus::Vision::BakedWorld::Load(std::string const& path, std::string& erro
         _tileLow[1] = std::min(_tileLow[1], recs[i].TileY);
         _tileHigh[1] = std::max(_tileHigh[1], recs[i].TileY);
     }
+    // The terrain record of each tile of the footprint, for a lookup that costs one index.
+    _tileGrid.assign(std::size_t(_tileHigh[0] - _tileLow[0] + 1) * std::size_t(_tileHigh[1] - _tileLow[1] + 1), -1);
+    for (uint32_t i = 0; i < header->TerrainTileCount; ++i)
+        _tileGrid[std::size_t(recs[i].TileX - _tileLow[0]) * std::size_t(_tileHigh[1] - _tileLow[1] + 1)
+            + std::size_t(recs[i].TileY - _tileLow[1])] = int32_t(i);
     return true;
 }
 
@@ -358,16 +362,11 @@ Animus::Vision::LiquidHit Animus::Vision::BakedWorld::ModelLiquid(Vec3 from, Vec
 
 Sc::TerrainRec const* Animus::Vision::BakedWorld::FindTerrain(int32_t tileX, int32_t tileY) const
 {
-    if (!_header)
+    if (!_header || tileX < _tileLow[0] || tileX > _tileHigh[0] || tileY < _tileLow[1] || tileY > _tileHigh[1])
         return nullptr;
-    Sc::TerrainRec const* first = _terrain;
-    Sc::TerrainRec const* last = _terrain + _header->TerrainTileCount;
-    first = std::lower_bound(first, last, std::pair<int32_t, int32_t>(tileX, tileY),
-        [](Sc::TerrainRec const& rec, std::pair<int32_t, int32_t> const& key)
-        {
-            return rec.TileX < key.first || (rec.TileX == key.first && rec.TileY < key.second);
-        });
-    return first != last && first->TileX == tileX && first->TileY == tileY ? first : nullptr;
+    int32_t const index = _tileGrid[std::size_t(tileX - _tileLow[0]) * std::size_t(_tileHigh[1] - _tileLow[1] + 1)
+        + std::size_t(tileY - _tileLow[1])];
+    return index < 0 ? nullptr : _terrain + index;
 }
 
 Animus::Vision::TerrainTile Animus::Vision::BakedWorld::Tile(int32_t tileX, int32_t tileY) const
@@ -415,8 +414,8 @@ Animus::Vision::TerrainCell Animus::Vision::BakedWorld::Cell(int32_t tileX, int3
                 static uint16_t const vertical[4] = { 0x000F, 0x00F0, 0x0F00, 0xF000 };
                 int32_t const cellRow = cellX / 8;
                 int32_t const cellCol = cellY / 8;
-                uint16_t const word = _terrainHoles[std::size_t(rec->HoleIndex) * 256 + std::size_t(cellRow * 16 + cellCol)];
-                hole = (word & horizontal[(cellY - cellCol * 8) / 2] & vertical[cellX % 8 / 2]) != 0;
+                std::size_t const word = std::size_t(rec->HoleIndex) * 256 + std::size_t(cellRow * 16 + cellCol);
+                hole = (_terrainHoles[word] & horizontal[(cellY - cellCol * 8) / 2] & vertical[cellX % 8 / 2]) != 0;
             }
             if (!hole)
             {

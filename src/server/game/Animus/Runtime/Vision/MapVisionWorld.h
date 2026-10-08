@@ -35,9 +35,9 @@ class Unit;
 class WorldObject;
 
 /// The camera's VisionWorld over a live map, composed of two halves. The static world -- WMOs and M2s, their liquids,
-/// the terrain cells and liquids -- is the map's baked scene (BakedWorld, from SceneRegistry: one immutable copy per map
-/// id, shared by every env and thread, baked offline-style at startup from the same extracted data and never rebuilt
-/// while the server runs). The dynamic world -- closed doors and other game objects with a collision model, phase
+/// the terrain cells and liquids -- is the map's baked scene (BakedWorld, from SceneRegistry: one immutable copy per
+/// map id, shared by every env and thread, baked at startup from the extracted data and never rebuilt while the server
+/// runs). The dynamic world -- closed doors and other game objects with a collision model, phase
 /// masked -- is the map's live dynamic tree, tested for any hit too for the entity sensor's shadow rays. Floors and
 /// liquid under a point are the controller's, through an uncounted MapWorldQuery (the controller's cost line keeps only
 /// the controller's rays). A hit's slope is its triangle's own. Read from the map's own update, as the rest of a

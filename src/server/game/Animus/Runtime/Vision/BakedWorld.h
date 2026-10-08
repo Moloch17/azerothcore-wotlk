@@ -89,6 +89,7 @@ namespace Animus::Vision
         float const* _terrainHeights = nullptr;
         uint16_t const* _terrainHoles = nullptr;
         uint8_t const* _terrainLiquid = nullptr;
+        std::vector<int32_t> _tileGrid;    // terrain record per tile of the footprint, or -1
         int32_t _tileLow[2] = {};
         int32_t _tileHigh[2] = {};
     };
