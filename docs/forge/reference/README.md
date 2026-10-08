@@ -29,8 +29,8 @@ person reviewing and refactoring the forge without an assistant.
 6. The stages: `stages.md` and `../04-curriculum.md`; the decisions in `../decisions/`.
 7. Operations: `config-keys.md`, `config-yaml.md`, `tools-and-ops.md`, then `../cluster.md`, `../forgectl.md`,
    `../deploy-gate.md`.
-8. Last: `known-issues.md` (the ranked list) and `../audit/` (the efficiency, operator-experience and repository-hygiene
-   audits, when present).
+8. Last: `known-issues.md` (the ranked list) and `../audit/SUMMARY.md` (the consolidated, ranked findings and the owner's
+   decisions from the efficiency, operator-experience and repository-hygiene audits, which sit beside it).
 
 ## The documents
 

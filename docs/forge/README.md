@@ -13,6 +13,7 @@ not what comments say, and each ends with its observed issues.
 
 | Document | What it is |
 |---|---|
+| [audit/SUMMARY.md](audit/SUMMARY.md) | the consolidated audit: ranked findings, a work order, and the questions the owner has to decide |
 | [reference/README.md](reference/README.md) | the index of the reference documents, with a reading order for a review |
 | [04-curriculum.md](04-curriculum.md) | the stages manual: what each of the 12 stages teaches |
 | [01-overview.md](01-overview.md) | what the forge is, the pieces, the twelve stages, a glossary of the core ideas |
