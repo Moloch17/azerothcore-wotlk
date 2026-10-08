@@ -278,7 +278,7 @@ Per-class convergence signals (stage.py, `ClassState.missing`): `score` (plateau
 
 ## 6. Training-row columns (metrics.csv; also progress.json)
 
-Listed in file-formats.md ("metrics.csv"). The measures the sim and operators read: `env_steps_per_sec`, `reward_per_decision`, `entropy` (against `allowed_actions`: the mean legal actions per decision), `value_loss`, `policy_loss`, `approx_kl`
+Listed in file-formats.md ("metrics.csv"). The measures the sim and operators read: `env_steps_per_sec` (the rollout phase only; `wall_steps_per_sec` is the real rate over the whole cycle, and `update_bound` says the sim waited over 20% of it for the update), `reward_per_decision`, `entropy` (against `allowed_actions`: the mean legal actions per decision), `value_loss`, `policy_loss`, `approx_kl`
 (joint) and `approx_kl_move` (movement part), `clip_frac`, `explained_variance`, `actor/critic_grad_norm`, `lr_scale`, `shaping_scale` and `cost_scale` (current ladder scales), `ladder_collapsed` (the fade's rung while its gate has collapsed, else -1),
 `ladder_stalled` (the rung whose gate metric has sat flat, else -1), `frozen_layouts`, the partner/stand-in counters (`partner_rows`, `stand_in_episodes`, `stand_in_unfielded`), `look_*` (look entropy and shares of turning/pitching/zooming and the zoom
 commands), goal-head and foresight stats, optional style stats.

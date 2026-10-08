@@ -112,7 +112,7 @@ zeroes the missing goal-scale parameters (`_GOAL_SCALE_KEYS`) and raises on any 
 the critic is loaded non-strictly with the same exception list and raises likewise; `value_norm` and optimisers are
 loaded
 only if present; top-level keys use `.get` defaults (`update`, `env_steps`, `convergence`, `controller`, `score_kind`,
-`style`, `explore`). The config saved in a checkpoint is not compared with the current one by the learner.
+`style`, `explore`, `partner_scores`). The config saved in a checkpoint is not compared with the current one by the learner.
 
 ## Cast (`cast.py`)
 
@@ -169,8 +169,9 @@ Counters feed the metrics columns `partner_rows`, `partner_fallback_rows`, `part
 
 The "human" stand-in: the sim picks a seat (present 2); the learner plays it with a pool member and never trains on it.
 The sim fields one only if the learner's MODE says it can (`can_field_stand_in`: a party stage and an active member).
-`field_stand_in()` also writes the progress note. `partners.json` (`PartnerPool.write`) is informational: the pool's
-scores and counts are not saved in checkpoints and restart on resume.
+`field_stand_in()` also writes the progress note. `partners.json` (`PartnerPool.write`) is informational. The pool's scores, episode counts and retired flags are saved in the checkpoint
+(`partner_scores`, `PartnerPool.scores_state`, keyed `<kind>:<name>`) and put back on the members present at a resume
+(`restore_scores`); a checkpoint without the key (older) restarts the pool unmet, as before.
 
 Evaluation arms (`train.py:1420-1479`): `with_partners` (share 1) and `with_human` (share 0, stand-in only) build their
 own
@@ -219,7 +220,7 @@ resume guard: one text entry per layout whose signature differs, empty if either
   header.
 - `cast.py:44` mentions `CastPool`, which does not exist.
 - `partners.py:246`: retired members keep their actors (device memory) for the rest of the run.
-- Pool scores do not survive a resume; the resumed pool draws with all members "unmet" (normalised 0).
+- (Fixed) Pool scores survive a resume through the checkpoint's `partner_scores`; only a checkpoint saved before it restarts the pool "unmet" (normalised 0). The cast keeps only counters and is not saved.
 - `config.py:649-650` and `:627-630` comments contradict `init_from_checkpoint` (see above).
 - `distill.py`: `stage21_ship` mentioned in a comment; unusable with cameras.
 - `partners.py:323-355`: an episode where only the stand-in seat is assigned (share draw skipped) is not counted in

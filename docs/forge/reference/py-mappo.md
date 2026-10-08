@@ -252,16 +252,16 @@ Config keys are `MappoConfig` fields (`trainer.py:41`) unless stated. "Live yaml
 | Goal lookahead | `goal_lookahead` (false), `lookahead_coef` (0.5) | true in both bases | `GoalHead.success/duration` |
 | Slow goal loop | `slow_goal_size` (0) | 128 in both bases | `slow_memory`, `slow_value`, `slow_opt`, `_update_goals` |
 | Look head | none (present whenever the vision block has `look.heads`); `look_entropy_coef` (None) | 0.001 (M1, combat), 0.004 (M2) | `LookHead`, `look_terms` |
-| Chunked camera update | `vision_chunk_rows` (0) | 0 in M1; 2048 in M2 and combat1 | `_encode_vision`, `_backward_vision` |
+| Chunked camera update | `vision_chunk_rows` (0) | 0 in M1; `auto` in M2 and combat1 (and so M3 to D3) | `_encode_vision`, `_backward_vision` |
 
 The camera, entity list, map and sight list have **no switch**: they are on whenever the stage's `stage.json` has the
 block (`trainer.py:620`).
 
 ## Observed issues
 
-1. `MappoTrainer.state_dict` / `load_state_dict` (`trainer.py:2027-2053`) save `actor_opt`, `critic_opt` and
-   `vision_opt` but not `slow_opt`. The slow goal loop's Adam state restarts on every resume, and every live stage
-   has `slow_goal_size 128`. `reset_optimizers` (`:740`) builds `slow_opt`.
+1. (Fixed) `MappoTrainer.state_dict` / `load_state_dict` now save and restore `slow_opt` too (key `slow_opt`, optional: a
+   checkpoint without it starts the slow goal loop's Adam fresh, as every resume used to; the configured `slow_goal_lr`
+   is re-applied after the load). `reset_optimizers` builds `slow_opt`.
 2. `set_learning_rate_scale` (`trainer.py:789-796`) scales `actor_opt`, `critic_opt` and `vision_opt` only. `slow_opt`
    keeps `slow_goal_lr` (0.0003) whatever `lr_final_fraction`/the controller's `lr_scale` say. Whether this is
    intended is UNVERIFIED (nothing says so).

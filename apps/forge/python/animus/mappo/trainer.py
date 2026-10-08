@@ -37,6 +37,12 @@ def chunked(value, length: int):
 LOOK_COMMANDS = ("look_zoom_hold", "look_zoom_in", "look_zoom_out", "look_recentre", "look_face")
 
 
+#: mappo.vision_chunk_rows: the learner picks the chunk from free device memory (train.choose_vision_chunk_rows), and
+#: the chunk it falls back to where the device or the query is not there (the value the stage yamls used to hard-code).
+VISION_CHUNK_AUTO = "auto"
+VISION_CHUNK_FALLBACK = 2048
+
+
 @dataclass
 class MappoConfig:
     hidden: tuple[int, ...] = (128, 128)
@@ -53,8 +59,9 @@ class MappoConfig:
     look_entropy_coef: float | None = None
     # The camera's update a chunk of this many rows at a time (MappoTrainer._encode_vision), encoded twice -- once
     # without its graph, once more for its gradient -- so the decoded images and the patch activations live a chunk
-    # at a time; 0 = the whole minibatch at once.
-    vision_chunk_rows: int = 0
+    # at a time; 0 = the whole minibatch at once. "auto" (VISION_CHUNK_AUTO) lets the learner choose at start from the
+    # device's free memory (train.choose_vision_chunk_rows); it is replaced by a number before the trainer is built.
+    vision_chunk_rows: int | str = 0
     value_coef: float = 1.0
     actor_lr: float = 5e-4
     critic_lr: float = 5e-4
@@ -587,6 +594,10 @@ class MappoTrainer:
     ):
         """layouts: (obs dim, action count) per agent layout, in the sim's layout order."""
         skip_distribution_checks()
+        if config.vision_chunk_rows == VISION_CHUNK_AUTO:
+            # Anything that builds a trainer without train.make_trainer (which chooses): the stage yamls' old value.
+            config = copy.copy(config)
+            config.vision_chunk_rows = VISION_CHUNK_FALLBACK
         self.config = config
         self.layouts = list(layouts)
         # Per layout its camera image (networks.vision_of, stage.json's vision block), or None: no camera anywhere.
@@ -714,6 +725,14 @@ class MappoTrainer:
         # The last update's entropy and approx_kl per layout (animus.stage reads them per class), by layout index.
         self.layout_stats: dict[int, dict[str, float]] = {}
         self.frozen_layouts: set[int] = set()
+
+    def clear_optimizer_state(self) -> None:
+        """Every optimizer's moments forgotten, its learning rate and parameter groups kept: after the weights were
+        replaced whole (an async follower repaired from the centre, animus.async_sync), when the old moments describe
+        weights that no longer exist and may be non-finite."""
+        for optimizer in (self.actor_opt, self.critic_opt, self.vision_opt, self.slow_opt):
+            if optimizer is not None:
+                optimizer.state.clear()
 
     def freeze_layouts(self, indices: set[int]) -> None:
         """Stop training the adapters and heads of these layouts (a class that has converged, animus.stage): their
@@ -943,8 +962,12 @@ class MappoTrainer:
             layout_t = self._tensor(layout, torch.long).reshape(rows)
             groups = self._groups(layout, layout_t)
             image_t = self._image_tensor(image, rows)
+            # The camera (and the map) encoded once, for the actor and the critic both: the rollout copies share the
+            # one encoder, as the graph path (_RolloutGraph) and the update do.
+            seen = (self._rollout_actor.vision(obs_t, layout_t, image_t)
+                    if self._rollout_actor.vision is not None else None)
             decided = self._decide(obs, mask, layout, deterministic, state, (obs_t, layout_t, groups), downloads,
-                                   image=image_t)
+                                   image=image_t, vision_embedding=seen)
 
             state_t = self._tensor(state_features)[:, None, :].expand(envs, agents, state_features.shape[-1]).reshape(
                 rows, -1)
@@ -952,7 +975,8 @@ class MappoTrainer:
             critic_memory = (self._memory_tensor(state.critic_memory if state is not None else None, rows)
                              if self.recurrent_size else None)
             values, carried = self._rollout_critic.step(state_t, obs_t, layout_t, goal_t, groups,
-                                                        memory=critic_memory, image=image_t)
+                                                        memory=critic_memory, image=image_t,
+                                                        vision_embedding=seen)
             carried_at = (downloads.add(carried.reshape(envs, agents, self.recurrent_size))
                           if self.recurrent_size and state is not None else None)
             if self._rollout_value_norm is not None:
@@ -967,11 +991,13 @@ class MappoTrainer:
 
     @torch.no_grad()
     def _decide(self, obs: np.ndarray, mask: np.ndarray, layout: np.ndarray, deterministic: bool,
-                state: "ActingState | None", prepared=None, downloads: "_Downloads | None" = None, image=None):
+                state: "ActingState | None", prepared=None, downloads: "_Downloads | None" = None, image=None,
+                vision_embedding: torch.Tensor | None = None):
         """One decision of the actor: actions, their log probabilities, the foresight predictions and the goals. The
         acting state's memory and goal are updated when the result is finished. `prepared` is (obs, layout, groups)
         as tensors when the caller has them already. With `downloads` the results are queued there and the caller
-        finishes them after its one wait for the device (_Decided.finish); without, they are finished here."""
+        finishes them after its one wait for the device (_Decided.finish); without, they are finished here.
+        `vision_embedding` is the camera's embedding of the rows when the caller has encoded it already."""
         own = downloads is None
         if own:
             downloads = _Downloads(self._rollout_stream)
@@ -988,7 +1014,8 @@ class MappoTrainer:
 
         memory = state.memory if state is not None else None
         features = self._rollout_actor.features(
-            obs_t, layout_t, self._memory_tensor(memory, rows) if self.recurrent_size else None, groups, image_t)
+            obs_t, layout_t, self._memory_tensor(memory, rows) if self.recurrent_size else None, groups, image_t,
+            vision_embedding)
 
         decided = _Decided(self, state, layout)
         if self.goal_count and state is not None:
@@ -1911,6 +1938,9 @@ class MappoTrainer:
             "critic_opt": self.critic_opt.state_dict(),
             # The camera's encoder is in "actor" alone (the critic reads it by reference); its optimizer here.
             **({"vision_opt": self.vision_opt.state_dict()} if self.vision_opt is not None else {}),
+            # The slow goal loop's own optimizer (its moments), so a resume does not restart it cold. Optional: a
+            # checkpoint without it (older, or no slow loop) leaves the optimizer fresh.
+            **({"slow_opt": self.slow_opt.state_dict()} if self.slow_opt is not None else {}),
         }
 
     def load_state_dict(self, state: dict, load_optimizers: bool = True) -> None:
@@ -1928,4 +1958,14 @@ class MappoTrainer:
             self.critic_opt.load_state_dict(state["critic_opt"])
             if self.vision_opt is not None and "vision_opt" in state:
                 self.vision_opt.load_state_dict(state["vision_opt"])
+            if self.slow_opt is not None and state.get("slow_opt") is not None:
+                try:
+                    self.slow_opt.load_state_dict(state["slow_opt"])
+                except ValueError as error:
+                    print(f"Resume: the saved slow-goal optimizer does not fit these parameters ({error}); it starts "
+                          f"fresh", flush=True)
+                else:
+                    # load_state_dict also restores the saved learning rate: the configured one stands.
+                    for group in self.slow_opt.param_groups:
+                        group["lr"] = self.config.slow_goal_lr
         self._sync_rollout()

@@ -362,6 +362,7 @@ class Link:
         self.reply = None
         self.updates = 0
         self.steps_since = 0
+        self.repaired = 0                  # times this rank took the centre whole after going non-finite
         self.outbox = None
         self.episodes: list = []           # the training episodes finished since the last push (observe)
         self.layouts: list[int] = []
@@ -418,6 +419,16 @@ class Link:
             rebased = center.copy()
             count = self.parameters
             rebased[:count] += now[:count] - self.pushed[:count]
+            if not np.isfinite(rebased).all():
+                # This rank's weights (or what the exchange made of them) went non-finite. Its pushes would be
+                # dropped by the leader for ever and its sim would play on garbage: take the centre whole instead.
+                if np.isfinite(center).all():
+                    self._repair(run, center, "its own weights" if not np.isfinite(now).all() else "the exchange")
+                    rebased = center
+                else:
+                    print(f"Async learners: rank {self.rank} was sent non-finite weights by the leader's centre "
+                          f"(update {run.update}); keeping its own", flush=True)
+                    rebased = now
             assign(self.modules, rebased)
             run.trainer.sync_rollout()
             self.base = center.copy()
@@ -430,6 +441,11 @@ class Link:
         if self.pushed is None and self.updates >= self.every and not self.stopped:
             self.pushed = flatten(self.modules)
             count = self.parameters
+            if not np.isfinite(self.pushed).all() and np.isfinite(self.base).all():
+                # Gone non-finite since the last trade: back to the centre this rank last took, and no push of this.
+                self._repair(run, self.base, "its own weights")
+                self.pushed = None
+                return
             message = {"type": "push", "rank": self.rank, "delta": self.pushed[:count] - self.base[:count],
                        "env_steps": self.steps_since, "base_steps": self.base_steps,
                        "episodes": self.episodes, "layouts": self.layouts}
@@ -439,6 +455,16 @@ class Link:
             with self.ready:
                 self.outbox = message
                 self.ready.notify()
+
+    def _repair(self, run, center: np.ndarray, what: str) -> None:
+        """Take `center` whole (parameters and statistics) and start the optimisers' moments afresh: they hold the
+        same non-finite numbers the weights do, and would put them straight back."""
+        assign(self.modules, center)
+        run.trainer.clear_optimizer_state()
+        run.trainer.sync_rollout()
+        self.repaired += 1
+        print(f"Async learners: rank {self.rank} ({socket.gethostname()}) found non-finite weights in {what} at "
+              f"update {run.update}; took the centre's weights whole ({self.repaired} repair(s) so far)", flush=True)
 
     def close(self) -> None:
         with self.ready:

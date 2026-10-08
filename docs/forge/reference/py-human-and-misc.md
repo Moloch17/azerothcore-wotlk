@@ -427,6 +427,10 @@ own pace and trade with it over plain TCP (length-prefixed pickles, `_send/_rece
   `at_safe_point` the follower keeps the progress made while the push was out and puts it on the new centre
   (`weights = centre + (now - pushed)`), applies the leader's control (`run.apply_control`), and pushes again after
   `every` updates (`mappo.weight_sync_every`).
+  A follower whose weights (or the rebased result) are non-finite takes the centre's whole instead (`Link._repair`: parameters
+  and statistics, the optimisers' moments cleared by `MappoTrainer.clear_optimizer_state`) and logs one line with the rank, host
+  and update; the same check runs before a push (it restores the last centre taken and pushes nothing). A non-finite centre is
+  never adopted (the follower keeps its own weights and says so). The wire format and messages are unchanged.
 - `fetch_shared(address, rank, root, timeout)` (`:160`) and `shared_listing(root, paths)` (`:141`): the leader serves
   the
   checkpoints the run read (parents, teachers, cast agents, partners), keyed by path relative to the runs directory,

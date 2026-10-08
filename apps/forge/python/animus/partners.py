@@ -268,6 +268,32 @@ class PartnerPool:
             members.append(entry)
         return {"members": members, "active": len(active), "missing": self.missing, "unusable": self.unusable}
 
+    @staticmethod
+    def key_of(member: Partner) -> str:
+        """The name a member is saved under: its kind and its stage/file name, the same on every machine."""
+        return f"{member.kind}:{member.name}"
+
+    def scores_state(self) -> dict:
+        """What the pool has learned about its members, for the checkpoint: {key: {score, episodes, retired}}."""
+        return {self.key_of(member): {"score": None if math.isnan(member.score) else float(member.score),
+                                      "episodes": int(member.episodes), "retired": bool(member.retired)}
+                for member in self.members}
+
+    def restore_scores(self, state: dict | None) -> int:
+        """Put saved scores back on the members that are in the pool now (matched by key_of); the others stay
+        unmet. Returns how many were restored."""
+        restored = 0
+        for member in self.members:
+            saved = (state or {}).get(self.key_of(member))
+            if not isinstance(saved, dict):
+                continue
+            score = saved.get("score")
+            member.score = math.nan if score is None else float(score)
+            member.episodes = int(saved.get("episodes", 0))
+            member.retired = bool(saved.get("retired", False))
+            restored += 1
+        return restored
+
     def write(self) -> None:
         (self.run_dir / PARTNERS_FILE).write_text(json.dumps(self.to_json(), indent=2))
 

@@ -62,10 +62,10 @@ returned
   `evals_since_best` (`:215-217`), which is misleading for those rows. `EvalResult.episodes` counts rows (one per agent
   of each seeded episode), not episodes, so the `episodes` column and "over N seeded episodes" text are agent rows.
 - `save_checkpoint` (`:170`): writes `<path>.partial` with `torch.save` then `replace` (atomic; no fsync).
-  Keys: `trainer` (`MappoTrainer.state_dict()`: actor, critic, value_norm, actor_opt, critic_opt, optional vision_opt),
+  Keys: `trainer` (`MappoTrainer.state_dict()`: actor, critic, value_norm, actor_opt, critic_opt, optional vision_opt and slow_opt),
   `config` (`TrainConfig.to_dict()`), `spec` (`asdict(Spec)`), `update`, `env_steps`, then `_checkpoint_extra()`
   (`:1122`): `convergence` (tracker), `controller`, `stage` (the whole stage.json), `score_kind`, and when present
-  `explore` and `style`. The partner pool, the cast, the layout weights and the replay seeds are not saved.
+  `explore`, `style` and `partner_scores` (the pool's scores, restored on resume). The partner pool's membership, the cast, the layout weights and the replay seeds are not saved.
 - Other files in the run dir: `config.yaml` and `spec.json` and `stage.json` (leader, at start), `progress.json`
   (every update and around evaluations), `finished.json`, `best.pt`, `latest.pt`, `checkpoint_<update:06d>.pt`,
   `best_rung<k>.pt`, `eval_baseline*.json`, `eval_motion.npz`, `partners/`, `partners.json`, `tb/`.
@@ -162,7 +162,7 @@ far side (cast, partners); write progress; run an evaluation if `eval.at_start` 
 build the row (counters, scales, ladder alarms as rung or -1, `frozen_layouts`, cast/partner stats, distill coef,
 explore, style), add `episode_<name>` means via `episode_means.means` (per-event columns weighted by their event count,
 NaN when none) and the update `stats`; `observe_entropy`; `audit_reward`; `audit_progress`; `logger.log`;
-`progress.training`/`write`; one console line `update N | steps S | sps | rollout .. compute .. | ...`.
+`progress.training`/`write`; one console line `update N | steps S | R sps | rollout .. compute .. [sync ..] wall W sps [update-bound] | ...` (W = steps over the whole cycle, `wall_steps_per_sec`; "update-bound" when the sim waited over 20% of the cycle).
 `audit_progress` prints "learning has stalled" when the KL divided by lr scale stays under `STALL_KL = 0.0015` for
 `STALL_WINDOW = 10` updates after `STALL_MIN_UPDATES = 20`, repeating no more often than `WARN_EVERY = 25` updates
 (`rewards.py:146`). `audit_reward` (`rewards.py`) prints when the largest shaping term earns more than
