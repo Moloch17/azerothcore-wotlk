@@ -41,6 +41,7 @@ build. Related: [config-keys.md](config-keys.md), [tests.md](tests.md) (there ar
 | `apps/forge/tools/sim_metrics.py` | 586 | extracts the metric names a stage's sim produces from the C++ |
 | `apps/forge/tools/stage_json_diff.py` | 256 | diff of two `stage.json` files |
 | `apps/forge/tools/gen_config_reference.py` | 422 | regenerates the key table of [config-keys.md](config-keys.md) |
+| `apps/forge/tools/runtime_graph_check.py` | 59 | exits 1 listing every `Animus/Runtime/` file that includes a header outside `Runtime/` (the runtime/training cut line) |
 | `apps/forge/patches/mod-animus-amdl8.patch` | 840 | patch for the `mod-animus` module (model format version 8/9 reader) |
 | `apps/forge/patches/amdl8-check/{README.md,prep.py,run.py,bench.py,golden.cpp}` | 1, 44, 38, 34, 157 | harness that checks the module's model reader against the learner's golden vectors |
 | `docker-compose.yml` | 284 | services `ac-database`, `ac-worldserver`, `ac-dev-server`, stock profile services |

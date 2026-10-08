@@ -68,7 +68,7 @@ neither follows the other. If you change one, decide what the other does.
 
 ## 4.2 What a stage is made of
 
-A stage is one `StageDefinition` (`src/server/game/Animus/Scenario/Curriculum/Stages/Stages.cpp`, type in
+A stage is one `StageDefinition` (`src/server/game/Animus/Runtime/Scenario/Curriculum/Stages/Stages.cpp`, type in
 `StageDefinition.h`) and one learner config.
 
 | Part | Where | What it decides |

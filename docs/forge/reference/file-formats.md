@@ -22,7 +22,7 @@ in [config-keys.md](config-keys.md) and [config-yaml.md](config-yaml.md); stages
 | apps/forge/python/animus/human/realism.py | 136 | eval_motion.npz writer; human_reference.json reader. |
 | apps/forge/python/animus/human/motion.py | 201 | The motion features that npz holds. |
 | src/server/game/Animus/Scenario/Curriculum/StageScenario.cpp | (large) | `WriteStageFiles` (stage.json and the layout manifests), `AppendRunEvent` (events.log). |
-| src/server/game/Animus/Scenario/Curriculum/Layout/Layout.cpp | | `Layout::Manifest` (`<model>.json`, manifest format 9). |
+| src/server/game/Animus/Runtime/Scenario/Curriculum/Layout/Layout.cpp | | `Layout::Manifest` (`<model>.json`, manifest format 9). |
 | src/server/game/Animus/Scenario/Curriculum/Blocks/LayeredField.cpp | | `.field` files. |
 | src/server/game/Animus/Vision/EvalVideo.cpp | | Evaluation videos, sidecars, index. |
 | src/server/game/Animus/AnimusForge.cpp | | Camera audit (`audit.csv`, PNGs), bench.json, eval video naming. |

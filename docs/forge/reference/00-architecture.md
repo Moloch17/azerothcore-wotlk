@@ -62,14 +62,14 @@ runs plans, and talks to other machines. The map table lists it; every file of t
 | `src/server/game/Animus/Env/AnimusHooks.h` | 53 | `Animus::Hooks`: damage, heal, cast events from the core |
 | `src/server/game/Animus/Env/AnimusHooks.cpp` | 71 | forwards to the active pool |
 | `src/server/game/Animus/Env/Kinematics.h` | 102 | the per-agent kinematic sample carried in a STEP (10 floats) |
-| `src/server/game/Animus/Env/ResetDefer.h` | 58 | queue for world-thread work done during a map-thread reset |
-| `src/server/game/Animus/Env/ResetDefer.cpp` | 66 | its implementation |
+| `src/server/game/Animus/Runtime/Env/ResetDefer.h` | 58 | queue for world-thread work done during a map-thread reset |
+| `src/server/game/Animus/Runtime/Env/ResetDefer.cpp` | 66 | its implementation |
 | `src/server/game/Animus/Env/ResetTiming.h` | 219 | timing of episode resets and the stall summary |
 | `src/server/game/Animus/Console/Progress.h` | 290 | `ProgressFile`, `SimSnapshot`, the report types |
 | `src/server/game/Animus/Console/Progress.cpp` | 835 | `forge status` and the periodic report; reads `progress.json` |
 | `src/server/game/Animus/Console/TextTable.h` | 100 | console text table and `LineSink` |
 | `src/server/game/Animus/Console/TextTable.cpp` | 188 | its implementation |
-| `src/server/game/Animus/Json/BoostJson.cpp` | 30 | single translation unit that compiles header-only Boost.JSON |
+| `src/server/game/Animus/Runtime/Json/BoostJson.cpp` | 30 | single translation unit that compiles header-only Boost.JSON |
 | `apps/forge/python/animus/train.py` | 2309 | the learner: `TrainingRun`, rollout loop, evaluation, finish |
 | `apps/forge/python/animus/env.py` | 515 | `ForgeEnv` and `ClusterEnv`: the learner's end of the socket |
 | `apps/forge/python/animus/protocol.py` | 558 | wire structs mirrored from `Protocol.h` |
@@ -104,6 +104,23 @@ runs plans, and talks to other machines. The map table lists it; every file of t
 
 Everything else under `src/server/game/Animus` (Bot, Gpu, Movement, Scenario, Vision) and the rest of
 `apps/forge/python/animus` belongs to the sibling documents.
+
+## Runtime/ vs training
+
+`src/server/game/Animus/Runtime/` holds the part of the sim a trained model needs to play: the movement controller,
+the camera and mental map, the bot factory, the blocks, the character building and action catalog, the layout and the
+stage table. Everything outside it (`AnimusForge.*`, `ForgeConfig.*`, `ForgeCommands.cpp`, Bridge, Learner, Gpu,
+Console, Env, the encounters, `StageScenario`, rewards, `CurriculumTuning`) is training. The rule: **`Runtime/` never
+includes a training header.** Includes are bare basenames, resolved by the core's directory-collecting CMake, so the
+directory split costs nothing at build time; `apps/forge/tools/runtime_graph_check.py` resolves them the same way and
+exits 1 listing every `Runtime/` file that includes a file outside it (run it before committing a change under
+`Animus/`). Sub-paths below `Animus/` are kept (`Animus/Movement/Client.h` is `Animus/Runtime/Movement/Client.h`).
+Counts at the split: 114 files / 25,666 lines under `Runtime/` (113 moved, plus `ActionTuning.h`), 106 files /
+36,773 lines of training.
+
+Three headers carry the seams: `Layout/ActionTuning.h` (`ActionTuning`, `OptionTuning`; `CurriculumTuning` aliases
+them), `Stages/StageDefinition.h` (`ROLE_TANK/HEALER/DAMAGE`, `DrilledRole`; `RolesDraw` re-exports them) and
+`Character/GearBuilder.h` (`WarmGearCaches`; `WarmCaches.h` includes it).
 
 ## 1. The system on one page
 

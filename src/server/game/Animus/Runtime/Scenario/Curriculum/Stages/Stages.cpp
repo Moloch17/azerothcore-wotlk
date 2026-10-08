@@ -49,7 +49,6 @@
 
 #include "StageDefinition.h"
 #include "InstanceBosses.h"
-#include "RolesDraw.h"
 #include "Log.h"
 #include "AreaDefines.h"
 #include <algorithm>
@@ -898,16 +897,16 @@ namespace
             .Arenas = {
                 { .Name = "tank_hold", .Weight = 2, .Seats = SeatPlan::Party, .Against = Opposition::Roles,
                     .PartyGroup = true, .EpisodeSeconds = 240, .ProperParty = true,
-                    .DrillRole = RolesDraw::ROLE_TANK, .Roles = RolesDrill::Hold, .RespawnAtEntrance = true },
+                    .DrillRole = ROLE_TANK, .Roles = RolesDrill::Hold, .RespawnAtEntrance = true },
                 { .Name = "heal_keep", .Weight = 2, .Seats = SeatPlan::Party, .Against = Opposition::Roles,
                     .PartyGroup = true, .EpisodeSeconds = 300, .ProperParty = true,
-                    .DrillRole = RolesDraw::ROLE_HEALER, .Roles = RolesDrill::Keep, .RespawnAtEntrance = true },
+                    .DrillRole = ROLE_HEALER, .Roles = RolesDrill::Keep, .RespawnAtEntrance = true },
                 { .Name = "damage_discipline", .Weight = 2, .Seats = SeatPlan::Party, .Against = Opposition::Roles,
                     .PartyGroup = true, .EpisodeSeconds = 240, .ProperParty = true,
-                    .DrillRole = RolesDraw::ROLE_DAMAGE, .Roles = RolesDrill::Focus, .RespawnAtEntrance = true },
+                    .DrillRole = ROLE_DAMAGE, .Roles = RolesDrill::Focus, .RespawnAtEntrance = true },
                 { .Name = "pull", .Weight = 2, .Seats = SeatPlan::Party, .Against = Opposition::Roles,
                     .PartyGroup = true, .EpisodeSeconds = 360, .ProperParty = true,
-                    .DrillRole = RolesDraw::ROLE_TANK, .Roles = RolesDrill::Pull, .RespawnAtEntrance = true },
+                    .DrillRole = ROLE_TANK, .Roles = RolesDrill::Pull, .RespawnAtEntrance = true },
             },
             .MapId = MAP_RAGEFIRE_CHASM,
             .SpawnPoints = { RagefireEntrance() },
@@ -1148,7 +1147,7 @@ namespace
                 "that";
         if (roles && (arena.Seats != SeatPlan::Party || arena.PartySize || !arena.ProperParty || !arena.PartyGroup
             || !arena.RespawnAtEntrance
-            || arena.DrillRole != RolesDraw::DrilledRole(arena.Roles)))
+            || arena.DrillRole != DrilledRole(arena.Roles)))
             return "a roles arena is a proper party of five in a core group, its drilled "
                 "role the drill's, its dead back at the entrance";
         if (roles && (!stage.Has(BlockId::Move) || !stage.Has(BlockId::Vision) || !stage.Has(BlockId::Sight)

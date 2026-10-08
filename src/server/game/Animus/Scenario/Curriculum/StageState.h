@@ -27,7 +27,7 @@
 #include "EntityMemory.h"
 #include "Identity.h"
 #include "MentalMap.h"
-#include "PlayerLink.h"
+#include "LinkMemory.h"
 #include "ObjectGuid.h"
 #include "Position.h"
 #include "RewardLedger.h"

@@ -36,7 +36,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
-CURRICULUM = REPO / "src" / "server" / "game" / "Animus" / "Scenario" / "Curriculum"
+ANIMUS = REPO / "src" / "server" / "game" / "Animus"
+CURRICULUM = ANIMUS / "Scenario" / "Curriculum"
+# The runtime half of the curriculum (Stages.cpp, the blocks, the layout) lives under Animus/Runtime.
+RUNTIME_CURRICULUM = ANIMUS / "Runtime" / "Scenario" / "Curriculum"
 PYTHON_DIR = REPO / "apps" / "forge" / "python"
 
 ANY = "[a-z0-9_]+"
@@ -176,14 +179,28 @@ class _Loop:
 class Source:
     """The curriculum's C++, read once, comments blanked."""
 
-    def __init__(self, root: Path = CURRICULUM):
+    def __init__(self, root: Path = CURRICULUM, runtime_root: Path | None = RUNTIME_CURRICULUM):
         self.root = root
-        self.files = {path: strip_comments(path.read_text()) for path in sorted(root.rglob("*")) if
-                      path.suffix in (".cpp", ".h")}
+        self.roots = [root] + ([runtime_root] if runtime_root is not None else [])
+        self.files = {path: strip_comments(path.read_text()) for base in self.roots for path in sorted(base.rglob("*"))
+                      if path.suffix in (".cpp", ".h")}
         self.unresolved: list[Unresolved] = []
 
+    def path(self, relative: str) -> Path:
+        """The file a curriculum-relative path names, in the training tree or under Runtime."""
+        for base in self.roots:
+            if base / relative in self.files:
+                return base / relative
+        raise KeyError(relative)
+
+    def relative(self, path: Path) -> str:
+        for base in self.roots:
+            if path.is_relative_to(base):
+                return str(path.relative_to(base))
+        return str(path)
+
     def text(self, relative: str) -> str:
-        return self.files[self.root / relative]
+        return self.files[self.path(relative)]
 
     def where(self, path: Path, offset: int) -> str:
         shown = path.relative_to(REPO) if path.is_relative_to(REPO) else path
@@ -222,7 +239,7 @@ class Extractor:
     def __init__(self, source: Source | None = None):
         self.source = source or Source()
         self.scenario = self.source.text("StageScenario.cpp")
-        self.scenario_path = self.source.root / "StageScenario.cpp"
+        self.scenario_path = self.source.path("StageScenario.cpp")
 
     # ----------------------------------------------------------- dynamic expressions
 
@@ -380,7 +397,7 @@ class Extractor:
         return names
 
     def function_names(self, relative: str, header: str) -> Names:
-        path = self.source.root / relative
+        path = self.source.path(relative)
         text = self.source.files[path]
         body, offset = function_body(text, header)
         return self.adds_in(text, path, offset, offset + len(body))
@@ -388,7 +405,7 @@ class Extractor:
     def encounter_file(self, cls: str) -> str:
         for path, text in self.source.files.items():
             if re.search(rf"\b{cls}::AddEpisodeInfo\(", text) and path.suffix == ".cpp":
-                return str(path.relative_to(self.source.root))
+                return self.source.relative(path)
         raise LookupError(f"no {cls}::AddEpisodeInfo in the curriculum")
 
     def reward_term_names(self) -> dict[str, str]:

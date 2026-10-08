@@ -30,25 +30,15 @@
 /// tests write it by hand (RolesStageTest).
 namespace Animus::Curriculum::RolesDraw
 {
-    /// The roles a drill is about, as StageState's DungeonRole numbers them (1 tank, 2 healer, 3 damage).
-    constexpr uint8 ROLE_TANK = 1;
-    constexpr uint8 ROLE_HEALER = 2;
-    constexpr uint8 ROLE_DAMAGE = 3;
+    /// The roles a drill is about and the role a drill drills: defined with the stage table (StageDefinition.h), which
+    /// the runtime reads, and named here for the draws.
+    using Animus::Curriculum::ROLE_TANK;
+    using Animus::Curriculum::ROLE_HEALER;
+    using Animus::Curriculum::ROLE_DAMAGE;
+    using Animus::Curriculum::DrilledRole;
 
     /// The seat whose lesson the drill is: the drilled role sits there (StageScenario's DrillRole makeup).
     constexpr uint32 DRILLED_SEAT = 0;
-
-    [[nodiscard]] inline uint8 DrilledRole(RolesDrill drill)
-    {
-        switch (drill)
-        {
-            case RolesDrill::Hold:
-            case RolesDrill::Pull:  return ROLE_TANK;
-            case RolesDrill::Keep:  return ROLE_HEALER;
-            case RolesDrill::Focus: return ROLE_DAMAGE;
-            default:                return 0;
-        }
-    }
 
     /// What one pack is at a rung.
     struct Pack

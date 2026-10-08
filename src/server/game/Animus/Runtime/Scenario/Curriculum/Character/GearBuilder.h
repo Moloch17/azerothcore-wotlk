@@ -184,6 +184,10 @@ namespace Animus::Curriculum
         std::vector<std::pair<uint8, uint32>> _deadlyPoisons;
         std::vector<std::pair<uint8, uint32>> _cripplingPoisons;
     };
+
+    /// GearBuilder.cpp's part of WarmCaches: its file-local enchant groups and the gear stats tables, read from the
+    /// world database before the pools are sealed. A host that does not seal calls it from its own startup.
+    void WarmGearCaches();
 }
 
 #endif

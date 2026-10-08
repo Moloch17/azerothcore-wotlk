@@ -17,7 +17,7 @@ numbers are of branch `forge` at commit bd32b9dc8. `UNVERIFIED` marks what was n
 | `src/server/game/Animus/Scenario/Curriculum/StageScenario.cpp` | 5192 | The scenario that runs any stage (the brief says about 6,000: the trim reduced it) |
 | `src/server/game/Animus/Scenario/Curriculum/Encounters/InstanceEncounter.cpp` | 2752 | Whole-dungeon encounter (brief: about 3,300) |
 | `src/server/game/Animus/AnimusForge.cpp` | 3087 | The forge's plan, state machine, cluster and learner glue |
-| `src/server/game/Animus/Scenario/Curriculum/Stages/Stages.cpp` | 1393 | Stage definitions plus map data tables |
+| `src/server/game/Animus/Runtime/Scenario/Curriculum/Stages/Stages.cpp` | 1393 | Stage definitions plus map data tables |
 | `src/server/game/Animus/Scenario/Curriculum/CurriculumTuning.h` | 1185 | All tuning keys with defaults |
 | `src/server/game/Animus/Scenario/Curriculum/Encounters/DifficultyLadder.cpp` | 104 | Per-class tier ladder |
 | `src/server/game/Animus/Scenario/Curriculum/Encounters/WingLadder.h` | 98 | Whole-dungeon ladder |

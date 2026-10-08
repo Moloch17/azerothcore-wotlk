@@ -86,6 +86,24 @@ namespace Animus::Curriculum
         Pull,           // pull: the tank pulls one pack of a camp at a time
     };
 
+    /// The roles a drill is about, as StageState's DungeonRole numbers them (1 tank, 2 healer, 3 damage).
+    constexpr uint8 ROLE_TANK = 1;
+    constexpr uint8 ROLE_HEALER = 2;
+    constexpr uint8 ROLE_DAMAGE = 3;
+
+    /// The role a drill is about (ArenaDefinition::DrillRole), 0 for none.
+    [[nodiscard]] inline uint8 DrilledRole(RolesDrill drill)
+    {
+        switch (drill)
+        {
+            case RolesDrill::Hold:
+            case RolesDrill::Pull:  return ROLE_TANK;
+            case RolesDrill::Keep:  return ROLE_HEALER;
+            case RolesDrill::Focus: return ROLE_DAMAGE;
+            default:                return 0;
+        }
+    }
+
     /// **A room of the seek stage** (ArenaDefinition::Rooms): a floor area the object may be put on, written once in
     /// the stage definition from the map. Floor is a convex polygon (x, y corners in order), kept a yard and a half in
     /// from the walls; FloorZ the floor's height, Opening the middle of its doorway onto the room or hallway it is

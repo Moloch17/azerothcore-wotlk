@@ -20,15 +20,15 @@
 #ifndef ANIMUS_WARM_CACHES_H
 #define ANIMUS_WARM_CACHES_H
 
+#include "GearBuilder.h"
+
 namespace Animus::Curriculum
 {
     /// Touch every table the curriculum reads from the world database on first use (consumables, gear sources,
     /// enchant groups, opponents, world creatures, quests, and each class's kit, talents and catalog), so that
     /// all of it is in memory before the database pools are sealed and no episode ever queries.
+    /// Calls WarmGearCaches (GearBuilder.h) for the gear tables.
     void WarmCaches();
-
-    /// GearBuilder.cpp's part of the above: its file-local enchant groups and the gear stats tables.
-    void WarmGearCaches();
 }
 
 #endif

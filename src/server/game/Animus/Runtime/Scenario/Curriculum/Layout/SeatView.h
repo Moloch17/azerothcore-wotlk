@@ -24,7 +24,7 @@
 #include "Aptitude.h"
 #include "Block.h"
 #include "ClassProfile.h"
-#include "CurriculumTuning.h"
+#include "ActionTuning.h"
 #include "FreeLook.h"
 #include "ObjectGuid.h"
 #include "Position.h"
@@ -214,8 +214,8 @@ namespace Animus::Curriculum
         uint32 StandingSeen = 0;
         Hazard DeepestSeen;
         SeatOptionSet* Option = nullptr;
-        /// How long each durative action may run (CurriculumTuning::OptionTuning).
-        CurriculumTuning::OptionTuning Options;
+        /// How long each durative action may run (OptionTuning).
+        OptionTuning Options;
         /// What the actions aim at: the opponent, the selected enemy. May be null (between pulls).
         Unit* Target = nullptr;
         /// The target when the bot can neither see nor detect it (stealth, invisibility). Target is null then, so no
