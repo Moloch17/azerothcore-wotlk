@@ -138,3 +138,222 @@ encounter in the same stage creates a duplicate column; in M4 only this encounte
 3. `RegroupPending` can remain true when a follower is out; cleared at `Died` (`:448`) only.
 4. `.h:43-46` states the leader is "no dead code" - the leader is the sole user of `OwnerAgent`/`BuildOwnerSeat`,
    a leftover slot of the deleted owner mechanism.
+
+## E2a.2 CombatEncounter (C1-C3 `combat1_fight`, `combat2_packs`, `combat3_survive`; `CombatEncounter.h` 183, `.cpp` 707, `CombatDraw.h` 148)
+
+`Opposition::Combat`, one solo seat (seat 0 only: `Reward` returns for `seatIndex != 0`, `.cpp:569-572`) on a cleared
+Ragefire Chasm. The three stages are three `CombatDrill`s of the same class: `Fight` (C1: `fight` weight 3 and `guard`
+weight 1 with `Ally`), `Packs` (C2: `packs` weight 2, `fire` weight 1 with `Hazards`), `Survive` (C3: `survive`). All
+arenas set `RespawnAtEntrance`. The seat perceives through the sight/combat blocks and selects its own target
+(`SelectTarget` is not overridden; the scenario takes the seat's client selection in a sight stage). Per-env state is
+`EnvCombat` (`.h:96-150`); the encounter also owns a `DifficultyLadder _ladder` (section E2a.3) and a per-map cache of
+corridor start points (`_corridors`, guarded by `_corridorLock`).
+
+### Draw: where the seat starts, what spawns (`CombatDraw.h`, `CombatEncounter.cpp:145-320`)
+
+- **Corridor points** (`FindCorridors`, `.cpp:156-186`, once per map, `Corridors()` `:145`): every creature spawn of the
+  map from `sObjectMgr->GetAllCreatureData()` sorted by spawn id (fixed order, so an evaluation's seed picks the same
+  point), kept when on dry ground (`map->GetLiquidData(...) == LIQUID_MAP_NO_WATER`, body height 2) and reached from the
+  entrance (where `bot` stands then) by a whole `PathGenerator` path (type `NORMAL`, not `NOPATH`) of length at most
+  `Combat.CorridorWalk` (220 yd), each at least `Combat.CorridorSpacing` (8 yd) from every point already kept
+  (`CombatDraw::CorridorPoints`, `.h:96-117`). The first call must be made by a bot standing at the entrance. The log line
+  reports the count. `RolesEncounter` reuses `FindCorridors` statically.
+- **Seat placement** (`Build`, `:188-242`): `Despawn(env)` first; `combat = EnvCombat()`; rung from
+  `_ladder.Draw(env, layout, spec, Combat.MaxTier)`; the start point is `corridors[EpisodeSeedIndex % n]` in an
+  evaluation, else a uniform draw; `BotFactory::TeleportWithinMap(bot, point, random facing)`; `StartWalk` is the
+  straight-line distance to the entrance (episode info `start_walk`). Then `_scenario.PrepareFighter(bot, seat)`; for
+  `Survive` it stocks food and drink (`ConsumablePool::Food/Drink(level)`, drink only if the seat has mana,
+  `StockConsumables`); for an `Ally` arena `SpawnAlly`; `SpawnPull(env, map, bot, nullptr)` (false fails the build); for
+  non-`Fight` drills a second pull is spawned beyond the first (`from = &Packs.front().Spot`); `ListTargets`.
+  If there are no corridor points the seat is left where it is (no error).
+- **What a pull is** (`CombatDraw::PlanPull`, `.h:45-80`), with `steps = tier * LevelsPerTier` (1):
+
+| Drill | LevelOffset | Size | Elite | Caster | Hazard | Linked |
+|---|---|---|---|---|---|---|
+| Fight | `LevelBase + steps` (-2 + tier) | 1 | `tier >= EliteTier` (4) | `!Elite && tier >= CasterTier (1) && casterRoll` | no | no |
+| Packs | `LevelBase + steps/2` | `min(4, 2 + tier/2)` | `tier >= 4` | `tier >= 1` | `fireRoll` | `tier >= LinkedTier (2)` |
+| Survive | `LevelBase + steps + SurviveLevels (2)` | `max(1, SurviveSize (3)) + (tier >= 3 ? 1 : 0)` | `tier >= 4` | `tier >= 1` | `fireRoll` | always |
+
+  `fireRoll = drill != Fight && (arena.Hazards || roll_chance_i(Combat.HazardChance 33))`; `casterRoll =
+  roll_chance_i(Difficulty.CasterChance 40)`. Creature level = `clamp(seatLevel + LevelOffset, 1, 83)`
+  (`CreatureLevel`). Note that 83 is not `DEFAULT_MAX_LEVEL` (80) used elsewhere (`Opponents`).
+- **Entries** (`SpawnPull`, `:244-320`): an elite (`pool.RandomElite`) first if the plan has one, then a hazard caster
+  (`RandomHazardCaster`), then a caster (`RandomCaster`), each only while there is room, the rest `pool.Random(level)`
+  (C1: default-AI open-world creatures) or `pool.RandomPackMember(level)` (C2/C3); an empty draw ends the fill and
+  zero entries fails the pull. **Where**: with `from` (the next pack) `Opponents::FindSpawnPointFrom(bot, map, *from,
+  bearing from the seat through `from`, spread 1.0 rad (`NEXT_SPREAD`), NextNearest 30, NextFurthest 45)`; otherwise, or
+  if that finds nothing, `Opponents::FindSpawnPoint(bot, map, FightNearest 28, FightFurthest 40)`. `Opponents::SpawnPack`
+  summons the pack around the spot. The `guard` ally's creature gets 10 threat on the ally and `AttackStart(ally)` for
+  the first pack only (`Packs.size() == 1`).
+- **Ally** (`SpawnAlly`, `:322-340`): a creature from `pool.Random(level)` placed 2-5 yd from the seat, faction of the
+  seat, `REACT_PASSIVE`.
+
+### Per-tick and per-decision flow
+
+1. `UpdateEnemies` (`:371-396`): per pack, marks `Engaged` (and `EngageMs`) once a member has a victim; for a `Linked`
+   pack, every idle member attacks the victim.
+2. `Update` (`:398-440`): I4 respawn first. `FellAt` is stored while dead and not yet out; `fightYards = dist(bot,
+   FightPoint)` (or -1 when dead); `Clock.Note(...)`; on `Step::Rise` with `RespawnAtEntrance`: `RiseAtEntrance(bot,
+   seat, SpawnPointFor(env), now)`, `Clock.Risen`, `DeathPaid = false`. If dead, stop. C1: when `NextFightMs` is due,
+   respawn the ally if dead and spawn the next creature. C2/C3: top the queue up to two packs whenever fewer remain.
+3. `OnSeatAction` (`:442`): remembers `PendingInterrupt` (the target the seat's interrupt was aimed at).
+4. `View` (`:448-468`): `PullsCleared = Clears + Kills`; for `Survive` the gauntlet block's `FoodItem`, `DrinkItem`,
+   `GauntletSupplies = CONSUMABLE_COUNT`; if the front pack fights, `ElitePull` and `PullTime = min(1, (now -
+   EngageMs) / 60000)`.
+5. `BeforeRewards` (`:497-567`): zeroes the per-decision counters; detects the ally's death (`AllyDeaths`); counts each
+   dead member of the front pack once (C1: `Kills++`, and `KillSeconds += (now - EngageMs)` if engaged); an **extra
+   pull** is counted once when the second pack is engaged while the front one still lives; when no member of the front
+   pack is alive: non-`Fight` drills `Clears++`/`NewClears++`, the pack is erased, C1 schedules `NextFightMs = now +
+   Combat.NextFightMs (2000)`, C2/C3 spawn a replacement beyond the back pack if the seat is alive; `ListTargets`.
+6. `Reward` (`:569-689`): see the table. Also counts `Decisions`, `SelectedDecisions` (`bot->GetTarget()` non-empty),
+   `InViewDecisions` (`CombatBlock::InView`), `RestMs` (a regen aura) when alive.
+7. `IsTerminal` (`:698`): `EpisodeElapsedMs >= EpisodeLengthMs` only; a death never ends it. `WriteState`: `STATE_TIER =
+   Tier / max(1, MaxTier)`.
+8. `Teardown`/default `Deactivate`: `Despawn` all packs and the ally.
+
+### Rewards (`Reward`, with `w = TierWeight(Difficulty.TierScale 0.25, tier) = 1 + 0.25 * tier`)
+
+`RewardTerms()` (`.cpp:58-63`): Kill, Clear, Survived, InterruptLanded, Away, Death, TeammateDeath, Hurt, FireHurt,
+PullExtra, StepCost, DamageDealt. (`CombatReward.cpp:65-73` is where the term names live; see
+[cpp-rewards-routing.md](cpp-rewards-routing.md).) Kinds from `RewardLedger.h:178-250`.
+
+| Term | Kind | Condition and amount | Key (default) |
+|---|---|---|---|
+| Kill | Outcome | C1 only: `Kill * w` per creature newly dead | `Combat.Kill` 1.0 |
+| Clear | Outcome | C2/C3: `Clear * w` per pack newly cleared | `Combat.Clear` 2.0 |
+| InterruptLanded | Outcome | C2/C3 when the seat's pending interrupt target's cast is in `env.StepInterruptedTargets`: flat `+InterruptLanded` (not tier-scaled; C1 counts `Interrupts` but pays nothing) | `Combat.InterruptLanded` 0.25 |
+| Survived | Outcome | once, on the decision the clock runs out, if `Deaths == 0`: `(Survive ? SurviveSurvived : Survived) * w` | `Combat.Survived` 1.0, `Combat.SurviveSurvived` 2.0 |
+| PullExtra | Cost | `-ExtraPull` per extra pull counted | `Combat.ExtraPull` 1.0 |
+| TeammateDeath | Cost | the guard ally fell: `-AllyDeath / w` | `Combat.AllyDeath` 1.0 |
+| Hurt | Cost | `-Hurt * (non-hazard damage taken / max health)` | `Combat.Hurt` 0.2 |
+| FireHurt | Cost | `-FireHurt * (hazard damage taken / max health)` | `Combat.FireHurt` 1.0 |
+| StepCost | Cost | while a front-pack member is alive and in combat: `-Clock * decisionSeconds` | `Combat.Clock` 0.01 |
+| Death | Cost | once per death: `-Death / w` | `Combat.Death` 2.0 |
+| Away | Cost | `-Away * decisionSeconds` when `CombatDraw::AwayCharged`: dead, or alive and further than `AwayYards` from `FightPoint` while rejoining (`Clock.Rejoining`) or while the front pack fights | `Combat.Away` 0.02, `Combat.AwayYards` 30 |
+| DamageDealt | Shaping | `Damage * step.Damage / mean max-health of the front pack` | `Combat.Damage` 0.3 |
+
+Win/loss tier scaling thus follows principle "tier-scaled outcomes": outcomes times `w`, deaths divided by it. `Hurt`,
+`FireHurt`, `ExtraPull`, `Away` and `Clock` are at full price (no cost ladder: the yaml says "full price from the
+start"). At the clock's end (`timeIsUp && !Recorded`) the encounter also records the window: `if (combat.Counts)
+_ladder.Record(layout, spec, tier, Won(Kills + Clears, Deaths), MaxTier)`, where `Won` is something taken down and no
+death (`CombatDraw.h:143-146`). Whether `Reward` is reached on the final decision (so `Recorded` is set) is
+UNVERIFIED: check the order of `Reward` and `IsTerminal` in `StageScenario::Reward`/`Observe`.
+
+### Episode info columns
+
+`won`, `survived`, `kills`, `packs_cleared`, `pulls`, `extra_pulls`, `interrupts`, `deaths`, `respawns`, `rises`
+(identical values: both are `Clock.Rises`), `rejoins`, `rejoin_seconds`, `rejoined` (`RejoinedShare` when rises),
+`dead_seconds`, `away_seconds`, `outcome_paid`, `interrupt_earnings` (`InterruptPaid / OutcomePaid`), `kill_seconds`,
+`ally_deaths`, `hurt_share`, `fire_share`, `hazard_pulls`, `linked_pulls`, `caster_pulls`, `rest_seconds`,
+`selected_share`, `target_in_view`, `start_walk`, `combat_rung`, `difficulty` (same value as `combat_rung`),
+`at_top_rung` (`Tier >= MaxTier`), and the twelve `reward_*` columns. Read by the learner configs
+`apps/forge/python/configs/combat1_fight.yaml` (headline `won, survived, kills, kill_seconds, hurt_share, deaths,
+rejoin_seconds, combat_rung, target_in_view, selected_share, ally_deaths`; convergence measure `won`; fade gate `won >= 0.7`
+with rungs [1.0, 0.5, 0.25, 0.0]), `combat2_packs.yaml` (`packs_cleared`, `extra_pulls`, `interrupts`, `interrupt_earnings
+<= 0.3`, `fire_share`; gate `won`), `combat3_survive.yaml` (convergence measure and fade gate `survived`; `rejoined >= 0.9`,
+`rejoin_seconds <= 60`, `away_seconds`, `rest_seconds`). The `deaths`, `rises`, `rejoins`, `rejoin_seconds`, `rejoined`,
+`dead_seconds` names are shared with PartyFollow, Roles and Instance.
+
+### Config keys
+
+All under `AnimusForge.Curriculum.` + `Combat.*` (defaults above and: `MaxTier` 5, `LevelBase` -2, `LevelsPerTier` 1,
+`EliteTier` 4, `CasterTier` 1, `LinkedTier` 2, `HazardChance` 33, `SurviveSize` 3, `SurviveLevels` 2, `FightNearest` 28,
+`FightFurthest` 40, `NextNearest` 30, `NextFurthest` 45, `NextFightMs` 2000, `CorridorWalk` 220, `CorridorSpacing` 8),
+`Difficulty.*` (E2a.3) and `Respawn.DelayMs` 10000, `Respawn.RejoinYards` 15. Clamps and the conf-file agreement:
+[cpp-tuning-keys.md](cpp-tuning-keys.md).
+
+### Tests
+
+`CombatPerceptionTest.cpp` (`CombatDrawTest.TheRungsPulls`, `OutcomesScaleWithTheRung`, `TheCorridorPointsAreReachableAndApart`,
+`CombatRespawnTest.AwayIsDeadOrOffFromTheFight`, `TheClockRisesAfterTheDelayAndRejoinsAtTheFight`, `CombatStagesTest.*`);
+no test drives the encounter against a world (`Build`, `SpawnPull`, `Reward` are not unit-tested); `RolesStageTest.cpp`
+covers the shared stage setup.
+
+### Reviewer notes
+
+- C1's win is "something taken down and no death" (`Won`), the gate for the shaping fade and the DifficultyLadder alike.
+- `Survived` pays only at the exact decision the clock runs out and only with zero deaths in the whole episode: a seat
+  that dies once never gets it, even if it comes back and clears everything.
+- Interrupt credit depends on `PendingInterrupt` being the same GUID as a caster in `StepInterruptedTargets`.
+- Spawning uses `PathGenerator` per attempt (up to 24 attempts, each a path computation) on the map thread.
+
+### Observed issues
+
+1. `CombatEncounter.cpp:93-94`: `respawns` and `rises` report the same number.
+2. `difficulty` and `combat_rung` columns duplicate each other (`CombatEncounter.cpp:127-128`).
+3. `CombatDraw.h:CreatureLevel` clamps to 83 while the pools stop at `DEFAULT_MAX_LEVEL` (80).
+4. `Build` silently leaves the seat where it was when the map has no corridor point (`:208-221`); `FindCorridors`
+   logs only the count.
+5. `StepCost` is paid under the name "Clock" in tuning (`Combat.Clock`) but is `RewardTerm::StepCost`, whereas the
+   scenario's own `RewardTerm::CombatClock` (`Output.Clock`) is a different, shaping term.
+6. `ResetEpisode` keeps `Packs` and `Ally` across the episode boundary (`:134-143`) so `Build` can despawn them with a
+   map; a reset that never reaches `Build` (failed build) leaves creatures alive.
+
+## E2a.3 DifficultyLadder (`DifficultyLadder.h` 100, `.cpp` 104)
+
+An adaptive per-(class, build) rung used by CombatEncounter and RolesEncounter (`CombatEncounter.h:177`,
+`RolesEncounter.h:148`; SightEncounter's comment at `SightEncounter.cpp:104` refers to it but does not use it).
+`DifficultyLadder(scenario, what)` sizes `_tiers` as `Layouts().size() * MAX_SPECS` rows (`Row(layout, spec) = layout *
+MAX_SPECS + min(spec, MAX_SPECS - 1)`); each row `{Tier, Fights, Wins}`; a mutex guards it ("envs finish on map update
+threads"). Rungs start at 0 with the worldserver and are not persisted.
+
+- `Draw(env, layout, spec, maxTier) -> {Tier, Counts}` (`.cpp:29-61`): an **evaluation** (`EpisodeSeedIndex !=
+  NO_EPISODE_SEED`) plays `(seed / CastingCount()) % (maxTier + 1)` and never counts, so every (class, build) pair meets
+  every rung. **Training** plays the current rung (capped to `maxTier`), counting; with `Difficulty.ReviewChance`
+  (25) percent and a rung above 0 it plays a uniformly drawn lower rung and does not count; else with
+  `Difficulty.StretchChance` (10) percent below the top it plays one rung up and does not count. (`roll_chance_i` is
+  called on the world thread, per the header.)
+- `Record(layout, spec, fightTier, won, maxTier)` (`:63-92`): ignored if the row's rung moved meanwhile; counts a fight;
+  once `Fights >= Difficulty.Window` (200) it moves the rung up if `wins/fights >= RaiseAbove` (0.9) and below the top,
+  or down if `< LowerBelow` (0.6) and above 0; resets the window and logs "<scenario>: <class> <spec> moves from <what>
+  <a> to <b>".
+- `Tier(layout, spec)` reads a row.
+
+This ladder **does step back on the score**, unlike the gate-stepped fade and wing ladders in principle 10: it is the
+older per-class pacing, kept for the combat and roles stages, and the learner also tracks the mean of the `difficulty`
+column per class (`apps/forge/python/animus/stage.py:21,51` "the ladder settled"; see [py-mappo.md](py-mappo.md) and
+[stages.md](stages.md)). Config: `Difficulty.RaiseAbove`, `LowerBelow`, `Window`, `ReviewChance`, `StretchChance`,
+`CasterChance`, `TierScale`, `MaxTierScale` 6 (the last is not read by this class). Tests: no direct test file (UNVERIFIED:
+grep found none for `DifficultyLadder`).
+
+Observed: the rung counters are lost on every worldserver restart, so a resumed stage restarts every class at rung 0
+(the learner's `difficulty` column then drops); `Draw` uses `urand` and the ladder state is shared by all envs of the
+pool, so training order matters for reproducibility.
+
+## E2a.4 Opponents (`Opponents.h` 98, `.cpp` 387)
+
+The curriculum's hostile creature pools, spawn-point finder and summoner, used by Combat, Roles and others.
+
+- **`OpponentPool::Instance()`** (a function static; built on first call, which `WarmCaches()` forces before the DB
+  pools are sealed, `WarmCaches.cpp:34`). The constructor (`.cpp:111-220`) runs two `WorldDatabase` queries over
+  `smart_scripts` (SmartAI creatures with `ScriptName = ''` whose scripts are only spell casts (action 11) and talks (action
+  1) on a list of combat events: "cast-only"; and their spells, to find which have a cast time (an interrupt can stop
+  it) and which carry a persistent area aura or area aura effect: "hazard"), then walks `sObjectMgr->GetCreatureTemplates()`.
+  A template qualifies when it is spawned in the world and not a waypoint walker (`WorldCreatures::SpawnedIds`,
+  `WaypointWalkerIds`), of a fair type (beast, dragonkin, demon, elemental, giant, undead, humanoid), no npcflag, no
+  vehicle, not non-attackable/immune/non-selectable/pacified, not civilian/trigger/guard, `ModHealth` and `DamageModifier` within
+  0.5-2.0 (elite: health up to 3.0, damage up to 2.5), nonzero `minlevel`, and not `SpawnsUnreachable` (no ground
+  movement, flying, rooted, hovering/flying/submerged anim tier, stealth or invisibility addon auras), and either default AI
+  (no script, no AI name) or cast-only SmartAI. Normal-rank creatures go into `_packByLevel` for every level in their
+  range, into `_byLevel` if default AI, `_castersByLevel` if cast-time, `_hazardCastersByLevel` if hazard; elite-rank
+  into `_elitesByLevel`. Counts are logged.
+- **Draws** `Random`, `RandomPackMember`, `RandomElite`, `RandomCaster`, `RandomHazardCaster` -> `PickNear(byLevel, level)`:
+  the level itself then the nearest levels either side (lower first), uniform in the bucket; 0 if everything is empty.
+- **`FindSpawnPoint(bot, map, min, max)`** (`:262-300`): up to 24 tries at a random bearing and distance; keeps a spot
+  with ground (`GetHeight`) within 6 yd of the bot's height, `Walkable` (a `PathGenerator` path of normal type no longer
+  than 1.5 times the straight line) and in line of sight (`IsWithinLOS` at +2 z); a walkable spot out of sight is the
+  fallback; otherwise the last random attempt's position (possibly unvalidated, with `m_positionZ` possibly the bot's z).
+  Random facing.
+- **`FindSpawnPointFrom`** (`:302-319`): as above but from a point along a bearing within `spread`, no line-of-sight
+  test; `nullopt` if none.
+- **`SummonOpponent`** (`:321-350`): sets thread-local `PendingSummonLevel = level` around `map->SummonCreature(entry,
+  pos)` (see `SummonLevel.h`), then puts the creature in the bot's phase mask, `FACTION_MONSTER`, `REACT_AGGRESSIVE`,
+  home position, full health, `SetRegeneratingHealth(false)`. Returns the `Creature*` or null with `LOG_ERROR`.
+- **`SpawnPack`** (`:352-387`): the first entry at the centre, each further one 2-5 yd (`PACK_SPREAD` = 5) away at a random
+  angle, ground-snapped, random facing; failed summons are skipped.
+
+Quirks: the pool is built from the world DB at startup and never refreshed; the query's `HAVING` clause is a hand-written
+description of "cast-only" scripts that nothing tests (UNVERIFIED: the world data it reads is outside the repo tests);
+`PickNear` falls to other levels without telling the caller (a level-60 seat may get a level-1 pool entry if buckets are
+empty); comments mention `stage1_duel`, `stage8_duel` and "the scripted baseline" (`.cpp:78-84`, `:333-341`), stale since
+the first curriculum was deleted. `Opponents.h:42` (`Random`) says "The duel stage's opponents".
