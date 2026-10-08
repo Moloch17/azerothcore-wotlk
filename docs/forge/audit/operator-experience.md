@@ -80,3 +80,327 @@ without `--archive-ok`, refuses to build under a running stage, writes an intent
 closes the console's input, takes a per-machine lock, backs up a conf before writing it atomically, and prints a
 "mixed state" report when `move-host` stops half way. The design below keeps those rules (`forgectl.md`, "Rules every
 command follows") and adds to them; it does not replace them.
+
+## 2. Designs
+
+Each design says what it builds on that already exists, what is new, a mock-up, and what it deliberately leaves out.
+Mock-ups are illustrative: names, numbers and wording are proposals, not output of any build.
+
+### 2.1 A control channel for the worldserver
+
+**Builds on.** Decision 0001 (a request/response JSON line protocol, a Unix socket by default, a token only for an
+opt-in TCP listener). The code already has what the decision's section "The work in C++" step 2 needs: the SOAP thread
+is a second producer of console commands. It queues `new CliCommandHolder(ctx, line, &print, &finished)` and waits
+for `finished(success)` (`ACSoap.cpp:121-140`); the world thread runs it between ticks, or from `Forge::Pump()` while
+it waits for the learner (`World.cpp:1505-1520`, `AnimusForge.cpp:1050-1056`). The socket is a third producer of the
+same holder, so it needs no new posting mechanism and cannot disagree with the console. `ClusterLink` already speaks
+line-based POSIX sockets (`ClusterLink.cpp`), the right style to copy (no new dependency).
+
+**Stage 0 (zero C++): SOAP as a stopgap.** `SOAP.Enabled = 1` (`ForgeMain.cpp:475`) opens an HTTP console on
+`127.0.0.1:7878`; the reply carries the success flag as a SOAP fault. It needs an administrator account that the
+in-memory account snapshot knows (`ForgeMain.cpp:235`; whether the forge's databases hold one is UNVERIFIED) and it is
+XML. Use it only if the socket slips, through `ssh -L`. It is correct about failure only after OX-15 is fixed.
+
+**Stage 1: the socket, `exec` only.**
+
+- Where: `<OutputDir>/control.sock` (the run directory's parent, `AnimusForge.OutputDir`), created at startup after the
+  sealed-database step, removed at shutdown. Mode `0660`. Which user owns it inside the container, and whether the
+  host's ssh user can open it through the bind mount, is UNVERIFIED (the container runs as whatever
+  `docker-compose.yml` selects); the fallback is `docker exec` with a relay, which is what forgectl does today anyway.
+- Conf: `AnimusForge.Control.Enable = 1` (default 0, as 0001 says), `AnimusForge.Control.Path`.
+- Framing: one UTF-8 JSON object per line, at most 64 KB, one request at a time per connection.
+- Request: `{"v":1,"id":7,"cmd":"exec","line":"forge resume move2_seek","confirm":false}`.
+- Replies stream: zero or more `{"id":7,"line":"Resuming move2_seek from update 3802"}` frames (the same strings the
+  console prints, with no log lines and no prompt, because only the holder's print callback feeds it), then one final
+  frame `{"id":7,"done":true,"ok":true}` or `{"id":7,"done":true,"ok":false,"code":"refused_state"}`.
+- `ok` is the holder's `success`, which makes OX-15 the prerequisite: every refusal uses `SendErrorMessage`.
+- Codes: `ok`, `refused_state` (idle/busy), `bad_args`, `unknown_command`, `unknown_stage`, `needs_confirm`,
+  `forbidden`, `too_large`, `timeout`, `shutting_down`, `internal`. A refusal always carries the text a person would
+  have read.
+- Destructive lines (`forge clean ...`, `forge bench apply`, `forge start` over a non-empty run) come back
+  `needs_confirm` unless the request has `"confirm":true`; forgectl sets it only after its own prompt or `--yes`.
+
+**Stage 2: typed commands.** `status` (structured, section 2.2), `plan.wait` (`{"timeout_s":600}` returns when the plan
+ends or the time runs out, replacing the log polling in `deploy.py:wait_for_log`), `events.subscribe` (a stream of the
+run events of section 2.5, from a byte offset so a reconnecting client misses nothing). `pause`, `resume` and `cancel`
+fan out through `ClusterLink` (new `PAUSE` and `RESUME` orders beside `RUNG` and `STOP`, `AnimusForge.cpp:1084-1090`,
+`:1214`), each worker acknowledging, so the reply names who did and who did not.
+
+**Mock-up, raw protocol** (what a person sees with `socat` or a three-line script, which is the point: no docker, no
+tty, no detach keys):
+
+```
+$ echo '{"v":1,"id":1,"cmd":"exec","line":"forge pause"}' | socat - UNIX-CONNECT:var/animus-forge/shared/control.sock
+{"id":1,"line":"Pausing move2_seek after the current decision."}
+{"id":1,"line":"Cluster: pause sent to spencer, thomas, moloch"}
+{"id":1,"done":true,"ok":true}
+$ echo '{"v":1,"id":2,"cmd":"exec","line":"forge cancel"}' | socat - UNIX-CONNECT:var/animus-forge/shared/control.sock
+{"id":2,"line":"Nothing is running."}
+{"id":2,"done":true,"ok":false,"code":"refused_state"}
+```
+
+**Mock-up, forgectl on top:**
+
+```
+$ forgectl stage cancel
+Plan:
+  stop the plan on the host and every worker; the learner saves latest.pt first
+  send `forge cancel` to sarah's control socket (the host fans it out to spencer, thomas, moloch)
+Proceed? [y/N] y
+sarah    ok   Cancelling move2_seek: the learner saves its latest checkpoint, then the sim goes idle
+         workers: spencer ok, thomas ok, moloch ok
+waiting for "Plan ended" ... ended after 41 s (latest.pt saved at update 3,811)
+$ forgectl stage cancel
+sarah    REFUSED (refused_state)  Nothing is running.
+exit status 1
+```
+
+**Security model.**
+
+1. Off unless enabled; Unix socket only in v1. Reach it from another computer over ssh (`ssh -L` of a socket path, or
+   `ssh host python3 relay.py`); the machine's ssh key is the credential, as for everything else in `cluster.md`.
+2. Same authority as the console: every line runs as `SEC_ADMINISTRATOR`, i.e. nothing the console cannot do.
+3. `SO_PEERCRED` (uid, pid) of each connection is logged with the line, so section 1's OX-19 is closed for the socket.
+4. A TCP listener is not in v1. If it is ever wanted, follow 0001: bind only to an RFC 1918 or loopback address, a long
+   token from the untracked conf compared in constant time, and tunnel over ssh on any network not fully trusted.
+5. Length limits (64 KB), a cap of 8 connections, one command at a time per connection, idle timeout 60 s.
+6. Stage names are validated against the stage list before use (`IsRunName`, `ForgeCommands.cpp:219`), never passed to
+   a shell.
+
+**Not in scope.** HTTP, WebSocket, TLS, user accounts, roles, a second command language. The console stays for
+people. The socket never adds a command the console lacks; it adds an `ok` flag, framing and streaming.
+
+**Effort.** Stage 1: about 300 lines of C++ plus tests, a day or two once OX-15 is done; the forgectl client replaces
+`console.py` in its main path and keeps it as the fallback for a worldserver without a socket. Stage 2 adds the
+structured `status`, `plan.wait`, events and the fan-out: three to five days. Every machine must be rebuilt (the source
+hash is in the fingerprint), so land it with the other C++ changes of the roadmap (section 3).
+
+### 2.2 Machine-readable status and a stable schema
+
+**Problem.** `status` is a table for eyes (`Progress.cpp:390`). `progress.json` is flat, unversioned and written by the
+learner only, so the sim's own view (decision timing, workers, controller) is only in the table.
+
+**Design.**
+
+1. A `ForgeStatus` struct in C++ filled by `CommandStatus`; the table becomes one renderer of it, JSON the other
+   (0001 item 3). The socket's `status` returns it. `forge status --json` prints it on the console too.
+2. Until that lands, `forgectl status --json` builds the same document from three things it can already read over ssh:
+   `runs/<stage>/progress.json`, `finished.json`, and `docker ps` / log age (`cluster.py:PROBE`). It does not scrape the
+   console or the learner log's `update` lines; it keeps those parsers only as a fallback and says so
+   (`"source":"files"`).
+3. Rules that make the schema stable: an integer `schema` field and additive changes only; never rename or remove a
+   field inside a schema number; every field present, `null` when unknown (never omitted); durations in seconds with an
+   `_s` suffix, steps as integers, scores as numbers; `alarms[].code` is a closed vocabulary; the document is validated
+   by a JSON Schema file in the repository and a test.
+
+**Mock-up.** `forgectl status --json` (shortened):
+
+```json
+{
+  "schema": 1, "time": "2026-10-08T03:12:44Z", "source": "socket",
+  "cluster": {"host": "sarah", "revision": "93cbc38ea", "fingerprint_ok": true},
+  "plan": {"state": "training", "index": 1, "of": 3, "stages": [
+    {"name": "move2_seek", "state": "done", "env_steps": 178000000, "best_score": 0.81},
+    {"name": "move3_interact", "state": "training", "env_steps": 41200000, "total_env_steps": 150000000},
+    {"name": "move4_follow", "state": "pending"}]},
+  "stage": {"name": "move3_interact", "rung": {"ladder": "fade", "index": 1, "of": 4, "scale": 0.5},
+            "headline": [{"metric": "reach_rate", "value": 0.62, "target": ">=0.8", "met": false}],
+            "eval": {"last_env_steps": 40000000, "score": 0.44, "stderr": 0.02, "evals_since_best": 1}},
+  "learner": {"phase": "training", "update": 3802, "steps_per_s": 2134, "log_age_s": 3, "alive": true},
+  "workers": [{"name": "spencer", "state": "up", "last_seen_s": 2, "revision": "93cbc38ea", "steps_per_s": 648}],
+  "alarms": [{"code": "ladder_stalled", "severity": "warn", "since": "2026-10-08T01:40:02Z",
+              "text": "the fade rung 1 (x0.5) stalled: no gate gain in 8 evaluations"}],
+  "disk": [{"machine": "sarah", "free_gb": 220}]
+}
+```
+
+and the human form, which stays the default and is the same data:
+
+```
+$ forgectl status
+move3_interact   training  41.2M / 150M steps  ETA 14 h 20 m   rung 1/4 (fade x0.5)   learner stepping 2,134 sps
+headline         reach_rate 0.62 (target >= 0.8, not yet)         last eval 40.0M: 0.44 +/- 0.02
+workers          spencer up   thomas up   moloch up                 disk free: sarah 220 GB (ok)
+ALARMS           ladder_stalled since 01:40  (the fade rung 1 stalled: no gate gain in 8 evaluations)
+```
+
+**Alarm vocabulary (closed).** `ladder_collapsed`, `ladder_stalled`, `learner_silent`, `learner_exited`,
+`worker_lost`, `worker_refused`, `reset_stall`, `step_rate_drop`, `entropy_floor`, `kl_high`, `nonfinite`,
+`disk_low`, `fingerprint_mismatch`. Seven of them already exist as warnings in `Progress.cpp` (step-rate drop, learner
+silent, learner exited, reset stall, entropy, KL/clip, non-finite) and two as learner flags (`ladder_collapsed`,
+`ladder_stalled`); the schema names them.
+
+**Effort.** py version: 2 days. C++ struct + renderer + `--json`: 2 days. Schema file and test: half a day.
+
+### 2.3 Log routing: replies separate from noise
+
+**Facts that shape it.** A command reply is written through `utf8print` to stdout (`CliRunnable.cpp:77-85`); it never
+passes through the logger. Logs go to appenders by logger name. Every Animus message uses one logger,
+`module.animus` (251 call sites), routed to `Console Server` at Info (`worldserver.conf.dist:734`). So the console is
+a mix only because the console appender prints everything at Info. `forgectl` waits for the `ready` line in
+`docker logs` (`deploy.py:ready_script`) and tells replies from logs by the log colour escape (`console.py:LOG_LINE`),
+so any change must keep `server.worldserver` Info on the console.
+
+**Step 1: conf only (no rebuild).** In each machine's `worldserver.conf` (or `AC_LOGGER_*` / `AC_APPENDER_*`
+environment variables in compose, which makes it identical everywhere and tracked - UNVERIFIED that the env override
+works for these keys; the core's config manager supports `AC_<KEY>` overrides in general):
+
+```
+Appender.Console=1,3,0,"1 9 3 6 5 8"          # console shows Warning and above only
+Appender.Server=2,5,17,Server.log,w           # flag 17 = timestamp + backup of the previous file; all levels
+Logger.server=4,Console Server                # keep the 'ready' line and startup on the console
+Logger.module=4,Server                        # module.animus: Info to the file, nothing to the console
+Logger.module.animus.plan=4,Console Server    # (step 2) plan start/end, cluster join/lost, alarms: console too
+```
+
+Result: the console shows replies, plan events and warnings; the Info flood (WingTrace, seats, route logs) is in
+`Server.log`, which `forgectl logs` can search. This alone removes most of OX-05.
+
+**Step 2: split the logger by area (C++, string edits).** Replace `"module.animus"` at each call site with a child:
+
+| Logger | Content | Console | File |
+|---|---|---|---|
+| `module.animus.plan` | start, end, pause, resume, cancel, learner start/exit, `Plan ended` | Info | Server.log |
+| `module.animus.cluster` | joined, lost, refused, rung broadcast | Info | Server.log |
+| `module.animus.ladder` | ladder steps, collapse, stall alarms, `Pull drill steps to rung` | Info | Server.log, `events.log` |
+| `module.animus.seat` | `Seat died`, `Press refused`, `Wing run/start/wipe/time/stuck`, route and corner lines | none | `Seats.log`, 512 MB cap |
+| `module.animus` | everything else (config, warm-up, bench) | Warn | Server.log |
+
+Append `Appender.Seats=2,4,0,Seats.log,a,536870912`. Because the per-episode families are the real flood, give them
+the cap pattern `MayLog` already uses (a per-process, per-kind counter), as `LogEvery(kind, per_minute)`; default
+`Instance.WingTrace` stays 1 but its output now lands in the file and is rate-limited.
+
+**Step 3: severity in the learner.** The learner prints with `print(..., flush=True)` into an `O_APPEND` file
+(`ChildProcess.cpp:74`). Add Python `logging` with a `[LEVEL]` prefix and the same names as the sim's loggers
+(`learner.eval`, `learner.stage`, `learner.cluster`), keep the exact `update N | steps ...` line (forgectl and
+`run_snapshot.py` read it) until the status schema replaces it, and write per run to `runs/<stage>/learner.log` (it
+then moves to `archive/` with the run) while `env/dist/logs/animus-learner.log` becomes a symlink to the live one.
+
+**One place for logs per machine.** `env/dist/logs/` for the machine, `runs/<stage>/` for the run:
+
+```
+env/dist/logs/Server.log          sim, Info+, previous file backed up on restart
+env/dist/logs/Seats.log           per-seat diagnostics, rate-limited, 512 MB cap
+env/dist/logs/Errors.log          Error and above only
+env/dist/logs/animus-learner.log  -> runs/<stage>/learner.log (symlink to the live run's)
+runs/<stage>/events.log           ladder events and alarms (the run's own story, section 2.5)
+docker: json-file, max-size 50m, max-file 5          (compose logging block; the console stream, now short)
+```
+
+**forgectl side.**
+
+```
+$ forgectl logs sarah --since 2h --grep "Wing wipe" --stage dungeon2_ragefire
+$ forgectl logs sarah --follow --level warn          # tail the files over ssh, filtered
+$ forgectl logs --where                              # prints the paths above for each machine
+```
+
+**Effort.** Step 1: an hour plus a rollout of four confs (and `forgectl conf-sync` can carry it if the keys move under
+a tracked file, section 2.7). Step 2: a day. Step 3: a day.
+
+### 2.4 A run registry and `forgectl runs`
+
+**Problem.** A run is a directory with at least nine kinds of file, plus `archive/<stage>-<time>/` siblings; "the
+latest run of M2" and "which checkpoint do I resume from" need ssh and `ls`.
+
+**Registry, no database.** A run's identity is its directory. Add one small file the learner writes at start and at
+every state change, `runs/<stage>/run.json`, and let `forgectl` index the directories on the host (and `archive/`).
+Fields: `schema`, `stage`, `run_id` (the archive stamp or `live`), `parent` (the stage and checkpoint it seeded from,
+`seed_from`), `started_at`, `revision` (git sha of the sim and learner), `config_sha` (hash of `config.yaml`),
+`fingerprint`, `seed`, `resumed_from` (list of `{update, env_steps, time}`), `state`
+(`training|paused|converged|ceiling|cancelled|crashed`), `reason` (from `finished.json`), `machines`. `finished.json`
+already carries `reason`, `advanced`, `env_steps`, `update`, `best_score`, `best_env_steps` (`train.py:2247-2255`);
+`run.json` adds what it lacks (parent, revision, seed, resumes) so it is written once and never reconstructed.
+
+**Commands.**
+
+```
+$ forgectl runs
+stage             run                    state       steps    best    eval   age      where
+move3_interact    live                   training    41.2M    0.44    0.44   2h 10m   sarah
+move2_seek        20261006-1802          converged   178M     0.81    0.80   1d 9h    sarah/archive
+move2_seek        20261003-0911          cancelled   32M      0.40    0.38   5d       sarah/archive
+dungeon2_ragefire (no run)
+
+$ forgectl runs show move3_interact
+move3_interact  live  on sarah  rev 93cbc38ea  seed 1000  seeded from move2_seek/best.pt (run 20261006-1802)
+state       training since 2026-10-08 01:02 (resumed 1x at 1.9M steps, 2026-10-08 01:40)
+steps       41.2M of 150M ceiling   ETA 14 h 20 m    best 0.44 at 36.0M
+rung        fade 1/4 (x0.5) since 38.1M; gate reach_rate >= 0.8 (now 0.62)
+alarms      ladder_stalled since 01:40
+checkpoints (what each is for, section below)
+  latest.pt              update 3802   1 min ago   resume point
+  best.pt                update 3470   36.0M       best evaluation (score 0.44) - what export uses
+  best_rung0.pt          update 2210   25.0M       best of the rung the fade left
+  checkpoint_003800.pt   update 3800   keep 5, oldest deleted
+events      01:02 started | 01:40 resumed (rebuild 93cbc38ea) | 01:40 ladder_stalled (fade rung 1)
+files       progress.json metrics.csv eval.jsonl ... (8 more, 1.9 GB)
+
+$ forgectl runs compare move2_seek:20261006-1802 move2_seek:20261003-0911 --metric reach_rate
+$ forgectl runs tail move3_interact          # eval rows and ladder events as they arrive
+$ forgectl runs resume-points move3_interact # latest.pt, and what `resume_check.py` says about it on this build
+```
+
+**What the checkpoints mean (printed by `runs show`, written once in the docs).** `latest.pt`: saved at the end of
+every checkpoint interval and on cancel; what `forge resume` continues from; never pruned. `best.pt`: the best
+evaluation of the current rung; what an export uses by default; never pruned. `best_rung<k>.pt` (fade) and
+`best_<ladder>_rung<k>.pt`: the best of a rung just left, copied at the step (`runs.py:rung_best_name`); never pruned.
+`checkpoint_NNNNNN.pt`: numbered snapshots, newest `keep_checkpoints = 5` kept (`config.py:606`), taken every 25
+updates or 5M steps (`:601-605`); the way back after a collapse. Which one to resume from after a collapse is a human
+call; `runs show` lists the evaluation score at each, read from `eval.jsonl`.
+
+**Compare.** Reuse `run_snapshot.py`: its snapshot (`--json`) is the unit; `runs compare` takes any two run ids or
+`stage@update`, aligns on env steps and prints each headline metric at equal steps, the evaluation and its stderr, and
+steps per second. It prints "within noise" only when the difference is under the sum of the stderrs; it does not
+declare winners (as `run_snapshot.py` says, "the ratios are a reading, not a verdict").
+
+**Effort.** `run.json` writer: half a day (learner, py). Index and `runs`/`show`/`tail`/`resume-points`: 2 days.
+`compare`: 1 day.
+
+### 2.5 An event stream and notifications
+
+**Sources that already exist.** `progress.json` (`phase`, `ladder_collapsed`, `ladder_stalled`, `nonfinite`,
+`last_eval_score`); `finished.json` (`reason`, `advanced`); the sim's `Plan ended: <reason>` and
+`<stage> done|failed|cancelled after <time>` lines (`AnimusForge.cpp:892`, `:922`); `Cluster: ... lost the host`,
+`is back`, `refused the worker` lines; the learner's log mtime (the STALLED test in `cluster.py`); `events.log`
+(ladder alarm lines). Nothing needs to be invented to detect the incidents listed in the brief.
+
+**Phase A, py only: `forgectl watch`.** A foreground (or systemd, section 2.6) process on the operator's always-on
+machine (the dev machine). Every 30 s it takes one `forgectl status --json` snapshot, compares with the previous one,
+and emits an event on each transition. Events are appended as JSON lines to `~/.forgectl/events.jsonl` (one file on the
+watcher's machine; the same shape the sim will later write per run):
+
+```
+{"t":"2026-10-08T03:40:02Z","kind":"stage_converged","stage":"move3_interact","severity":"info","text":"converged at 96.4M steps, advanced"}
+{"t":"2026-10-08T04:12:51Z","kind":"worker_lost","machine":"moloch","severity":"warn","text":"moloch: worldserver DOWN (3 checks)"}
+```
+
+Kinds and rules: `stage_converged` / `stage_ceiling` (from `finished.json`, `advanced` true/false), `plan_ended`,
+`ladder_collapsed`, `ladder_stalled` (once per rung until it clears), `learner_exited`, `learner_silent` (log older
+than 5 minutes while the plan is training; the cluster table uses 60 s, `cluster.py:STALE_SECONDS`, and the sim warns
+at 120 s; whether the learner logs during a long evaluation is UNVERIFIED, so the threshold is a conf value),
+`worker_lost` and `worker_back` (needs two failed checks, to ignore a flap), `worker_refused`, `disk_low` (under
+30 GB, the number `deploy-gate.md` uses), `watcher_blind` (the watcher itself cannot reach the host for 10 minutes: the
+alert that would otherwise be silence). Deduplicate by (kind, subject) with a quiet period; clear events on recovery.
+
+**Notification sinks, in order of effort.** Configure in `~/.forgectl/notify.toml` (never in the tracked `cluster.toml`,
+since it holds addresses and secrets):
+
+```
+[notify]
+min_severity = "warn"                     # info events go to the file only
+[[sink]]  kind = "desktop"                # notify-send, no account needed
+[[sink]]  kind = "webhook"  url = "https://ntfy.sh/forge-alex"   # a push to a phone; Discord/Slack hooks take the same POST
+[[sink]]  kind = "command"  run = "mail -s 'forge: {kind}' me@example.com"   # any local script, text on stdin
+```
+
+A webhook to a push service reaches a phone with no mail server; `command` covers e-mail through whatever the
+machine already has. `forgectl notify --test` sends one of each kind. No retries beyond one; a failed send is itself
+logged as an event, never fatal.
+
+**Phase B, C++ (with the socket): `events.jsonl` per run, written by the sim,** replacing log scraping: plan
+transitions, worker join and drop, the wing-ladder rung (closing OX-03's visibility), alarms; `events.subscribe` streams
+it. The watcher then needs no polling for those. Keep the watcher for what only an outside observer can see (the host
+being down, ssh unreachable, disk).
+
+**Effort.** Phase A: 2-3 days (the status snapshot of 2.2 is the prerequisite). Phase B: 2 days.
