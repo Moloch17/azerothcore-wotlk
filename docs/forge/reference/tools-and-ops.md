@@ -14,7 +14,7 @@ build. Related: [config-keys.md](config-keys.md), [tests.md](tests.md) (there ar
 | `forge.sh` | 109 | start/stop/attach the training container; `--build` recompiles inside it |
 | `forgectl` | 8 | shim that puts `apps/forge` on the path and runs the `forgectl` package |
 | `apps/forge/cluster.toml` | 96 | the machines, host, remote, branch, ports, container and paths forgectl reads, plus the `[doctor]` thresholds and the `[notify]` sinks of `watch` |
-| `apps/forge/forgectl/__main__.py` | 203 | argument parser, dispatch, audit wiring |
+| `apps/forge/forgectl/__main__.py` | 205 | argument parser, dispatch, audit wiring |
 | `apps/forge/forgectl/__init__.py` | 1 | package marker |
 | `apps/forge/forgectl/config.py` | 182 | loads and validates `cluster.toml` into `Config` / `Machine` |
 | `apps/forge/forgectl/remote.py` | 84 | ssh (BatchMode) and local command execution, `parallel_map` |
@@ -28,8 +28,8 @@ build. Related: [config-keys.md](config-keys.md), [tests.md](tests.md) (there ar
 | `apps/forge/forgectl/doctor.py` | 272 | `forgectl doctor`: the read-only pre-flight checks |
 | `apps/forge/forgectl/confkeys.py` | 79 | the conf keys that decide the sim's cost and sight (must match / may differ), shared by cluster, conf-sync and doctor |
 | `apps/forge/forgectl/snapshot.py` | 371 | `status --json` / `cluster --json`: the schema-1 document built from `progress.json`, `finished.json`, `spec.json`, `metrics.csv`, `eval.csv` and the machine probes |
-| `apps/forge/forgectl/stage.py` | 233 | `forgectl stage ...` and `forgectl status` |
-| `apps/forge/forgectl/deploy.py` | 348 | `forgectl build [--cluster]` and `cluster move-host` |
+| `apps/forge/forgectl/stage.py` | 238 | `forgectl stage ...` and `forgectl status` |
+| `apps/forge/forgectl/deploy.py` | 359 | `forgectl build [--cluster]` and `cluster move-host` |
 | `apps/forge/forgectl/confsync.py` | 262 | `forgectl conf-sync`; the conf writers (also used by move-host) |
 | `apps/forge/forgectl/logs.py` | 96 | `forgectl logs` |
 | `apps/forge/forgectl/videos.py` | 48 | `forgectl videos` (wraps `collect-videos.sh`) |
@@ -240,8 +240,10 @@ Usage and behaviour are in [../forgectl.md](../forgectl.md); this is where each 
 - `stage.py`: `console_line` builds `forge start|resume|pause|cancel`; `start` shows what it archives
   (`existing_run`, `ARCHIVE_TOKEN_STEPS = 1,000,000`); `pause` and `cancel` also go to each worker's console;
   `status` prints the console table and the learner's last `update` line.
-- `deploy.py`: `build` (local: touch request + recreate container; `--cluster`: refuse if a stage runs unless
-  `--stop-running`, `git push <lan> <branch>`, run `cluster-pull.sh` on each machine in parallel, wait for the log line
+- `deploy.py`: `build` (both forms first read the plan state of the machine they restart, `stage.machine_plan_state`:
+  the host for `--cluster`, this machine for a local build; refuse if a stage runs unless `--stop-running`; local:
+  touch request + recreate container; `--cluster`:
+  `git push <lan> <branch>`, run `cluster-pull.sh` on each machine in parallel, wait for the log line
   `AzerothCore rev. <sha9> ... ready`); `move_host` (cancel, copy run, rewrite roles, rebuild, edit `host =` in
   `cluster.toml`, resume) with `mixed_state_report`. It deploys the local `HEAD`: uncommitted work is not shipped.
 - `confsync.py`: `curriculum_keys`, `compare`, `synced_text` (replace differing, append missing under a comment, remove

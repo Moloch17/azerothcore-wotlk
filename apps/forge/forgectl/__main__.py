@@ -83,14 +83,16 @@ def parser() -> argparse.ArgumentParser:
     lg.add_argument("--lines", type=int, default=40, help="lines per section (default 40)")
     lg.add_argument("--wide", action="store_true", help="do not cut long lines")
 
-    bd = add("build", "rebuild the worldserver here, or with --cluster push and rebuild every machine",
+    bd = add("build", "rebuild the worldserver here, or with --cluster push and rebuild every machine "
+                      "(refuses under a running stage)",
              "forgectl build --cluster")
     bd.add_argument("--cluster", action="store_true", help="push to the lan remote, then cluster-pull on every "
                                                           "machine in the cluster, and wait for each to be ready")
     bd.add_argument("--yes", action="store_true", help="do not ask")
     bd.add_argument("--stop-running", action="store_true",
-                    help="with --cluster: if a stage is running, cancel it on every machine (it saves latest.pt), "
-                         "wait for 'Plan ended', then build; without this a running stage makes the build refuse")
+                    help="if a stage is running, cancel it (on every machine with --cluster, else on this one; it "
+                         "saves latest.pt), wait for 'Plan ended', then build; without this a running stage makes "
+                         "the build refuse")
     bd.add_argument("--timeout", type=float, default=60, help="minutes to wait for each machine (default 60)")
 
     cs = add("conf-sync", "copy the host's AnimusForge.Curriculum.* keys to every worker's conf (with backups)",

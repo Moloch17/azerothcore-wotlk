@@ -416,7 +416,8 @@ problems; `--lines N` (default 40); `--wide` does not cut long lines. The defaul
 
 - `forgectl build`: in the checkout forgectl is run from, `touch env/dist/.forge-build` and recreate the
   worldserver container (which
-  recompiles the checkout with `-march=native`), then wait for its `ready` line. Asks first.
+  recompiles the checkout with `-march=native`), then wait for its `ready` line. Asks first. **It has the same
+  running-stage guard as `--cluster`, applied to this machine's own worldserver** (see below).
 - `forgectl build --cluster`: checks this checkout is on the cluster branch (`forge`), **pushes it to the lan remote**,
   then runs `apps/forge/tools/cluster-pull.sh` on every machine in the cluster **in parallel**, and waits for each to
   print `AzerothCore rev. <sha> ... ready` for the new revision (up to `--timeout` minutes each, default 60; the
@@ -439,7 +440,17 @@ then starts with "cancel the running stage on every machine ... and wait for 'Pl
 sends the cancel to the host and every worker (a machine that does not take it stops the build before anything is
 pushed), waits for "Plan ended" on the host, and only then pushes and builds. The audit line says the stage was
 stopped. Afterwards `forgectl stage resume <stage>` continues the run from `latest.pt`. A host whose worldserver
-container is not running at all can be rebuilt without the flag. After a build, a
+container is not running at all can be rebuilt without the flag.
+
+**The same guard on a local `forgectl build`** (no `--cluster`). Recreating the container under a running plan on
+this machine would kill it the same way, so the local build first reads `forge status` from this machine's own
+worldserver console and refuses, even with `--yes`, if a stage is running there ("a stage is running (...on dev): a
+rebuild restarts the worldserver on dev and kills it without the final checkpoint save...") or if the console does
+not answer while the container is up. `--stop-running` has the same meaning: the plan starts with "cancel the running
+stage on dev (the learner saves latest.pt first) and wait for 'Plan ended'", and after you confirm it types
+`forge cancel` into this machine's console (not the cluster's: `forgectl stage cancel` acts on the host), waits
+for "Plan ended", then builds. A container that is not running can be rebuilt without the flag. The refusal tells
+you to type `forge cancel` into that console yourself if you prefer. After a build, a
 change to the curriculum keys still needs `forgectl conf-sync`; then `forgectl cluster` should show one revision.
 
 ## `forgectl conf-sync [--check]`
