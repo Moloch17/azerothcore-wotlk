@@ -250,3 +250,130 @@ merges go on `forge`).
 Who: the owner or an agent the owner starts for it; nothing here is safe to automate without a person reading the
 Tier 2 table, because git reports it as clean.
 
+## 2. Repository contents
+
+### 2.1 Size, history and what is tracked
+
+- `git count-objects -vH`: one pack set of **14.24 GiB** (236,484 objects in 6 packs) plus 9.8 MiB loose. `HEAD`
+  holds 20,122 commits, of which 751 are the forge's since the merge-base. The size is upstream history: its tracked
+  tree is 10,842 files, 847 MB of them `data/` (7,606 files, nearly all SQL; the single largest tracked file is
+  `data/sql/base/db_world/broadcast_text_locale.sql`, 76 MB) and 21 MB `deps/` (including the upstream binary
+  `deps/acore/mysql-tools/bin/mysql.exe`, 4 MB). None of this is the forge's doing and none of it can be trimmed
+  without rewriting upstream's history.
+- **Forge-only history is small.** `git rev-list --objects 37de65eb0..HEAD` piped to `git cat-file --batch-check`
+  gives a largest blob of 634,598 bytes (a revision of `Unit.cpp`); the next are `Player.cpp`, `ObjectMgr.cpp`,
+  `Spell.cpp` and `worldserver.conf.dist` revisions of 330 to 620 KB, which are edits of upstream files, not additions.
+  No model, probe, checkpoint or video was ever committed on the forge side. The forge added 549 files, deleted 34
+  (31 under `e2e/`, `e2e-live.yml`, `e2e-policy.md`, `Main.cpp`) and modified 102 beyond the Animus tree.
+- **Binary or large forge files that are tracked, all deliberate:** four `.amdl` goldens
+  (`apps/forge/python/tests/golden/*.amdl`, 56 to 197 KB each, marked `binary` by `.gitattributes:33-36`), three stage
+  JSON fixtures of 132 to 148 KB, `LiveLayoutPin.golden.inc`, and 128 KB of patches. `StageScenario.cpp` is 254 KB
+  and 5,192 lines (the brief's "about 6,000" is the pre-trim figure; `known-issues.md` has the measured number).
+- **Untracked bulk, correctly ignored** (sizes of the owner's checkout, `du`): `apps/forge/python/.venv` 15 GB (torch
+  alone 14 GB), `apps/forge/probes` 3.1 GB, `apps/forge/models` 580 MB, `var/` 38 GB, `env/` 1.2 GB. The ignore rules
+  are at `.gitignore` ("Forge" block), `/var/*`, `/env/dist/*`. Two things follow: the probes live in a second
+  repository (`animus-probes.git` on the dev machine, `cluster-pull.sh:35-46`) whose creation is not documented in
+  this tree (UNVERIFIED where), and the cluster fingerprint checks them only by count and total bytes of `*.field`
+  files (`AnimusForge.cpp:79-87`), so a copy with the same sizes and different content would pass.
+- **Not a venv, but close:** `apps/forge/python/animus_forge.egg-info` and `.pytest_cache` exist in the owner's tree
+  and are ignored; they are not tracked.
+- **Branch and worktree litter** (shared repository): 30 branches in the owner's repository including a run of
+  `worktree-agent-*` branches, 7 registered worktrees, no stash. Housekeeping, not a defect; the agent worktrees are
+  disposable once merged.
+
+### 2.2 Top level, file by file
+
+| Path | What it is | Forge-specific or upstream | Comment |
+|---|---|---|---|
+| `AGENTS.md`, `CLAUDE.md` (`@AGENTS.md`), `.agents/` | agent instructions and docs | upstream, minus four e2e lines | no forge guidance (R-23) |
+| `CMakeLists.txt`, `PreLoad.cmake`, `conf/`, `src/cmake/` | build | upstream, forge edits (section 3) | |
+| `acore.sh`, `acore.json`, `bin/`, `install.sh`, `apps/{compiler,installer,startup-scripts,...}` | upstream's dashboard and tooling | upstream | `acore.json` still says `azerothcore-wotlk` 17.0.0-dev; the forge uses `acore.sh compiler` inside its containers (`forge-worldserver.sh:33-35`) |
+| `docker-compose.yml`, `docker-compose.cluster.yml`, `forge.sh`, `forgectl`, `apps/docker/{forge-worldserver,animus-venv}.sh` | forge operations | forge | |
+| `apps/forge/` | forge tooling: `forgectl/` (14 modules), `python/` (learner, 13 stage configs, 95 test files), `tools/` (12 scripts), `patches/`, `cluster.toml` | forge | |
+| `src/server/game/Animus/`, `src/server/game/Forge/`, `src/test/server/game/Animus/` | the sim, `ForgeCore`, its GTests | forge | |
+| `docs/forge/` | the forge manual (this audit lives in `audit/`) | forge | |
+| `data/` | SQL base, archive, updates | upstream, untouched (`git diff --stat 37de65eb0 forge -- data` is empty) | |
+| `deps/`, `doc/`, `tools/socket_stress_heavy.py` | vendored libraries, upstream docs, a stress script | upstream | |
+| `modules/` | module loader plumbing; `.gitignore` ignores every module checkout | upstream, +40 lines of CMake | the owner's tree holds `mod-animus` and a stale `mod-animus-forge` (names from `ls`; contents not read) |
+| `env/`, `var/` | install prefix and scratch | upstream layout; only `.gitkeep` files are tracked | |
+| `.coderabbit.yml`, `.git_commit_template.txt`, `.suppress.cppcheck`, `flake.nix`, `flake.lock`, `pull_request_template.md`, `.github/FUNDING.yml`, `.github/CODEOWNERS`, `.github/agents/` | upstream project machinery | upstream | unused by the fork; `FUNDING.yml` shows upstream's donation link on the fork's page (R-35) |
+| `.devcontainer/`, `.vscode/` | editor containers | upstream, `devcontainer.json` renamed and `shutdownAction: none` | works against the compose file |
+| `AUTHORS`, `LICENSE` | credits, GPL v2 | upstream, unchanged | the fork's files cite "See AUTHORS" but `AUTHORS` has no forge entry (R-31) |
+
+There is **no root `README`** in either upstream or the fork; the manual's entry point is `docs/forge/README.md` and
+nothing in the root points to it.
+
+### 2.3 `e2e/`, `data/`, `conf/dist`, `env/dist`
+
+- `e2e/` is gone (31 Go files, 4,295 lines) along with its workflow; the delta document records it, and upstream keeps
+  editing it, so it returns as 27 modify/delete conflicts at every merge (section 1.2). `AGENTS.md` still carries the
+  other half of the removal.
+- `data/`: no change by the forge. `data/sql/custom/` is gitignored (`.gitignore`), so nothing forge-specific enters
+  the schema.
+- `conf/dist`: `config.cmake` +6 lines (`WITH_LTO`, `FORGE_PGO`, `FORGE_PGO_DIR`) and `env.ac` (`CTYPE=Release` and a
+  comment). The forge's settings are not in `conf/dist` at all; they are in `worldserver.conf.dist` (+1,823 lines, 414
+  key lines) and in a per-machine `modules/mod_animus_forge.conf` that is untracked (R-20).
+- `env/dist`: only `.gitkeep` files are tracked; the installed binaries, configs and logs are untracked.
+
+### 2.4 `apps/forge`: patches, models, probes, tools
+
+- `apps/forge/patches/mod-animus-movement.patch` (88,804 bytes): line 1 reads "OBSOLETE (player-controller,
+  2026-10-05) ... do not apply". Principle 17 (dead code is deleted, git history keeps it) says remove it.
+- `apps/forge/patches/mod-animus-amdl8.patch` (39,779 bytes) and `amdl8-check/` (5 files): a reader for `.amdl` 8 and 9
+  for the realm module `mod-animus`, targeting `animus-lib/src/runtime/...`. `06-animus.md:30-36` already says it
+  applies only to an older module shape. The owner's notes say the realm is parked. Whether the realm module reads
+  today's `.amdl` version 9 is UNVERIFIED (`modules/` was not read). Candidates: move to the module's repository.
+- `apps/forge/models/` (580 MB, ignored): exported `.amdl` plus `.json` pairs, e.g. `deathknight_duel`,
+  `deathknight_gauntlet`, `deathknight_companion`, `deathknight_life`: these are model names of the archived first
+  curriculum (`ls` of the owner's directory); the current stages are `move*`, `combat*`, `group*`, `dungeon*`. Stale
+  exports are not tracked but are 580 MB of the first curriculum.
+- `apps/forge/probes/` (3.1 GB, ignored): baked ground-probe `*.field` tables, in their own repository.
+- `apps/forge/tools/`: every script is referenced by `forgectl`, a doc or a test:
+  `cluster-pull.sh` (`deploy.py:50`), `collect-videos.sh` (`videos.py:12`), `forgectl-test.sh` (`testcmd.py:17`),
+  `conf_prune.py`, `resume_check.py`, `run_snapshot.py`, `stage_json_diff.py`, `spec_builds/` (tests exist for each),
+  `rename_runs.py`, `forge_classes.py`, `sim_metrics.py` (referenced in `08-reference.md`, `deploy-gate.md` and
+  `test_metric_names.py`). `forgectl-test.sh:3` and `testcmd.py:3` say they were "ported from the gitignored
+  `var/staging_test.sh`", and `console.py:3` cites `var/forge_console.py`: the originals are in the ignored scratch
+  directory and the ports may have drifted (not compared; `var/` was not read).
+- Duplicates: `tests/fixtures/seek_stage.json` and `tests/fixtures/stage_move2_seek.json` are byte-identical
+  (blob `4595e6cef`, 148,174 bytes each), used by `test_golden_update.py:5,42` and `test_resume_check.py:219`.
+  `bench.py`/`prep.py` in `patches/amdl8-check` are used only by that README.
+
+### 2.5 License headers
+
+`apps/codestyle/codestyle-cpp.py` was run read-only from the root and prints "Everything looks good": multiple blank
+lines, trailing whitespace, `GetCounter()`, misc, `GetTypeId()`, the three flag-helper checks and qualifier alignment
+all pass over the whole of `src`. The header check the brief asks for:
+
+- Upstream's header line is "This file is part of the AzerothCore Project. See AUTHORS file for Copyright
+  information" with the GPL v2-or-later text (`MapMgr.cpp:2-15`; `LICENSE` is GPL v2).
+- **198 forge files** carry "This file is part of the Animus Forge project, based on AzerothCore. See AUTHORS file for
+  Copyright information" with the identical GPL text (`BotSlot.cpp:2-15`). The licence is the same; the project line
+  differs, and `AUTHORS` (unchanged, line 18 lists mangos) has no entry for the forge. A few `Animus/Movement/` files
+  carry the AzerothCore line instead (`CastWatch.cpp`, `Client.cpp`, `ControllerCost.h`, `Capture.cpp`,
+  `MapWorldQuery.*`, `Replay.cpp`, `Seek.h`, `FlagRules.h`, `ReportCadence.h`).
+- **One file has no header:** `src/test/server/game/Animus/LiveLayoutPin.golden.inc` (a generated golden; harmless).
+  Python, shell, CMake and YAML files carry none, as upstream's helpers do not either.
+- Not found: any forge C++ file with a foreign licence or no licence line.
+
+The wording is a decision, not a defect (Q-8): either add the forge as a copyright holder in `AUTHORS` and keep the
+project line, or switch the 198 files to upstream's line so the codestyle tooling and future upstream merges treat them
+alike.
+
+### 2.6 `.agents/`, `AGENTS.md`, `CLAUDE.md`
+
+- `CLAUDE.md` is `@AGENTS.md`; `AGENTS.md` is upstream's with four e2e lines removed. It does not mention `docs/forge`,
+  `forgectl`, `src/server/game/Animus` or `apps/forge`, so an agent started in this repository learns the forge only
+  from the owner's private memory notes. The "Repository layout" list is upstream's.
+- `AGENTS.md` sends the reader to `.agents/docs/systems/`; the directory does not exist in the fork or upstream
+  (`git ls-tree upstream/master .agents` lists seven docs and no `systems`). Upstream defect, harmless.
+- `.agents/docs/*.md` (7 files) are upstream's, accurate for stock AzerothCore, silent on the forge. The one stale
+  reference removed was `e2e-policy.md`.
+- `.agents/plans/forge-parallel-core/forge-parallel-core.PLAN.md` (107 KB, 1,359 lines) is tracked, against `AGENTS.md`
+  ("Planning docs go in `.agents/plans/<task-slug>/` (gitignored)"). `.gitignore` carries explicit un-ignores for it and
+  for four more folders (`animus-long-build-fixes`, `animus-team-ctf`, `animus-director`, `animus-curriculum`,
+  `animus-retrain`) that do not exist in this tree. Its first section opens "Until now it kept every change rebasable
+  ... Main.cpp is still in the tree ... That constraint is being dropped": a record of a decision, now history.
+  Candidate: move to `docs/forge/decisions/` or delete (R-27).
+- `docs/forge/decisions/0002` to `0017` are 11-line records; fine, but `0014` carries "UNVERIFIED: exact date".
+
