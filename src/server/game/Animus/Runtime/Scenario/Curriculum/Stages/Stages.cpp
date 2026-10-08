@@ -1324,6 +1324,40 @@ std::vector<std::string> const& Animus::Curriculum::CurriculumProblems()
     return LeftOut();
 }
 
+std::map<uint32, std::vector<std::string>> Animus::Curriculum::StageMaps(uint32 fallbackMap)
+{
+    std::map<uint32, std::vector<std::string>> maps;
+    auto const add = [&maps](uint32 mapId, StageDefinition const& stage)
+    {
+        std::vector<std::string>& names = maps[mapId];
+        if (std::find(names.begin(), names.end(), stage.Name) == names.end())
+            names.push_back(stage.Name);
+    };
+    for (StageDefinition const& stage : CurriculumStages())
+    {
+        if (stage.MapId)
+            add(stage.MapId, stage);
+        bool placedByStage = false;
+        for (ArenaDefinition const& arena : stage.Arenas)
+        {
+            if (arena.Instance != InstanceLadder::None)
+            {
+                std::vector<BossRow> const& rows = InstanceLadderRows(arena.Instance);
+                if (arena.InstanceRow >= 0 && std::size_t(arena.InstanceRow) < rows.size())
+                    add(rows[std::size_t(arena.InstanceRow)].MapId, stage);
+                continue;
+            }
+            if (arena.MapId)
+                add(arena.MapId, stage);
+            else
+                placedByStage = true;
+        }
+        if (!stage.MapId && (placedByStage || stage.Arenas.empty()))
+            add(fallbackMap, stage);
+    }
+    return maps;
+}
+
 Animus::Curriculum::StageDefinition const* Animus::Curriculum::FindStage(std::string_view name)
 {
     for (StageDefinition const& stage : CurriculumStages())

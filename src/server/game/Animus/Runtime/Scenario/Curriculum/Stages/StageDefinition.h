@@ -24,6 +24,7 @@
 #include "ClassProfile.h"
 #include "Position.h"
 #include <optional>
+#include <map>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -319,6 +320,12 @@ namespace Animus::Curriculum
     /// valid. The forge refuses to start training while it is not empty: a stage left out with only a log line is how
     /// two open-world stages once went missing from a queue unnoticed.
     [[nodiscard]] std::vector<std::string> const& CurriculumProblems();
+
+    /// Every map the valid stages run on, with the names of the stages that use it: the stage's own map, each arena's
+    /// and the map of each instance ladder row an arena runs (a held-out evaluation arena included). A stage that
+    /// names no map at all (and an arena that is not an instance) is placed on `fallbackMap`, the spawn point's.
+    /// These are the maps whose baked scene (Vision/BakedWorld) a run needs.
+    [[nodiscard]] std::map<uint32, std::vector<std::string>> StageMaps(uint32 fallbackMap);
 }
 
 #endif
