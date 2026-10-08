@@ -114,7 +114,7 @@ namespace Animus::Curriculum
             /// scenario's TrackMotion, every seat in every arena; the travel encounter's own objective reading is
             /// the travel arenas'). A seat wedged against a rock reads 0 here while its keys are held.
             ///
-            /// The objective's presence, bearing, distances and detour are the compass block's since revision 5
+            /// The objective's presence, bearing and distances are the compass block's since revision 5
             /// (CompassBlock): a stage without the compass (M2 seek) has nothing here that points at its objective.
             OBS_MOVE_RATE,
             OBS_CLOSE_RATE,

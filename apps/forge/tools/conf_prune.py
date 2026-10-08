@@ -13,8 +13,8 @@
 CONF is a machine's mod_animus_forge.conf or worldserver.conf (the sim reads both: ForgeMain.cpp loads
 modules/mod_animus_forge.conf after worldserver.conf). A key is *unknown* when the checkout's
 src/server/apps/worldserver/worldserver.conf.dist (or --dist FILE / --dist-rev REV) neither lists it nor names a family
-it belongs to (AnimusForge.Stage.<name>.Envs and .TicksPerDecision, AnimusForge.Curriculum.Arena.<stage>.<arena>.<key>,
-AnimusForge.Curriculum.Stage.<name>.GoalPlaces: read by name at run time, so they are not listed key by key; the
+it belongs to (AnimusForge.Stage.<name>.Envs and .TicksPerDecision, AnimusForge.Curriculum.Arena.<stage>.<arena>.<key>:
+read by name at run time, so they are not listed key by key; the
 families are read from the template's comments and from the C++ that reads them). A key of one of those families
 for a stage that no longer exists is unknown too.
 

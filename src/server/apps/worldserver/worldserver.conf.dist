@@ -6342,7 +6342,7 @@ AnimusForge.Curriculum.Hazards.Max = 3.0
 #        The ladder (per class and build, Difficulty.*) has Rungs rungs; each moves the furthest distance from
 #        DistanceFirst to DistanceLast (the nearest is always DistanceMin), the bearing span either side of the
 #        facing from BearingFirst to BearingLast degrees, and the stop radius from RadiusFirst to RadiusLast yards.
-#        A marker's way on the navmesh is at most MaxDetour times the straight line. stop_distance averages the
+#        stop_distance averages the
 #        distance at every stop within StopNear yards of the marker. An arena with a fixed objective (move1_controls'
 #        Stockades hallway: ArenaDefinition::Objective) has none of the ladder: one marker an episode, always the same
 #        place, stopped on inside the arena's ObjectiveRadius. StepCost is the time a run takes (per 50 ms, so about

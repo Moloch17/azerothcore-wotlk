@@ -11,10 +11,12 @@ came from a failure name it.
    The critic (the value network used in training) may see privileged state; the policy may not. *Why:* the bots are
    meant to play on a real realm beside a human.
 2. **Goal places in dungeons are what the bot discovered:** the hostiles it saw (where it last saw them, alive until it
-   sees them dead), the edges of its own map and its leader. Never a live pack's or boss's position or the route's order.
-   *(Decision 2026-10-07.)*
+   sees them dead), the edges of its own map and its leader within the minimap's range. Never a live pack's or boss's
+   position, a route or a layout built from one. *(Decisions 2026-10-07, 2026-10-08.)*
 3. **Movement goes only through the player controller:** held keys and turn rates. No splines, teleports or navmesh
-   moves for a bot. *Why:* it must move the way a player can.
+   moves for a bot, and no route, waypoint or path hint in anything the policy sees: movement is vision-only. Stock
+   `PathGenerator` may serve a reward's geometry and reset-time setup (and the one scripted leader, M4), never an
+   input. *Why:* it must move the way a player can, and find its own way. *(Decision 0019.)*
 4. **Actions on objects go through the same client packets a player sends** (select, use, cast, item use). No
    server-side shortcuts, no auto-opening doors.
 5. **Nothing is masked except the physically impossible.** A bad press in a situation (a heal on a full-health friend,
