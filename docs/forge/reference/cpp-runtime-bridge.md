@@ -139,7 +139,6 @@ advertise)` only records settings; `Poll()` calls `ConnectToHost()` every 3 s wh
   contains only those three extensions, so every file is hashed. It does **not** cover `ForgeMain.cpp`, `cs_forge.cpp`,
   core files (`Unit.cpp`, `Spell.cpp`, `MapMgr.cpp` ...), the Python learner, YAML configs or the `src/test` golden
   files. Without the generated header the value is `unhashed` (`AnimusForge.cpp:64-68`).
-- `fields`: number and total bytes of `*.field` files in `ProbeDir` (not a content hash).
 - The fingerprint is set in `OnStartup` only when the role is not standalone (`:214-224`). The mismatch message lists the
   keys that differ (`Differences`, `ClusterLink.cpp:46`).
 - The wing ladder `RUNG` and worker settings other than those above (envs per stage, ticks) are not fingerprinted; the

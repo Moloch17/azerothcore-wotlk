@@ -28,7 +28,7 @@ class Map;
 /// (Map::GetHeight's terrain + VMAP rules), liquids (Map::GetLiquidData), and both collision trees -- the static models
 /// and the dynamic one, which holds game objects, so a closed door is a wall and an open one is not -- for sweeps and
 /// ceilings. Read-only queries of the map the body is on, made from that map's own update (thread-safe as the rest of
-/// a map update's reads are). The layered-field fast path is C8.
+/// a map update's reads are).
 namespace Animus::Movement
 {
     class MapWorldQuery final : public WorldQuery

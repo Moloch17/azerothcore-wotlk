@@ -268,13 +268,6 @@ void AnimusForge::ForgeConfig::Load()
     fs::path const outputDir = sConfigMgr->GetOption<std::string>("AnimusForge.OutputDir", "");
     OutputDir = (outputDir.empty() ? workDir : Resolve(outputDir, configDir)).lexically_normal().string();
 
-    fs::path const probeDir = sConfigMgr->GetOption<std::string>("AnimusForge.Probe.Dir", "");
-    // The layered fields ship with the forge, beside its models: baked ahead of time (`forge fieldstage`), never by
-    // a running server.
-    ProbeDir = (probeDir.empty() ? DefaultLearnerWorkDir().parent_path() / "probes" : Resolve(probeDir, configDir))
-        .lexically_normal().string();
-    ProbeCacheGrids = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AnimusForge.Probe.CacheGrids", 64));
-
     // The camera (camera-vision): a value out of its range is clamped into it, and said so.
     {
         Animus::Vision::Settings const defaults;

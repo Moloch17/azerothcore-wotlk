@@ -43,8 +43,6 @@ A boolean parse or a missing key gives the default below. Where code clamps, the
 | `AnimusForge.Learner.AutoStart` | 1 | start the learner as a child process | 262 |
 | `AnimusForge.Learner.WorkDir` | "" | empty = compile-time `FORGE_PYTHON_DIR` (`apps/forge/python` of the build tree) | 264 |
 | `AnimusForge.OutputDir` | "" | empty = the learner work directory; holds `runs/`, `layouts/`, `bench/` | 268 |
-| `AnimusForge.Probe.Dir` | "" | empty = `<WorkDir parent>/probes` | 271 |
-| `AnimusForge.Probe.CacheGrids` | 64 | min 1; layered-field grids kept in memory | 276 |
 | `AnimusForge.Vision.Width` / `Height` | 128 / 64 | clamped 8..256 (error logged); not a multiple of the 16-column patch grid logs an error | 289-302 |
 | `AnimusForge.Vision.FovH` / `FovV` | 120 / 60 | clamped 30..170 / 20..120 | 291-292 |
 | `AnimusForge.Vision.Range` | 100 | clamped 10..500 yd | 293 |

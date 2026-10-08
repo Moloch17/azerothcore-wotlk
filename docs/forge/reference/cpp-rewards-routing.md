@@ -1,7 +1,7 @@
 # Rewards, the reward ledger, and routing data (C++)
 
 Purpose and scope. The reward ledger and its term kinds (`Rewards/`), what the simulator does with the learner's fade
-and cost scales, tier scaling, and the routing/field data (`Routing/` plus the field files in `Blocks/LayeredField.*`).
+and cost scales, tier scaling, and the routing data (`Routing/`).
 Encounters that pay the terms are documented in [cpp-encounters.md](cpp-encounters.md); tuning keys in
 [cpp-tuning-keys.md](cpp-tuning-keys.md) and [config-keys.md](config-keys.md); metrics in [metrics.md](metrics.md);
 learner-side fade and cost ladders in [py-learner.md](py-learner.md) and [py-mappo.md](py-mappo.md). Blocks and
@@ -18,16 +18,9 @@ commit `bd32b9dc8`.
 | Rewards/RewardLedger.h | 387 | `RewardTerm` (53 terms), `RewardCategory`, `RewardLedger`. |
 | Rewards/CombatReward.h | 45 | `CombatReward::DesiredRange`, `TierScale`. |
 | Rewards/CombatReward.cpp | 91 | `RewardTermName` for every term (not combat specific), `DesiredRange`. |
-| Routing/FieldGrids.h | 58 | Grid index and the grids a stage covers. |
-| Routing/FieldGrids.cpp | 91 | Implementation (reads `mmaps/` file names). |
-| Routing/FieldRoute.h | 58 | A* over the layered field: `Plan`, `Covers`, `Report`. |
-| Routing/FieldRoute.cpp | 341 | The search. |
 | Routing/RoutePlanner.h | 116 | Navmesh corner routes (`Route`, `RoutePlanner`). |
 | Routing/RoutePlanner.cpp | 285 | Detour queries per thread. |
-| Routing/FloorScan.h | 113 | Pure classification for `forge floorscan`. |
 | Routing/RouteShortcut.h | 150 | Pure corner/door helpers for dungeon routes. |
-| Blocks/LayeredField.h | 126 | Layered height field type, file I/O, store. |
-| Blocks/LayeredField.cpp | 478 | Bake, file format, cache. |
 
 ## RewardLedger
 
@@ -158,75 +151,31 @@ opposite of principle 9 for anything that is a price). `Threat` is used both as 
 is
 Shaping, so a faded stage pays nothing for standing about except the wing's `Idle`.
 
-## Layered fields (`Blocks/LayeredField.*`)
-
-Not a block. A `Grid` is one 533.33 yd map grid at 1 yd cells (`STANDARD_CELL`): per cell the intervals of open air
-above each
-floor: `Interval` (8 bytes): `Floor8` (eighths of a yard), `Headroom8` (0xFFFF open sky), `Liquid8` (surface above floor
-or none), `LiquidFlags`, `Flags` (low nibble the navmesh polygon flags ground/magma/slime/water, 0x80 open above).
-`Bake(map, x, y, cell, threads)` (`LayeredField.cpp:204`): for every cell column, floors = navmesh floors (snapped to
-the
-core's height within a step) + terrain + up to 48 downward collision-ray surfaces from 600 yd above; floors within 0.5
-yd
-merged; headroom by an upward collision ray (100 yd search), floors with under 0.5 yd dropped unless on the navmesh;
-liquid within 10 yd below a floor attached. Multi-threaded by row. `Write`/`Read`: header (magic `AHLF`, version 1, map,
-grid x/y, cell, side, min x/y, interval count, raw bytes), then zstd level 15 of (one count byte per cell, capped at
-255,
-then the intervals); written to `<path>.partial` and renamed. `Store`: `Configure(dir, cacheGrids)`
-(`AnimusForge.cpp:191`, from `AnimusForge.Probe.Dir` and `AnimusForge.Probe.CacheGrids`; minimum 9), `Find(map, gx, gy)`
-thread-safe with a read
-lock, files `NNN_gx_gy.field`, negative results cached, least-recently-read eviction over the cap, one warning when file
-reads reach 4 x cap. Produced by `forge fieldstage <scenario> [rebake]` and `forge fieldworld <all|map> [rebake]`
-(`src/server/scripts/Commands/cs_forge.cpp:939`, `:1015`). Tests: none. Reviewer notes: `Enabled()` and `Dir()` read
-unprotected globals set under a lock; negative cache entries are never evicted; the per-cell count byte silently caps at
-255; the file includes `MoveBlock.h` only for `MAX_STEP`.
-
-## FieldGrids
-
-`GridIndex(c) = floor(c / SIZE_OF_GRIDS)`. `StageGrids(stage, wholeMaps)`: for each map the stage or its arenas or
-instance
-ladder rows use; a continent contributes the 3x3 grids at 80 yd around each spawn (or the whole map with `wholeMaps`);
-an instanceable map contributes every `mmaps/MMMXXYY.mmtile` it finds (core grid coordinates counted down from
-`CENTER_GRID_ID`, converted to field numbering). Caller: `cs_forge.cpp:957`. No tests.
-
-## FieldRoute
-
-`Plan(mapId, from, to, out, maxNodes = 4000000)`: A* over a 1-yard lattice of (x, y, floor index), eight neighbours,
-cost `across (1 or 1.414) + 0.3 off-mesh + 0.1 |rise| + drop surcharge`; standable = headroom >= 2 yd and not burning
-(magma/slime nav flag or liquid); step up/down limit `MAX_SLOPE 1.2` per yard across; larger drops only onto navmesh
-floors and at most `MAX_DROP 8`; floors within `SNAP 3` of the start z; goal within 2.5 yd horizontally and 3 in z.
-Returns the yard cells, false without a field (store disabled or no file) or no way. `Covers` asks if a column exists.
-`Report` is the console diagnostic. Callers: `InstanceEncounter.cpp:1485, 1553, 1554, 1642` (the wing route),
-`:1282` (`Covers`), `cs_forge.cpp:1126`. `thread_local` visit table; the header says "World thread" but the code is
-per-thread. Tests: none.
-
 ## RoutePlanner
 
 Navmesh corner routes with a private 65535-node query per thread per mesh (`QueryFor`); filter ground and water, never
 magma or slime. `Plan` returns up to `Route::MAX_CORNERS = 256` corners with `Remaining[i]` (length to the end), partial
-routes return true with `Complete = false`; extents 3 x 5 x 3 yd; plan time goes to `CurrentReset.RouteNs`. `SurfaceAt`
-(`forge floorscan`). `Route::Advance` steps `Next` past reached corners (its comment mentions a `RemainingFrom` that
+routes return true with `Complete = false`; extents 3 x 5 x 3 yd; plan time goes to `CurrentReset.RouteNs`. `Route::Advance` steps `Next` past reached corners (its comment mentions a `RemainingFrom` that
 does
-not exist). Callers: `PartyFollowEncounter.cpp:413` (the follow leader's route), `cs_forge.cpp:381, 1166`. Tests: none.
+not exist). Callers: `PartyFollowEncounter.cpp:413` (the follow leader's route), `forge route` (`cs_forge.cpp`). Tests: none.
 Reviewer notes: thread safety is per-thread queries; the long comment about "thread safety is inherited, not enforced"
 is stale. Bot movement does not use this; it is the scripted follow leader and diagnostics (principle 3 concerns bots).
 
-## FloorScan and RouteShortcut
+## RouteShortcut
 
-`FloorScan` (pure): `Classify(nav, navZ, floor, floorZ, normalZ)` -> Ok, Hole, Mismatch (> 0.75 yd), Steep (normal z <
-cos 50),
-NoNav, Unwalkable; glyphs, severities, `GridSpan`. Tests: `FloorScanTest`. `RouteShortcut` (pure): `Corners(count, step,
-clear)` gives each yard the farthest straight-walkable yard within `REACH 20`, used by `InstanceEncounter.cpp:1742` to
-build `CornerAhead/CornerBack`. (`Door`, `EntersDoor`, `CutAtDoors`, `Chain`, `ADVANCE_YARDS` and `MAX_POINTS` were deleted
-2026-10-08, with `ClosedDoors` of the instance encounter, which only they read.)
+`RouteShortcut` (pure): `Corners(count, step, clear)` gives each yard the farthest straight-walkable yard within
+`REACH 20`. Its only producer was the layered-field wing route (`FieldWingRoute`, removed 2026-10-08), so nothing
+builds `CornerAhead/CornerBack` now; the header and the consumers in `SeatView.h` remain. (`Door`, `EntersDoor`,
+`CutAtDoors`, `Chain`, `ADVANCE_YARDS` and `MAX_POINTS` were deleted 2026-10-08, with `ClosedDoors` of the instance
+encounter, which only they read.)
 
 ## Observed issues (routing)
 
+- (removed 2026-10-08) The layered fields (`LayeredField`, `FieldGrids`, `FieldRoute`), `FloorScan`, `forge fieldstage`,
+  `fieldworld`, `fieldroute`, `floorscan`, `RoutePlanner::SurfaceAt` and `AnimusForge.Probe.*` were removed (owner order).
 - (fixed 2026-10-08) `RouteShortcut::Chain/CutAtDoors/EntersDoor` and constants were deleted.
-- `LayeredField` lives in `Blocks/` and depends on `MoveBlock.h`.
-- `Route::Advance` and `RoutePlanner` comments refer to removed designs; `FieldRoute.h` says world thread, code is per
-  thread.
-- No unit tests for FieldRoute, LayeredField, FieldGrids, RoutePlanner (only data-dependent integration checks exist
+- `Route::Advance` and `RoutePlanner` comments refer to removed designs.
+- No unit tests for RoutePlanner (only data-dependent integration checks exist
   elsewhere, UNVERIFIED).
 
 ## Questions for the owner

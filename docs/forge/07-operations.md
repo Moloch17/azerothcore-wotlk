@@ -69,7 +69,7 @@ Attach (`./forge.sh attach` or `docker attach ac-animus-forge-worldserver`) and 
 | `forge clean archive\|scenario <stage>\|exports\|fast\|logs\|all` | delete run data (idle only for `all`) |
 | `forge progress [seconds\|off]` | the periodic report interval |
 | `forge tasks` | per-map update task times since the last call |
-| `forge route`, `floorscan`, `fieldroute`, `fieldstage`, `fieldworld` | route and layered-field tools |
+| `forge route` | plan a way between two points on the navmesh |
 | `forge controller record\|replay\|probe`, `forge camera snapshot` | diagnostics (idle only; `record` needs a playtest player) |
 
 Rules the code enforces: commands only record a request and are applied at the start of a tick, never inside a decision;

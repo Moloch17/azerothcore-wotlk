@@ -196,8 +196,8 @@ namespace Animus::Curriculum
             uint32 ChainPaid = 0;
             bool FullClearPaid = false;
             uint32 Deaths = 0;
-            mutable uint32 DenseAt = 0;         // the yard of the field route it was nearest at its last view
-            /// Off the route out of a fight -- fallen into a cavern, kited away -- its own field way back to it,
+            mutable uint32 DenseAt = 0;         // the yard of the dense route it was nearest at its last view
+            /// Off the route out of a fight -- fallen into a cavern, kited away -- its own way back to it,
             /// planned at DetourMs and again every DETOUR_REPLAN_MS.
             mutable std::vector<Position> Detour;
             /// Taken off the route (past 6 yards from it) and not yet back on it (within 4): the way back is the
@@ -230,7 +230,7 @@ namespace Animus::Curriculum
             /// trash killed, the wipes, and the creatures watched for dying.
             std::vector<Position> Route;
             std::vector<float> RouteRemain;     // per route point: yards along the route from it to the end
-            /// The route a yard at a time, as the layered field walks it (FieldRoute), and the yard of each route
+            /// The route a yard at a time, a yard at a time, and the yard of each route
             /// point: what the crowd block's advance steps along. Empty when the route is the navmesh's.
             std::vector<Position> Dense;
             std::vector<uint32> RouteDense;
@@ -383,8 +383,8 @@ namespace Animus::Curriculum
         /// The dead rise at the entrance after Respawn.DelayMs and walk back (I4); the rejoins counted.
         void RiseDead(Env& env, EnvInstance& fight);
         /// A whole dungeon's way through: its route points every Instance.WingWaypointYards (the last one the boss),
-        /// the field route a yard at a time with the yard of each point, and the spawns of the creatures it can reach.
-        /// A pack of the field route, in the order the route reaches it: where it is fought from, the route's yard
+        /// the route a yard at a time with the yard of each point, and the spawns of the creatures it can reach.
+        /// A pack of the route, in the order the route reaches it: where it is fought from, the route's yard
         /// there, its creatures' spawns, and how far the nearest creature not cleared before it stands from it.
         struct WingPack
         {
@@ -406,13 +406,8 @@ namespace Animus::Curriculum
             std::vector<uint32> CornerAhead;
             std::vector<uint32> CornerBack;
         };
-        /// The door-to-boss plan, once per boss: over the layered field where it covers the dungeon (FieldRoute),
-        /// else the server's navmesh as before.
+        /// The door-to-boss plan, once per boss: along the server's navmesh (PathGenerator).
         [[nodiscard]] WingPlan WingRoute(Env const& env, Map* map, Player* seat, Creature* boss) const;
-        /// The plan over the layered field, from the door (`seat`) through `bosses` in order (the last one last);
-        /// WingPlan::Field false when the field cannot walk that far.
-        [[nodiscard]] WingPlan FieldWingRoute(Env const& env, Map* map, Player* seat, Creature* boss,
-            std::vector<Position> const& bosses) const;
         void UpdateWingEnemies(Env& env, EnvInstance& fight);
         /// The pull drill: a pack off the ladder, the packs before it cleared, the party set down short of it.
         /// False when the route has no packs to drill (a navmesh route); the run is the whole dungeon then.

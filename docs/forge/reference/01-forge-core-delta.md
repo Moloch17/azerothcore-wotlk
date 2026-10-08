@@ -65,14 +65,14 @@ them forward:
 | File | +/- | Section | What changed |
 |---|---|---|---|
 | `.devcontainer/devcontainer.json` | +4 -3 | K | container renamed ac-animus-forge-dev-server; `shutdownAction: none` so closing the editor does not stop training |
-| `.gitattributes` | +6 -0 | K | `*.probe`, `*.amdl`, `*.field` marked binary |
+| `.gitattributes` | +4 -0 | K | `*.amdl` marked binary |
 | `.github/workflows/core-build-nopch.yml` | +4 -49 | K | e2e job removed; the clang-18 cell becomes an ordinary matrix cell |
 | `.github/workflows/e2e-live.yml` | +0 -421 | K | deleted with the Go e2e suite |
-| `.gitignore` | +32 -6 | K | ignores training output, probes, venv; un-ignores `.agents/plans/forge-parallel-core/` and four animus plan folders (see I-4) |
+| `.gitignore` | +32 -6 | K | ignores training output, venv; un-ignores `.agents/plans/forge-parallel-core/` and four animus plan folders (see I-4) |
 | `AGENTS.md` | +0 -4 | K | four e2e lines removed |
 | `CMakeLists.txt` | +4 -2 | I | default build type Release (was RelWithDebInfo); includes `ConfigureLTO` |
-| `apps/docker/Dockerfile` | +3 -2 | I | CTYPE Release; llvm, lld, libzstd-dev added to the build image |
-| `apps/docker/Dockerfile.dev-server` | +14 -2 | I | llvm, libzstd-dev, hipcc, libamdhip64-dev, python3-venv added; ccache dir |
+| `apps/docker/Dockerfile` | +3 -2 | I | CTYPE Release; llvm, lld, libzstd-dev added (libzstd-dev is no longer needed by the forge) to the build image |
+| `apps/docker/Dockerfile.dev-server` | +14 -2 | I | llvm, libzstd-dev (no longer needed), hipcc, libamdhip64-dev, python3-venv added; ccache dir |
 | `apps/docker/animus-venv.sh` | +42 -0 | I | new: creates/updates the learner's Python venv on every start |
 | `apps/docker/forge-worldserver.sh` | +95 -0 | I | new: the `ac-worldserver` container command (build if asked, conf restore, venv, TensorBoard, exec worldserver) |
 | `conf/dist/config.cmake` | +6 -0 | I | options `WITH_LTO`, `FORGE_PGO`, `FORGE_PGO_DIR` |
@@ -117,7 +117,7 @@ them forward:
 | `src/server/game/Battlegrounds/Battleground.h` | +9 -1 | F | (nothing left: `SetSimOwned`, `_simOwned` and `logMissing` deleted) |
 | `src/server/game/Battlegrounds/Zones/BattlegroundSA.cpp` | +2 -2 | B | demolisher respawn timers 64-bit |
 | `src/server/game/Battlegrounds/Zones/BattlegroundSA.h` | +1 -1 | B | `DemoliserRespawnList` value type `uint64` |
-| `src/server/game/CMakeLists.txt` | +79 -0 | I | `FORGE_PYTHON_DIR`, `ForgeSourceHash.h`, zstd, the `forge-gpu` shared library built with hipcc |
+| `src/server/game/CMakeLists.txt` | +79 -0 | I | `FORGE_PYTHON_DIR`, `ForgeSourceHash.h`, the `forge-gpu` shared library built with hipcc |
 | `src/server/game/DungeonFinding/LFGMgr.cpp` | +71 -46 | F | `_storeLock`; `PlayerData(guid)` and `GroupData(guid)` replace `PlayersStore[guid]`/`GroupsStore[guid]` |
 | `src/server/game/DungeonFinding/LFGMgr.h` | +8 -0 | F | the mutex and the two accessors |
 | `src/server/game/Entities/Creature/Creature.cpp` | +10 -5 | H | `PendingSummonLevel` overrides the selected level; 64-bit school lockouts and cooldown ends |
@@ -442,7 +442,7 @@ CMake: default build type Release; `-O3`, `-march=native` (plus `-mtune=znver5/4
 `modules/CMakeLists.txt` drops `mod-animus-forge` from the module list when a stale checkout exists but still installs its
 `.conf.dist`. `src/server/game/CMakeLists.txt` (`:53-150`): defines `FORGE_PYTHON_DIR`; hashes every `Animus/*.cpp`,
 `.h`, `.hip` file at configure time into the generated `ForgeSourceHash.h` (used by the cluster fingerprint;
-renames of files do not change the hash, edits outside `Animus/` do not either); links static zstd; builds
+renames of files do not change the hash, edits outside `Animus/` do not either); builds
 `libforge-gpu.so` with hipcc for `FORGE_GPU_ARCHS` (default `gfx1100`) when `hipcc` exists, else builds without it.
 
 Containers: `docker-compose.yml` is rewritten (project `ac-animus-forge`; `ac-worldserver` runs the forge from the

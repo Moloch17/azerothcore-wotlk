@@ -138,7 +138,7 @@ namespace Animus::Curriculum
 
         /// The height change a seat can walk up or drop down without it counting as a wall, and how much more a
         /// rise may be per yard of ground between two samples (a slope rather than a step): the travel encounter's
-        /// ledges and the layered fields' floors are judged by them.
+        /// ledges are judged by them.
         static constexpr float MAX_STEP = 2.5f;
         static constexpr float MARCH_SLOPE = 0.5f;
         /// How far out clearance is measured (the travel encounter's clearance charge; never observed). Kept small on

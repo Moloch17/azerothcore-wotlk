@@ -33,8 +33,6 @@ chapter: UNVERIFIED here.)
   only to a module checkout of that older shape. UNVERIFIED whether it applies to the current mod-animus.
 - `apps/forge/patches/amdl8-check/`: `prep.py`, `run.py`, `bench.py`, `golden.cpp` to compare that reader's logits with
   the learner's (its README).
-- `forge fieldworld <all|map id> [rebake]` (`cs_forge.cpp` help) bakes layered fields "for a realm's companions
-  (mod-animus)", written to `<Probe.Dir>/world`, "never read by the forge itself".
 
 ## Stale claims removed
 

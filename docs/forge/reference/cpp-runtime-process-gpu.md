@@ -89,7 +89,6 @@ waits up to 15 s (`LEARNER_STOP_GRACE`) for the checkpoint save.
   `#define FORGE_SOURCE_HASH`. Only `AnimusForge.cpp` includes it (a change rebuilds one file). The hash is stale until cmake
   re-runs: the container script reconfigures on every build (`apps/docker/forge-worldserver.sh:30-36`). Coverage and limits:
   see the fingerprint section of [cpp-runtime-bridge.md](cpp-runtime-bridge.md).
-- zstd (:77-86): `find_library(libzstd.a zstd) REQUIRED`, linked statically; used by the ground-probe bake (outside this area).
 - `libforge-gpu.so` (:104-148): only if `hipcc` is found. Each `Animus/Gpu/Device/*.hip` is compiled by a custom command with `hipcc
   --offload-arch=<FORGE_GPU_ARCHS, default gfx1100> -O3 -fPIC -std=c++20 -fvisibility=hidden`, linked as a shared library
   `forge-gpu` (no HIP runtime linked), `add_dependencies(game forge-gpu)`, installed to `bin`. Without hipcc the build

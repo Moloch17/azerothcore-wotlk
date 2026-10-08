@@ -69,7 +69,7 @@ namespace AnimusForge
 
         /// What this machine runs, as "key=value ..." with no spaces in a value: a worker sends it when it registers,
         /// and a host takes only workers whose fingerprint is its own. A cluster is set up by copying the project to
-        /// every machine; a worker with other code, other probe data or other curriculum settings would train the
+        /// every machine; a worker with other code or other curriculum settings would train the
         /// same policy on a different game, and nothing downstream could tell.
         void SetFingerprint(std::string fingerprint) { _fingerprint = std::move(fingerprint); }
         /// Worker: whether it runs a learner of its own, which the host then gives a rank (sent as CAPS).

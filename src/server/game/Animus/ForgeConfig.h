@@ -100,12 +100,6 @@ namespace AnimusForge
         /// AnimusForge.OutputDir, resolved: where runs/ and layouts/ go. Never empty after Load.
         std::string OutputDir;
 
-        /// AnimusForge.Probe.Dir and CacheGrids: the layered fields the dungeon wings' routes read (`forge
-        /// fieldstage`), and how many are held in memory at once. (The move block's ground probe is measured live;
-        /// the keys keep their names so existing configs still point at the fields.)
-        std::string ProbeDir;           // resolved: never empty after Load
-        uint32 ProbeCacheGrids = 64;
-
         /// AnimusForge.Vision.*: the vision block's camera (camera-vision), validated at load. Width and Height set
         /// the block's size, so they are the process's (Animus::Vision::Configure, before any layout is built).
         /// RenderSizes ("WxH, ..."), the sizes frames are cast at and scaled up from, are parsed and checked

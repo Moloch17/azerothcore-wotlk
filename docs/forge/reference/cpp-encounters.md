@@ -1574,7 +1574,7 @@ Logical parts of `InstanceEncounter.cpp` 1-1400:
 | 1026-1165 | `TraceWing()` and `LogWipe()` (tank choice, crowd measure, wipe log) |
 | 1167-1226 | `Hostile()`, `Usable()`, `KeyItems()` |
 | 1228-1240 | `DungeonLevels()` |
-| 1242-1465 | `WingRoute()` (boss order, field route, navmesh fallback, full-clear packs; continues past 1400) |
+| 1242-1465 | `WingRoute()` (boss order, navmesh route, full-clear packs; continues past 1400) |
 
 ### E3.1 InstanceBosses: the boss tables
 
@@ -2011,9 +2011,11 @@ Computes the door-to-boss plan once per boss and caches it in the process-wide `
 2. **Stops** (`:1258-1279`): every living dungeon boss or world boss in the map's spawn store other than `boss`, ordered
    greedily nearest-next from the seat's start position, then the last boss. The order depends on server-side spawn
    positions (the route is the server's, used for rewards and the layout; what the bot is shown is `SeenWorld`).
-3. If `FieldRoute::Covers(MapId, seatX, seatY)`, the plan is `FieldWingRoute(...)` (second half); when it has `Field`
-   true it is cached and returned; otherwise a `LOG_WARN` and fall through (`:1282-1293`).
-4. **Navmesh fallback** (`pathThrough`, `:1297-1385`): per stop, up to `PATH_LEGS = 16` PathGenerator legs from the
+3. (Removed 2026-10-08: the layered-field branch, `FieldRoute::Covers` / `FieldWingRoute`. Every dungeon is now planned
+   by step 4; the plan has no packs, no dense route and no corner tables, so the pack drill, Go-Explore starts and
+   corridor runs, which need `Packs`, find none and the run is the whole dungeon. Line numbers in this file are from
+   before the removal.)
+4. **Navmesh route** (was "fallback") (`pathThrough`, `:1297-1385`): per stop, up to `PATH_LEGS = 16` PathGenerator legs from the
    cursor
    (one leg is limited to about 296 yd); on an incomplete path a second path back from the stop; the gap between the
    halves
@@ -2171,7 +2173,7 @@ live conf, so every "default" below is UNVERIFIED as the live value.
 
 | Path | Lines | Role |
 |---|---|---|
-| `InstanceEncounter.cpp` (1395-2752 here) | 2752 | field route, per-decision enemy upkeep, Go-Explore/corridor/drill starts, drill ladder, seen-places view, rewards, terminal |
+| `InstanceEncounter.cpp` (1395-2752 here) | 2752 | per-decision enemy upkeep, Go-Explore/corridor/drill starts, drill ladder, seen-places view, rewards, terminal |
 | `WingLadder.h` | 98 | the whole-dungeon difficulty ladder state machine (one way, probes only, collapse alarm) |
 | `WingLadder.cpp` | 111 | its implementation (`Note`, `Follow`) |
 | `WingRun.h` | 175 | pure helpers: tier of rung, leader seat, stray/away predicates, seeded picks, corridor bookkeeping, chain-pull tracker |
@@ -2184,7 +2186,6 @@ Logical parts of `InstanceEncounter.cpp` 1395-2752:
 | Lines | Part |
 |---|---|
 | 1395-1465 | tail of `WingRoute`'s navmesh fallback (packs by `PACK_REACH`, route points every `WingWaypointYards`, cache store) |
-| 1467-1752 | `FieldWingRoute` (route on the field-route graph: spine, packs, gaps, dense route, drill bands, corner tables) |
 | 1754-1980 | `UpdateWingEnemies` (usable objects, closed doors, pack clearing, kills, enemy slots, crowd past the slots) |
 | 1982-2004 | `PlaceParty` |
 | 2006-2092 | `StartAt` (Go-Explore cell start) |
@@ -2202,54 +2203,11 @@ Logical parts of `InstanceEncounter.cpp` 1395-2752:
 | 2739-2743 | `WriteState` |
 | 2745-2752 | `IsTerminal` |
 
-### E4.1 `FieldWingRoute` (`:1467-1752`)
+### E4.1 `FieldWingRoute` (removed 2026-10-08)
 
-Called from `WingRoute` (E3.10) when `FieldRoute::Covers(MapId, x, y)` is true. It builds a `WingPlan` (declared
-`Encounters.h`; fields used here: `Route`, `RouteDense`, `Dense`, `Packs`, `Reachable`, `CornerAhead`, `CornerBack`,
-`Field`) and returns it; the caller caches it per `{MapId, Entry}`. It never returns a partial plan: on the first
-unwalkable leg of the boss spine it returns the empty plan (`plan.Field` stays false, `:1507-1508`), and the caller
-logs and falls back to the navmesh route.
-
-1. **Walk helper** (`:1477-1497`): `walk(from, stops, dense, log)` appends `FieldRoute::Plan(mapId, from, stop, leg)`
-   legs
-   to `dense`; false (with a `LOG_WARN "field route: no way from ... to ..."`) at the first leg with no path.
-2. **Spine** (`:1499-1507`): the door (the seat's position) then every boss in the order the dungeon opens up
-   (`bosses`),
-   walked on the field graph.
-3. **Packs** (only with `Instance.WingFullClear` = 1, `:1513-1575`): every `Hostile` creature in the map's spawn store
-   other than the last boss is grouped by home position within `PACK_REACH = 15` yd of the first remaining one
-   (greedy clustering, `:1530-1552`). The pack's stand point is the member nearest the spine; the pack is kept only if
-   `FieldRoute::Plan(...)` succeeds from the spine point to it **and back** with a 400000 node budget (`:1553-1555`),
-   else
-   its members are counted in `left` and dropped ("a pit a seat can drop into but not climb out of"). Kept packs get
-   `WingPack{At, Members}`, their spawn ids go to `plan.Reachable`, and packs are stable-sorted by the spine index
-   (`along`) they hang off (`:1569-1575`).
-4. **Stops** (`:1576-1609`): kept packs and all bosses but the last are merged and stable-sorted by where the spine
-   passes them; the last boss is appended. `stopPack[i]` says which stop is which pack (-1 for a boss).
-5. **Each pack's gap** (`:1610-1632`): the distance from the pack's members to the nearest creature home that is neither
-   in the pack nor in a pack the route reaches before it (`WingPack::Gap`, `float max` if none). This is what the pull
-   drill's ladder orders packs by.
-6. **Dense route** (`:1634-1664`): starting at the door, `FieldRoute::Plan` from the cursor to each stop; a stop the
-   field
-   cannot reach from the last one is skipped with a count (`skipped`, `:1668-1669`); if the last boss itself is
-   unreachable after the packs, the dense route falls back to the bare spine and every pack's `Yard` is zeroed
-   (`:1636-1651`), so no pack is drillable. `WingPack::Yard` is the index in `dense` where a pack stop was reached.
-7. **Route points** (`:1666-1684`): one point every `max(5, Instance.WingWaypointYards)` yards (default 30) along
-   `dense`,
-   `RouteDense[i]` = the dense index of route point `i`, the last boss's own position last.
-8. **Drill bands log** (`:1685-1703`): per `PULL_GAPS` rung, how many drillable packs fall in it (a pack counts in the
-   first rung whose gap it meets), logged `"pull drill packs by gap: ..."`.
-9. **Corner tables** (`:1705-1750`): `RouteShortcut::Corners` ahead and back over `dense`, with a visibility predicate
-   `clear(from, to)` that needs `|dz| <= index distance`, a VMAP line of sight at chest height 1.5 yd, ground within
-   1.5 yd at every 1-yd sample (`GetHeight(..., z + 2, true, 4)`), and no liquid. Logged with the number of straight
-   legs
-   and milliseconds. See `RouteShortcut.h` (cpp-movement.md).
-
-The plan is a **function of the map data and the creature spawns of the first instance that builds it**, cached
-process-wide, so it is computed once per boss per process (E3.10). Quirk: a Wailing Caverns or Deadmines plan is built
-on a worker thread inside `Build` (map thread), costs seconds (the corner pass and many A* runs), and holds
-`routesLock` only for the cache store (`:1458-1461`), so two envs building at once compute it twice; UNVERIFIED how
-likely (depends on `Build` ordering across envs, E3.4).
+The layered-field route (spine, packs and their gaps, dense route, drill bands, corner tables) was removed with the
+ground probe and layered fields (owner order). `WingPlan::Packs`, `Dense`, `RouteDense`, `Reachable`, `Field`,
+`CornerAhead` and `CornerBack` stay declared but are always empty / false, as they already were for a navmesh route.
 
 ### E4.2 `UpdateWingEnemies` (`:1754-1980`), run from `UpdateEnemies`
 
@@ -2727,7 +2685,7 @@ The complete table with clamps is in [cpp-tuning-keys.md](cpp-tuning-keys.md).
 `TheLayoutHoldsNoCreatureDataAndNoOrder`, `TheFrontierIsOpenGroundBesideTheUnseen`,
 `WailingCavernsIsNeverDrawnInTraining`,
 `TheDeadminesDoorsLeversAndCannonAreUsedThroughTheHandlers`); `PartyFollowTest.cpp` (clock use). Not covered by any C++
-test found: `FieldWingRoute`, `UpdateWingEnemies`, `StartAt`, `StartCorridor`, `StartDrill`, `UpdateDrill`, `NoteDrill`,
+test found: `UpdateWingEnemies`, `StartAt`, `StartCorridor`, `StartDrill`, `UpdateDrill`, `NoteDrill`,
 `Reward` as a whole, `RiseAtEntrance`, `AppendRunEvent`, the cluster tally parse. Those need a live map; the pure parts
 were pulled into `WingRun.h`, `SeenPlaces.h`, `WingLadder.h` so they could be tested, and are.
 
@@ -2792,7 +2750,7 @@ were pulled into `WingRun.h`, `SeenPlaces.h`, `WingLadder.h` so they could be te
 - `fight` state is `EnvInstance` reset by value-assignment `fight = EnvInstance()` at every `ResetEpisode`: large
   vectors reallocate every episode; `routes`/`plan` copies per `Build` (`WingPlan` returned by value with its dense
   route and corner tables) are the likely reset-time cost behind `place_p95_ms`.
-- `FieldWingRoute` and `WingRoute` are both cached by `{MapId, Entry}` per process, not per seed: a change to the spawn
+- `WingRoute` is cached by `{MapId, Entry}` per process, not per seed: a change to the spawn
   data needs a restart, and Deadmines' `Hostile` filter is evaluated on whichever instance builds first.
 
 ### E4.17 UNVERIFIED (check these)

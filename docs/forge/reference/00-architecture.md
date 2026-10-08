@@ -161,8 +161,7 @@ what persists is files the learner and the sim write under `AnimusForge.OutputDi
    read yet.
 5. (No world listener is started.)
 6. `sScriptMgr->OnStartup()`, then **`sAnimusForge->OnStartup()`** (`AnimusForge.cpp:154`): `ForgeConfig::Load`;
-   configures the camera, mental map, entity memory (`Animus::Vision::Configure*`); configures the layered-field store
-   (`LayeredField::Store::Configure(ProbeDir, ProbeCacheGrids)`); `Gpu::PrepareEnvironment`; builds the fast profile;
+   configures the camera, mental map, entity memory (`Animus::Vision::Configure*`); `Gpu::PrepareEnvironment`; builds the fast profile;
    loads the device library if `Gpu.Observe` and the policy is remote; for a cluster machine computes the fingerprint
    (`ClusterFingerprint`, `AnimusForge.cpp:70`) and starts `Listen` (host) or `Join` (worker, unless it first runs an
    automatic benchmark); **`Curriculum::WarmCaches()`** (reads every world table the curriculum will need); opens the
@@ -360,8 +359,7 @@ host   -> worker REFUSED <keys>   START <stage> <resume> <fast> [envs=] ticks=  
 
 - **Fingerprint** (`ClusterFingerprint`, `AnimusForge.cpp:70`): `src=` the 16-hex prefix of a SHA-256 over the SHA-256 of
   every `Animus/*.cpp`, `.h`, `.hip` file, computed by CMake at configure time (`game/CMakeLists.txt`; nothing outside
-  `Animus/` and no Python is hashed), `protocol=` `PROTOCOL_VERSION`, `fields=count/bytes` of the `*.field` files in
-  `ProbeDir` (a count and a byte total, **not** a content hash), `curriculum=` the FNV-1a of the serialised
+  `Animus/` and no Python is hashed), `protocol=` `PROTOCOL_VERSION`, `curriculum=` the FNV-1a of the serialised
   `CurriculumTuning::Load("AnimusForge.Curriculum.")` (every value in force, defaults included), `decision=`
   `DecisionMs/TicksPerDecision`. The host registers a worker only when the strings are equal and otherwise answers
   `REFUSED` with the differing keys; the worker retries a minute later.
@@ -411,8 +409,7 @@ The plain bools `_decisionTick` and `_applyTick` are read by map tasks without a
   once per kind, synchronous reads return no rows (strict).
 - **Files under `AnimusForge.OutputDir`** (`/azerothcore/var/animus-forge` in the container): `runs/<stage>/`,
   `archive/`, `layouts/<stage>/` (manifests, `stage.json`), `models/` (exports), `fast/`, `bench/`.
-- **Per machine, untracked**: `env/dist/etc/modules/mod_animus_forge.conf` (and `worldserver.conf`), the Python venv, the
-  baked probe/field data under `apps/forge/probes` (ignored by git, copied separately).
+- **Per machine, untracked**: `env/dist/etc/modules/mod_animus_forge.conf` (and `worldserver.conf`), the Python venv.
 - **Tracked**: code, the learner's stage yamls (`apps/forge/python/configs`), `cluster.toml`, docs.
 
 ## 9. Data-flow diagram
