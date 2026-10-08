@@ -24,21 +24,12 @@
 
 /// The sim host's few process-wide switches.
 ///
-/// The forge is unconditional: it is always the sim host, always built this way. The one sanctioned
-/// exception is playtest mode, which exists so a human can log a real client in and confirm the world
-/// is joinable and behaves: the game clock follows the wall clock, the world listener starts, Warden
-/// runs and the database stays open. Everything else in the fork is the same in both modes.
+/// The forge is unconditional: it is always the sim host, always built this way.
 namespace ForgeCore
 {
-    /// Read Forge.Playtest once, after the configs are loaded and before anything asks. Never re-read.
-    AC_GAME_API void LoadSettings();
-
-    /// A real client can log in: wall clock, listener, Warden, database open.
-    AC_GAME_API bool Playtest();
-
-    /// Whether any real client session exists right now. Sim sessions are never registered with the
-    /// session manager, so this is the cheap answer to "is there anybody to build a packet for": the
-    /// packet builders skip their work while it is false, and behave as stock while it is true.
+    /// Whether any real client session exists right now: never, the forge opens no listener. Sim sessions are
+    /// never registered with the session manager, so this is the cheap answer to "is there anybody to build a
+    /// packet for": the packet builders skip their work while it is false, and behave as stock while it is true.
     AC_GAME_API bool HasClients();
 
     /// The world tick (game ms) the running stage wants, set by the module when a stage starts and cleared (0) when

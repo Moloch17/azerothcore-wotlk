@@ -93,25 +93,13 @@
 RealmID = 1
 
 #
-#    Forge.Playtest
-#        Description: Forge: run the sim host as a joinable realm so a human can verify the world.
-#                     The game clock follows the wall clock, the world listener starts on
-#                     WorldServerPort, Warden runs as Warden.Enabled says, and the database stays
-#                     open for the login and the character's saves. Off is the training sim: fixed
-#                     game-time ticks, no listener, every table in memory after startup.
-#        Default:     0 - (Disabled)
-#                     1 - (Enabled)
-
-Forge.Playtest = 0
-
-#
 #    Forge.SealStrict
 #        Description: After startup the databases are sealed: memory is the truth, writes are
 #                     discarded, and the worker threads close. 1 closes every connection too, so the
 #                     MySQL container can be stopped once the log says the pools are sealed; a later
 #                     read gets no rows. 0 keeps one connection per pool and still serves late reads.
 #                     Either way each distinct late read is logged once with where it came from, for
-#                     finding the reads a new stage adds. Playtest mode never seals.
+#                     finding the reads a new stage adds.
 #        Default:     1
 
 Forge.SealStrict = 1
@@ -438,38 +426,9 @@ Network.UseSocketActivation = 0
 ###################################################################################################
 
 ###################################################################################################
-# REMOTE ACCESS
+# SOAP
 #
-#    Ra.Enable
-#        Description: Enable remote console (telnet).
-#        Default:     0 - (Disabled)
-#                     1 - (Enabled)
-
-Ra.Enable = 0
-
-#
-#    Ra.IP
-#        Description: Bind remote access to IP/hostname.
-#        Default:     "0.0.0.0" - (Bind to all IPs on the system)
-
-Ra.IP = "0.0.0.0"
-
-#
-#    Ra.Port
-#        Description: TCP port to reach the remote console.
-#        Default:     3443
-
-Ra.Port = 3443
-
-#
-#    Ra.MinLevel
-#        Description: Required security level to use the remote console.
-#        Default:     3
-
-Ra.MinLevel = 3
-
-#
-#    SOAP.Enable
+#    SOAP.Enabled
 #        Description: Enable soap service
 #        Default:     0 - (Disabled)
 #                     1 - (Enabled)
