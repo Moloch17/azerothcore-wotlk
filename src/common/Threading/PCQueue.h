@@ -95,20 +95,20 @@ public:
         _condition.notify_all();
     }
 
-    // Ready for producers and consumers again after a Cancel or a Shutdown. The queue is empty and has no
-    // consumers by then, so clearing the flags cannot strand anything already queued.
-    void Reset()
-    {
-        std::lock_guard<std::mutex> lock(_queueLock);
-        _cancel = false;
-        _shutdown = false;
-    }
-
     // Graceful stop: waits for the queue to become empty before stopping consumers.
     void Shutdown()
     {
         _shutdown = true;
         _condition.notify_all();
+    }
+
+    // Reopens the queue after Cancel()/Shutdown() so new consumers can be attached.
+    // Callers must make sure the previous consumers have already stopped.
+    void Reset()
+    {
+        std::lock_guard<std::mutex> lock(_queueLock);
+        _cancel = false;
+        _shutdown = false;
     }
 
 private:
