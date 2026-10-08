@@ -60,8 +60,6 @@ SAME_RULES = [
      "no"),
     (r"AnimusForge\.(Classes|EpisodeSeconds|ContinentReplicas|HalfBatch|SpawnPoint\..*)",
      "yes, by hand (what every episode is built from; deploy-gate.md step 6)", "no"),
-    (r"AnimusForge\.Probe\.Dir", "the path is per machine; the data in it must match",
-     "indirectly: the count and bytes of *.field files in it (fields=<n>/<bytes>)"),
     (r"AnimusForge\.Cluster\.(Host|DataPort|Advertise|Learner)", "per machine (worker keys)", "no"),
     (r"AnimusForge\.Cluster\.(ControlPort|DistPort|Sync)",
      "host key: every machine reads it, only a host uses it", "no"),
@@ -77,7 +75,6 @@ CODE_RULES = {
     "AnimusForge.HalfBatch": "needs TicksPerDecision 1 (error otherwise); an odd DecisionMs is lowered by 1",
     "AnimusForge.EpisodeSeconds": "at least 1",
     "AnimusForge.ReportEpisodes": "at least 1",
-    "AnimusForge.Probe.CacheGrids": "at least 1 (the template says at least 9; the code does not enforce 9)",
     "AnimusForge.Cluster.Role": "standalone, host or worker (anything else: error, standalone); a worker with an "
                                 "empty Host falls back to standalone",
     "AnimusForge.Cluster.Sync": "async or weights (anything else: error, async)",

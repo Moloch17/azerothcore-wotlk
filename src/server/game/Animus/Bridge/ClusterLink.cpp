@@ -303,7 +303,7 @@ void AnimusForge::ClusterLink::Poll()
                     {
                         std::string const differ = Differences(_fingerprint, theirs);
                         LOG_ERROR("module.animus", "Cluster: refused the worker at {}: it does not run what this host "
-                            "runs: {}. Copy the project (and the probe data) to it again, match its AnimusForge "
+                            "runs: {}. Copy the project to it again, match its AnimusForge "
                             "settings, and rebuild.", it->Pending, differ);
                         Send(*it, "REFUSED " + differ);
                         it->Pending.clear();
@@ -349,7 +349,7 @@ void AnimusForge::ClusterLink::Poll()
                 if (line.rfind("REFUSED", 0) == 0)
                 {
                     LOG_ERROR("module.animus", "Cluster: the host at {} refused this worker: {}. It differs from the "
-                        "host in these; copy the project (and the probe data) again, match the settings, rebuild. "
+                        "host in these; copy the project again, match the settings, rebuild. "
                         "Trying again in a minute.", _hostAddress, line.size() > 8 ? line.substr(8) : "");
                     refused = true;
                     break;

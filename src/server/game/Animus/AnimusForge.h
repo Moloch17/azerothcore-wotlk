@@ -202,8 +202,6 @@ namespace AnimusForge
         void ApplyRequest();
         void HoldWhilePaused();
 
-        /// Whether the layered fields a stage's dungeon routes read are all shipped: said once at its start.
-        void ReportFields(std::string const& scenario) const;
         bool StartCurrent();
 
         /// Tear the running scenario down. With `stopLearner` the learner is disconnected and waited for (it saves

@@ -23,7 +23,6 @@ in [config-keys.md](config-keys.md) and [config-yaml.md](config-yaml.md); stages
 | apps/forge/python/animus/human/motion.py | 201 | The motion features that npz holds. |
 | src/server/game/Animus/Scenario/Curriculum/StageScenario.cpp | (large) | `WriteStageFiles` (stage.json and the layout manifests), `AppendRunEvent` (events.log). |
 | src/server/game/Animus/Runtime/Scenario/Curriculum/Layout/Layout.cpp | | `Layout::Manifest` (`<model>.json`, manifest format 9). |
-| src/server/game/Animus/Scenario/Curriculum/Blocks/LayeredField.cpp | | `.field` files. |
 | src/server/game/Animus/Vision/EvalVideo.cpp | | Evaluation videos, sidecars, index. |
 | src/server/game/Animus/AnimusForge.cpp | | Camera audit (`audit.csv`, PNGs), bench.json, eval video naming. |
 | src/server/game/Animus/Console/Progress.cpp | | Reads progress.json and finished.json for `forge status`. |
@@ -39,7 +38,6 @@ in [config-keys.md](config-keys.md) and [config-yaml.md](config-yaml.md); stages
   layouts/<stage>/<model>.json          one layout manifest per class (format 9)
   runs/<stage>/                         the learner's run directory (below)
   archive/<stage>-<YYYYmmdd-HHMMSS>[-n]/  earlier runs moved aside by a fresh start (runs.archive_run)
-  probes/*.field                        (AnimusForge.Probe.Dir default, ForgeConfig.cpp:274: <learner work dir parent>/probes; here var/animus-forge/probes or shared/probes, UNVERIFIED which on a given machine)
   bench/ bench.json, bench/runs, bench/layouts   the auto-tune benchmark (AnimusForge.Bench.*)
   fast/  runs, layouts                  the `forge fast` profile (AnimusForge.Fast.OutputDir)
 ```
@@ -54,7 +52,7 @@ sibling of `runs/`, not inside it, so TensorBoard on `runs/` does not load old r
 `runs/teacher_ragefire` exist in the live tree and are used by configs as named checkpoints (UNVERIFIED who creates them; not
 written by the current code).
 
-Written atomically (write to `*.partial`, then rename): checkpoints, `best_rung<k>.pt`, progress.json, `.field` files, `.amdl`,
+Written atomically (write to `*.partial`, then rename): checkpoints, `best_rung<k>.pt`, progress.json, `.amdl`,
 `eval_motion.npz` (`.partial.npz`). Appended: metrics.csv, layouts.csv, eval.*, events.log, stage.jsonl. Not atomic: spec.json,
 config.yaml, stage.json copy, finished.json, partners.json, eval_baseline.json.
 
@@ -314,14 +312,6 @@ is "evaluating", else `d<decision ticks>` (a worker); a held-out arena adds `-he
 
 Seeds filmed: `EvalVideoSeeds(first, end, count, pairs)` spreads `count` picks over (class, build) pairs and rungs, identical every evaluation. Frames queued past 512 MiB are dropped (counted in `dropped_frames`). `forgectl videos` and
 `apps/forge/tools/collect-videos.sh` gather them from workers.
-
-## Probe data: `.field`
-
-`LayeredField::Write/Read` (LayeredField.cpp). File name `<AnimusForge.Probe.Dir>/<mapId:03>_<gridX>_<gridY>.field`. Layout: a header struct (natural alignment, no pragma; by member sizes it is 48 bytes with no padding, UNVERIFIED by sizeof)
-`u32 Magic = 0x464C4841 ("AHLF" as a little-endian u32), u32 Version = 1, u32 MapId, i32 GridX, i32 GridY, f32 Cell, u32 Side, f32 MinX, f32 MinY, u32 Intervals, u64 RawBytes`, then one **zstd level 15** stream of `RawBytes` bytes:
-`Side*Side` bytes (interval count per cell, capped at 255) followed by `Intervals` x 8-byte `Interval { i16 Floor8 (1/8 yd), u16 Headroom8 (0xFFFF = sky), i16 Liquid8 (-32768 none), u8 LiquidFlags, u8 Flags (low 4 bits nav flags, 0x80 OpenAbove) }`.
-Reader validates magic, version, `Side` in 1..8192, `RawBytes <= 2^32` and the total. Cells are 1 yd (`STANDARD_CELL`); about 0.3 MB a grid; baked by the `forge fieldstage` / `forge fieldworld` console commands. The cluster fingerprint counts `*.field` files and
-their bytes only. There is **no `.probe` file** in the code: the briefing's ".field/.probe" has no second format (grep for `.probe` finds none).
 
 ## Other files
 

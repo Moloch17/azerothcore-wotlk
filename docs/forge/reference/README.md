@@ -55,7 +55,7 @@ person reviewing and refactoring the forge without an assistant.
 | `cpp-stagescenario.md` | `Stages.cpp` field by field, `StageScenario.cpp` by line range, the `Scenario` interface and helpers |
 | `cpp-tuning-keys.md` | all `AnimusForge.Curriculum.*` keys: defaults, ranges, readers, live stages |
 | `protocol.md` | the version 25 wire protocol byte by byte, the cluster messages, the version history |
-| `file-formats.md` | stage.json, progress.json, metrics.csv, evaluation files, checkpoints, `.amdl`, probe data, run directory layout |
+| `file-formats.md` | stage.json, progress.json, metrics.csv, evaluation files, checkpoints, `.amdl`, run directory layout |
 | `metrics.md` | every episode-info and reward column, derived measures, how evaluation tables are built |
 | `py-learner.md` | the map of the learner's top-level modules (index) |
 | `py-learner-train.md` | `TrainingRun`: the loop, rollout, update, evaluation, checkpoints; the wire client |

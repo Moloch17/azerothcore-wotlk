@@ -52,10 +52,6 @@ unless a file is named; body = `ForgeCommands.cpp` line.
 | `forge progress` | `[seconds\|off]` | no | show or set the periodic report interval (default 0 = off) | :1225 : 1291 |
 | `forge tasks` | - | no | per-map update-task totals since the previous `forge tasks` (resets them), slowest mean first | :903 |
 | `forge route` | `<map> <x> <y> <z> <x> <y> <z>` | yes | creates the grids between the ends and prints `RoutePlanner::Report` | :1143 |
-| `forge fieldroute` | `<map> <x> <y> <z> <x> <y> <z>` | **no check** | `FieldRoute::Report` over baked fields | :1121 |
-| `forge fieldstage` | `<scenario> [rebake]` | **no check** | bakes the layered fields for the stage's maps (and the 8 neighbours of every grid) into `Probe.Dir`; creates grids with `EnsureGridCreated` | :944 |
-| `forge fieldworld` | `<all\|map id> [rebake]` | **no check** | bakes (or copies from the stage fields) every grid of every `mmaps/*.mmtile` into `<Probe.Dir>/world` | :1020 |
-| `forge floorscan` | `<map> <x1> <y1> <x2> <y2> <z> [step] [file]` | yes | controller floor versus navmesh over a box; summary, ASCII map, optional CSV | :352 |
 | `forge controller probe` | `<map> <x> <y> <z> [facing]` | yes | prints the controller's world query at a point | :708 |
 | `forge controller record` | `<player> <file>` or `stop` | no | record a Playtest player's movement packets; `stop` writes the file | :763 |
 | `forge controller replay` | `<file> [player]` | yes | replay a recording through the controller; drift report | :822 |
@@ -76,7 +72,7 @@ forwarded.
 
 1. Header line `Forge: <scenario> (i of n) | <state> | learner <phase> | update N | <duration>` (`ReportTraining` `:437`).
 2. A `Metric | Value | Note` `TextTable`: rows `learner`, `sim`, `per decision`, `sim parts`, `reset parts`, `world parts`,
-   `observe blocks` (top block by thread time), `travel` (`ProbeNote`, route fields held), `map tasks`, `controller`,
+   `observe blocks` (top block by thread time), `map tasks`, `controller`,
    `vision`, `mental map`, `wire`, `camera audit`, `eval videos`, `placement` (reset percentiles), then the learner's numbers:
    `env steps`, `step rate`, `ETA (step limit)`, `ETA (converged, earliest)`, `converged`, `weakest`, `eval score`, `best vs
    baseline`, the stage headline measures with targets (`met`/`not yet`), ladder alarms, excluded classes, stand-in, `reward/
@@ -118,10 +114,6 @@ separated by two spaces, header underlined with dashes, trailing spaces trimmed;
 
 ## Observed issues
 
-- `cs_forge.cpp:944,1020`: `forge fieldstage` and `forge fieldworld` create base maps and grids with no idle check, while
-  every other grid-creating command refuses unless idle (`:357,471,608,666,713,826,1146`); they also block the world thread for
-  the whole bake, stalling a running plan. `forge fieldroute` (`:1121`) has no check either; whether `FieldRoute::Report`
-  creates grids is UNVERIFIED (Scenario area).
 - `cs_forge.cpp:238-239` help for `forge fast` says "default: AnimusForge.Queue"; the code uses `AnimusForge.Fast.Queue`
   (`ForgeCommands.cpp:522`). `:284` help for `forge clean archive` says "runs/_archive/"; the code deletes
   `<OutputDir>/archive` and the legacy directory (`ForgeCommands.cpp:1164`).

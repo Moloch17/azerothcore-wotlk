@@ -18,10 +18,8 @@
 
 #include "AnimusForge.h"
 #include "GpuRuntime.h"
-#include "LayeredField.h"
 #include "MoveBlock.h"
 #include "ReportCadence.h"
-#include "FieldGrids.h"
 #include "InstanceBosses.h"
 #include "CurriculumTuning.h"
 #include "SeatEncoder.h"
@@ -70,22 +68,10 @@
 namespace
 {
     /// What this machine runs, for a cluster's check that its workers run the same (ClusterLink::SetFingerprint): the
-    /// forge's sources, the learner protocol, the layered fields the dungeon routes read, and the settings every
+    /// forge's sources, the learner protocol, and the settings every
     /// episode is built from. Each "key=value", no spaces in a value.
     std::string ClusterFingerprint(AnimusForge::ForgeConfig const& config)
     {
-        // The field data: how many field files, and their bytes. Not a hash of 350 MB at every start; a copy that
-        // lost or truncated files, or never had the fields, differs here.
-        uint64 fields = 0, fieldBytes = 0;
-        std::error_code error;
-        for (auto const& entry : std::filesystem::directory_iterator(config.ProbeDir, error))
-        {
-            std::string const extension = entry.path().extension().string();
-            uint64 const size = entry.is_regular_file(error) ? uint64(entry.file_size(error)) : 0;
-            if (extension == ".field")
-                ++fields, fieldBytes += size;
-        }
-
         // Every curriculum setting as it is in force -- written or left at its default, so two machines whose
         // config files list different keys but agree on every value agree here -- and what a decision is, hashed
         // (FNV-1a, stable across builds).
@@ -95,8 +81,8 @@ namespace
         for (unsigned char c : settings)
             hash = (hash ^ c) * 1099511628211ull;
 
-        return Acore::StringFormat("src={} protocol={} fields={}/{} curriculum={:016x} decision={}/{}",
-            FORGE_SOURCE_HASH, AnimusForge::PROTOCOL_VERSION, fields, fieldBytes, hash, config.DecisionMs,
+        return Acore::StringFormat("src={} protocol={} curriculum={:016x} decision={}/{}",
+            FORGE_SOURCE_HASH, AnimusForge::PROTOCOL_VERSION, hash, config.DecisionMs,
             config.TicksPerDecision);
     }
 
@@ -186,9 +172,6 @@ void AnimusForge::Forge::OnStartup()
         Animus::Movement::STEP_UP, Animus::Movement::JUMP_SPEED, Animus::Movement::SWIM_JUMP_SPEED,
         Animus::Movement::Cadence::HEARTBEAT_MS, Animus::Movement::Cadence::MOUSE_FACING_THRESHOLD,
         Animus::Movement::MAX_SUBSTEP * 1000.0f);
-    // The layered fields the dungeon wings' routes are planned over (FieldRoute); the move block's ground probe is
-    // measured live and reads none.
-    Animus::Curriculum::LayeredField::Store::Configure(_config.ProbeDir, _config.ProbeCacheGrids);
     // Before anything HIP starts, here or in the learner spawned later, which inherits it.
     Animus::Gpu::PrepareEnvironment();
     _fastConfig = _config.FastProfile(_config.FastBudget);
@@ -617,34 +600,6 @@ void AnimusForge::Forge::HoldWhilePaused()
     }
 }
 
-void AnimusForge::Forge::ReportFields(std::string const& scenario) const
-{
-    // Only counted, never made: the fields ship with the forge. Only a stage with dungeon wings reads them (its
-    // routes, FieldRoute); every other stage reads none.
-    namespace Grids = Animus::Curriculum::FieldGrids;
-    namespace Field = Animus::Curriculum::LayeredField;
-    Animus::Curriculum::StageDefinition const* stage = Animus::Curriculum::FindStage(scenario);
-    if (!stage || !Field::Store::Enabled())
-        return;
-    bool wings = false;
-    for (Animus::Curriculum::ArenaDefinition const& arena : stage->Arenas)
-        wings = wings || !Animus::Curriculum::InstanceLadderRows(arena.Instance).empty();
-    if (!wings)
-        return;
-
-    std::vector<Grids::GridRef> const grids = Grids::StageGrids(*stage, true);
-    uint32 shipped = 0;
-    std::error_code error;
-    for (Grids::GridRef const& grid : grids)
-        shipped += std::filesystem::exists(Field::Store::FileFor(grid.MapId, grid.X, grid.Y), error) ? 1 : 0;
-    if (shipped == grids.size())
-        LOG_INFO("module.animus", "Layered fields for {}: all {} grids", scenario, grids.size());
-    else
-        LOG_WARN("module.animus", "Layered fields for {}: {} of {} grids in {}; routes over the others are not "
-            "planned. Bake them with `forge fieldstage {}` and ship the files.", scenario, shipped, grids.size(),
-            Field::Store::Dir(), scenario);
-}
-
 bool AnimusForge::Forge::StartCurrent()
 {
     // A stage none of this run's classes can play (the stealth drill in a run of classes that cannot stealth) is
@@ -664,7 +619,6 @@ bool AnimusForge::Forge::StartCurrent()
         if (scenario->Playable())
         {
             _scenario = std::move(scenario);
-            ReportFields(skipped.Scenario);
             break;
         }
 
@@ -2305,13 +2259,6 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
 
     sim.TicksPerSecond = _ticksPerSecond;
     sim.ObserveBlocks = _observeBlockMs;
-    {
-        // The layered fields the routes hold.
-        namespace Store = Animus::Curriculum::LayeredField::Store;
-        if (uint64 const reads = Store::FileReads.load(std::memory_order_relaxed))
-            sim.ProbeNote += Acore::StringFormat("route fields held {} ({:.0f} MB, {} files read)", Store::Loaded(),
-                double(Store::Bytes()) / (1024.0 * 1024.0), reads);
-    }
     sim.EpisodesPerSecond = _episodesPerSecond;
     sim.EnvStepsPerSecond = _ticksPerSecond * double(sim.Envs) * double(sim.AgentsPerEnv);
     sim.WorldMsPerTick = _worldMsPerTick;

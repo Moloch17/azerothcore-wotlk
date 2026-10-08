@@ -412,7 +412,7 @@ stages and the gate's tools depend on; each must be present with the same value 
 | `AnimusForge.Classes`, `EpisodeSeconds`, `SpawnPoint.MapId/X/Y/Z/O`, `ContinentReplicas`, `HalfBatch` | per the host's conf | what every episode is built from |
 
 (`DecisionMs` and the global `TicksPerDecision` are in the fingerprint: they are compared already. Per machine and
-allowed to differ: `Envs` and `Stage.<stage>.Envs`, `Cluster.*`, `Learner.*`, `Gpu.*`, `OutputDir`, `Probe.Dir`,
+allowed to differ: `Envs` and `Stage.<stage>.Envs`, `Cluster.*`, `Learner.*`, `Gpu.*`, `OutputDir`,
 `Socket`.) Check them on **every** machine, comparing with the host's, and fix the difference before step 7 (the conf is
 read at start: step 7's restart applies it):
 
@@ -492,7 +492,7 @@ for m in sarah@192.168.0.68 spencer@192.168.0.66 thomas@192.168.0.67 moloch@192.
 done
 ```
 
-`cluster-pull.sh` pulls `forge` (fast-forward only), pulls the probe data, touches `env/dist/.forge-build` and
+`cluster-pull.sh` pulls `forge` (fast-forward only), touches `env/dist/.forge-build` and
 recreates the worldserver container, which builds from source with `-march=native`; the slowest machine takes longest.
 Watch each build finish:
 
@@ -506,9 +506,9 @@ Success, on every machine: the log shows `AzerothCore rev. <the new short sha> .
 for m in ...; do ssh $m 'docker logs ac-animus-forge-worldserver 2>&1 | grep "Cluster fingerprint" | tail -1'; done
 ```
 
-prints **identical** lines (`src=... protocol=25 fields=.../... curriculum=... decision=...`) on the host and every
-worker. A worker that differs is refused (`Cluster: refused the worker at ...` in the host's log); compare the five
-parts to see which differs (a stale checkout: `src`; the probe data: `fields`; tuned curriculum keys: `curriculum`).
+prints **identical** lines (`src=... protocol=25 curriculum=... decision=...`) on the host and every
+worker. A worker that differs is refused (`Cluster: refused the worker at ...` in the host's log); compare the four
+parts to see which differs (a stale checkout: `src`; tuned curriculum keys: `curriculum`).
 The `curriculum=` value differs from before the deploy on every machine, because the removed keys left the hash:
 that is expected, only equality across machines matters. (`forgectl cluster` should then show one revision, the new
 one, with no `*`.)
@@ -659,7 +659,7 @@ what you saw; do not try a second fix.
 | 6 | a non-Curriculum key differs between machines | **Stop** | Fix it on the machine that differs (append or correct the key, after the backup) and re-run the loop; it takes effect at step 7's restart. |
 | 7 | `merge --ff-only` is refused, or the two shas differ | **Stop** | `forge` moved or the branch moved after step 1. Nothing is pushed. Start again at step 1 (a new tag is not needed; the tested sha is). |
 | 7 | one machine's build fails or times out (`PULL FAILED`, `TIMED OUT`) | **Stop** | Wait the full time first (the slowest build takes up to an hour). Then `forgectl logs <machine> --errors`. The rule is that all four machines run one revision or none: a worker on another revision is refused. Fix that machine (disk, ssh) and re-run its pull; if it cannot be fixed, **roll back all four** (step 9). |
-| 7 | fingerprints differ, or `refused the worker` | **Stop** | Compare the five parts. `src`: stale checkout, re-pull. `curriculum`: step 6's key loop. `fields`: the probe data pull. Fix that machine and restart only its container. |
+| 7 | fingerprints differ, or `refused the worker` | **Stop** | Compare the four parts. `src`: stale checkout, re-pull. `curriculum`: step 6's key loop. Fix that machine and restart only its container. |
 | 8 | no `Resumed` line, learner errors, no workers joining, or no updates | **Roll back** | Cancel (`forgectl stage cancel`), step 9, then `forge resume move2_seek` on the old build. Nothing is lost: the run directory is the old one plus nothing. |
 | 8 | `lr_scale` is not 1.0, or no re-baseline note | **Stop** | Pause. The convergence state was not cleared: the resumed run is on the schedule that annealed to 0.41. Do not let it train on; roll back if the owner is away. |
 | 8 | `kl_move` above 0.02, or the first evaluation well below the old one | **Roll back** if you cannot see the cause; otherwise pause and tell the owner | A wrong learning rate or a misread checkpoint. Pause first; do not let a bad update chain run. |
@@ -692,7 +692,7 @@ From the source:
   `.TicksPerDecision` by stage name: a leftover for a removed stage becomes a map entry nobody looks up (and a
   `.TicksPerDecision` that does not divide `DecisionMs` logs an error and is skipped, `ForgeConfig.cpp:239-243`).
 - **The fingerprint hashes only known keys.** `ClusterFingerprint` (`src/server/game/Animus/AnimusForge.cpp:77-107`)
-  is `src` (the hash of the forge's sources), `protocol`, `fields` (the probe data's file count and bytes),
+  is `src` (the hash of the forge's sources), `protocol`,
   `curriculum` and the decision timing. `curriculum` is the FNV-1a hash of
   `CurriculumTuning::Load("AnimusForge.Curriculum.").Json()` (`AnimusForge.cpp:93-96`), and `Json()` is `Visit` again
   (`CurriculumTuning.cpp:96-115`): the effective value of every known key, written or defaulted. An unknown key is in

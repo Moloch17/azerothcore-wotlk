@@ -17,8 +17,7 @@ exists for a bot (principle 3). Motion the core imposes (root, stun, fear, splin
 and resynced from.
 
 Not in this area: the policy's action space (`Scenario/Curriculum/Blocks/MoveControls.h`, `MoveBlock.*`; see
-cpp-blocks.md), the layered "field" and probe data (`Blocks/LayeredField.*`, `AnimusForge.cpp:191` configures its store;
-these are NOT in Movement/; see cpp-blocks.md), the core `ClientMovement` (`src/server/game/Movement/ClientMovement.*`,
+cpp-blocks.md), the core `ClientMovement` (`src/server/game/Movement/ClientMovement.*`,
 see 01-forge-core-delta.md). `forge controller probe` (src/server/scripts/Commands/cs_forge.cpp) prints the controller's
 view of a point through `MapWorldQuery`; it is the only "probe" tied to this directory.
 

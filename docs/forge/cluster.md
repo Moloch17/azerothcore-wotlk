@@ -49,7 +49,7 @@ forgectl stage resume <stage>
 
 Merge into `forge` and `git push origin forge` yourself; `forgectl build --cluster` pushes to `lan` (the bare repo on
 the dev machine the workers pull from). **The cluster fingerprint** must match: the host refuses a worker whose source
-hash, protocol version, probe-data count or curriculum settings differ (`Cluster: refused the worker at ...`, which
+hash, protocol version or curriculum settings differ (`Cluster: refused the worker at ...`, which
 `forgectl cluster` shows). The curriculum settings are the `AnimusForge.Curriculum.*` keys in
 `mod_animus_forge.conf`, identical on every machine (239 of them on 2026-10-07).
 

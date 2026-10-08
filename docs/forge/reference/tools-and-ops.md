@@ -2,7 +2,7 @@
 
 Purpose and scope. Everything around the code that is not the sim or the learner: the scripts in `apps/forge/tools`, the
 `forgectl` program (a code map; usage is in [../forgectl.md](../forgectl.md)), the cluster file, the container and
-compose files, the patches, the probe and model data, the repository's top-level layout, the git conventions and the
+compose files, the patches, the model data, the repository's top-level layout, the git conventions and the
 build. Related: [config-keys.md](config-keys.md), [tests.md](tests.md) (there are no tests),
 [../cluster.md](../cluster.md),
 [../deploy-gate.md](../deploy-gate.md), [00-architecture.md](00-architecture.md), [known-issues.md](known-issues.md).
@@ -33,7 +33,7 @@ build. Related: [config-keys.md](config-keys.md), [tests.md](tests.md) (there ar
 | `apps/forge/forgectl/confsync.py` | 262 | `forgectl conf-sync`; the conf writers (also used by move-host) |
 | `apps/forge/forgectl/logs.py` | 96 | `forgectl logs` |
 | `apps/forge/forgectl/videos.py` | 48 | `forgectl videos` (wraps `collect-videos.sh`) |
-| `apps/forge/tools/cluster-pull.sh` | 51 | on one machine: pull code and probe data, recreate the worldserver container |
+| `apps/forge/tools/cluster-pull.sh` | 51 | on one machine: pull code, recreate the worldserver container |
 | `apps/forge/tools/collect-videos.sh` | 84 | pull evaluation videos from workers by ssh+tar |
 | `apps/forge/tools/conf_prune.py` | 311 | unknown-key finder and conf cleaner (local or over ssh) |
 | `apps/forge/tools/resume_check.py` | 498 | CPU dry run of `--resume`, or of a fresh start, for a stage |
@@ -54,10 +54,8 @@ build. Related: [config-keys.md](config-keys.md), [tests.md](tests.md) (there ar
 | `src/server/game/CMakeLists.txt` (lines 53-73) | n/a | `FORGE_PYTHON_DIR` define and the `ForgeSourceHash.h` step |
 | `src/cmake/compiler/{clang,gcc}/settings.cmake` | n/a | `-march=native` and `-O3` forge flags |
 
-Data directories that are not tracked: `apps/forge/probes/` (a git repository of its own, 2940 `*.field` files, 3.1 GB
-on the dev machine) and `apps/forge/models/` (270 files, 580 MB, exported `.amdl` models and `.json` manifests of the
-first curriculum, e.g. `deathknight_companion`, `deathknight_duel`). Both are listed in `.gitignore`
-(lines 150 and 153).
+Data directories that are not tracked: `apps/forge/models/` (270 files, 580 MB, exported `.amdl` models and `.json` manifests of the
+first curriculum, e.g. `deathknight_companion`, `deathknight_duel`). It is listed in `.gitignore`.
 
 ## Top-level repository layout
 
@@ -92,7 +90,7 @@ From `.gitignore` (excerpt): `/conf/*` except `conf/dist`, `/modules/*` except l
 (except
 `.gitkeep` files in `var/build` and `var/ccache`), `/env/dist/*`, `/env/user/*`, `/.env*`, `/data/sql/custom/*`,
 `/*.override.yml`, `*.patch` and `*.diff`, `.agents/plans/**` (with a few exceptions), `.claude/worktrees`,
-`apps/forge/models/`, `apps/forge/probes/`, `apps/forge/python/{runs,layouts,.venv}/`.
+`apps/forge/models/`, `apps/forge/python/{runs,layouts,.venv}/`.
 
 - **`env/dist/`** (the install tree inside the container at `/azerothcore/env/dist`): `bin/worldserver`,
   `bin/libforge-gpu.so` (the optional device library), `bin/Data` (client data mount), `etc/` (conf files, see
@@ -102,7 +100,7 @@ From `.gitignore` (excerpt): `/conf/*` except `conf/dist`, `/modules/*` except l
   built for; `forge-worldserver.sh:38-57`).
 - **`env/user/`**: empty on the dev machine.
 - **`var/`**: `var/animus-forge/` is the default `OutputDir` in compose
-  (`shared/{runs,archive,layouts,bench,fast,probes}`;
+  (`shared/{runs,archive,layouts,bench,fast}`;
   `shared/runs/<stage>/` holds `progress.json`, `metrics.csv`, `eval.jsonl`, `latest.pt`, `best.pt`, `stage.json`),
   `var/build` and `var/ccache` are the compose volumes' mount points for the build tree and ccache (`docker-compose.yml`
   volumes), `var/client` is the extractor client folder, `var/syntax-*`/`var/forgectl-build-*` are throwaway cmake
@@ -125,10 +123,6 @@ From `.gitignore` (excerpt): `/conf/*` except `conf/dist`, `/modules/*` except l
   `upstream` = `azerothcore/azerothcore-wotlk`.
 - Tags that matter: `curriculum-v1`, `pre-cleanup-2026-10-07`, `curriculum-movement-v1`, `archive/movement-curriculum`.
 - Agent worktrees live under `.claude/worktrees/` on branches `worktree-agent-*`; `.claude/worktrees` is ignored.
-- Probe data is a separate repository: `animus-probes.git` on the dev machine, branch `main`, cloned or pulled into
-  `apps/forge/probes` by `cluster-pull.sh` (`cluster-pull.sh:32-45`). Nothing in this repository pushes it; how new
-  probe data is
-  produced and pushed is UNVERIFIED (no tool found; `forge fieldstage` bakes it per ForgeConfig.h comment).
 - Patches: `.gitignore` ignores `*.patch`, yet the `apps/forge/patches/*.patch` file is tracked
   (`git ls-files apps/forge/patches` lists them): they were force-added; a new patch there would not be picked up by
   `git add -A`.
@@ -161,7 +155,7 @@ From `.gitignore` (excerpt): `/conf/*` except `conf/dist`, `/modules/*` except l
    stores an
    md5 of `/proc/cpuinfo` vendor/family/model/flags in `env/dist/.forge-build-cpu` and rebuilds when it differs.
 5. `FORGE_PYTHON_DIR` (`src/server/game/CMakeLists.txt:55-56`) bakes `${CMAKE_SOURCE_DIR}/apps/forge/python` into the
-   binary as the default learner work directory (and via its parent, models and probes).
+   binary as the default learner work directory (and via its parent, models).
 6. The compose `ac-worldserver` mounts the whole checkout at `/azerothcore` (`docker-compose.yml`
    `${DOCKER_VOL_ROOT:-.}:/azerothcore:cached`), the volumes `ac-animus-forge-build-dev` at `/azerothcore/var/build`
    and `ac-animus-forge-ccache-dev` at `/azerothcore/var/ccache`, and the client-data volume at `env/dist/data`
@@ -202,7 +196,7 @@ Safety column: "reads" = never writes outside stdout (or a named output); "write
 | `stage_json_diff.py` | what changed between two `stage.json`: header, layouts, shapes, actions, blocks, obs names, sets, episode info, categories, reward terms, tuning, arenas | `old.json new.json [--allow-removed-terms] [--allow-removed-keys] [--allow-removed-columns]` | stdout; exit 0 identical/allowed, 1 other, 2 bad input | reads |
 | `gen_config_reference.py` | regenerate the key table in [config-keys.md](config-keys.md) | `--check`, `--stdout` | reads conf.dist and sources; writes only between its two marker lines | writes one docs file |
 | `collect-videos.sh` | copy workers' `runs/<stage>/videos` PNGs, JSON and HTML by `ssh ... find ... \| tar` into `runs/<stage>/videos/from-<worker>/` | `[--dry-run \| --check] [--workers "u@h ..."] [--remote-dir D] [--runs-dir D] <stage>` | default workers list includes sarah (the host) and omits eli (`collect-videos.sh:23`) | `--dry-run` prints; `--check` read-only ssh; default writes the local run folder |
-| `cluster-pull.sh` | on one machine: `git pull --ff-only <origin user@host>:git/animus-forge.git forge`; clone or pull `apps/forge/probes` from `animus-probes.git` (`main`); touch `env/dist/.forge-build`; `docker compose up -d --force-recreate ac-worldserver` | `[user@host]` | modifies the checkout, probe data and containers of the machine it runs on | writes; moves an existing non-git `probes/` to `probes.before-clone` |
+| `cluster-pull.sh` | on one machine: `git pull --ff-only <origin user@host>:git/animus-forge.git forge`; touch `env/dist/.forge-build`; `docker compose up -d --force-recreate ac-worldserver` | `[user@host]` | modifies the checkout and containers of the machine it runs on | writes |
 | `patches/amdl8-check/*` | compare the in-game model reader (`mod-animus` `MlpPolicy`) to the learner's golden vectors; time a decision | `prep.py <dir>`, `run.py <dir> [Model dir]`, `bench.py <dir>` | needs `modules/mod-animus` and `var/syntax-build-animus/compile_commands.json` | writes in `<dir>` |
 
 ## forgectl code map

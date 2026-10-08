@@ -68,7 +68,7 @@ Lines are `wc -l` at `bd32b9dc8`.
 | `A/Gpu/Device/Runtime.hip` | 127 | allocation, IPC export, copies, the API table |
 | `src/server/apps/worldserver/ForgeMain.cpp` | 520 | `main()` of the fork: startup, DB seal, update loops, shutdown |
 | `src/server/scripts/Commands/cs_forge.cpp` | 986 | the `forge` command table and the handlers that are not `Forge::Command*` |
-| `src/server/game/CMakeLists.txt` | 146 | Animus source hash, `FORGE_PYTHON_DIR`, zstd, `libforge-gpu.so` |
+| `src/server/game/CMakeLists.txt` | 146 | Animus source hash, `FORGE_PYTHON_DIR`, `libforge-gpu.so` |
 | `src/server/game/Forge/Forge.h`, `Forge.cpp` | 51 + 60 | `ForgeCore`: `HasClients()` (false), `SetTickMs/TickMs` (owner: 01-forge-core-delta.md, used here) |
 | `src/common/Threading/CpuPlacement.h`, `.cpp` | 62 + 278 | CPU ordering and pinning used by `LearnerProcess` and `ForgeConfig` (owner: 01-forge-core-delta.md) |
 | `src/common/Utilities/RandomSeed.h` | 28 | `rand_seed`, used by `EnvPool::ResetEnv` (owner: 01-forge-core-delta.md) |

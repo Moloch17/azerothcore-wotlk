@@ -22,8 +22,6 @@
 #include "Map.h"
 #include "MapMgr.h"
 #include "MoveBlock.h"
-#include "FieldGrids.h"
-#include "LayeredField.h"
 #include "MapWorldQuery.h"
 #include "MapVisionWorld.h"
 #include "FrameImage.h"
@@ -38,9 +36,11 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <cstring>
 #include <map>
 #include <mutex>
+#include <utility>
 #include "InstanceBosses.h"
 #include "StageDefinition.h"
 #include "World.h"
@@ -49,8 +49,6 @@
 #include <fstream>
 #include <set>
 #include <vector>
-#include "FieldRoute.h"
-#include "FloorScan.h"
 #include "RoutePlanner.h"
 #include "Optional.h"
 #include "StringConvert.h"
@@ -122,10 +120,6 @@ namespace
                 { "skip",      HandleSkip,      SEC_ADMINISTRATOR, Console::Yes },
                 { "run",       HandleRun,       SEC_ADMINISTRATOR, Console::Yes },
                 { "route",     HandleRoute,     SEC_ADMINISTRATOR, Console::Yes },
-                { "floorscan", HandleFloorScan, SEC_ADMINISTRATOR, Console::Yes },
-                { "fieldroute", HandleFieldRoute, SEC_ADMINISTRATOR, Console::Yes },
-                { "fieldstage", HandleFieldStage, SEC_ADMINISTRATOR, Console::Yes },
-                { "fieldworld", HandleFieldWorld, SEC_ADMINISTRATOR, Console::Yes },
                 { "controller", controllerCommandTable },
                 { "camera",    cameraCommandTable },
                 { "tasks",     HandleTasks,     SEC_ADMINISTRATOR, Console::Yes },
@@ -168,12 +162,6 @@ namespace
                 "<file>-depth.pgm, <file>-kind.ppm and <file>-height.pgm (default file camera-snapshot) and prints the "
                 "rays and the wall time, split into tree casts, WMO liquids, terrain cells and units; no range: a ray "
                 "leaving the grids created round the feet is sky (idle only)" });
-            table.AddRow({ "forge fieldstage <scenario> [rebake]", "bake the layered fields the dungeon wings' routes "
-                "read for this scenario to AnimusForge.Probe.Dir: every grid of its maps' navmeshes and their "
-                "neighbours (kept if already baked, unless rebake)" });
-            table.AddRow({ "forge fieldworld <all|map id> [rebake]", "bake the layered fields of every grid of a map's "
-                "navmesh, or of every map, for a realm's companions (mod-animus): into <Probe.Dir>/world, taking the "
-                "stage fields already baked, and never read by the forge itself" });
             table.AddRow({ "forge tasks", "every map's update task since the last `forge tasks`: how many ran, "
                 "their mean and longest time, and the envs on the map, slowest first" });
             table.AddRow({ "forge route <map> <x> <y> <z> <x> <y> <z>", "plan a way between two points and print "
@@ -249,115 +237,20 @@ namespace
             return sAnimusForge->CommandRun(scenario, policy, episodes.value_or(0), Reply(handler));
         }
 
-        /// `forge floorscan <map> <x1> <y1> <x2> <y2> <z> [step] [file]`: the player controller's floor against the
-        /// navmesh's walkable surface over a box, every `step` yards (FloorScan): where the route planner walks and
-        /// the controller has no floor (HOLE), they disagree on the height (MISMATCH), the controller's floor is too
-        /// steep (STEEP), or the controller has a floor the mesh does not walk (NONAV). Each cell's height comes
-        /// from the navmesh within FloorScan::NAV_REACH_Z of `z` (ramps and stairs included), else `z`; the
-        /// controller's floor is read from a step above it. A summary, the HOLE and MISMATCH cells, an ASCII map
-        /// (a yard a character, the worst cell shown), and with `file` a CSV of every cell. On the base map (no
-        /// instance needed), only while the forge is idle.
-        static bool HandleFloorScan(ChatHandler* handler, uint32 mapId, float x1, float y1, float x2, float y2, float z,
-            Optional<float> step, Optional<std::string> file)
+        /// The grid a coordinate is in, counting up from 0: floor(coordinate / SIZE_OF_GRIDS).
+        static int32 GridIndex(float coordinate)
         {
-            namespace Mv = Animus::Movement;
-            namespace Scan = Animus::Curriculum::FloorScan;
-            if (!sAnimusForge->IsIdle())
-            {
-                handler->SendSysMessage("forge floorscan runs only while the forge is idle (it creates grids)");
-                return true;
-            }
-            Map* map = sMapMgr->CreateBaseMap(mapId);
-            if (!map)
-            {
-                handler->PSendSysMessage("No such map: {}", mapId);
-                return true;
-            }
-            float const cell = std::clamp(step.value_or(0.5f), 0.1f, 10.0f);
-            float const left = std::min(x1, x2), right = std::max(x1, x2);
-            float const bottom = std::min(y1, y2), top = std::max(y1, y2);
-            uint32 const columns = uint32(std::floor((right - left) / cell)) + 1;
-            uint32 const rows = uint32(std::floor((top - bottom) / cell)) + 1;
-            if (uint64(columns) * rows > 1000000)
-            {
-                handler->PSendSysMessage("{} x {} cells is too many: a larger step, or a smaller box", columns, rows);
-                return true;
-            }
-            CreateGrids(map, left, bottom, right, top);
-
-            Mv::MapWorldQuery const world(map, PHASEMASK_NORMAL);
-            Animus::Curriculum::RoutePlanner& planner = Animus::Curriculum::RoutePlanner::Instance();
-            std::ofstream csv;
-            if (file)
-            {
-                csv.open(*file);
-                if (!csv)
-                {
-                    handler->PSendSysMessage("Could not write {}", *file);
-                    return true;
-                }
-                csv << "x,y,navmesh_z,floor_z,normal_z,class\n";
-            }
-            std::array<uint32, 6> counts{};
-            std::vector<std::string> listed;
-            uint32 const mapColumns = uint32(std::ceil(right - left)) + 1;
-            uint32 const mapRows = uint32(std::ceil(top - bottom)) + 1;
-            std::vector<Scan::Cell> worst(std::size_t(mapColumns) * mapRows, Scan::Cell::Unwalkable);
-            for (uint32 row = 0; row < rows; ++row)
-                for (uint32 column = 0; column < columns; ++column)
-                {
-                    float const x = left + float(column) * cell;
-                    float const y = bottom + float(row) * cell;
-                    float navZ = 0.0f;
-                    bool const nav = planner.SurfaceAt(map, x, y, z, Scan::NAV_REACH_Z, navZ);
-                    float const reference = nav ? navZ : z;
-                    float const floor = world.FloorBelow(x, y, reference + Mv::STEP_UP, 2.0f * Mv::STEP_UP);
-                    bool const hasFloor = floor > Mv::INVALID_FLOOR + 1.0f;
-                    float const normal = hasFloor ? world.FloorNormalZ(x, y, floor) : 0.0f;
-                    Scan::Cell const verdict = Scan::Classify(nav, navZ, hasFloor, floor, normal);
-                    ++counts[std::size_t(verdict)];
-                    if ((verdict == Scan::Cell::Hole || verdict == Scan::Cell::Mismatch) && listed.size() < 40)
-                        listed.push_back(Acore::StringFormat("  {} at ({:.1f}, {:.1f}): navmesh {:.2f}, floor {}",
-                            Scan::Name(verdict), x, y, navZ, hasFloor ? Acore::StringFormat("{:.2f}", floor) : "none"));
-                    std::size_t const at = std::size_t(std::min<uint32>(uint32(y - bottom), mapRows - 1)) * mapColumns
-                        + std::min<uint32>(uint32(x - left), mapColumns - 1);
-                    if (Scan::Severity(verdict) > Scan::Severity(worst[at]))
-                        worst[at] = verdict;
-                    if (csv)
-                        csv << Acore::StringFormat("{:.2f},{:.2f},{},{},{},{}\n", x, y,
-                            nav ? Acore::StringFormat("{:.2f}", navZ) : "", hasFloor ? Acore::StringFormat("{:.2f}",
-                            floor) : "", hasFloor ? Acore::StringFormat("{:.3f}", normal) : "", Scan::Name(verdict));
-                }
-
-            handler->PSendSysMessage("floorscan map {} x {:.1f}..{:.1f} y {:.1f}..{:.1f} at z {:.1f} (navmesh within "
-                "{:.0f} yd), {} cells of {:.2f} yd:", mapId, left, right, bottom, top, z, Scan::NAV_REACH_Z,
-                columns * rows, cell);
-            for (Scan::Cell verdict : { Scan::Cell::Ok, Scan::Cell::Hole, Scan::Cell::Mismatch, Scan::Cell::Steep,
-                     Scan::Cell::NoNav, Scan::Cell::Unwalkable })
-                handler->PSendSysMessage("  {:<10} {}", Scan::Name(verdict), counts[std::size_t(verdict)]);
-            if (!listed.empty())
-            {
-                handler->SendSysMessage("HOLE and MISMATCH cells (the first 40):");
-                for (std::string const& line : listed)
-                    handler->SendSysMessage(line);
-            }
-            handler->PSendSysMessage("A yard a character, the worst cell shown ('.' OK, 'H' HOLE, 'M' MISMATCH, 'S' "
-                "STEEP, 'n' NONAV, ' ' UNWALKABLE); x from {:.0f} rightwards, y from {:.0f} at the top down:", left,
-                top);
-            for (uint32 row = mapRows; row-- > 0;)
-            {
-                std::string line = Acore::StringFormat("{:>7.1f} |", bottom + float(row));
-                for (uint32 column = 0; column < mapColumns; ++column)
-                    line += Scan::Glyph(worst[std::size_t(row) * mapColumns + column]);
-                handler->SendSysMessage(line + "|");
-            }
-            if (file)
-                handler->PSendSysMessage("Every cell in {}", *file);
-            return true;
+            return int32(std::floor(coordinate / SIZE_OF_GRIDS));
         }
 
-        /// A map's grid as the core names it (GridCoord, the mmtile file name) from a field's grid index
-        /// (FieldGrids::GridIndex): the core counts grids from +x/+y down, the fields from 0 up.
+        /// The grids (GridIndex's numbering) a span [a, b] touches, widened by `margin` yards: first and last.
+        static std::pair<int32, int32> GridSpan(float a, float b, float margin)
+        {
+            return { GridIndex(std::min(a, b) - margin), GridIndex(std::max(a, b) + margin) };
+        }
+
+        /// A map's grid as the core names it (GridCoord, the mmtile file name) from a grid index (GridIndex): the
+        /// core counts grids from +x/+y down, the index from 0 up.
         static GridCoord CoreGrid(int32 gridX, int32 gridY)
         {
             return GridCoord(uint32(std::clamp(int32(CENTER_GRID_ID) - 1 - gridX, 0, int32(MAX_NUMBER_OF_GRIDS) - 1)),
@@ -511,8 +404,8 @@ namespace
             }
             for (int32 dx = -1; dx <= 1; ++dx)
                 for (int32 dy = -1; dy <= 1; ++dy)
-                    map->EnsureGridCreated(CoreGrid(Animus::Curriculum::FieldGrids::GridIndex(x) + dx,
-                        Animus::Curriculum::FieldGrids::GridIndex(y) + dy));
+                    map->EnsureGridCreated(CoreGrid(GridIndex(x) + dx,
+                        GridIndex(y) + dy));
 
             Mv::MapWorldQuery const world(map, PHASEMASK_NORMAL);
             Mv::Body const body;
@@ -607,8 +500,8 @@ namespace
             for (Cap::MoveRecord const& move : moves)
                 for (int32 dx = -1; dx <= 1; ++dx)
                     for (int32 dy = -1; dy <= 1; ++dy)
-                        grids.emplace(Animus::Curriculum::FieldGrids::GridIndex(move.X) + dx,
-                            Animus::Curriculum::FieldGrids::GridIndex(move.Y) + dy);
+                        grids.emplace(GridIndex(move.X) + dx,
+                            GridIndex(move.Y) + dy);
             for (auto const& [gx, gy] : grids)
                 map->EnsureGridCreated(CoreGrid(gx, gy));
 
@@ -667,178 +560,16 @@ namespace
             return true;
         }
 
-        /// `forge fieldstage <scenario> [rebake]`: the layered fields the dungeon wings' routes read for this
-        /// scenario (FieldRoute) -- every grid of its maps' navmeshes, continents whole, and their neighbours, since a
-        /// route near a grid's edge crosses it. A grid with no floor in it (past a dungeon's edge) is
-        /// written too, a few bytes, so that a missing file means a grid not baked and never "no floor here".
-        /// Static geometry only; a grid takes a fraction of a second.
-        static bool HandleFieldStage(ChatHandler* handler, std::string scenario, Optional<std::string> mode)
+        /// Every grid of `map` over the box, with a grid's margin: terrain, collision and navmesh tiles only
+        /// (EnsureGridCreated). Not LoadGrid: that loads the grid's creatures too, which an instanced map's base map --
+        /// one with no instance, as the console reads it -- cannot hold (`forge route 34 ...` crashed the sim).
+        static void CreateGrids(Map* map, float x1, float y1, float x2, float y2)
         {
-            namespace Bake = Animus::Curriculum::FieldGrids;
-            namespace Field = Animus::Curriculum::LayeredField;
-            Animus::Curriculum::StageDefinition const* stage = Animus::Curriculum::FindStage(scenario);
-            if (!stage)
-            {
-                handler->PSendSysMessage("No such scenario: {}", scenario);
-                return true;
-            }
-            bool const rebake = mode && *mode == "rebake";
-
-            std::set<Bake::GridRef> grids;
-            for (Bake::GridRef const& grid : Bake::StageGrids(*stage, true))
-                for (int32 dx = -1; dx <= 1; ++dx)
-                    for (int32 dy = -1; dy <= 1; ++dy)
-                        // Within the world's 64 x 64 grids: a map at its edge has no neighbour past it.
-                        if (std::abs(2 * (grid.X + dx) + 1) < MAX_NUMBER_OF_GRIDS
-                            && std::abs(2 * (grid.Y + dy) + 1) < MAX_NUMBER_OF_GRIDS)
-                            grids.insert(Bake::GridRef{ grid.MapId, grid.X + dx, grid.Y + dy });
-            handler->PSendSysMessage("{}: {} grids (every grid of its maps' navmeshes and their neighbours), into {}",
-                scenario,
-                grids.size(), Field::Store::Dir());
-            uint32 baked = 0;
-            uint32 kept = 0;
-            uint32 empty = 0;
-            uint32 failed = 0;
-            std::size_t bytes = 0;
-            auto const started = std::chrono::steady_clock::now();
-            for (Bake::GridRef const& grid : grids)
-            {
-                Map* map = sMapMgr->CreateBaseMap(grid.MapId);
-                if (!map)
-                    continue;
-
-                std::string const path = Field::Store::FileFor(grid.MapId, grid.X, grid.Y);
-                std::error_code error;
-                if (!rebake && std::filesystem::exists(path, error))
-                {
-                    ++kept;
-                    continue;
-                }
-
-                // Terrain and collision only: no objects are spawned.
-                for (int32 dx = -1; dx <= 1; ++dx)
-                    for (int32 dy = -1; dy <= 1; ++dy)
-                        map->EnsureGridCreated(CoreGrid(grid.X + dx, grid.Y + dy));
-
-                float const centreX = (float(grid.X) + 0.5f) * SIZE_OF_GRIDS;
-                float const centreY = (float(grid.Y) + 0.5f) * SIZE_OF_GRIDS;
-                Field::Grid const field = Field::Bake(map, centreX, centreY, Field::STANDARD_CELL);
-                empty += field.Intervals.empty() ? 1 : 0;
-                if (Field::Write(field, path))
-                {
-                    ++baked;
-                    bytes += std::filesystem::file_size(path, error);
-                }
-                else
-                {
-                    ++failed;
-                    handler->PSendSysMessage("  could not write {}", path);
-                }
-            }
-
-            double const seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-            handler->PSendSysMessage("{}: {} grids baked ({:.1f} MB, {} of them with no floor), {} already there, "
-                "{} failed, in {:.0f} s", scenario, baked, double(bytes) / (1024.0 * 1024.0), empty, kept, failed,
-                seconds);
-            return true;
-        }
-
-        /// `forge fieldworld <all|map id> [rebake]`: the layered fields a realm's companions read wherever their
-        /// players take them (mod-animus, Animus.Probe.Dir) -- every grid of a map's navmesh and its neighbours, or
-        /// of every map's. Into <Probe.Dir>/world, not beside the stage fields: the forge ships those to every cluster
-        /// machine, and the world's are gigabytes no training reads. A grid already baked for a stage is copied, not
-        /// rebaked.
-        static bool HandleFieldWorld(ChatHandler* handler, std::string which, Optional<std::string> mode)
-        {
-            namespace Bake = Animus::Curriculum::FieldGrids;
-            namespace Field = Animus::Curriculum::LayeredField;
-            bool const rebake = mode && *mode == "rebake";
-            Optional<uint32> onlyMap;
-            if (which != "all")
-            {
-                onlyMap = Acore::StringTo<uint32>(which);
-                if (!onlyMap)
-                {
-                    handler->PSendSysMessage("forge fieldworld <all|map id> [rebake]");
-                    return true;
-                }
-            }
-
-            // Every mmtile, MMMXXYY.mmtile: XX and YY count down from +x/+y where the grid indices count up from 0.
-            std::set<Bake::GridRef> grids;
-            std::error_code error;
-            for (auto const& file : std::filesystem::directory_iterator(sWorld->GetDataPath() + "mmaps", error))
-            {
-                std::string const name = file.path().filename().string();
-                if (name.size() != 14 || file.path().extension() != ".mmtile")
-                    continue;
-                uint32 const mapId = uint32(std::atoi(name.substr(0, 3).c_str()));
-                if (onlyMap && mapId != *onlyMap)
-                    continue;
-                int32 const x = int32(CENTER_GRID_ID) - 1 - std::atoi(name.substr(3, 2).c_str());
-                int32 const y = int32(CENTER_GRID_ID) - 1 - std::atoi(name.substr(5, 2).c_str());
-                for (int32 dx = -1; dx <= 1; ++dx)
-                    for (int32 dy = -1; dy <= 1; ++dy)
-                        if (std::abs(2 * (x + dx) + 1) < MAX_NUMBER_OF_GRIDS
-                            && std::abs(2 * (y + dy) + 1) < MAX_NUMBER_OF_GRIDS)
-                            grids.insert(Bake::GridRef{ mapId, x + dx, y + dy });
-            }
-
-            std::filesystem::path const dir = std::filesystem::path(Field::Store::Dir()) / "world";
-            std::filesystem::create_directories(dir, error);
-            handler->PSendSysMessage("fieldworld {}: {} grids, into {}", which, grids.size(), dir.string());
-            uint32 baked = 0;
-            uint32 copied = 0;
-            uint32 kept = 0;
-            uint32 failed = 0;
-            uint32 lastMap = UINT32_MAX;
-            Map* map = nullptr;
-            auto const started = std::chrono::steady_clock::now();
-            for (Bake::GridRef const& grid : grids)
-            {
-                std::filesystem::path const staged = Field::Store::FileFor(grid.MapId, grid.X, grid.Y);
-                std::filesystem::path const path = dir / staged.filename();
-                if (!rebake && std::filesystem::exists(path, error))
-                {
-                    ++kept;
-                    continue;
-                }
-                if (!rebake && std::filesystem::exists(staged, error))
-                {
-                    std::filesystem::copy_file(staged, path, std::filesystem::copy_options::overwrite_existing, error);
-                    ++(error ? failed : copied);
-                    continue;
-                }
-
-                if (grid.MapId != lastMap)
-                {
-                    lastMap = grid.MapId;
-                    map = sMapMgr->CreateBaseMap(grid.MapId);
-                }
-                if (!map)
-                {
-                    ++failed;
-                    continue;
-                }
-                // Terrain and collision only: no objects are spawned.
-                for (int32 dx = -1; dx <= 1; ++dx)
-                    for (int32 dy = -1; dy <= 1; ++dy)
-                        map->EnsureGridCreated(CoreGrid(grid.X + dx, grid.Y + dy));
-                float const centreX = (float(grid.X) + 0.5f) * SIZE_OF_GRIDS;
-                float const centreY = (float(grid.Y) + 0.5f) * SIZE_OF_GRIDS;
-                if (Field::Write(Field::Bake(map, centreX, centreY, Field::STANDARD_CELL), path.string()))
-                    ++baked;
-                else
-                {
-                    ++failed;
-                    handler->PSendSysMessage("  could not write {}", path.string());
-                }
-            }
-
-            double const seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-            handler->PSendSysMessage("fieldworld {}: {} grids baked, {} copied from the stage fields, {} already "
-                "there, {} failed, in {:.0f} s", which, baked, copied, kept, failed, seconds);
-            return true;
+            auto const [gx1, gx2] = GridSpan(x1, x2, 1.0f);
+            auto const [gy1, gy2] = GridSpan(y1, y2, 1.0f);
+            for (int32 gx = gx1; gx <= gx2; ++gx)
+                for (int32 gy = gy1; gy <= gy2; ++gy)
+                    map->EnsureGridCreated(CoreGrid(gx, gy));
         }
 
         /// Plan a route between two points, with no seat, policy or run.
@@ -847,30 +578,6 @@ namespace
         /// episode fails, was there ever a way? PathGenerator says PATHFIND_NORMAL when it has not pathfound at
         /// all, so "reachable" has meant less than it reads. This plans with the planner's own query -- a large
         /// node pool, no 74-point cap -- and says plainly whether the way arrives or stops short.
-        /// Plan a way over the layered field (FieldRoute), the ground the seats walk by, between two points: what a
-        /// dungeon's route is built from. Its fields must be baked (`forge fieldstage`).
-        static bool HandleFieldRoute(ChatHandler* handler, uint32 mapId, float fromX, float fromY, float fromZ,
-            float toX, float toY, float toZ)
-        {
-            Position const from(fromX, fromY, fromZ, 0.0f);
-            Position const to(toX, toY, toZ, 0.0f);
-            handler->SendSysMessage(Animus::Curriculum::FieldRoute::Report(mapId, from, to));
-            return true;
-        }
-
-        /// Every grid of `map` over the box, with a grid's margin: terrain, collision and navmesh tiles only
-        /// (EnsureGridCreated). Not LoadGrid: that loads the grid's creatures too, which an instanced map's base map --
-        /// one with no instance, as the console reads it -- cannot hold (`forge route 34 ...` crashed the sim).
-        static void CreateGrids(Map* map, float x1, float y1, float x2, float y2)
-        {
-            namespace Scan = Animus::Curriculum::FloorScan;
-            auto const [gx1, gx2] = Scan::GridSpan(x1, x2, 1.0f);
-            auto const [gy1, gy2] = Scan::GridSpan(y1, y2, 1.0f);
-            for (int32 gx = gx1; gx <= gx2; ++gx)
-                for (int32 gy = gy1; gy <= gy2; ++gy)
-                    map->EnsureGridCreated(CoreGrid(gx, gy));
-        }
-
         static bool HandleRoute(ChatHandler* handler, uint32 mapId, float fromX, float fromY, float fromZ,
             float toX, float toY, float toZ)
         {

@@ -190,7 +190,7 @@ def run(config: Config, include_out: bool = False) -> int:
     refused = refused_lines(config) if any(s.machine.name == config.host_name and s.reachable for s in statuses) else []
     say()
     if refused:
-        say(f"The host refused workers (last 6 h; the fingerprint differs: code, probe data, protocol or "
+        say(f"The host refused workers (last 6 h; the fingerprint differs: code, protocol or "
             f"AnimusForge.Curriculum.* keys; see forgectl conf-sync --check):")
         for line in refused:
             say(f"  {line}")

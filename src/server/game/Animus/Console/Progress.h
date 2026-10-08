@@ -207,7 +207,6 @@ namespace AnimusForge
         std::vector<std::pair<std::string, double>> ObserveBlocks;
         /// The dungeon ladder's collapsed rung (WingLadder's alarm, the host's: the cluster has one), or -1.
         int32 WingLadderCollapsed = -1;
-        std::string ProbeNote;          // the travel arenas' route plans and searches, and the route fields held
         bool LearnerRunning = false;
         int32 LearnerPid = -1;
         bool LearnerConnected = false;

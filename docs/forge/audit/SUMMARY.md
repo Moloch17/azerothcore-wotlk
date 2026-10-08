@@ -181,3 +181,5 @@ upstreaming the seven groups of general fixes the audit found.
   then set to 1.5e-4 (decision 0013). Those changes are on `forge` but M2 has not been resumed on the new build.
 
 Update 2026-10-08: the Gpu/ camera path (owner question 13) was removed; tag archive/gpu-camera.
+
+Update 2026-10-08: the ground probe and layered fields were removed (owner order); the dungeon routes use the navmesh RoutePlanner.

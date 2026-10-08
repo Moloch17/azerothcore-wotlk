@@ -5274,33 +5274,6 @@ AnimusForge.Socket = "/tmp/animus-forge.sock"
 AnimusForge.ResetOnMapThreads = 1
 
 ###################################################################################################
-# LAYERED FIELDS
-#
-#    The layered fields the dungeon wings' routes are planned over (per 1 yd cell every floor, the
-#    room above it, its liquid and its navmesh flags; about 0.3 MB a grid, made with
-#    `forge fieldstage <scenario>`), and a realm's companions read (`forge fieldworld`). The move
-#    block no longer senses the ground at all (no ground or flight rays, no clearance: the camera
-#    sees for the seat), so nothing a seat observes reads a field. (AnimusForge.Probe.Source, the
-#    baked probe tables and `forge rays` are gone.)
-#
-#    AnimusForge.Probe.Dir
-#        Description: Where the layered fields are, one zstd-compressed file a grid (about 0.3 MB,
-#                     <map>_<gridX>_<gridY>.field). Relative paths are relative to this config file's
-#                     directory.
-#        Default:     "" - (apps/forge/probes, beside the forge's models)
-
-AnimusForge.Probe.Dir = ""
-
-#
-#    AnimusForge.Probe.CacheGrids
-#        Description: Most layered fields held in memory at once (about 4 MB each; at least 9).
-#                     Past it the one read longest ago is let go, and read from disk again if a route
-#                     comes back to it.
-#        Default:     64
-
-AnimusForge.Probe.CacheGrids = 64
-
-###################################################################################################
 # CAMERA VISION
 #
 #    The vision block's third-person camera (camera-vision): the seat turns it itself (free look: a

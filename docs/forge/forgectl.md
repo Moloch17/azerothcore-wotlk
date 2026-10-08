@@ -66,7 +66,7 @@ No 'refused the worker' lines on the host in the last 6 h.
   used/total VRAM if `rocm-smi` or `nvidia-smi` is on the machine's path, else `-` (none of the current machines has
   either on its non-interactive path).
 - **The refused-worker lines** come from the host's docker log and `Server.log` (last 6 hours). Each one is a worker
-  whose fingerprint differs (code, probe data, protocol or the curriculum keys): see `conf-sync --check` and the
+  whose fingerprint differs (code, protocol or the curriculum keys): see `conf-sync --check` and the
   revision column.
 - A machine that does not answer shows `UNREACHABLE: <why>` (the ssh timeout is a few seconds), and the exit code is 1
   if any machine in the cluster is unreachable. `--all` adds the machines that are out of the cluster.

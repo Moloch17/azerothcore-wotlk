@@ -85,7 +85,7 @@ visit each worker's console over ssh (forgectl.md). A person typing `forge pause
 Direction: the
 cluster-wide fan-out in decision 0001 (proposal, not built). Verify: pause on the host leaves workers paused.
 
-**A7. The cluster fingerprint is broad and unforgiving.** It hashes source, protocol version, probe data, decision
+**A7. The cluster fingerprint is broad and unforgiving.** It hashes source, protocol version, decision
 timing and the
 curriculum tuning values (`Bridge/ClusterLink.cpp:226` onward; 239 keys on 2026-10-07). Conf files are per machine and
 untracked, so

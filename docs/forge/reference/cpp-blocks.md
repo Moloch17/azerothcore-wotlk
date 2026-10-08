@@ -49,8 +49,6 @@ are those of commit `bd32b9dc8`.
 | Blocks/CombatBlock.cpp | 344 | Threat status, visible enemies, ground fire, presses. |
 | Blocks/GoalBlock.h | 95 | Goal availability block (128 columns, no actions). |
 | Blocks/GoalBlock.cpp | 258 | Availability, goal status, "earned" rule. |
-| Blocks/LayeredField.h | 126 | NOT a block: layered height field types and store (documented in cpp-rewards-routing.md). |
-| Blocks/LayeredField.cpp | 478 | NOT a block: field bake, file I/O, cache. |
 | Layout/Block.h | 305 | `BlockId`, `Block` interface, sizing constants, goal space (documented here). |
 
 `Layout/Block.h` belongs to the Layout directory and is mapped again in cpp-layout-character.md.
@@ -340,8 +338,7 @@ Tests: `MoveBlockTest` (no ray columns, column names), `MoveControlsTest` (layou
 `MovePriceTest`, `LiveLayoutPinTest`, plus `PlayerControllerTest`/`KinematicsTest` for the controller.
 
 Reviewer notes: `MovePrice::BearingSwing` and `MovePrice::Undone` are used only by tests (bearing design is gone).
-`CLEARANCE_RANGE`, `MAX_STEP`, `MARCH_SLOPE` are kept in `MoveBlock.h` for routing (`LayeredField.cpp` includes the move
-header for `MAX_STEP`: a routing file depends on a block). The block writes the trail inside a const method: a second
+`CLEARANCE_RANGE`, `MAX_STEP`, `MARCH_SLOPE` are kept in `MoveBlock.h`. The block writes the trail inside a const method: a second
 observation of a seat in one decision advances nothing but would add a trail sample if 1 s passed. `RUN_SPEED` comment
 refers to a deleted TravelBlock. Hazard columns are fed from the aura/area search (`Encoding::TrackNearestHazard`) in
 non-sight stages (see duel notes).
@@ -557,8 +554,6 @@ ender targets that nothing populates.
 
 ## Observed issues
 
-- `Blocks/LayeredField.h/.cpp` are routing data, not a block; they sit in the wrong directory and include `MoveBlock.h`
-  for one constant (`LayeredField.cpp:27`).
 - `Layout/Block.h` comments reference deleted blocks (PartyBlock, CompanionBlock, CrowdBlock, HostilesBlock,
   SupportBlock) and `SeatView.h` references WorldBlock.
 - Goal block order columns (45-86) are dead.
