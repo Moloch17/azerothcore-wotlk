@@ -82,6 +82,9 @@ the end; with `overlap_updates` the caller passes `sync=False` and calls `sync_r
    (`Categorical.sample` or argmax), the look, foresight and memory, queueing every result into a `_Downloads`
    object, then `_Decided.finish` (`:313`) updates the `ActingState` from the fetched arrays. The critic is run in
    `act_and_value` itself (`:997`).
+   With a camera, `act_and_value` encodes it once (`self._rollout_actor.vision`) and hands the embedding to both the
+   actor (`_decide(vision_embedding=)`, `LayoutActor.features`) and the critic (`LayoutCritic.step(vision_embedding=)`), as
+   the graph path and the update do; before, each network ran the camera and map encoder. The result is the same tensor.
 
 Both must agree; `test_rollout_graph.py::test_the_graph_decides_as_the_eager_path_does` (GPU only) is the guard. They
 differ in the sampler: graph uses `sample_logits` (Gumbel-max), eager uses `Categorical`.

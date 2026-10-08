@@ -962,8 +962,12 @@ class MappoTrainer:
             layout_t = self._tensor(layout, torch.long).reshape(rows)
             groups = self._groups(layout, layout_t)
             image_t = self._image_tensor(image, rows)
+            # The camera (and the map) encoded once, for the actor and the critic both: the rollout copies share the
+            # one encoder, as the graph path (_RolloutGraph) and the update do.
+            seen = (self._rollout_actor.vision(obs_t, layout_t, image_t)
+                    if self._rollout_actor.vision is not None else None)
             decided = self._decide(obs, mask, layout, deterministic, state, (obs_t, layout_t, groups), downloads,
-                                   image=image_t)
+                                   image=image_t, vision_embedding=seen)
 
             state_t = self._tensor(state_features)[:, None, :].expand(envs, agents, state_features.shape[-1]).reshape(
                 rows, -1)
@@ -971,7 +975,8 @@ class MappoTrainer:
             critic_memory = (self._memory_tensor(state.critic_memory if state is not None else None, rows)
                              if self.recurrent_size else None)
             values, carried = self._rollout_critic.step(state_t, obs_t, layout_t, goal_t, groups,
-                                                        memory=critic_memory, image=image_t)
+                                                        memory=critic_memory, image=image_t,
+                                                        vision_embedding=seen)
             carried_at = (downloads.add(carried.reshape(envs, agents, self.recurrent_size))
                           if self.recurrent_size and state is not None else None)
             if self._rollout_value_norm is not None:
@@ -986,11 +991,13 @@ class MappoTrainer:
 
     @torch.no_grad()
     def _decide(self, obs: np.ndarray, mask: np.ndarray, layout: np.ndarray, deterministic: bool,
-                state: "ActingState | None", prepared=None, downloads: "_Downloads | None" = None, image=None):
+                state: "ActingState | None", prepared=None, downloads: "_Downloads | None" = None, image=None,
+                vision_embedding: torch.Tensor | None = None):
         """One decision of the actor: actions, their log probabilities, the foresight predictions and the goals. The
         acting state's memory and goal are updated when the result is finished. `prepared` is (obs, layout, groups)
         as tensors when the caller has them already. With `downloads` the results are queued there and the caller
-        finishes them after its one wait for the device (_Decided.finish); without, they are finished here."""
+        finishes them after its one wait for the device (_Decided.finish); without, they are finished here.
+        `vision_embedding` is the camera's embedding of the rows when the caller has encoded it already."""
         own = downloads is None
         if own:
             downloads = _Downloads(self._rollout_stream)
@@ -1007,7 +1014,8 @@ class MappoTrainer:
 
         memory = state.memory if state is not None else None
         features = self._rollout_actor.features(
-            obs_t, layout_t, self._memory_tensor(memory, rows) if self.recurrent_size else None, groups, image_t)
+            obs_t, layout_t, self._memory_tensor(memory, rows) if self.recurrent_size else None, groups, image_t,
+            vision_embedding)
 
         decided = _Decided(self, state, layout)
         if self.goal_count and state is not None:

@@ -1877,9 +1877,11 @@ class LayoutActor(nn.Module):
         return _carry_sequence(self.memory, self.recurrent_size, encoded, memory, dones)
 
     def features(self, obs: torch.Tensor, layout: torch.Tensor, memory: torch.Tensor | None = None,
-                 groups=None, image: torch.Tensor | None = None) -> torch.Tensor:
-        """The trunk's output for flat rows, through the GRU when there is one: what every head reads."""
-        return self.features_from(self.encode(obs, layout, groups, image=image), memory)
+                 groups=None, image: torch.Tensor | None = None,
+                 vision_embedding: torch.Tensor | None = None) -> torch.Tensor:
+        """The trunk's output for flat rows, through the GRU when there is one: what every head reads.
+        `vision_embedding`: the camera's embedding of these rows when the caller has it (as for encode)."""
+        return self.features_from(self.encode(obs, layout, groups, vision_embedding, image), memory)
 
     def features_from(self, hidden: torch.Tensor, memory: torch.Tensor | None = None) -> torch.Tensor:
         """features() from the trunk's output on: the GRU, when there is one."""
@@ -2111,12 +2113,15 @@ class LayoutCritic(nn.Module):
         return torch.zeros((*lead, self.recurrent_size), dtype=torch.float32, device=device)
 
     def step(self, state: torch.Tensor, obs: torch.Tensor, layout: torch.Tensor, goal: torch.Tensor | None = None,
-             groups=None, memory: torch.Tensor | None = None,
-             image: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
-        """One decision: (value [...], the memory carried out). Without a GRU the memory out is whatever came in."""
+             groups=None, memory: torch.Tensor | None = None, image: torch.Tensor | None = None,
+             vision_embedding: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+        """One decision: (value [...], the memory carried out). Without a GRU the memory out is whatever came in.
+        `vision_embedding`: the camera's embedding of these rows when the caller has it (the actor's, in a rollout
+        decision), else it is computed from `image`."""
         lead = obs.shape[:-1]
         state, obs, layout = state.reshape(-1, state.shape[-1]), obs.reshape(-1, obs.shape[-1]), layout.reshape(-1)
-        return self.step_encoded(self.encode(state, obs, layout, goal, groups, image=image), lead, memory)
+        return self.step_encoded(self.encode(state, obs, layout, goal, groups, vision_embedding=vision_embedding,
+                                             image=image), lead, memory)
 
     def step_encoded(self, encoded: torch.Tensor, lead, memory: torch.Tensor | None = None):
         """step() from the encoding on: the GRU and the value head."""
