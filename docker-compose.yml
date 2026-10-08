@@ -122,8 +122,19 @@ services:
     # A real init as PID 1 forwards `docker stop` to the worldserver (which then stops the learner so it
     # saves a checkpoint) and reaps background children such as TensorBoard.
     init: true
-    # Every start retrains the queue from scratch, so the server is never restarted behind your back.
-    restart: "no"
+    # The server boots idle ("Animus Forge is idle. Type `forge start`"): nothing starts a plan by itself, so a
+    # restarted container (a crash, a reboot of the machine, the docker daemon coming back) is harmless. On a worker
+    # it rejoins the host as soon as the host starts or resumes a stage; on the host it waits for `forge resume`.
+    # A crashed run is NOT resumed automatically: `forgectl watch` alerts when the learner stops, and `forge resume
+    # <stage>` continues from latest.pt. `docker compose stop` (or `down`) still keeps it stopped.
+    restart: unless-stopped
+    # The worldserver writes everything to stdout; docker's default json-file driver never rotates, so a long run
+    # fills the disk. Keep at most 5 files of 100 MB.
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
     stop_grace_period: 1m
     env_file:
         ${DOCKER_AC_ENV_FILE:-conf/dist/env.ac}
