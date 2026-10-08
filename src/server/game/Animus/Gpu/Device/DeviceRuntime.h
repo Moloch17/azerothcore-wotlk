@@ -48,8 +48,6 @@ using hipIpcMemHandle_t = cudaIpcMemHandle_t;
 #include <hip/hip_runtime.h>
 #endif
 
-struct ForgeVisionLaunch;
-
 /// Shared between the library's sources (hidden: only ForgeGpuGetApi is exported).
 namespace ForgeGpuDevice
 {
@@ -57,8 +55,6 @@ namespace ForgeGpuDevice
     hipStream_t Stream();
     /// 0 for success, else the error's code, with `what` and its text kept for LastError.
     int Check(hipError_t result, char const* what);
-    /// Vision.hip: DeviceApi's CastVision.
-    int CastVision(ForgeVisionLaunch const* launch);
 }
 
 #endif

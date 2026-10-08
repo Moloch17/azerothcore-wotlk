@@ -74,10 +74,6 @@ namespace VMAP
         bool GetLocationInfo(G3D::Vector3 const& p, LocationInfo& info) const;
         bool GetLiquidLevel(G3D::Vector3 const& p, LocationInfo& info, float& liqHeight) const;
         WorldModel* getWorldModel() { return iModel.get(); }
-        //! What intersectRay reads, read-only (the bots' camera copies it to the GPU: Animus/Gpu/VisionScene).
-        [[nodiscard]] WorldModel const* GetWorldModel() const { return iModel.get(); }
-        [[nodiscard]] G3D::Matrix3 const& GetInvRot() const { return iInvRot; }
-        [[nodiscard]] float GetInvScale() const { return iInvScale; }
     protected:
         G3D::Matrix3 iInvRot;
         float iInvScale{0.0f};

@@ -94,9 +94,8 @@ Each rank gets a contiguous slice of each group: `RankGroup(rank, group)` (`:302
 
 ### Device buffers (protocol 15+)
 
-`OfferDevice` only offers when `Animus::Gpu::Api()` is non-null, which is true if `AnimusForge.Gpu.Observe = 1` loaded the
-library at startup (`AnimusForge.cpp:203-210`) **or** if any earlier console command (`forge gpu scene`, `forge camera
-diff`) loaded it (`cs_forge.cpp:587-598`): the config switch is not consulted in `OfferDevice`. Per rank it allocates obs,
+`OfferDevice` only offers when `Animus::Gpu::Api()` is non-null, which is true only if `AnimusForge.Gpu.Observe = 1` loaded the
+library at startup (`AnimusForge.cpp:203-210`); `OfferDevice` itself checks only `Api()`. Per rank it allocates obs,
 state and mask (and image) buffers on `_config.Gpus[rank]` (or 0), exports IPC handles, sends DEVICE; if the learner
 accepts, `UploadRows` copies the rank's rows before each STEP (`CopyToDevice` per array then `Synchronize`) and the STEP
 omits those arrays (`:2909-2926`, `:2985-3000`). Any failure falls back to the socket path with a warning. Default is off

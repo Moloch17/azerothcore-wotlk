@@ -179,3 +179,5 @@ upstreaming the seven groups of general fixes the audit found.
 - The M2 learning-rate story: the stage's score plateau was read against the easy rung's best, so the learning rate
   annealed from about 30M steps (not 140M); this was fixed in the convergence re-baseline (decision 0011) and M2's rate was
   then set to 1.5e-4 (decision 0013). Those changes are on `forge` but M2 has not been resumed on the new build.
+
+Update 2026-10-08: the Gpu/ camera path (owner question 13) was removed; tag archive/gpu-camera.

@@ -91,71 +91,46 @@ waits up to 15 s (`LEARNER_STOP_GRACE`) for the checkpoint save.
   see the fingerprint section of [cpp-runtime-bridge.md](cpp-runtime-bridge.md).
 - zstd (:77-86): `find_library(libzstd.a zstd) REQUIRED`, linked statically; used by the ground-probe bake (outside this area).
 - `libforge-gpu.so` (:104-148): only if `hipcc` is found. Each `Animus/Gpu/Device/*.hip` is compiled by a custom command with `hipcc
-  --offload-arch=<FORGE_GPU_ARCHS, default gfx1100> -O3 -fPIC -std=c++20 -fvisibility=hidden -ffp-contract=off`, linked as a shared library
+  --offload-arch=<FORGE_GPU_ARCHS, default gfx1100> -O3 -fPIC -std=c++20 -fvisibility=hidden`, linked as a shared library
   `forge-gpu` (no HIP runtime linked), `add_dependencies(game forge-gpu)`, installed to `bin`. Without hipcc the build
-  prints "built without it" and everything stays on the CPU. Header dependencies are the `Gpu/*.h`, `Gpu/Device/*.h` and
-  `Vision/Camera.h`.
+  prints "built without it" and everything stays on the CPU. Header dependencies are the `Gpu/*.h`, `Gpu/Device/*.h`.
 
 ## GPU layer (`A/Gpu/`)
 
 What is built: a device library with one exported symbol `ForgeGpuGetApi()` returning a `ForgeGpuApi` table (`DeviceApi.h:46`,
-`FORGE_GPU_API_VERSION` = 5): `Init, Alloc, Free, Export` (IPC handle), `CopyToDevice, CopyToHost, Synchronize, AllocHost,
-FreeHost, LastError, CastVision`. `GpuRuntime.cpp` loads it (`std::call_once`): `PrepareEnvironment()` sets
+`FORGE_GPU_API_VERSION` = 6): `Init, Alloc, Free, Export` (IPC handle), `CopyToDevice, CopyToHost, Synchronize, AllocHost,
+FreeHost, LastError`. `GpuRuntime.cpp` loads it (`std::call_once`): `PrepareEnvironment()` sets
 `HSA_ENABLE_IPC_MODE_LEGACY=0` if unset; `TorchLibDir` runs `<python> -c 'import torch ...'` through `popen` in WorkDir to find the learner's torch
 `lib` directory (empty if torch has no HIP); `dlopen(libamdhip64.so, RTLD_NOW|RTLD_GLOBAL)` from there, then
-`dlopen(<dir of /proc/self/exe>/libforge-gpu.so, RTLD_LOCAL)`; a table with another version is refused (`AcceptApi`; test
-`VisionGpuTest.ALibraryFromAnotherBuildIsRefused`). The worldserver therefore only has HIP in memory if this was asked for.
+`dlopen(<dir of /proc/self/exe>/libforge-gpu.so, RTLD_LOCAL)`; a table with another version is refused (`AcceptApi`). The worldserver therefore only has HIP in memory if this was asked for.
 
 What uses it:
 
 | Consumer | Needs | Switch |
 |---|---|---|
-| Device observation buffers (`OfferDevice`/`UploadRows`, `AnimusForge.cpp:2824-2926`) | `Gpu::Api()` non-null | `AnimusForge.Gpu.Observe` (default **0**) loads at startup; but any earlier `forge gpu scene`/`forge camera diff` also loads it, and `OfferDevice` checks only `Api()` |
-| `GpuVision::Renderer` (`VisionGpu`): scenes, `Cast`, `Emulate` | `Api()` for the device, host only otherwise | called **only** from `cs_forge.cpp` (`forge gpu scene`, `forge camera diff`); the header says so (`VisionGpu.h:43-45`) |
+| Device observation buffers (`OfferDevice`/`UploadRows`, `AnimusForge.cpp:2824-2926`) | `Gpu::Api()` non-null | `AnimusForge.Gpu.Observe` (default **0**) loads at startup |
 
-So in production training nothing runs on the GPU from the worldserver: the camera is cast on the CPU (`Vision/VisionCaster.cpp`),
+So in production training nothing runs on the GPU from the worldserver: the camera is cast on the CPU (`Vision/VisionCaster.cpp`; the GPU camera was removed 2026-10-08, tag `archive/gpu-camera`),
 observations travel over the socket. `Gpu.Observe = 0` is the shipped default (conf.dist: the socket transport measured faster).
 
 Files:
 
-- `VisionDevice.h` (1680 lines): the camera's ray caster written once as `FORGE_HD` functions over 32-bit word arrays (BIH
-  walk, model/group/triangle tests, WMO liquids, terrain cells, door grid, pixel encoding, slot assignment, upscale) and the
-  `ForgeVisionLaunch` struct. Compiled by hipcc into the library and by the host compiler for `Emulate`, tests and the diff
-  (host builds may fuse multiply-adds; the library is built with `-ffp-contract=off`).
-- `VisionScene.{h,cpp}`: packs what the server loaded (`StaticScene` for the static tree with pruned top trees, `ModelPool`,
-  `DoorScene`, `PackTerrain`) into words; pure CPU.
-- `VisionGpu.{h,cpp}`: `Renderer` keeps scenes per (map, instance), shares terrain grids by reference count and static trees
-  per (map, tree pointer); `Sync(SceneSource)` brings a scene up to date and uploads; `Cast` runs a batch; `Emulate` the host
-  path; `Forget(map, instance)` releases a scene; `Shared()` is the process's renderer (replaced when the device appears).
-  World thread only.
-- `VisionDiff.{h,cpp}`: `RandomFrames`, `RunDiff`, `CompareFrame`, `FormatDiff`: the CPU-versus-GPU gate used by `forge camera diff`
-  (>= 99.9 % of non-edge pixels identical within tolerances, class and identity exact off edges).
 - `Device/Runtime.hip`: the table implementation (one process-wide stream `g_stream`, created non-blocking in `Init`).
-  `Device/Vision.hip`: kernels `CastKernel<Stack>` (one thread per ray, 8x8 tiles, 64 threads), `ClearKernel`, `CountKernel`
-  (atomic per-entity pixel counts), `SlotKernel` (one thread per frame), `UpscaleKernel`, `RemapKernel`; stack size chosen from
-  four sizes by the launch's worst-case depth. `Device/DeviceRuntime.h` maps HIP names to CUDA under `FORGE_GPU_CUDA` (no CUDA
+  `Device/DeviceRuntime.h` maps HIP names to CUDA under `FORGE_GPU_CUDA` (no CUDA
   build exists in the tree).
-
-Tests: `src/test/server/game/Animus/VisionGpuTest.cpp` (packing and host walks versus the CPU tree, API refusal, "nothing runs
-unless asked") and `VisionGpuDataTest.cpp` (needs map data; scenes such as Stockades, Barrens). Both skip the device parts on a
-machine without a GPU; see [tests.md](tests.md).
 
 ## Observed issues
 
 - `Runtime.hip:38-47`: `Init` creates a new stream whenever the requested device differs from the last, never destroying the
   old one (stream leak with several ranks on different GPUs; latent).
 - `GpuRuntime.cpp:35`, `ForgeConfig.cpp:143`: shell command lines built by concatenating paths in single quotes.
-- `VisionGpu.cpp:404`: `Renderer::Forget` has no production caller; scenes and `Static::Tree` pointers (`VisionGpu.h:201`) are
-  never released when a `Map` unloads; the shared renderer can hold dangling `StaticMapTree` pointers after a map is destroyed.
-  Harmless for the idle-only commands that use it today.
 - `DeviceRuntime.h:22-25` describes a CUDA build "that comes with G0"; no CUDA target exists in `CMakeLists.txt`.
-- `VisionGpu.h:44` mentions "G3 moves the CPU packing to the map threads": planned, not done; GPU camera rendering in training
-  is unimplemented.
 - `LearnerProcess.cpp:236` comment versus `CpuPlacement.h:55` (see above).
 
 ## Reviewer notes
 
-- Question: keep the GPU camera and device-buffer path at all (principle 17: dead code is deleted)? Its only users are two
-  diagnostic commands and a default-off switch, plus ~3,600 lines (`Gpu/` sources) and a hipcc build step.
+- Question: keep the device-buffer path at all (principle 17: dead code is deleted)? Its only user is a default-off switch
+  (`AnimusForge.Gpu.Observe`), plus the loader and a hipcc build step. The GPU camera that used to share the library was
+  removed 2026-10-08 (tag `archive/gpu-camera`).
 - The fingerprint hashes the `.hip` and `Gpu/` sources even on machines without hipcc, so a worker without the device library
   still matches.

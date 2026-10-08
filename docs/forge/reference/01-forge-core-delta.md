@@ -407,7 +407,7 @@ on the GPU. The core gained read-only access, with no change to any existing que
 - A hardening fix: `BIH` leaves out a primitive whose bounds are not finite or inside out
   (`BoundingIntervalHierarchy.h:89-92`; seen as `std::terminate` from `BIH::subdivide`).
 
-Callers: `Animus/Vision/MapVisionWorld.cpp`, `Animus/Gpu/VisionScene.cpp`. Note the dynamic-tree listing may only run
+Callers: `Animus/Vision/MapVisionWorld.cpp`. Note the dynamic-tree listing may only run
 while the owning map is not updating (comment in `DynamicTree.cpp`).
 **Merge risk.** Low (additive), except the `GetLiquidData` refactor, which touches upstream logic: re-check it on every
 merge of `GridTerrainData.cpp`.

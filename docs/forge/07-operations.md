@@ -70,7 +70,7 @@ Attach (`./forge.sh attach` or `docker attach ac-animus-forge-worldserver`) and 
 | `forge progress [seconds\|off]` | the periodic report interval |
 | `forge tasks` | per-map update task times since the last call |
 | `forge route`, `floorscan`, `fieldroute`, `fieldstage`, `fieldworld` | route and layered-field tools |
-| `forge controller record\|replay\|probe`, `forge camera snapshot\|diff`, `forge gpu scene` | diagnostics (idle only; `record` needs a playtest player) |
+| `forge controller record\|replay\|probe`, `forge camera snapshot` | diagnostics (idle only; `record` needs a playtest player) |
 
 Rules the code enforces: commands only record a request and are applied at the start of a tick, never inside a decision;
 `start` refuses while a plan is running; `start`/`resume` refuse a stage with no valid definition. The help line for

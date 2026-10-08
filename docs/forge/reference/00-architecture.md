@@ -454,7 +454,6 @@ The plain bools `_decisionTick` and `_applyTick` are read by map tasks without a
 - `LearnerProcess.cpp` `LearnerArgs`: `mappo.rank_sync` is only set when `DistWorld > 1` (a cluster); a purely local multi-rank
   run (`LearnerRanks > 1`, `DistWorld <= 1`) passes no `rank_sync` and the learner's yaml default applies. UNVERIFIED: that
   default's value.
-- `GpuVision::Renderer::Forget` has no production caller (known; deploy-gate "Before the dungeon stages").
 - Apparent stale artefact: `mod-animus-amdl8.patch` patches block files (`SupportBlock`, `HostilesBlock`, ...) that no longer exist in this tree.
 
 ## 11. Reviewer notes

@@ -224,7 +224,7 @@ the only thing it is used for is the scenario constructor. Do **not** use `forge
 directory that holds a run you want: it archives the stage's previous run.
 
 **Follow-up, not part of this deploy.** A command that writes only the files, `forge stagefiles <stage>|all`, is built
-and tested on the branch `stagefiles` (idle-only, like `forge camera diff`): it builds each scenario exactly as starting
+and tested on the branch `stagefiles` (idle-only): it builds each scenario exactly as starting
 it does, writes `layouts/<stage>/stage.json` and the manifests, and drops the scenario, with no episode and no learner.
 It is **not in this deploy's build**: a new console command is a new variable in the build the gate verifies. Merge it
 after the deploy; the next gate's step 4 is then `forge stagefiles all` once, with `forge run <stage> random 1` kept
@@ -619,9 +619,7 @@ None of these blocks the deploy; each must be done before the stage it concerns 
   alarm is: warn when six reads in a row at a rung bring no new best read and none reaches the target.
 - **(b) The wing rung-0 alarm** exists already; check that it fires on a real G2 first read (it has only been tested
   on synthetic reads).
-- **(c) G3: `GpuVision::Renderer::Forget` has no production caller.** With the GPU renderer on, a scene is built for each
-  instance and never freed, so scenes leak every time an instance unloads. The instance-unload path must call `Forget`
-  before `Gpu.Observe` is switched on.
+- **(c) G3** (`GpuVision::Renderer::Forget` has no production caller): moot, removed with the GPU camera (tag `archive/gpu-camera`).
 
 ## What can wait
 

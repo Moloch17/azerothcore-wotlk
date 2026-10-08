@@ -70,22 +70,6 @@ public:
 
     [[nodiscard]] bool isEnabled() const { return phasemask != 0; }
 
-    /// What intersectRay reads, at this moment (the bots' camera copies it to the GPU: Animus/Gpu/VisionScene).
-    struct RayView
-    {
-        uint32 PhaseMask = 0;
-        bool Spawned = false;
-        G3D::AABox Bound;
-        G3D::Matrix3 InvRot;
-        G3D::Vector3 Pos;
-        float InvScale = 0.0f;
-        float Scale = 0.0f;
-        VMAP::WorldModel const* Model = nullptr;
-    };
-    [[nodiscard]] RayView GetRayView() const
-    {
-        return { phasemask, owner && owner->IsSpawned(), iBound, iInvRot, iPos, iInvScale, iScale, iModel.get() };
-    }
     [[nodiscard]] bool IsMapObject() const { return isWmo; }
 
     /// `normal`, when given, takes the nearest hit triangle's normal in world space (unnormalised, either side), and

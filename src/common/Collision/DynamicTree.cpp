@@ -124,29 +124,6 @@ void DynamicMapTree::remove(GameObjectModel const& mdl)
     impl->remove(mdl);
 }
 
-void DynamicMapTree::VisitModels(
-    std::function<void(GameObjectModel const&, uint16 const* cells, uint32 count)> const& visit) const
-{
-    for (auto it = impl->memberTable.begin(); it != impl->memberTable.end(); ++it)
-    {
-        uint16 cells[9];
-        uint32 count = 0;
-        // Each node's own cell, found by its address, as insert filed it.
-        for (auto* node : it->value._nodes)
-        {
-            if (!node)
-                break;
-            for (int cell = 0; cell < DynTreeImpl::CELL_NUMBER * DynTreeImpl::CELL_NUMBER; ++cell)
-                if (impl->nodes[cell / DynTreeImpl::CELL_NUMBER][cell % DynTreeImpl::CELL_NUMBER] == node)
-                {
-                    cells[count++] = uint16(cell);
-                    break;
-                }
-        }
-        visit(*it->key, cells, count);
-    }
-}
-
 bool DynamicMapTree::contains(GameObjectModel const& mdl) const
 {
     return impl->contains(mdl);

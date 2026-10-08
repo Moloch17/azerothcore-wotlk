@@ -111,8 +111,7 @@ namespace Animus::Vision
 
     /// **A ground hazard as a ray sees it** (Class::GroundHazard): a flat disc, HAZARD_THICKNESS yards thick, lying on
     /// the ground at the area's centre with its radius -- what the client draws of a fire pool or a poison cloud. It is
-    /// a UnitShape (a vertical cylinder), so every caster that draws units -- VisionCaster's CastRay and the device's
-    /// (Gpu/VisionDevice.h, DeviceUnit) -- draws it the same way, and the diff gate and the data harness compare it.
+    /// a UnitShape (a vertical cylinder), so VisionCaster's CastRay draws it as it draws any unit.
     constexpr float HAZARD_THICKNESS = 0.2f;
     /// How far below the area's centre the disc starts, so ground a little uneven under it does not hide it.
     constexpr float HAZARD_SINK = 0.05f;
