@@ -73,3 +73,24 @@ address = "192.168.0.65"
 role = "worker"
 path = "~/animus-forge"
 in_cluster = false
+
+[doctor]                # thresholds for `forgectl doctor` (a key left out takes the default shown)
+disk_min_gb = 30                 # free space under a checkout below this is a FAIL (the deploy gate's number)
+learner_error_hours = 6          # a traceback or error in the tail of a learner log counts if the log was written this recently
+partial_stale_minutes = 30       # a *.pt.partial older than this is a checkpoint write that did not finish
+refused_hours = 3                # how far back in the host's logs to look for 'refused the worker'
+dev_gpu_busy_max_percent = 30    # the dev card counts as idle at or below this busy percentage
+
+[notify]                # `forgectl watch`: where messages go. A sink left empty/false is off; with none on, watch prints.
+# Put a webhook URL or token in ~/.forgectl/notify.toml (a [notify] table there overrides this one), not here:
+# this file is tracked.
+min_severity = "info"            # info, warn or critical: lower events are printed but not sent
+poll_seconds = 60                # seconds between polls
+learner_silent_minutes = 10      # the plan trains and the host learner's log is older than this: learner_silent
+confirm_polls = 2                # a worker drop or an unreadable host must hold for this many polls to be told
+debounce_minutes = 30            # the same event (kind and subject) is not sent twice inside this window
+desktop = false                  # notify-send, if installed
+command = ""                     # a shell command; the message is in $FORGECTL_MESSAGE and is $1
+webhook_url = ""                 # an http(s) URL; the body is JSON {"text", "content", "kind", "severity", ...}
+webhook_header = ""              # one optional header, "Name: value" (an Authorization token)
+file = ""                        # append one line per message to this file (~ is expanded)

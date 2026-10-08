@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from . import remote
+from . import confkeys, remote
 from .config import Config, Machine
 from .ui import say, strip_ansi, table
 
@@ -17,6 +17,8 @@ PROBE = r"""
 cd {path} 2>/dev/null || {{ echo "nopath=1"; exit 0; }}
 echo "rev=$(git rev-parse --short HEAD 2>/dev/null)"
 echo "ws=$(docker ps --filter 'name=^{container}$' --format '{{{{.Status}}}}' 2>/dev/null | head -1)"
+docker ps -q >/dev/null 2>&1; echo "dockerrc=$?"
+echo "restart=$(docker inspect -f '{{{{.HostConfig.RestartPolicy.Name}}}}' {container} 2>/dev/null)"
 L={learner_log}
 pick() {{ tail -c 300000 "$L" 2>/dev/null | grep -a '^update [0-9]* | steps' | tail -1 | cut -c1-120; }}
 echo "u1=$(pick)"
@@ -32,6 +34,10 @@ elif command -v nvidia-smi >/dev/null 2>&1; then
   echo "gpu=$(nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null \
     | head -1 | awk -F, '$2 > 0 {{printf "%d/%d MiB", $1, $2}}')"
 fi
+C={conf}
+if [ -r "$C" ]; then echo "conflines=$(wc -l < "$C")"; else echo "conflines=-1"; fi
+echo "##CONF"
+{conf_grep} "$C" 2>/dev/null
 """
 
 REFUSED = r"""
@@ -55,6 +61,10 @@ class MachineStatus:
     disk: str = "-"
     gpu: str = "-"
     fields: dict = field(default_factory=dict)
+    restart: str | None = None     # the worldserver container's docker restart policy ("unless-stopped", "no", ...)
+    docker_ok: bool | None = None  # `docker ps` works
+    conf_lines: int | None = None  # line count of the conf (0: empty, -1: unreadable)
+    conf_keys: dict = field(default_factory=dict)   # confkeys.scan of the conf
 
 
 def parse_update(line: str):
@@ -66,15 +76,20 @@ def parse_update(line: str):
 
 def parse_probe(machine: Machine, out: str) -> MachineStatus:
     fields = {}
+    out, _, conf_text = out.partition("##CONF")
     for line in out.splitlines():
         key, sep, value = line.partition("=")
         if sep:
             fields[key.strip()] = value.strip()
-    status = MachineStatus(machine, fields=fields)
+    status = MachineStatus(machine, fields=fields, conf_keys=confkeys.scan(conf_text))
     if "nopath" in fields:
         status.problem = f"no checkout at {machine.path}"
         return status
     status.rev = fields.get("rev", "")
+    status.restart = fields.get("restart") or None
+    status.docker_ok = (fields["dockerrc"] == "0") if "dockerrc" in fields else None
+    lines = fields.get("conflines", "")
+    status.conf_lines = int(lines) if lines.lstrip("-").isdigit() else None
     status.worldserver = fields.get("ws", "")
     first, second = parse_update(fields.get("u1", "")), parse_update(fields.get("u2", ""))
     if second is None:
@@ -98,7 +113,8 @@ def parse_probe(machine: Machine, out: str) -> MachineStatus:
 
 def probe(config: Config, machine: Machine) -> MachineStatus:
     script = PROBE.format(path=remote.sh_path(machine.path), container=config.worldserver, sample=SAMPLE_SECONDS,
-                          learner_log=remote.sh_path(config.path_of(machine, "learner_log")))
+                          learner_log=remote.sh_path(config.path_of(machine, "learner_log")),
+                          conf=remote.sh_path(config.path_of(machine, "conf")), conf_grep=confkeys.GREP)
     result = remote.on(machine, script, timeout=SAMPLE_SECONDS + 20)
     if result.unreachable or (not result.ok and not result.out):
         return MachineStatus(machine, reachable=False, problem=result.reason())
@@ -113,6 +129,27 @@ def refused_lines(config: Config, since: str = "6h") -> list[str]:
     return [strip_ansi(line).strip() for line in result.out.splitlines() if line.strip()] if result.ok else []
 
 
+def cadence_drift(config: Config, statuses: list[MachineStatus]) -> list[str]:
+    """Machines whose must-match conf keys (ticks, half-batch, camera, map, memory) differ from the host's."""
+    host = next((s for s in statuses if s.machine.name == config.host_name and s.reachable and not s.problem), None)
+    if host is None:
+        return []
+    out = []
+    for s in statuses:
+        if s is not host and s.reachable and not s.problem:
+            out += [f"{s.machine.name}: {line}" for line in confkeys.mismatches(host.conf_keys, s.conf_keys)[:3]]
+    return out
+
+
+def stage_ticks_line(statuses: list[MachineStatus]) -> str:
+    parts = []
+    for s in statuses:
+        ticks = confkeys.cadence(s.conf_keys)["stage_ticks"] if s.reachable and not s.problem else {}
+        if ticks:
+            parts.append(f"{s.machine.name}: " + ", ".join(f"{k}={v}" for k, v in ticks.items()))
+    return "; ".join(parts)
+
+
 def render(config: Config, statuses: list[MachineStatus]) -> str:
     host_rev = next((s.rev for s in statuses if s.machine.name == config.host_name and s.reachable), "")
     rows = []
@@ -120,16 +157,26 @@ def render(config: Config, statuses: list[MachineStatus]) -> str:
         role = s.machine.role if s.machine.in_cluster else f"{s.machine.role} (out)"
         if not s.reachable or s.problem:
             rows.append([s.machine.name, role, "-", "-", f"UNREACHABLE: {s.problem}" if not s.reachable else s.problem,
-                         "-", "-", "-"])
+                         "-", "-", "-", "-", "-", "-", "-"])
             continue
         rev = s.rev + ("*" if host_rev and s.rev != host_rev else "")
         ws = "up" if s.worldserver.startswith("Up") else "DOWN"
         learner = s.learner if s.step is None else f"{s.learner}, step {s.step:,}, {s.sps:,.0f}/s"
-        rows.append([s.machine.name, role, rev, ws, learner, s.load, s.disk, s.gpu])
-    headers = ["machine", "role", "rev", "worldserver", "learner", "load", "disk free", "gpu mem"]
+        rows.append([s.machine.name, role, rev, ws, learner, *confkeys.short(s.conf_keys), s.load, s.disk, s.gpu])
+    headers = ["machine", "role", "rev", "worldserver", "learner", "ticks", "half", "envs", "cpus", "load", "disk free",
+               "gpu mem"]
     text = table(headers, rows)
     if any(s.reachable and host_rev and s.rev != host_rev for s in statuses):
         text += "\n* the revision differs from the host's: that machine is not on the host's build"
+    text += ("\nticks, half, envs, cpus: AnimusForge.TicksPerDecision, HalfBatch, Envs and Learner.Cpus from each "
+             "machine's conf ('-' = not set, the build's default applies)")
+    per_stage = stage_ticks_line(statuses)
+    if per_stage:
+        text += "\nper-stage ticks per decision: " + per_stage
+    drift = cadence_drift(config, statuses)
+    if drift:
+        text += ("\nCADENCE DIFFERS from the host's (ticks, half-batch, camera, map, memory keys):\n  "
+                 + "\n  ".join(drift))
     return text
 
 

@@ -30,8 +30,10 @@ may itself be listed (`local = true` there: no ssh).
 
 | Command | What it is for | Changes things? |
 |---|---|---|
-| `forgectl cluster` | the health table of the machines | no |
-| `forgectl status` | the host's `forge status` and the learner's latest numbers | no |
+| `forgectl cluster [--json]` | the health table of the machines (with each one's ticks, half-batch, envs, cpus) | no |
+| `forgectl status [--json]` | the host's `forge status` and the learner's latest numbers; `--json` is the stable machine-readable document | no |
+| `forgectl doctor` | the read-only pre-flight: PASS / WARN / FAIL per check, exit 1 on a FAIL | no |
+| `forgectl watch [--once]` | poll the cluster and notify on a change (desktop, command, webhook, file) | no (writes its sinks and `~/.forgectl/watch-state.json`) |
 | `forgectl logs [machine]` | worldserver and learner logs, problems first | no |
 | `forgectl conf-sync [--check]` | keep the workers' `AnimusForge.Curriculum.*` keys equal to the host's | writes workers' confs |
 | `forgectl stage status\|start\|resume\|pause\|cancel` | drive a stage | console commands |
@@ -80,6 +82,277 @@ learner (sarah): update 3,802 | steps 172,177,408 | 2,560 steps/s | rollout 3.20
 The table is the one the console prints (stage, progress, the sim's timing, the warnings, the connected workers). The
 learner line is the newest decision: its step count and rate, how long the rollout and the update took, and the loss,
 entropy and score. If the console does not answer, it prints that and still shows the learner line; exit 1.
+
+## `forgectl status --json` and `forgectl cluster --json`
+
+One JSON object on stdout, nothing else (no colour codes, no progress lines), for scripts, `forgectl watch` and a
+dashboard. **Exit 0 when the host could be read** (`read_ok: true`), 1 when it could not; a worker that is
+unreachable is data in `machines`, not an error. `--no-console` leaves out the one console read (below);
+`status --json --stage NAME` reads that run directory instead of the newest one. `cluster --json` prints the
+`schema`, `kind`, `time`, `source`, `host`, `read_ok`, `cluster` and `machines` keys only (`kind: "cluster"`).
+
+**Where the data comes from.** Files, not the console: on the host, the newest run directory's `progress.json`
+(`runs/*/progress.json` by modification time, archived `*.worker-*` directories skipped; keys in
+[file-formats.md](reference/file-formats.md)), `finished.json`, `spec.json`, the last row of `metrics.csv` and the
+newest `learner` row of `eval.csv`, all read over ssh with BatchMode; on every machine the same one-ssh probe `forgectl
+cluster` uses. The host's `forge status` text is typed into its console once, only for `plan.last_plan` and
+`workers_seen_by_host` (skipped, and those become null, with `--no-console` or when the console does not answer).
+`source` is `"files"`.
+
+**The rules of the schema.** `schema` is an integer (now `1`); changes only add keys, never rename or remove one inside
+a schema number. Every key is always present and is `null` when unknown or absent. Times are UTC ISO-8601 (`...Z`),
+durations in seconds (`*_s` or `*_seconds`), counts and steps are integers. `wall_steps_per_sec`, `update_bound`,
+`rollout_seconds`, `update_compute_seconds` and `wait_seconds` are passed through as the learner logged them (a build
+that does not write them gives `null`).
+
+| Key | Meaning |
+|---|---|
+| `schema`, `kind`, `time`, `source`, `host` | the schema number, `"status"` or `"cluster"`, when it was taken (UTC), `"files"`, the host's name |
+| `read_ok`, `read_problem` | the host and its run directory could be read; if not, why |
+| `cluster.dev_revision`, `host_revision` | short revisions of this checkout and of the host |
+| `cluster.revisions_equal` | every reachable cluster machine is on the host's revision (null if none could be read) |
+| `cluster.refused`, `refused_window` | `refused the worker` lines the host logged in the last 6 h (the fingerprint differs; see [cluster.md](cluster.md)) |
+| `plan.state` | `running` (phase `training`/`evaluating` and `progress.json` fresh: 5 min while training, 2 h while evaluating), `stale` (an active phase whose file stopped being written), `idle` (anything else, including no run) |
+| `plan.stage`, `run_dir`, `phase`, `updated_at`, `progress_age_s` | the run read, `progress.json`'s `phase` (`training`, `evaluating`, `finished`, `stopped`), when it was written, its age by the host's clock |
+| `plan.last_plan`, `console_available` | the console's `last plan` line (e.g. `move2_seek cancelled`); whether the console answered |
+| `progress.update`, `env_steps`, `total_env_steps`, `fraction` | the learner's update count, steps so far, the stage's ceiling, the quotient |
+| `progress.env_steps_per_sec` | the steps/s the learner logged for its last update |
+| `progress.wall_steps_per_sec`, `update_bound`, `rollout_seconds`, `update_compute_seconds`, `wait_seconds` | the wall-clock rate and the split of an update, when the learner logs them; else `null` |
+| `progress.update_seconds`, `elapsed_seconds`, `resumed_env_steps` | seconds of the last update, seconds of the run, steps the run resumed from |
+| `ladder.rung` | the rung of the stage's ladder at the last evaluation (`eval_seek_rung` today; null for a stage with none); `episode_rung` is the mean over the last update's episodes |
+| `ladder.shaping_scale`, `cost_scale`, `lr_scale` | the fade's scales and the learning-rate scale |
+| `ladder.collapsed`, `ladder.stalled`, `alarm_rung` | `ladder_collapsed` / `ladder_stalled` from the learner (`true` when the rung is raised; `stalled` is `null` while the learner does not write it); the rung that raised it |
+| `eval.count`, `last_env_steps`, `last_score`, `best_score`, `best_env_steps`, `evals_since_best`, `patience`, `eval_every` | the evaluation bookkeeping of `progress.json` |
+| `eval.file_updated_at`, `eval.latest` | when `eval.csv` was last written; its newest `learner` row (`update, env_steps, policy, episodes, score, stderr, margin, best, evals_since_best, seconds`) |
+| `eval.headline[]` | each headline measure of the stage: `metric`, `value` (its newest evaluation value), `target` (`{op, value}` from `status_targets`, or null) and `met` (null if there is no target or value) |
+| `finished` | `finished.json` (`reason`, `advanced`, `env_steps`, `best_score`) or null while the stage is undecided |
+| `spec.decision_ticks`, `tick_ms`, `env_groups`, `num_envs` | the run's `spec.json`: the cadence the sim actually ran |
+| `learner` | the host's learner: `state` (`stepping`, `stalled`, `no_log`), `env_steps`, `steps_per_sec`, `log_age_s` (seconds since the learner log was written; a long idle gap reads `stalled` too: read it with `plan.state`) |
+| `workers_seen_by_host[]` | what the host's console lists: `address`, `machine`, `state`, `scenario`, `envs`, `env_steps_per_sec`, `last_seen_s` |
+| `machines[]` | per machine: `name, role, in_cluster, reachable, problem, revision, revision_matches_host, worldserver {up, status}, learner {state, env_steps, steps_per_sec, log_age_s}, load {one_minute, cpus}, disk_free_gb, gpu {used_mib, total_mib}` |
+
+A real output (read-only, from the idle cluster on 2026-10-08, trimmed to three of seventeen headline values, one
+worker of three and the host plus one unreachable machine of four):
+
+```json
+{
+  "schema": 1, "kind": "status", "time": "2026-10-08T11:07:05Z", "source": "files", "host": "sarah",
+  "read_ok": true, "read_problem": null,
+  "cluster": {"host": "sarah", "dev_revision": "a06f5ad36", "host_revision": "64b7c7dc5", "revisions_equal": true,
+              "refused": [], "refused_window": "6h"},
+  "plan": {"state": "idle", "stage": "move2_seek", "run_dir": "move2_seek", "phase": "stopped",
+           "updated_at": "2026-10-07T15:01:22Z", "progress_age_s": 72329, "last_plan": "move2_seek cancelled",
+           "console_available": true},
+  "progress": {"update": 4203, "env_steps": 179769344, "total_env_steps": 250000000, "fraction": 0.7191,
+               "resumed_env_steps": 138510336, "env_steps_per_sec": 2508.9453979659193,
+               "update_seconds": 1.6734974089995376, "elapsed_seconds": 10735.036196289002,
+               "wall_steps_per_sec": null, "update_bound": null, "rollout_seconds": null,
+               "update_compute_seconds": 4.874696118000429, "wait_seconds": null},
+  "ladder": {"rung": 1.0, "episode_rung": 1.96875, "alarm_rung": null, "shaping_scale": 0.25, "cost_scale": 1.0,
+             "lr_scale": 0.38774980967020956, "collapsed": false, "stalled": null},
+  "eval": {"count": 18, "last_env_steps": 171218944, "last_score": 1.512293768234742,
+           "best_score": 2.753656503481743, "best_env_steps": 40351744, "evals_since_best": 13, "patience": 3,
+           "eval_every": 10000000, "file_updated_at": "2026-10-07T14:24:09Z",
+           "latest": {"update": 3756, "env_steps": 171218944, "policy": "learner", "episodes": 78,
+                      "score": 1.512293768234742, "stderr": 0.20714293188462887, "margin": 0.49322934515362243,
+                      "best": 2.753656503481743, "evals_since_best": 13, "seconds": 22.4},
+           "headline": [
+             {"metric": "found", "value": 0.807692289352417, "target": {"op": ">=", "value": 0.95}, "met": false},
+             {"metric": "found_hallway", "value": null, "target": null, "met": null},
+             {"metric": "wall_seconds", "value": 6.580128192901611, "target": {"op": "<=", "value": 2.0},
+              "met": false}]},
+  "finished": null,
+  "spec": {"decision_ticks": 1, "tick_ms": 250, "env_groups": 2, "num_envs": 64},
+  "learner": {"state": "stalled", "env_steps": 179759104, "steps_per_sec": 2509.0, "log_age_s": 72333},
+  "workers_seen_by_host": [
+    {"address": "192.168.0.117", "machine": "moloch", "state": "idle", "scenario": "move2_seek", "envs": 0,
+     "env_steps_per_sec": 0, "last_seen_s": 3}],
+  "machines": [
+    {"name": "sarah", "role": "host", "in_cluster": true, "reachable": true, "problem": null,
+     "revision": "64b7c7dc5", "revision_matches_host": true, "worldserver": {"up": true, "status": "Up 23 hours"},
+     "learner": {"state": "stalled", "env_steps": 179759104, "steps_per_sec": 2509.0, "log_age_s": 72333},
+     "load": {"one_minute": 0.75, "cpus": 24}, "disk_free_gb": 219.5, "gpu": null},
+    {"name": "spencer", "role": "worker", "in_cluster": true, "reachable": false,
+     "problem": "unreachable: ssh: connect to host 192.168.0.66 port 22: No route to host", "revision": null,
+     "revision_matches_host": null, "worldserver": {"up": null, "status": null},
+     "learner": {"state": null, "env_steps": null, "steps_per_sec": null, "log_age_s": null},
+     "load": {"one_minute": null, "cpus": null}, "disk_free_gb": null, "gpu": null}]
+}
+```
+
+(The real output is the same data indented one key per line.) The idle cluster shows `learner.state: "stalled"`
+because the learner's log has not been written for 20 hours: a stalled learner is a fault only while `plan.state` is
+`running`. The phase 2 structured `status` of the audit will replace the file reads and keep this schema.
+
+## `forgectl doctor`
+
+The read-only pre-flight: "can I start or resume a stage?". It prints one `PASS`, `WARN`, `FAIL` (or `INFO`) line per
+check, and under every WARN and FAIL a `to do:` line. **Exit 1 if any check FAILs**, 0 otherwise (warnings do not
+change the exit code). It changes nothing: it asks each cluster machine one probe over ssh (BatchMode) plus one more
+for the learner log, reads the confs with `cat`, reads `docker inspect` and the local GPU's sysfs counters, and
+takes about 10 seconds. Thresholds are in the `[doctor]` section of
+[`apps/forge/cluster.toml`](../../apps/forge/cluster.toml):
+
+| `[doctor]` key | Default | Used by |
+|---|---|---|
+| `disk_min_gb` | `30` | free space under a checkout, per machine (the deploy gate's number) |
+| `learner_error_hours` | `6` | a traceback or error in the tail of a learner log counts only if the log was written within this many hours |
+| `partial_stale_minutes` | `30` | a `*.pt.partial` older than this is a checkpoint write that never finished |
+| `refused_hours` | `3` | how far back in the host's docker log and `Server.log` to look for `refused the worker` |
+| `dev_gpu_busy_max_percent` | `30` | the dev card counts as idle at or below this busy percentage |
+
+An unknown key or a negative number in `[doctor]` is a configuration error naming the key.
+
+| Check | Level when it goes wrong | What it looks at | What it tells you to do |
+|---|---|---|---|
+| `machines reachable` | FAIL | every cluster machine answers its ssh probe and has the checkout | power it on or fix the network, test `ssh -o BatchMode=yes user@address true`, or set `in_cluster = false` |
+| `revision` | FAIL | every machine's `git rev-parse --short HEAD` equals this checkout's (the machines that differ are named) | `forgectl build --cluster` (refuses under a running stage unless `--stop-running`) |
+| `docker` | FAIL | `docker ps` works on every machine | start docker; the user must be in the docker group |
+| `worldserver up` | WARN | the worldserver container runs | fine if no stage is meant to run; otherwise start it or build |
+| `restart policy` | WARN | the container's docker restart policy is not `no` | `docker update --restart unless-stopped ac-animus-forge-worldserver` on that machine |
+| `disk free` | FAIL | free space under each checkout is at least `disk_min_gb` | archive old runs, delete old `checkpoint_*.pt` |
+| `dev disk free` | WARN | the same for this machine's checkout | free space before a local build |
+| `dev card idle` | WARN | the dev machine's GPU (the card with the most VRAM, `/sys/class/drm`) busy percentage over 2 s is at most `dev_gpu_busy_max_percent`; also reports VRAM used | find what is using it; the desktop counts |
+| `curriculum keys` | FAIL | the `AnimusForge.Curriculum.*` keys of every worker equal the host's (what `conf-sync --check` compares); an unreadable conf fails too | `forgectl conf-sync --check`, then `forgectl conf-sync` |
+| `sim keys` | FAIL | `AnimusForge.Vision.*`, `Map.*`, `Memory.*`, `TicksPerDecision` (global and every `Stage.<name>.TicksPerDecision`) and `HalfBatch` equal the host's on every machine (an unset key counts as a value) | edit the conf by hand to equal the host's and restart that worldserver (`conf-sync` does not copy these) |
+| `cadence <machine>` (INFO) | none | each machine's `decision_ticks` (`TicksPerDecision`), `HalfBatch`, `Envs`, `Learner.Cpus` and per-stage tick overrides, so a deploy cannot change the sim's cost silently (audit finding O1). `Envs` and `Cpus` may differ between machines; they are shown, not compared | read them; compare with `spec.decision_ticks` of `status --json` |
+| `conf not empty` | FAIL | no machine's conf has zero lines or is unreadable | restore it from its `mod_animus_forge.conf.bak-*` before any restart |
+| `fingerprint refusals` | WARN | `refused the worker` lines in the host's last `refused_hours` | if the two checks above pass they are from before the fix; else build or conf-sync |
+| `learner log errors` | WARN | a `Traceback`, `Error`, `CRITICAL`, `FATAL` or `Exception` line in the last 400 lines of a learner log written in the last `learner_error_hours` | `forgectl logs <machine> --errors` |
+| `stale checkpoint writes` | WARN | `*.pt.partial` files under `runs/` older than `partial_stale_minutes` | make sure no learner runs there, then delete the partial (the `.pt` beside it is the good one) |
+
+The last line is the count (`10 pass, 0 warn, 3 fail.`). A machine that is unreachable is one FAIL (`machines
+reachable`); the other checks skip it. Real output (2026-10-08; spencer and thomas were off the network, and this
+checkout is ahead of the cluster):
+
+```
+$ forgectl doctor
+Checking 4 machines (sarah, spencer, thomas, moloch); read-only, about 10 seconds ...
+FAIL  machines reachable       2/4; no answer from spencer (unreachable: ssh: connect to host 192.168.0.66 port 22: No route to host), thomas (unreachable: ssh: connect to host 192.168.0.67 port 22: No route to host)
+      to do: power it on or fix the network and try `ssh -o BatchMode=yes user@address true`; if it is meant to be out, set in_cluster = false in apps/forge/cluster.toml
+FAIL  revision                 dev checkout is 3e3216eb1; different: sarah 64b7c7dc5, moloch 64b7c7dc5
+      to do: a stage must not be running; run `forgectl build --cluster` (it refuses under a running stage unless --stop-running)
+PASS  docker                   answers on 2 machines
+PASS  worldserver up           running on 2 machines
+PASS  restart policy           restarts at boot on 2 machines
+PASS  disk free                sarah 219 GB, moloch 1119 GB (need >= 30)
+PASS  dev card idle            busy 1% (limit 30%), VRAM 1225/20464 MiB used
+FAIL  curriculum keys          conf not readable: spencer, thomas
+      to do: reach the machine first
+PASS  sim keys                 Vision.*, Map.*, Memory.*, TicksPerDecision (global and per stage) and HalfBatch equal on 2 machines
+INFO  cadence sarah            decision_ticks 1, HalfBatch 1, Envs 64, Cpus auto, stage ticks: none
+INFO  cadence moloch           decision_ticks 1, HalfBatch 1, Envs 16, Cpus auto, stage ticks: none
+PASS  conf not empty           every conf has lines
+PASS  fingerprint refusals     none in the host's last 3 h
+PASS  learner log errors       none in the tail of a log written in the last 6 h
+PASS  stale checkpoint writes  no *.pt.partial left behind
+10 pass, 0 warn, 3 fail. Fix the FAIL lines before starting or resuming a stage.
+```
+
+The cadence is also in `forgectl cluster` (columns `ticks`, `half`, `envs`, `cpus`, a `per-stage ticks per decision`
+line and a `CADENCE DIFFERS` block when a machine's must-match keys differ from the host's) and in `conf-sync --check`
+(the same four columns, a host row, and the same block; `conf-sync` still copies only the Curriculum keys, and its exit
+code is still decided by them). `-` means the key is not in that conf and the build's default applies (Envs 64,
+TicksPerDecision 1, HalfBatch 0, Cpus `auto`). In `status --json` and `cluster --json` each machine has
+`restart_policy`, `docker_ok`, `conf_lines` and `cadence {ticks_per_decision, half_batch, envs, learner_cpus,
+map_update_threads, stage_ticks {stage: ticks}}`.
+
+## `forgectl watch`
+
+A long-running watcher: it polls the cluster the way `status --json` reads it (files over ssh, the machine probes, the
+refusal lines; **not** the console) and sends a message when something changes, so nobody has to run `forgectl
+cluster` and read. It runs in the foreground (Ctrl-C stops it, exit 0); `--once` does one pass and exits (1 if the
+host could not be read); `--interval SECONDS` overrides `poll_seconds`.
+
+**It is read-only toward the cluster**: it never changes a machine and is not audited. It writes only to its sinks and
+to `~/.forgectl/watch-state.json` (mode 0600; `$FORGECTL_HOME` moves it), which holds the last poll, which alarms are
+active and when each event was last sent. One watcher per machine: a second one stops with "another forgectl watch is
+running" (an exclusive lock on `~/.forgectl/watch.lock`). The first poll is the baseline: it reports what is wrong
+right now (a worker down, a low disk), but not transitions, because there is no earlier poll.
+
+**What it tells you.**
+
+| Event (`kind`) | Severity | When |
+|---|---|---|
+| `stage_finished` | info | a stage's `finished.json` appeared (converged and advanced, converged without advancing, or reached its step ceiling); also read from the old stage's run when the plan moved on between two polls |
+| `stage_advanced` | info | the plan moved from one stage to the next |
+| `rung_stepped` | info | the stage's ladder rung (`ladder.rung`) or the fade's `shaping_scale` changed |
+| `eval_finished` | info | `eval.count` grew: the new evaluation's score and the headline measures that have targets, met or not |
+| `plan_ended` | info / warn | the plan went from running to idle: info if a stage decision ended it (nothing is running now), warn if it stopped without one (the sim went idle unexpectedly: cancelled, crashed or finished its queue) |
+| `ladder_collapsed`, `ladder_stalled` | warn | the learner raised the flag while the plan is running |
+| `learner_silent` | critical | the plan is training and the host learner's log is older than `learner_silent_minutes` (10) |
+| `plan_stale` | critical | `progress.json` says training or evaluating but has not been written for 5 min (2 h while evaluating) |
+| `worker_down` | warn | a cluster worker is unreachable, its worldserver container is not running, or (while training) its learner stopped stepping; must hold for `confirm_polls` (2) polls in a row |
+| `fingerprint_refused` | warn | a new `refused the worker` line in the host's log |
+| `disk_low` | warn | a machine has less free disk than `[doctor] disk_min_gb` (30) |
+| `host_unreadable` | critical | the host (or its run directory) cannot be read, so the watcher is blind; also after `confirm_polls` polls |
+| `<kind>_cleared` | info | a condition above went away (`worker_down_cleared` is a worker rejoining) |
+
+A condition (everything from `ladder_collapsed` down) is told once when it appears and once when it clears, not on
+every poll. The same event (kind and subject) is not sent twice inside `debounce_minutes` (30). Everything is printed
+to stdout with a time and a severity; only events at or above `min_severity` go to the sinks. A sink that fails is
+printed as `sink X failed: why` and skipped; the watcher goes on. A poll that raises is reported and tried again.
+
+**The `[notify]` section** of [`apps/forge/cluster.toml`](../../apps/forge/cluster.toml). With no sink set, `watch`
+only prints. Anything in a `[notify]` table in `~/.forgectl/notify.toml` overrides it, so a webhook URL or token stays
+out of the tracked file.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `min_severity` | `"info"` | `info`, `warn` or `critical`: lower events are printed, not sent |
+| `poll_seconds` | `60` | seconds between polls (each poll takes about 8 s, mostly the 5-second learner sample) |
+| `learner_silent_minutes` | `10` | the `learner_silent` limit |
+| `confirm_polls` | `2` | polls a `worker_down` or `host_unreadable` must hold before it is told (`--once` waives it) |
+| `debounce_minutes` | `30` | the same event is not sent twice inside this window |
+| `desktop` | `false` | `notify-send` (needs a desktop session; reports `notify-send is not installed` or its error otherwise) |
+| `command` | `""` | a shell command run with `sh -c`; the message is in `$FORGECTL_MESSAGE` and is `$1`; `$FORGECTL_KIND`, `$FORGECTL_SEVERITY` and `$FORGECTL_SUBJECT` are set too |
+| `webhook_url` | `""` | an `http://` or `https://` URL; the body is JSON `{"text", "content", "kind", "severity", "subject", "time"}` (`text` for Slack-style and `content` for Discord-style hooks) |
+| `webhook_header` | `""` | one header, `"Name: value"` (for a token) |
+| `file` | `""` | append `time severity kind subject: text` per message to this file (`~` is expanded) |
+
+An unknown key or a wrong type is a configuration error naming the key. Example `command`:
+`command = "printf '%s\n' \"$FORGECTL_MESSAGE\" | mail -s forgectl me@example.com"` (needs a working `mail` on the
+machine that runs the watcher; not tested here).
+
+**Running it for days.** Under tmux: `tmux new -d -s forgewatch './forgectl watch'`; look at it with `tmux attach -t
+forgewatch`. Under systemd, as a user service (it needs the ssh keys of your login, so use `--user`):
+
+```
+# ~/.config/systemd/user/forgectl-watch.service
+[Unit]
+Description=forgectl watch (forge cluster alerts)
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/mlac/azerothcore
+ExecStart=%h/mlac/azerothcore/forgectl watch
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target
+```
+
+then `systemctl --user daemon-reload && systemctl --user enable --now forgectl-watch` and `journalctl --user -u
+forgectl-watch -f`; `loginctl enable-linger $USER` keeps it running when you are logged out. (`desktop = true` needs
+the graphical session's bus, which a service started at boot does not have: use `file`, `command` or `webhook` there.)
+From cron, `forgectl watch --once` every few minutes works too, because the state file carries the active alarms
+between runs.
+
+Real output (read-only, 2026-10-08, idle cluster, spencer and thomas off the network, sinks `command` and `file`
+pointed at files in /tmp):
+
+```
+$ forgectl watch --once
+forgectl watch: one pass; sinks: command, file; state /tmp/fh/watch-state.json
+2026-10-08 05:16:59 [warn] worker_down: worker spencer dropped: unreachable: ssh: connect to host 192.168.0.66 port 22: No route to host
+2026-10-08 05:16:59 [warn] worker_down: worker thomas dropped: unreachable: ssh: connect to host 192.168.0.67 port 22: No route to host
+2026-10-08 05:16:59 plan idle (move2_seek, phase stopped); host read
+$ cat /tmp/fh/watch.log
+2026-10-08T05:16:59-0600 warn worker_down spencer: worker spencer dropped: unreachable: ssh: connect to host 192.168.0.66 port 22: No route to host
+```
+
+A second `--once` printed only the plan line: the alarms were already active.
 
 ## `forgectl stage status|start|resume|pause|cancel [<stage> ...]`
 
@@ -143,7 +416,8 @@ problems; `--lines N` (default 40); `--wide` does not cut long lines. The defaul
 
 - `forgectl build`: in the checkout forgectl is run from, `touch env/dist/.forge-build` and recreate the
   worldserver container (which
-  recompiles the checkout with `-march=native`), then wait for its `ready` line. Asks first.
+  recompiles the checkout with `-march=native`), then wait for its `ready` line. Asks first. **It has the same
+  running-stage guard as `--cluster`, applied to this machine's own worldserver** (see below).
 - `forgectl build --cluster`: checks this checkout is on the cluster branch (`forge`), **pushes it to the lan remote**,
   then runs `apps/forge/tools/cluster-pull.sh` on every machine in the cluster **in parallel**, and waits for each to
   print `AzerothCore rev. <sha> ... ready` for the new revision (up to `--timeout` minutes each, default 60; the
@@ -166,7 +440,17 @@ then starts with "cancel the running stage on every machine ... and wait for 'Pl
 sends the cancel to the host and every worker (a machine that does not take it stops the build before anything is
 pushed), waits for "Plan ended" on the host, and only then pushes and builds. The audit line says the stage was
 stopped. Afterwards `forgectl stage resume <stage>` continues the run from `latest.pt`. A host whose worldserver
-container is not running at all can be rebuilt without the flag. After a build, a
+container is not running at all can be rebuilt without the flag.
+
+**The same guard on a local `forgectl build`** (no `--cluster`). Recreating the container under a running plan on
+this machine would kill it the same way, so the local build first reads `forge status` from this machine's own
+worldserver console and refuses, even with `--yes`, if a stage is running there ("a stage is running (...on dev): a
+rebuild restarts the worldserver on dev and kills it without the final checkpoint save...") or if the console does
+not answer while the container is up. `--stop-running` has the same meaning: the plan starts with "cancel the running
+stage on dev (the learner saves latest.pt first) and wait for 'Plan ended'", and after you confirm it types
+`forge cancel` into this machine's console (not the cluster's: `forgectl stage cancel` acts on the host), waits
+for "Plan ended", then builds. A container that is not running can be rebuilt without the flag. The refusal tells
+you to type `forge cancel` into that console yourself if you prefer. After a build, a
 change to the curriculum keys still needs `forgectl conf-sync`; then `forgectl cluster` should show one revision.
 
 ## `forgectl conf-sync [--check]`
@@ -239,7 +523,7 @@ then needs ssh keys to the workers).
 Every command that changes something appends two lines to `~/.forgectl/audit.log` (an intent line when it starts, a result line when it ends) on the machine it was run from
 (the directory is created, mode 0700; `$FORGECTL_HOME` moves it). Logged: `stage start|resume|pause|cancel`,
 `build`, `conf-sync` (without `--check`), `cluster move-host`, `videos` (without `--check`/`--dry-run`). Not logged:
-`cluster`, `status`, `stage status`, `logs`, `test`, and the `--check`/`--dry-run` forms.
+`cluster`, `status`, `doctor`, `watch`, `stage status`, `logs`, `test`, and the `--check`/`--dry-run` forms.
 
 ```
 2026-10-07T12:31:07+0100 kind=intent user=moloch machines=sarah,spencer,thomas,moloch confirm=prompt-pending cmd="forgectl stage cancel"

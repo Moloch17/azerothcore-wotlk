@@ -13,19 +13,24 @@ build. Related: [config-keys.md](config-keys.md), [tests.md](tests.md) (there ar
 |---|---|---|
 | `forge.sh` | 109 | start/stop/attach the training container; `--build` recompiles inside it |
 | `forgectl` | 8 | shim that puts `apps/forge` on the path and runs the `forgectl` package |
-| `apps/forge/cluster.toml` | 75 | the machines, host, remote, branch, ports, container and paths forgectl reads |
-| `apps/forge/forgectl/__main__.py` | 185 | argument parser, dispatch, audit wiring |
+| `apps/forge/cluster.toml` | 96 | the machines, host, remote, branch, ports, container and paths forgectl reads, plus the `[doctor]` thresholds and the `[notify]` sinks of `watch` |
+| `apps/forge/forgectl/__main__.py` | 205 | argument parser, dispatch, audit wiring |
 | `apps/forge/forgectl/__init__.py` | 1 | package marker |
-| `apps/forge/forgectl/config.py` | 135 | loads and validates `cluster.toml` into `Config` / `Machine` |
+| `apps/forge/forgectl/config.py` | 182 | loads and validates `cluster.toml` into `Config` / `Machine` |
 | `apps/forge/forgectl/remote.py` | 84 | ssh (BatchMode) and local command execution, `parallel_map` |
 | `apps/forge/forgectl/ui.py` | 58 | printing, the `Proceed? [y/N]` confirmation, tables |
 | `apps/forge/forgectl/audit.py` | 142 | `~/.forgectl/audit.log` intent/result lines |
 | `apps/forge/forgectl/home.py` | 10 | `forgectl_home()`: `$FORGECTL_HOME` or `~/.forgectl` |
 | `apps/forge/forgectl/console.py` | 275 | types one line into a worldserver console through `docker attach` under a pty; per-machine flock; signal guard |
-| `apps/forge/forgectl/cluster.py` | 153 | `forgectl cluster`: one read-only probe per machine, table |
-| `apps/forge/forgectl/stage.py` | 233 | `forgectl stage ...` and `forgectl status` |
-| `apps/forge/forgectl/deploy.py` | 348 | `forgectl build [--cluster]` and `cluster move-host` |
-| `apps/forge/forgectl/confsync.py` | 249 | `forgectl conf-sync`; the conf writers (also used by move-host) |
+| `apps/forge/forgectl/cluster.py` | 200 | `forgectl cluster`: one read-only probe per machine, table |
+| `apps/forge/forgectl/watch.py` | 303 | `forgectl watch`: `diff` of two status documents into events, the state file, the poll loop |
+| `apps/forge/forgectl/notify.py` | 121 | the `[notify]` sinks: desktop, command, webhook, file |
+| `apps/forge/forgectl/doctor.py` | 272 | `forgectl doctor`: the read-only pre-flight checks |
+| `apps/forge/forgectl/confkeys.py` | 79 | the conf keys that decide the sim's cost and sight (must match / may differ), shared by cluster, conf-sync and doctor |
+| `apps/forge/forgectl/snapshot.py` | 371 | `status --json` / `cluster --json`: the schema-1 document built from `progress.json`, `finished.json`, `spec.json`, `metrics.csv`, `eval.csv` and the machine probes |
+| `apps/forge/forgectl/stage.py` | 238 | `forgectl stage ...` and `forgectl status` |
+| `apps/forge/forgectl/deploy.py` | 359 | `forgectl build [--cluster]` and `cluster move-host` |
+| `apps/forge/forgectl/confsync.py` | 262 | `forgectl conf-sync`; the conf writers (also used by move-host) |
 | `apps/forge/forgectl/logs.py` | 96 | `forgectl logs` |
 | `apps/forge/forgectl/videos.py` | 48 | `forgectl videos` (wraps `collect-videos.sh`) |
 | `apps/forge/tools/cluster-pull.sh` | 51 | on one machine: pull code and probe data, recreate the worldserver container |
@@ -203,7 +208,7 @@ Safety column: "reads" = never writes outside stdout (or a named output); "write
 
 Usage and behaviour are in [../forgectl.md](../forgectl.md); this is where each piece lives.
 
-- `__main__.py`: `parser()` defines `cluster [--all] [move-host]`, `status`, `stage {status,start,resume,pause,cancel}`,
+- `__main__.py`: `parser()` defines `cluster [--all] [--json] [move-host]`, `status [--json]`, `doctor`, `watch [--once]`, `stage {status,start,resume,pause,cancel}`,
   `logs`, `build`, `conf-sync`, `videos` (`forgectl test` and `testcmd.py` were removed with the test suites, see
   [tests.md](tests.md)). `changes_state` (`__main__.py:125-138`) decides which invocations are
   audited
@@ -219,12 +224,26 @@ Usage and behaviour are in [../forgectl.md](../forgectl.md); this is where each 
   prompt, strips colour and log noise (`parse_reply`), and detaches with Ctrl-P Ctrl-Q in a `finally`
   (`detach`); `SignalGuard` turns SIGTERM/SIGHUP into an exception so the detach runs.
 - `cluster.py`: one shell probe per machine in parallel (revision, container state, last learner log line, load,
-  disk, GPU memory), `refused_lines` greps the host's logs for "refused the worker".
+  disk, GPU memory, docker restart policy, the cadence keys of the conf), `refused_lines` greps the host's logs for "refused the worker".
+- `snapshot.py`: `collect` builds the schema-1 document of `status --json` (one ssh read of the newest run's
+  `progress.json`, `finished.json`, `spec.json`, last `metrics.csv` row and `eval.csv`; the machine probes; the
+  refusal lines; optionally one console `forge status`); `cluster_json`, `status_json` print it. Optional learner keys
+  (`wall_steps_per_sec` ...) are read with `num()` and are `null` when absent.
+- `confkeys.py`: `scan` the must-match and may-differ conf keys of a conf text, `cadence`, `mismatches`; the probe's
+  shell `GREP` sends only those lines.
+- `watch.py`: `conditions` (what is wrong now, keyed by kind and subject), `transitions` (what changed between two
+  polls), `diff` (both, with the persisted `active`/`streak` state so a condition is told once, after
+  `confirm_polls` for worker drops), `tell` (print, min_severity, debounce, sinks), `run` (lock, poll loop, state file).
+  `notify.py`: the four sinks and `Event`.
+- `doctor.py`: `checks()` turns the gathered facts into PASS/WARN/FAIL lines (thresholds in `config.DOCTOR_DEFAULTS`,
+  `cluster.toml` `[doctor]`); `run` gathers in parallel and exits 1 on a FAIL. Read-only.
 - `stage.py`: `console_line` builds `forge start|resume|pause|cancel`; `start` shows what it archives
   (`existing_run`, `ARCHIVE_TOKEN_STEPS = 1,000,000`); `pause` and `cancel` also go to each worker's console;
   `status` prints the console table and the learner's last `update` line.
-- `deploy.py`: `build` (local: touch request + recreate container; `--cluster`: refuse if a stage runs unless
-  `--stop-running`, `git push <lan> <branch>`, run `cluster-pull.sh` on each machine in parallel, wait for the log line
+- `deploy.py`: `build` (both forms first read the plan state of the machine they restart, `stage.machine_plan_state`:
+  the host for `--cluster`, this machine for a local build; refuse if a stage runs unless `--stop-running`; local:
+  touch request + recreate container; `--cluster`:
+  `git push <lan> <branch>`, run `cluster-pull.sh` on each machine in parallel, wait for the log line
   `AzerothCore rev. <sha9> ... ready`); `move_host` (cancel, copy run, rewrite roles, rebuild, edit `host =` in
   `cluster.toml`, resume) with `mixed_state_report`. It deploys the local `HEAD`: uncommitted work is not shipped.
 - `confsync.py`: `curriculum_keys`, `compare`, `synced_text` (replace differing, append missing under a comment, remove

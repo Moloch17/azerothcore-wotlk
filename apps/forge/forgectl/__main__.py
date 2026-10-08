@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import audit, cluster, config as config_module, confsync, deploy, logs, stage, videos
+from . import audit, cluster, config as config_module, confsync, deploy, doctor, logs, snapshot, stage, videos, watch
 from .config import ConfigError
 from .ui import Failure, say
 
@@ -35,6 +35,9 @@ def parser() -> argparse.ArgumentParser:
     cl = add("cluster", "one table of the machines: role, revision, worldserver, learner, load, disk, GPU",
              "forgectl cluster            |   forgectl cluster move-host thomas move2_seek")
     cl.add_argument("--all", action="store_true", help="include machines that are out of the cluster")
+    cl.add_argument("--json", action="store_true",
+                    help="print one JSON object (schema in docs/forge/forgectl.md) instead of the table; exit 0 when "
+                         "the host could be read")
     cl_sub = cl.add_subparsers(dest="cluster_command", metavar="[move-host]")
     mv = cl_sub.add_parser("move-host", formatter_class=raw,
                            help="move the host role (and a run) to another machine",
@@ -46,8 +49,22 @@ def parser() -> argparse.ArgumentParser:
     mv.add_argument("--yes", action="store_true", help="do not ask")
     mv.add_argument("--timeout", type=float, default=60, help="minutes to wait for each machine's build (default 60)")
 
-    st = add("status", "the host's `forge status` table plus the learner's latest metrics",
-             "forgectl status")
+    st = add("status", "the host's `forge status` table plus the learner's latest metrics (--json: one JSON object)",
+             "forgectl status   |   forgectl status --json")
+    st.add_argument("--json", action="store_true",
+                    help="print one JSON object read from the run's files (schema in docs/forge/forgectl.md); exit 0 "
+                         "when the host could be read")
+    st.add_argument("--stage", help="with --json: the run directory to read (default: the newest progress.json)")
+    st.add_argument("--no-console", action="store_true",
+                    help="with --json: do not type `forge status` into the host's console (files and ssh only)")
+
+    add("doctor", "read-only pre-flight: PASS, WARN or FAIL per check, exit 1 on any FAIL, a 'to do' under each",
+        "forgectl doctor")
+
+    wt = add("watch", "poll the cluster and send a notification when something changes (read-only; Ctrl-C to stop)",
+             "forgectl watch   |   forgectl watch --once")
+    wt.add_argument("--once", action="store_true", help="one pass, then exit (exit 1 if the host cannot be read)")
+    wt.add_argument("--interval", type=float, help="seconds between polls (default [notify] poll_seconds, 60)")
 
     sg = add("stage", "start, resume, pause or cancel a stage on the host (pause and cancel reach the workers too)",
              "forgectl stage resume move2_seek    |    forgectl stage cancel")
@@ -66,14 +83,16 @@ def parser() -> argparse.ArgumentParser:
     lg.add_argument("--lines", type=int, default=40, help="lines per section (default 40)")
     lg.add_argument("--wide", action="store_true", help="do not cut long lines")
 
-    bd = add("build", "rebuild the worldserver here, or with --cluster push and rebuild every machine",
+    bd = add("build", "rebuild the worldserver here, or with --cluster push and rebuild every machine "
+                      "(refuses under a running stage)",
              "forgectl build --cluster")
     bd.add_argument("--cluster", action="store_true", help="push to the lan remote, then cluster-pull on every "
                                                           "machine in the cluster, and wait for each to be ready")
     bd.add_argument("--yes", action="store_true", help="do not ask")
     bd.add_argument("--stop-running", action="store_true",
-                    help="with --cluster: if a stage is running, cancel it on every machine (it saves latest.pt), "
-                         "wait for 'Plan ended', then build; without this a running stage makes the build refuse")
+                    help="if a stage is running, cancel it (on every machine with --cluster, else on this one; it "
+                         "saves latest.pt), wait for 'Plan ended', then build; without this a running stage makes "
+                         "the build refuse")
     bd.add_argument("--timeout", type=float, default=60, help="minutes to wait for each machine (default 60)")
 
     cs = add("conf-sync", "copy the host's AnimusForge.Curriculum.* keys to every worker's conf (with backups)",
@@ -96,9 +115,19 @@ def dispatch(args, config) -> int:
     if args.command == "cluster":
         if getattr(args, "cluster_command", None) == "move-host":
             return deploy.move_host(config, args.machine, args.stage, args.yes, args.timeout)
+        if args.json:
+            return snapshot.cluster_json(config, include_out=args.all)
         return cluster.run(config, include_out=args.all)
     if args.command == "status":
+        if args.json:
+            return snapshot.status_json(config, args.stage, not args.no_console)
+        if args.stage or args.no_console:
+            raise Failure("--stage and --no-console only go with --json")
         return stage.status(config)
+    if args.command == "doctor":
+        return doctor.run(config)
+    if args.command == "watch":
+        return watch.run(config, args.once, args.interval)
     if args.command == "stage":
         return stage.run(config, args.action, args.stages, getattr(args, "yes", False),
                           getattr(args, "archive_ok", False))

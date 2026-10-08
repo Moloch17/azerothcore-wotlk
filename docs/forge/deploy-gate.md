@@ -625,8 +625,8 @@ None of these blocks the deploy; each must be done before the stage it concerns 
 
 ## What can wait
 
-- A local `forgectl build` (no `--cluster`) has no running-stage check: it recreates the container under a running
-  stage. Cancel the stage first by hand.
+- (Done: a local `forgectl build` now refuses under a running stage on this machine's own worldserver, like `--cluster`,
+  and takes `--stop-running`.)
 - The goal block's always-zero order columns come out at the next goal-block revision (a revision bump, so seeding
   by name carries on).
 - `CombatReward.cpp`'s file name no longer fits `RewardTermName` (the one-on-one reward is gone); rename it with the

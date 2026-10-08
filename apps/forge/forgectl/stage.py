@@ -115,10 +115,15 @@ def check_archives(config: Config, stages: list[str], yes: bool, archive_ok: boo
 
 
 def host_plan_state(config: Config) -> tuple[str, str]:
-    """("idle" | "running" | "down" | "unknown", the first line of the host's `forge status`). "down" is a worldserver
-    container that is not running (nothing can be training); "unknown" is a console that did not answer while the
-    container is up, which is not evidence that nothing runs."""
-    host = config.host
+    """The plan state of the host: see machine_plan_state."""
+    return machine_plan_state(config, config.host)
+
+
+def machine_plan_state(config: Config, machine: Machine) -> tuple[str, str]:
+    """("idle" | "running" | "down" | "unknown", the first line of the machine's `forge status`). "down" is a
+    worldserver container that is not running (nothing can be training); "unknown" is a console that did not answer
+    while the container is up, which is not evidence that nothing runs."""
+    host = machine
     try:
         status = send_checked(config, host, "forge status")
     except Failure as failure:

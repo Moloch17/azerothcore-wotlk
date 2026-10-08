@@ -12,7 +12,7 @@ import shlex
 import time
 from dataclasses import dataclass, field
 
-from . import audit, remote
+from . import audit, confkeys, remote
 from .config import Config, Machine
 from .ui import Declined, Failure, confirm, say, table
 
@@ -194,18 +194,31 @@ def run(config: Config, check_only: bool, yes: bool) -> int:
     host_keys = curriculum_keys(host_text)
     if not host_keys:
         raise Failure(f"{host.name}'s conf has no {PREFIX}* keys: refusing to sync from it")
-    texts, diffs, rows = {}, {}, []
+    texts, diffs, rows, cadence_notes = {}, {}, [], []
+    host_cadence = confkeys.scan(host_text)
     for worker in workers:
         try:
             texts[worker.name] = read_conf(config, worker)
         except Failure as failure:
-            rows.append([worker.name, "UNREADABLE", str(failure)])
+            rows.append([worker.name, "UNREADABLE", str(failure), "-", "-", "-", "-"])
             continue
         keys = curriculum_keys(texts[worker.name])
         diffs[worker.name] = compare(host_keys, keys)
+        worker_cadence = confkeys.scan(texts[worker.name])
+        cadence_notes += [f"{worker.name}: {line}" for line in confkeys.mismatches(host_cadence, worker_cadence)]
         rows.append([worker.name, f"{len(keys)} keys", "same" if diffs[worker.name].same else
-                     diffs[worker.name].summary()])
-    say(table(["machine", f"keys (host: {len(host_keys)})", "against the host"], rows))
+                     diffs[worker.name].summary(), *confkeys.short(worker_cadence)])
+    rows.insert(0, [f"{host.name} (host)", f"{len(host_keys)} keys", "-", *confkeys.short(host_cadence)])
+    say(table(["machine", f"keys (host: {len(host_keys)})", "against the host", "ticks", "half", "envs", "cpus"], rows))
+    say("ticks, half, envs, cpus: AnimusForge.TicksPerDecision, HalfBatch, Envs, Learner.Cpus from each conf "
+        "('-' = not set, the build's default applies)")
+    if cadence_notes:
+        say("CADENCE DIFFERS from the host's (ticks, half-batch, camera, map, memory keys; conf-sync does not copy "
+            "these, edit them by hand):")
+        for line in cadence_notes[:10]:
+            say(f"  {line}")
+        if len(cadence_notes) > 10:
+            say(f"  ... and {len(cadence_notes) - 10} more")
     for name, diff in diffs.items():
         for label, keys in (("different", diff.different), ("missing", diff.missing), ("extra", diff.extra)):
             for key in keys[:5]:
