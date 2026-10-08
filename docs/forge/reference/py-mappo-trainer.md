@@ -173,7 +173,7 @@ parameters every `weight_sync_every` updates (`:1479-1490`) and syncs the rollou
 Reported statistics (`stats`): `policy_loss, value_loss, entropy` (actions only), `clip_frac, approx_kl, approx_kl_move`
 (the movement action alone, stored joint log-prob less the look's part), `actor_grad_norm, critic_grad_norm`,
 `goal_entropy` (if goals), `look_entropy`, `vision_grad_{norm,actor,critic}`, `foresight_loss` and
-`forecast_*` qualities, `explained_variance`, `epochs_run`, `epochs_done` (a duplicate of `epochs_run`, `:1979-1982`),
+`forecast_*` qualities, `explained_variance`, `epochs_run`,
 `minibatches_done`, `goal_<k>_share`, `goal_targeted_share`, `goal_kept_share`, `goal_swap_action_change`, `look_*`
 shares, `hindsight_*`, `update_compute_seconds`, `weight_sync_seconds`. Names are consumed by metrics/CSV
 ([metrics.md](metrics.md)).
@@ -235,7 +235,7 @@ what the failure looks like; torch raises on a group size mismatch).
 
 1. `slow_opt` is saved since the resume fix, but still not learning-rate-scaled (deferred: that changes learning; see [py-mappo.md](py-mappo.md) issues 1-2).
 2. `_update_recurrent` docstring says the critic is feed-forward; it is recurrent (`:1608` vs `:1899`).
-5. `epochs_run` and `epochs_done` duplicate each other (`:1979-1982`).
+5. (Fixed 2026-10-08: the `epochs_done` duplicate of `epochs_run` was removed.)
 7. `_updates_since_sync` set via `getattr` (`:1480`).
 8. `reset_optimizers` also resets `layout_stats` and `frozen_layouts` (`:750-751`): it is called only from `__init__`
    (checked by grep), so a stage restart never resets Adam state in the live code even though the docstring says "after

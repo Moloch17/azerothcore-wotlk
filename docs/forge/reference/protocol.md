@@ -271,6 +271,7 @@ into the core (`359b303c4`); their content is UNVERIFIED (no comment survives; c
 | 23 | Pixel = 5 bytes (class + entity slot); layout otherwise protocol 22's. | c20dc0c1a |
 | 24 | SPEC MapBytes; map/final_map after the images. | 8452ff458 |
 | 25 | `present` 2 = stand-in row played by a frozen partner; `MODE_FLAG_STAND_IN` in training MODE. | Protocol.h:178; ac9873986, 641cf015c, aa303bc33 (scripted stand-in removed) |
+| 26 (planned, entity-sensing stream) | The layout cleanup of 2026-10-08 folds into this bump with no change of structure: SPEC `GoalCount` 348 -> 207 (goal block revision 1), `StateDim` 1958 -> 1927, and stage.json gains `state.dim`. `Protocol.h` is untouched by that stream. | this branch, `Layout cleanup` commit |
 
 Commit-date mapping for 15-25 was taken from `git log` subjects and is approximate: the commit that sets the constant
 (`git log -S"PROTOCOL_VERSION = N;"`) was checked only for 24 and 25 (both 641cf015c on 2026-10-07; 24 first at 8452ff458,

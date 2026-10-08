@@ -31,7 +31,7 @@ This file maps itself: it has no source files of its own; it summarises those na
 | **Convergence** | The one rule that ends a stage: every class has a plateaued score, a quiet policy (KL), settled entropy, a settled ladder and (ladder stages) the top rung; `animus/stage.py` `ConvergenceController`. |
 | **Cost (reward category)** | An Outcome-side price: deaths, the clock, noise prices; counted in the score at full price; `RewardCategory::Cost`, `Rewards/RewardLedger.h`. |
 | **Cost ladder** | The ladder that scales the noise prices (Repeat, Jitter, Aimless, Effort, Fidget, Stuck, Wall) by rung; `costs:` in the yaml, `CostLadder` in `animus/stage.py`. Off in all twelve stages. |
-| **Critic / critic state** | The value network's input, which may see privileged state (`STATE_DIM` 1958); the policy may not; `StageScenario::WriteState`. |
+| **Critic / critic state** | The value network's input, which may see privileged state (`STATE_DIM` 1927, was 1958 before 2026-10-08); the policy may not; `StageScenario::WriteState`. |
 | **Decision** | See Clock. Also the unit all per-decision reward terms are scaled to (`DecisionScale` = DecisionMs / 50). |
 | **Drill** | An arena that trains one lesson (a role, a pull) on a stage's ground; weighted in a stage, never a stage of its own. |
 | **Encounter** | The object that runs an arena's episode: builds the situation, pays rewards, says when it ends; `Encounters/*.cpp` (Sight, Seek, Interact, PartyFollow, Combat, Roles, Instance, Party). |

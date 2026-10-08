@@ -476,14 +476,16 @@ group of five; a stage's `_seatCount` is how many of the 40 `SeatState`s it uses
 
 Three plain enums give the column offsets of the class-agnostic critic state (the `state` array on the wire):
 
-- `StateGlobal` (61-79): `STATE_EPISODE_TIME=0 ... STATE_TIER=13`, `STATE_ARENA_FIRST=14` (a one-hot over `MAX_ARENAS`
-  columns), `STATE_GLOBAL_COUNT = 14 + MAX_ARENAS`.
+- `StateGlobal`: `STATE_EPISODE_TIME=0`, the owner (the party follow's leader) `STATE_OWNER_PRESENT/ALIVE/HEALTH/X/Y =
+  1..5`, `STATE_TIER=6`, `STATE_ARENA_FIRST=7` (a one-hot over `MAX_ARENAS` columns), `STATE_GLOBAL_COUNT = 7 +
+  MAX_ARENAS` (23). Until 2026-10-08 it also held pull active/cleared/next/elite/linked, owner mana and owner in
+  combat, which no encounter wrote (STATE_TIER was 13, the arena one-hot at 14).
 - `StateSeat` (81-96): named columns `0..25`, `STATE_SEAT_FEATURES = 26` is the width per seat. Columns 6-11 are the
   six-number aptitude brief, 12-21 a one-hot over `PLAYABLE_CLASSES`.
-- `StateEnemy` (98-123): width `STATE_ENEMY_FEATURES = 29 + RAID_GROUPS`; columns from 12 on depend on `RAID_GROUPS`.
+- `StateEnemy` (98-123): width `STATE_ENEMY_FEATURES = 28 + RAID_GROUPS` (36; 37 before `STATE_ENEMY_ON_OWNER`, never written, was removed); columns from 11 on depend on `RAID_GROUPS`.
 - The state width is `STATE_GLOBAL_COUNT + MAX_SEATS * STATE_SEAT_FEATURES + PACK_SLOTS * STATE_ENEMY_FEATURES`
   (`StageScenario.cpp:395`): `MAX_SEATS` (40) seats are always reserved, however few the stage uses.
-- `stage.json` publishes where the arena one-hot sits (`state.arena_first`, `state.arena_count`,
+- `stage.json` publishes the state width (`state.dim`, 1927) and where the arena one-hot sits (`state.arena_first`, `state.arena_count`,
   `StageScenario.cpp:1309-1311`). `WriteState` is at `StageScenario.cpp:5073` (a later part), and each encounter has
   its own `WriteState`.
 - `LiveLayoutPinTest` pins layout constants (`add("MAX_ARENAS", ...)` list at
@@ -1337,8 +1339,7 @@ which gives the `goal_match*` info columns (S1, StageScenario.cpp:1214-1237).
   4509) read `movespline` too. Principle 3 (bots move only through the controller) means a seat's spline is never
   initialised, so these clauses are only true for server-originated motion (fear, knockback). UNVERIFIED: whether any
   live stage relies on the spline clause.
-- `SeatGoal::Loot` exists (2787, 4116) although principle 6 says no looting; `Goals.WorldValue` pays it
-  (`GoalValue`, 3883-3885).
+- (Fixed 2026-10-08: `SeatGoal::Loot`, Gather, Interact and `Goals.WorldValue` were removed.)
 - In party arenas `PartyEncounter::Reward` (reached at `SeatReward` 4993) clears `StepRevivedAlly` before `GoalHeld`
   reads it at 5009, so a Resurrect goal never matches there. UNVERIFIED by test; derived from the call order.
 
@@ -1539,7 +1540,7 @@ is charged at once (`StepRepeats`, `RepeatedPresses`).
   `friend health - 1`; Position `-min(gap, 60)/60`; TravelTo `-min(dist, 60)/60`; Resurrect -1 while the friend is dead.
   A dead seat: -1 for Resurrect (no target), Recover and Rest; else 0.
 - `GoalValue` (3874): Fight `Goals.FightValue` 0.3, Control `ControlValue` 0.2, Protect `ProtectValue` 1.0, TravelTo
-  `TravelValue` 0.1, Loot/Gather/Interact `WorldValue` 0.2, Recover/Rest `RecoverValue` 1.0 x (resource now - resource
+  `TravelValue` 0.1, Recover/Rest `RecoverValue` 1.0 x (resource now - resource
   at
   choice), others `Goals.Reached` 0.05.
 - `ObserveGoalSignals` (3902): `Achieved` is the first named enemy slot that was alive last time and is dead now
@@ -1577,7 +1578,7 @@ was not a held key (3347-3348); `SettleIntent` runs once per decision from `Seat
      reaching it; Control: serves when tactical on another enemy; Position: neutral only while out of range and on the
      focus, else aimless; Prepare: aimless unless in combat; Protect: serves on an attacker of the friend; Recover,
      Rest,
-     TravelTo, Loot, Gather, Interact, Resurrect: aimless when nothing attacks the seat); non-harmful casts by goal
+     TravelTo, Resurrect: aimless when nothing attacks the seat); non-harmful casts by goal
      (Protect serves on the named or any friend; Recover and Rest serve on self or untargeted; Prepare serves with
      preparation time; Fight and Control: aimless "help on another" unless self, untargeted, hurt, or a healing cast;
      Resurrect serves on a revive of the named friend). An aimless verdict with no cause becomes `HelpOffGoal`,
@@ -1753,13 +1754,12 @@ episode's
 `STATE_ARENA_FIRST + Arena` (< `MAX_ARENAS`); every active encounter's `WriteState` (the encounter-owned global columns
 `STATE_PULL_*`, `STATE_OWNER_*`, `STATE_TIER`, `StageScenario.h:62-78`); per seat 26 features (present, alive, health,
 mana, other power, level / 80, the six-number aptitude brief, class one-hot, in combat, casting, x and y relative to the
-spawn point); per enemy slot up to `PACK_SLOTS`, `STATE_ENEMY_FEATURES = 29 + RAID_GROUPS` features (present, alive,
+spawn point); per enemy slot up to `PACK_SLOTS`, `STATE_ENEMY_FEATURES = 28 + RAID_GROUPS` features (present, alive,
 health, x, y, casting, elite, level difference to seat 0 over 5 (5115), in combat, whose victim it is as seat index,
 group one-hot and aptitude brief, max health ratio, armor reduction, damage modifier, run speed 5156, opponent-type
 one-hot). This is privileged state (the critic may see it; the policy may not, principle 1).
 
-Quirks: `STATE_ENEMY_ON_OWNER` (9) is never written here, and the owner globals only if an encounter writes them
-(UNVERIFIED which). `data.Seats[0].Level` is read without a guard (5115). A null `bots[0]` skips max health and armor.
+Quirks: the owner globals are written only by `PartyFollowEncounter::WriteState`. `data.Seats[0].Level` is read without a guard (5115). A null `bots[0]` skips max health and armor.
 
 **`EpisodeInfo`** (5161-5173): `_info.Write(env, seat, info + seat * EpisodeInfoDim)` for each seat; the owner row is
 zero,
@@ -1822,9 +1822,8 @@ at
 13. Size: `JudgePress` is about 390 lines with a 220-line lambda; `SeatReward` (about 165) and `ObserveSeat` (about 185)
     are
     long too; all untested.
-14. `StageScenario.h:62-78`: the `STATE_*` enums still name owner and pull columns whose writers belong to encounters;
-    any column no live encounter writes is a constant zero input to the critic. UNVERIFIED which.
-15. `StageScenario.cpp:3883-3885`, `2787`: loot goals remain though looting is out of scope.
+14. (Fixed 2026-10-08: the seven unwritten global columns and `STATE_ENEMY_ON_OWNER` were removed, 1958 -> 1927.)
+15. (Fixed 2026-10-08: the loot, gather and interact goals were removed.)
 
 ## S2.19 Questions for the owner
 
@@ -1832,5 +1831,5 @@ at
   become Cost or Outcome (principle 9)?
 - Are the `movespline` reads in `AgentKinematics`, `GoalHeld` and `SettleIntent` meant to see only server-driven motion?
   If controller falls should read as jumping, the kinematic mode needs the controller's `Body.Kind`.
-- Loot goals (`SeatGoal::Loot`, `Goals.WorldValue`) exist though looting is out of scope (principle 6): delete them?
+- (Done 2026-10-08.) Loot goals and `Goals.WorldValue` were deleted.
 - Is `Falls` meant to differ from `Drops`?

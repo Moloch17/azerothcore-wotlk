@@ -32,7 +32,7 @@ The tests were also guards. Each row says what could now break without anything 
 
 | Guard (removed) | What could now break silently | How to check by hand |
 |---|---|---|
-| `LiveLayoutPinTest` and its golden file | A block's columns, actions, id or revision change (or the critic state width, 1958) and old checkpoints no longer seed or load | Generate stage.json from the built sim (`forge run <stage> random 1`) and compare with the old build's using `apps/forge/tools/stage_json_diff.py`; run `apps/forge/tools/resume_check.py` on the real checkpoint |
+| `LiveLayoutPinTest` and its golden file | A block's columns, actions, id or revision change (or the critic state width, 1927 since 2026-10-08) and old checkpoints no longer seed or load | Generate stage.json from the built sim (`forge run <stage> random 1`) and compare with the old build's using `apps/forge/tools/stage_json_diff.py`; run `apps/forge/tools/resume_check.py` on the real checkpoint |
 | `BotAccountsTest` | The seat account id range moves | Read `BotAccounts` (`BASE`, `SEATS_PER_ENV`, `SESSIONS_PER_BOT`, `MAX_ENVS`) before and after a change |
 | `test_conf_covers_tuning` | `worldserver.conf.dist` and the tuning's `Visit` list disagree (a key documented but unread, or read but undocumented) | `python3 apps/forge/tools/conf_prune.py --removed <old-rev> <new-rev>` lists keys added or removed in conf.dist; compare with `CurriculumTuning.h` |
 | `test_metric_names` | A live yaml gate, headline or measure names a column the stage never reports (it then reads as 0 or never fires) | `python3 apps/forge/tools/sim_metrics.py --check <stage.json>` against the stage's real stage.json |

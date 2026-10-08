@@ -83,13 +83,13 @@ Top-level keys written by the current code:
 | cast | [object] | `{agent, name}` for a cast owner row ("leader" or "owner"); `[]` for all live stages. |
 | seed_chain | [string] | Stages seeded from, closest first (walk of `Extends`). |
 | merges | [string] | Further parents of a merge stage (group1_roles merges move4_follow). |
-| state | {arena_first, arena_count} | Where the critic state holds the arena one-hot (`STATE_ARENA_FIRST`, `MAX_ARENAS`=16). |
+| state | {dim, arena_first, arena_count} | The critic state's width (`dim`, 1927 since 2026-10-08, was 1958; `resume_check.state_dim_of` reads it) and where it holds the arena one-hot (`STATE_ARENA_FIRST`=7, `MAX_ARENAS`=16). |
 | models | {class: model} | e.g. `warrior: warrior_seek`. |
 | layouts | {class: object} | Per class, see below. |
 | episode_info | [string] | Episode-info column names in wire order (the SPEC's list). |
 | episode_categories | {column: [names]} | Columns that index a name list: `drill_pack`, `seek_room`, `seek_object`, `interact_site`, `interact_object`, `sight_object`, `objective_corner` (["in_sight","corner"]). |
 | reward_terms | {term: "outcome"\|"cost"\|"shaping"} | Category of every reward term (`RewardTermCategory`). |
-| goals | object | `kinds` [12 names], `accepts` [kind][target] 0/1, `targets` (29 in the backup), `block` "goal", `columns` {secondary_ended, event, from_order, order_kind, order_target, achieved_kind, achieved_target, width} (first-column offsets inside the goal block), `slots_on_wire` (2). |
+| goals | object | `kinds` [9 names], `accepts` [kind][target] 0/1, `targets` (23 since goal block revision 1; 29 in the backup), `block` "goal", `columns` {secondary_ended, event, from_order, order_kind, order_target, achieved_kind, achieved_target, width} (first-column offsets inside the goal block), `slots_on_wire` (2). |
 | tuning | object | `CurriculumTuning::Json()`: every `AnimusForge.Curriculum.*` value in force (725 keys in the backup, e.g. `Characters.HighLevelFirst: 61`), written or default. This is what the cluster fingerprint hashes (protocol.md section 9). |
 
 `arenas[i]` (current writer): `name`, `weight` (the arena's draw weight as configured), `seats`, `episode_seconds`, `plan`
@@ -135,7 +135,7 @@ Writer: leader learner at start (train.py:582): `yaml.safe_dump(config.to_dict()
 Writer: `RunLogger` (train.py:105+), one row each `log_every` updates, flushed per row; `csv.DictWriter(restval="", extrasaction="ignore")`.
 Columns are fixed at start (train.py:785-855): `update, env_steps, env_steps_per_sec, update_seconds, reward_per_decision, episodes`, then one
 `episode_<name>` for every SPEC episode-info name, then `policy_loss, value_loss, entropy, entropy_coef, clip_frac, approx_kl, explained_variance,
-actor_grad_norm, critic_grad_norm, epochs_run, allowed_actions, approx_kl_move, epochs_done, minibatches_done, lr_scale, shaping_scale, cost_scale,
+actor_grad_norm, critic_grad_norm, epochs_run, allowed_actions, approx_kl_move, minibatches_done, lr_scale, shaping_scale, cost_scale,
 ladder_collapsed, ladder_stalled, frozen_layouts, cast_rows, cast_fallback_rows, partner_rows, partner_fallback_rows, partner_members,
 partner_episodes, stand_in_episodes, stand_in_unfielded, elapsed_seconds, update_compute_seconds, distill_coef, distill_kl, distill_rows, wall_steps_per_sec, rollout_seconds, wait_seconds, update_bound`, then
 optional groups: style (`style_reward, style_scale, style_disc_human, style_disc_bot, style_gp, style_disc_loss, style_reward_<context>`),

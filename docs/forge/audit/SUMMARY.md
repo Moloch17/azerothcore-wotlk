@@ -183,3 +183,5 @@ upstreaming the seven groups of general fixes the audit found.
 Update 2026-10-08: the Gpu/ camera path (owner question 13) was removed; tag archive/gpu-camera.
 
 Update 2026-10-08: the ground probe and layered fields were removed (owner order); the dungeon routes use the navmesh RoutePlanner.
+
+Update 2026-10-08: layout and protocol cleanup (stream C): loot, gather and interact goals and the unused goal targets (goal block revision 1, 348 -> 207 joint goals), seven unwritten critic-state columns (1958 -> 1927) and the duplicate epochs_done column were removed; the goal order columns, the duplicate episode columns and the MODE_FLAG bit wait for their file owners (known-issues H).

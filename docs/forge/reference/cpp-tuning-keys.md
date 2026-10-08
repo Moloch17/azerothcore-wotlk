@@ -158,7 +158,7 @@ Struct line ranges are in `CurriculumTuning.h`. "Per decision" terms are tuned f
 | `Duel` | 145-151 | 2 | `StageScenario.cpp:2773, 3790`, `Rewards/CombatReward.cpp:90` | The melee and ranged range the position goal aims for. The group name is a leftover of the deleted duel stages. |
 | `Difficulty` | 153-178 | 7 | `Encounters/DifficultyLadder.cpp`, `CombatEncounter.cpp:252, 576`, `RolesEncounter.cpp:560`, `InstanceEncounter.cpp:2731` | The per-class/build tier ladder (raise/lower rates, window, review and stretch draws) and the tier scale of outcome terms. |
 | `Instance` | 180-279 | 42 | `InstanceEncounter.cpp`, `StageScenario.cpp:302-303, 1712` | Whole-dungeon wing: prices (`Wing*`), the wing ladder (`WingProbe`, `WingRungRuns`, `WingRungTarget`, `WingRungStart`), the pull drill (`Pull*`) and its rungs. |
-| `Goals` | 281-324 | 13 | `StageScenario.cpp:3638-3898, 5026-5036` | The learner-chosen goals (SeatGoal): reached payments, switch cost, potential progress, per-kind values, the secondary goal. |
+| `Goals` | 281-324 | 12 | `StageScenario.cpp:3638-3898, 5026-5036` | The learner-chosen goals (SeatGoal): reached payments, switch cost, potential progress, per-kind values, the secondary goal. |
 | `Support` | 326-348 | 2 | `StageScenario.cpp:5048-5053` | Self healing pay and the mana price of healing. |
 | `Actions` | 350-442 | 34 | `Layout/SeatMemory.cpp` (pacing), `StageScenario.cpp:3734-4584` | Press pacing (`RepeatMs`...), repeat/jitter/effort/fidget prices, and the "aimless" press price and its 19 per-cause prices. |
 | `Options` | 444-462 | 3 | `Blocks/GauntletBlock.cpp:113`, `Blocks/PackBlock.cpp:120`, `StageScenario.cpp:4498`, `Blocks/MoveBlock.cpp:333` | Durative action limits and the steering-jitter decay. |
@@ -360,7 +360,6 @@ through to `StandIn.Share`, so its default 0 is never consulted today (the "defe
 | Goals | `Goals.ProtectValue` | 1.0f | float | - | `StageScenario.cpp:3881` | all |
 | Goals | `Goals.ProtectHoldMs` | 5000 | uint32 | - | `StageScenario.cpp:3638` | all |
 | Goals | `Goals.TravelValue` | 0.1f | float | - | `StageScenario.cpp:3882` | all |
-| Goals | `Goals.WorldValue` | 0.2f | float | - | `StageScenario.cpp:3885` | all |
 | Goals | `Goals.SecondaryShare` | 0.5f | float | - | `StageScenario.cpp:3650`, `StageScenario.cpp:5026` | all |
 | Goals | `Goals.Secondary` | 0.002f | float | - | `StageScenario.cpp:5033` | all |
 | Support | `Support.SelfHealing` | 0.5f | float | - | `StageScenario.cpp:5048` | all |
@@ -555,8 +554,7 @@ through to `StandIn.Share`, so its default 0 is never consulted today (the "defe
   `forgectl conf-sync --check` first ([forgectl.md](../forgectl.md)).
 - Four near-identical price blocks (`Markers`, `Seek`, `Interact`, `Controls`) and the `Raid`/`Roles`/`Party`
   triplet invite consolidation; M4 reading `Seek.Stuck/Wall/WallSlide` means a retune of M2 silently retunes M4.
-- Group names are history: `Duel` (no duel stage exists), `Raid` (no raid stage exists), `Goals` (loot goals despite
-  principle 6, see [known-issues.md](known-issues.md)). Renaming changes the keys and so every deployed conf and the
+- Group names are history: `Duel` (no duel stage exists), `Raid` (no raid stage exists). Renaming changes the keys and so every deployed conf and the
   fingerprint.
 - `Characters.*` level keys are reached in training only by `move4_follow` (table note 3); the other stages fix the
   level by `Level`, a focus band or the instance rung. Check that this is intended before tuning them.
