@@ -404,3 +404,255 @@ it. The watcher then needs no polling for those. Keep the watcher for what only 
 being down, ssh unreachable, disk).
 
 **Effort.** Phase A: 2-3 days (the status snapshot of 2.2 is the prerequisite). Phase B: 2 days.
+
+### 2.6 Auto-recovery
+
+Principle: recover from the boring failures without a human, never from a deliberate stop, and never in a loop.
+
+**Level 0, compose (OX-01).** `restart: unless-stopped` on `ac-worldserver` in `docker-compose.yml` (the database and
+dev services already have it). `docker compose stop` still stops it for good, and a reboot brings it back: `docker`
+must itself start at boot (`systemctl is-enabled docker`; UNVERIFIED on the four machines, and part of `doctor`). A
+restarted worldserver is idle (`AnimusForge.cpp:246`), so a reboot cannot restart training behind anyone's back. The
+`forge-worldserver.sh` start only builds when there is no binary, a build request, or a different CPU
+(`forge-worldserver.sh`, `cpu_signature`), so a reboot is a fast start. Also add the log rotation block here
+(OX-17):
+
+```
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "5" }
+```
+
+**Worker rejoin after a reboot.** Sequence in the code: container up -> worldserver idle -> connects to the host every
+3 s (`ClusterLink.cpp:38`) -> `REGISTER` + fingerprint -> the host orders it back onto the running stage if it was one
+of the stage's sims (`AnimusForge.cpp:1062-1072`) -> the host's learner takes the envs back "between rollouts". Whether
+this machine's own learner rejoins the cross-machine weight exchange (`AnimusForge.Cluster.Learner = "auto"`: each
+worker trains its own learner and only weights cross) is UNVERIFIED: `DealClusterLearners` is the code that sets the
+ranks (`AnimusForge.cpp:1274-1340`), and it runs when the stage starts. Rehearse it once (stop one worker's container,
+start it, watch `forgectl cluster` and the learner log) before relying on it, and record the result in `cluster.md`.
+`forgectl rejoin <machine>` is a checklist command, not magic: it checks the revision (no `*`), the conf line count
+(the `forgectl.md` warning), starts the container if it is down, waits for `Cluster: joined the host`, then for the
+host's `ordering it onto <stage>`, and prints what is left to do by hand if it did not happen.
+
+**Level 1, the watcher (`forgectl watch --arm <stage-or-chain>`).** Arming is explicit. While armed, the watcher
+(section 2.5) may act on three events, each with a budget:
+
+| Event | Action | Budget | Always |
+|---|---|---|---|
+| `learner_exited` (stage not finished) | `forgectl stage resume <stage>` (restarts the learner from `latest.pt`) | 2 per 6 h | notify |
+| host back after a reboot, plan idle, armed stage unfinished, `latest.pt` newer than 10 min before the outage | `doctor`, then `forgectl stage resume <stage>` | 1 per outage | notify |
+| `worker_lost` | nothing (compose restarts it); after 15 min, notify again | - | notify |
+
+It disarms itself on any `forgectl stage cancel|pause|start`, on `forge cancel` seen in the host log (once OX-19
+exists), on a budget being used up, and on `forgectl watch --disarm`. A hand-typed cancel that the watcher did not see
+is the reason the default is disarmed and the reason OX-19 matters. Auto-resume never changes a conf, never rebuilds,
+never starts a stage fresh.
+
+**Unit, for the always-on machine** (a user unit; the dev machine is the natural place, since it holds the `lan`
+repository and is outside the cluster):
+
+```
+# ~/.config/systemd/user/forgectl-watch.service
+[Unit]
+Description=forgectl watcher (alerts; auto-resume only while armed)
+[Service]
+ExecStart=%h/mlac/azerothcore/forgectl watch --serve
+Restart=on-failure
+RestartSec=30
+[Install]
+WantedBy=default.target
+```
+
+`loginctl enable-linger <user>` makes it survive logout. `forgectl watch --serve` is the same loop without a terminal,
+logging to the journal.
+
+**Resume after reboot of the host, honestly.** The sim's wing-ladder rung is lost on any worldserver restart (OX-03).
+Until that is fixed, auto-resume for a stage with a wing ladder must be off (the watcher refuses to arm it and says
+why): a silent reset to rung 0 is worse than a stopped run.
+
+### 2.7 Config management, `config check`, `doctor`
+
+**What is wrong.** Tuning that must be identical everywhere (the 313 `CurriculumTuning` values; 239 of them present in
+the confs) lives in an untracked per-machine file, next to values that must differ (role, host, threads, envs,
+paths). The fingerprint punishes any difference; `conf-sync` repairs it after the fact.
+
+**Design.**
+
+1. **Split the keys by who owns them.** *Shared*: `AnimusForge.Curriculum.*` and anything else the fingerprint hashes.
+   *Per machine*: `Cluster.Role`, `Cluster.Host`, `MapUpdate.Threads`, `AnimusForge.Envs`, `Stage.<name>.Envs`,
+   `Learner.TorchThreads`, `OutputDir`, paths, logging.
+2. **Track the shared keys.** `apps/forge/tuning/tuning.conf` in git holds only the keys that differ from the C++
+   default; `ForgeMain.cpp` loads it with `LoadAdditionalFile` after the machine conf, the same call it uses for
+   `mod_animus_forge.conf` (`ForgeMain.cpp:355-358`), and the tracked file wins. A machine conf that contains a
+   `Curriculum` key is then a configuration error the sim reports at start with the key name, not a silent override.
+   A pull is the sync; `conf-sync` is retired. Because the fingerprint hashes effective values (defaults included,
+   `AnimusForge.cpp:91-100`), nothing about the hash changes, which keeps the change inside what the cluster already
+   checks.
+3. **Per-stage overlays (second step).** `tuning/<stage>.conf` applied when a stage's scenario is built, so a tuning
+   value is "for this stage", visible in review, and not a global that every other stage inherits. Requires the sim to
+   load tuning per scenario instead of once (`CurriculumTuning::Load` is called at fingerprint time and at scenario
+   construction; how many sites is UNVERIFIED). Do step 2 first; step 3 only if a real need appears.
+4. **Say why.** Each line in a tuning file carries a comment with the date and the reason, as `CurriculumTuning.h`
+   comments already do for defaults. `git log -p apps/forge/tuning` is the history of every change to what the bots
+   are asked to do.
+5. **Fingerprint message.** The worker also sends its tuning as sorted `key=value` (a few KB at 313 keys), so the host
+   can print `Instance.WingTimeout host 420 worker 300` instead of two hashes (OX-12).
+
+**`forgectl config check`** (py, works today against the confs, better after step 2):
+
+```
+$ forgectl config check
+machine  conf lines  Curriculum keys  against tracked tuning  per-machine keys                 problems
+sarah    1,412       0                 same                    role=host threads=16 envs=192    -
+spencer  1,411       0                 same                    role=worker threads=6 envs=48    -
+thomas   1,411       3                 3 DIFFERENT             role=worker threads=12 envs=96   Curriculum keys in a machine conf
+moloch   0           -                 UNREADABLE              -                                conf is EMPTY: do not restart
+  thomas: Instance.WingTimeout = 300 here, 420 tracked (line 880); remove it from the conf
+exit 1
+```
+
+It reuses `confsync.py` (key parsing, the line-count rule) and `conf_prune.py` (keys the build no longer reads).
+`--fix` is absent on purpose: it prints the one-line edit; a conf is changed by `forgectl conf ...` with the backup
+and atomic write that `conf-sync` already has.
+
+**`forgectl doctor [--stage <s>]`**: the "can I start?" answer, from the checks that `deploy-gate.md`'s pre-flight page
+makes a person do by hand:
+
+```
+$ forgectl doctor --stage move3_interact
+machines      4/4 reachable, one revision (93cbc38ea), no '*'                                    ok
+containers    4/4 worldserver up, restart policy unless-stopped on 3, 'no' on moloch                WARN
+config        tracked tuning identical on 4; no machine conf empty                                ok
+resume        move3_interact latest.pt resumes on this build (resume_check.py)                    ok
+stage change  stage_json_diff vs the run: 2 reward terms added                                    NOTE
+disk          sarah 220 GB, spencer 228 GB, thomas 948 GB, moloch 1120 GB (need >= 30)            ok
+logs          docker log rotation set on 3 of 4                                                   WARN
+ports         7700-7702 reachable host<->workers                                                  ok
+runtime       docker enabled at boot on 4; torch version equal (2.7.1)                            ok / UNKNOWN on moloch
+notify        a test message reached 'ntfy' in 2 s                                                ok
+audit         ~/.forgectl/audit.log writable                                                      ok
+2 warnings, 0 failures. `forgectl stage resume move3_interact` is safe to run.
+```
+
+Exit 0 (all ok or notes), 1 (a warning the caller should read), 2 (a failure; the start would fail or damage a run).
+`forgectl stage start|resume` call the relevant subset automatically and print its failures in the plan, so the
+operator cannot forget it. `--dry-run` on `stage start|resume|build --cluster|conf` prints the plan and runs the checks
+and sends nothing (today only `videos` and `conf-sync --check` have a read-only form).
+
+**Effort.** `doctor` and `config check`: 3 days py. Tracked tuning, step 2: 2 days C++ plus moving 239 keys (a review
+task, with `test_conf_covers_tuning.py` as the safety net - it already checks the conf template covers the keys).
+Fingerprint key list: 1 day C++. Per-stage overlays: 3 days, optional.
+
+### 2.8 A stage queue and chain runner
+
+**What exists.** `forge start a b c` builds one plan; `FinishCurrent` runs the entries one after another
+(`AnimusForge.cpp:886-915`); entries 2 and later do not resume (`Resume = false`) and archive a prior run; there is no
+gate (a stage that stops at its step ceiling is as good as a converged one, `RunAdvanced` defaults to advanced,
+`:977-986`); an entry that ends `Failed` does not stop the plan either: `FinishCurrent` tears it down and starts the
+next entry (`:901-915`).
+
+**Design: orchestrate from forgectl, one single-stage plan at a time.** The sim's multi-entry plan cannot hold a gate,
+a notification or a human decision. forgectl can, and each stage start is already guarded. A chain is a small tracked
+file:
+
+```
+# apps/forge/chains/movement.toml
+name = "movement"
+doctor = true                       # run `doctor` before every stage; stop the chain if it fails
+[[stage]]
+name = "move3_interact"
+require = ["advanced", "headline_met"]      # finished.json advanced=true and every headline target met
+max_hours = 30                              # wall-clock ceiling (the step budget is the learner's)
+on_fail = "stop"                            # stop | skip | resume_once
+[[stage]]
+name = "move4_follow"
+require = ["advanced"]
+on_fail = "stop"
+```
+
+```
+$ forgectl chain run movement
+Chain 'movement': move3_interact -> move4_follow          (state: ~/.forgectl/chain.json)
+  doctor ok. start move3_interact? it has a run at 12M steps; start archives it  [y/N] y
+  ...
+03:40  move3_interact converged at 96.4M steps (advanced, headline met): gate passed
+03:41  doctor ok; resuming nothing, starting move4_follow fresh (parent checkpoint move3_interact/best.pt)
+03:41  notify: "movement: move3_interact done, move4_follow started"
+$ forgectl chain status
+$ forgectl chain pause        # finish the current stage, do not start the next
+$ forgectl chain abort        # cancel the running stage (saves latest.pt) and end the chain
+```
+
+Rules: gates read `finished.json` and `progress.json` only; a failed gate stops the chain with a notification, never
+skips quietly; `on_fail = resume_once` is allowed only for `learner_exited`; the chain state file lets the armed
+watcher (section 2.6) continue a chain after a reboot; a chain asks the same archive question as `stage start`, once,
+up front, for every stage that already has a run. The queue (`Queue`, `Queue.SkipFinished`) stays as the sim's own
+default for people who type `forge start`; the chain runner does not use it.
+
+**Effort.** 3 days py; depends on status JSON (2.2), `doctor` (2.7), notifications (2.5). A hands-off week of
+curriculum is worth the cost only after the individual stages are routine (section 6).
+
+### 2.9 "Look at what the bot sees"
+
+**What exists.** `forge camera snapshot <map> <x> <y> <z> <yaw> [pitch] [zoom] [file]` renders one frame of the vision
+block's camera from a point and writes `<file>-depth.pgm`, `-kind.ppm`, `-height.pgm`; idle only, no units, no
+objective (`cs_forge.cpp:467-480`, `HandleCameraSnapshot`; the help row says so). The sim writes a "camera audit" set of
+frames (`AnimusForge.cpp:1530`) and evaluation videos (`EvalVideo.cpp:493`, `runs/<stage>/videos/`), which
+`forgectl videos` already collects. `camera diff` compares the CPU and GPU casters.
+
+**Design: three modes, all wrappers.**
+
+```
+$ forgectl look point dev --map 34 --at -149.3,47.1,-22.4 --yaw 90      # an idle machine: the dev machine
+rendering on dev (idle) ... 256 x 144, 31 ms
+wrote var/look/point-1.png (kind), point-1-depth.png, point-1-height.png   open: file:///.../look/index.html
+
+$ forgectl look run move2_seek                                          # what the running stage already saved
+camera audit frames (newest 8) and evaluation videos (3), from sarah, converted to PNG/GIF
+var/look/move2_seek/index.html   (a contact sheet: audit frames, eval video stills, with the update they came from)
+
+$ forgectl look bot move2_seek --env 17      # OPTIONAL, needs C++: dump the frame the policy is given right now
+```
+
+- `look point` needs a worldserver that is idle. Never on the host during a stage: the dev machine, or a worker with
+  its container stopped from the plan (`cluster.toml` already marks `dev` as out of the cluster). forgectl checks
+  `idle` first (via status JSON) and refuses otherwise.
+- Conversion is stdlib: PGM/PPM are trivial formats and PNG needs `zlib` and `struct`; `forgectl` stays dependency-free
+  (`forgectl.md`: "plain Python, nothing to install").
+- A page, not a viewer: an `index.html` with the images and the parameters that made them.
+- `look bot` is the only new C++: a command that writes the current camera observation of env N (`forge camera dump
+  <env> <file>`), because "what the bot sees during training" is not otherwise available. Feasibility (whether the
+  observation tensor is still on the CPU side per env when `Gpu` observation writing is on) is UNVERIFIED; if it is
+  hard, skip it, the first two modes give most of the value. Principle 1 ("a bot perceives only what a player
+  perceives") is untouched: this shows the policy's input, not more.
+
+**Effort.** `look point` and `look run`: 2 days py. `look bot`: 2 days C++, optional.
+
+### 2.10 A local read-only dashboard
+
+**Shape.** `forgectl dashboard [--port 8099]` serves one page on `127.0.0.1` from the always-on machine (stdlib
+`http.server`, one thread polling every 30 s, a JSON endpoint and a static page with inline script; no framework, no
+build step, no login because it is loopback only and changes nothing). TensorBoard (`127.0.0.1:16006` on each machine)
+stays the tool for curves; the dashboard is the operations view.
+
+**Panels and where each gets its data.**
+
+| Panel | Shows | From |
+|---|---|---|
+| Now | stage, state, step bar, ETA, rung, steps/s, alarm banner | status JSON (2.2): `progress.json`, `finished.json`, sim status |
+| Cluster | one row per machine: revision, worldserver, learner, load, disk, last seen | `forgectl cluster` probe (`cluster.py:PROBE`) |
+| Targets | the stage's headline metrics against their targets, last eval with stderr | `progress.json` (`status_headline`, `status_targets`, `eval_*`) |
+| Trend | reward, entropy, KL, eval score vs steps for the live run (small SVG) | tail of `metrics.csv` and `eval.csv` over ssh |
+| Ladder | rung history and the time each rung took | `events.log`, `eval.jsonl`, later `ladder.json` |
+| Events | last 50 events, newest first | `~/.forgectl/events.jsonl` (2.5) |
+| Runs | the registry table (2.4) with links to `show` text | `run.json` index |
+| Look | latest camera audit frames, eval video stills | `look run` output |
+| Problems | `forgectl logs --errors` for the host, collapsed | `logs.py` |
+| Commands | the exact `forgectl` line for each next action, copy-only | static |
+
+Read-only on purpose: a button that cancels a stage is a second way to damage a run. If a button is ever wanted, it
+calls the same `forgectl stage ...` path with its prompt.
+
+**Effort.** 3-4 days py, after status JSON, runs index and events exist; it is the last item of the roadmap because it
+only displays what the earlier items produce.
