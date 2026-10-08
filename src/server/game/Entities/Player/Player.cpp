@@ -12043,7 +12043,7 @@ void Player::ApplyEquipCooldown(Item* pItem)
     if (GetCommandStatus(CHEAT_COOLDOWN))
         return;
 
-    TimePoint const cooldownStart = std::chrono::steady_clock::now();
+    TimePoint const cooldownStart = GameTime::Now();
     auto applyProcCooldown = [this, pItem, cooldownStart](uint32 spellId)
     {
         SpellProcEntry const* procEntry = sSpellMgr->GetSpellProcEntry(spellId);
