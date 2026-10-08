@@ -35,11 +35,10 @@ namespace VMAP
     class MapRayCallback
     {
     public:
-        MapRayCallback(ModelInstance* val, ModelIgnoreFlags ignoreFlags, Vector3* hitNormal = nullptr): prims(val),
-            flags(ignoreFlags), hit(false), normal(hitNormal) { }
+        MapRayCallback(ModelInstance* val, ModelIgnoreFlags ignoreFlags): prims(val), flags(ignoreFlags), hit(false) { }
         bool operator()(G3D::Ray const& ray, uint32 entry, float& distance, bool StopAtFirstHit)
         {
-            bool result = prims[entry].intersectRay(ray, distance, StopAtFirstHit, flags, normal);
+            bool result = prims[entry].intersectRay(ray, distance, StopAtFirstHit, flags);
             if (result)
             {
                 hit = true;
@@ -51,22 +50,6 @@ namespace VMAP
         ModelInstance* prims;
         ModelIgnoreFlags flags;
         bool hit;
-        Vector3* normal;
-    };
-
-    class MapLiquidCallback
-    {
-    public:
-        MapLiquidCallback(ModelInstance* val): prims(val) { }
-        bool operator()(G3D::Ray const& ray, uint32 entry, float& distance, bool /*StopAtFirstHit*/)
-        {
-            if (prims[entry].intersectLiquid(ray, distance, liquidType))
-                hit = true;
-            return hit;
-        }
-        ModelInstance* prims;
-        bool hit = false;
-        uint32 liquidType = 0;
     };
 
     class LocationInfoCallback
@@ -130,11 +113,10 @@ namespace VMAP
     Else, pMaxDist is not modified and returns false;
     */
 
-    bool StaticMapTree::GetIntersectionTime(G3D::Ray const& pRay, float& pMaxDist, bool StopAtFirstHit, ModelIgnoreFlags ignoreFlags,
-        Vector3* normal) const
+    bool StaticMapTree::GetIntersectionTime(G3D::Ray const& pRay, float& pMaxDist, bool StopAtFirstHit, ModelIgnoreFlags ignoreFlags) const
     {
         float distance = pMaxDist;
-        MapRayCallback intersectionCallBack(iTreeValues, ignoreFlags, normal);
+        MapRayCallback intersectionCallBack(iTreeValues, ignoreFlags);
         iTree.intersectRay(pRay, intersectionCallBack, distance, StopAtFirstHit);
         if (intersectionCallBack.didHit())
         {
@@ -143,23 +125,6 @@ namespace VMAP
         return intersectionCallBack.didHit();
     }
     //=========================================================
-
-    bool StaticMapTree::GetSurfaceIntersection(G3D::Ray const& pRay, float& pMaxDist, Vector3& normal) const
-    {
-        return GetIntersectionTime(pRay, pMaxDist, false, ModelIgnoreFlags::Nothing, &normal);
-    }
-
-    bool StaticMapTree::GetLiquidIntersection(G3D::Ray const& pRay, float& pMaxDist, uint32& liquidType) const
-    {
-        float distance = pMaxDist;
-        MapLiquidCallback callback(iTreeValues);
-        iTree.intersectRay(pRay, callback, distance, false);
-        if (!callback.hit)
-            return false;
-        pMaxDist = distance;
-        liquidType = callback.liquidType;
-        return true;
-    }
 
     bool StaticMapTree::isInLineOfSight(Vector3 const& pos1, Vector3 const& pos2, ModelIgnoreFlags ignoreFlags) const
     {

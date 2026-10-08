@@ -63,10 +63,7 @@ namespace VMAP
         std::string iBasePath;
 
     private:
-        /// `normal`, when given, takes the nearest hit triangle's normal in the tree's (internal) space,
-        /// unnormalised and either side, and is left alone without a hit.
-        bool GetIntersectionTime(G3D::Ray const& pRay, float& pMaxDist, bool StopAtFirstHit, ModelIgnoreFlags ignoreFlags,
-            G3D::Vector3* normal = nullptr) const;
+        bool GetIntersectionTime(G3D::Ray const& pRay, float& pMaxDist, bool StopAtFirstHit, ModelIgnoreFlags ignoreFlags) const;
         //bool containsLoadedMapTile(unsigned int pTileIdent) const { return(iLoadedMapTiles.containsKey(pTileIdent)); }
     public:
         static std::string getTileFileName(uint32 mapID, uint32 tileX, uint32 tileY);
@@ -79,12 +76,6 @@ namespace VMAP
 
         [[nodiscard]] bool isInLineOfSight(G3D::Vector3 const& pos1, G3D::Vector3 const& pos2, ModelIgnoreFlags ignoreFlags) const;
         bool GetObjectHitPos(G3D::Vector3 const& pos1, G3D::Vector3 const& pos2, G3D::Vector3& pResultHitPos, float pModifyDist) const;
-        //! The nearest WMO liquid surface the ray crosses closer than pMaxDist: sets pMaxDist and the liquid's type
-        //! (LiquidType.dbc) and returns true. Read-only and opt-in (the bots' camera); no other query changes.
-        bool GetLiquidIntersection(G3D::Ray const& pRay, float& pMaxDist, uint32& liquidType) const;
-        //! The nearest solid the ray meets closer than pMaxDist: sets pMaxDist and `normal` (the hit triangle's, in
-        //! this tree's space, unnormalised and either side) and returns true. Read-only and opt-in (the bots' camera).
-        bool GetSurfaceIntersection(G3D::Ray const& pRay, float& pMaxDist, G3D::Vector3& normal) const;
         [[nodiscard]] float getHeight(G3D::Vector3 const& pPos, float maxSearchDist) const;
         bool GetLocationInfo(G3D::Vector3 const& pos, LocationInfo& info) const;
 

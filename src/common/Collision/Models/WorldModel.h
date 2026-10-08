@@ -51,10 +51,6 @@ namespace VMAP
         ~WmoLiquid();
         WmoLiquid& operator=(WmoLiquid const& other);
         bool GetLiquidHeight(G3D::Vector3 const& pos, float& liqHeight) const;
-        //! The nearest crossing of the ray with the liquid's surface (each used tile's two triangles, as
-        //! GetLiquidHeight tessellates it; the single level of a liquid with no tiles) closer than `distance`, in
-        //! model space: sets `distance` and returns true. Read-only; nothing else calls it (the bots' camera does).
-        bool IntersectRay(G3D::Ray const& ray, float& distance) const;
         [[nodiscard]] uint32 GetType() const { return iType; }
         float* GetHeightStorage() { return iHeight; }
         uint8* GetFlagsStorage() { return iFlags; }
@@ -91,8 +87,6 @@ namespace VMAP
         enum InsideResult { INSIDE = 0, MAYBE_INSIDE = 1, ABOVE = 2, OUT_OF_BOUNDS = -1 };
         InsideResult IsInsideObject(G3D::Ray const& ray, float& z_dist) const;
         bool GetLiquidLevel(G3D::Vector3 const& pos, float& liqHeight) const;
-        //! The ray's nearest crossing of the group's liquid within the group's bound, closer than `distance`.
-        bool IntersectLiquid(G3D::Ray const& ray, float& distance, uint32& liquidType) const;
         [[nodiscard]] uint32 GetLiquidType() const;
         bool writeToFile(FILE* wf);
         bool readFromFile(FILE* rf);
@@ -122,8 +116,6 @@ namespace VMAP
         /// `normal` as GroupModel::IntersectRay's.
         bool IntersectRay(G3D::Ray const& ray, float& distance, bool stopAtFirstHit, ModelIgnoreFlags ignoreFlags,
             G3D::Vector3* normal = nullptr) const;
-        //! The ray's nearest crossing of any group's liquid closer than `distance` (opt-in: only the camera asks).
-        bool IntersectLiquid(G3D::Ray const& ray, float& distance, uint32& liquidType) const;
         bool GetLocationInfo(G3D::Vector3 const& p, G3D::Vector3 const& down, float& dist, GroupLocationInfo& info) const;
         bool writeFile(std::string const& filename);
         bool readFile(std::string const& filename);
