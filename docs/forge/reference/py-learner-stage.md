@@ -181,7 +181,8 @@ Both alarm lines are printed by `TrainingRun.evaluate` (`train.py:1288-1291`) an
 ### Persistence
 
 `state_dict` (`:353`) saves rung, tracker, evals_at_rung, step_score, step_stderr, falls, steps, rung_gates,
-lower_gate, collapsed, gate_best, gate_best_steps, evals_since_gate_best, stalled. `load_state_dict` (`:361`) reads every
+lower_gate, collapsed, gate_best, gate_best_steps, evals_since_gate_best, stalled. `load_state_dict` (`:361`) reads
+every
 key with a default, and clamps `rung` to the configured last rung without comment (the cost ladder instead flags
 `reshaped`, below). `forget_scores` (`:342`) keeps the rung and drops the scores.
 
@@ -206,14 +207,16 @@ Same machine over `config.costs`, with `NAME "cost ladder"`. Overrides:
 - `entropy_coef(env_steps)` (`:524`): `mappo.entropy_coef * entropy_scale * schedule(entropy_final_fraction, ...)`.
 - `observe_entropy(entropy, allowed)` (`:540`), every logged update: with `entropy_floor.fraction > 0` and more than one
   allowed action, the target is `fraction * ln(allowed)`. If entropy is below the target, `wanted = min(max_boost,
-  entropy_scale * 1.5)`, else 1. `entropy_scale += rate * (wanted - entropy_scale)`, clamped to `[1, max(1, max_boost)]`.
+  entropy_scale * 1.5)`, else 1. `entropy_scale += rate * (wanted - entropy_scale)`, clamped to `[1, max(1,
+max_boost)]`.
   A floor, never a ceiling.
 - `hold_weights()`: per class `convergence.hold_share` (0.02) if converged, else 1. Sent to the sim with the layout
   weights (`train.py:1521-1533`).
 
 ## Decisions
 
-- `after_eval(env_steps)` (`:727`): ADVANCE with reason "converged" when `convergence.advance`, at least one class played,
+- `after_eval(env_steps)` (`:727`): ADVANCE with reason "converged" when `convergence.advance`, at least one class
+  played,
   `evals >= window`, every played class converged, `fade.settled` and `costs.ready`. Else CONTINUE. `Outcome.report`
   is `report()`: per class converged, reentries, missing, last score, kl, entropy, rung, top_rung ("never played" for a
   class without rows).
@@ -250,10 +253,12 @@ lr_hold_until_plateau, top_rung, measure), `fade.*` and `costs.*`, `entropy_floo
 - `stage.py:462-463`: `sim_fallback_ceiling` is accepted and ignored; `tools/resume_check.py` still passes it.
 - `stage.py:153`: `or (1.0,)` is unreachable past `FadeConfig.__post_init__` (rungs cannot be empty).
 - `evaluation.py:691` `promote` and the `min_env_steps` argument of `converged` are unused.
-- `CostLadder` can never be gate-stepped (no `require_plateau` in `CostLadderConfig`), so `baselined["costs"]` never moves
+- `CostLadder` can never be gate-stepped (no `require_plateau` in `CostLadderConfig`), so `baselined["costs"]` never
+  moves
   and its rung steps are never re-baselined, archived (`best_<ladder>_rung<k>.pt`) or watched by an alarm. The
   `rung_best_name` branch for non-fade ladders (`runs.py:240`) is therefore unreachable today.
-- Fade and cost ladders treat a shortened rung list differently: the cost ladder resets and flags it (`:397-408`), the fade
+- Fade and cost ladders treat a shortened rung list differently: the cost ladder resets and flags it (`:397-408`), the
+  fade
   silently clamps (`:364`).
 - No stall alarm at the top rung (`:320`); the collapse alarm skips rung 0 (`:301`).
 - `convergence.patience = 0` is described by the sim as making a budget a budget (`ForgeConfig.cpp:725-729`), but

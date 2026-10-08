@@ -9,7 +9,8 @@ Line numbers: commit `bd32b9dc8`. The convergence rule is in [py-learner-stage.m
 
 ## Entry point and argv
 
-`python -m animus.train` runs `main()` (`train.py:2271`): parse args, `TrainConfig.load(config, --set..., --overlay...)`,
+`python -m animus.train` runs `main()` (`train.py:2271`): parse args, `TrainConfig.load(config, --set...,
+--overlay...)`,
 apply `--socket`, `--run-name`, `--runs-dir`, `--layouts-dir` over the config, `blas.prepare(train device)`, then
 `TrainingRun(config, resume=--resume).run()`. The return value 0 is the exit code. The exit code is 0 whether the stage
 converged or hit its budget (`train.py:17`); an exception (including `ConnectionError` when the sim goes away) leaves
@@ -45,7 +46,8 @@ reaches the same `finally`) and how long the 10 s grace (`ChildProcess.cpp:40`) 
 ## `RunLogger` and the run-directory writers
 
 - `_rotate(path, columns)` (`:71`): if the file exists, is non-empty and its header differs from `columns`, it is
-  renamed `<stem>-before-<YYYYmmdd-HHMMSS><suffix>`, a line says which columns were added or dropped, and True is returned
+  renamed `<stem>-before-<YYYYmmdd-HHMMSS><suffix>`, a line says which columns were added or dropped, and True is
+returned
   (a new file starts). Used by `RunLogger` (metrics.csv, layouts.csv) and `EvalLog` (eval.csv).
 - `RunLogger(run_dir, columns, append)` (`:103`): opens `metrics.csv` append when `append` and the header matches, else
   write with a header. Uses `csv.DictWriter(restval="", extrasaction="ignore")`: a key not in `columns` is silently
@@ -148,13 +150,15 @@ far side (cast, partners); write progress; run an evaluation if `eval.at_start` 
    `set_learning_rate_scale`; `distiller.coef = distill.coef_at(env_steps)`.
 7. `update += 1`; `env_steps += rollout_length * run_envs * agents_per_env` (all seats, including frozen, cast and
    partner rows). `maybe_partner_snapshot()`. `env.set_stage_progress(env_steps / total, shaping, cost)` (PROGRESS).
-8. Update: serial `trainer.update(buffer, distiller)`; `blas.save()`; `at_safe_point()`. With `overlap_updates`: join the
+8. Update: serial `trainer.update(buffer, distiller)`; `blas.save()`; `at_safe_point()`. With `overlap_updates`: join
+   the
    previous update (`finish_update`: result, `blas.save`, safe point, `sync_rollout`), submit this one with
    `sync=False`, swap buffers; the stats returned belong to the previous rollout (the first returns `{}`), so the
    rollout acts on weights one update stale.
 
 `log_update` (`:1995`): gather ended episodes from all ranks; `controller.observe_update(layout stats, lr_scale)`;
-`explore_update`; `observe_training_episodes` (difficulty, at_top_rung per class); return unless `update % log_every == 0`;
+`explore_update`; `observe_training_episodes` (difficulty, at_top_rung per class); return unless `update % log_every ==
+0`;
 build the row (counters, scales, ladder alarms as rung or -1, `frozen_layouts`, cast/partner stats, distill coef,
 explore, style), add `episode_<name>` means via `episode_means.means` (per-event columns weighted by their event count,
 NaN when none) and the update `stats`; `observe_entropy`; `audit_reward`; `audit_progress`; `logger.log`;
@@ -166,7 +170,8 @@ NaN when none) and the update `stats`; `observe_entropy`; `audit_reward`; `audit
 
 `maybe_checkpoint` (`:1136`): when `update % checkpoint_every == 0` or `env_steps` advanced by `checkpoint_env_steps`
 since the last (`checkpointed_env_steps` is created lazily with `getattr`), the leader writes
-`checkpoint_<update:06d>.pt` and `latest.pt` (two serialisations of the same state) then `prune_checkpoints(keep_checkpoints)`.
+`checkpoint_<update:06d>.pt` and `latest.pt` (two serialisations of the same state) then
+`prune_checkpoints(keep_checkpoints)`.
 Every `_save` first `drain_update()`s an overlapped update.
 
 ### One evaluation (`evaluate()`, `:1243-1327`)
@@ -184,7 +189,8 @@ Every `_save` first `drain_update()`s an overlapped update.
    `heldout` (`heldout_due`: final, or improved and `heldout_on_best`, or every `heldout_every`-th), `arms`.
 4. Broadcast the decisions; an improved best joins the partner pool; `evaluate_sampled`, `evaluate_heldout`,
    `evaluate_arms` (each is a reading only: tracker and controller never see them).
-5. `apply_holds()` (freeze converged classes' adapters and heads and drop them from the sample: `trainer.freeze_layouts`);
+5. `apply_holds()` (freeze converged classes' adapters and heads and drop them from the sample:
+   `trainer.freeze_layouts`);
    the leader sends layout weights (`casting_weights` times `hold_weights`, WEIGHTS) and the replay seeds (REPLAY).
    `casting_weights` is in `evaluation.py:371`: need = standardised shortfall of score (and of
    `layout_sampling.metric`, and of role metrics), `exp(strength * clip(need, -3, 3))`, spread capped at `max_ratio`.
@@ -222,7 +228,8 @@ CLOSE 5, MODE 6, WEIGHTS 7, REPLAY 8, DEVICE 9, DEVICE_ACK 10, PROGRESS 11, EXPL
 - ACT: header `(env_begin, envs)`, then `int32 actions[E,A]`, goals `[E,A,2]` if the policy has a goal head, look
   `[E,A,heads]` if `spec.look_heads` (a stage with look heads always sends one: `LOOK_HOLD = (3, 2, 0)` for 3 heads).
 - MODE (`<IIIIII32s`): evaluate flag, seed base, episodes, flags, first seed, held-out arena (index+1), baseline name.
-  Replies with a fresh STEP of every env. WEIGHTS: float32 per layout slot, `MAX_SPECS = 4` per layout. REPLAY: seed base,
+  Replies with a fresh STEP of every env. WEIGHTS: float32 per layout slot, `MAX_SPECS = 4` per layout. REPLAY: seed
+base,
   fraction, then seed list (max 65536). PROGRESS: three float32 (progress, shaping scale, cost scale), clamped to [0,1].
   EXPLORE_STARTS: share and up to 64 cells. None of WEIGHTS, REPLAY, PROGRESS, EXPLORE_STARTS gets a reply.
 - `ForgeEnv.step` sends every group's ACT before reading (half-batch works as a whole-pool step); `send_act` and
@@ -236,7 +243,8 @@ CLOSE 5, MODE 6, WEIGHTS 7, REPLAY 8, DEVICE 9, DEVICE_ACK 10, PROGRESS 11, EXPL
   without a device (`ForgeEnv(endpoint, ...)`, no `device=`), so only the host's sim can use device buffers.
 
 `device.py`: `host(x)` copies a tensor to numpy (used everywhere); `DeviceBuffers` opens the sim's HIP IPC handles with
-`libamdhip64` found next to torch (ROCm only) and wraps them as tensors; `open_buffers` declines with a reason unless the
+`libamdhip64` found next to torch (ROCm only) and wraps them as tensors; `open_buffers` declines with a reason unless
+the
 rollouts run on the same GPU under a HIP torch. `animus/__init__.py` sets `HSA_ENABLE_IPC_MODE_LEGACY=0` before torch.
 `blas.py`: on gfx12 ROCm only, sends matmuls to rocBLAS with TunableOp, tunings in `var/animus-forge/tunableop`;
 `save()` writes the tuning file after each of the first 21 updates (`TUNING_UPDATES = 20`, condition `_saves > 20`) and

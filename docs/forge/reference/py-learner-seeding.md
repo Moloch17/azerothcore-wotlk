@@ -16,7 +16,8 @@ Part of [py-learner.md](py-learner.md). Covers `bootstrap.py` (903 lines), `cast
 `init_from_checkpoint(path, prefer)` (`train.py:276`): a candidate whose file name is `best.pt` or `latest.pt` is
 replaced by the run's `prefer` file (`seed_from`, default `latest`; all live yamls use `latest`,
 `test_seed_from.py:47`), falling back to the other, or None. Any other path is taken if it exists. So a path written as
-`best.pt` yields `latest.pt` by default. This is intended and pinned by `test_seed_from.py:18-44`, but comments disagree:
+`best.pt` yields `latest.pt` by default. This is intended and pinned by `test_seed_from.py:18-44`, but comments
+disagree:
 `config.py:627-630` ("a best.pt that does not exist falls back to the latest.pt") and `config.py:649-650` ("each merged
 stage's best.pt (else latest.pt)") understate it. It also applies to `finetune_from` and (with the default prefer)
 named `distill.teachers` (`train.py:373`, `1027`). Partners are different: a bare stage name means `latest.pt` if it
@@ -52,7 +53,8 @@ not named above (UNVERIFIED which actor modules that includes: foresight and slo
 
 A layout the checkpoint lacks raises `ValueError` unless `overlay` (`:717-724`).
 
-Per layout (matched by name, `:726-769`): adapters (actor and critic), observation normalisers (`norms.<i>.mean/var/count`)
+Per layout (matched by name, `:726-769`): adapters (actor and critic), observation normalisers
+(`norms.<i>.mean/var/count`)
 and the actor head. With block spans in both stage.jsons (`stages.block_spans`) the move is block by block through
 `_layout_segments`; without them (older runs) `_seed_adapter`/`_seed_norm`/`_seed_head` copy a prefix.
 
@@ -63,7 +65,8 @@ and the actor head. With block spans in both stage.jsons (`stages.block_spans`) 
 - Same size: whole block copied.
 - Size changed: `GROWS_AT_END = {"crowd"}` carries the old columns when only features were added at the end; the
   `core` block with both action-name lists is matched action by action (`_core_by_name`, using
-  `CORE_GLOBAL_FEATURES = 91`, per-action features from stage.json `action_features` default 6, `CORE_ACTION_FEATURES = 8`,
+  `CORE_GLOBAL_FEATURES = 91`, per-action features from stage.json `action_features` default 6, `CORE_ACTION_FEATURES =
+8`,
   rank-tier actions named `rank_*` closing the block); a block with a seat set that only gained slots uses
   `_slots_grown`; otherwise the block is seeded from scratch and the rest still carries.
 - `_by_name` then fills still-empty new columns and actions from old columns of the same name in any block
@@ -73,7 +76,8 @@ and the actor head. With block spans in both stage.jsons (`stages.block_spans`) 
 reads the header. It was once 67 when the C++ had 94.
 
 Adapter weights for the segments move (`_seed_adapter_blocks`: new weights zeroed, then segments copied, bias copied);
-head rows move (`_seed_head_blocks`); normalisers move per feature with `count` capped at `SEED_COUNT_CAP = 16384` if the
+head rows move (`_seed_head_blocks`); normalisers move per feature with `count` capped at `SEED_COUNT_CAP = 16384` if
+the
 block gained features (`_seed_norm_blocks`), rescaled columns (stage.json `rescaled` tags the parent lacks) restart at
 mean 0 var 1 (`_seed_rescaled_norms`), new seat-set slots copy the last old slot's statistics.
 
@@ -102,10 +106,12 @@ Seeding does not carry the partner pool, the cast, or `best.pt` scores.
 
 ## Resume versus seed
 
-Resume (`train.py:949-972`) loads everything via `MappoTrainer.load_state_dict` (optimisers too) after the shape and layout
+Resume (`train.py:949-972`) loads everything via `MappoTrainer.load_state_dict` (optimisers too) after the shape and
+layout
 checks, plus `restore_evaluation_state`. Loader tolerance for old keys: `load_actor_state` ignores blind-column masks,
 zeroes the missing goal-scale parameters (`_GOAL_SCALE_KEYS`) and raises on any other missing or unexpected actor key;
-the critic is loaded non-strictly with the same exception list and raises likewise; `value_norm` and optimisers are loaded
+the critic is loaded non-strictly with the same exception list and raises likewise; `value_norm` and optimisers are
+loaded
 only if present; top-level keys use `.get` defaults (`update`, `env_steps`, `convergence`, `controller`, `score_kind`,
 `style`, `explore`). The config saved in a checkpoint is not compared with the current one by the learner.
 
@@ -148,13 +154,15 @@ first (highest normalised score) except the newest `keep_newest`. A retired memb
 
 Draw weights (`probabilities`): each member's `score` is the exponential moving average (alpha `1/min(episodes,
 rate_window)`) of the party score (mean of `partners.score` column, default `score_outcome`, else `won`, over the live
-seats) in episodes it partnered. Normalised across the pool: best 1, worst 0, unmet 0, one met 0.5, all equal 0.5. Weight
+seats) in episodes it partnered. Normalised across the pool: best 1, worst 0, unmet 0, one met 0.5, all equal 0.5.
+Weight
 `(1 - normalised)^2 + floor`; if `newest_share > 0` the newest snapshot's probability is raised to at least that share.
 `draw_for(layout)` draws among active members whose checkpoint has that layout.
 
 `Partners.draw` (called from `rows()` at an env's first decision of an episode, `fresh` flag): first the stand-in seats
 (rows the sim marked `present == 2`): each gets a member whatever `share` is; then, with probability `share`, up to
-`max_partners` other present seats of a party env (never a drill seat from stage.json `drill_seat`, never the stand-in's,
+`max_partners` other present seats of a party env (never a drill seat from stage.json `drill_seat`, never the
+stand-in's,
 always leaving one live seat) get members. Rows with members are masked out of the training samples in `_act_on_rows`.
 `observe_ended` scores each member that partnered an ended episode. `clear` and `reset_all` reset memories and redraw.
 Counters feed the metrics columns `partner_rows`, `partner_fallback_rows`, `partner_members`, `partner_episodes`,
@@ -165,7 +173,8 @@ The sim fields one only if the learner's MODE says it can (`can_field_stand_in`:
 `field_stand_in()` also writes the progress note. `partners.json` (`PartnerPool.write`) is informational: the pool's
 scores and counts are not saved in checkpoints and restart on resume.
 
-Evaluation arms (`train.py:1420-1479`): `with_partners` (share 1) and `with_human` (share 0, stand-in only) build their own
+Evaluation arms (`train.py:1420-1479`): `with_partners` (share 1) and `with_human` (share 0, stand-in only) build their
+own
 `Partners` with the eval members, argmax, no snapshots, seeded `eval.seed * 1000 + rank`; their rows are `excluded` from
 scoring (`with_partners_chooser`). Readings only.
 
@@ -185,14 +194,16 @@ parent's actor from its own saved config and stage.json (`frozen_actor`, frozen,
 columns by block (`_index_pairs`: blocks with equal sizes; a revised block is dropped from the mapping),
 and runs `check_camera` for camera teachers. `Distiller(stage, teachers)` needs the stage's `state.arena_first` span and
 **refuses any teacher with a camera** (`distill.py:256-259`; `test_cast_vision.py:230`). Every live stage has a vision
-block (`move1_controls` and `move2_seek` stage.json: all 10 layouts), so distillation is unusable in the live curriculum,
+block (`move1_controls` and `move2_seek` stage.json: all 10 layouts), so distillation is unusable in the live
+curriculum,
 and the restricted-stage overlay (`train.py:1019-1024`) would raise the same error.
 
 In the update the trainer calls only `Distiller.sequence_loss` (`mappo/trainer.py:1753-1763`) and refuses an auxiliary
 without it (`:1499`). It returns `coef * mean KL(teacher || policy)` over taught rows (the arena's rows, over actions
 both have and the stage's mask allows, renormalised). Recurrent teachers are replayed in order per sequence.
 `Distiller.__call__`, `.kl` and `.begin_sequence` are not called in production (dead; `.kl` is only used by `__call__`).
-`test_distill.py` is an empty file (one newline, no tests); distillation is exercised by `test_cast_vision.py` and a fake
+`test_distill.py` is an empty file (one newline, no tests); distillation is exercised by `test_cast_vision.py` and a
+fake
 distiller in `test_recurrent.py`.
 
 ## `stages.py` (the stage.json reader)
@@ -205,7 +216,8 @@ resume guard: one text entry per layout whose signature differs, empty if either
 ## Observed issues
 
 - `bootstrap.py:773` calls the private `trainer._sync_rollout()`; `train.py` uses `sync_rollout`.
-- `bootstrap.py:60-66`: a hand-kept constant that must equal a C++ constant; guarded only by a test that reads the header.
+- `bootstrap.py:60-66`: a hand-kept constant that must equal a C++ constant; guarded only by a test that reads the
+  header.
 - `cast.py:44` mentions `CastPool`, which does not exist.
 - `partners.py:246`: retired members keep their actors (device memory) for the rest of the run.
 - Pool scores do not survive a resume; the resumed pool draws with all members "unmet" (normalised 0).
