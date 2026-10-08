@@ -258,7 +258,6 @@ namespace Animus::Vision
         void Crop(float x, float y, float z, float yaw, uint8_t* out) const;
 
         [[nodiscard]] std::size_t Tiles() const { return _tiles.size(); }
-        [[nodiscard]] std::size_t CoarseTileCount() const { return _coarse.size(); }
 
     private:
         struct Tile

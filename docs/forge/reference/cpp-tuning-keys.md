@@ -47,7 +47,7 @@ Paths relative to the repository root.
     `tank = tank*100/(tank+healer)`, `healer = 100 - tank` when the sum passes 100): (`Characters.HighLevelChance`,
     `Characters.LowLevelChance`), (`Characters.NoisyTalentChance`, `Characters.RandomTalentChance`),
     (`Party.RoleTankChance`, `Party.RoleHealerChance`), (`StandIn.TankChance`, `StandIn.HealerChance`);
-  - `Difficulty.Window >= 1`; `Party.SizeWeight1..4 >= 0`.
+  - `Difficulty.Window >= 1`.
 - Nothing else is clamped in `Load`. Unsigned keys are not range-checked at all; what a negative or oversized text
   does for a `uint32` key depends on `Acore::StringTo<uint32>` (UNVERIFIED: read `common/Utilities/StringConvert.h`),
   and with `showLogs = false` any failure falls back to the default silently.
@@ -139,8 +139,9 @@ If every `Weight` is 0 the arenas are drawn evenly with an error log (`StageScen
 `WeightFinal`
 is 0 they take the start weights (`StageScenario.cpp:516-517`).
 
-conf.dist documents `Weight` and `MaxRung` (lines 6017-6028), `StandInShare` (6740-6741, in prose) and `GoalPlaces`
-(6232). It does not document `WeightFinal`. Nothing reads `MaxRung` (Observed issues 3).
+conf.dist documents `Weight` and `WeightFinal`, `StandInShare` (in prose) and `GoalPlaces`. (The undocumented-`WeightFinal`
+and unread-`MaxRung` findings of Observed issues 3 and 4 were fixed 2026-10-08: `MaxRung` was removed from conf.dist
+and `WeightFinal` documented.)
 
 ## 3. The groups
 
@@ -184,7 +185,8 @@ Notes per group worth knowing before changing it:
   (note 3 in the table); the dungeon stages' levels come from the instance rung (UNVERIFIED: read
   `InstanceEncounter::BeforeLevel`). The doc comment of `RandomLevel` sits above `TankModeSpell`
   (`StageScenario.cpp:142-153` vs the function at 171): misplaced.
-- **Party / Raid.** `Party.SizeWeight*` is dead in the live curriculum (note 4); the makeup draw
+- **Party / Raid.** `Party.SizeWeight*` and `Raid.DrillWeight` were deleted (2026-10-08: no live party arena reached
+  the size draw, and no drilled seat is paid by `PartyEncounter`); the makeup draw
   (`ClassicChance`, `RoleTankChance`, `RoleHealerChance`) is reached only by `move4_follow`
   (`classic = DrillRole || instance || proper || roll`, `StageScenario.cpp:2023`). PartyEncounter is used by arenas with
   `PartyGroup` (`StageScenario.cpp:470-475`): group1, group2, dungeon1-3. The `Roles.*` per-role prices mirror the
@@ -223,9 +225,8 @@ Notes per group worth knowing before changing it:
   ranges).
 
 Notes: (3) the tuned level draw is reached only where no fixed level, episode level, kept level or focus band applies:
-`move4_follow` in training (see section 3); (4) `RandomPartySize` is called only for a party arena with no instance,
-no `ProperParty` and no `PartySize` (`StageScenario.cpp:2005-2007`), and every live party arena has one of these
-(`move4_follow` sets `PartySize`, `Stages.cpp:770-773`); (5) arenas of group2-dungeon3 carry their own `StandInShare =
+`move4_follow` in training (see section 3); (4) the party-size draw (`RandomPartySize`, `Party.SizeWeight*`) was deleted 2026-10-08: every live party arena has an
+instance, a `ProperParty` or a `PartySize`; (5) arenas of group2-dungeon3 carry their own `StandInShare =
 20`
 (`Stages.cpp:621`), group1's roles arenas use `Roles.StandInShare`, `heldout` arenas are `EvalOnly`; no live arena falls
 through to `StandIn.Share`, so its default 0 is never consulted today (the "defer" path still exists).
@@ -242,10 +243,6 @@ through to `StandIn.Share`, so its default 0 is never consulted today (the "defe
 | Characters | `Characters.PetOutChance` | 50 | int32 | Load: 0..100 | `StageScenario.cpp:1573`, `StageScenario.cpp:2397` | all |
 | Characters | `Characters.ReuseEpisodes` | 4 | uint32 | - | `StageScenario.cpp:2095`, `StageScenario.cpp:2101`, `StageScenario.cpp:2178` (+1) | all |
 | Characters | `Characters.KeepCasting` | 1 | uint32 | - | `StageScenario.cpp:2095` | all |
-| Party | `Party.SizeWeight1` | 20 | int32 | Load: >= 0 | `StageScenario.cpp:240` | none (note 4) |
-| Party | `Party.SizeWeight2` | 20 | int32 | Load: >= 0 | `StageScenario.cpp:240` | none (note 4) |
-| Party | `Party.SizeWeight3` | 20 | int32 | Load: >= 0 | `StageScenario.cpp:240` | none (note 4) |
-| Party | `Party.SizeWeight4` | 40 | int32 | Load: >= 0 | `StageScenario.cpp:240` | none (note 4) |
 | Party | `Party.ClassicChance` | 50 | int32 | Load: 0..100 | `StageScenario.cpp:2023` | move4 only |
 | Party | `Party.RoleTankChance` | 25 | int32 | Load: 0..100; pair scaled to sum <= 100 | `StageScenario.cpp:2028` | move4 only |
 | Party | `Party.RoleHealerChance` | 25 | int32 | Load: 0..100; pair scaled to sum <= 100 | `StageScenario.cpp:2028` | move4 only |
@@ -262,7 +259,6 @@ through to `StandIn.Share`, so its default 0 is never consulted today (the "defe
 | Raid | `Raid.TankTarget` | 0.3f | float | - | `Encounters/PartyEncounter.cpp:483` | group1, group2, dungeon1-3 |
 | Raid | `Raid.PulledOff` | 0.004f | float | - | `Encounters/PartyEncounter.cpp:487` | group1, group2, dungeon1-3 |
 | Raid | `Raid.EarlyPull` | 0.01f | float | - | `Encounters/PartyEncounter.cpp:496` | group1, group2, dungeon1-3 |
-| Raid | `Raid.DrillWeight` | 3.0f | float | - | `Encounters/PartyEncounter.cpp:289`, `Encounters/PartyEncounter.cpp:443` | group1, group2, dungeon1-3 |
 | Raid | `Raid.KeepUp` | 0.0002f | float | - | `Encounters/PartyEncounter.cpp:510` | group1, group2, dungeon1-3 |
 | Raid | `Raid.Overheal` | 0.5f | float | - | `Encounters/PartyEncounter.cpp:519` | group1, group2, dungeon1-3 |
 | Raid | `Raid.TankStance` | 0.001f | float | - | `Encounters/PartyEncounter.cpp:456` | group1, group2, dungeon1-3 |
@@ -564,7 +560,7 @@ through to `StandIn.Share`, so its default 0 is never consulted today (the "defe
   fingerprint.
 - `Characters.*` level keys are reached in training only by `move4_follow` (table note 3); the other stages fix the
   level by `Level`, a focus band or the instance rung. Check that this is intended before tuning them.
-- `Party.SizeWeight1..4` are dead in the live curriculum (note 4), as is the fall-through to `StandIn.Share` (note 5).
+- The fall-through to `StandIn.Share` is dead in the live curriculum (note 5). (`Party.SizeWeight1..4` were deleted.)
 
 ## 6. Observed issues
 
@@ -572,16 +568,15 @@ through to `StandIn.Share`, so its default 0 is never consulted today (the "defe
    Only the two `Sudden*` pairs are guarded at their reader (`PartyFollowEncounter.cpp:319, 359`).
 2. `Load` reads with `showLogs = false` (`CurriculumTuning.cpp:60-62`): a malformed value is silently replaced by the
    default, and unsigned keys have no range check at all.
-3. conf.dist documents `Arena.<stage>.<arena>.MaxRung` (`worldserver.conf.dist:6024-6029`), and `test_conf_prune.py:127,
-   134` and `04-curriculum.md:858` list it, but nothing in `src/` reads it (grep of the tree). The same conf.dist text
-   refers to `Pulls.MaxTier` (`:6028`), a key that does not exist (the group is `Instance.Pull*`/`Combat.MaxTier`).
-4. conf.dist does not document `Arena.<stage>.<arena>.WeightFinal`, which `StageScenario.cpp:492-494` reads.
+3. (fixed 2026-10-08) conf.dist documented `Arena.<stage>.<arena>.MaxRung`, which nothing reads; the block is gone.
+   `test_conf_prune.py:127,134` and `04-curriculum.md:858` still list it (Python/doc side, not touched here).
+4. (fixed 2026-10-08) conf.dist now documents `Arena.<stage>.<arena>.WeightFinal`.
 5. The `Arena.*` and `Stage.*.GoalPlaces` overrides are not part of the fingerprint (section 1.4).
 6. `StageScenario.cpp:142-153` vs `:171`: the doc comment of `RandomLevel` sits above `TankModeSpell` (misplaced).
 7. The `Actions` preamble comment says decisions are 100 ms apart; the sim's tuning unit is 50 ms
    (`StageScenario.cpp:103`, header line 34).
-8. `Duel.*` and `Raid.*` group names describe stages that no longer exist; `Party.SizeWeight1..4` are never reached by a
-   live stage.
+8. `Duel.*` and `Raid.*` group names describe stages that no longer exist, but their keys are read (the duel's approach
+   ranges; the party and roles prices); only the names are history. (`Party.SizeWeight1..4` were deleted.)
 9. `CurriculumTuning.h` is 1185 lines with many lines over 120 columns in doc comments (for example the `Raid.KeepUp`
    comment at about line 126: UNVERIFIED exact lines; run `awk 'length>120'`).
 10. `AnimusForge.Curriculum.*` environment overrides (`AC_...`) enter the fingerprint invisibly (section 1.4).

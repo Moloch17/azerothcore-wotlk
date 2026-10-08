@@ -12,7 +12,7 @@ tools-and-ops.md) (conf tools, build, deploy), [01-forge-core-delta.md](01-forge
 
 | Path | Lines | Role |
 |---|---|---|
-| `src/server/apps/worldserver/worldserver.conf.dist` | 6755 | the config template; lines 4980-6000 are the FORGE section (`AnimusForge.*` keys, ~100 non-Curriculum plus 313 `Curriculum` keys) and lines 96-117 hold `Forge.Playtest` and `Forge.SealStrict` |
+| `src/server/apps/worldserver/worldserver.conf.dist` | 6755 | the config template; lines 4980-6000 are the FORGE section (`AnimusForge.*` keys, ~100 non-Curriculum plus 313 `Curriculum` keys) and lines 96-107 hold `Forge.SealStrict` |
 | `src/server/game/Animus/ForgeConfig.h` | 318 | `ForgeConfig`: the typed settings struct, `BenchSettings`, `GpuMode`, `ClusterRole`, derived paths |
 | `src/server/game/Animus/ForgeConfig.cpp` | 763 | `ForgeConfig::Load` (reads and validates every key), `ApplyGpuMode`, `AutoBenchGrids`, `BenchProfile`, `FastProfile`, `Stage`, `LearnerConfigFor` |
 | `src/server/apps/worldserver/ForgeMain.cpp` | 520 | loads `worldserver.conf`, then the legacy module conf (lines 354-361); reads `DecisionMs`, `TicksPerDecision`, `HalfBatch` itself for the update loop (lines 276-281) |
@@ -148,7 +148,6 @@ Curriculum keys are not in the template and 265 of the template's 313 are not in
 
 | Key | Where it is read | Role for the forge |
 |---|---|---|
-| `Forge.Playtest` (default 0) | `src/server/game/Forge/Forge.cpp:36`, once | 1 runs the host as a joinable realm: wall clock, listener, Warden, database open; the training sim is 0 ([01-forge-core-delta.md](01-forge-core-delta.md)) |
 | `Forge.SealStrict` (default 1) | `ForgeMain.cpp:229` | after startup the databases are sealed; 1 closes every connection, so MySQL can be stopped |
 | `MapUpdate.Threads` | `World/WorldConfig.cpp:574`; `AnimusForge.cpp:1702`; `ForgeConfig.cpp:497` | map task pool size; `forge bench apply` writes it |
 | `MapUpdate.Cpus` | `Maps/MapUpdater.cpp:71` | CPU list for the map pool; `Learner.Cpus = auto` uses the CPUs this leaves free |

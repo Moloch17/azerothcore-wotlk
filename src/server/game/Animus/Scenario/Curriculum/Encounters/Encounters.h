@@ -42,7 +42,6 @@
 #include <functional>
 #include <map>
 #include <string>
-#include <mutex>
 #include <vector>
 
 class Battleground;
@@ -169,7 +168,6 @@ namespace Animus::Curriculum
         bool Build(Env& env, Map* map, uint8 level) override;
         void UpdateEnemies(Env& env) override;
         void Update(Env& env) override;
-        bool SelectTarget(Env const& env, uint32 seat, Unit*& target) override;
         void View(Env const& env, uint32 seat, SeatView& view) const override;
         void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
         void WriteState(Env const& env, float* state) const override;
@@ -291,8 +289,6 @@ namespace Animus::Curriculum
             ObjectGuid Tank;
             std::vector<ObjectGuid> Overflow;
             std::vector<ObjectGuid> Objects;    // what the party can use near it (CrowdBlock::ACTION_USE_OBJECT)
-            /// Every closed door near the party, locked or not, as discs: an advance's run ends at one (A8).
-            std::vector<RouteShortcut::Door> ClosedDoors;
             mutable std::vector<ObjectGuid> Used;   // what a seat has used this run: each thing once
             ObjectGuid Approached;              // the thing the tank has been near, unused, since ApproachedMs
             uint32 ApproachedMs = 0;

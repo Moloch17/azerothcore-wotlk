@@ -34,7 +34,6 @@
 #include "GpuRuntime.h"
 #include "Capture.h"
 #include "GameTime.h"
-#include "MovementHandlerScript.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
 #include "Replay.h"
@@ -90,77 +89,6 @@ namespace
         return names;
     }
 
-    /// `forge controller record`: a Playtest player's movement packets, as the server took them (OnPlayerMove: after
-    /// ReadMovementInfo's flag rules, before relocation), kept in the human-capture format (FORMAT.md Move and
-    /// Speeds) until `record stop` writes them. One player at a time.
-    struct MoveRecorder
-    {
-        std::atomic<bool> On{ false };
-        std::mutex Lock;
-        ObjectGuid Player;
-        std::string Path;
-        uint64 OpenedMs = 0;
-        Animus::Movement::Capture::Recording Recording;
-        Animus::Movement::Speeds LastSpeeds;
-        bool HasSpeeds = false;
-    };
-
-    MoveRecorder& Recorder()
-    {
-        static MoveRecorder recorder;
-        return recorder;
-    }
-
-    /// The hook the recorder listens on; costs one atomic load a movement packet while nothing is recorded (bots'
-    /// reports reach it too, through ClientMovement::Apply).
-    class ForgeMoveRecorderScript : public MovementHandlerScript
-    {
-    public:
-        ForgeMoveRecorderScript() : MovementHandlerScript("ForgeMoveRecorderScript", { MOVEMENTHOOK_ON_PLAYER_MOVE })
-        {
-        }
-
-        void OnPlayerMove(Player* player, MovementInfo movementInfo, uint32 opcode) override
-        {
-            MoveRecorder& recorder = Recorder();
-            if (!recorder.On.load(std::memory_order_relaxed) || !player)
-                return;
-            std::lock_guard guard(recorder.Lock);
-            if (player->GetGUID() != recorder.Player)
-                return;
-            namespace Cap = Animus::Movement::Capture;
-            uint64 const ms = uint64(GameTime::GetGameTimeMS().count());
-            uint64 const id = player->GetGUID().GetCounter();
-            // The unit's speeds whenever they change (mount, form, snare), as the capture's Speeds record does.
-            Animus::Movement::Speeds const speeds = Animus::Movement::SpeedsOf(player);
-            if (!recorder.HasSpeeds || std::memcmp(&speeds, &recorder.LastSpeeds, sizeof(speeds)) != 0)
-            {
-                recorder.Recording.Speeds.push_back(Cap::FromSpeeds(speeds, ms, id));
-                recorder.LastSpeeds = speeds;
-                recorder.HasSpeeds = true;
-            }
-            Cap::MoveRecord record;
-            record.Ms = ms;
-            record.Player = id;
-            record.ClientMs = movementInfo.time;
-            record.Opcode = uint16(opcode);
-            record.Flags = movementInfo.GetMovementFlags();
-            record.Flags2 = movementInfo.GetExtraMovementFlags();
-            record.X = movementInfo.pos.GetPositionX();
-            record.Y = movementInfo.pos.GetPositionY();
-            record.Z = movementInfo.pos.GetPositionZ();
-            record.O = movementInfo.pos.GetOrientation();
-            record.Pitch = movementInfo.pitch;
-            record.FallMs = movementInfo.fallTime;
-            record.JumpZSpeed = movementInfo.jump.zspeed;
-            record.JumpSin = movementInfo.jump.sinAngle;
-            record.JumpCos = movementInfo.jump.cosAngle;
-            record.JumpXYSpeed = movementInfo.jump.xyspeed;
-            record.Map = player->GetMapId();
-            recorder.Recording.Moves.push_back(record);
-        }
-    };
-
     AnimusForge::LineSink Reply(ChatHandler* handler)
     {
         return [handler](std::string const& line) { handler->SendSysMessage(line); };
@@ -176,7 +104,6 @@ namespace
             static ChatCommandTable controllerCommandTable =
             {
                 { "probe",  HandleControllerProbe,  SEC_ADMINISTRATOR, Console::Yes },
-                { "record", HandleControllerRecord, SEC_ADMINISTRATOR, Console::Yes },
                 { "replay", HandleControllerReplay, SEC_ADMINISTRATOR, Console::Yes },
             };
 
@@ -236,14 +163,13 @@ namespace
             table.AddRow({ "forge start [scenario ...]", "train these from scratch in order (default: "
                 "AnimusForge.Queue)" });
             table.AddRow({ "forge fast [scenario ...]", "quick low-resolution test run of these (default: "
-                "AnimusForge.Queue) in the fast output directory" });
+                "AnimusForge.Fast.Queue) in the fast output directory" });
             table.AddRow({ "forge resume [scenario ...]", "unpause; or continue the first from its latest.pt, then the "
                 "rest (default: where the last plan stopped)" });
             table.AddRow({ "forge pause", "freeze the sim and the learner after the current decision" });
             table.AddRow({ "forge cancel", "stop the plan; the learner saves latest.pt first" });
             table.AddRow({ "forge skip", "end the current scenario and start the next one" });
             table.AddRow({ "forge run <scenario> <policy> [episodes]", "run the random policy, no learner" });
-            table.AddRow({ "forge controller record <player> <file> | stop", "record a Playtest player's movement packets (the human-capture format's Move and Speeds) until stopped, then write them" });
             table.AddRow({ "forge controller replay <file> [player]", "replay a recording (or a realm capture's move file) through the player controller: drift at 1/2/5/10 s, jumps, steps and slopes, and each client constant against what the recording measured (idle only)" });
             table.AddRow({ "forge controller probe <map> <x> <y> <z> [facing]", "the player controller's view of the world at a point (MapWorldQuery): the floor, its slope, the liquid, the free run along eight headings at the knee and the chest, the ceiling, and whether it is inside the terrain" });
             table.AddRow({ "forge camera snapshot <map> <x> <y> <z> <yaw> [pitch] [zoom] [file]", "render one frame of "
@@ -281,7 +207,7 @@ namespace
                 "CPU)" });
             table.AddRow({ "forge export [scenario] [best|latest]", "write the scenario's .amdl models to "
                 "AnimusForge.ModelDir" });
-            table.AddRow({ "forge clean archive", "delete runs/_archive/" });
+            table.AddRow({ "forge clean archive", "delete <OutputDir>/archive" });
             table.AddRow({ "forge clean scenario <scenario>", "delete runs/<scenario>/ (its checkpoints and logs)" });
             table.AddRow({ "forge clean exports", "delete the exported models" });
             table.AddRow({ "forge clean fast", "delete the fast test runs, layouts and models" });
@@ -758,63 +684,6 @@ namespace
             return true;
         }
 
-        /// `forge controller record <player> <file>` starts recording that player's movement packets (a Playtest
-        /// client's); `forge controller record stop` writes them (player-controller C6). One player at a time.
-        static bool HandleControllerRecord(ChatHandler* handler, std::string name, Optional<std::string> file)
-        {
-            namespace Cap = Animus::Movement::Capture;
-            MoveRecorder& recorder = Recorder();
-            if (name == "stop")
-            {
-                Cap::Recording recording;
-                std::string path;
-                uint64 opened = 0;
-                {
-                    std::lock_guard guard(recorder.Lock);
-                    if (!recorder.On.exchange(false))
-                    {
-                        handler->SendSysMessage("nothing is being recorded");
-                        return true;
-                    }
-                    recording = std::move(recorder.Recording);
-                    path = recorder.Path;
-                    opened = recorder.OpenedMs;
-                    recorder.Recording = Cap::Recording();
-                }
-                std::string error;
-                if (!Cap::WriteFile(path, recording, opened, error))
-                {
-                    handler->PSendSysMessage("could not write the recording: {}", error);
-                    return true;
-                }
-                handler->PSendSysMessage("wrote {} movement packets and {} speed records to {}; read it with `forge "
-                    "controller replay {}`", recording.Moves.size(), recording.Speeds.size(), path, path);
-                return true;
-            }
-            if (!file || file->empty())
-            {
-                handler->SendSysMessage("usage: forge controller record <player> <file> | forge controller record "
-                    "stop");
-                return true;
-            }
-            Player* player = ObjectAccessor::FindPlayerByName(name, false);
-            if (!player || !player->GetSession() || player->GetSession()->IsSimSession())
-            {
-                handler->PSendSysMessage("no player named {} with a client is online", name);
-                return true;
-            }
-            std::lock_guard guard(recorder.Lock);
-            recorder.Player = player->GetGUID();
-            recorder.Path = *file;
-            recorder.OpenedMs = uint64(GameTime::GetGameTimeMS().count());
-            recorder.Recording = Cap::Recording();
-            recorder.HasSpeeds = false;
-            recorder.On = true;
-            handler->PSendSysMessage("recording {}'s movement packets; `forge controller record stop` writes them to "
-                "{}", name, *file);
-            return true;
-        }
-
         /// `forge controller replay <file> [player]`: the recording's packets fed through the player controller over
         /// the live world (MapWorldQuery on the recording's map), and the report (Animus::Movement::Replay). Idle
         /// only: it creates the grids it reads. A realm capture's move file holds many players: the one with the most
@@ -1252,5 +1121,4 @@ namespace
 void AddSC_forge_commandscript()
 {
     new ForgeCommandScript();
-    new ForgeMoveRecorderScript();
 }

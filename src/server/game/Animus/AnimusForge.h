@@ -64,7 +64,7 @@ namespace AnimusForge
 
         /// Inside a map's task, on the thread updating it: the envs on this map take the last decision's
         /// actions before its tick (OnMapPrologue) and are scored and observed after it (OnMapEpilogue).
-        /// Both do nothing for a map that holds no env, which is every map in playtest mode.
+        /// Both do nothing for a map that holds no env.
         void OnMapPrologue(Map& map);
         void OnMapEpilogue(Map& map);
         /// After every map task has joined (MapMgr::Update): with AnimusForge.ObserveAfterJoin, the maps whose
@@ -385,7 +385,6 @@ namespace AnimusForge
 
         uint64 _ticks = 0;                  // decisions since the scenario started, not world updates
         uint32 _ticksSinceDecision = 0;     // world updates since the last decision (< TicksPerDecision)
-        uint32 _msSinceDecision = 0;        // ... and, under Forge.Playtest, game ms since it (< DecisionMs)
         /// The running stage's split and world tick (ForgeConfig::TicksFor, movement-smooth A6), set when it starts.
         uint32 _runTicks = 1;
         uint32 _runWorldTickMs = 0;

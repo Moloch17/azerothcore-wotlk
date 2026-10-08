@@ -45,7 +45,8 @@ namespace Animus
     /// Every env of one scenario, plus the flat structure-of-arrays buffers a host reads and writes: the forge's bridge
     /// sends them to the learner (its STEP payload layout, env-major), the stage viewer plays them locally.
     ///
-    /// Its hooks (RecordDamage, ...) are fed by the library's scripts while the pool is registered (PoolRegistry).
+    /// Its hooks (RecordDamage, ...) are fed by the core's hooks while the pool is the active one
+    /// (Hooks::SetActivePool).
     class EnvPool
     {
     public:
@@ -109,7 +110,7 @@ namespace Animus
         /// Evaluation (the forge's MODE message): hand seed indexes firstSeed..firstSeed+episodes-1 to envs as they
         /// reset (a cluster's sims each play their own run of one evaluation's seeds), each env
         /// rebuilt right after reseeding the world thread's random numbers from (seedBase, index)
-        /// (CoreHooks::SeedRandom). With a baseline policy name ("random"), EvalBaseline() tells the caller to
+        /// (rand_seed). With a baseline policy name ("random"), EvalBaseline() tells the caller to
         /// run it instead of the learner's actions. Takes effect at the next reset; call ResetAll to start every env on it.
         void SetEvaluation(bool enabled, uint32 seedBase, uint32 episodes, std::string const& baseline,
             uint32 firstSeed = 0);
@@ -191,8 +192,8 @@ namespace Animus
             uint64 ResetStockNs = 0;        // ... supplies and pets
             uint64 ResetPrepareNs = 0;      // ... the draws and the encounters' episode resets
             uint64 ResetDespawnNs = 0;      // ... the previous episode's targets despawned
-            uint64 ResetSeatsNs = 0;
-            uint64 ResetScenarioNs = 0;     // ... Scenario::Reset as a whole        // ... the seats' loop as a whole
+            uint64 ResetSeatsNs = 0;        // ... the seats' loop as a whole
+            uint64 ResetScenarioNs = 0;     // ... Scenario::Reset as a whole
             uint64 ApplyNs = 0;             // ApplyActions, which is a decision's other half
             uint32 Observes = 0;            // envs observed (one per env per decision)
             uint32 Resets = 0;              // episodes that ended and were rebuilt (on the world thread)

@@ -23,7 +23,7 @@ A boolean parse or a missing key gives the default below. Where code clamps, the
 | Key | Default | Meaning and clamps | Line |
 |---|---|---|---|
 | `AnimusForge.Enable` | 1 | 0 turns every hook into a no-op; also read by `OutdoorPvPMgr.cpp:49` | 173 |
-| `AnimusForge.Queue` | "" | comma list; empty = stages with `InDefaultQueue` | 175 |
+| `AnimusForge.Queue` | "" | comma list; empty = every stage | 175 |
 | `AnimusForge.Queue.SkipFinished` | 1 | `forge start` without names skips advanced runs | 176 |
 | `AnimusForge.Queue.LocalEpisodes` | 0 | episodes per scenario with a local policy | 177 |
 | `AnimusForge.Classes` | "" | comma list; empty = every class; one class selects `configs/<class>/<stage>.yaml` when present (`LearnerConfigFor`) | 178 |

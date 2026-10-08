@@ -21,7 +21,6 @@
 
 #include "World.h"
 #include "AnimusForge.h"
-#include "Forge.h"
 #include "AccountMgr.h"
 #include "AchievementMgr.h"
 #include "AddonMgr.h"
@@ -204,8 +203,6 @@ void World::LoadConfigSettings(bool reload)
 
     if (reload)
     {
-        sMapMgr->SetMapUpdateInterval(getIntConfig(CONFIG_INTERVAL_MAPUPDATE));
-
         _timers[WUPDATE_UPTIME].SetInterval(getIntConfig(CONFIG_UPTIME_UPDATE) * MINUTE* IN_MILLISECONDS);
         _timers[WUPDATE_UPTIME].Reset();
 
@@ -1133,7 +1130,7 @@ void World::DetectDBCLang()
 ///
 /// Relative to upstream's World::Update this drops, and why:
 ///   - sMetric->Update(), METRIC_*   -- Metric is never initialised
-///   - sToCloud9Sidecar block        -- single process, never clustered
+///   - sToCloud9Sidecar block        -- the ToCloud9 sidecar is not used (the forge's cluster is AnimusForge.Cluster.*)
 ///   - sWorldUpdateTime Update/Record
 ///                                   -- percentile bookkeeping only TC9Sidecar reads, plus
 ///                                      per-tick slow-update logging
@@ -1164,12 +1161,9 @@ void World::Update(uint32 diff)
     ///- Update the game time and check for shutdown time. This is stock _UpdateGameTime() with one
     /// change: the clock advances by the fixed tick diff (the sim clock) instead of being re-read
     /// from the wall clock, so every GameTime reader -- cooldowns, GCD, procs, respawns -- moves on
-    /// game time. See GameTime::AdvanceGameTimers. Playtest mode is the stock wall clock.
+    /// game time. See GameTime::AdvanceGameTimers.
     Seconds lastGameTime = GameTime::GetGameTime();
-    if (ForgeCore::Playtest())
-        GameTime::UpdateGameTimers();
-    else
-        GameTime::AdvanceGameTimers(Milliseconds(diff));
+    GameTime::AdvanceGameTimers(Milliseconds(diff));
 
     Seconds currentGameTime = GameTime::GetGameTime();
     Seconds elapsed = currentGameTime - lastGameTime;
@@ -1232,10 +1226,6 @@ void World::Update(uint32 diff)
 
     ///- Expired auctions.
     sAuctionMgr->Update(diff);
-
-    ///- Real client sessions (playtest mode only; sim sessions are driven by their map).
-    if (ForgeCore::Playtest())
-        sWorldSessionMgr->UpdateSessions(diff);
 
     ///- Dungeon finder: remove obsolete entries before the maps look for compatibles.
     sLFGMgr->Update(diff, 0);

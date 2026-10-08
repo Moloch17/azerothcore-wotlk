@@ -77,8 +77,7 @@ namespace GameTime
      * cast bars, auras and swing timers run on the tick diff. At sim speed that mismatch is
      * enormous. The sim host's World::Update calls this instead, advancing the same four cached
      * values by exactly the fixed tick diff, so every GameTime reader moves on game time.
-     * UpdateGameTimers() keeps its wall-clock semantics for its unit tests and for a real-time
-     * (playtest) run.
+     * UpdateGameTimers() keeps its wall-clock semantics for its unit tests.
      *
      * getMSTime() deliberately stays on the wall clock: database timing, logging, load measurements
      * and the throughput report in ForgeUpdateLoop all need real time.

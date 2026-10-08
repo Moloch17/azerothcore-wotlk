@@ -434,8 +434,7 @@ public:
 
     void StartBattleground();
 
-    /// `logMissing` false for a caller that polls for an object the script has not spawned yet.
-    GameObject* GetBGObject(uint32 type, bool logMissing = true);
+    GameObject* GetBGObject(uint32 type);
     Creature* GetBGCreature(uint32 type);
 
     // Location
@@ -565,11 +564,6 @@ public:
 
     [[nodiscard]] bool ToBeDeleted() const { return m_SetDeleteThis; }
 
-    /// A match the sim runs (the flag stages): its episode ends it, and the sim deletes it. The manager never
-    /// deletes it for being empty and it never sends its players off at the end -- they are bots with no entry
-    /// point to go back to, and the encounter still holds the match.
-    void SetSimOwned(bool simOwned) { _simOwned = simOwned; }
-    [[nodiscard]] bool IsSimOwned() const { return _simOwned; }
     //void SetDeleteThis() { m_SetDeleteThis = true; }
 
     void RewardXPAtKill(Player* killer, Player* victim);
@@ -675,7 +669,6 @@ private:
     uint8  m_ArenaType;                                 // 2=2v2, 3=3v3, 5=5v5
     bool   _InBGFreeSlotQueue{ false };                // used to make sure that BG is only once inserted into the BattlegroundMgr.BGFreeSlotQueue[bgTypeId] deque
     bool   m_SetDeleteThis;                             // used for safe deletion of the bg after end / all players leave
-    bool   _simOwned = false;
     bool   m_IsArena;
     bool   m_IsTemplate;
     PvPTeamId m_WinnerId;

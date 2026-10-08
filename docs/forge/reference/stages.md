@@ -52,7 +52,7 @@ stage is [../04-curriculum.md](../04-curriculum.md). Related references: [00-arc
 | 11 | `dungeon2_ragefire` | Ragefire, door to Bazzalan | band | 5 | Instance (whole wing) | wing ladder + fade (`full_clear` 0.5) | 1500M | never |
 | 12 | `dungeon3_deadmines` | Deadmines, door to VanCleef | 17 to 20 | 5 | Instance (whole wing) | wing ladder + fade (`bar_clear` 0.5) | 2000M | never |
 
-The queue order is the table's order (`InDefaultQueue` is true for all, `StageDefinition.h`). Budgets are ceilings, not
+The queue order is the table's order (every stage is in the default queue). Budgets are ceilings, not
 targets (see [../04-curriculum.md](../04-curriculum.md)).
 
 ### Seed chain

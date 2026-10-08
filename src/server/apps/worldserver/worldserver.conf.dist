@@ -93,25 +93,13 @@
 RealmID = 1
 
 #
-#    Forge.Playtest
-#        Description: Forge: run the sim host as a joinable realm so a human can verify the world.
-#                     The game clock follows the wall clock, the world listener starts on
-#                     WorldServerPort, Warden runs as Warden.Enabled says, and the database stays
-#                     open for the login and the character's saves. Off is the training sim: fixed
-#                     game-time ticks, no listener, every table in memory after startup.
-#        Default:     0 - (Disabled)
-#                     1 - (Enabled)
-
-Forge.Playtest = 0
-
-#
 #    Forge.SealStrict
 #        Description: After startup the databases are sealed: memory is the truth, writes are
 #                     discarded, and the worker threads close. 1 closes every connection too, so the
 #                     MySQL container can be stopped once the log says the pools are sealed; a later
 #                     read gets no rows. 0 keeps one connection per pool and still serves late reads.
 #                     Either way each distinct late read is logged once with where it came from, for
-#                     finding the reads a new stage adds. Playtest mode never seals.
+#                     finding the reads a new stage adds.
 #        Default:     1
 
 Forge.SealStrict = 1
@@ -438,38 +426,9 @@ Network.UseSocketActivation = 0
 ###################################################################################################
 
 ###################################################################################################
-# REMOTE ACCESS
+# SOAP
 #
-#    Ra.Enable
-#        Description: Enable remote console (telnet).
-#        Default:     0 - (Disabled)
-#                     1 - (Enabled)
-
-Ra.Enable = 0
-
-#
-#    Ra.IP
-#        Description: Bind remote access to IP/hostname.
-#        Default:     "0.0.0.0" - (Bind to all IPs on the system)
-
-Ra.IP = "0.0.0.0"
-
-#
-#    Ra.Port
-#        Description: TCP port to reach the remote console.
-#        Default:     3443
-
-Ra.Port = 3443
-
-#
-#    Ra.MinLevel
-#        Description: Required security level to use the remote console.
-#        Default:     3
-
-Ra.MinLevel = 3
-
-#
-#    SOAP.Enable
+#    SOAP.Enabled
 #        Description: Enable soap service
 #        Default:     0 - (Disabled)
 #                     1 - (Enabled)
@@ -6040,12 +5999,12 @@ AnimusForge.Progress.Interval = 0
 #        Default:     the stage definition's weight (1 for every arena of the current stages)
 
 #
-#    AnimusForge.Curriculum.Arena.<stage>.<arena>.MaxRung
-#        Description: Hold one arena's ladder at a rung instead of letting it climb, e.g.
-#                     AnimusForge.Curriculum.Arena.<stage>.<arena>.MaxRung = 0 for the bottom rung.
-#                     Binds training and evaluation alike. A drill uses it so the thing being drilled is
-#                     the only thing that varies; -1 lets the ladder climb to Pulls.MaxTier as usual.
-#        Default:     the stage definition's (-1 for every arena: the ladder climbs)
+#    AnimusForge.Curriculum.Arena.<stage>.<arena>.WeightFinal
+#        Description: An arena's share of episodes at the end of the stage's budget, reached linearly from
+#                     Weight as training goes (the learner's progress): an arena weighted up as the skills it
+#                     needs come in. Evaluation draws by the final weights. A value below 0 is taken as 0;
+#                     when every arena's final weight is 0 the final weights are the Weight values.
+#        Default:     the stage definition's WeightFinal, else the arena's Weight
 
 #
 #    AnimusForge.Curriculum.Characters.*
@@ -6083,11 +6042,6 @@ AnimusForge.Curriculum.Characters.KeepCasting = 1
 #    AnimusForge.Curriculum.Party.*
 #        Which party seats have a character, and their roles.
 
-#   relative chance of 1, 2, 3 or 4 seats with a character
-AnimusForge.Curriculum.Party.SizeWeight1 = 20
-AnimusForge.Curriculum.Party.SizeWeight2 = 20
-AnimusForge.Curriculum.Party.SizeWeight3 = 20
-AnimusForge.Curriculum.Party.SizeWeight4 = 40
 #   percent: tank, healer, damage dealers instead of drawn roles
 AnimusForge.Curriculum.Party.ClassicChance = 50
 #   drawn roles: percent tanks, healers, the rest damage dealers
@@ -6120,12 +6074,11 @@ AnimusForge.Curriculum.Raid.TankHold = 0.015
 #   the party's tank is charged per enemy on somebody else, per decision
 AnimusForge.Curriculum.Raid.TankLoose = 0.006
 #   a party's damage dealers: their damage on the tank's target times TankTarget, and PulledOff per enemy they took
-#   off the tank, per decision; a drill's drilled seat has its role's terms times DrillWeight
+#   off the tank, per decision
 AnimusForge.Curriculum.Raid.TankTarget = 0.3
 AnimusForge.Curriculum.Raid.PulledOff = 0.004
 #   a party's damage dealers and healer: per enemy on them while the tank has not engaged, per decision (a cost)
 AnimusForge.Curriculum.Raid.EarlyPull = 0.01
-AnimusForge.Curriculum.Raid.DrillWeight = 3.0
 #   healers (party and raid): per group member above 50% health per decision, the same charged per member below 35%
 AnimusForge.Curriculum.Raid.KeepUp = 0.0002
 #   healers, party and raid: healing cast that landed on nobody's missing health, as a share of the healer's health,

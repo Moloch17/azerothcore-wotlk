@@ -100,16 +100,16 @@ namespace Animus::Curriculum
     };
 
     // Sizes several blocks and the scenario agree on.
-    constexpr uint32 RAID_GROUPS = 8;       // a raid's groups
+    constexpr uint32 RAID_GROUPS = 8;       // a raid's groups (a bound: no stage fields a raid)
     constexpr uint32 GROUP_SEATS = 5;       // seats in a group: a party is one of them
-    /// Learned agents per env: 1, an arena's 2, a party's 1-5, or a raid's groups of five.
+    /// Learned agents per env: 1, or a party's 1-5 (one group); a raid's groups of five are the bound.
     constexpr uint32 MAX_SEATS = RAID_GROUPS * GROUP_SEATS;
     constexpr uint32 TEAM_SEATS = 10;       // a battleground side: Warsong Gulch as it is played
     constexpr uint32 TEAM_COUNT = 2;
     constexpr uint32 NO_SEAT = 0xFFFFFFFF;
     constexpr uint32 GROUP_MEMBERS = GROUP_SEATS - 1;    // the seat's own group, itself aside
     /// Raiders outside the seat's group that it still has to act on: the raid's main tank, its most hurt member,
-    /// and the nearest one. Empty in every stage below a raid, where the group is the whole of it.
+    /// and the nearest one. Empty in every stage, where the group is the whole of it.
     constexpr uint32 SPOTLIGHT_SLOTS = 3;
     /// Teammate slots a seat observes and acts on (PartyBlock). Bounded on purpose: a raider heals, assists and
     /// guards its own group and a few named others, never 39 people, and a slot is 36 features and three actions.

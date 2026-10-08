@@ -38,7 +38,7 @@ namespace AnimusForge
     ///                    when its own is the same, and otherwise answers
     ///   host -> worker   REFUSED <the keys that differ>   and closes; the worker tries again a minute later
     ///   worker -> host   CAPS learner=<0|1>   whether it runs a learner of its own (AnimusForge.Cluster.Learner)
-    ///   host -> worker   START ... rank=<r> world=<n> dist=<address:port> iface=<name>   to such a worker: its
+    ///   host -> worker   START ... rank=<r> world=<n> dist=<address:port>   to such a worker: its
     ///                    learner's rank among all of the cluster's, and where they meet (torch.distributed)
     ///   host -> worker   START <scenario> <resume 0|1> <fast 0|1> [envs=<n>] ticks=<n>
     ///                    envs: the host's own env count for this stage (AnimusForge.Stage.<name>.Envs, per

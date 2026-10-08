@@ -101,7 +101,7 @@ Kind, Height, Radius), `SightPair` (`:124`: Spawn, Object, Corner; indexes into 
 | `ProperParty` | tank + healer + three damage drawn by build (`StageScenario::FitsDungeonRole`); G1 only |
 | `DrillRole` [0] | 1 tank, 2 healer, 3 damage; the drilled role is seat 0 |
 | `Hazards` | every pull holds a ground-effect caster (`OpponentPool::RandomHazardCaster`); `combat2_packs/fire` only |
-| `SpawnPoints`, `MapId`, `MinLevel` | per-arena overrides of the stage's (`MinLevel` is set by no live arena) |
+| `SpawnPoints`, `MapId` | per-arena overrides of the stage's (`ArenaDefinition::MinLevel` was deleted: no arena set it) |
 | `Rooms`, `Objects`, `SeekRadius` [3.0] | Seek: the rooms and the object pool; Sight and Interact: `Objects` is the pool |
 | `SightPairs` | Sight: the fixed evaluation pairs |
 | `Sites` | Interact: doors with their openers |
@@ -117,8 +117,7 @@ Kind, Height, Radius), `SightPair` (`:124`: Spawn, Object, Corner; indexes into 
 **`StageDefinition`** (`:272-317`): `Name`; `Suffix` (written to `stage.json` as `suffix`, `StageScenario.cpp:1256`; no
 C++ reader; python shows it only in test fixtures and `apps/forge/tools/stage_json_diff.py:169`: UNVERIFIED whether any
 learner code reads `suffix` from a live `stage.json`); `Extends`; `Merges`; `Summary` (written as `summary`,
-`StageScenario.cpp:1257`); `Blocks`; `Arenas`; `InDefaultQueue` [true; read at `AnimusForge.cpp:959`; no live stage
-sets it false]; `MapId`; `SpawnPoints`; `MinLevel` (`StageScenario.cpp:2164`); the focus band (`FocusLevelFirst`,
+`StageScenario.cpp:1257`); `Blocks`; `Arenas`; `MapId`; `SpawnPoints`; `MinLevel` (`StageScenario.cpp:2164`); the focus band (`FocusLevelFirst`,
 `FocusLevelLast`, `FocusChance`, `StageScenario.cpp:2194-2206`); `Level` (`StageScenario.cpp:2204`: every character of
 the stage at this level, raised to the class minimum); `GoalPlaces` [`SeenOnly`; overridden by conf
 `<prefix>Stage.<name>.GoalPlaces`, read at `StageScenario.cpp:509-510`, where the config value `1` means seen only and
@@ -187,7 +186,7 @@ minima, and that a Wing row fits a `LevelFirst` band.
 
 ### A.4 The twelve live definitions, field by field
 
-All twelve use the default `InDefaultQueue = true` and `GoalPlaces = SeenOnly`; order is that of `Definitions()`
+All twelve use the default `GoalPlaces = SeenOnly` (`InDefaultQueue` was deleted: every stage was in the queue); order is that of `Definitions()`
 (training order). "Eff. blocks" are after the `Entities` insertion.
 
 | Stage (`Stages.cpp` line), suffix | Extends / Merges | Eff. blocks (layout order) | Map, spawn, level fields |
@@ -264,7 +263,7 @@ separately (not a definition field; see [config-keys.md](config-keys.md)).
   structs would remove most of the 160 lines of `ArenaProblem`.
 - The default `Against = Instance` is a trap for a new arena.
 - `Suffix` and `Summary` have no C++ reader beyond the JSON dump.
-- `WeightFinal`, `ArenaDefinition::MinLevel`, `InDefaultQueue = false` and a non-default `GoalPlaces` are used by no
+- `WeightFinal` and a non-default `GoalPlaces` are used by no
   live
   stage (plumbing and tests only).
 - PartyFollow caps `PartySize` at 4 while the generic check allows 5 (`:1134`).
@@ -665,10 +664,7 @@ through `stage.json`, covered by `apps/forge/python/tests/test_metric_names.py` 
 - `ClassicDemands(seats)` (206-220): seat 0 of every group of `GROUP_SEATS` gets `HoldsThePull`, seat 1 `KeepsThemUp`,
   the rest `Anything`.
 - `RollDemand(tankChance, healerChance)` (225-234): one roll: tank, else healer, else anything.
-- `RandomPartySize(tuning)` (237-257): weighted draw of 1..4 from `Party.SizeWeight1..4`. The weight array is
-  `std::array<int32, MAX_SEATS>` (40 long) with only four initialisers, so sizes above 4 have weight 0 and are never
-  drawn; but when the four weights sum to 0 or less the function returns `MAX_SEATS` (40), not 4 or 5
-  (`StageScenario.cpp:245-246`), which `Rebuild` assigns to `ActiveSeats` (2007).
+- (deleted 2026-10-08) `RandomPartySize` and `Party.SizeWeight1..4`: no live arena reached the draw.
 - `OtherPower(unit)` (259-267): non-mana power fraction; UNVERIFIED users after line 2631.
 - `WriteIfChanged(path, content)` (271-292): compares size then bytes; otherwise writes `<path>.partial` and renames.
   Returns false on error. Used for every manifest and `stage.json`.
@@ -677,10 +673,6 @@ through `stage.json`, covered by `apps/forge/python/tests/test_metric_names.py` 
 
 - `StageScenario.cpp:150-156`: the doc comment of `RandomLevel` sits above `TankModeSpell` (a function was inserted
   between them).
-- `StageScenario.cpp:245-246`: a zero-weight `Party` config returns 40 seats instead of a sane party size. In the live
-  stages the party arenas set `PartySize`/`ProperParty` or are instance arenas, so `RandomPartySize` is probably never
-  reached (UNVERIFIED: no live arena is a non-proper non-instance party arena without `PartySize`; check
-  `Stages.cpp`); then the whole `Party.SizeWeight*` group is dead.
 - `StageScenario.cpp:2300`: a line over 120 columns.
 
 ## S1.4 The constructor (`StageScenario.cpp:295-587`)
@@ -1038,8 +1030,7 @@ restored to their previous characters). Timers go into the thread-local `Current
 13. **Save the old characters** (1972-1993) in a local `Character` array (layout, race, level, spec, talent plan, damage
     scale, build, unspent points, equipped items, known ranks) to restore on failure.
 14. **Seats and classes** (1997-2115), `ActiveSeats = arena.SeatCount()`:
-    - Party arenas (`SeatPlan::Party`): size is `RandomPartySize(Party.SizeWeight*)` unless the arena is an instance, a
-      `ProperParty` or has a fixed `PartySize` (2003-2007). Demands start as `ClassicDemands` (tank seat 0, healer seat
+    - Party arenas (`SeatPlan::Party`): the size is the arena's `SeatCount()` (the size draw was deleted). Demands start as `ClassicDemands` (tank seat 0, healer seat
       1 of the group); a drill swaps the drilled role into seat 0 (healer: swap 0 and 1; damage: swap 0 and 2)
       (2016-2019). "Classic" holds for a drill, an instance, a proper party, or with probability `Party.ClassicChance`
       percent; a classic non-drill is shuffled with `RandomEngine::Instance()`; a non-classic party draws each seat's
@@ -1061,7 +1052,7 @@ restored to their previous characters). Timers go into the thread-local `Current
     that can be that level and fit its dungeon role; keep the old when none. Seat 0 of other arenas is left alone
     because the rung was drawn for it (comment 2122-2126).
 17. **Minimum level** (2155-2164): max over seats of the class `MinLevel`; for a drawn tank also the level its tank-mode
-    spell is learned (`Kit->LevelOf(TankModeSpell(class))`); then `_stage.MinLevel`, `arena.MinLevel`.
+    spell is learned (`Kit->LevelOf(TankModeSpell(class))`); then `_stage.MinLevel`.
 18. **Reuse flags** (2171-2192): need `Characters.ReuseEpisodes > 0`, not the first build, not an evaluation, not
     `changesMap` (a different episode map, or an arena with `Instance == Wing`, which always opens a fresh instance); a
     seat is reused when its bot is in world and not teleporting, same layout and spec, `EpisodesPlayed <
@@ -1105,11 +1096,11 @@ Contracts and hazards:
 - `map->GetId()` (2297) and `map->Instanceable()` (2298) dereference `map`, non-null only when a bot was created into it
   or an old map was found; with zero active seats `map` could be null. UNVERIFIED reachable.
 
-Config read (via `_tuning`): `Party.SizeWeight1..4`, `Party.ClassicChance`, `Party.RoleTankChance`,
+Config read (via `_tuning`): `Party.ClassicChance`, `Party.RoleTankChance`,
 `Party.RoleHealerChance`, `Characters.KeepCasting`, `Characters.ReuseEpisodes`, `Characters.HighLevelChance/First`,
 `LowLevelChance/Last`; stage fields `FocusChance`, `FocusLevelFirst`, `FocusLevelLast`, `Level`, `MinLevel`; arena
 fields
-`PartySize`, `ProperParty`, `DrillRole`, `Instance`, `MapId`, `MinLevel`, `Seats`. Full key table:
+`PartySize`, `ProperParty`, `DrillRole`, `Instance`, `MapId`, `Seats`. Full key table:
 [cpp-tuning-keys.md](cpp-tuning-keys.md).
 
 Tests: no unit test drives `Rebuild`. `DungeonStagesTest.cpp` and `LiveLayoutPinTest.cpp` check the stage definitions

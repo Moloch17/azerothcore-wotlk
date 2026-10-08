@@ -273,7 +273,7 @@ void Battleground::Update(uint32 diff)
     if (!PreUpdateImpl(diff))
         return;
 
-    if (!GetPlayersSize() && !_simOwned)
+    if (!GetPlayersSize())
     {
         //BG is empty
         // if there are no players invited, delete BG
@@ -327,8 +327,7 @@ void Battleground::Update(uint32 diff)
             }
             break;
         case STATUS_WAIT_LEAVE:
-            if (!_simOwned)
-                _ProcessLeave(diff);
+            _ProcessLeave(diff);
             break;
         default:
             break;
@@ -1555,10 +1554,10 @@ void Battleground::DoorOpen(uint32 type)
                        type, BgObjects[type].ToString(), m_MapId, m_InstanceID);
 }
 
-GameObject* Battleground::GetBGObject(uint32 type, bool logMissing)
+GameObject* Battleground::GetBGObject(uint32 type)
 {
     GameObject* obj = GetBgMap()->GetGameObject(BgObjects[type]);
-    if (!obj && logMissing)
+    if (!obj)
         LOG_ERROR("bg.battleground", "Battleground::GetBGObject: gameobject (type: {}, {}) not found for BG (map: {}, instance id: {})!",
                        type, BgObjects[type].ToString(), m_MapId, m_InstanceID);
     return obj;

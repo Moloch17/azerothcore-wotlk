@@ -75,9 +75,9 @@ namespace Animus::Movement::Cadence
     }
 
     /// The opcodes a client sends this tick for the change from `before` to `after` (MovementFlags of the body and its
-    /// controls), with `jumped` / `landed` from the step. In the client's order of checks (fn 0x6ef860). Empty when
-    /// nothing a client reports changed.
-    [[nodiscard]] inline std::vector<uint16_t> Changes(uint32_t before, uint32_t after, bool jumped, bool landed)
+    /// controls). The jump and the landing are reported by the step itself (Client.cpp), not here. In the client's
+    /// order of checks (fn 0x6ef860). Empty when nothing a client reports changed.
+    [[nodiscard]] inline std::vector<uint16_t> Changes(uint32_t before, uint32_t after)
     {
         std::vector<uint16_t> ops;
         auto changed = [before, after](uint32_t mask) { return (before & mask) != (after & mask); };
@@ -91,8 +91,6 @@ namespace Animus::Movement::Cadence
         if (changed(Flag::ASCENDING | Flag::DESCENDING))
             ops.push_back((after & Flag::ASCENDING) ? Op::START_ASCEND : (after & Flag::DESCENDING) ? Op::START_DESCEND
                 : Op::STOP_ASCEND);
-        if (jumped)
-            ops.push_back(Op::JUMP);
         if (changed(Flag::LEFT | Flag::RIGHT))
             ops.push_back((after & Flag::LEFT) ? Op::START_TURN_LEFT : (after & Flag::RIGHT) ? Op::START_TURN_RIGHT
                 : Op::STOP_TURN);
@@ -103,8 +101,6 @@ namespace Animus::Movement::Cadence
         if (changed(Flag::PITCH_UP | Flag::PITCH_DOWN))
             ops.push_back((after & Flag::PITCH_UP) ? Op::START_PITCH_UP : (after & Flag::PITCH_DOWN) ? Op::START_PITCH_DOWN
                 : Op::STOP_PITCH);
-        if (landed)
-            ops.push_back(Op::FALL_LAND);
         return ops;
     }
 
@@ -163,12 +159,6 @@ namespace Animus::Movement::Cadence
         out.At = at;
         out.Value = target;
         return out;
-    }
-
-    /// Whether a heartbeat is due at `nowMs`, the last movement packet having gone at `lastSendMs`.
-    [[nodiscard]] inline bool HeartbeatDue(uint32_t flags, uint32_t nowMs, uint32_t lastSendMs)
-    {
-        return (flags & HEARTBEAT_FLAGS) != 0 && nowMs - lastSendMs >= HEARTBEAT_MS;
     }
 }
 

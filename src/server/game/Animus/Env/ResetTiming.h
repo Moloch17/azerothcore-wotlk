@@ -46,7 +46,8 @@ namespace Animus
         uint64 SeatsNs = 0;         // the seats' loop as a whole (create, place and configure are inside it)
         uint64 ScenarioNs = 0;      // Scenario::Reset as a whole, from the pool
         uint64 RouteNs = 0;         // RoutePlanner::Plan, wherever in the reset it was asked (inside EncounterNs
-        uint32 Routes = 0;          // when an encounter's Build plans) -- and how many plans
+                                    // when an encounter's Build plans)
+        uint32 Routes = 0;          // ... and how many plans
     };
 
     inline thread_local ResetTiming CurrentReset;

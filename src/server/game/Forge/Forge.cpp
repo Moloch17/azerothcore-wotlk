@@ -18,34 +18,20 @@
  */
 
 #include "Forge.h"
-#include "Config.h"
-#include "Log.h"
-#include "WorldSessionMgr.h"
 #include <atomic>
 
 namespace
 {
-    bool ForgePlaytest = false;
     std::atomic<uint32> ForgeTickMs{ 0 };
 }
 
 namespace ForgeCore
 {
-    void LoadSettings()
-    {
-        ForgePlaytest = sConfigMgr->GetOption<bool>("Forge.Playtest", false);
-        if (ForgePlaytest)
-            LOG_INFO("server.worldserver", "Forge.Playtest is on: wall clock, world listener, Warden and the database stay up for a real client");
-    }
-
-    bool Playtest()
-    {
-        return ForgePlaytest;
-    }
-
     bool HasClients()
     {
-        return sWorldSessionMgr->GetActiveSessionCount() > 0;
+        // The forge opens no world listener and registers no sim session with the session manager, so there is
+        // never a real client to build a packet for.
+        return false;
     }
 
     void SetTickMs(uint32 tickMs)

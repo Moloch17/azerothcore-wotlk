@@ -283,22 +283,7 @@ void AnimusForge::Forge::OnWorldPrologue(uint32 diff)
     // learner. That is the whole point: movement wants a fast world, the policy does not want a faster decision.
     // Counting ticks rather than accumulating milliseconds keeps a decision exactly TicksPerDecision ticks
     // whatever the tick rounds to.
-    //
-    // Under Forge.Playtest the world ticks on the wall clock instead, a few milliseconds a tick (ForgePlaytestLoop),
-    // and counting ticks made every one of them a decision: a policy choosing hundreds of times a second over a
-    // sliver of game time each, and every per-decision tally (DecisionMs a decision) wrong by as much. There a
-    // decision is DecisionMs of accrued game time, the remainder carried, a stall's backlog dropped rather than
-    // decided in a burst (movement-smooth A10).
-    if (ForgeCore::Playtest())
-    {
-        uint32 const decisionMs = RunConfig().DecisionMs;
-        _msSinceDecision += _halfBatch ? 2 * diff : diff;
-        _decisionTick = _msSinceDecision >= decisionMs;
-        if (_decisionTick)
-            _msSinceDecision = _msSinceDecision - decisionMs < decisionMs ? _msSinceDecision - decisionMs : 0;
-    }
-    else
-        _decisionTick = ++_ticksSinceDecision >= _runTicks;
+    _decisionTick = ++_ticksSinceDecision >= _runTicks;
     if (_decisionTick)
         _pool->BeginDecision(_turn);
 
@@ -458,7 +443,7 @@ void AnimusForge::Forge::OnUpdate(uint32 diff)
     // `forge start` runs inside it) was sized before the run's tick, so the check waits for the next one.
     bool const tickJustSet = _tickJustSet;
     _tickJustSet = false;
-    if (diff != _runWorldTickMs && !tickJustSet && !ForgeCore::Playtest() && !_tickMismatchLogged)
+    if (diff != _runWorldTickMs && !tickJustSet && !_tickMismatchLogged)
     {
         _tickMismatchLogged = true;
         LOG_ERROR("module.animus", "The world ticks {} ms, but AnimusForge.DecisionMs {} over TicksPerDecision {}{} "
@@ -798,7 +783,6 @@ bool AnimusForge::Forge::StartCurrent()
     auto const now = std::chrono::steady_clock::now();
     _ticks = 0;
     _ticksSinceDecision = 0;
-    _msSinceDecision = 0;
     _decisions = 0;
     _worldNs = 0;
     _simNs = 0;
@@ -956,8 +940,7 @@ std::vector<std::string> AnimusForge::Forge::DefaultQueue() const
 
     std::vector<std::string> stages;
     for (Animus::Curriculum::StageDefinition const& stage : Animus::Curriculum::CurriculumStages())
-        if (stage.InDefaultQueue)
-            stages.push_back(stage.Name);
+        stages.push_back(stage.Name);
 
     return stages;
 }
@@ -991,8 +974,8 @@ bool AnimusForge::Forge::RunAdvanced(ForgeConfig const& config, std::string cons
 /// animus.config.resolved_init_from walks the seed chain and takes the first best.pt that exists, whether or not
 /// that stage finished -- an interrupted run does not write finished.json. RunAdvanced answers a different question
 /// (did this stage finish), and using it here warned that a parent would not be seeded from whenever its run had
-/// merely been cancelled, while the learner went on to seed from it: every `forge start stage19_duo_led` this
-/// session printed that warning and then seeded from stage15_arena's best.pt in the next breath. A warning that is
+/// merely been cancelled, while the learner went on to seed from it: every `forge start <stage>` of an
+/// earlier session printed that warning and then seeded from its parent's best.pt in the next breath. A warning that is
 /// usually wrong teaches operators to skip them.
 bool AnimusForge::Forge::RunSeedable(ForgeConfig const& config, std::string const& scenario) const
 {

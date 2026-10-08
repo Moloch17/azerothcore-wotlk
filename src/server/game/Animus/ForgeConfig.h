@@ -34,7 +34,7 @@
 
 namespace AnimusForge
 {
-    /// Module settings, read once at startup (mod_animus_forge.conf.dist documents every key). Only settings: what is
+    /// Module settings, read once at startup (worldserver.conf.dist documents every key). Only settings: what is
     /// running lives in Forge. The curriculum's tuning is CurriculumTuning.
     struct ForgeConfig
     {
@@ -57,7 +57,7 @@ namespace AnimusForge
         /// is not one map task for the whole pool. 0 = the fewest the 31 phase bits allow (31 envs each).
         uint32 ContinentReplicas = 0;
         /// AnimusForge.Stage.<name>.Envs: a stage's own env count where the default would not do (forty seats an
-        /// env at 128 envs is 5,120 bots), so `forge start stage11_raids` needs no conf edit.
+        /// env at 128 envs is 5,120 bots), so `forge start <stage>` needs no conf edit.
         std::map<std::string, uint32> StageEnvs;
         /// AnimusForge.DecisionMs: game time per decision. Everything that scales a reward or measures elapsed game
         /// time is in these units, and it is what the learner is told the step is worth.

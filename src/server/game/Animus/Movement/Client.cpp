@@ -229,7 +229,7 @@ void Mv::Client::Tick(ControlState& control, Speeds const& speeds, Movement::Bod
         // A control changed: the client sends it at the key press, with the body as it is.
         uint32_t const before = FlagsOf(control, speeds);
         if ((before ^ _lastFlags) & CONTROL_MASK)
-            for (uint16_t opcode : Cd::Changes(_lastFlags & CONTROL_MASK, before & CONTROL_MASK, false, false))
+            for (uint16_t opcode : Cd::Changes(_lastFlags & CONTROL_MASK, before & CONTROL_MASK))
             {
                 ++Counts.Changes;
                 if (!Send(Snapshot(opcode, startMs, before), link))
