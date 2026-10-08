@@ -15,6 +15,10 @@ marked HYPOTHESIS or UNVERIFIED in the source reports are guesses until measured
 
 ## 1. Decide these first (they block or change everything else)
 
+**Decided 2026-10-08:** (1) the public fork's exposure of LAN addresses and machine names is accepted as is; (2) the LAN is
+trusted, so the cluster network hardening (item 2) is optional and drops to low priority; (3) is explained to the owner and
+still open.
+
 1. **The public fork.** `origin` is a public GitHub fork. Since 2026-10-07 06:15 it has carried the LAN addresses and SSH
    login names of the cluster (36 lines in 7 tracked files) and machine names that may be people's first names. No
    secrets. Options: accept; redact the tip (cluster.toml becomes untracked with a tracked example; docs say `host` and
