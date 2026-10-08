@@ -33,7 +33,8 @@
  *   - Remote Access                          -- no network operators; the console is enough
  *   - Metric, AppenderDB, PID file, banner   -- telemetry/ops surface the sim does not use
  *   - FreezeDetector                         -- it ABORT()s; a sim tick is allowed to be slow
- *   - TC9/libsidecar cluster plumbing        -- ToCloud9 is not used (the forge's own cluster is AnimusForge.Cluster.*)
+ *   - TC9/libsidecar startup plumbing        -- not used (the forge's own cluster is AnimusForge.Cluster.*); the
+ *                                               sidecar library is still linked for the upstream hooks that call it
  *   - SecretMgr (TOTP)                       -- only the auth login flow consumes it
  *   - LoadRealmInfo + all realmlist UPDATEs  -- no client is ever handed an address
  *   - WORLD_UPD_VERSION write                -- the sim does not stamp the world DB

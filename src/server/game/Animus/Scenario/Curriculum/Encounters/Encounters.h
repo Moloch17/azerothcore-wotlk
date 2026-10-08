@@ -289,8 +289,6 @@ namespace Animus::Curriculum
             ObjectGuid Tank;
             std::vector<ObjectGuid> Overflow;
             std::vector<ObjectGuid> Objects;    // what the party can use near it (CrowdBlock::ACTION_USE_OBJECT)
-            /// Every closed door near the party, locked or not, as discs: an advance's run ends at one (A8).
-            std::vector<RouteShortcut::Door> ClosedDoors;
             mutable std::vector<ObjectGuid> Used;   // what a seat has used this run: each thing once
             ObjectGuid Approached;              // the thing the tank has been near, unused, since ApproachedMs
             uint32 ApproachedMs = 0;

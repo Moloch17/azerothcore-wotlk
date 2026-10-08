@@ -45,7 +45,8 @@ namespace Animus
     /// Every env of one scenario, plus the flat structure-of-arrays buffers a host reads and writes: the forge's bridge
     /// sends them to the learner (its STEP payload layout, env-major), the stage viewer plays them locally.
     ///
-    /// Its hooks (RecordDamage, ...) are fed by the core's hooks while the pool is the active one (Hooks::SetActivePool).
+    /// Its hooks (RecordDamage, ...) are fed by the core's hooks while the pool is the active one
+    /// (Hooks::SetActivePool).
     class EnvPool
     {
     public:

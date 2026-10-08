@@ -1767,7 +1767,6 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
         if (Unit const* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive() && enemy->IsInCombat())
             fighting = true;
     fight.Objects.clear();
-    fight.ClosedDoors.clear();
     // One visit from the party's middle, wide enough to reach OBJECT_SIGHT past its farthest living seat, rather than
     // one per seat: what each seat can see is then picked out of it, as before.
     std::array<Player*, MAX_SEATS> living{};
@@ -1794,12 +1793,6 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
         Cell::VisitObjects(centreX, centreY, living[0]->GetMap(), searcher, OBJECT_SIGHT + spread);
         for (GameObject* object : objects)
         {
-            // Every closed door, locked or not: a spline walks through one, so an advance stops at it (A8).
-            constexpr float DOOR_RADIUS = 4.0f;
-            if (object->GetGoType() == GAMEOBJECT_TYPE_DOOR && object->isSpawned()
-                && object->GetGoState() == GO_STATE_READY)
-                fight.ClosedDoors.push_back({ { object->GetPositionX(), object->GetPositionY() },
-                    std::max(DOOR_RADIUS, object->GetObjectSize()) });
             if (!Usable(object)
                 || std::find(fight.Used.begin(), fight.Used.end(), object->GetGUID()) != fight.Used.end())
                 continue;

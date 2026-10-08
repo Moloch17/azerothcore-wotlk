@@ -1130,7 +1130,7 @@ void World::DetectDBCLang()
 ///
 /// Relative to upstream's World::Update this drops, and why:
 ///   - sMetric->Update(), METRIC_*   -- Metric is never initialised
-///   - sToCloud9Sidecar block        -- single process, never clustered
+///   - sToCloud9Sidecar block        -- the ToCloud9 sidecar is not used (the forge's cluster is AnimusForge.Cluster.*)
 ///   - sWorldUpdateTime Update/Record
 ///                                   -- percentile bookkeeping only TC9Sidecar reads, plus
 ///                                      per-tick slow-update logging

@@ -499,7 +499,8 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
         for (uint64 healed : step.AgentHealingBy)
             effective += healed;
         if (step.HealingRaw > effective)
-            ledger.Add(RewardTerm::TeammateHealing, -rolePay * _scenario.Tuning().Party.TeammateHealing * tuning.Overheal
+            ledger.Add(RewardTerm::TeammateHealing,
+                -rolePay * _scenario.Tuning().Party.TeammateHealing * tuning.Overheal
                 * float(step.HealingRaw - effective) / float(std::max<uint32>(1, bot->GetMaxHealth())));
     }
 

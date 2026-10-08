@@ -1054,6 +1054,9 @@ namespace
             return "a proper party is drawn for a party drill on a dungeon's ground (a whole dungeon draws its own)";
         if (arena.DrillRole > DRILL_DAMAGE || (arena.DrillRole && !arena.ProperParty))
             return "a drilled role (1 tank, 2 healer, 3 damage) is a proper party's";
+        // The drilled seat is paid its lesson by RolesEncounter alone (PartyEncounter pays no drill weighting).
+        if (arena.DrillRole && !roles)
+            return "a drilled role is a roles arena's";
         if (arena.InstanceRow >= 0 && !instance)
             return "only an instance arena pins a row of its ladder";
         if (arena.EvalOnly && arena.PullDrill)

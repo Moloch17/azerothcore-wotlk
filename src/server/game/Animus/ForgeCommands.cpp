@@ -17,8 +17,8 @@
  */
 
 /*
- * The forge's console commands (see src/server/scripts/Commands/cs_forge.cpp for the command table). Every command runs on the
- * world thread; the ones that start or stop scenarios only record a request that OnUpdate applies.
+ * The forge's console commands (the command table is src/server/scripts/Commands/cs_forge.cpp). Every command runs
+ * on the world thread; the ones that start or stop scenarios only record a request that OnUpdate applies.
  */
 
 #include "AnimusForge.h"
