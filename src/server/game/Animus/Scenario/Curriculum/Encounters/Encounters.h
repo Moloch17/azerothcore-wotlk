@@ -341,9 +341,6 @@ namespace Animus::Curriculum
             /// Each route pack's members' spawn ids -> the pack (its RoutePacks index): what a creature fighting the
             /// party belongs to, for the chain pull.
             std::unordered_map<ObjectGuid::LowType, uint32> PackOf;
-            /// The dungeon map's layout (SeenPlaces::Layout): ground nodes, unordered, no creature on them -- what a
-            /// player's dungeon map draws; a sight stage's goal places in SeenAndLayout.
-            std::vector<SeenPlaces::Point> MapLayout;
             /// A corridor run (ArenaDefinition::CorridorPacks, G2): its packs and which were cleared in route order.
             bool CorridorRun = false;
             WingRun::Corridor Corridor;
@@ -432,7 +429,7 @@ namespace Animus::Curriculum
         /// The route packs fighting the party this decision, for the chain pull (EnvInstance::Drawn).
         void UpdateDrawnPacks(Env& env, EnvInstance& fight);
         /// A sight stage's goal places in a dungeon (SeenPlaces): what `seat` saw and remembers, its map's frontier,
-        /// the layout (SeenAndLayout), the leader -- never a pack's or boss's live position or the route's order.
+        /// the leader within the minimap's range -- never a pack's or boss's live position or a route.
         void SeenWorld(Env const& env, uint32 seat, SeatView& view) const;
         /// Whether a whole dungeon's run is a full clear: the last boss dead and every creature the clear counts.
         [[nodiscard]] static bool FullClear(EnvInstance const& fight);

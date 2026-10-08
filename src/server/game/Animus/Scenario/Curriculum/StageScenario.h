@@ -164,8 +164,6 @@ namespace Animus::Curriculum
         [[nodiscard]] CurriculumTuning const& Tuning() const { return _tuning; }
         /// The shaping scale the learner's fade has reached (1 at the start, 0 when faded): the seek stage's room ladder
         /// is read off it (SeekEncounter).
-        /// Where a sight stage's goal places come from in a dungeon (StageDefinition::GoalPlaces and its conf key).
-        [[nodiscard]] SeenPlaces::Source GoalPlaces() const { return _goalPlaces; }
         [[nodiscard]] float ShapingScale() const { return _shapingScale.load(std::memory_order_relaxed); }
         [[nodiscard]] Position const& SpawnPoint() const { return _spawnPoint; }
         /// Where the env's seats start: the stage's spawn point for the env (StageDefinition::SpawnPoints), else
@@ -501,7 +499,6 @@ namespace Animus::Curriculum
         /// conf
         /// key); -1: StandIn.Share's.
         std::vector<int32> _arenaStandInShare;
-        SeenPlaces::Source _goalPlaces = SeenPlaces::Source::SeenOnly;
         /// The party follow's leader (M4), in the owner's slot: PartyFollowEncounter builds it there (OwnerAgent),
         /// CastOwnerActive says when a frozen checkpoint plays its row, and the controller moves it as a seat's.
         /// Not dead code: the owner's slot and these two uses are what the leader stands on.

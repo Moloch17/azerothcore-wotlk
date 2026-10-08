@@ -30,11 +30,9 @@
 /// stage come only from
 /// - what the seat has **seen**: the hostiles its entity memory holds (where it last saw them, alive), and the
 ///   **frontier** of its mental map (known floor beside ground it has not seen);
-/// - the dungeon map's **layout** (a 3.3.5 player has the dungeon map): ground nodes with no creature on them, no
-///   order and no markers -- only in SeenAndLayout;
-/// - the party's **leader** (its frame and its dot on the map).
-/// Never a live pack's or boss's position, never the route's "next pack" order: those stay the encounter's own
-/// bookkeeping, in SeatView::Crowd.
+/// - the party's **leader** (its frame and its dot on the map), within the minimap's range.
+/// Never a live pack's or boss's position, never a route or a layout built from one (vision-only movement, decision
+/// 0019): those stay the encounter's own bookkeeping, in SeatView::Crowd.
 ///
 /// Pure: its inputs are positions and flags, so the tests feed it by hand (DungeonStagesTest).
 namespace Animus::Curriculum::SeenPlaces
@@ -48,13 +46,6 @@ namespace Animus::Curriculum::SeenPlaces
     };
     static_assert(sizeof(Point) == 3 * sizeof(float), "a place is a position and nothing else: no creature data");
 
-    /// Where a stage's goal places come from (StageDefinition::GoalPlaces; <TuningPrefix>Stage.<name>.GoalPlaces).
-    enum class Source : uint8_t
-    {
-        SeenAndLayout = 0,      // what the seat saw, its map's frontier, and the dungeon map's layout nodes
-        SeenOnly = 1,           // what the seat saw and its map's frontier alone
-    };
-
     /// A hostile the seat's entity memory holds: where it last saw it.
     struct Recalled
     {
@@ -64,27 +55,24 @@ namespace Animus::Curriculum::SeenPlaces
         bool GameObject = false;
     };
 
-    /// What the choice reads. `Explored` says whether a layout node's ground is already on the seat's mental map.
+    /// What the choice reads.
     struct Input
     {
         Point Seat;
         std::vector<Recalled> Memory;
         std::vector<Point> Frontier;
-        std::vector<Point> const* Layout = nullptr;     // null: seen only
-        std::vector<bool> LayoutExplored;               // per layout node
         bool HasLeader = false;                         // the party's leader, not this seat (its frame, its map dot)
         Point Leader;
     };
 
     /// The goal head's eight places (WorldView::JOURNAL_PLACES): 0-5 what to go and see or fight -- remembered hostiles
-    /// first (MEMORY_PLACES at most), then the frontier and unexplored layout nodes -- 6 the nearest way on (the
-    /// frontier's, else the layout's), 7 the leader; and the assignment.
+    /// first (MEMORY_PLACES at most), then the frontier -- 6 the nearest frontier point, 7 the leader; and the assignment.
     constexpr uint32_t PLACES = 8;
     constexpr uint32_t ROAM_PLACES = PLACES - 2;
     constexpr uint32_t MEMORY_PLACES = 3;
     constexpr uint32_t WAY_ON = PLACES - 2;
     constexpr uint32_t LEADER = PLACES - 1;
-    /// A frontier point or layout node closer than this to one already chosen is the same place.
+    /// A frontier point closer than this to one already chosen is the same place.
     constexpr float SAME_PLACE = 10.0f;
 
     struct Choice
@@ -138,32 +126,25 @@ namespace Animus::Curriculum::SeenPlaces
             out.Where[next++] = at;
         }
 
-        // The way on: its own map's frontier, then the layout's ground it has not been to (SeenAndLayout).
+        // The way on: its own map's frontier.
         std::vector<Point> frontier = in.Frontier;
         nearestFirst(frontier);
-        std::vector<Point> unexplored;
-        if (in.Layout)
-            for (std::size_t node = 0; node < in.Layout->size(); ++node)
-                if (node >= in.LayoutExplored.size() || !in.LayoutExplored[node])
-                    unexplored.push_back((*in.Layout)[node]);
-        nearestFirst(unexplored);
         bool wayOn = false;
-        for (std::vector<Point> const* list : { &frontier, &unexplored })
-            for (Point const& at : *list)
+        for (Point const& at : frontier)
+        {
+            if (!wayOn)
             {
-                if (!wayOn)
-                {
-                    wayOn = true;
-                    out.Present[WAY_ON] = true;
-                    out.Where[WAY_ON] = at;
-                }
-                if (next >= ROAM_PLACES)
-                    break;
-                if (taken(at))
-                    continue;
-                out.Present[next] = true;
-                out.Where[next++] = at;
+                wayOn = true;
+                out.Present[WAY_ON] = true;
+                out.Where[WAY_ON] = at;
             }
+            if (next >= ROAM_PLACES)
+                break;
+            if (taken(at))
+                continue;
+            out.Present[next] = true;
+            out.Where[next++] = at;
+        }
 
         if (in.HasLeader)
         {
@@ -222,25 +203,6 @@ namespace Animus::Curriculum::SeenPlaces
                 { return Distance(kept, cell) < SAME_PLACE; }))
                 out.push_back(cell);
         }
-        return out;
-    }
-
-    /// **The dungeon map's layout**: ground nodes along the dungeon's walkable way, one every `spacing` yards, none
-    /// within `spacing` of another -- positions alone, unordered (sorted by place, so nothing of the order the way was
-    /// walked in survives), no creature, pack, boss or encounter on them: what the dungeon map draws.
-    [[nodiscard]] inline std::vector<Point> Layout(std::vector<Point> ground, float spacing)
-    {
-        // By place first, so the nodes kept do not depend on the order the ground was walked in.
-        auto const byPlace = [](Point const& a, Point const& b)
-        {
-            return a.X != b.X ? a.X < b.X : a.Y != b.Y ? a.Y < b.Y : a.Z < b.Z;
-        };
-        std::sort(ground.begin(), ground.end(), byPlace);
-        std::vector<Point> out;
-        for (Point const& at : ground)
-            if (std::none_of(out.begin(), out.end(), [&at, spacing](Point const& kept)
-                { return Distance(kept, at) < spacing; }))
-                out.push_back(at);
         return out;
     }
 }

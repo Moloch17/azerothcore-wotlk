@@ -634,14 +634,6 @@ bool Animus::Curriculum::InstanceEncounter::Build(Env& env, Map* map, uint8 /*le
         fight.RoutePacks.push_back({ pack.Yard && pack.Yard < fight.Dense.size() ? fight.Dense[pack.Yard] : pack.At,
             pack.Members, false });
     }
-    // The dungeon map's layout: the walkable way's ground every LAYOUT_SPACING yards, unordered, no creature on it.
-    {
-        constexpr float LAYOUT_SPACING = 25.0f;
-        std::vector<SeenPlaces::Point> ground;
-        for (Position const& at : fight.Dense.empty() ? fight.Route : fight.Dense)
-            ground.push_back({ at.GetPositionX(), at.GetPositionY(), at.GetPositionZ() });
-        fight.MapLayout = SeenPlaces::Layout(ground, LAYOUT_SPACING);
-    }
     // The party is paid for a pull started ready at most once a pack (and once on a navmesh route's boss).
     fight.ReadyPaidCap = std::max<uint32>(1, uint32(fight.RoutePacks.size()));
     LOG_DEBUG("module.animus", "{}: env {}: {} route places from {} packs and {} route points", _scenario.Name(),
@@ -2179,18 +2171,8 @@ void Animus::Curriculum::InstanceEncounter::SeenWorld(Env const& env, uint32 sea
         own.FrontierReady = true;
     }
     in.Frontier = own.Frontier;
-    // The dungeon map's layout, and which of its nodes the seat's map already holds (SeenAndLayout only).
-    if (_scenario.GoalPlaces() == SeenPlaces::Source::SeenAndLayout && !fight.MapLayout.empty())
-    {
-        in.Layout = &fight.MapLayout;
-        in.LayoutExplored.reserve(fight.MapLayout.size());
-        for (SeenPlaces::Point const& node : fight.MapLayout)
-        {
-            Vision::MapCell const* cell = state.Map.Find(node.X, node.Y);
-            in.LayoutExplored.push_back(cell && Vision::Known(*cell));
-        }
-    }
-    // The party's leader -- the stand-in when it leads, else the tank -- as its frame and its map dot show it.
+    // The party's leader -- the stand-in when it leads, else the tank -- as its frame and its map dot show it: the
+    // place only within the minimap's range (PartyFollow.MinimapYards, the dot's own, 2D), as a player's map shows it.
     int32 tankSeat = -1;
     for (uint32 index = 0; index < _scenario.Data(env).ActiveSeats && tankSeat < 0; ++index)
         if (Player* member = _scenario.SeatBot(env, index); member && !fight.Tank.IsEmpty()
@@ -2198,7 +2180,8 @@ void Animus::Curriculum::InstanceEncounter::SeenWorld(Env const& env, uint32 sea
             tankSeat = int32(index);
     int32 const leaderSeat = WingRun::LeaderSeat(_scenario.StandInSeat(env), _scenario.StandInLeads(env), tankSeat);
     if (Player* leader = leaderSeat >= 0 && uint32(leaderSeat) != seat ? _scenario.SeatBot(env, uint32(leaderSeat))
-        : nullptr; leader && leader->IsAlive() && leader->IsInMap(bot))
+        : nullptr; leader && leader->IsAlive() && leader->IsInMap(bot)
+        && bot->GetExactDist2d(leader) <= _scenario.Tuning().PartyFollow.MinimapYards)
     {
         in.HasLeader = true;
         in.Leader = { leader->GetPositionX(), leader->GetPositionY(), leader->GetPositionZ() };

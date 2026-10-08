@@ -481,12 +481,6 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         longestMs = std::max(longestMs, episodeMs);
     }
 
-    // Where a sight stage's goal places come from in a dungeon: the stage's, or the conf's (0 seen and layout, 1 seen
-    // only).
-    _goalPlaces = sConfigMgr->GetOption<int32>(Acore::StringFormat("{}Stage.{}.GoalPlaces", settings.TuningPrefix,
-        _stage.Name), int32(_stage.GoalPlaces), false) == int32(SeenPlaces::Source::SeenOnly)
-        ? SeenPlaces::Source::SeenOnly : SeenPlaces::Source::SeenAndLayout;
-
     if (std::all_of(_arenaWeightsFinal.begin(), _arenaWeightsFinal.end(), [](uint32 weight) { return weight == 0; }))
         _arenaWeightsFinal = _arenaWeights;
     if (std::all_of(_arenaWeights.begin(), _arenaWeights.end(), [](uint32 weight) { return weight == 0; }))
