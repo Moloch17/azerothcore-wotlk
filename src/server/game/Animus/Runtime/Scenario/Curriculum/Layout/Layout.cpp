@@ -62,9 +62,6 @@ std::string_view Animus::Curriculum::GoalName(SeatGoal goal)
         case SeatGoal::Position: return "position";
         case SeatGoal::Prepare:  return "prepare";
         case SeatGoal::TravelTo: return "travel_to";
-        case SeatGoal::Loot:     return "loot";
-        case SeatGoal::Gather:   return "gather";
-        case SeatGoal::Interact: return "interact";
         case SeatGoal::Rest:     return "rest";
         case SeatGoal::Resurrect: return "resurrect";
         case SeatGoal::Count:    break;
@@ -77,9 +74,7 @@ bool Animus::Curriculum::GoalAccepts(SeatGoal kind, uint32 target)
 {
     bool const none = target == GOAL_TARGET_NONE;
     bool const enemy = target >= GOAL_TARGET_ENEMY_FIRST && target < GOAL_TARGET_FRIEND_FIRST;
-    bool const friendly = target >= GOAL_TARGET_FRIEND_FIRST && target < GOAL_TARGET_OBJECTIVE_FIRST;
-    bool const objective = target >= GOAL_TARGET_OBJECTIVE_FIRST && target < GOAL_TARGET_GIVER;
-    bool const npc = target == GOAL_TARGET_GIVER || target == GOAL_TARGET_ENDER;
+    bool const friendly = target >= GOAL_TARGET_FRIEND_FIRST && target < GOAL_TARGET_PLACE_FIRST;
     bool const place = target >= GOAL_TARGET_PLACE_FIRST && target < GOAL_TARGET_ASSIGNMENT;
     switch (kind)
     {
@@ -87,12 +82,9 @@ bool Animus::Curriculum::GoalAccepts(SeatGoal kind, uint32 target)
         case SeatGoal::Position: return none || enemy;
         case SeatGoal::Control:  return enemy;
         case SeatGoal::Protect:  return friendly;
-        case SeatGoal::TravelTo: return objective || npc || place || target == GOAL_TARGET_ASSIGNMENT;
-        case SeatGoal::Gather:   return none || place;
-        case SeatGoal::Interact: return objective || npc;
+        case SeatGoal::TravelTo: return place || target == GOAL_TARGET_ASSIGNMENT;
         case SeatGoal::Recover:
         case SeatGoal::Prepare:
-        case SeatGoal::Loot:
         case SeatGoal::Rest:     return none;
         case SeatGoal::Resurrect: return none || friendly;
         case SeatGoal::Count:    break;

@@ -6212,7 +6212,7 @@ AnimusForge.Curriculum.Goals.Progress = 0.5
 AnimusForge.Curriculum.Goals.ProgressGamma = 0.999
 #   what reaching a goal is worth, by what it achieved (Reached stays for the kinds with no value of their own):
 #   a named enemy dead, one held in crowd control, Recover/Rest by the share of health and mana restored since the
-#   choice, a friend brought back up, a place reached, a corpse, node or objective done
+#   choice, a friend brought back up, a place reached
 AnimusForge.Curriculum.Goals.FightValue = 0.3
 AnimusForge.Curriculum.Goals.ControlValue = 0.2
 AnimusForge.Curriculum.Goals.RecoverValue = 1.0
@@ -6221,7 +6221,6 @@ AnimusForge.Curriculum.Goals.ProtectValue = 1.0
 #   well as by healing it back above 70%
 AnimusForge.Curriculum.Goals.ProtectHoldMs = 5000
 AnimusForge.Curriculum.Goals.TravelValue = 0.1
-AnimusForge.Curriculum.Goals.WorldValue = 0.2
 #   the secondary goal held beside the primary: paid this share of what the primary would be (reaching it, closing
 #   on it), and charged Secondary every decision it is held
 AnimusForge.Curriculum.Goals.SecondaryShare = 0.5
