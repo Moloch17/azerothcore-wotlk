@@ -215,8 +215,10 @@ Usage and behaviour are in [../forgectl.md](../forgectl.md); this is where each 
   `machine.local` else `ssh -o BatchMode=yes` (`ssh_argv` adds the connect timeout, `-tt` for a tty);
   `parallel_map` is a thread pool.
 - `console.py`: `send(config, machine, line)` locks `~/.forgectl/locks/<machine>.lock` (`machine_lock`, flock, 90 s),
-  spawns `docker attach --sig-proxy=false` under `pty` (via ssh for a worker), types the line, reads to the `AC> `
-  prompt, strips colour and log noise (`parse_reply`), and detaches with Ctrl-P Ctrl-Q in a `finally`
+  spawns `docker attach --sig-proxy=false` under `pty` (via ssh for a worker), types the line, reads until the reply
+  ends (`finished_reply`: the prompt alone after reply lines, or a quiet period of 0.8 s with no new reply line; the
+  prompt is redrawn before the reply, so it is not the marker), strips colour and log noise (`parse_reply`: a log line
+  starts with a real colour, a bare `ESC[0m` reset in front of a line is not one), and detaches with Ctrl-P Ctrl-Q in a `finally`
   (`detach`); `SignalGuard` turns SIGTERM/SIGHUP into an exception so the detach runs.
 - `cluster.py`: one shell probe per machine in parallel (revision, container state, last learner log line, load,
   disk, GPU memory, docker restart policy, the cadence keys of the conf), `refused_lines` greps the host's logs for "refused the worker".

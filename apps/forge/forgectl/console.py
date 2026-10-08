@@ -5,9 +5,10 @@ Ported from the gitignored var/forge_console.py. The rules it keeps:
   - stdin is never closed: end-of-file on the console shuts the server down, so the detach keys are sent in a `finally`
     and the process is only ever ended after that;
   - `--sig-proxy=false`: a signal sent to the attach client must not be forwarded to the worldserver.
-New here: the output is read until the console prompt ("AC> ") comes back after the command (the console streams log
-noise all the time, so "until quiet" never happens on a busy host), with a hard timeout; ANSI is stripped; the coloured
-log lines that interleave with the reply are dropped; and it works through ssh for the workers.
+New here: the end of the reply is found by a terminator or a quiet period (see `finished_reply`: the prompt is redrawn
+BEFORE the server writes its reply, so it is not a reliable end marker; the console streams log noise all the time, so
+only reply lines count towards "quiet"), with a hard timeout; ANSI is stripped; the coloured log lines that interleave
+with the reply are dropped; and it works through ssh for the workers.
 """
 from __future__ import annotations
 
@@ -30,17 +31,25 @@ from .ui import Failure, note, strip_ansi
 PROMPT = "AC> "
 DETACH_KEYS = b"\x10\x11"  # Ctrl-P Ctrl-Q
 LOCK_TIMEOUT = 90.0   # seconds a send waits for another forgectl that is typing into the same console
-# A log line starts with a colour escape (the logger colours by level); a command's reply is plain text.
+QUIET = 0.8           # seconds without a new reply line that end a reply which has lines
+SILENT_QUIET = 2.5    # seconds after the echo and the prompt redraw that end a reply with no lines at all
+# A log line starts with a level colour (`ESC[36m...`); a command's reply is plain text. The logger resets the colour
+# AFTER the line's newline, so a reply line is normally preceded by a bare reset (`ESC[0m`, `ESC[m`): that is not a
+# colour, and does not make the line a log line (it used to, which lost the reply's first line and the echo).
 PRIVATE_MODE = re.compile(r"\x1b\[\?[0-9;]*[hl]")  # bracketed paste on/off, which readline writes around a line
-LOG_LINE = re.compile(r"^(?:\x1b\[[0-9;]*m)+")
+RESET = re.compile(r"\x1b\[0?m")
+LOG_LINE = re.compile(r"^(?:\x1b\[0?m)*\x1b\[(?!0?m)[0-9;]*m")
 
 
 @dataclass
 class ConsoleResult:
     lines: list[str]      # the reply, ANSI stripped, log noise and the prompt removed
-    prompt_seen: bool     # the console came back with its prompt: the command finished
+    prompt_seen: bool     # the prompt came back alone after reply lines: the command finished
     started: bool         # the typed line was seen echoed (we were really attached to a console)
     raw: str = ""
+    redrawn: bool = False  # the prompt was redrawn after the echo (the console took the line)
+    open_tail: bool = False  # the output ends in the middle of a line
+    complete: bool = False  # the reply ended: by the prompt after it, or by a quiet period (see `finished_reply`)
 
     @property
     def text(self) -> str:
@@ -48,7 +57,7 @@ class ConsoleResult:
 
     @property
     def ok(self) -> bool:
-        return self.prompt_seen
+        return self.complete
 
 
 def attach_argv(config: Config, machine: Machine) -> list[str]:
@@ -85,31 +94,61 @@ def _drain(fd: int, seconds: float, until=None) -> bytes:
 
 
 def parse_reply(raw: str, line: str) -> ConsoleResult:
-    """The reply to `line` out of everything the console printed after it was typed."""
-    cleaned_lines = []
-    for raw_line in raw.replace("\r", "").split("\n"):
-        if LOG_LINE.match(PRIVATE_MODE.sub("", raw_line)):
-            continue
-        cleaned_lines.append(strip_ansi(raw_line))
-    # the echo of the typed line (the console shows it first); the reply is what follows, up to a line that is the
-    # prompt alone. The prompt is also redrawn in front of the reply's first line, so a leading prompt is stripped.
-    start = next((i for i, text in enumerate(cleaned_lines) if line in text), None)
-    body = cleaned_lines[start + 1:] if start is not None else cleaned_lines
-    prompt_seen = False
+    """The reply to `line` out of everything the console printed after it was typed.
+
+    What the console prints for `forge status` (colour escapes shown): the echo `ESC[0mforge status`, then readline
+    redraws the prompt (`ESC[?2004hAC> `) in front of whatever log line comes next, and only then does the server write
+    the reply, each line ending `\\r\\r\\n` and the first one preceded by the bare reset of the log line before it.
+    So the prompt comes BEFORE the reply; and a line is log noise only if it starts with a real colour."""
+    segments = raw.split("\n")
+    open_tail = False
+    entries = []   # (text, is_log, prompt_only)
+    for index, segment in enumerate(segments):
+        text = PRIVATE_MODE.sub("", segment.replace("\r", ""))
+        plain = strip_ansi(text)
+        had_prompt = False
+        # the prompt, redrawn in front of the line (or alone): strip it, and the escapes in front of it
+        probe = RESET.sub("", text)
+        if probe.startswith(PROMPT) or probe.rstrip() == PROMPT.strip():
+            had_prompt = True
+            text = probe[len(PROMPT.strip()):].lstrip(" ") if probe.startswith(PROMPT.strip()) else probe
+            plain = strip_ansi(text)
+        is_log = bool(LOG_LINE.match(text))
+        if index == len(segments) - 1 and plain.strip():
+            open_tail = True  # the output stops in the middle of a line
+        entries.append((plain.rstrip(), is_log, had_prompt and not plain.strip()))
+    start = next((i for i, (text, is_log, _) in enumerate(entries) if not is_log and line in text), None)
+    body = entries[start + 1:] if start is not None else entries
+    prompt_seen = redrawn = False
     reply = []
-    for text in body:
-        stripped = text.lstrip()
-        if stripped.startswith(PROMPT.strip()) and stripped[len(PROMPT.strip()):].strip() == "":
-            prompt_seen = True  # the prompt alone on its line: the command is done
-            break
-        if text.startswith(PROMPT):
-            text = text[len(PROMPT):]
-        reply.append(text.rstrip())
-    while reply and not reply[0].strip():
-        reply.pop(0)
+    for text, is_log, prompt_only in body:
+        if is_log:
+            continue
+        if prompt_only:
+            if reply:
+                prompt_seen = True  # the prompt alone after reply lines: the command is done
+                break
+            redrawn = True  # the redraw in front of the reply
+            continue
+        if text.strip() or reply:
+            reply.append(text)
     while reply and not reply[-1].strip():
         reply.pop()
-    return ConsoleResult(reply, prompt_seen, start is not None, raw)
+    return ConsoleResult(reply, prompt_seen, start is not None, raw, redrawn, open_tail, False)
+
+
+def finished_reply(result: ConsoleResult, quiet_for: float) -> bool:
+    """Has the reply ended? `quiet_for` is the time since the last change to the reply (a new reply line, or the echo).
+    Yes when the prompt came back alone after the lines, or when the line was echoed, the output is not stopped
+    mid-line, and nothing new came for QUIET s (the reply has lines) or SILENT_QUIET s (it has none: a command that
+    answers nothing, or answers only in the log)."""
+    if not result.started:
+        return False
+    if result.prompt_seen:
+        return True
+    if result.open_tail:
+        return False
+    return quiet_for >= (QUIET if result.lines else SILENT_QUIET)
 
 
 class Terminated(SystemExit):
@@ -204,34 +243,40 @@ def send(config: Config, machine: Machine, line: str, timeout: float = 20, settl
     with SignalGuard() as guard, machine_lock(machine, lock_timeout):
         pid = fd = None
         raw = b""
+        typed = b""
+        complete = False
         try:
             pid, fd = spawn(attach_argv(config, machine))
             raw += _drain(fd, settle)  # the screen as it was when we attached, and the connection's own noise
             if not remote_failed(raw):
                 os.write(fd, (line + "\n").encode())
-                typed = b""
-
-                def finished(chunk: bytes) -> bool:
-                    return parse_reply((typed + chunk).decode(errors="replace"), line).prompt_seen
-
-                deadline = time.monotonic() + timeout
+                seen = (-1, False)   # (reply lines, echo seen) at the last change
+                changed = time.monotonic()
+                deadline = changed + timeout
                 while time.monotonic() < deadline:
-                    more = _drain(fd, min(1.0, deadline - time.monotonic()), until=None)
-                    if not more:
-                        if not alive(pid):
-                            break
-                        continue
+                    more = _drain(fd, min(0.2, deadline - time.monotonic()))
+                    now = time.monotonic()
                     typed += more
-                    if finished(b""):
-                        typed += _drain(fd, 0.4)  # the prompt can arrive a line before the last of the reply
+                    result = parse_reply(typed.decode(errors="replace"), line)
+                    state = (len(result.lines), result.started)
+                    if state != seen or more and result.open_tail:
+                        seen, changed = state, now
+                    if finished_reply(result, now - changed):
+                        complete = True
+                        if result.prompt_seen:
+                            typed += _drain(fd, 0.2)
                         break
-                raw += typed
+                    if not more and not alive(pid):
+                        break
             guard.shielded = True   # from here a signal waits for the detach to finish (see SignalGuard)
         finally:
             if pid is not None:
                 guard.shielded = True
                 detach(pid, fd)
-        return parse_reply(raw.decode(errors="replace"), line)
+        result = parse_reply(typed.decode(errors="replace"), line)
+        result.complete = complete
+        result.raw = (raw + typed).decode(errors="replace")
+        return result
 
 
 def remote_failed(raw: bytes) -> bool:

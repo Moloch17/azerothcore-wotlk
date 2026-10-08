@@ -71,8 +71,8 @@ them forward:
 | `.gitignore` | +32 -6 | K | ignores training output, venv; un-ignores `.agents/plans/forge-parallel-core/` and four animus plan folders (see I-4) |
 | `AGENTS.md` | +0 -4 | K | four e2e lines removed |
 | `CMakeLists.txt` | +4 -2 | I | default build type Release (was RelWithDebInfo); includes `ConfigureLTO` |
-| `apps/docker/Dockerfile` | +3 -2 | I | CTYPE Release; llvm, lld, libzstd-dev added (libzstd-dev is no longer needed by the forge) to the build image |
-| `apps/docker/Dockerfile.dev-server` | +14 -2 | I | llvm, libzstd-dev (no longer needed), hipcc, libamdhip64-dev, python3-venv added; ccache dir |
+| `apps/docker/Dockerfile` | +3 -2 | I | CTYPE Release; llvm, lld added to the build image (the `libzstd-dev` the forge once added for the zstd probe tables is gone: nothing in src, apps or deps uses zstd any more) |
+| `apps/docker/Dockerfile.dev-server` | +14 -2 | I | llvm, hipcc, libamdhip64-dev, python3-venv added; ccache dir |
 | `apps/docker/animus-venv.sh` | +42 -0 | I | new: creates/updates the learner's Python venv on every start |
 | `apps/docker/forge-worldserver.sh` | +95 -0 | I | new: the `ac-worldserver` container command (build if asked, conf restore, venv, TensorBoard, exec worldserver) |
 | `conf/dist/config.cmake` | +6 -0 | I | options `WITH_LTO`, `FORGE_PGO`, `FORGE_PGO_DIR` |
