@@ -51,7 +51,6 @@ unless a file is named; body = `ForgeCommands.cpp` line.
 | `forge clean all` | - | requires idle and no learner/export | deletes every directory under `runs/`, exports, fast, logs (not `archive`) | same |
 | `forge progress` | `[seconds\|off]` | no | show or set the periodic report interval (default 0 = off) | :1225 : 1291 |
 | `forge tasks` | - | no | per-map update-task totals since the previous `forge tasks` (resets them), slowest mean first | :903 |
-| `forge route` | `<map> <x> <y> <z> <x> <y> <z>` | yes | creates the grids between the ends and prints `RoutePlanner::Report` | :1143 |
 | `forge controller probe` | `<map> <x> <y> <z> [facing]` | yes | prints the controller's world query at a point | :708 |
 | `forge controller record` | `<player> <file>` or `stop` | no | record a Playtest player's movement packets; `stop` writes the file | :763 |
 | `forge controller replay` | `<file> [player]` | yes | replay a recording through the controller; drift report | :822 |

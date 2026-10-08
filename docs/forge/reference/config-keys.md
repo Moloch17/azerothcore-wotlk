@@ -69,7 +69,7 @@ The table lists everything; this is what the groups are for.
   two clocks (policy
   step and world tick); `Stage.<name>.TicksPerDecision` overrides the split per stage and is what makes every live
   stage tick at 50 ms (5 ticks of 50 ms in 250 ms). `HalfBatch` runs two env halves in turn; it needs
-  `TicksPerDecision` 1 and a stage that has no per-stage tick, so with the live yaml-and-conf (all 12 stages tick 5) it
+  `TicksPerDecision` 1 and a stage that has no per-stage tick, so with the live yaml-and-conf (all 10 stages tick 5) it
   never applies (`AnimusForge.cpp` run set-up, `_halfBatch = _config.HalvesTick() && _runTicks == 1`).
 - **Policy**: `remote` (the Python learner over `Socket`) or `random`. `Policy` is not validated in `Load`;
   `Forge::KnowsPolicy` accepts only `random` for a local policy

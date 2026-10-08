@@ -31,8 +31,7 @@ numbers are of branch `forge` at commit bd32b9dc8. `UNVERIFIED` marks what was n
 ## A. Correctness risks
 
 **A1. The sim's ladder state is not checkpointed.** The wing ladder rung (`StageScenario::_wingLadder`, constructed from
-`Instance.WingRungStart` at `StageScenario.cpp:302`), the pull-drill rung (`InstanceEncounter.cpp:143`, `PullRungStart`)
-and the
+`Instance.WingRungStart` at `StageScenario.cpp:302`), and the
 per-class `DifficultyLadder` tiers (`DifficultyLadder.h`: "Rungs start at 0 with the worldserver") live in worldserver
 memory. A restart (every cluster rebuild, then `resume`) returns them to the conf value or 0; the learner's `latest.pt`
 does not carry them, and only the host's rung is broadcast to workers (`AnimusForge.cpp:1084`). Matters most for D2/D3
@@ -200,9 +199,9 @@ and the intent prices (4027-4620); evaluation pinning and episode tracking (4622
 `WriteState`. Suggested split: Rebuild+character build; Observe+WriteState; Intent (JudgePress and goals); Reward.
 Verify with `LiveLayoutPinTest` unchanged, the full GTest set and a `forge run <stage> random 1` per stage.
 
-**G2. `InstanceEncounter.cpp` (2752 lines).** Regions (method start lines): route and fight setup (about 181-1150), the
+**G2. `InstanceEncounter.cpp` (2752 lines).** Regions (method start lines): fight setup (about 181-1150), the
 run loop and boss and pack tracking (1151-1980), views and goal places (1982-2450), `Reward` (2530-2700), selection and
-teardown (2734+). Wing ladder, pull drill, corridor and Go-Explore are four behaviours sharing one `EnvInstance`; split
+teardown (2734+). The wing ladder and the run itself share one `EnvInstance`; split
 by behaviour with `WingRun.h` as the pure core. Verify with `DungeonStagesTest.cpp`, `WingLadderTest.cpp`.
 
 **G3. `AnimusForge.cpp` (3087) and `ForgeCommands.cpp` (1304):** the state machine, cluster, learner supervision and

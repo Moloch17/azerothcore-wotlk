@@ -228,7 +228,7 @@ It logs once an error if the tick it was handed differs from `_runWorldTickMs` (
 
 All driven by the learner's messages inside `RemoteDecision` (see the bridge document): `MODE` (training/evaluation, seed
 base, first seed, episodes, held-out arena, optional baseline name, `MODE_FLAG_STAND_IN`), `WEIGHTS`, `PROGRESS`,
-`REPLAY`, `EXPLORE_STARTS`. `ApplyMode` (`:2746`) rejects `Mode > 1`, an unknown baseline, and applies
+`REPLAY`. `ApplyMode` (`:2746`) rejects `Mode > 1`, an unknown baseline, and applies
 `PinEvaluationArena`, `SetStandIn`, `SetEvaluation`. A baseline can only be `random` (`KnowsPolicy`); with one set the
 learner's ACT is overwritten by `ChooseLocalActions` (`:2726-2734`). Evaluation videos: `BeginEvalVideos` (`:1533`) picks
 seeds, `CaptureEvalVideos` (`:1590`) feeds frames before each STEP leaves; both are skipped for a baseline run. The camera

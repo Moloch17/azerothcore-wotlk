@@ -1,6 +1,6 @@
 # 4. The curriculum: the stages manual
 
-This chapter is the manual for the twelve live stages: what order they run in, what a stage is made of, how a stage
+This chapter is the manual for the ten live stages: what order they run in, what a stage is made of, how a stage
 ends,
 how to read one while it trains, and what to touch to change one. The per-stage detail (places, rewards, ladders,
 evaluations, targets) is in [reference/stages.md](reference/stages.md); the vocabulary is in
@@ -13,7 +13,7 @@ chapter describes them.
 
 ## 4.1 The line of stages
 
-Twelve stages, trained in this order, each seeded from the stage named in [reference/stages.md](reference/stages.md)'s
+Ten stages, trained in this order, each seeded from the stage named in [reference/stages.md](reference/stages.md)'s
 seed
 chain. All are in the default queue, so `forge start` with no stage name walks them in order.
 
@@ -27,8 +27,6 @@ chain. All are in the default queue, so `forge start` with no stage name walks t
 | `combat2_packs` | 300M | 10M | 240 |
 | `combat3_survive` | 300M | 10M | 240 |
 | `group1_roles` | 400M | 10M | 384 |
-| `group2_corridor` | 500M | 10M | 128 |
-| `dungeon1_pulls` | 300M | 10M | 192 |
 | `dungeon2_ragefire` | 1500M | 20M | 64 |
 | `dungeon3_deadmines` | 2000M | 20M | 64 |
 
@@ -37,7 +35,7 @@ The table is read by `apps/forge/python/tests/test_manual.py` and checked agains
 is a
 ceiling, never a target (4.4).
 
-Only `move1_controls` and `move2_seek` have ever trained. The other ten are built, configured and tested but have never
+Only `move1_controls` and `move2_seek` have ever trained. The other eight are built, configured and tested but have never
 produced a checkpoint; treat their numbers (targets, gates, hyperparameters) as untested designs.
 
 ```
@@ -49,10 +47,8 @@ movement   move1_controls   the controls, walk and stop beside an object (emptie
               │           └─ combat3_survive   packs that can kill; food, drink, rest
               └─ move4_follow   a party of five keeps with a scripted leader
 party      group1_roles (from combat3_survive, merging move4_follow's party frames)   one role drilled an episode
-           └─ group2_corridor   four of a wing's real packs in route order
-dungeons      └─ dungeon1_pulls   one Ragefire pack a run
-                 └─ dungeon2_ragefire   Ragefire, door to Bazzalan (Wailing Caverns held out)
-                    └─ dungeon3_deadmines   the Deadmines, door to VanCleef (the bar)
+dungeons   └─ dungeon2_ragefire   Ragefire, door to Bazzalan (Wailing Caverns held out)
+              └─ dungeon3_deadmines   the Deadmines, door to VanCleef (the bar)
 ```
 
 It is a line, not a tree, for one reason: a branch is cheaper to train but ends in several checkpoints, and what a leaf
@@ -78,13 +74,12 @@ A stage is one `StageDefinition` (`src/server/game/Animus/Runtime/Scenario/Curri
 | Blocks | `.Blocks` | The layout: the observation and action vector, in order. `Entities` is inserted after `Vision` automatically |
 | Arenas | `.Arenas` (1 to `MAX_ARENAS` = 16) | The situations an episode can be, drawn by weight (`Weight`, or `Arena.<stage>.<arena>.Weight` in the conf) |
 | Ground | `.MapId`, `.SpawnPoints`, `.MinLevel`, `.Level`, `.FocusLevelFirst/Last/Chance` | Map, start points and levels |
-| Goal places | `.GoalPlaces` | Seen-only by default ([decision 0005](decisions/0005-goal-places-seen-only.md)) |
 | Rewards, draws | `CurriculumTuning` (`AnimusForge.Curriculum.*`) | Every weight and distance |
 | Learner | `apps/forge/python/configs/<stage>.yaml` | MAPPO values, evaluation, ladders, convergence, status |
 
 An arena is an `ArenaDefinition`: its `Opposition` (Sight, Seek, Interact, PartyFollow, Combat, Roles, Instance) picks
 the
-encounter that runs the episode; the other fields (seats, party, level band, corridor, drill, respawn, stand-in share,
+encounter that runs the episode; the other fields (seats, party, level band, respawn, stand-in share,
 `EvalOnly`) are listed with comments in `StageDefinition.h`.
 
 **Validation.** `CurriculumStages()` checks each definition in order and leaves out, with a logged error, any stage that

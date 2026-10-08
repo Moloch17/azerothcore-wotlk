@@ -56,7 +56,7 @@ Attach (`./forge.sh attach` or `docker attach ac-animus-forge-worldserver`) and 
 |---|---|
 | `forge status` | state, progress, ETA, timing breakdown, warnings (or the idle settings) |
 | `forge scenarios` | every stage with its run: checkpoint, steps, best score |
-| `forge start [stage ...]` | train these from scratch in order; no names: `AnimusForge.Queue`, else all twelve stages minus those already finished (`AnimusForge.Queue.SkipFinished`) |
+| `forge start [stage ...]` | train these from scratch in order; no names: `AnimusForge.Queue`, else all ten stages minus those already finished (`AnimusForge.Queue.SkipFinished`) |
 | `forge fast [stage ...]` | fixed-budget low-cost rehearsal into `<OutputDir>/fast/` (7.5) |
 | `forge resume [stage ...]` | unpause; or restart a dead learner; or continue the first named stage from its `latest.pt` and train the rest from scratch; no names: continue the last plan |
 | `forge pause` | freeze the sim and the learner after the current decision. **Does not reach cluster workers** |
@@ -69,7 +69,6 @@ Attach (`./forge.sh attach` or `docker attach ac-animus-forge-worldserver`) and 
 | `forge clean archive\|scenario <stage>\|exports\|fast\|logs\|all` | delete run data (idle only for `all`) |
 | `forge progress [seconds\|off]` | the periodic report interval |
 | `forge tasks` | per-map update task times since the last call |
-| `forge route` | plan a way between two points on the navmesh |
 | `forge controller record\|replay\|probe`, `forge camera snapshot` | diagnostics (idle only; `record` needs a playtest player) |
 
 Rules the code enforces: commands only record a request and are applied at the start of a tick, never inside a decision;

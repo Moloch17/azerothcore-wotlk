@@ -13,7 +13,7 @@ A seat (a sessionless bot `Player`) moves the way a 3.3.5a client moves a player
 the client physics (gravity, jump, step-up, slopes, swimming, flight, fall), then reports the result to the server as a
 client would (movement opcodes with the client's cadence), and the server applies it through the stock movement rules
 (`ClientMovement::Apply`: verification, anticheat hooks, fall damage, relocation). No spline, teleport or navmesh move
-exists for a bot (principle 3). Motion the core imposes (root, stun, fear, spline, knockback, teleport) is yielded to
+exists for a bot (principle 3, decision 0019: vision-only movement). Motion the core imposes (root, stun, fear, spline, knockback, teleport) is yielded to
 and resynced from.
 
 Not in this area: the policy's action space (`Scenario/Curriculum/Blocks/MoveControls.h`, `MoveBlock.*`; see

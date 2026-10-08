@@ -153,8 +153,8 @@ them forward:
 | `src/server/game/Instances/InstanceScript.cpp` | +4 -0 | C | `LoadInstanceSavedGameobjectStateData` returns on a sealed pool |
 | `src/server/game/Maps/Map.cpp` | +153 -13 | F | phase timing, unseen-spawn skipping, `_playersByGuid`, `OnCreateMap` for replicas, update-list removal fix, `SendObjectUpdates` drains without a client, sealed-pool guards |
 | `src/server/game/Maps/Map.h` | +123 -0 | F | `UpdateTiming`, `TaskSample`, accrued diff, `GetPlayerByGuid`, `GetCreatedGridTerrainData` |
-| `src/server/game/Maps/MapCollisionData.cpp` | +114 -0 | G | `GetLiquidHit`, `GetSurfaceHit` (static and dynamic), `ThreadQueryScope` |
-| `src/server/game/Maps/MapCollisionData.h` | +30 -0 | G | declarations |
+| `src/server/game/Maps/MapCollisionData.cpp` | +72 -0 | G | `GetLiquidHit`, `GetSurfaceHit` (static and dynamic): the camera's additions only |
+| `src/server/game/Maps/MapCollisionData.h` | +13 -0 | G | declarations |
 | `src/server/game/Maps/MapInstanced.cpp` | +49 -12 | F | empty children are not ticked; half-batch freeze; heap-trim notice |
 | `src/server/game/Maps/MapMgr.cpp` | +275 -31 | F | uniform per-tick map update, continent replicas, deferred tile loads, heap trim, task timing |
 | `src/server/game/Maps/MapMgr.h` | +100 -10 | F | declarations for the above |
@@ -358,8 +358,7 @@ maps (`Map.cpp:96`).
 
 **Deferred tile loads.** While map tasks run, an instance-0 grid's vmap and mmap tile loads are queued
 (`GridTerrainLoader.cpp`, `MapMgr::DeferTileLoad` `:648`) and performed by the world thread after the join
-(`LoadDeferredTiles` `:654`); until then that tile answers as if it had no collision data. `MMapData::ThreadQueryScope`
-(`MapCollisionData.cpp`) gives a thread its own navmesh query so one map's pathfinding may be split across threads.
+(`LoadDeferredTiles` `:654`); until then that tile answers as if it had no collision data.
 
 **Map-level changes.** Per-phase timing in `Map::Update` (`UpdateTiming`); world spawns that share no phase with any
 player are not updated (`Map::UpdateNonPlayerObject`, `Map.cpp:597`); the marked-cell bitset is cleared only on a

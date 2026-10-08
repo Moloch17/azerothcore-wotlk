@@ -87,14 +87,14 @@ Top-level keys written by the current code:
 | models | {class: model} | e.g. `warrior: warrior_seek`. |
 | layouts | {class: object} | Per class, see below. |
 | episode_info | [string] | Episode-info column names in wire order (the SPEC's list). |
-| episode_categories | {column: [names]} | Columns that index a name list: `drill_pack`, `seek_room`, `seek_object`, `interact_site`, `interact_object`, `sight_object`, `objective_corner` (["in_sight","corner"]). |
+| episode_categories | {column: [names]} | Columns that index a name list: `seek_room`, `seek_object`, `interact_site`, `interact_object`, `sight_object`, `objective_corner` (["in_sight","corner"]). |
 | reward_terms | {term: "outcome"\|"cost"\|"shaping"} | Category of every reward term (`RewardTermCategory`). |
 | goals | object | `kinds` [12 names], `accepts` [kind][target] 0/1, `targets` (29 in the backup), `block` "goal", `columns` {secondary_ended, event, from_order, order_kind, order_target, achieved_kind, achieved_target, width} (first-column offsets inside the goal block), `slots_on_wire` (2). |
 | tuning | object | `CurriculumTuning::Json()`: every `AnimusForge.Curriculum.*` value in force (725 keys in the backup, e.g. `Characters.HighLevelFirst: 61`), written or default. This is what the cluster fingerprint hashes (protocol.md section 9). |
 
 `arenas[i]` (current writer): `name`, `weight` (the arena's draw weight as configured), `seats`, `episode_seconds`, `plan`
 ("solo" or "party"; note: the code only ever writes these two, although `partners.py` and a comment mention "raid"), `eval_only`,
-`pull_drill`, `corridor_packs`, `stand_in_share` (percent), `drill_seat` (0 when `DrillRole`, else -1). The backup's arenas also have
+`stand_in_share` (percent), `drill_seat` (0 when `DrillRole`, else -1). The backup's arenas also have
 `pvp`, `ambushers`, `checkpoints`, `team_seats`, `lone_seats`, `directed`, `taught` and the top level has `director_agents`: keys the current
 writer no longer emits (a diff of old and new stage.json will report them removed; `stage_json_diff.py --allow-removed-keys`).
 
@@ -139,7 +139,7 @@ actor_grad_norm, critic_grad_norm, epochs_run, allowed_actions, approx_kl_move, 
 ladder_collapsed, ladder_stalled, frozen_layouts, cast_rows, cast_fallback_rows, partner_rows, partner_fallback_rows, partner_members,
 partner_episodes, stand_in_episodes, stand_in_unfielded, elapsed_seconds, update_compute_seconds, distill_coef, distill_kl, distill_rows, wall_steps_per_sec, rollout_seconds, wait_seconds, update_bound`, then
 optional groups: style (`style_reward, style_scale, style_disc_human, style_disc_bot, style_gp, style_disc_loss, style_reward_<context>`),
-explore (`explore_cells, explore_deepest`), goal head (`goal_swap_action_change, hindsight_loss, hindsight_rows, goal_entropy,
+goal head (`goal_swap_action_change, hindsight_loss, hindsight_rows, goal_entropy,
 goal_kept_share, goal_<i>_share, goal_targeted_share`), look head (`look_entropy, look_turning, look_pitching, look_zooming`, and the five
 `LOOK_COMMANDS` shares), slow goal loop (`slow_policy_loss, slow_value_loss, slow_approx_kl, goal_reached_share, lookahead_loss, lookahead_brier,
 lookahead_brier_base, lookahead_duration_error, goal_best_by_lookahead`) and foresight (`foresight_loss, forecast_health_8_error,
@@ -272,7 +272,6 @@ the floor, 5 at rung 0). Read by people; `forge status` only refers to it. The h
 | `controller` | `ConvergenceController.state_dict()`: `best_summary, baseline_summary, plateau_env_steps, baselined, evals, fade{...}, costs{...}, layouts{class: {tracker, kl, entropy, rung, top, ladder, top_scored, scores, converged, converged_score, converged_margin, reentries, played}}`. |
 | `stage` | the stage.json dict at save time (for seeding later stages). A checkpoint older than this key is read with the run directory's stage.json (`load_parent`, cast.py). |
 | `score_kind` | "" (return) or "score_outcome". |
-| `explore` | Go-Explore archive (if enabled). |
 | `style` | style discriminator state (if enabled). |
 | `partner_scores` | the partner pool's `{<kind>:<name>: {score, episodes, retired}}` (if the pool exists); optional, an older checkpoint restarts the pool unmet. `trainer` also carries `slow_opt` when the slow goal loop exists (optional). |
 

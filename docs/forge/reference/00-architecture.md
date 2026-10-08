@@ -269,7 +269,7 @@ Sim side (per env, per decision):
 
 Wire: `LockstepServer` (Unix socket path, or `tcp://host:port` for a cluster worker's sim), one blocking connection per
 learner rank. Messages are `MsgHeader{type,length}` + payload; the sim sends SPEC, DEVICE, STEP; the learner HELLO,
-DEVICE_ACK, ACT, MODE, WEIGHTS, PROGRESS, REPLAY, EXPLORE_STARTS, CLOSE. Version 25 (`Protocol.h`); `MODE_FLAG` bit 1
+DEVICE_ACK, ACT, MODE, WEIGHTS, PROGRESS, REPLAY, CLOSE. Version 25 (`Protocol.h`); `MODE_FLAG` bit 1
 is unused.
 
 Learner side (`train.py`): `ForgeEnv` reads SPEC and (device) DEVICE, `TrainingRun.rollout` acts group by group
@@ -283,7 +283,7 @@ optionally two goals a seat, optionally three look choices a seat), range-checks
 learner), copies into `Actions`/`Goals`/`Look`, sets `_actionsPending`. Other message types may arrive first and are
 handled in the same loop without ending the wait: MODE (reset every env and answer with fresh STEPs, once every rank has
 asked), WEIGHTS (`SetLayoutWeights`), PROGRESS (`SetStageProgress`, shaping scale and cost scale clamped to 0..1, NaN
-is full), REPLAY, EXPLORE_STARTS; CLOSE or a protocol error drops the learner.
+is full), REPLAY; CLOSE or a protocol error drops the learner.
 
 Applying an action: `EnvPool::ApplyActionsForMap` (map thread) -> per env `ApplyGoals`, `ApplyLook`, then
 `StageScenario::ApplyActions` -> `encounter->UpdateEnemies/Update`, then `ApplySeatAction` -> `SeatEncoder::Apply`
@@ -297,7 +297,7 @@ through `Animus::Hooks` into `EnvPool::Record*`, which write the per-seat step s
 ## 5. Episode and stage lifecycle
 
 **Plan.** A console command builds a `Plan` (a list of `PlanEntry{Scenario, Resume}` and a policy name). `forge start`
-without names uses `DefaultQueue()` = `AnimusForge.Queue` or every stage (all twelve), skipping
+without names uses `DefaultQueue()` = `AnimusForge.Queue` or every stage (all ten), skipping
 stages whose `finished.json` says advanced when `Queue.SkipFinished` (default on). `forge resume <stage>` resumes the
 first entry from `latest.pt` and starts later entries from scratch. `forge resume` with no names unpauses, restarts a
 dead learner, or continues `_lastPlan` from the first entry that did not end Done or Skipped.

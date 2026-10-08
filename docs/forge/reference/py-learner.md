@@ -7,7 +7,7 @@ distillation,
 the wire client, run-directory writers, export to `.amdl`, and the small tools. Written for a reviewer refactoring
 without
 an LLM. Facts are from commit `bd32b9dc8`; `UNVERIFIED:` marks what was not checked. Not covered here: `animus/mappo/*`
-([py-mappo.md](py-mappo.md)), `animus/human/*`, `async_sync.py`, `parallel.py`, `explore.py`, `style.py`
+([py-mappo.md](py-mappo.md)), `animus/human/*`, `async_sync.py`, `parallel.py`, `style.py`
 ([py-human-and-misc.md](py-human-and-misc.md)).
 
 Other docs: [00-architecture.md](00-architecture.md), [protocol.md](protocol.md), [file-formats.md](file-formats.md),
@@ -50,7 +50,7 @@ Other docs: [00-architecture.md](00-architecture.md), [protocol.md](protocol.md)
 | `rewards.py` | 88 | reward-mix audit (print-only) |
 | `evaluate.py` | 150 | CLI: score a checkpoint on seeded episodes |
 | `bench_learner.py` | 215 | CLI: time the learner against a fake sim |
-| `async_sync.py`, `parallel.py`, `explore.py`, `style.py` | 450, 204, 126, 341 | not mine: see py-human-and-misc.md |
+| `async_sync.py`, `parallel.py`, `style.py` | 450, 204, 341 | not mine: see py-human-and-misc.md |
 
 Directories `mappo/` and `human/` are other agents'.
 

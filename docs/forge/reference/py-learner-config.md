@@ -62,7 +62,7 @@ index falls back to `cuda:0`, no GPU to `cpu`, each with a line).
 | `seed_from` | `latest` | `best` or `latest`, validated in `__post_init__` (`:670`) |
 | `merge_from` | `auto` | |
 | `finetune_from` | `{runs_dir}/_finetune/{run_name}/best.pt` | used if the file exists |
-| sections | | `mappo, distill, eval, convergence, layout_sampling, entropy_floor, cast, fade, costs, style, status, explore` |
+| sections | | `mappo, distill, eval, convergence, layout_sampling, entropy_floor, cast, fade, costs, style, status` |
 
 ## `EvalConfig` (`:58`), section `eval`
 
@@ -117,11 +117,6 @@ No `require_plateau`, `moving_classes`, `stall_*`. Disabled in every live yaml (
 required when enabled, coef >= 0, lr > 0, hidden non-empty positive, grad_penalty >= 0, window >= 2, minibatches and
 batch
 >= 1, eval_windows >= 0. Live yamls: `enabled: false`.
-
-## `ExploreConfig` (`:320`), section `explore`
-
-`enabled` False; `share` 0.5; `table_size` 64; `max_cells` 4096; `depth_weight` 1.0. Validation: share in [0,1],
-`table_size` 1..64, `max_cells >= table_size`. Enabled in `dungeon2_ragefire.yaml:35-36`.
 
 ## `EntropyFloorConfig` (`:341`), `DistillConfig` (`:357`)
 

@@ -202,7 +202,7 @@ Used by the camera (read-only, opt-in): `StaticVMapCollisionData::GetLiquidHit(x
 (`src/common/Collision/Maps/MapTree.cpp`), `DynamicMapTree::GetIntersectionTime(..., G3D::Vector3* normal, GameObjectModel const** model)`, the `normal` out-parameter threaded through `ModelInstance::intersectRay`,
 `WorldModel/GroupModel::IntersectRay` and `WmoLiquid::IntersectRay`, `ModelInstance::intersectLiquid`, `GroupModel::IntersectLiquid`; `GridTerrainData::HasHeights/GetMaxHeight/GetCellHeights/HasLiquid/GetLiquidSurface`
 (`src/server/game/Grids/GridTerrainData.h:262-271`, `.cpp:638-693`, plus `LoadedHeightData::gridMaxHeight`); `Map::GetCreatedGridTerrainData` (`Map.cpp:220`). For movement: `ClientMovement::{Verify,Apply,Relocate}`,
-`WorldSession::SanitizeMovementFlags`, `WorldSession::MovementOrders` and the `SendPacket` order filter. `MMapData::ThreadQueryScope` (same file) is the runtime area's (cpp-runtime.md).
+`WorldSession::SanitizeMovementFlags`, `WorldSession::MovementOrders` and the `SendPacket` order filter.
 
 ## Tests
 

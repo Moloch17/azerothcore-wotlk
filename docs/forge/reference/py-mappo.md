@@ -19,7 +19,7 @@ Related: [00-architecture.md](00-architecture.md), [py-learner.md](py-learner.md
 [known-issues.md](known-issues.md), [glossary.md](glossary.md).
 
 Everything below is derived from the code at `bd32b9dc8` (branch `forge`). Line numbers are of that tree. "Live" means
-one of the twelve stages in `apps/forge/python/configs/` (the yaml files are `move1_controls` ... `dungeon3_deadmines`;
+one of the ten stages in `apps/forge/python/configs/` (the yaml files are `move1_controls` ... `dungeon3_deadmines`;
 `fast.yaml` is an overlay, not a stage). Nothing was run: shapes come from reading the code and from the checked-in
 golden file `apps/forge/python/tests/golden/learner_update.json`.
 
@@ -221,16 +221,16 @@ differ
 
 ### M1 (`move1_controls`), from `fixtures/stage_move1_controls.json`
 
-Same layouts but no map block and a `compass` block: warrior obs 1557 = core 715 + move 57 + compass 6 + vision 11 +
-entities 640 + goal 128 (spans `core [0,715]`, `move [715,57]`, `compass [772,6]`, `vision [778,11]`,
-`entities [789,640]`, `goal [1429,128]`), 95 actions (`core` 70 + `move` 25). Patch is 8; the vision scalars 11; the
+Same layouts but no map block and a `compass` block: warrior obs 1556 = core 715 + move 57 + compass 5 + vision 11 +
+entities 640 + goal 128 (spans `core [0,715]`, `move [715,57]`, `compass [772,5]`, `vision [777,11]`,
+`entities [788,640]`, `goal [1428,128]`), 95 actions (`core` 70 + `move` 25). Patch is 8; the vision scalars 11; the
 look heads (7,5,5). The network has no `vision.map.*` keys (so fewer than 153 actor keys): the exact M1 key count is
 UNVERIFIED (there is no golden for it; derive it by deleting the 9 `vision.map.*` keys from the M2 list, giving 144,
 if M1's layout count and features are the same, which is also UNVERIFIED).
 
 ### Other live stages
 
-Widths of combat1..3, group1/2 and dungeon1..3 (these have a sight block; the `combat1_fight.yaml:42-45` comment says
+Widths of combat1..3, group1 and dungeon2..3 (these have a sight block; the `combat1_fight.yaml:42-45` comment says
 the enemies and friends are "the sight list (its own encoder and pointer heads)") are **UNVERIFIED**: no fixture holds
 their `stage.json`. Derive them from `<layouts_dir>/<stage>/stage.json` written by the sim, or from the golden-style
 procedure in `tests/test_golden_update.py` (do not run it from this document's reader's point of view unless intended).
@@ -244,7 +244,6 @@ Config keys are `MappoConfig` fields (`trainer.py:41`) unless stated. "Live yaml
 | Feature | Keys (default) | Live yaml | Depends on it |
 |---|---|---|---|
 | Style reward | `style.enabled` (false), `style.dataset`, `style.reference`, ... (`config.StyleConfig`, `config.py:271`) | `style: enabled: false` in `move1_controls.yaml:208` and `combat1_fight.yaml:172` | `style.py`, `human/motion.py`; the realism columns work with `style.reference` alone |
-| Go-Explore | `explore.enabled` (false), `share`, `table_size`, `max_cells`, `depth_weight` (`config.ExploreConfig`, `config.py:321`) | `true`, `share 0.5` in `dungeon2_ragefire.yaml:35`; inherited by `dungeon3_deadmines` (no `explore` key there, checked); `false` in `group2_corridor.yaml:36`, inherited by `dungeon1_pulls` | `explore.py`, `ForgeEnv.set_explore_starts`, the wing episode-info columns |
 | Rank sync | `rank_sync` ("gradients"), `weight_sync_every` (1) | not in any yaml. Injected by the worldserver: `LearnerProcess.cpp:138` passes `mappo.rank_sync=` the config's `DistSync` or "weights". The live cluster value is UNVERIFIED (per-machine conf, `ForgeConfig.h:212`) | `parallel.py` ("gradients", "weights"), `async_sync.py` ("async") |
 | Rollout graphs | `rollout_graphs` (true) | not set; default | `_RolloutGraph`; only effective when `rollout_device` resolves to CUDA/HIP (worker GPUs are UNVERIFIED per [cluster.md](../cluster.md)) |
 | Hindsight | `hindsight_coef` (0) | 0.1 in `move1_controls.yaml` and `combat1_fight.yaml` | `_achieved_of`, needs `goal_slots > 1` |

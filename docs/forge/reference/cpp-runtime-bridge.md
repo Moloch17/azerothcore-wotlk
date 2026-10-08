@@ -12,7 +12,7 @@ u32 Length}` followed by `Length` bytes, little-endian, packed (`#pragma pack(1)
 little-endian (`:186`). The sim is the server (the listening side), the learner the client.
 
 `MsgType` (`:188-210`): 1 Hello, 2 Spec, 3 Step, 4 Act, 5 Close, 6 Mode, 7 Weights, 8 Replay, 9 Device, 10 DeviceAck,
-11 Progress, 12 ExploreStarts.
+11 Progress; 12 is unused (retired 2026-10-08, decision 0019).
 
 | Message | Direction | Payload | Handled at |
 |---|---|---|---|
@@ -26,7 +26,6 @@ little-endian (`:186`). The sim is the server (the listening side), the learner 
 | WEIGHTS | learner -> sim | `u32 Count`, `f32[Count]` (per layout x `MAX_SPECS`) | `:2615-2634`, `SetLayoutWeights` |
 | PROGRESS | learner -> sim | `ProgressMsg {Progress, ShapingScale, CostScale}` (floats) | `:2636-2664`; scales clamped to [0,1], NaN -> 1, each clamp logged once per run |
 | REPLAY | learner -> sim | `ReplayHeader {SeedBase, Fraction, Count}` + `u32[Count]` (max `MAX_REPLAY_SEEDS` = 65536) | `:2666-2686` |
-| EXPLORE_STARTS | learner -> sim | `ExploreStartsHeader {Share, Count}` + `ExploreCell[Count]` (32 bytes, max 64) | `:2688-2713` |
 | CLOSE | either | empty | `LockstepServer::Receive*` drops all clients |
 
 STEP array order, exactly as `SendStep` builds `chunks` (`AnimusForge.cpp:2991-3015`): header; obs `f32[E*A*O]`; state
@@ -84,7 +83,7 @@ finished (`LearnerFinished`, `:947`); then for every rank `SendSpec`, then for e
 and `SendEveryGroup()` (a STEP per group). Later calls: `FinishCollect(group)`, `SendStep(group)`.
 
 Then, for the group whose maps tick next (`target`: the other half in half-batch), it reads each rank in order until the ACT
-arrives, handling WEIGHTS, PROGRESS, REPLAY, EXPLORE_STARTS without an answer, and MODE (all ranks must send MODE before it
+arrives, handling WEIGHTS, PROGRESS, REPLAY without an answer, and MODE (all ranks must send MODE before it
 applies: `ApplyModes` requires identical mode/seed base/flags/arena/baseline, then `ResetAll` and every group's fresh STEP).
 Receive buffers are capped by the largest expected message (`:2527-2530`). Half-batch: a group's STEP goes out when its
 decision closes and its answer is read one world tick later, after the other half's maps ticked.
@@ -178,7 +177,7 @@ The `forge pause` command is not cluster-aware; `forge cancel` on the host ends 
 - `ClusterLink.cpp:264-335`: a connected peer that never sends REGISTER stays open forever (only `Pending` has a timeout).
 - `ClusterLink.h:41` stale START description (`iface=`); `Protocol.h:26` still lists `HELLO { u32 version }` though it
   carries rank and ranks; `Protocol.h:326-327` has an orphaned sentence ("Then the arrays of envs ...") above `DEVICE`;
-  the file-header message list omits PROGRESS, EXPLORE_STARTS, DEVICE.
+  the file-header message list omits PROGRESS, DEVICE.
 - `AnimusForge.cpp:2829,2884`: `OfferDevice` ignores `AnimusForge.Gpu.Observe` (see above): behaviour depends on whether a
   GPU console command ran earlier in the process.
 - `Runtime.hip:38-47` (device library): `Init(device)` makes a new stream whenever `device` differs from the last one and
