@@ -379,8 +379,14 @@ got the command). If the host does not answer, the workers are left alone. For `
 optional; if you give one it must be the one running (`pause` and `cancel` act on the whole plan).
 
 How the console is reached: `docker attach` in a pty (over `ssh -tt` for a worker), typing the line, reading until the
-console prompt `AC> ` comes back (with a timeout), stripping colour codes and the interleaved log lines, and leaving
-with Ctrl-P Ctrl-Q. It never closes the console's input (end-of-file would shut the server down) and attaches with
+reply ends (with a timeout), stripping colour codes and the interleaved log lines, and leaving with Ctrl-P Ctrl-Q. The
+reply is finished when the prompt `AC> ` comes back alone after reply lines, or when the typed line was echoed and no new
+reply line has come for 0.8 s (2.5 s if the command printed nothing); log lines do not count towards "quiet". The prompt
+is not the end marker on its own because readline redraws it BEFORE the server writes its reply (`forge status` on a
+busy host never showed one after it), and a reply line is told from a log line by a real colour escape: the logger
+resets its colour after each line's newline, so the reply's first line (and the echo) arrives behind a bare `ESC[0m`,
+which an earlier version took for a log line and dropped (a `forge status` then read "console did not answer" after the
+full timeout, and `host_plan_state` returned `unknown` on an idle host). It never closes the console's input (end-of-file would shut the server down) and attaches with
 `--sig-proxy=false` so a signal to the client cannot reach the server.
 
 **One run per console.** Two forgectl runs typing into the same machine's console at once would interleave their
@@ -555,7 +561,7 @@ result line; SIGTERM and SIGHUP during a console send still leave a result (`fai
 | You see | Meaning |
 |---|---|
 | `UNREACHABLE: timed out` / `No route to host` | the machine is off, on another address, or ssh keys are missing: try `ssh -o BatchMode=yes user@address true` |
-| `the console did not answer ... with its prompt` | the container is not running, or the worldserver is stuck: `forgectl cluster`, then `forgectl logs` |
+| `the console did not finish answering ...` | the container is not running, or the worldserver is stuck: `forgectl cluster`, then `forgectl logs` |
 | `Nothing was ... (not a terminal ...)` | run it from a terminal or add `--yes` |
 | a `*` after a revision | that machine is on different code from the host: `forgectl build --cluster` |
 | `Cluster: refused the worker` | fingerprint differs: `forgectl conf-sync --check`, then the revision column |

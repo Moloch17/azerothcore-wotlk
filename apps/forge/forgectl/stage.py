@@ -35,7 +35,7 @@ def send_checked(config: Config, machine: Machine, line: str, timeout: float = 2
     note(f"{machine.name}: typing `{line}` into the console of {config.worldserver} ...")
     result = console.send(config, machine, line, timeout=timeout)
     if not result.ok:
-        raise Failure(f"{machine.name}: the console did not answer `{line}` with its prompt within {timeout:.0f} s"
+        raise Failure(f"{machine.name}: the console did not finish answering `{line}` within {timeout:.0f} s"
                       + (f"; got: {result.text[:300]!r}" if result.lines else " (no reply at all: is the "
                          "worldserver container up, and is ssh working?)"))
     return result

@@ -33,8 +33,10 @@ stage.json: camera and map bytes, look heads, layouts, episode columns), the hel
 eval.mask_actions against the stage's actions, the score and gate columns against the
 stage's episode columns, the convergence controller with its ladders, the trainer inputs and the trainer itself on
 CPU -- and says PASS or FAIL per stage with the first error. It is the only check that the learner side of a stage
-nobody has trained starts. What it cannot know (the sim's state width and goal count, which stage.json does not
-carry) it takes from STATE_DIM and GOAL_COUNT below (--state-dim, --goal-count override them).
+nobody has trained starts. The goal count is read from stage.json (goals.kinds x goals.targets). The critic's state width is read from
+stage.json's state.dim when the sim writes one, else from the spec.json next to it, else only the part stage.json
+describes (state.arena_first + state.arena_count) is known and the check says so as UNVERIFIED; --state-dim and
+--goal-count override all of these.
 
 Exit status: 0 every check passed (UNVERIFIED lines allowed), 1 a check failed, 2 the inputs could not be read.
 Run it in the dev container with the learner's python: /azerothcore/apps/forge/python/.venv/bin/python.
@@ -59,11 +61,6 @@ SIM_INJECTED = ("socket", "run_name", "runs_dir", "layouts_dir", "torch_threads"
                 "mappo.rank_sync")
 
 
-#: The critic's input width and the goal space a sim's SPEC announces, the same in every stage (the C++ constants
-#: StageScenario::STATE_GLOBAL_COUNT + MAX_SEATS * STATE_SEAT_FEATURES + PACK_SLOTS * STATE_ENEMY_FEATURES, and
-#: GOAL_JOINT_COUNT); stage.json does not carry them. A test pins them against the M2 checkpoint's saved spec.
-STATE_DIM = 1958
-GOAL_COUNT = 348
 #: Stages are the yamls in configs/ except the fast profile.
 CONFIG_DIR = PYTHON_DIR / "configs"
 NOT_STAGES = ("fast",)
@@ -296,10 +293,31 @@ def check_resume(run_dir: Path, stage_json: Path, config_path: Path, checkpoint_
 
 # ------------------------------------------------------------------------------------------------ --fresh
 
-def fresh_spec(stage: dict, state_dim: int = STATE_DIM, goal_count: int = GOAL_COUNT):
+def goal_count_of(stage: dict) -> int:
+    """The goal space a sim announces (C++ GOAL_JOINT_COUNT = kinds * targets), from stage.json's goals block; 0 when
+    the stage has none."""
+    goals = stage.get("goals") or {}
+    return len(goals.get("kinds", ())) * int(goals.get("targets", 0))
+
+
+def state_dim_of(stage: dict, stage_json: Path | None = None) -> tuple[int, str]:
+    """(the critic's input width, where it came from). stage.json's state.dim if the sim writes one; else the spec.json
+    beside the stage.json (the learner writes one to a run directory); else only the global part stage.json describes
+    (state.arena_first + state.arena_count), with the source "partial": the seat and enemy columns are not in it."""
+    state = stage.get("state") or {}
+    if state.get("dim"):
+        return int(state["dim"]), "stage.json"
+    if stage_json is not None and (Path(stage_json).parent / "spec.json").is_file():
+        spec = json.loads((Path(stage_json).parent / "spec.json").read_text())
+        if spec.get("state_dim"):
+            return int(spec["state_dim"]), "spec.json"
+    return int(state.get("arena_first", 0)) + int(state.get("arena_count", 0)), "partial"
+
+
+def fresh_spec(stage: dict, state_dim: int, goal_count: int):
     """The Spec a sim would announce for this stage.json: everything stage.json carries (layouts, episode columns, the
-    camera's and the map's bytes, the look heads, the episode length) and, for the two numbers it does not, the
-    constants of the sim."""
+    camera's and the map's bytes, the look heads, the episode length), with the critic's width and the goal count
+    resolved by the caller (`state_dim_of`, `goal_count_of`, or the operator's override)."""
     from animus.mappo.networks import vision_of
     from animus.protocol import Layout, Spec
 
@@ -346,8 +364,8 @@ def _spec_step(stage: dict, state_dim: int, goal_count: int):
 
 
 def check_fresh(stage_name: str, stage_json: Path, config_path: Path | None = None, sets: list[str] | None = None,
-                overlays: list[str] | None = None, state_dim: int = STATE_DIM,
-                goal_count: int = GOAL_COUNT) -> Report:
+                overlays: list[str] | None = None, state_dim: int | None = None,
+                goal_count: int | None = None) -> Report:
     """What a fresh start of `stage_name` builds on the learner's side, each step a check; stops at the first FAIL."""
     from animus.evaluation import RATIO_METRICS, action_mask_table
     from animus.stage import ConvergenceController
@@ -375,9 +393,16 @@ def check_fresh(stage_name: str, stage_json: Path, config_path: Path | None = No
     config = step(f"learner config: {config_path}", lambda: _load_config(config_path, sets, overlays, stage_name))
     if config is None:
         return report
-    spec = step("spec from stage.json", lambda: _spec_step(stage, state_dim, goal_count))
+    width, source = (state_dim, "--state-dim") if state_dim else state_dim_of(stage, stage_json)
+    goals = goal_count if goal_count is not None else goal_count_of(stage)
+    spec = step("spec from stage.json", lambda: _spec_step(stage, width, goals))
     if spec is None:
         return report
+    if source == "partial":
+        report.add("UNVERIFIED", "critic state width",
+                   f"stage.json and its directory do not give it: using {width} (the global part only); the seat "
+                   "and enemy columns are the sim's; pass --state-dim (or a spec.json beside stage.json) to check the "
+                   "real width")
     names = [layout.name for layout in spec.layouts]
 
     def heldout():
@@ -458,8 +483,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--stage", help="--fresh: the stage's name (configs/<stage>.yaml)")
     parser.add_argument("--all", action="store_true", help="--fresh: every live stage (needs --stage-json-dir)")
     parser.add_argument("--stage-json-dir", type=Path, help="--fresh --all: the directory holding <stage>/stage.json")
-    parser.add_argument("--state-dim", type=int, default=STATE_DIM, help="--fresh: the critic's input width")
-    parser.add_argument("--goal-count", type=int, default=GOAL_COUNT, help="--fresh: the goal space's width")
+    parser.add_argument("--state-dim", type=int, help="--fresh: the critic's input width (default: read, see above)")
+    parser.add_argument("--goal-count", type=int, help="--fresh: the goal space's width (default: from stage.json)")
     parser.add_argument("--config", type=Path, help="the stage's learner yaml (default configs/<stage>.yaml)")
     parser.add_argument("--checkpoint", type=Path, help="the checkpoint (default RUN_DIR/latest.pt)")
     parser.add_argument("--spec", type=Path, help="the new build's spec.json")

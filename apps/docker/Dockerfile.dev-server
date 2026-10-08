@@ -42,7 +42,6 @@ RUN apt-get update \
         libncurses-dev \
         mysql-server \
         libboost-all-dev \
-        libzstd-dev \
         # Other
         curl  \
         unzip  \
