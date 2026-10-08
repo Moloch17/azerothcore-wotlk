@@ -806,9 +806,9 @@ publish step is UNVERIFIED and deliberately not automated.
 
 - Generate the command reference from the command table. `HandleHelp` is a hand-written list (`cs_forge.cpp:231-290`)
   that has drifted (OX-20, OX-24). Make the table the single source: help text, the command table of
-  `docs/forge/reference/cpp-runtime-console.md` and `forgectl`'s known console commands are produced from it by a small script and checked by a
-  GTest ("every registered subcommand has a help row") and a `forgectl docs check` (links to existing pages: four
-  reference pages are linked and absent today).
+  `docs/forge/reference/cpp-runtime-console.md` and `forgectl`'s known console commands are produced from it by a
+  small script and checked by a GTest ("every registered subcommand has a help row") and a `forgectl docs check`
+  (links to existing pages: four reference pages are linked and absent today).
 - `forgectl --help` already has an example per command; add `forgectl help <topic>` that prints the relevant
   `forgectl.md` section, so the operator does not leave the terminal.
 - A one-page "operator's card" (`docs/forge/operator-card.md`): ten commands, the three alarms that matter, where logs
