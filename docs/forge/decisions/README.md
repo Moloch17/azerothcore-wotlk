@@ -21,3 +21,4 @@ Decisions with lasting consequences, one file each. Dates are the day the owner 
 | [0015](0015-sarah-host-dev-out-of-cluster.md) | Sarah is the cluster host; the dev machine is not in the cluster | 2026-10-07 |
 | [0016](0016-eli-out-of-cluster.md) | eli is out of the cluster | 2026-10-06 |
 | [0017](0017-human-stand-in-is-a-frozen-learned-partner.md) | The "human" stand-in is a frozen learned partner | 2026-10-07 |
+| [0018](0018-upstream-merged-2026-10-08.md) | Upstream AzerothCore merged into the forge (2026-10-08) |

@@ -1,5 +1,10 @@
 # Forge core delta: how the fork differs from upstream AzerothCore
 
+> **Update 2026-10-08:** upstream `bce7ed5a6` was merged into `forge` (decision 0018). The delta below was measured against
+> the old merge-base 37de65eb0 and its list of edited upstream files is still right; the "no caller" claims for
+> `PCQueue::Reset` are stale (upstream now calls it), and `git diff master..forge` is now the delta (`master` mirrors upstream).
+
+
 Purpose and scope: every change the `forge` branch makes to upstream AzerothCore **outside** the forge's own code
 (`src/server/game/Animus`, `apps/forge`, `docs`, `src/test`). For each changed upstream file there is a row in the
 table below, and for each kind of change there is a section with the rationale, the files, and the risk of merging
