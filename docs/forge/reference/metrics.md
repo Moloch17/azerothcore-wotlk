@@ -364,7 +364,7 @@ The `eval.report` lists (what the console and eval.jsonl summaries carry beyond 
 * D3's yaml `eval.report` contains `boss_sneed_shredder`; D3's headline uses `boss_sneed`: both exist, but the headline omits the shredder phase.
 * `episode_info` ordering depends on `Add` order across encounters; a stage built with a different encounter order changes column positions (`stage_json_diff.py` guards).
 * `sim_metrics.py` yields a superset (guarded columns, loop artefacts `*_unknown`, `act_refused_none`); only stage.json lists the exact set.
-* `evaluation.RATIO_METRICS` (`arrived_at_rung`) is defined but the ratio is computed inline in `summary`; the constant is only read by `sim_metrics.evaluation_names` (UNVERIFIED that nothing else uses it).
+* `evaluation.RATIO_METRICS` (`arrived_at_rung`) is defined but the ratio is computed inline in `summary`; the constant is only read by `tools/resume_check.py` (the unused `sim_metrics.evaluation_names` that also read it was deleted).
 * `standard_error`'s docstring refers to a nonexistent `animus.gates.noise_allowance`.
 * Headline names missing from a stage are silently blank in `forge status` (no startup check besides the tests).
 * `core` columns for pets, stealth, heals etc. are mostly dead weight in the movement stages (about 100 columns, all zero), inflating every STEP's `episode_info` for ended envs (K x A x D floats).

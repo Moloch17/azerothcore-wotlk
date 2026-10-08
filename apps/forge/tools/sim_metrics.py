@@ -29,7 +29,6 @@ binary writes (its `episode_info`), which is what the deploy gate does.
 from __future__ import annotations
 
 import argparse
-import ast
 import json
 import re
 import sys
@@ -496,46 +495,6 @@ class Extractor:
 
     def reward_terms(self) -> set[str]:
         return set(self.reward_term_names().values())
-
-
-def evaluation_names() -> set[str]:
-    """The summary fields the learner derives from the columns (animus.evaluation): ratio metrics, the
-    score, and any other key EvalResult.summary assigns by name (found_deepest ...)."""
-    path = PYTHON_DIR / "animus" / "evaluation.py"
-    tree = ast.parse(path.read_text())
-    names = {"score", "return", "stderr", "episodes"}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Subscript) and isinstance(target.slice, ast.Constant) \
-                        and isinstance(target.slice.value, str):
-                    names.add(target.slice.value)
-        # RATIO_METRICS = (...)
-        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "RATIO_METRICS"
-                                                for t in node.targets):
-            names |= {element.value for element in node.value.elts}
-    return names
-
-
-def progress_names() -> set[str]:
-    """The measures the learner derives from an evaluation arm (animus.progress.ARM_SPLITS): the arm's column split
-    into the plain run's reading and the gap between them (clear_standin -> clear_allbot, standin_gap)."""
-    tree = ast.parse((PYTHON_DIR / "animus" / "progress.py").read_text())
-    names: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "ARM_SPLITS" for t in node.targets):
-            for columns in ast.literal_eval(node.value).values():
-                for derived in columns.values():
-                    names |= set(derived)
-    return names
-
-
-def eval_arms() -> tuple[str, ...]:
-    tree = ast.parse((PYTHON_DIR / "animus" / "config.py").read_text())
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "EVAL_ARMS" for t in node.targets):
-            return tuple(element.value for element in node.value.elts)
-    return ()
 
 
 def stage_json_names(path: Path) -> set[str]:

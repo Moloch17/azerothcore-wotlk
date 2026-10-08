@@ -1074,15 +1074,10 @@ class MappoTrainer:
             return torch.zeros((rows, self.recurrent_size), device=self.rollout_device)
         return self._tensor(memory).reshape(rows, self.recurrent_size)
 
-    def hindsight_targets(self, buffer: RolloutBuffer) -> None:
-        """Fill buffer.achieved: per decision, what the next observation's goal block says it achieved (-1 for
-        nothing, and at the rollout's last step and where the episode ended, which have no next observation here)."""
-        tensor = lambda array: torch.as_tensor(array, device=self.train_device)
-        buffer.achieved[:] = self._achieved_of(tensor(buffer.obs), tensor(buffer.layout), tensor(buffer.dones)).cpu()
-
     def _achieved_of(self, obs: torch.Tensor, layout: torch.Tensor, dones: torch.Tensor) -> torch.Tensor:
-        """hindsight_targets on tensors already on the device: [T, E, A], -1 where nothing was achieved. The update
-        reads it off the observations it has just uploaded rather than uploading them a second time."""
+        """What the next observation's goal block says each decision achieved, [T, E, A]: -1 for nothing, and at the
+        rollout's last step and where the episode ended, which have no next observation here. The update reads it off
+        the observations it has just uploaded."""
         steps, envs, agents = layout.shape
         achieved = torch.full((steps, envs, agents), -1, dtype=torch.long, device=obs.device)
         head = self.actor.goal_head

@@ -168,7 +168,7 @@ class RolloutBuffer:
         # With two goals and a queue (goal_slots > 1): the slots a choice drew, -1 for none (what the slow update
         # scores again; `goal` holds the pair the seat then held).
         self.goal_slots = np.full((*shape, goal_slots), -1, dtype=np.int64)
-        # Hindsight (MappoTrainer.hindsight_targets): the goal each decision turned out to achieve, read off the next
+        # Hindsight (MappoTrainer._achieved_of): the goal each decision turned out to achieve, read off the next
         # observation's goal block, -1 for none.
         self.achieved = np.full(shape, -1, dtype=np.int64)
         # The memory each decision was taken with (LayoutActor's GRU), so the update can replay the rollout's

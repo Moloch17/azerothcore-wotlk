@@ -236,9 +236,6 @@ class Residency:
     def forget(self, actor: CastActor | None) -> None:
         self.order = [other for other in self.order if other is not actor]
 
-    def resident(self) -> int:
-        return sum(1 for actor in self.order if str(actor.device) == str(actor.home))
-
 
 # ------------------------------------------------------------------ snapshots
 
