@@ -259,9 +259,9 @@ block (`trainer.py:620`).
 
 ## Observed issues
 
-1. `MappoTrainer.state_dict` / `load_state_dict` (`trainer.py:2027-2053`) save `actor_opt`, `critic_opt` and
-   `vision_opt` but not `slow_opt`. The slow goal loop's Adam state restarts on every resume, and every live stage
-   has `slow_goal_size 128`. `reset_optimizers` (`:740`) builds `slow_opt`.
+1. (Fixed) `MappoTrainer.state_dict` / `load_state_dict` now save and restore `slow_opt` too (key `slow_opt`, optional: a
+   checkpoint without it starts the slow goal loop's Adam fresh, as every resume used to; the configured `slow_goal_lr`
+   is re-applied after the load). `reset_optimizers` builds `slow_opt`.
 2. `set_learning_rate_scale` (`trainer.py:789-796`) scales `actor_opt`, `critic_opt` and `vision_opt` only. `slow_opt`
    keeps `slow_goal_lr` (0.0003) whatever `lr_final_fraction`/the controller's `lr_scale` say. Whether this is
    intended is UNVERIFIED (nothing says so).

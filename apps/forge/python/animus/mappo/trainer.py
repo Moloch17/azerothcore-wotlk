@@ -1919,6 +1919,9 @@ class MappoTrainer:
             "critic_opt": self.critic_opt.state_dict(),
             # The camera's encoder is in "actor" alone (the critic reads it by reference); its optimizer here.
             **({"vision_opt": self.vision_opt.state_dict()} if self.vision_opt is not None else {}),
+            # The slow goal loop's own optimizer (its moments), so a resume does not restart it cold. Optional: a
+            # checkpoint without it (older, or no slow loop) leaves the optimizer fresh.
+            **({"slow_opt": self.slow_opt.state_dict()} if self.slow_opt is not None else {}),
         }
 
     def load_state_dict(self, state: dict, load_optimizers: bool = True) -> None:
@@ -1936,4 +1939,14 @@ class MappoTrainer:
             self.critic_opt.load_state_dict(state["critic_opt"])
             if self.vision_opt is not None and "vision_opt" in state:
                 self.vision_opt.load_state_dict(state["vision_opt"])
+            if self.slow_opt is not None and state.get("slow_opt") is not None:
+                try:
+                    self.slow_opt.load_state_dict(state["slow_opt"])
+                except ValueError as error:
+                    print(f"Resume: the saved slow-goal optimizer does not fit these parameters ({error}); it starts "
+                          f"fresh", flush=True)
+                else:
+                    # load_state_dict also restores the saved learning rate: the configured one stands.
+                    for group in self.slow_opt.param_groups:
+                        group["lr"] = self.config.slow_goal_lr
         self._sync_rollout()

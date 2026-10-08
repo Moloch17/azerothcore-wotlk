@@ -62,10 +62,10 @@ returned
   `evals_since_best` (`:215-217`), which is misleading for those rows. `EvalResult.episodes` counts rows (one per agent
   of each seeded episode), not episodes, so the `episodes` column and "over N seeded episodes" text are agent rows.
 - `save_checkpoint` (`:170`): writes `<path>.partial` with `torch.save` then `replace` (atomic; no fsync).
-  Keys: `trainer` (`MappoTrainer.state_dict()`: actor, critic, value_norm, actor_opt, critic_opt, optional vision_opt),
+  Keys: `trainer` (`MappoTrainer.state_dict()`: actor, critic, value_norm, actor_opt, critic_opt, optional vision_opt and slow_opt),
   `config` (`TrainConfig.to_dict()`), `spec` (`asdict(Spec)`), `update`, `env_steps`, then `_checkpoint_extra()`
   (`:1122`): `convergence` (tracker), `controller`, `stage` (the whole stage.json), `score_kind`, and when present
-  `explore` and `style`. The partner pool, the cast, the layout weights and the replay seeds are not saved.
+  `explore`, `style` and `partner_scores` (the pool's scores, restored on resume). The partner pool's membership, the cast, the layout weights and the replay seeds are not saved.
 - Other files in the run dir: `config.yaml` and `spec.json` and `stage.json` (leader, at start), `progress.json`
   (every update and around evaluations), `finished.json`, `best.pt`, `latest.pt`, `checkpoint_<update:06d>.pt`,
   `best_rung<k>.pt`, `eval_baseline*.json`, `eval_motion.npz`, `partners/`, `partners.json`, `tb/`.

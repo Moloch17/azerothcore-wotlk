@@ -276,6 +276,7 @@ the floor, 5 at rung 0). Read by people; `forge status` only refers to it. The h
 | `score_kind` | "" (return) or "score_outcome". |
 | `explore` | Go-Explore archive (if enabled). |
 | `style` | style discriminator state (if enabled). |
+| `partner_scores` | the partner pool's `{<kind>:<name>: {score, episodes, retired}}` (if the pool exists); optional, an older checkpoint restarts the pool unmet. `trainer` also carries `slow_opt` when the slow goal loop exists (optional). |
 
 Files: `latest.pt` is rewritten at every checkpoint (`checkpoint_every` updates or `checkpoint_env_steps`) and at the end; `checkpoint_<update:06d>.pt` is written alongside, and only the newest
 `keep_checkpoints` are kept (`prune_checkpoints`); `best.pt` is written when an evaluation improves on the best by the margin (the best of the **current rung** on a gate-stepped ladder: the next rung's first

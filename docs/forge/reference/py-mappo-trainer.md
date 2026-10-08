@@ -219,17 +219,18 @@ Config keys: `slow_goal_*`, `lookahead_coef`, `goal_*`, `epochs`, `clip`, `value
 
 ## Checkpoint state (`:2027-2053`)
 
-`state_dict()`: `actor`, `critic`, `value_norm`, `actor_opt`, `critic_opt`, `vision_opt` (if present). **`slow_opt` is
-not saved.** `load_state_dict(state, load_optimizers=True)`: `load_actor_state` (tolerates only blind-column masks and
+`state_dict()`: `actor`, `critic`, `value_norm`, `actor_opt`, `critic_opt`, `vision_opt` (if present), `slow_opt` (if the slow
+goal loop exists). `load_state_dict(state, load_optimizers=True)`: `load_actor_state` (tolerates only blind-column masks and
 the
 goal-scale tables), critic strict apart from blind-column masks, value norm if both sides have one, optimizers if asked
-(`vision_opt` only if present in the checkpoint), then `_sync_rollout`. The optimizer state loads by parameter order
+(`vision_opt` and `slow_opt` only if present in the checkpoint; a `slow_opt` that does not fit starts fresh with a line; the
+configured `slow_goal_lr` is set after the load), then `_sync_rollout`. The optimizer state loads by parameter order
 within each group; a change that adds, removes or reorders actor parameters breaks loading of `actor_opt` (UNVERIFIED
 what the failure looks like; torch raises on a group size mismatch).
 
 ## Observed issues
 
-1. `slow_opt` neither saved nor learning-rate-scaled (see [py-mappo.md](py-mappo.md) issues 1-2).
+1. `slow_opt` is saved since the resume fix, but still not learning-rate-scaled (deferred: that changes learning; see [py-mappo.md](py-mappo.md) issues 1-2).
 2. `_update_recurrent` docstring says the critic is feed-forward; it is recurrent (`:1608` vs `:1899`).
 5. `epochs_run` and `epochs_done` duplicate each other (`:1979-1982`).
 7. `_updates_since_sync` set via `getattr` (`:1480`).

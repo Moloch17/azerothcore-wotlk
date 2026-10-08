@@ -914,6 +914,7 @@ class TrainingRun:
         self.partners: Partners | None = None
         # Every checkpoint this setup reads from the runs directory, for the followers (async_sync.Hub).
         self.shared_files: list[Path] = []
+        saved_partner_scores = None
         if self.resume_path:
             checkpoint = torch.load(self.resume_path, map_location="cpu", weights_only=False)
             if mismatch := resume_mismatch(checkpoint.get("spec", {}), asdict(spec)):
@@ -930,6 +931,7 @@ class TrainingRun:
                       f"starts fresh", flush=True)
             if self.explore is not None and checkpoint.get("explore"):
                 self.explore.load_state_dict(checkpoint["explore"])
+            saved_partner_scores = checkpoint.get("partner_scores")
             self.update = int(checkpoint.get("update", 0))
             self.env_steps = int(checkpoint.get("env_steps", 0))
             # The convergence test and the best evaluation carry on where the run stopped -- unless they were scored
@@ -1033,6 +1035,8 @@ class TrainingRun:
         if partners.enabled or (self.stand_in_share > 0 and pooled):
             self.partners = Partners(partners, spec, self.stage, self.run_dir, self.trainer.rollout_device,
                                      self.partner_members, seed=config.seed + 7)
+            if saved_partner_scores and (restored := self.partners.pool.restore_scores(saved_partner_scores)):
+                print(f"Resuming {config.run_name}: the scores of {restored} partner(s) are back", flush=True)
             if self.partners.rule is None:
                 print("cast.partners is on but the stage has no party or raid arena: no partners play", flush=True)
             else:
@@ -1092,6 +1096,9 @@ class TrainingRun:
         return {"convergence": self.tracker.state_dict(), "controller": self.controller.state_dict(),
                 "stage": self.stage, "score_kind": self.score_kind,
                 **({"explore": self.explore.state_dict()} if self.explore is not None else {}),
+                # The partner pool's scores (and which members are retired), so a resume does not draw evenly again.
+                **({"partner_scores": self.partners.pool.scores_state()}
+                   if getattr(self, "partners", None) is not None else {}),
                 **({"style": self.style.state_dict()} if getattr(self, "style", None) is not None else {})}
 
     def _save(self, path: Path) -> None:
