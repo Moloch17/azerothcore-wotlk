@@ -25,6 +25,7 @@
 #include "CreatureGroups.h"
 #include "MoveSpline.h"
 #include "DatabaseEnv.h"
+#include "Forge.h"
 #include "Formulas.h"
 #include "GameEventMgr.h"
 #include "GameTime.h"
@@ -3054,6 +3055,10 @@ void Creature::AddSpellCooldown(uint32 spell_id, uint32 /*itemid*/, uint32 end_t
     // The cast spell keeps its own recovery time when it outlasts the category cooldown
     if (spellcooldown > categorycooldown)
         _AddCreatureSpellCooldown(spellInfo->Id, 0, spellcooldown);
+
+    // Forge: the packet below is for a client; a sim seat has none, so skip the building.
+    if (!ForgeCore::HasClients())
+        return;
 
     // The controlling player only learns creature cooldowns from us, category spells included
     Player* player = GetCharmerOrOwnerPlayerOrPlayerItself();
