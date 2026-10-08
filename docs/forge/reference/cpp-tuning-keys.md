@@ -28,7 +28,8 @@ Paths relative to the repository root.
 
 ### 1.1 Prefix and `Load`
 
-- The config key of a value is `<prefix><key>`. The prefix is `StageSettings::TuningPrefix` (`Scenario/StageSettings.h:73-75`):
+- The config key of a value is `<prefix><key>`. The prefix is `StageSettings::TuningPrefix`
+  (`Scenario/StageSettings.h:73-75`):
   `"AnimusForge.Curriculum."` for the forge (`ForgeConfig.cpp:669`) and `"Animus.Curriculum."` for mod-animus (the
   header's claim; the module is not in this tree: UNVERIFIED, see the end).
 - `CurriculumTuning::Load(prefix)` (`CurriculumTuning.cpp:58-92`) default-constructs the struct, then calls `Visit` and
@@ -38,7 +39,8 @@ Paths relative to the repository root.
   infinity is logged (`module.animus` warning) and the default is kept (`CurriculumTuning.cpp:63-68`).
 - `ConfigMgr::GetOption` also honours an environment variable `AC_<KEY>` (`common/Configuration/Config.cpp:435-441,
   540-552`), so a tuning key can be set from the environment; it then also enters the fingerprint (1.4).
-- After loading, `Load` clamps (`CurriculumTuning.cpp:74-91`), logging a `module.animus` warning when it changes a value:
+- After loading, `Load` clamps (`CurriculumTuning.cpp:74-91`), logging a `module.animus` warning when it changes a
+  value:
   - percent chances to 0..100 (`ClampPercent`): `Characters.PetOutChance`, `Difficulty.ReviewChance`,
     `Party.ClassicChance`, `StandIn.Share`, `StandIn.LeadChance`, and each member of the pairs below;
   - role pairs whose two chances come from one roll (`ClampRolePair`, scaled down proportionally to
@@ -50,12 +52,14 @@ Paths relative to the repository root.
   does for a `uint32` key depends on `Acore::StringTo<uint32>` (UNVERIFIED: read `common/Utilities/StringConvert.h`),
   and with `showLogs = false` any failure falls back to the default silently.
 - The header says `Load` returns values where "min/max pairs are ordered" (`CurriculumTuning.h:1176-1177`). **The code
-  orders no pair.** `BandMin/BandMax`, `Nearest/Furthest`, `SightNearest/SightFurthest`, `HallwayNearest/HallwayFurthest`,
+  orders no pair.** `BandMin/BandMax`, `Nearest/Furthest`, `SightNearest/SightFurthest`,
+  `HallwayNearest/HallwayFurthest`,
   `FightNearest/FightFurthest`, `NextNearest/NextFurthest`, `PartyNearest/PartyFurthest`, `DecoysMin/DecoysMax`,
   `SuddenStopMinMs/MaxMs`, `SuddenGapMin/Max` are used as set. Only the two `Sudden*` pairs are guarded where they are
   read (`PartyFollowEncounter.cpp:319, 359`: `max(min, max)`).
 
-Who calls `Load`: the scenario constructor (`StageScenario.cpp:296`, held as the member `_tuning`, `StageScenario.h:436`,
+Who calls `Load`: the scenario constructor (`StageScenario.cpp:296`, held as the member `_tuning`,
+`StageScenario.h:436`,
 exposed as `Tuning()`, `StageScenario.h:164`) and `ClusterFingerprint` (`AnimusForge.cpp:92-93`). A scenario therefore
 holds one copy read at construction; a config reload does not change a running scenario (UNVERIFIED: whether anything
 rebuilds scenarios on reload; check `AnimusForge.cpp` / `ForgeMain.cpp`).
@@ -68,8 +72,10 @@ test and (through `Json`) the fingerprint and `stage.json` all derive from it. A
 added to `Visit` is never read from the config, never recorded and never fingerprinted; nothing in the C++ checks this.
 (One-off check done for this document: all 309 struct fields appear in `Visit`, no key appears twice.)
 
-The key order of `Visit` is not the struct order. `Actions.Aimless.*` map to the fields `Actions.AimlessX`; `Options.JitterDecayMs`
-is listed late, after `Roles.*` (`CurriculumTuning.h:1160`), while `Options.RestMaxMs` and `Options.HoldInterruptMs` are listed
+The key order of `Visit` is not the struct order. `Actions.Aimless.*` map to the fields `Actions.AimlessX`;
+`Options.JitterDecayMs`
+is listed late, after `Roles.*` (`CurriculumTuning.h:1160`), while `Options.RestMaxMs` and `Options.HoldInterruptMs` are
+listed
 earlier (lines ~992-993). The order matters: it is the order of the serialised JSON that is hashed (1.4).
 
 ### 1.3 `Json` and `stage.json`
@@ -95,7 +101,8 @@ differs ([cluster.md](../cluster.md)). Consequences:
 - It does **not** cover the override families of section 2 (`Arena.*`, `Stage.*.GoalPlaces`): two machines can differ
   there and be accepted. `forgectl conf-sync` does copy them (`confsync.py:16-17`: every uncommented
   `AnimusForge.Curriculum.*` line), so only a machine that was not synced is exposed.
-- A reordering or renaming in `Visit` changes the hash of otherwise identical values (harmless across a build because the
+- A reordering or renaming in `Visit` changes the hash of otherwise identical values (harmless across a build because
+  the
   source hash differs anyway).
 - Environment variables `AC_ANIMUS_FORGE_...` (1.1) enter the hash; they are per machine and invisible in the conf.
 
@@ -112,7 +119,8 @@ differs ([cluster.md](../cluster.md)). Consequences:
   uncommented conf lines against the in-class defaults: they agree today (no test enforces it).
 - Arena/stage override keys are commented in conf.dist, so the test does not see them.
 
-`conf_prune.py` treats `AnimusForge.Curriculum.Arena.<stage>.<arena>.<key>` and `AnimusForge.Curriculum.Stage.<name>.GoalPlaces`
+`conf_prune.py` treats `AnimusForge.Curriculum.Arena.<stage>.<arena>.<key>` and
+`AnimusForge.Curriculum.Stage.<name>.GoalPlaces`
 as families "read by name" (`conf_prune.py:16-19`, test `test_conf_prune.py:125-136` also lists `MaxRung` as valid, see
 Observed issues), and relies on this test: "the conf.dist diff IS the Visit diff" (`conf_prune.py:21-25`).
 
@@ -127,7 +135,8 @@ All read in the `StageScenario` constructor with `GetOption(..., false)` (silent
 | `Arena.<stage>.<arena>.StandInShare` | `ArenaDefinition::StandInShare` | `StageScenario.cpp:497-499` | percent of the arena's training episodes with a stand-in; clamped -1..100 (-1 = defer to `Roles.StandInShare` for a Roles arena, else `StandIn.Share`; `StandInSeat.cpp:82-91`). |
 | `Stage.<name>.GoalPlaces` | `StageDefinition::GoalPlaces` | `StageScenario.cpp:509-511` | 1 = seen only, anything else = seen and layout nodes (the comparison is `== SeenOnly`). |
 
-If every `Weight` is 0 the arenas are drawn evenly with an error log (`StageScenario.cpp:520-524`); if every `WeightFinal`
+If every `Weight` is 0 the arenas are drawn evenly with an error log (`StageScenario.cpp:520-524`); if every
+`WeightFinal`
 is 0 they take the start weights (`StageScenario.cpp:516-517`).
 
 conf.dist documents `Weight` and `MaxRung` (lines 6017-6028), `StandInShare` (6740-6741, in prose) and `GoalPlaces`
@@ -178,7 +187,8 @@ Notes per group worth knowing before changing it:
 - **Party / Raid.** `Party.SizeWeight*` is dead in the live curriculum (note 4); the makeup draw
   (`ClassicChance`, `RoleTankChance`, `RoleHealerChance`) is reached only by `move4_follow`
   (`classic = DrillRole || instance || proper || roll`, `StageScenario.cpp:2023`). PartyEncounter is used by arenas with
-  `PartyGroup` (`StageScenario.cpp:470-475`): group1, group2, dungeon1-3. The `Roles.*` per-role prices mirror the `Raid.*` ones
+  `PartyGroup` (`StageScenario.cpp:470-475`): group1, group2, dungeon1-3. The `Roles.*` per-role prices mirror the
+  `Raid.*` ones
   at three times the value (`Roles.Hold = 3 x Raid.TankHold`, `Roles.Focus = 3 x Raid.TankTarget`, `Roles.Keep = 3 x
   Raid.KeepUp`: header comments, values 0.045 / 0.9 / 0.0006 check out).
 - **Instance.** The stall (`WingStall`) is paid as `Idle` (a Cost, full price), the stray (`WingStray`) as `Lost`, the
@@ -209,12 +219,14 @@ Notes per group worth knowing before changing it:
   would be missed; I read the lines of the shared-name families (Markers/Seek/Interact/Controls, Combat, PartyFollow,
   Instance, Party/Raid) by eye. Every key has at least one real reader; none is read only in a comment.
 - **Live stages**: where the reader runs in the twelve live stages, derived from the arenas' `Against`/`Seats`/blocks
-  in `Stages/Stages.cpp` (`all` = every stage; short names `move1` ... `dungeon3`; `combat1-3`, `dungeon1-3` are ranges).
+  in `Stages/Stages.cpp` (`all` = every stage; short names `move1` ... `dungeon3`; `combat1-3`, `dungeon1-3` are
+  ranges).
 
 Notes: (3) the tuned level draw is reached only where no fixed level, episode level, kept level or focus band applies:
 `move4_follow` in training (see section 3); (4) `RandomPartySize` is called only for a party arena with no instance,
 no `ProperParty` and no `PartySize` (`StageScenario.cpp:2005-2007`), and every live party arena has one of these
-(`move4_follow` sets `PartySize`, `Stages.cpp:770-773`); (5) arenas of group2-dungeon3 carry their own `StandInShare = 20`
+(`move4_follow` sets `PartySize`, `Stages.cpp:770-773`); (5) arenas of group2-dungeon3 carry their own `StandInShare =
+20`
 (`Stages.cpp:621`), group1's roles arenas use `Roles.StandInShare`, `heldout` arenas are `EvalOnly`; no live arena falls
 through to `StandIn.Share`, so its default 0 is never consulted today (the "defer" path still exists).
 

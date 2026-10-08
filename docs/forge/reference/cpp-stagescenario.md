@@ -264,7 +264,8 @@ separately (not a definition field; see [config-keys.md](config-keys.md)).
   structs would remove most of the 160 lines of `ArenaProblem`.
 - The default `Against = Instance` is a trap for a new arena.
 - `Suffix` and `Summary` have no C++ reader beyond the JSON dump.
-- `WeightFinal`, `ArenaDefinition::MinLevel`, `InDefaultQueue = false` and a non-default `GoalPlaces` are used by no live
+- `WeightFinal`, `ArenaDefinition::MinLevel`, `InDefaultQueue = false` and a non-default `GoalPlaces` are used by no
+  live
   stage (plumbing and tests only).
 - PartyFollow caps `PartySize` at 4 while the generic check allows 5 (`:1134`).
 - The block-order rules (Sight after Entities, Combat after Sight, Map after Vision) are enforced here only; the
@@ -342,7 +343,8 @@ Reviewer notes: the interface was designed for several scenarios ("Adding a stan
 one branch in CreateScenario", `Scenario.cpp:26-27`) but now has exactly one implementation; a good deal of it
 (`SetExploreStarts`, the cluster tally calls, `FilmedRole`) is wing-ladder or stand-in plumbing that exists only for
 `StageScenario`. The comment on `LayoutSpec` ("One kind of agent: its observation features and actions (a class/role,
-say)") sits above `ExploreStart` (`:36-40`), the `ExploreStart` comment's doc following it, i.e. the doc comment of `LayoutSpec` is attached to the wrong struct.
+say)") sits above `ExploreStart` (`:36-40`), the `ExploreStart` comment's doc following it, i.e. the doc comment of
+`LayoutSpec` is attached to the wrong struct.
 
 ### B.2 `StageSettings.h` (86 lines)
 
@@ -368,7 +370,8 @@ only for a stage that has no map of its own; none of the twelve live stages is s
 that are in the world and within `radius` (2-D distance), and despawns them for a week. Both only remove
 database-spawned creatures; neither touches gameobjects (doors, levers, chests: `ObjectPool::ClearOwn` does, see
 cpp-encounters.md). Callers: `StageScenario.cpp:2294-2307` on the env's first build of an instanceable map (and for the
-party follow whenever a new instance opens): ClearMap with `INSTANCE_CLEAR_RADIUS 300` (`:108`) for Seek, Sight, Combat, Roles;
+party follow whenever a new instance opens): ClearMap with `INSTANCE_CLEAR_RADIUS 300` (`:108`) for Seek, Sight, Combat,
+Roles;
 `DUNGEON_CLEAR_RADIUS 1000` for PartyFollow (`:113`); `INTERACT_CLEAR_RADIUS 600` for Interact; `Clear` (60 yd)
 otherwise (Instance arenas, which spawn their own instance fresh). No test covers either. A creature despawned with
 `WEEK` respawn is gone for the instance's life; instances are per env, so the next run starts again from the database.
@@ -405,7 +408,8 @@ duplicates the core's cost computation and can drift from it. No test covers thi
 selected on this thread; 0 = no override". Set only in `Opponents::SummonOpponent` (`Opponents.cpp:332-334`) around one
 `Map::SummonCreature`. Read in **core**, `src/server/game/Entities/Creature/Creature.cpp:1509-1511`, immediately after
 `sScriptMgr->OnBeforeCreatureSelectLevel` at `:1507`: the header comment says the hook applies it, but the application
-is a direct read in `Creature::SelectLevel` (a forge edit of core, see [01-forge-core-delta.md](01-forge-core-delta.md)).
+is a direct read in `Creature::SelectLevel` (a forge edit of core, see
+[01-forge-core-delta.md](01-forge-core-delta.md)).
 It is not reset if `SummonCreature` throws (no RAII); in `SummonOpponent` it is reset right after the call.
 
 ### B.6 `Curriculum/BuildRetry.h` (47 lines)
@@ -417,11 +421,13 @@ attempts inside `Rebuild` (`SPAWN_ATTEMPTS`, `StageScenario.cpp:2327`).
 
 ### B.7 `Curriculum/WarmCaches.h/.cpp` (34 + 43 lines)
 
-`WarmCaches()` touches every table the curriculum reads from the world DB on first use so "no episode ever queries" after
+`WarmCaches()` touches every table the curriculum reads from the world DB on first use so "no episode ever queries"
+after
 the pools are sealed: `ConsumablePool::Instance()`, `WarmGearCaches()` (defined in `Character/GearBuilder.cpp:893`),
 `Opponents::OpponentPool::Instance()`, `WorldCreatures::SpawnedIds()`, `WorldCreatures::WaypointWalkerIds()`, and
 `ClassAssets::For(profile)` for every `ClassProfile` (the kit, talents and catalog). Logs "Curriculum caches warmed in N
-ms". Called once from `AnimusForge.cpp:239` before the DB pools are sealed (the comment at `:236-238`). Contract: any new
+ms". Called once from `AnimusForge.cpp:239` before the DB pools are sealed (the comment at `:236-238`). Contract: any
+new
 world-DB read in the curriculum must be added here or it will fail (or query) after sealing. Not covered by a test.
 Observed: the log line at `WarmCaches.cpp:42` is 134 columns (over the 120 limit).
 
@@ -645,7 +651,8 @@ through `stage.json`, covered by `apps/forge/python/tests/test_metric_names.py` 
   Random, else Standard. Keys `Characters.NoisyTalentChance`, `Characters.RandomTalentChance`
   ([cpp-tuning-keys.md](cpp-tuning-keys.md)).
 - `TankModeSpell(class)` (159-169): hard-coded ids: warrior 71 (Defensive Stance), paladin 25780 (Righteous Fury),
-  druid 5487 (Bear Form), death knight 48263 (Frost Presence), else 0. Used in `Rebuild` (2161) and `PrepareFighter` (2539).
+  druid 5487 (Bear Form), death knight 48263 (Frost Presence), else 0. Used in `Rebuild` (2161) and `PrepareFighter`
+  (2539).
 - `RandomLevel(minLevel, fixed, tuning, seedIndex, layouts)` (171-198): (a) `fixed` (`StageSettings::Level`) wins,
   clamped to `[minLevel, 80]`; (b) an evaluation (`seedIndex != NO_EPISODE_SEED`) takes a band from its seed: width
   `80 / 4 = 20`, `band = (seed / layouts) % 4`, level `urand(max(minLevel, band*20+1), min(80, (band+1)*20))`, a band
@@ -683,7 +690,8 @@ stage start. In order:
 
 1. Member init (295-304): `_tuning = CurriculumTuning::Load(settings.TuningPrefix)` (the prefix is
    `"AnimusForge.Curriculum."` for the forge, `ForgeConfig.cpp:669`); the spawn map and point are the stage's
-   (`stage.MapId`, `stage.SpawnPoints.front()`) when the stage names a map, else the settings' (`StageSettings::SpawnMapId`
+   (`stage.MapId`, `stage.SpawnPoints.front()`) when the stage names a map, else the settings'
+   (`StageSettings::SpawnMapId`
    default 560, `SpawnPosition`); `_seatCount = stage.SeatCount()`; `_level = settings.Level`;
    `_decisionScale = DecisionMs / 50`; `_wingLadder(WING_RUNGS.size(), Instance.WingRungRuns, Instance.WingRungTarget,
    Instance.WingRungStart)`. The comment says the ladder is not saved with the policy: a resumed run names its rung.
@@ -743,7 +751,8 @@ Contracts: a new encounter has to be added in three places: the `add` (405-456),
 `AnyArena(...)` conditions as text (header of that script, lines 14-17), so reformatting this block can break
 `apps/forge/python/tests/test_metric_names.py`.
 
-Config read directly: `<prefix>Arena.<stage>.<arena>.Weight|WeightFinal|StandInShare` and `<prefix>Stage.<stage>.GoalPlaces`;
+Config read directly: `<prefix>Arena.<stage>.<arena>.Weight|WeightFinal|StandInShare` and
+`<prefix>Stage.<stage>.GoalPlaces`;
 everything else through `CurriculumTuning::Load`, `Vision::Current()` and `Vision::MapCurrent()`.
 
 ### Observed issues (constructor)
@@ -775,7 +784,8 @@ everything else through `CurriculumTuning::Load`, `Vision::Current()` and `Visio
   learner's `eval.heldout`) returns `pinned - 1`; (2) a single-arena stage returns 0 unless that arena is `EvalOnly`;
   (3) otherwise `ArenaDrawWeights(arenas, weights, finalWeights, evaluating, progress)` (in the stage definition part;
   per the comment at 675-677 it interpolates Weight to WeightFinal over `_stageProgress`, an evaluation uses the final
-  weights, a held-out arena gets none, a pull drill is dropped from an evaluation except in a stage of drills; UNVERIFIED
+  weights, a held-out arena gets none, a pull drill is dropped from an evaluation except in a stage of drills;
+  UNVERIFIED
   by reading that function, see [cpp-stagescenario.md](cpp-stagescenario.md)); (4) all weights 0 returns the first
   non-`EvalOnly` arena; (5) a weighted `urand` pick from the world thread's engine, so an evaluation's draw
   follows its seed.
@@ -879,7 +889,8 @@ failure, 1248-1251) and `stage.json`. Every write goes through `WriteIfChanged`.
 | `tuning` | `_tuning.Json()`, the effective tuning | 1504 |
 
 Per block entry in `layouts[].blocks[]` (1349-1402): `name`, `obs` and `actions` spans, `revision` when nonzero,
-`action_features` (core block only), the vision block's `image`/`camera`/`look`, the entities block's `entities`, the map
+`action_features` (core block only), the vision block's `image`/`camera`/`look`, the entities block's `entities`, the
+map
 block's `map`, the sight block's `sight` (each from `GetBlock(id).DescribeManifest`), `obs_names` (`DescribeColumns`)
 and `rescaled` (`DescribeRescaled`) when non-empty. Seeding by name depends on `obs_names` (principle 15).
 
@@ -985,7 +996,8 @@ reported `rung`; UNVERIFIED how `WingLadder::Note` treats a rung that is not the
 
 - `IsTerminal(env)` (1837-1845): true if `BuildFailed`, else true if any ACTIVE encounter's `IsTerminal(env)` is true.
   Time-outs are not here; the env pool ends an episode at `EpisodeLengthMs` (set in `Rebuild`).
-- `Setup(env)` (1847-1867): false with an error when `_layouts` is empty. Otherwise `RetryBuild(SETUP_BUILD_ATTEMPTS = 8,
+- `Setup(env)` (1847-1867): false with an error when `_layouts` is empty. Otherwise `RetryBuild(SETUP_BUILD_ATTEMPTS =
+  8,
   Rebuild, log)` (`BuildRetry.h:30`); on success `Fresh = true`.
 - `Reset(env)` (1869-1884): if `Fresh`, clears it and returns (`Setup` already built the first episode); else
   `BuildFailed = !Rebuild(env)`; a failed build logs an error, the episode ends at the next `IsTerminal` and the next
@@ -1004,11 +1016,13 @@ restored to their previous characters). Timers go into the thread-local `Current
 1. **Arena** (1892-1895): remember `previousEncounters`; `Arena = DrawArena(env.Evaluating)`; clear `StandInPlay`.
 2. **Episode parameters** (1896-1904): `EpisodeMapId = arena.MapId` (`HasEpisodeMap` = nonzero); `EpisodeLevel`,
    `EpisodeTeam`, `DungeonDifficulty`, `RaidDifficulty`, `HasEpisodeSpawn` cleared.
-3. **Spawn draw** (1910-1914): `Spawn = urand(0, ground.size()-1)` (0 with no ground); `SpawnDrawn = Spawn`. One draw per
+3. **Spawn draw** (1910-1914): `Spawn = urand(0, ground.size()-1)` (0 with no ground); `SpawnDrawn = Spawn`. One draw
+   per
    episode from the seeded engine.
 4. `env.EpisodeLengthMs = _arenaEpisodeMs[Arena]` (1916).
 5. **Seat totals** (1919-1920): `ResetEpisode()` on all `MAX_SEATS` seat states.
-6. **Camera size** (1924-1929): with a vision block only, `Look.Render = Vision::DrawRenderSize(Vision::Current(), draw)`
+6. **Camera size** (1924-1929): with a vision block only, `Look.Render = Vision::DrawRenderSize(Vision::Current(),
+   draw)`
    per seat (`frand`, clamped below the total with `nextafter`).
 7. **Map keep roll** (1934-1944): with a Map or Sight block, per seat `MapPending = true`, `MapKept = false`,
    `MapKeep = !Evaluating && KeepShare > 0 && frand < KeepShare`, `MapAgeOffset = frand(0, AgeOffsetSeconds)` when
@@ -1036,7 +1050,8 @@ restored to their previous characters). Timers go into the thread-local `Current
       from its demand (tank, healer, damage) and redraws among the castings that `FitsDungeonRole`; for a stage with
       `FocusChance >= 100` only classes whose `MinLevel <= FocusLevelLast` are eligible (keeps death knights out of
       band stages, 2052, 2058); training draws by the learner's weights, an evaluation by `(seed + seat) % fits`.
-    - Solo arenas: with `Characters.KeepCasting && Characters.ReuseEpisodes > 0`, not the first build, training, no seed,
+    - Solo arenas: with `Characters.KeepCasting && Characters.ReuseEpisodes > 0`, not the first build, training, no
+      seed,
       a seat whose previous bot is active with `EpisodesPlayed < ReuseEpisodes` keeps its casting; the others draw over
       every pair with `Anything` (2095-2114).
 15. **Encounter-fixed parameters** (2119-2120): `BeforeLevel(env)` on each active encounter (an instance writes map,
@@ -1056,7 +1071,8 @@ restored to their previous characters). Timers go into the thread-local `Current
     `keptLevel`; the stage focus band (`FocusChance` percent in training, or any evaluation of a 100%-focus stage:
     `urand(max(minLevel, FocusLevelFirst), FocusLevelLast)`); else `RandomLevel(...)`. A nonzero `StageSettings::Level`
     (`_level`) disables the focus band.
-20. **Map** (2213-2226): reuse `env.FindMap()` unless it is the first build, a fresh wing instance, or the map id differs
+20. **Map** (2213-2226): reuse `env.FindMap()` unless it is the first build, a fresh wing instance, or the map id
+    differs
     from the episode's; for a non-instanceable episode map use `CreateContinentReplica(map id, ReplicaOf(env))`.
 21. **Place seats** (2233-2278): per active seat a start = `SpawnPointFor(env)`, in a party offset by `PARTY_SPACING`
     (alternating sides, rows by group); `ReuseSeat` when flagged (falling back to `BuildSeat` if it fails) else
@@ -1091,7 +1107,8 @@ Contracts and hazards:
 
 Config read (via `_tuning`): `Party.SizeWeight1..4`, `Party.ClassicChance`, `Party.RoleTankChance`,
 `Party.RoleHealerChance`, `Characters.KeepCasting`, `Characters.ReuseEpisodes`, `Characters.HighLevelChance/First`,
-`LowLevelChance/Last`; stage fields `FocusChance`, `FocusLevelFirst`, `FocusLevelLast`, `Level`, `MinLevel`; arena fields
+`LowLevelChance/Last`; stage fields `FocusChance`, `FocusLevelFirst`, `FocusLevelLast`, `Level`, `MinLevel`; arena
+fields
 `PartySize`, `ProperParty`, `DrillRole`, `Instance`, `MapId`, `MinLevel`, `Seats`. Full key table:
 [cpp-tuning-keys.md](cpp-tuning-keys.md).
 
@@ -1102,7 +1119,8 @@ that feed it.
 
 - `StageScenario.cpp:2230, 2276-2277`: `firstNew` is assigned and never read (dead variable).
 - `StageScenario.cpp:2169-2170`: garbled comment ("Never in an evaluation ..., never on never a seat that was empty").
-- `StageScenario.cpp:2006`: `arena.Seats == SeatPlan::Party` is repeated inside the `if (arena.Seats == SeatPlan::Party)`
+- `StageScenario.cpp:2006`: `arena.Seats == SeatPlan::Party` is repeated inside the `if (arena.Seats ==
+  SeatPlan::Party)`
   that starts at 1998; redundant.
 - `StageScenario.cpp:2176`: `Arena(env).Instance == InstanceLadder::Wing` is read for every arena, named
   `freshInstance`; it relies on the default `Instance` of a non-instance arena not being `Wing`.
@@ -1377,12 +1395,14 @@ counters are per scenario object and never reset: caps are per process and stage
   (cap 4) naming auras, speeds, and the client's counters, once per episode (`VoidFallLogged`).
 
 **`TrackController`** (2988-3023), after each tick: with a movement key held, `WallMs += diffMs` if the tick hit a wall;
-`stuck` = keys held and `TickCommanded > 0.01` and `TickMoved < 0.1 * TickCommanded`; a stuck run counts toward `StuckMs`
+`stuck` = keys held and `TickCommanded > 0.01` and `TickMoved < 0.1 * TickCommanded`; a stuck run counts toward
+`StuckMs`
 only once it has lasted 1000 ms (3001-3002: the whole run is added the moment it crosses 1 s, then each tick);
 `Jumps += TickJumps`; a landing from >= 2.0 yd increments `Drops` and `Falls` together (3006-3009); `FallDamage`,
 `FallDeaths`, `VoidDeaths` are drained from `seat.Link` and zeroed; `CourseKink` increments `CourseKinks`.
 
-**`CourseKink`** (3025-3045, static and public for the test): true when the heading from the last tick's position to this
+**`CourseKink`** (3025-3045, static and public for the test): true when the heading from the last tick's position to
+this
 one differs from the previous tick's heading by more than 0.3490659 rad (20 degrees) while moving at >= 0.5 yd/s over
 the tick (3035). State is `CourseX/Y`, `HasCoursePos`, `HasCourse`, `LastCourse`. Test: `StandingTest.cpp:66-78`.
 
@@ -1444,20 +1464,23 @@ Per seat per decision (from `ApplyActions` 2814-2819, for each seat and the cast
 4. `ViewSeat`; in a sight stage `HazardsSeen = true` and the ground fire is what the camera shows
    (`CombatBlock::ReadHazards(seat.Seen, x, y, orientation)`), else `NearestHazard` from `TrackHazards`.
 5. `SeatEncoder::Apply(view, action, result)` (3294) fills a `SeatActionResult`; then `seat.Facing = view.Facing`.
-6. **Water and breath** (3299-3345): `WaterMs` while swimming, `AquaticMs` in aquatic form, `WaterWalkMs` on a water-walk
+6. **Water and breath** (3299-3345): `WaterMs` while swimming, `AquaticMs` in aquatic form, `WaterWalkMs` on a
+   water-walk
    liquid, `SubmergedMs` under water. Under water without a water-breathing aura `BreathSpentMs += decisionMs` and
    `DrowningDamage += LastStepSelfDamage`; above water breath returns ten times faster (3334). `BreathMs()` is
    `max(1000, sWorld CONFIG_WATER_BREATH_TIMER)` (StageScenario.cpp:121-124, the core's `WaterBreath.Timer`, not an
    AnimusForge key). A death while submerged with self damage or an empty breath sets `Drowned` (3341).
 7. If `action > 0 && !result.KeyStillHeld`: `Press(...)` then `JudgePress(...)` (3347-3348). A held movement control
    pressed again is not a press (MoveBlock).
-8. Durative options: `OptionMs += decisionMs` when any option slot is running (3366); `OptionPresses` for each slot whose
+8. Durative options: `OptionMs += decisionMs` when any option slot is running (3366); `OptionPresses` for each slot
+   whose
    kind changed during this action.
 9. Copies the per-action result counters into `SeatState` (3375-3400: `HealsOnFull`, `DefensiveCasts`, `HealingCasts`,
    `HealingPowerSpent`, `DownrankedCasts`, `SpellCasts`, `BreathingCasts`, `ControlChanges`, `TurnReversals`,
    `BearingFlips`, `PitchReversals`, `Weaves`, `StepJitter += JitterWeight` (3384), `TrinketUses`, `ItemUses`,
    `ConsumablesUsed`, `SelfResurrections`, `PetAbilities`, `PetOrders`, `PetOrderCounts`) and the combat tally
-   (`PreparationMs`, `StealthOpeners`, new `StealthUtilityTargets` once per target per stealth, cleared when stealth ends,
+   (`PreparationMs`, `StealthOpeners`, new `StealthUtilityTargets` once per target per stealth, cleared when stealth
+   ends,
    3409).
 10. Every active encounter's `OnSeatAction` (3412); then the hunter's Call Pet (3414).
 
@@ -1488,14 +1511,16 @@ mounts and flight were deleted, yet `Mounted` (3521) and `MOVE_FLIGHT` (3524) ar
    non-empty map (3576-3577); else cleared. `Recall` follows the same roll and offset.
 4. `ViewSeat`; in a sight stage the camera-read hazards; with the map block `Hits`, `Map`, `MapRow`, `MapKept` (3610).
 5. **Goals** (about 3615-3690), for each hold that has not ended: `GoalBlock::Status(view, goal, reached, possible)`;
-   `reached = GoalBlock::Earned(reached, Fresh, SatisfiedAtChoice)` (a goal already true when chosen is held unpaid until it
+   `reached = GoalBlock::Earned(reached, Fresh, SatisfiedAtChoice)` (a goal already true when chosen is held unpaid
+   until it
    stops being true); Protect is also reached by keeping the named friend at or above 50% health with an attacker on it
    for `Goals.ProtectHoldMs` (default 5000; 3637-3638). A reached, not yet rewarded goal is paid
    `GoalReached = GoalValue(hold, bot) * (slot ? Goals.SecondaryShare : 1)` (0 for a group healer's Fight goal) with
    `Rewards.AddTaken` (3651), and the paid amount (shaping scale included) is added to `Data(env).StepReward[seat]`
    (3652-3653). A goal no longer possible counts `GoalsLost`. `hold.Ended = reached || !possible` (3657).
 6. Per hold: `HasPlace/Place` via `GoalBlock::PlaceOf`; the named friend; the first-observation potential
-   (`GoalPotential`; `ChoiceResource = min(health, mana fraction)`, 0.5 if dead; 3678-3683). An ended secondary is cleared.
+   (`GoalPotential`; `ChoiceResource = min(health, mana fraction)`, 0.5 if dead; 3678-3683). An ended secondary is
+   cleared.
 7. `ObserveGoalSignals` (3691) sets `Event` and `Achieved` (the learner's hindsight labels); `SeatEncoder::Observe(view,
    obs, mask)` writes the row; the time spent building the view is added to `SeatEncoder::AddObserve(OBSERVE_VIEW)`.
 8. With an image row and `view.HasObjective`: count the objective-flagged pixels (`Vision::CountObjectivePixels`, 3702)
@@ -1505,7 +1530,8 @@ mounts and flight were deleted, yet `Mounted` (3521) and `MOVE_FLIGHT` (3524) ar
 ## S2.9 Pacing, repeats and the press: `Paced`, `Press` (3719-3761)
 
 `Paced` asks `seat.Memory.Paced(layout, action, now, _tuning.Actions)`. `Press` (3724): actions outside any block
-return; `++ActionsPressed`; `Memory.Press(...)` with the seat's `KnownRanks`; `PendingRepeat = false` (3743); press times
+return; `++ActionsPressed`; `Memory.Press(...)` with the seat's `KnownRanks`; `PendingRepeat = false` (3743); press
+times
 older than `Actions.RepeatWindowMs` (default 10000) are erased and the new one pushed; if the count in the window is
 at most `Actions.RepeatFree` (3, line 3750) nothing more happens. Otherwise, when the press did something or the action
 is a movement action it sets `PendingRepeat` (settled by the verdict in `JudgePress` or `SettleIntent`); else the repeat
@@ -1522,7 +1548,8 @@ is charged at once (`StepRepeats`, `RepeatedPresses`).
   `friend health - 1`; Position `-min(gap, 60)/60`; TravelTo `-min(dist, 60)/60`; Resurrect -1 while the friend is dead.
   A dead seat: -1 for Resurrect (no target), Recover and Rest; else 0.
 - `GoalValue` (3874): Fight `Goals.FightValue` 0.3, Control `ControlValue` 0.2, Protect `ProtectValue` 1.0, TravelTo
-  `TravelValue` 0.1, Loot/Gather/Interact `WorldValue` 0.2, Recover/Rest `RecoverValue` 1.0 x (resource now - resource at
+  `TravelValue` 0.1, Loot/Gather/Interact `WorldValue` 0.2, Recover/Rest `RecoverValue` 1.0 x (resource now - resource
+  at
   choice), others `Goals.Reached` 0.05.
 - `ObserveGoalSignals` (3902): `Achieved` is the first named enemy slot that was alive last time and is dead now
   (`MakeGoal(Fight, ENEMY_FIRST + slot)`), else Recover when the seat was below 0.8 of min(health, mana) and now is not
@@ -1540,14 +1567,16 @@ was not a held key (3347-3348); `SettleIntent` runs once per decision from `Seat
 
 **`JudgePress`** (4027-4419), in order:
 1. Effort: `StepEffort += result.EffortWeight`, `++EffortPresses`, `++CombatPresses` in combat (4037-4040).
-2. A refused core cast the seat could have prevented (`Encoding::SituationalFailure`, 4049: facing, range, sight, moving,
+2. A refused core cast the seat could have prevented (`Encoding::SituationalFailure`, 4049: facing, range, sight,
+   moving,
    power): one aimless press of cause `CastFacing`, `CastRange`, `CastSight`, `CastMoving` or `CastPower`, then return
    (4047-4068). Only for the Core block and `!result.SpellCasts && result.RefusedCast`.
 3. A sight-block press the world refused (`result.ActRefused` in `1..REFUSALS-1`, 4072): `ActRefusedBy[kind]` and an
    aimless `ActRefused`, then return.
 4. With no primary goal (4089): a pending repeat is charged unless the press did something or was a move block press;
    return.
-5. A **move block** press (4118-4130): a step (`MoveControls::IsStep`) outside hazards records `MoveGap = GoalGap(...)`; a
+5. A **move block** press (4118-4130): a step (`MoveControls::IsStep`) outside hazards records `MoveGap = GoalGap(...)`;
+   a
    repeated step waits for the settle; a repeated non-steer press with no gap is charged at once. Return.
 6. Otherwise the `judgeFor(hold)` lambda (4134) returns `Judgement{judged, verdict, cause}` for one goal:
    - **Spell cast** (not a revive): a trap is aimless `TrapNoEnemy` unless an enemy within 30 yd hurts a friend, or the
@@ -1555,24 +1584,29 @@ was not a held key (3347-3348); `SettleIntent` runs once per decision from `Seat
      (< 50%), a stealth opener; **taunt or tank mode by a non-tank beside a living tank** is aimless `TauntOffRole` or
      `TankModeOffRole` (4186); harmful casts (4195) are judged per goal (Fight: serves on the focus or an area spell
      reaching it; Control: serves when tactical on another enemy; Position: neutral only while out of range and on the
-     focus, else aimless; Prepare: aimless unless in combat; Protect: serves on an attacker of the friend; Recover, Rest,
+     focus, else aimless; Prepare: aimless unless in combat; Protect: serves on an attacker of the friend; Recover,
+     Rest,
      TravelTo, Loot, Gather, Interact, Resurrect: aimless when nothing attacks the seat); non-harmful casts by goal
      (Protect serves on the named or any friend; Recover and Rest serve on self or untargeted; Prepare serves with
      preparation time; Fight and Control: aimless "help on another" unless self, untargeted, hurt, or a healing cast;
      Resurrect serves on a revive of the named friend). An aimless verdict with no cause becomes `HelpOffGoal`,
      `AoeMissed`, `OffFocus`, `InRangeCast` or `UnprovokedHarm` (4288-4297).
-   - **Food or drink** (4299): aimless `ConsumeNotNeeded` when the resource is at or above `Actions.ConsumeFullPct` (85);
+   - **Food or drink** (4299): aimless `ConsumeNotNeeded` when the resource is at or above `Actions.ConsumeFullPct`
+     (85);
      else serves Recover, Prepare, Rest, neutral otherwise.
-   - **Pack-block selection** of slot `local < PACK_SLOTS` (4317): serves the named enemy slot; neutral if the goal names
+   - **Pack-block selection** of slot `local < PACK_SLOTS` (4317): serves the named enemy slot; neutral if the goal
+     names
      none, or the chosen enemy hurts a friend, or the seat is below `ESCAPE_HEALTH_PCT` 35 (4099); else aimless
      `TargetSwitch`.
    - **Pet attack order** (4335): same shape; aimless `PetOffGoal`.
 7. The seat's verdict is the primary's, unless the primary did not serve and the secondary judged and serves (or is
    neutral where the primary was aimless) (4355-4363).
 8. Supplies spent are counted for `SupplySpent` (4366). A spell that changed a mode group (`layout.ModeGroups[action]`,
-   4374) is a standing choice: the same situation (combat bit, mana band under 30, under 80, or above; mounted) as at the
+   4374) is a standing choice: the same situation (combat bit, mana band under 30, under 80, or above; mounted) as at
+   the
    last change makes it aimless `ModeFlip`, or `ModeReverse` within 10 s; always `++StepModeSwitches`, `++ModeSwitches`.
-9. A pending repeat is charged unless the press served (4394). Judged presses count `JudgedPresses` (4399), `PurposefulMs`
+9. A pending repeat is charged unless the press served (4394). Judged presses count `JudgedPresses` (4399),
+   `PurposefulMs`
    (not aimless, 4401), `ServingPresses`, and for aimless `StepAimless`, `AimlessPresses`, `StepAimlessBy[cause]`,
    `AimlessBy[cause]`.
 
@@ -1584,10 +1618,12 @@ was not a held key (3347-3348); `SettleIntent` runs once per decision from `Seat
   `MoveStarts`; a restart within 1 s of the stop counts `MoveStopStarts`; each restart adds
   `MovePrice::Recency(since, Options.JitterDecayMs)` (default 2500) to `StepJitter` (4492-4498).
 - **Fidget** (4510-4536): moving in a fight, goal gap exactly 0, target not moving, not getting behind it (only seats
-  whose catalog has a spell with `SPELL_ATTR0_CU_REQ_CASTER_BEHIND_TARGET`, cached in `FromBehind`), not in hazards, held
+  whose catalog has a spell with `SPELL_ATTR0_CU_REQ_CASTER_BEHIND_TARGET`, cached in `FromBehind`), not in hazards,
+  held
   for `Actions.SettleGraceMs` (500): `StepFidgetMs`, `FidgetMs`.
 - **Needless move** (4543-4565): a ranged spec moving in a fight, target alive and still, 30 yd or nearer (hunters 8 yd
-  or more), in line of sight, nothing in melee on the seat, not in hazards, held `SettleGraceMs`: aimless `NeedlessMove`.
+  or more), in line of sight, nothing in melee on the seat, not in hazards, held `SettleGraceMs`: aimless
+  `NeedlessMove`.
 - **Prices charged here** (4571-4584): `Aimless` = sum over causes of `AimlessPrice(cause) * StepAimlessBy[cause]` +
   `Actions.Aimless` for uncaused + `Actions.ModeSwitch * StepModeSwitches`; `Effort` = `-Actions.Effort * StepEffort -
   Actions.SupplySpent * StepSuppliesSpent`; `Fidget` = `-Actions.Fidget * StepFidgetMs / 1000`.
@@ -1599,7 +1635,8 @@ five cast causes share one price, `Actions.Aimless.CastFailed` (`AimlessPrice`).
 **Defaults** (`CurriculumTuning.h`): `Actions.Repeat` 0.03, `RepeatWindowMs` 10000, `RepeatFree` 3, `Jitter` 0.05,
 `Aimless` 0.02, each `Aimless.<cause>` 0.02 except `TargetSwitch` 0.04, `PetOffGoal` 0.04, `ConsumeNotNeeded` 0.03,
 `TrapNoEnemy` 0.03, `ModeFlip` 0.03, `ModeReverse` 0.06, `TauntOffRole` 0.15, `TankModeOffRole` 0.04; `ModeSwitch`
-0.01, `SupplySpent` 0.02, `ConsumeFullPct` 85, `Effort` 0.004, `Fidget` 0.01, `SettleGraceMs` 500, `IntentSlackYards` 0.5.
+0.01, `SupplySpent` 0.02, `ConsumeFullPct` 85, `Effort` 0.004, `Fidget` 0.01, `SettleGraceMs` 500, `IntentSlackYards`
+0.5.
 
 **Info columns fed** (S1, StageScenario.cpp:985-1100): `serving_share` (served / judged), `aimless_presses`,
 `aimless_<cause>` for 21 causes (`aimless_act_refused` only with a sight block), `act_refused_<reason>` (sight stages),
@@ -1615,8 +1652,10 @@ tank_mode_off_role, cast_facing, cast_range, cast_sight, cast_moving, cast_power
 `LOG_INFO "Seat died: ..."` line. Called from `SeatReward` so a death an episode outlives (a respawn arena) is seen.
 
 **Reviewer notes.**
-- The 35% literal exists three times: `ESCAPE_HEALTH_PCT` (4099, local to `JudgePress`), `EVENT_HEALTH_PCT` (3936, local)
-  and `LOW_HEALTH_PCT` (StageScenario.cpp:115). A comment (4098) says CoreBlock's goal escape uses the same number; that is
+- The 35% literal exists three times: `ESCAPE_HEALTH_PCT` (4099, local to `JudgePress`), `EVENT_HEALTH_PCT` (3936,
+  local)
+  and `LOW_HEALTH_PCT` (StageScenario.cpp:115). A comment (4098) says CoreBlock's goal escape uses the same number; that
+  is
   a separate literal in Blocks. UNVERIFIED that they agree.
 - Position-goal casts are neutral only while out of range (the comment explains: a 99% Position drill had a 0.05
   serving share); a ranged seat that stands in range and fires while holding Position is charged `InRangeCast`.
@@ -1678,16 +1717,19 @@ Other work in `SeatReward`: `TrackSeatStep` (damage scaled by `DamageScale`, `La
 `LastStepSelfDamage`, `CurrentTargetGuid`, `TrackSupport`); `TrackInterruptibleCast` and `TrackHazards` for a live bot;
 pet bookkeeping (`PetDied`, `LastPetHealth`, `PetOutMs`, `PetAttackingMs`, `PetPassiveMs`, `PetStayingMs`, default
 stance); `Combat.DeathCounted = false` once alive again; `LogDeath`; goal decision counts (`GoalDecisions[kind]`,
-`GoalTargetedDecisions`, `GoalMatches[kind]` via `GoalHeld`, 5004-5010); `LastStepPowerDelta` and `LastPower`. It returns
+`GoalTargetedDecisions`, `GoalMatches[kind]` via `GoalHeld`, 5004-5010); `LastStepPowerDelta` and `LastPower`. It
+returns
 `seat.Rewards.TakeStep()` (5070).
 
-**Contracts.** Shaping terms are multiplied by the learner's fade scale and noise prices by the cost scale; the episode's
+**Contracts.** Shaping terms are multiplied by the learner's fade scale and noise prices by the cost scale; the
+episode's
 `Score()` is at full price and leaves out tier (`RewardLedger.h:269-312`). Terms are summed per episode into the
 `reward_<name>` columns.
 
 **Reviewer notes.**
 - The `Hazard` cap compares an unscaled price with `Episode(Hazard)`, which already has the shaping scale applied
-  (`RewardLedger::Add` multiplies by `Shaped(term)`). At fade scale `s` the effective cap is `Hazards.Max / s`. Harmless at
+  (`RewardLedger::Add` multiplies by `Shaped(term)`). At fade scale `s` the effective cap is `Hazards.Max / s`. Harmless
+  at
   0 and 1.
 - `HealingMana` is described as a price but is Shaping, so it fades away; likewise `Hazard`, `SelfHealing` and all three
   goal terms. With the fade at 0 the goal block's pay is gone and the goal head learns from `Achieved` and the
@@ -1728,7 +1770,8 @@ one-hot). This is privileged state (the critic may see it; the policy may not, p
 Quirks: `STATE_ENEMY_ON_OWNER` (9) is never written here, and the owner globals only if an encounter writes them
 (UNVERIFIED which). `data.Seats[0].Level` is read without a guard (5115). A null `bots[0]` skips max health and armor.
 
-**`EpisodeInfo`** (5161-5173): `_info.Write(env, seat, info + seat * EpisodeInfoDim)` for each seat; the owner row is zero,
+**`EpisodeInfo`** (5161-5173): `_info.Write(env, seat, info + seat * EpisodeInfoDim)` for each seat; the owner row is
+zero,
 so its `present` is 0 and no per-seat metric sees it. The columns are `_info`'s, declared in S1.
 
 **`Teardown`** (5175-5192): despawns the env's targets; calls each encounter's `Teardown` **in reverse reward order**
@@ -1740,8 +1783,10 @@ so its `present` is 0 and no per-seat metric sees it. The columns are `_info`'s,
 Defaults and ranges are in cpp-tuning-keys.md. The groups read here are `Resurrection.*`, `Goals.*`, `Actions.*`
 (including `Actions.Aimless.*`), `Options.JitterDecayMs`, `Hazards.*`, `Support.*`, `Output.Clock`,
 `Party.TankDamageShare`, `Duel.MeleeRange`, `PartyFollow.MinimapYards`. In code they are read through `_tuning` (the
-scenario's `CurriculumTuning`, S1), at the lines cited in the sections above. The core's own `WaterBreath.Timer` is read at
-StageScenario.cpp:123. The `Vision::Current()`, `Vision::MapCurrent()` and `Vision::MemoryCurrent()` settings are read at
+scenario's `CurriculumTuning`, S1), at the lines cited in the sections above. The core's own `WaterBreath.Timer` is read
+at
+StageScenario.cpp:123. The `Vision::Current()`, `Vision::MapCurrent()` and `Vision::MemoryCurrent()` settings are read
+at
 2692, 3580 and 3585 (see cpp-vision.md).
 
 ## S2.17 Tests that touch this half
@@ -1777,11 +1822,14 @@ StageScenario.cpp:123. The `Vision::Current()`, `Vision::MapCurrent()` and `Visi
 9. `StageScenario.cpp:4993 vs 5009`: `PartyEncounter::Reward` clears `StepRevivedAlly` before `GoalHeld` reads it, so a
    Resurrect goal never matches in party arenas (derived from call order, no test).
 10. `StageScenario.cpp:3749-3750` region (end of `ObserveSeat`, 3716): a stray blank line before the closing brace.
-11. `StageScenario.cpp:4607, 4615`: `DrawExploreStart` uses `frand`, not the env's seeded generator; a Go-Explore start is
+11. `StageScenario.cpp:4607, 4615`: `DrawExploreStart` uses `frand`, not the env's seeded generator; a Go-Explore start
+    is
     not reproducible from the episode seed. UNVERIFIED: whether `ReplayTest.cpp` covers wing runs.
-12. `StageScenario.cpp:2892-2896`: the `_logged` caps are never reset; a long process stops logging deaths and voids after
+12. `StageScenario.cpp:2892-2896`: the `_logged` caps are never reset; a long process stops logging deaths and voids
+    after
     8 lines per layout, across stage runs started in the same process.
-13. Size: `JudgePress` is about 390 lines with a 220-line lambda; `SeatReward` (about 165) and `ObserveSeat` (about 185) are
+13. Size: `JudgePress` is about 390 lines with a 220-line lambda; `SeatReward` (about 165) and `ObserveSeat` (about 185)
+    are
     long too; all untested.
 14. `StageScenario.h:62-78`: the `STATE_*` enums still name owner and pull columns whose writers belong to encounters;
     any column no live encounter writes is a constant zero input to the critic. UNVERIFIED which.
