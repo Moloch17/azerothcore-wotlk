@@ -506,5 +506,5 @@ Plain-terms list, each with a location.
 - **F-13** `MapMgr.h:~100`: `SetMapUpdateInterval` is a no-op kept "for the config reload that sets it".
 - **F-14** `MapUpdater.h:MaxTasks = 16384`: `Push` asserts if a tick schedules more; the stated margin ("more than the
   largest env count") is not enforced by any config check. UNVERIFIED: the largest env count a stage can configure.
-- **F-15** `EnvPool.cpp` and `ForgeMain` still say "stage11", "stage7_flight", "stage20_quest" in core comments
-  (`OutdoorPvPMgr.cpp:46`, `Map.cpp:~850`, `AnimusForge.h`), names of deleted curriculum-v1 stages.
+- **F-15** Core comments still name deleted curriculum-v1 stages: `OutdoorPvPMgr.cpp:48` ("stage7_flight"),
+  `Map.cpp` near `:850` ("stage20_quest"), `ForgeConfig.h:60` ("stage11_raids").
