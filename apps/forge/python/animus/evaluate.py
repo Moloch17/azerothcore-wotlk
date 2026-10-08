@@ -27,7 +27,7 @@ import torch
 from .config import REPORT_COLUMNS, TrainConfig
 from .env import ForgeEnv
 from .evaluation import action_mask_table, format_summary, run_evaluation
-from .mappo.networks import check_image_bytes, check_look_heads, seat_sets_of, vision_of
+from .mappo.networks import check_image_bytes, check_look_heads, vision_of
 from .mappo.trainer import MappoConfig, MappoTrainer
 from .runs import resume_mismatch
 from .stages import STAGE_FILE, layout_changes, load_stage
@@ -79,20 +79,19 @@ def main() -> None:
         raise SystemExit(f"the checkpoint's {', '.join(mismatch)} do not match the sim's (AnimusForge.ClassRoles?)")
     layouts = [(layout.obs_dim, layout.num_actions) for layout in spec.layouts]
 
-    # The checkpoint's own seat sets and camera (its stage.json), or its weights do not load.
+    # The checkpoint's own camera (its stage.json), or its weights do not load.
     stage = checkpoint.get("stage")
     # And the layouts it was trained on are the sim's, block by block (a block re-laid at the same width included).
     if changes := layout_changes(stage, load_stage(saved.get("layouts_dir", TrainConfig.layouts_dir), spec.scenario)):
         raise SystemExit(f"the checkpoint's layouts are not the sim's -- {' | '.join(changes)}")
     names = [layout.name for layout in spec.layouts]
-    seat_sets = seat_sets_of(stage, names) if mappo.seat_sets else None
     vision = vision_of(stage, names)
     try:
         check_image_bytes(vision, spec.image_bytes, spec.map_bytes)
         check_look_heads(vision, spec.look_heads)
     except ValueError as error:
         raise SystemExit(f"vision: {error}") from None
-    trainer = MappoTrainer(layouts, spec.state_dim, mappo, seat_sets=seat_sets, vision=vision)
+    trainer = MappoTrainer(layouts, spec.state_dim, mappo, vision=vision)
     trainer.load_state_dict(checkpoint["trainer"], load_optimizers=False)
 
     acting = trainer.acting_state(spec.num_envs, spec.agents_per_env)

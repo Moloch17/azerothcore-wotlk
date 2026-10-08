@@ -46,7 +46,7 @@ from .evaluation import (ConvergenceTracker, EvalResult, action_mask_table, cast
                          run_evaluation)
 from .mappo.buffer import RolloutBuffer
 from .mappo.trainer import LOOK_COMMANDS, MappoTrainer, horizon_seconds, per_decision, schedule
-from .mappo.networks import check_image_bytes, check_look_heads, seat_sets_of, vision_of
+from .mappo.networks import check_image_bytes, check_look_heads, vision_of
 from .progress import ProgressWriter
 from . import blas, episode_means, protocol
 from .async_sync import Hub, Link, fetch_shared, shared_listing
@@ -492,10 +492,9 @@ class RolloutOutcome:
 
 @dataclass
 class TrainerInputs:
-    """What the networks of a stage are built from besides the layouts' widths: the seat sets and the camera
-    (stage.json's blocks). TrainingRun builds them, and so does resume_check."""
+    """What the networks of a stage are built from besides the layouts' widths: the camera (stage.json's blocks).
+    TrainingRun builds them, and so does resume_check."""
 
-    seat_sets: object | None
     vision: list | None
 
 
@@ -503,8 +502,6 @@ def trainer_inputs(config: TrainConfig, spec, stage: dict | None) -> TrainerInpu
     """The networks' stage-dependent inputs, read the way a run reads them (SystemExit on a camera the sim and
     stage.json disagree about)."""
     names = [layout.name for layout in spec.layouts]
-    # Every seat layout's entities as sets (mappo.seat_sets, stage.json layouts.<name>.sets): off, None.
-    seat_sets = seat_sets_of(stage, names) if config.mappo.seat_sets else None
     # The camera (stage.json's vision block): on in every network wherever the stage has it, no switch. The sim's SPEC
     # and stage.json must agree about the camera's bytes (protocol 21) and the free look's heads (protocol 22).
     vision = vision_of(stage, names)
@@ -513,7 +510,7 @@ def trainer_inputs(config: TrainConfig, spec, stage: dict | None) -> TrainerInpu
         check_look_heads(vision, spec.look_heads)
     except ValueError as error:
         raise SystemExit(f"vision: {error}") from None
-    return TrainerInputs(seat_sets, vision)
+    return TrainerInputs(vision)
 
 
 def make_trainer(config: TrainConfig, spec, inputs: TrainerInputs, ranks=None, device=None) -> MappoTrainer:
@@ -525,7 +522,6 @@ def make_trainer(config: TrainConfig, spec, inputs: TrainerInputs, ranks=None, d
         train_device=device or config.resolved_train_device(),
         rollout_device=device or config.resolved_rollout_device(),
         ranks=ranks,
-        seat_sets=inputs.seat_sets,
         vision=inputs.vision,
     )
 
@@ -639,9 +635,6 @@ class TrainingRun:
 
         names = [layout.name for layout in spec.layouts]
         inputs = trainer_inputs(config, spec, self.stage)
-        if config.mappo.seat_sets and inputs.seat_sets is None:
-            print("mappo.seat_sets is on, but no layout of this stage has a seat set: the networks have none here",
-                  flush=True)
         vision = inputs.vision
         if vision is not None:
             image = next(entry for entry in vision if entry is not None)
@@ -659,12 +652,6 @@ class TrainingRun:
 
         self.make_trainer = lambda: make_trainer(config, spec, inputs, ranks=self.ranks.update)
         self.trainer = self.make_trainer()
-        if self.trainer.actor.entity_sets is not None and self.trainer.actor.entity_sets.attention:
-            sets = self.trainer.actor.entity_sets
-            layer = sum(parameter.numel() for name, parameter in sets.named_parameters()
-                        if not name.startswith(("encoders.", "queries.", "pool.")))
-            print(f"Entity attention: {sets.HEADS} heads over {sum(slots for slots, _ in sets.shapes.values()) + 1} "
-                  f"tokens of {sets.embed}, {layer} parameters a network beside the sets'", flush=True)
         # ROCm wears the CUDA API's name: torch.cuda is HIP on an AMD card and the device prints as "cuda",
         # which reads as though the wrong backend were in use. Say what it actually is, and which card.
         def named(device: torch.device) -> str:
@@ -729,7 +716,7 @@ class TrainingRun:
         # After the seed and any resume, which bring a parent's goal block positions with its weights: the goal
         # head is masked by this stage's own (stage.json "goals" and the layouts' blocks).
         self.trainer.set_goal_space(self.stage, [layout.name for layout in self.spec.layouts])
-        # A seed brings the parent's adapters whole: their seat set and camera columns are made blind. A resumed
+        # A seed brings the parent's adapters whole: their camera columns are made blind. A resumed
         # run's must already be -- their gradient is masked -- and anything else is a checkpoint to stop on, not fix.
         if self.resume_path:
             if not self.trainer.director_columns_clear():

@@ -506,8 +506,8 @@ With the reason, so nobody spends a week on them.
   it runs once a route plan, not once a step.
 - **`EntityMemory` linear scans** (`EntityMemory.cpp:56-110`): at most 32 seen entities against a cap of at most 1,024
   entries, a few microseconds a seat.
-- **Rollout graph fallbacks.** The only fallback condition is seat sets, which are off in every live yaml
-  (`trainer.py:883-895`; known issue B4). On a GPU the rollout is one launch and one wait.
+- **Rollout graph fallbacks.** The seat-set fallback was deleted with seat sets (known issue B4); the remaining
+  conditions are the device, `mappo.rollout_graphs` and an acting state. On a GPU the rollout is one launch and one wait.
 - **`isfinite().all()` per decision** (`train.py:1815-1817`): a device sync only for device observations; the host path
   is a numpy call on 1.2 MB.
 - **A deeper update/rollout pipeline.** With one update in flight the cycle is already `max(rollout, update)`; a second

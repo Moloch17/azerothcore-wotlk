@@ -49,8 +49,6 @@ mappo:
   foresight_horizons_seconds: [5.0, 30.0]
   foresight_time_scale_seconds: 60.0
   recurrent_size: 128
-  # The enemies and friends are the sight list (its own encoder and pointer heads), not the seat sets.
-  seat_sets: false
   chunk_length: 128
   goal_count: 12
   goal_slots: 4

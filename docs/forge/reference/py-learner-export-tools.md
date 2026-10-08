@@ -56,7 +56,7 @@ Flow: load the checkpoint; `mappo_from_checkpoint` drops config keys this build'
 printed
 line) and rebuilds it with `hidden` as a tuple; connect `ForgeEnv(socket)`; refuse on scenario mismatch,
 `resume_mismatch`, or `layout_changes`; check the camera bytes and look heads; build `MappoTrainer(layouts, state_dim,
-mappo, seat_sets, vision)`; `load_state_dict(..., load_optimizers=False)`; resolve `--mask-actions` (default: the
+mappo, vision)`; `load_state_dict(..., load_optimizers=False)`; resolve `--mask-actions` (default: the
 checkpoint's `eval.mask_actions`); `env.reset()`; optionally score the baseline; `run_evaluation` with a chooser that
 clears the acting state on done, applies the mask, calls `trainer.act` (argmax unless `--stochastic`) and returns the
 look when there is one; prints the score and `format_summary`.
@@ -131,7 +131,7 @@ loads.
 ## Lazy imports (known fact: changing files under a running learner can mix versions)
 
 The learner imports most modules at start, but these imports run later, at call time: `env.py:203`
-(`from .device import open_buffers`), `bootstrap.py:464` (`SEAT_SET_NAMES`), `export.py:365`, `:396`, `config.py:740`
+(`from .device import open_buffers`), `export.py:365`, `:396` (they import `SEAT_SET_NAMES` and `EntitySets`, both deleted), `config.py:740`
 (`import torch` in `resolve_device`), `mappo/trainer.py:2039` (`BLIND_KEEP_PREFIXES`), `protocol.py:253`, `:292`
 (`torch` for device views), `bench_learner.py:155-156`, `blas.py:153`, `:164`, `:166`. A source file replaced while the
 learner runs is read at the next such call, so a running learner can hold some modules of the old version and load

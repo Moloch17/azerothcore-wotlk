@@ -19,7 +19,7 @@ from dataclasses import dataclass
 import torch
 
 
-from .mappo.networks import (LayoutActor, MASKED_LOGIT, load_actor_state, seat_sets_of, vision_image_bytes,
+from .mappo.networks import (LayoutActor, MASKED_LOGIT, load_actor_state, vision_image_bytes,
                               vision_look_heads, vision_of)
 from .stages import Span, arena_names, arena_state_span, block_spans, revised_blocks
 
@@ -82,7 +82,7 @@ def _index_pairs(student: dict[str, tuple[Span, Span]] | None, teacher: dict[str
 
 
 def frozen_actor(checkpoint: dict, device) -> LayoutActor:
-    """A checkpoint's actor rebuilt as it was trained -- its layouts, memory, goal head, seat sets and camera
+    """A checkpoint's actor rebuilt as it was trained -- its layouts, memory, goal head and camera
     (VisionEncoder with its MapEncoder, entity list, SightEntities and look head, all from the checkpoint's own
     stage.json) -- loaded with its weights by name, frozen, on `device`. Refused, never started fresh: weights the
     rebuilt actor has no place for or lacks (load_actor_state), a camera block vision_of cannot read (from before
@@ -104,17 +104,13 @@ def frozen_actor(checkpoint: dict, device) -> LayoutActor:
                          if float(mappo.get("foresight_coef", 0.0) or 0.0) > 0.0 else 0)
     t_names = [entry["name"] for entry in t_spec["layouts"]]
     t_stage = checkpoint.get("stage")
-    # And a stage's seat sets, when its actor was trained with them (mappo.seat_sets), from its own stage.json.
-    seat_sets = seat_sets_of(t_stage, t_names) if mappo.get("seat_sets", False) else None
     # Its camera, from its own stage.json.
     vision = vision_of(t_stage, t_names)
     if vision is None and any(key.startswith("vision.") for key in checkpoint["trainer"]["actor"]):
         raise ValueError("the checkpoint's actor has a camera (vision.* weights) but no stage.json describes it")
     actor = LayoutActor(t_layouts, hidden, foresight_outputs, recurrent_size, goal_count, goal_targets, slow_size,
                         bool(mappo.get("foresight_feedback", False)), bool(mappo.get("goal_lookahead", False)),
-                        goal_slots=int(mappo.get("goal_slots", 1) or 1), seat_sets=seat_sets,
-                        entity_attention=bool(mappo.get("entity_attention", False)) and seat_sets is not None,
-                        vision=vision)
+                        goal_slots=int(mappo.get("goal_slots", 1) or 1), vision=vision)
     load_actor_state(actor, checkpoint["trainer"]["actor"])
     actor.to(device).eval()
     for param in actor.parameters():

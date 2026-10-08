@@ -261,7 +261,6 @@ validation.
 | `rank_sync`, `weight_sync_every` | `gradients`, 1 | `parallel.py:117`, `train.py:546, 758`; the sim sets `mappo.rank_sync` for clusters |
 | `goal_count`, `goal_targets`, `goal_every_decisions`, `goal_slots` | 0, 1, 16, 1 | `networks.py:2006`; `trainer.py:649-659` |
 | `hindsight_coef` | 0.0 | `trainer.py:1639, 1818` |
-| `seat_sets`, `entity_attention` | false, false | `bootstrap.py:450`, `export.py:124-126`, `networks.py:625` |
 | `goal_entropy_scale`, `goal_entropy_final_fraction`, `goal_slot_entropy_weight` | 1.0, 1.0, 0.1 | `train.py:1736-1737`; `trainer.py:665` |
 | `slow_goal_size`, `slow_goal_gamma`, `slow_goal_lambda`, `slow_goal_lr` | 0, 0.993, 0.95, 3e-4 | `trainer.py:654-659, 746`; `train.py:1712` |
 | `goal_lookahead`, `lookahead_coef` | false, 0.5 | `trainer.py:662, 196` |
@@ -272,7 +271,7 @@ Each row lists what a yaml sets that differs from its parent's effective value (
 the
 files. "Restated" means the key is present with the parent's value (no effect). Every live stage has `mappo.hidden =
 [256, 512, 512]`, `recurrent_size 128`, `goal_count 12`, `goal_slots 4`, `goal_targets 29`, `slow_goal_size 128`,
-`seat_sets false`, `target_kl 0.02`, `hindsight_coef 0.1`, `style.enabled false`, `layout_sampling.enabled true`
+`target_kl 0.02`, `hindsight_coef 0.1`, `style.enabled false`, `layout_sampling.enabled true`
 (from the roots) unless stated.
 
 Chain A (movement): `move1_controls` (root) <- `move2_seek` <- `move3_interact`, and `move2_seek` <- `move4_follow`.

@@ -101,7 +101,7 @@ Per class under `layouts.<class>`: `obs_dim`, `num_actions`, `action_names`, `sp
 `blocks[]` with `name`, `obs`, `actions`, optional `revision`, and: for core `action_features` (8); vision `image`,
 `camera`, `look`; entities `entities`; map `map`; sight `sight`; and for blocks with `DescribeColumns` the list
 `obs_names`; for blocks with `DescribeRescaled` the list `rescaled`. The learner seeds from these (bootstrap.py).
-Facts: EntitySets/`seat_sets` are enabled by learner YAML but the C++ always writes `sets` (always only "enemies" for
+Facts: the learner no longer has seat sets (`EntitySets`, `seat_sets` deleted) but the C++ always writes `sets` (always only "enemies" for
 dungeon stages); `slots_on_wire` and goal order columns are written although nothing fills the order columns.
 
 ## SeatEncoder (`Layout/SeatEncoder.cpp`)

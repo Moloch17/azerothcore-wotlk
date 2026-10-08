@@ -219,7 +219,7 @@ def check_resume(run_dir: Path, stage_json: Path, config_path: Path, checkpoint_
     parameters = sum(parameter.numel() for parameter in trainer.actor.parameters())
     report.add("PASS", "networks built for the new stage.json on CPU",
                f"{len(spec.layouts)} layouts, actor {parameters:,} parameters, camera "
-               f"{'yes' if inputs.vision is not None else 'no'}, seat sets {'yes' if inputs.seat_sets else 'no'}")
+               f"{'yes' if inputs.vision is not None else 'no'}")
     state = checkpoint["trainer"]
     problems = []
     for name, module, saved in (("actor", trainer.actor, state["actor"]), ("critic", trainer.critic, state["critic"])):
@@ -240,7 +240,7 @@ def check_resume(run_dir: Path, stage_json: Path, config_path: Path, checkpoint_
         report.add("PASS", "MappoTrainer.load_state_dict (the call the resume makes, optimizers included)")
         trainer.set_goal_space(stage, [layout.name for layout in spec.layouts])
         clear = trainer.director_columns_clear()
-        report.add("PASS" if clear else "FAIL", "director/seat-set/camera blind columns still read nothing (resume's guard)")
+        report.add("PASS" if clear else "FAIL", "camera blind columns still read nothing (resume's guard)")
     except (RuntimeError, ValueError, KeyError) as error:
         report.add("FAIL", "MappoTrainer.load_state_dict", str(error).splitlines()[0][:400])
 
@@ -417,7 +417,7 @@ def check_fresh(stage_name: str, stage_json: Path, config_path: Path | None = No
         trainer = make_trainer(config, spec, inputs, device="cpu")
         parameters = sum(parameter.numel() for parameter in trainer.actor.parameters())
         return (f"{len(names)} layouts, actor {parameters:,} parameters, camera "
-                f"{'yes' if inputs.vision is not None else 'no'}, seat sets {'yes' if inputs.seat_sets else 'no'}",
+                f"{'yes' if inputs.vision is not None else 'no'}",
                 trainer)
 
     for title, build_step in (("held-out arenas (train.heldout_arenas)", heldout),

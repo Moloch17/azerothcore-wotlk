@@ -28,7 +28,7 @@ golden file `apps/forge/python/tests/golden/learner_update.json`.
 | Path | Lines | Role |
 |---|---|---|
 | `apps/forge/python/animus/mappo/__init__.py` | 1 | package marker (one line) |
-| `apps/forge/python/animus/mappo/networks.py` | 2382 | all network classes, the stage.json readers (`vision_of`, `seat_sets_of`), image/map decoders, sampling helpers |
+| `apps/forge/python/animus/mappo/networks.py` | 2382 | all network classes, the stage.json readers (`vision_of`), image/map decoders, sampling helpers |
 | `apps/forge/python/animus/mappo/trainer.py` | 2053 | `MappoConfig`, `MappoTrainer` (rollout path, CUDA/HIP graphs, PPO update, slow goal update, checkpoint state) |
 | `apps/forge/python/animus/mappo/buffer.py` | 398 | `RolloutBuffer`, GAE, foresight targets, span GAE |
 | `apps/forge/python/animus/mappo/valuenorm.py` | 46 | `ValueNorm`, the running return normaliser |
@@ -51,18 +51,17 @@ Call chain (`train.py:502-531`, also used by `tools/resume_check.py` and `tests/
    (`protocol.Spec`: `layouts` as (name, obs_dim, num_actions), `state_dim`, `image_bytes`, `map_bytes`,
    `look_heads`).
 2. `trainer_inputs(config, spec, stage)` (`train.py:502`) calls
-   - `seat_sets_of(stage, names)` only if `mappo.seat_sets` is true (`networks.py:786`), else `None`;
    - `vision_of(stage, names)` (`networks.py:968`): one dict per layout with a `vision` block, else `None`;
    - `check_image_bytes` and `check_look_heads` (`networks.py:1080, 1089`) against SPEC; a mismatch is a `SystemExit`
      (`train.py:514`);
 3. `make_trainer` (`train.py:519`) passes `[(obs_dim, num_actions)...]`, `state_dim`, `config.mappo`, the two devices,
-   `seat_sets` and `vision` to `MappoTrainer.__init__` (`trainer.py:602`).
+   and `vision` to `MappoTrainer.__init__` (`trainer.py:602`).
 4. `MappoTrainer.__init__` constructs, in order (`trainer.py:644-696`):
    - derived sizes: `foresight_outputs = len(foresight_horizons_seconds) + 1 (+ 3 if foresight_obs_targets)` when
      `foresight_coef > 0`, else 0; `goal_count = goal_count * goal_targets`; `slow_goal_size` only if goals exist;
      `goal_slots > 1` requires `slow_goal_size` and at least 3 slots (`trainer.py:658`);
    - `LayoutActor(...)` (`networks.py:1971`) with `hidden`, foresight, recurrent size, goal kinds/targets,
-     slow size, foresight feedback, lookahead, slots, seat sets, attention and `vision`;
+     slow size, foresight feedback, lookahead, slots and `vision`;
    - `LayoutCritic(...)` (`networks.py:2262`), given the actor's `VisionEncoder` so the critic reads it by reference;
    - `ValueNorm` if `use_value_norm`;
    - optimizers (`reset_optimizers`, `trainer.py:740`);
@@ -82,7 +81,6 @@ What the `stage.json` has to contain for each network feature (`networks.py` rea
 | entity list | block `entities` with `entities` description | `_entities_of` (`:902`) | span mismatch |
 | mental map | block `map` with `map` description | `_map_of` (`:878`) | not 6 channels and 5 codes; bytes != h*w*6; scalars != block width; map in some layouts but not all (`:1053`) |
 | sight list | block `sight` | `_sight_of` (`:923`) | needs the entity list; visible half and leading columns must equal the entity list's; named row must follow the slots |
-| seat sets | `layouts.<name>.sets` | `seat_sets_of` (`:786`) | refused outright if `mappo.seat_sets` is on and no layout names a set |
 | goal space | `goals.{kinds,targets,accepts,block}` and the goal block's `obs[0]` per layout | `MappoTrainer.set_goal_space` (`:806`) | kinds/targets differ from `mappo.goal_count/goal_targets` |
 
 ## Parameter inventory: the live M2 stage (`move2_seek`)
@@ -92,7 +90,7 @@ Source: `tests/golden/learner_update.json`, case `move2_seek` (`actor_shapes`, `
 `configs/move2_seek.yaml` (which `extends` `move1_controls.yaml`). Ten layouts. Config in force:
 `hidden [256, 512, 512]`, `recurrent_size 128`, `goal_count 12`, `goal_targets 29`, `goal_slots 4`,
 `slow_goal_size 128`, `foresight_coef 0.25` with `foresight_horizons_seconds [5, 30]`, `foresight_obs_targets`,
-`foresight_feedback`, `goal_lookahead`, `seat_sets false`; the stage has camera (patch 8), entity
+`foresight_feedback`, `goal_lookahead`; the stage has camera (patch 8), entity
 list (32 slots x 20), mental map (48x48x6, 4 scalars), look heads (7,5,5); no sight list.
 
 The golden file lists **state_dict keys** (parameters and buffers). Both counts verified from the file: actor 153,
@@ -140,7 +138,7 @@ all `vision_keep_*` (10), `goal_head.accepts`, `goal_head.block_at`; 42 in all. 
 
 Not in the state dict, by design (non-persistent buffers or plain attributes): the `VisionEncoder` tables `start`,
 `has_vision`, `offsets`, `grid_x/y`, `patch_of`; `MapEncoder.start/offsets/grid_*`; `VisibleEntities.kept_columns`,
-`column_keep`; `VisionJoin.has_vision`; `LookHead.has_vision`; the `EntitySets` tables and `has_sets`. They are
+`column_keep`; `VisionJoin.has_vision`; `LookHead.has_vision`; `VisibleEntities.columns_visible`, `present_visible` and `has_sets`. They are
 rebuilt from the `stage.json` at construction.
 
 ### Critic, 80 keys
@@ -245,7 +243,6 @@ Config keys are `MappoConfig` fields (`trainer.py:41`) unless stated. "Live yaml
 
 | Feature | Keys (default) | Live yaml | Depends on it |
 |---|---|---|---|
-| Seat sets (`EntitySets`) | `mappo.seat_sets` (false); `mappo.entity_attention` (false) | false, set explicitly in `move1_controls.yaml:57` and `combat1_fight.yaml:53`; every other stage inherits it. Never on. | `EntitySets` and `_attach_entity_sets`; pointer heads for slot-naming actions; `_graphs_off_reason` disables rollout graphs when on (`trainer.py:893`); `stage.json` `layouts.<n>.sets` is still written by the sim ([cpp-stagescenario.md](cpp-stagescenario.md)); `export` tests `test_export_seat_sets.py` |
 | Style reward | `style.enabled` (false), `style.dataset`, `style.reference`, ... (`config.StyleConfig`, `config.py:271`) | `style: enabled: false` in `move1_controls.yaml:208` and `combat1_fight.yaml:172` | `style.py`, `human/motion.py`; the realism columns work with `style.reference` alone |
 | Go-Explore | `explore.enabled` (false), `share`, `table_size`, `max_cells`, `depth_weight` (`config.ExploreConfig`, `config.py:321`) | `true`, `share 0.5` in `dungeon2_ragefire.yaml:35`; inherited by `dungeon3_deadmines` (no `explore` key there, checked); `false` in `group2_corridor.yaml:36`, inherited by `dungeon1_pulls` | `explore.py`, `ForgeEnv.set_explore_starts`, the wing episode-info columns |
 | Rank sync | `rank_sync` ("gradients"), `weight_sync_every` (1) | not in any yaml. Injected by the worldserver: `LearnerProcess.cpp:138` passes `mappo.rank_sync=` the config's `DistSync` or "weights". The live cluster value is UNVERIFIED (per-machine conf, `ForgeConfig.h:212`) | `parallel.py` ("gradients", "weights"), `async_sync.py` ("async") |
@@ -273,8 +270,8 @@ block (`trainer.py:620`).
 4. `GoalHead.ended()` (`networks.py:583`) has no caller anywhere in `animus/`, `tests/` or `tools/`: dead code.
 5. `_graphs_apply` (`trainer.py:897`) is a one-line wrapper over `_graphs_off_reason` (`:883`) and is called only by
    tests; production code calls `_graphs_off_reason` via `_rollout_graph` (`:905`). See the trainer document.
-6. `MappoTrainer.director_columns_clear` (`trainer.py:825`) is named after the removed director; it checks the seat-set
-   and camera blind columns. The name is kept because `tools/resume_check.py:242` and four tests call it.
+6. `MappoTrainer.director_columns_clear` (`trainer.py:825`) is named after the removed director; it checks the camera
+   blind columns. The name is kept because `tools/resume_check.py:242` calls it.
 7. `update()` creates `_updates_since_sync` lazily with `getattr` (`trainer.py:1480`); it is not set in `__init__`.
 8. The long comment explaining the foresight heads (`trainer.py:90-94`) sits above `recurrent_size` (`:102`), not above
    `foresight_coef` (`:173`).
@@ -296,7 +293,5 @@ block (`trainer.py:620`).
   updates or the chunked camera; those are covered only by tests that skip without a GPU (`test_rollout_graph.py`,
   `test_recurrent.py::test_fused_gru_*`, `test_update_on_two_streams...`).
 - The by-name loading rules (what a checkpoint may lack) are in the networks document ("Loading").
-- Things to decide before refactoring: whether to keep `seat_sets`/`entity_attention`/`SharedInputDense`-adjacent
-  code (off in every live yaml, principle 17 "dead code is deleted"); whether `map_vin` stays; whether SIL stays given
-  it
-  is impossible with a camera.
+- Dead features deleted: self-imitation, the map value-iteration network and the seat-set network (`EntitySets`) were removed;
+  `SharedInputDense` (GPU only) is the one path left to judge.

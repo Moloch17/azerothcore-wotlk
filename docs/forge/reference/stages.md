@@ -137,8 +137,8 @@ The layout pin test covers all twelve (`LiveLayoutPinTest.LiveStageLayoutsAreUnc
   filmed from seeds that are the same every evaluation (`Vision/EvalVideo.h`).
 * **Shared MAPPO values** (M1's block, inherited by the others unless noted): hidden [256, 512, 512], gae_lambda 0.985,
   clip 0.2, entropy_coef 0.01 falling to 0.3 of it (`entropy_final_fraction`), lr falling to 0.1 of itself
-  (`lr_final_fraction`), recurrent_size 128, target_kl 0.02, minibatches 4, `per_layout_advantages`, `seat_sets: false`
-  (entity sets are off in every live yaml, yet the sim still writes them for the layouts with a pack block),
+  (`lr_final_fraction`), recurrent_size 128, target_kl 0.02, minibatches 4, `per_layout_advantages`
+  (the sim still writes seat `sets` into stage.json for the layouts with a pack block; the learner ignores them),
   rollout_length
   128, `overlap_updates: true`, convergence `patience 3, window 4, z 2.0, kl 0.003, entropy_slope 0.01, hold_share 0.02`
   for M1 and C1 explicitly and as defaults elsewhere.

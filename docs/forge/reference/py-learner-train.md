@@ -84,7 +84,7 @@ returned
 4. `load_stage(layouts_dir, scenario)` (stage.json written by the sim before it accepts a learner); leader copies it.
    Derived tables: `arena_names`, `heldout` (`heldout_arenas`: refuses an arena the stage lacks or trains on),
    `action_names`, `spec_names`, `episode_categories`, `casting_roles`, `eval_action_mask` (`action_mask_table`).
-5. `trainer_inputs` (seat sets, camera: refuses with `SystemExit` when the sim's SPEC and stage.json disagree on
+5. `trainer_inputs` (the camera: refuses with `SystemExit` when the sim's SPEC and stage.json disagree on
    image bytes or look heads), then `make_trainer`. Prints the device line. `per_decision` converts `mappo.gamma`
    and `gae_lambda` (per `reference_decision_ms`) to the sim's `decision_ms`; foresight discounts likewise.
 6. `recurrent_size <= 0` raises (the flat update was removed). `ConvergenceController(config, layout names)`.
@@ -256,7 +256,7 @@ Top level: `run_name`, `runs_dir`, `layouts_dir`, `socket`, `cluster_sims`, `clu
 `local_rank`, `local_ranks`, `dist_address`, `dist_iface`, `dist_timeout`, `seed`, `total_env_steps`,
 `rollout_length`, `log_every`, `checkpoint_every`, `checkpoint_env_steps`, `keep_checkpoints`, `overlap_updates`,
 `train_device`, `rollout_device`, `torch_threads`, `init_from`, `seed_from`, `merge_from`, `finetune_from`, and the
-sections `mappo` (rank_sync, recurrent_size, seat_sets, gamma, gae_lambda, reference_decision_ms,
+sections `mappo` (rank_sync, recurrent_size, gamma, gae_lambda, reference_decision_ms,
 foresight_*, goal_*, slow_goal_*, weight_sync_every, entropy_coef, ...), `eval`, `convergence`, `fade`, `costs`,
 `entropy_floor`, `layout_sampling`, `distill`, `cast`, `style`, `status`, `explore`. Defaults:
 [py-learner-config.md](py-learner-config.md).

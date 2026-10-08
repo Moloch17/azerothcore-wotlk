@@ -124,10 +124,10 @@ Decide whether to renumber at the next bump (protocol 25 now).
 every stage, pinned by `LiveLayoutPinTest`). Removing them changes every checkpoint; only do it with a revision bump and
 a deliberate re-pin.
 
-**B4.** `EntitySets`/`seat_sets` are off in every live yaml (`seat_sets: false`), yet `StageScenario.cpp:1346` still
-writes `sets` into `stage.json` for any layout with a pack block (`Blocks.cpp:41 DescribeSeatSets`), and the learner has
-`SEAT_SET_NAMES` machinery (`bootstrap.py:464`, `export.py:365`). Candidate for deletion once confirmed unused by
-mod-animus.
+**B4.** (Resolved.) The learner's seat-set network (`EntitySets`, `mappo.seat_sets`, `entity_attention`, `SEAT_SET_NAMES`, the
+seat-set seeding) was deleted. `StageScenario.cpp:1346` still writes `sets` into `stage.json` (the learner ignores it for
+the networks; `bootstrap._layout_sets` still reads it to re-match a block whose set only gained slots), and `export.py`'s
+seat-set branches now name symbols that no longer exist (the export is held for an owner decision).
 
 **B5.** `BlockId::Duel` and its class `DuelBlock` keep the name of the deleted one-on-one stage but now carry movement,
 auto-attack, pets and stopping casts for every fighting stage (`Layout/Block.h:49`). Also `Opposition::Instance`-era

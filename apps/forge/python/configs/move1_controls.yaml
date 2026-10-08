@@ -53,8 +53,6 @@ mappo:
   foresight_horizons_seconds: [5.0, 30.0]
   foresight_time_scale_seconds: 60.0
   recurrent_size: 128
-  # No entity in a movement layout is a set (nothing to fight, no one beside it).
-  seat_sets: false
   chunk_length: 32
   goal_count: 12
   goal_slots: 4

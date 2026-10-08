@@ -49,7 +49,6 @@ The yaml section is `mappo:` (`TrainConfig.mappo`, `config.py:657`); unknown key
 | `rank_sync`, `weight_sync_every` | "gradients", 1 | `update()` (`:1469`); also `train.py:549` (async), `async_sync.Link` |
 | `goal_count`, `goal_targets`, `goal_every_decisions`, `goal_slots` | 0, 1, 16, 1 | goal head; the goal clock `age % goal_every_decisions == 0` |
 | `hindsight_coef` | 0.0 | hindsight imitation term (needs `goal_slots > 1`) |
-| `seat_sets`, `entity_attention` | False, False | `seat_sets` selects whether `trainer_inputs` builds descriptors |
 | `foresight_coef`, `foresight_horizons_seconds`, `foresight_time_scale_seconds` | 0, (5,30), 60 | foresight head and loss |
 | `foresight_obs_targets`, `foresight_feedback` | False, False | extra targets (`FORESIGHT_OBS_TARGETS`, `:203`); feedback of detached predictions |
 | `goal_lookahead`, `lookahead_coef` | False, 0.5 | lookahead head and its loss weight |
@@ -95,7 +94,6 @@ Graphs are used iff all hold, else a one-time log line names the reason (`announ
 1. `_rollout_stream is not None`, i.e. `rollout_device.type == "cuda"` (`:680`; HIP shows as cuda);
 2. `config.rollout_graphs` is true;
 3. the call has an acting `state` (so `act` calls and evaluation calls without one run eager);
-4. `self.seat_sets is None` (seat sets branch on the host).
 
 One graph per key `(envs, agents, obs width, mask width, state width, deterministic, device_fed)` (`:912`), captured on
 first use: two warm-up runs on the capture stream, then `torch.cuda.graph` of `_body` (`:425-432`). Inputs live in

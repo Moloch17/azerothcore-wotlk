@@ -12,7 +12,6 @@ that defines the policy and critic networks. Parameter lists and shape chains fo
 | `test_free_look.py` | patch 8 at 128x64, render sizes, look head, camera chunking, seeding |
 | `test_mental_map.py` | map decode, `MapEncoder` |
 | `test_sight.py`, `test_interact.py` | sight list, pointer heads, named row |
-| `test_seat_sets.py` | `EntitySets`, attention, blind columns |
 | `test_recurrent.py`, `test_normalisation.py`, `test_masking.py`, `test_goals.py`, `test_goal_queue.py`, `test_goal_targets.py`, `test_two_clock.py`, `test_foresight.py` | recurrent core, normalisers, masks, goal head and slots |
 | `test_rollout_graph.py`, `test_rollout_graph_log.py` | graph path (GPU) and log lines (CPU) |
 
@@ -33,7 +32,7 @@ Unit index (line of the definition):
 | grouping helpers (`per_layout`, ...) | 257-301 | | `GoalEmbedding`, `goal_pair`, `split_goal_pair` | 1868, 1960, 1965 |
 | `_carry_sequence(_loop)`, `_pieces` | 304-379 | | `load_actor_state`, `without_blind_columns` | 1943, 1936 |
 | `GoalHead`, `_Factored` | 382, 591 | | `LayoutActor` | 1971 |
-| `EntitySets`, `seat_sets_of` | 613, 786 | | `LayoutCritic` | 2262 |
+| `LayoutCritic` | 2262 |
 | `attach_blind_columns`, `clear_blind_columns` | 800, 821 | | stage.json readers `_map_of`, `_entities_of`, `_sight_of`, `vision_of` | 878-1056 |
 | `MapValueIteration`, `MapEncoder` | 1164, 1208 | | decoders `decode_image/slots/map` | 1110-1152 |
 | `VisibleEntities`, `SightEntities`, `SightPointers` | 1288, 1363, 1531 | | checks `check_look_heads`, `check_image_bytes` | 1080, 1089 |
@@ -140,29 +139,9 @@ Known quirk: "the goal block's order columns are always zero" ([known-issues.md]
 only by tests (`test_goal_queue.py::test_the_directors_primary_is_held_and_not_scored`).
 Tests: `test_goals.py`, `test_goal_queue.py`, `test_goal_targets.py`, `test_two_clock.py`.
 
-## `EntitySets` (`:613`) and `seat_sets_of` (`:786`)
-
-Seat layouts' entities (enemies, members, friends, crowd) as sets: one encoder `Linear(w,64) tanh Linear(64,64) tanh`
-per set name shared by every slot and layout (`nn.ModuleDict encoders`), mean+max pooling of present slots, a `pool`
-Linear onto the adapter width, and **pointer heads**: one `queries` Linear(head_width -> 64, gain 0.01) per
-(set, n-th pointer range) scoring each slot's encoding to overwrite the logits of the actions that name a slot
-(`with_pointers :763`). `attention=True` (peak-play W7) adds one pre-norm transformer layer (`HEADS = 4`) over the
-seat's
-tokens with zero-initialised output projections so it starts as the identity. The per-layout tables (`columns_<set>`,
-`present_<set>`, `first_<kind>`, `has_sets`) are non-persistent buffers computed from the stage.json descriptors.
-`self.blind` lists the columns each adapter must not read (the slot columns).
-**Not used live** (seat_sets false everywhere; see the feature table in [py-mappo.md](py-mappo.md)). Also the base class
-of `VisibleEntities`, which is live (the camera's entity list), so deleting `EntitySets` means folding its encode/pool
-logic into `VisibleEntities`.
-Caveat: `with_pointers` indexes `columns = first + arange(slots)` and writes with `scatter`; the rows whose layout has
-no
-such set keep their old logits (`torch.where`, `:782`).
-Tests: `test_seat_sets.py`, `test_export_seat_sets.py`.
-
 ## Blind columns: `attach_blind_columns`, `clear_blind_columns`, `without_blind_columns` (`:800-829`, `:1936`)
 
-A layout's adapter must not read some columns (camera scalars, entity-list slots, map scalars, sight slots, seat set
-slots) because dedicated encoders read them. `attach_blind_columns(network, columns, tag)` registers a buffer
+A layout's adapter must not read some columns (camera scalars, entity-list slots, map scalars, sight slots) because dedicated encoders read them. `attach_blind_columns(network, columns, tag)` registers a buffer
 `<tag>_keep_<index> [1, obs_i]` (1 = keep, 0 = blind), multiplies the adapter weight by it and registers a gradient hook
 that multiplies the gradient by it, so those weight columns stay exactly zero through every update. Tags: `"set"` and
 `"vision"` (`BLIND_KEEP_PREFIXES` `:1933` also lists the retired `"blind_keep_"`). `clear_blind_columns(network)`
@@ -212,7 +191,8 @@ Tests: `test_mental_map.py`.
 
 ## `VisibleEntities` (`:1288`), `SightEntities` (`:1363`), `SightPointers` (`:1531`)
 
-`VisibleEntities(EntitySets)` is the camera's entity list (32 slots x 20 columns for the live M2/M1): its slot
+`VisibleEntities` is the camera's entity list (a standalone module since the seat-set base class was removed; its
+state-dict keys and shapes are unchanged) (32 slots x 20 columns for the live M2/M1): its slot
 token is `[kept columns (18), class embedding (6, the camera's table), type embedding (8, hashed
 `(entry*2 + is_object) mod 4096`)]` -> `32 -> 64 -> 64` tanh MLP; the `memory` column is zeroed (read as 0 here) and the
 token also adds `link(patch features under the slot's pixels)` (`encode_linked :1349`). The pooled mean+max goes through
@@ -273,17 +253,16 @@ Tests: `test_goal_queue.py::test_an_actor_saved_before_the_goal_scale_loads_with
 ## `LayoutActor` (`:1971`)
 
 Constructor `(layouts, hidden, foresight_outputs, recurrent_size, goal_count, goal_targets, slow_size,
-foresight_feedback, lookahead, goal_slots, seat_sets, entity_attention, vision)`. Members: `norms`, `adapters`, `trunk`,
+foresight_feedback, lookahead, goal_slots, vision)`. Members: `norms`, `adapters`, `trunk`,
 `memory` (GRUCell(hidden[-1] -> recurrent_size)), `heads` (per layout, gain 0.01), `foresight`, `goal_head`,
-`goal_embedding`, `foresight_proj`, `slow_memory` (GRUCell(head_width -> slow_size)), `slow_value`, `entity_sets`,
+`goal_embedding`, `foresight_proj`, `slow_memory` (GRUCell(head_width -> slow_size)), `slow_value`,
 `vision`, `vision_join`, `sight_pointers`, `look_head`, and the rollout-only `dense_adapters`/`dense_heads`.
 `head_width` = recurrent size when recurrent, else `hidden[-1]`.
 
 Flow for one decision (`_forward :2248`, used by `forward`/`step`):
-`encode` (`:2081`) = adapters (per-layout loop over `per_layout` groups, or dense on the GPU rollout copy) + seat-set
-pool + camera join, then trunk -> `features_from` (GRU) -> `policy_features` (`:2146`: foresight feedback, then goal
+`encode` (`:2081`) = adapters (per-layout loop over `per_layout` groups, or dense on the GPU rollout copy) + camera join, then trunk -> `features_from` (GRU) -> `policy_features` (`:2146`: foresight feedback, then goal
 FiLM)
--> `action_logits` (`:2164`: heads, then seat pointers, then sight pointers, then `masked_logits`).
+-> `action_logits` (`:2164`: heads, then sight pointers, then `masked_logits`).
 `decide_goals` (`:2204`) is the single implementation of the goal decision used by the eager path and the graph:
 drop an ended secondary; promote the queue's head if the primary ended; choose on the clock, on `ended`-without-queue,
 or on an `event`; an order overrides. `carry` runs the GRU over a replayed sequence. `slow_step` runs the slow GRU on
@@ -297,8 +276,8 @@ Tests: `test_recurrent.py`, `test_goals.py`, `test_goal_queue.py`, `test_masking
 
 `V(global state, own observation)`. Members: `state_norm`, `state_encoder` Linear(state_dim -> hidden[0]), `norms`,
 `adapters`, `trunk`, `memory` GRUCell(hidden[-1] -> recurrent_size), `head` Linear(head_width -> 1, gain 1),
-`goal_embedding` (width hidden[0], shift only), `entity_sets` (no pointers), `vision` (reference) + `vision_join`.
-`encode_goal_free` (`:2309`) = `state_encoder(state_norm(state))` and the seat's own adapter output + sets + camera;
+`goal_embedding` (width hidden[0], shift only), `vision` (reference) + `vision_join`.
+`encode_goal_free` (`:2309`) = `state_encoder(state_norm(state))` and the seat's own adapter output + camera;
 `encode_goal` (`:2328`) adds the goal embedding and runs `trunk(hidden + own)`. A rollout decision runs the first half
 beside the actor choosing the goal (`_RolloutGraph._body`, `trainer.py:452`). `step_encoded` (`:2369`) runs the GRU and
 the head. Output is a **normalised** value when `ValueNorm` is used; the trainer denormalises.
@@ -327,8 +306,6 @@ Tests: `test_recurrent.py::test_critic_*`.
 4. `GoalHead.slot_entropy_weight` is a public attribute defaulting to 0.1 that the trainer overwrites after construction
    (`trainer.py:665`); a caller that builds a `LayoutActor` without the trainer (cast, distill, evaluate) keeps 0.1
    whatever the config says. Harmless for acting; wrong for any scoring.
-5. `EntitySets` is the base of the live `VisibleEntities` but is itself off everywhere live; its attention path, pointer
-   heads and `SEAT_SET_NAMES` (`:610`) are untested live.
 6. `_carry_sequence` depends on the private `torch._VF.gru` (`:373`).
 7. `attach_blind_columns` registers a hook referencing the network by default argument (`:816`).
 8. The first lines of the file describe an architecture (adapter + trunk + head = plain MLP) that no longer holds.
@@ -340,7 +317,7 @@ Tests: `test_recurrent.py::test_critic_*`.
 
 - Refactor hazard: the tensor names (`adapters.N`, `heads.N`, `norms.N`, `vision.*`, `goal_head.*`) are the checkpoint
   format; the golden test fails on any rename, and `bootstrap.py` seeds by these names.
-- `networks.py` mixes five concerns (primitives, goal head, entity sets, camera/map/sight, the two networks). A split
+- `networks.py` mixes five concerns (primitives, goal head, entity list, camera/map/sight, the two networks). A split
   by file is safe for imports because everything is imported by name from `.networks` (`train.py:49`, `distill.py:23`,
   `evaluate.py:30`, `trainer.py:18`, `cast.py`, `partners.py`, `export.py`).
-- Dead-feature question list: `EntitySets` pointers/attention, `MapValueIteration`, `SharedInputDense` (GPU only).
+- Dead-feature question list: `SharedInputDense` (GPU only). (`EntitySets`, its attention and pointer heads, and `MapValueIteration` were deleted.)

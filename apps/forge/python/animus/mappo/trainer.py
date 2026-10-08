@@ -136,16 +136,6 @@ class MappoConfig:
     # relabelled goal was never the behaviour's, so the ratio would mean nothing). Needs goal_slots > 1 (the goal
     # block's achieved columns).
     hindsight_coef: float = 0.0
-    # **Seat sets** (peak-play W4): every seat layout's entities -- enemies, teammates, friends, the crowd -- read as
-    # sets through encoders shared by every slot and class, and the actions that name a slot scored by its encoding
-    # (EntitySets; stage.json layouts.<name>.sets). Off: the networks are exactly as before. Turning it on makes the
-    # adapters blind to the slot columns the policy reads today, so a running chain does not take it on resume: it is
-    # a restart of the chain from the stage it is turned on at.
-    seat_sets: bool = False
-    # **Entity attention** (peak-play W7): with seat_sets, one pre-norm transformer layer over the seat's entity tokens
-    # before they are pooled (EntitySets). Starts as the identity, so a sets checkpoint seeds it unchanged; the
-    # network only, the observation is as it was. Off is the default; the A/B against the sets alone is stage5_pack.
-    entity_attention: bool = False
     # The goal head's share of the entropy bonus, as a factor on what it would get from entropy_coef, falling
     # linearly to goal_entropy_final_fraction of itself over total_env_steps. The action head's exploration and the
     # goal head's are different things: the first keeps the fight's options open, the second keeps the head from
@@ -594,16 +584,12 @@ class MappoTrainer:
         train_device: str = "cpu",
         rollout_device: str = "cpu",
         ranks=None,
-        seat_sets=None,
         vision=None,
     ):
         """layouts: (obs dim, action count) per agent layout, in the sim's layout order."""
         skip_distribution_checks()
         self.config = config
         self.layouts = list(layouts)
-        # Per layout stage.json's seat sets, when mappo.seat_sets is on (EntitySets); None leaves the networks as they
-        # were.
-        self.seat_sets = seat_sets if config.seat_sets else None
         # Per layout its camera image (networks.vision_of, stage.json's vision block), or None: no camera anywhere.
         # On whenever the stage has one, with no switch of its own; the networks then carry a VisionEncoder each.
         self.vision = vision
@@ -645,14 +631,13 @@ class MappoTrainer:
         self.actor = LayoutActor(self.layouts, hidden, self.foresight_outputs, self.recurrent_size,
                                  self.goal_kinds, self.goal_targets, self.slow_goal_size, config.foresight_feedback,
                                  config.goal_lookahead, self.goal_slots,
-                                 self.seat_sets, config.entity_attention, self.vision).to(self.train_device)
+                                 self.vision).to(self.train_device)
         if self.actor.goal_head is not None:
             self.actor.goal_head.slot_entropy_weight = config.goal_slot_entropy_weight
         # One camera encoder for both networks: the actor's, which the critic reads by reference (VisionEncoder).
         self.critic = LayoutCritic(state_dim, self.layouts, hidden, self.goal_kinds,
                                    self.recurrent_size, self.goal_targets,
-                                   self.goal_slots, self.seat_sets, config.entity_attention,
-                                   self.vision, self.actor.vision).to(self.train_device)
+                                   self.goal_slots, self.vision, self.actor.vision).to(self.train_device)
         self.value_norm = (ValueNorm(beta=config.value_norm_beta).to(self.train_device)
                            if config.use_value_norm else None)
 
@@ -804,18 +789,17 @@ class MappoTrainer:
                 actor.goal_head.set_space(goals["accepts"], block_at)
 
     def director_columns_clear(self) -> bool:
-        """Whether no layout's adapter reads its seat sets' or camera's columns (the name is the one resume_check.py
-        calls)."""
+        """Whether no layout's adapter reads its camera's columns (the name is the one resume_check.py calls)."""
         for network in (self.actor, self.critic):
             for index in range(len(network.adapters)):
-                for tag in ("set", "vision"):
+                for tag in ("vision",):
                     keep = getattr(network, f"{tag}_keep_{index}", None)
                     if keep is not None and bool((network.adapters[index].weight * (1.0 - keep) != 0).any()):
                         return False
         return True
 
     def clear_blind_columns(self) -> None:
-        """Zero the adapters' seat set and camera columns in both networks, and in the rollout copies."""
+        """Zero the adapters' camera columns in both networks, and in the rollout copies."""
         from .networks import clear_blind_columns
         for network in (self.actor, self.critic):
             clear_blind_columns(network)
@@ -863,16 +847,13 @@ class MappoTrainer:
 
     def _graphs_off_reason(self, state: "ActingState | None") -> "str | None":
         """Why a rollout decision does not run as a captured graph, None when it does (_rollout_graph): on the GPU,
-        turned on, with an acting state, and without what branches on the host (the seat sets' row picks). The camera
-        (VisionEncoder) is not one of those: its shapes are fixed, graphs stay on."""
+        turned on and with an acting state. The camera (VisionEncoder) does not turn them off: its shapes are fixed."""
         if self._rollout_stream is None:
             return "the rollout is not on a GPU"
         if not self.config.rollout_graphs:
             return "mappo.rollout_graphs is off"
         if state is None:
             return "this call has no acting state"
-        if self.seat_sets is not None:
-            return "seat sets are on (their row picks branch on the host)"
         return None
 
     def _graphs_apply(self, state: "ActingState | None") -> bool:
@@ -881,8 +862,7 @@ class MappoTrainer:
     def _rollout_graph(self, obs, mask, layout, state_features, deterministic: bool,
                        state: "ActingState | None") -> "_RolloutGraph | None":
         """The captured decision for this batch shape, captured on first use; None where it does not apply: off the
-        GPU, turned off (mappo.rollout_graphs), without an acting state, or with seat sets (their row picks branch
-        on the host). The first capture of each shape, and each reason graphs are not used, is logged once."""
+        GPU, turned off (mappo.rollout_graphs), or without an acting state. The first capture of each shape, and each reason graphs are not used, is logged once."""
         reason = self._graphs_off_reason(state)
         if reason is not None:
             announce_graph(self._graph_log_seen, ("off", reason), f"rollout graphs NOT used: {reason}; decisions run "

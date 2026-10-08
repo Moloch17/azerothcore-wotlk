@@ -606,202 +606,11 @@ class _Factored(nn.Module):
         return joint.reshape(features.shape[0], -1)
 
 
-#: The seat sets in the order their pooled encodings are concatenated (stage.json layouts.<name>.sets names).
-SEAT_SET_NAMES = ("enemies", "members", "friends", "crowd")
-
-
-class EntitySets(nn.Module):
-    """**Every seat layout's entities as sets** (peak-play W4, mappo.seat_sets). A slot of a set -- an enemy, a teammate, a friend, a creature in the
-    crowd -- is gathered from the segments stage.json names (an enemy is its pack block slot and its hostiles block slot) and goes through one encoder shared
-    by every slot and every layout, so a class reads its fourth enemy with the weights it reads its first with. The
-    encodings of the slots present are pooled (mean and max) and added to the adapter's output; the raw slot columns
-    are kept out of every layout's adapter (blind_columns), so nothing learns a slot's position. The actions that name
-    a slot -- select this enemy, assist or guard this member, select this friend -- are scored from that slot's
-    encoding against a query from the features (pointer heads), so they follow the entity rather than the slot.
-
-    `descriptors` is per layout stage.json's layouts.<name>.sets (an empty list for a layout without any). Every layout gathers through one table indexed by its layout id, one batched op whatever mix
-    of classes a batch holds.
-
-    **Attention** (peak-play W7, mappo.entity_attention): before the pooling, one pre-norm transformer layer over the
-    seat's tokens -- a learned token of its own layout first (always present), then every slot of every set, each its
-    encoding plus its set's type embedding -- with the absent slots masked out of the keys:
-    x = x + MHA(LN(x)), x = x + W2 relu(W1 LN(x)). The sets are then pooled as without it, from the attended slots,
-    and the layout's own token joins the pool; the pointers read the attended slots. The type embeddings, the
-    attention's output projection, W2 and the own token's pool columns start at zero, so the layer starts as the
-    identity: a sets checkpoint seeds it with its policy unchanged."""
-
-    HEADS = 4
-
-    def __init__(self, descriptors: Sequence[Sequence[dict]], obs_dims: Sequence[int], width: int,
-                 head_width: int = 0, embed: int = 64, attention: bool = False):
-        super().__init__()
-        layouts = len(descriptors)
-        self.embed = embed
-        shapes: dict[str, tuple[int, int]] = {}
-        for sets in descriptors:
-            for entry in sets:
-                name = entry["name"]
-                shape = (int(entry["slots"]), sum(int(part["stride"]) for part in entry["segments"]))
-                if shapes.setdefault(name, shape) != shape:
-                    raise ValueError(f"seat set {name!r}: {shapes[name]} (slots, width) in one layout and {shape} in "
-                                     f"another; a shared encoder needs one shape")
-        self.names = [name for name in SEAT_SET_NAMES if name in shapes] + sorted(set(shapes) - set(SEAT_SET_NAMES))
-        self.shapes = {name: shapes[name] for name in self.names}
-        self.encoders = nn.ModuleDict({name: nn.Sequential(_linear(width_, embed, math.sqrt(2)), nn.Tanh(),
-                                                           _linear(embed, embed, math.sqrt(2)), nn.Tanh())
-                                       for name, (_, width_) in self.shapes.items()})
-        self.attention = attention
-        self.pool = _linear(2 * embed * len(self.names) + (embed if attention else 0), width, 1.0)
-        if attention:
-            self.type_embed = nn.Parameter(torch.zeros(len(self.names), embed))
-            self.self_token = nn.Parameter(torch.randn(layouts, embed) * 0.02)
-            self.norm_attend = nn.LayerNorm(embed)
-            self.attend = nn.MultiheadAttention(embed, self.HEADS, batch_first=True)
-            self.norm_mix = nn.LayerNorm(embed)
-            self.mix_in = nn.Linear(embed, 2 * embed)
-            self.mix_out = nn.Linear(2 * embed, embed)
-            with torch.no_grad():
-                for zeroed in (self.attend.out_proj.weight, self.attend.out_proj.bias, self.mix_out.weight,
-                               self.mix_out.bias, self.pool.weight[:, 2 * embed * len(self.names):]):
-                    zeroed.zero_()
-        # Per set: [layouts, slots * width] observation columns and [layouts, slots] present columns (-1: the layout
-        # has no such set). Derived from stage.json, not learned: kept out of the state dict.
-        self.has = {}
-        for name, (slots, width_) in self.shapes.items():
-            columns = torch.zeros(layouts, slots * width_, dtype=torch.long)
-            present = torch.full((layouts, slots), -1, dtype=torch.long)
-            for index, sets in enumerate(descriptors):
-                for entry in sets:
-                    if entry["name"] != name:
-                        continue
-                    for slot in range(slots):
-                        row = []
-                        for part in entry["segments"]:
-                            first, stride = int(part["first"]), int(part["stride"])
-                            row.extend(range(first + slot * stride, first + (slot + 1) * stride))
-                        columns[index, slot * width_ : (slot + 1) * width_] = torch.tensor(row)
-                        present[index, slot] = int(entry["segments"][0]["first"]) + slot * int(
-                            entry["segments"][0]["stride"]) + int(entry["present"])
-            self.register_buffer(f"columns_{name}", columns, persistent=False)
-            self.register_buffer(f"present_{name}", present, persistent=False)
-        has = torch.tensor([[any(e["name"] == name for e in sets) for name in self.names] for sets in descriptors],
-                           dtype=torch.bool).reshape(layouts, len(self.names))
-        self.register_buffer("has_sets", has.any(dim=1), persistent=False)
-        # The columns each layout's adapter does not read (attach_blind_columns, tag "set").
-        self.blind = {index: sorted({c for sets in [descriptors[index]] for entry in sets for slot in
-                                     range(int(entry["slots"])) for part in entry["segments"]
-                                     for c in range(int(part["first"]) + slot * int(part["stride"]),
-                                                    int(part["first"]) + (slot + 1) * int(part["stride"]))})
-                      for index in range(layouts) if descriptors[index]}
-        # Pointer heads, one per (set, its n-th action range): a query from the features scored against each slot.
-        kinds: dict[str, list[int]] = {}
-        for index, sets in enumerate(descriptors):
-            for entry in sets:
-                for ordinal, part in enumerate(entry.get("pointers", ())):
-                    kinds.setdefault(f"{entry['name']}_{ordinal}", [-1] * layouts)[index] = int(part["first"])
-        self.pointer_kinds = sorted(kinds) if head_width else []
-        self.queries = nn.ModuleDict({kind: _linear(head_width, embed, 0.01) for kind in self.pointer_kinds})
-        for kind in self.pointer_kinds:
-            self.register_buffer(f"first_{kind}", torch.tensor(kinds[kind], dtype=torch.long), persistent=False)
-
-    def encode(self, obs: torch.Tensor, layout: torch.Tensor) -> dict[str, tuple[torch.Tensor, torch.Tensor]]:
-        """Per set: [rows, slots, embed] encodings and [rows, slots] which slots are present."""
-        rows = obs.shape[0]
-        layout = layout.reshape(-1).long()
-        out = {}
-        for name, (slots, width_) in self.shapes.items():
-            columns = getattr(self, f"columns_{name}")[layout]
-            raw = obs.gather(1, columns).reshape(rows, slots, width_)
-            present_at = getattr(self, f"present_{name}")[layout]
-            present = (present_at >= 0) & (obs.gather(1, present_at.clamp(min=0)) > 0.5)
-            out[name] = (self.encoders[name](raw.to(self.pool.weight.dtype)), present)
-        return out
-
-    def tokens(self, obs: torch.Tensor, layout: torch.Tensor):
-        """Per set the slots as the pool and the pointers read them -- attended, with attention -- and the layout's
-        own token after attention (None without)."""
-        encoded = self.encode(obs, layout)
-        if not self.attention:
-            return encoded, None
-        layout = layout.reshape(-1).long()
-        rows = obs.shape[0]
-        own = self.self_token[layout][:, None, :]
-        parts = [own] + [encoded[name][0] + self.type_embed[index] for index, name in enumerate(self.names)]
-        ignored = [torch.zeros((rows, 1), dtype=torch.bool, device=obs.device)] + [~encoded[name][1]
-                                                                                      for name in self.names]
-        x = torch.cat(parts, dim=1)
-        normed = self.norm_attend(x)
-        attended, _ = self.attend(normed, normed, normed, key_padding_mask=torch.cat(ignored, dim=1),
-                                  need_weights=False)
-        x = x + attended
-        x = x + self.mix_out(torch.relu(self.mix_in(self.norm_mix(x))))
-        out, at = {}, 1
-        for name in self.names:
-            slots = encoded[name][0].shape[1]
-            out[name] = (x[:, at:at + slots], encoded[name][1])
-            at += slots
-        return out, x[:, 0]
-
-    def pooled(self, obs: torch.Tensor, layout: torch.Tensor,
-               encoded: dict[str, tuple[torch.Tensor, torch.Tensor]] | None = None) -> torch.Tensor:
-        """What the sets add to the adapter's output: [rows, width], zero for a layout without sets."""
-        own = None
-        if encoded is None:
-            encoded, own = self.tokens(obs, layout)
-        parts = []
-        for name in self.names:
-            codes, present = encoded[name]
-            weight = present.to(codes.dtype)[..., None]
-            parts.append((codes * weight).sum(dim=1) / weight.sum(dim=1).clamp(min=1.0))
-            peak = torch.where(present[..., None], codes, torch.full_like(codes, -1.0)).amax(dim=1)
-            parts.append(torch.where(present.any(dim=1, keepdim=True), peak, torch.zeros_like(peak)))
-        if own is not None:
-            parts.append(own)
-        pooled = self.pool(torch.cat(parts, dim=-1))
-        return pooled * self.has_sets[layout.reshape(-1).long()][:, None].to(pooled.dtype)
-
-    def with_pointers(self, logits: torch.Tensor, features: torch.Tensor, obs: torch.Tensor,
-                      layout: torch.Tensor) -> torch.Tensor:
-        """`logits` with every slot-naming action scored by its slot's encoding, in the rows whose layout has it; the
-        other rows' logits are written back as they were (no row is picked out: nothing waits on the device)."""
-        if not self.pointer_kinds:
-            return logits
-        layout = layout.reshape(-1).long()
-        encoded, _ = self.tokens(obs, layout)
-        for kind in self.pointer_kinds:
-            name = kind.rsplit("_", 1)[0]
-            codes, _ = encoded[name]
-            slots = codes.shape[1]
-            first = getattr(self, f"first_{kind}")[layout]
-            scores = torch.einsum("rse,re->rs", codes, self.queries[kind](features).to(codes.dtype))
-            valid = first >= 0
-            columns = first.clamp(min=0)[:, None] + torch.arange(slots, device=logits.device)[None, :]
-            columns = columns.clamp(max=logits.shape[-1] - 1)
-            kept = logits.gather(1, columns)
-            # Out of place: the update differentiates through `logits`, which the gather above has just read.
-            logits = logits.scatter(1, columns, torch.where(valid[:, None], scores.to(logits.dtype), kept))
-        return logits
-
-
-def seat_sets_of(stage: dict | None, layout_names: Sequence[str]) -> list[list[dict]] | None:
-    """Per layout, in `layout_names` order, stage.json's layouts.<name>.sets (EntitySets' descriptors); None for a stage
-    whose layouts have no set at all (stage4_duel: one opponent, no pack, party or friends), or for a scenario without
-    a stage.json (not a curriculum stage), which run without them. Refused for a stage.json from before them (no
-    layout says any): a network built with seat sets would read nothing."""
-    if stage is None:
-        return None
-    layouts = stage.get("layouts", {})
-    if not any("sets" in layouts.get(name, {}) for name in layout_names):
-        raise ValueError("mappo.seat_sets is on but stage.json names no seat sets (a sim from before peak-play W4)")
-    sets = [list(layouts.get(name, {}).get("sets", ())) for name in layout_names]
-    return sets if any(sets) else None
-
-
 def attach_blind_columns(network: nn.Module, columns: dict[int, list[int]], tag: str) -> None:
     """Keep layout adapters blind to some of their observation columns (layout index -> columns): the weights start at
     zero and their gradient is masked, so they stay zero through every update and the rollout copies' folding. For
-    columns the policy must not read directly: the seat sets' slot columns (tag "set": read through EntitySets
-    instead) and the camera's. Once per network and tag; a later call only zeroes again."""
+    columns the policy must not read directly: the camera's. Once per network and tag; a later call only zeroes
+    again."""
     for index, cols in columns.items():
         if not cols or index >= len(network.adapters):
             continue
@@ -819,25 +628,14 @@ def attach_blind_columns(network: nn.Module, columns: dict[int, list[int]], tag:
 
 
 def clear_blind_columns(network: nn.Module) -> None:
-    """Zero every seat layout's set columns (EntitySets) and camera columns (VisionEncoder) again (after a seed or a
-    load brought weights from elsewhere)."""
+    """Zero every seat layout's camera columns (VisionEncoder) again (after a seed or a load brought weights from
+    elsewhere)."""
     with torch.no_grad():
         for index in range(len(network.adapters)):
-            for tag in ("set", "vision"):
+            for tag in ("vision",):
                 keep = getattr(network, f"{tag}_keep_{index}", None)
                 if keep is not None:
                     network.adapters[index].weight.mul_(keep)
-
-
-def _attach_entity_sets(network: nn.Module, seat_sets, head_width: int = 0, attention: bool = False) -> None:
-    """Give an actor or critic the seat layouts' set encoder (EntitySets) and blind its adapters to the set columns;
-    `seat_sets` is per layout stage.json's sets, or None (mappo.seat_sets off: nothing changes)."""
-    network.entity_sets = None
-    if seat_sets is None:
-        return
-    network.entity_sets = EntitySets(seat_sets, network.obs_dims, network.adapters[0].out_features, head_width,
-                                     attention=attention)
-    attach_blind_columns(network, network.entity_sets.blind, tag="set")
 
 
 #: The vision block's name in stage.json (BlockId::Vision); its manifest entry carries the camera image's shape.
@@ -1224,10 +1022,9 @@ class MapEncoder(nn.Module):
         return self.join(silu(self.embed(pooled)))
 
 
-class VisibleEntities(EntitySets):
-    """**The entity list** (perception-goals 1b and 1c): the entities block's slots read as a set by the EntitySets
-    machinery -- one encoder shared by every slot and layout, the present slots pooled (mean and max) -- with two
-    changes to how a slot is encoded:
+class VisibleEntities(nn.Module):
+    """**The entity list** (perception-goals 1b and 1c): the entities block's slots read as a set -- one encoder shared
+    by every slot and layout, the present slots pooled (mean and max) -- with two changes to how a slot is encoded:
     - the class and the type are embedded, never one-hot (amendment 10): the class through the camera's own class
       embedding (one table for the pixels and the list), the type -- the creature or game object entry, raw in its
       column -- hashed into TYPE_EMBED-wide buckets, (entry x 2 + is object) mod the manifest's type_buckets; the
@@ -1235,18 +1032,16 @@ class VisibleEntities(EntitySets):
     - **the link** (1c): each slot's token adds a projection of the mean patch feature under its own pixels (the
       slots' masks pooled at patch resolution: `linked`), so a token knows what its shape looks like.
     The pool (Linear onto the camera's embedding width) is added to the camera's embedding; a layout without a list
-    adds zero. No pointer heads yet (P3's goal head points at these)."""
+    adds zero. The sight list (SightEntities) shares the encoder and points at the slots."""
 
     TYPE_EMBED = 8
 
     def __init__(self, descriptors: Sequence[dict | None], class_embedding: nn.Embedding, feature_width: int,
                  out_width: int, embed: int = 64):
+        super().__init__()
         entries = [entry for entry in descriptors if entry is not None]
         spec = entries[0]
-        sets = [[{"name": "visible", "slots": entry["slots"], "present": entry["present"],
-                  "segments": [{"first": entry["first"], "stride": entry["width"]}]}] if entry is not None else []
-                for entry in descriptors]
-        super().__init__(sets, [0] * len(descriptors), out_width, embed=embed)
+        self.embed = embed
         self.slots, self.width_ = spec["slots"], spec["width"]
         self.class_column, self.type_column = spec["class_column"], spec["type_column"]
         self.object_column, self.buckets = spec["object_column"], spec["type_buckets"]
@@ -1257,8 +1052,27 @@ class VisibleEntities(EntitySets):
                                  f"reads them all")
         # The camera's class embedding, held by reference (it is the camera's module, not a second copy).
         self.__dict__["class_embedding"] = class_embedding
-        self.type_embed = nn.Embedding(self.buckets, self.TYPE_EMBED)
         kept = [c for c in range(self.width_) if c not in (self.class_column, self.type_column)]
+        inputs = len(kept) + class_embedding.embedding_dim + self.TYPE_EMBED
+        self.encoders = nn.ModuleDict({"visible": nn.Sequential(_linear(inputs, embed, math.sqrt(2)), nn.Tanh(),
+                                                                _linear(embed, embed, math.sqrt(2)), nn.Tanh())})
+        self.pool = _linear(2 * embed, out_width, 1.0)
+        self.type_embed = nn.Embedding(self.buckets, self.TYPE_EMBED)
+        self.link = _linear(feature_width, embed, 1.0)
+        # Per layout: [layouts, slots * width] observation columns and [layouts, slots] present columns (-1: the layout
+        # has no list). Derived from stage.json, not learned: kept out of the state dict.
+        layouts = len(descriptors)
+        columns = torch.zeros(layouts, self.slots * self.width_, dtype=torch.long)
+        present = torch.full((layouts, self.slots), -1, dtype=torch.long)
+        for index, entry in enumerate(descriptors):
+            if entry is None:
+                continue
+            start = int(entry["first"])
+            columns[index] = torch.arange(start, start + self.slots * self.width_)
+            present[index] = start + torch.arange(self.slots) * self.width_ + int(entry["present"])
+        self.register_buffer("columns_visible", columns, persistent=False)
+        self.register_buffer("present_visible", present, persistent=False)
+        self.register_buffer("has_sets", torch.tensor([entry is not None for entry in descriptors]), persistent=False)
         self.register_buffer("kept_columns", torch.tensor(kept, dtype=torch.long), persistent=False)
         # The memory id (entity memory, dungeon-curriculum I2) is a label, not a quantity: it reads 0 here, as it did
         # before memory existed, and the sight list embeds it instead (SightEntities).
@@ -1267,10 +1081,6 @@ class VisibleEntities(EntitySets):
         if self.memory_column >= 0:
             keep[self.memory_column] = 0.0
         self.register_buffer("column_keep", keep, persistent=False)
-        inputs = len(kept) + class_embedding.embedding_dim + self.TYPE_EMBED
-        self.encoders["visible"] = nn.Sequential(_linear(inputs, embed, math.sqrt(2)), nn.Tanh(),
-                                                 _linear(embed, embed, math.sqrt(2)), nn.Tanh())
-        self.link = _linear(feature_width, embed, 1.0)
 
     def token(self, raw: torch.Tensor) -> torch.Tensor:
         """Slots' tokens [..., embed] from their entity-list columns [..., width] alone (no pixels): the class and the
@@ -1288,7 +1098,7 @@ class VisibleEntities(EntitySets):
     def encode_linked(self, obs: torch.Tensor, layout: torch.Tensor,
                       linked: torch.Tensor) -> dict[str, tuple[torch.Tensor, torch.Tensor]]:
         """The slots' tokens [N, slots, embed] (with the patch features under each, `linked` [N, slots, F]) and which
-        are present, as EntitySets.encode returns them."""
+        are present."""
         rows = obs.shape[0]
         layout = layout.reshape(-1).long()
         raw = obs.gather(1, self.columns_visible[layout]).reshape(rows, self.slots, self.width_)
@@ -1297,6 +1107,17 @@ class VisibleEntities(EntitySets):
         present_at = self.present_visible[layout]
         present = (present_at >= 0) & (obs.gather(1, present_at.clamp(min=0)) > 0.5)
         return {"visible": (codes, present)}
+
+    def pooled(self, obs: torch.Tensor, layout: torch.Tensor,
+               encoded: dict[str, tuple[torch.Tensor, torch.Tensor]]) -> torch.Tensor:
+        """What the list adds to the camera's embedding: [rows, out], zero for a layout without it."""
+        codes, present = encoded["visible"]
+        weight = present.to(codes.dtype)[..., None]
+        mean = (codes * weight).sum(dim=1) / weight.sum(dim=1).clamp(min=1.0)
+        peak = torch.where(present[..., None], codes, torch.full_like(codes, -1.0)).amax(dim=1)
+        peak = torch.where(present.any(dim=1, keepdim=True), peak, torch.zeros_like(peak))
+        pooled = self.pool(torch.cat([mean, peak], dim=-1))
+        return pooled * self.has_sets[layout.reshape(-1).long()][:, None].to(pooled.dtype)
 
 
 class SightEntities(nn.Module):
@@ -1479,7 +1300,7 @@ class SightPointers(nn.Module):
 
 class VisionEncoder(nn.Module):
     """**The camera** (camera-vision): a seat's H x W image of what its camera's rays hit, encoded by one small
-    network shared by every layout, as EntitySets shares its encoders.
+    network shared by every layout, as VisibleEntities shares its encoder.
 
     The image arrives as bytes beside the observation (protocol 23: [N, H x W x 5] uint8, [row][col][byte]) and is
     decoded on the device to its five channels, channels last (decode_image); the block's scalars are gathered from
@@ -1793,13 +1614,12 @@ def vision_term(network: nn.Module, obs: torch.Tensor, layout: torch.Tensor,
     return network.vision_join(embedding, layout)
 
 
-def _vision_extra(network: nn.Module, obs: torch.Tensor, layout: torch.Tensor, extra,
+def _vision_extra(network: nn.Module, obs: torch.Tensor, layout: torch.Tensor,
                   embedding: torch.Tensor | None = None, image: torch.Tensor | None = None):
-    """`extra` (what the sets add to the adapter's output, or None) with the camera's term added."""
+    """What the camera adds to the adapter's output, or None for a network without one."""
     if getattr(network, "vision", None) is None:
-        return extra
-    seen = vision_term(network, obs, layout, embedding, image)
-    return seen if extra is None else extra + seen.to(extra.dtype)
+        return None
+    return vision_term(network, obs, layout, embedding, image)
 
 
 class GoalEmbedding(nn.Module):
@@ -1866,13 +1686,13 @@ _GOAL_SCALE_KEYS = ("goal_embedding.kind_scale.weight", "goal_embedding.target_s
 
 
 #: The blind-column masks' buffer names (attach_blind_columns' tags): "blind_keep_" (a checkpoint from before the hint
-#: block went still carries it, and it is dropped on load), the seat sets', the camera's.
-BLIND_KEEP_PREFIXES = ("blind_keep_", "set_keep_", "vision_keep_")
+#: block went still carries it, and it is dropped on load), the camera's.
+BLIND_KEEP_PREFIXES = ("blind_keep_", "vision_keep_")
 
 
 def without_blind_columns(state: dict) -> dict:
     """A saved network's state without its blind-column masks (attach_blind_columns): they are made again from the
-    stage's layouts after loading (the seat sets, the camera), and a network not yet given them refused them."""
+    stage's layouts after loading (the camera), and a network not yet given them refused them."""
     return {key: value for key, value in state.items()
             if not key.split(".")[-1].startswith(BLIND_KEEP_PREFIXES)}
 
@@ -1909,7 +1729,7 @@ class LayoutActor(nn.Module):
     def __init__(self, layouts: Sequence[tuple[int, int]], hidden: Sequence[int], foresight_outputs: int = 0,
                  recurrent_size: int = 0, goal_count: int = 0, goal_targets: int = 1, slow_size: int = 0,
                  foresight_feedback: bool = False, lookahead: bool = False, goal_slots: int = 1,
-                 seat_sets=None, entity_attention: bool = False, vision=None):
+                 vision=None):
         """layouts: (obs dim, action count) per layout; hidden: widths, the first being the adapters' output.
 
         `foresight_outputs` adds a head on the trunk that predicts what happens after this decision (mappo.trainer's
@@ -1965,8 +1785,6 @@ class LayoutActor(nn.Module):
         # features the action head and the slow loop read, so the policy acts on what it expects to happen.
         self.foresight_feedback = bool(foresight_feedback and foresight_outputs)
         self.foresight_proj = _linear(foresight_outputs, head_width, 0.01) if self.foresight_feedback else None
-        # Every seat layout's entities as sets, with pointer heads (EntitySets; mappo.seat_sets, None = off).
-        _attach_entity_sets(self, seat_sets, head_width, entity_attention)
         # The camera (VisionEncoder; vision_of(stage.json), None = no layout has one).
         _attach_vision(self, vision)
         # The sight list's pointer heads (SightPointers), where the layouts have a sight block: the actor's own.
@@ -2022,10 +1840,7 @@ class LayoutActor(nn.Module):
         which is the difference between one large matmul per layer and one per step. `vision_embedding` is the
         camera's embedding of these rows when the caller has it (the update encodes once for the actor and the
         critic); else it is computed here, from the rows' camera bytes `image` [N, I]."""
-        extra = None
-        if self.entity_sets is not None:
-            extra = self.entity_sets.pooled(obs, layout)
-        extra = _vision_extra(self, obs, layout, extra, vision_embedding, image)
+        extra = _vision_extra(self, obs, layout, vision_embedding, image)
         if self.dense_adapters is not None:
             hidden = self.dense_adapters(obs, layout)
             return self.trunk(hidden if extra is None else hidden + extra.to(hidden.dtype))
@@ -2066,7 +1881,7 @@ class LayoutActor(nn.Module):
                             goal: torch.Tensor | None = None, groups=None,
                             obs: torch.Tensor | None = None) -> Categorical:
         """The actions of flat rows whose features are `features`, under `goal` where the actor has goals. `obs`
-        lets the seat sets' and the sight list's pointer heads score their per-slot actions."""
+        lets the sight list's pointer heads score their per-slot actions."""
         return Categorical(logits=self.action_logits(features, layout, mask, goal, groups, obs))
 
     def with_foresight(self, features: torch.Tensor) -> torch.Tensor:
@@ -2108,15 +1923,13 @@ class LayoutActor(nn.Module):
             own = torch.where(dense.valid[layout.long()], dense(features, layout), MASKED_LOGIT)
             logits = own if own.shape[-1] == mask.shape[-1] else nn.functional.pad(
                 own, (0, mask.shape[-1] - own.shape[-1]), value=MASKED_LOGIT)
-            return masked_logits(self._with_sight_pointers(
-                self._with_seat_pointers(logits, features, layout, obs), features, layout, obs), mask)
+            return masked_logits(self._with_sight_pointers(logits, features, layout, obs), mask)
 
         groups = groups if groups is not None else _per_layout(layout, len(self.adapters))
         logits = features.new_full((features.shape[0], mask.shape[-1]), MASKED_LOGIT)
         for index, rows in groups:
             logits[rows, : self.action_counts[index]] = self.heads[index](features[rows]).to(logits.dtype)
-        return masked_logits(self._with_sight_pointers(
-            self._with_seat_pointers(logits, features, layout, obs), features, layout, obs), mask)
+        return masked_logits(self._with_sight_pointers(logits, features, layout, obs), mask)
 
     def _with_sight_pointers(self, logits: torch.Tensor, features: torch.Tensor, layout: torch.Tensor,
                              obs: torch.Tensor | None) -> torch.Tensor:
@@ -2125,13 +1938,6 @@ class LayoutActor(nn.Module):
             return logits
         return self.vision.sight.with_pointers(logits, features, obs.reshape(-1, obs.shape[-1]), layout,
                                                self.sight_pointers)
-
-    def _with_seat_pointers(self, logits: torch.Tensor, features: torch.Tensor, layout: torch.Tensor,
-                            obs: torch.Tensor | None) -> torch.Tensor:
-        """The seats' slot-naming actions scored by their slots' encodings (EntitySets.with_pointers)."""
-        if self.entity_sets is None or obs is None:
-            return logits
-        return self.entity_sets.with_pointers(logits, features, obs.reshape(-1, obs.shape[-1]), layout)
 
     def goal_distribution(self, features: torch.Tensor, obs: torch.Tensor | None = None,
                           layout: torch.Tensor | None = None) -> Categorical:
@@ -2208,7 +2014,7 @@ class LayoutCritic(nn.Module):
 
     def __init__(self, state_dim: int, layouts: Sequence[tuple[int, int]], hidden: Sequence[int],
                  goal_count: int = 0, recurrent_size: int = 0, goal_targets: int = 1,
-                 goal_slots: int = 1, seat_sets=None, entity_attention: bool = False, vision=None,
+                 goal_slots: int = 1, vision=None,
                  vision_encoder: "VisionEncoder | None" = None):
         super().__init__()
         if not hidden:
@@ -2229,7 +2035,6 @@ class LayoutCritic(nn.Module):
         self.memory = nn.GRUCell(hidden[-1], recurrent_size) if recurrent_size else None
         self.head = _linear(recurrent_size if recurrent_size else hidden[-1], 1, 1.0)
         self.dense_adapters: DenseLayouts | None = None     # as LayoutActor's
-        _attach_entity_sets(self, seat_sets, attention=entity_attention)
         # The camera: the actor's encoder when given one (`vision_encoder`, MappoTrainer: one encoder, both losses'
         # gradients), else its own; the join onto its adapters' output is always its own.
         _attach_vision(self, vision, vision_encoder)
@@ -2256,8 +2061,6 @@ class LayoutCritic(nn.Module):
             for index, rows in groups if groups is not None else _per_layout(layout, len(self.adapters)):
                 own[rows] = self.adapters[index](self.norms[index](obs[rows, : self.obs_dims[index]])).to(
                     own.dtype)
-        if self.entity_sets is not None:
-            own = own + self.entity_sets.pooled(obs, layout).to(own.dtype)
         if self.vision is not None:
             own = own + vision_term(self, obs, layout, vision_embedding, image).to(own.dtype)
         return hidden, own
