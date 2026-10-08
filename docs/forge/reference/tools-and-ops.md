@@ -3,7 +3,8 @@
 Purpose and scope. Everything around the code that is not the sim or the learner: the scripts in `apps/forge/tools`, the
 `forgectl` program (a code map; usage is in [../forgectl.md](../forgectl.md)), the cluster file, the container and
 compose files, the patches, the probe and model data, the repository's top-level layout, the git conventions and the
-build. Related: [config-keys.md](config-keys.md), [tests.md](tests.md), [../cluster.md](../cluster.md),
+build. Related: [config-keys.md](config-keys.md), [tests.md](tests.md) (there are no tests),
+[../cluster.md](../cluster.md),
 [../deploy-gate.md](../deploy-gate.md), [00-architecture.md](00-architecture.md), [known-issues.md](known-issues.md).
 
 ## Map of the files in this area
@@ -27,10 +28,8 @@ build. Related: [config-keys.md](config-keys.md), [tests.md](tests.md), [../clus
 | `apps/forge/forgectl/confsync.py` | 249 | `forgectl conf-sync`; the conf writers (also used by move-host) |
 | `apps/forge/forgectl/logs.py` | 96 | `forgectl logs` |
 | `apps/forge/forgectl/videos.py` | 48 | `forgectl videos` (wraps `collect-videos.sh`) |
-| `apps/forge/forgectl/testcmd.py` | 165 | `forgectl test` (wraps `forgectl-test.sh`) |
 | `apps/forge/tools/cluster-pull.sh` | 51 | on one machine: pull code and probe data, recreate the worldserver container |
 | `apps/forge/tools/collect-videos.sh` | 84 | pull evaluation videos from workers by ssh+tar |
-| `apps/forge/tools/forgectl-test.sh` | 78 | the build-and-test script run inside the dev container |
 | `apps/forge/tools/conf_prune.py` | 311 | unknown-key finder and conf cleaner (local or over ssh) |
 | `apps/forge/tools/resume_check.py` | 498 | CPU dry run of `--resume`, or of a fresh start, for a stage |
 | `apps/forge/tools/run_snapshot.py` | 179 | a run's headline readings; before/after comparison |
@@ -49,7 +48,7 @@ build. Related: [config-keys.md](config-keys.md), [tests.md](tests.md), [../clus
 | `docker-compose.cluster.yml` | 25 | host-network override for cluster machines |
 | `docker-compose.override.yml` | (untracked) | per-machine GPU devices, torch index, `CCUSTOMOPTIONS` |
 | `apps/docker/forge-worldserver.sh` | 95 | the worldserver container's command: build if needed, venv, TensorBoard, exec worldserver |
-| `apps/docker/animus-venv.sh` | 42 | creates the learner venv and installs torch, the learner, pytest |
+| `apps/docker/animus-venv.sh` | 42 | creates the learner venv and installs torch and the learner (and pytest: the script still installs the `dev` extra, `animus-venv.sh:41`) |
 | `apps/docker/Dockerfile.dev-server` | 120 | the `dev` image shared by `ac-worldserver` and `ac-dev-server` |
 | `apps/docker/Dockerfile`, `docker-cmd.sh`, `entrypoint.sh`, `README.md` | 279, 216, 54, 41 | upstream AzerothCore images (stock profile) |
 | `src/server/game/CMakeLists.txt` (lines 53-73) | n/a | `FORGE_PYTHON_DIR` define and the `ForgeSourceHash.h` step |
@@ -70,7 +69,6 @@ Forge-specific vs upstream is from `git diff --name-status master HEAD` (master 
 | `src/server/game/Forge/` | forge (added) | `ForgeCore`: playtest flag, seal, tick control ([01-forge-core-delta.md](01-forge-core-delta.md)) |
 | `src/server/apps/worldserver/` | upstream, with `ForgeMain.cpp` and a forge `worldserver.conf.dist` | entry point; `ForgeMain.cpp` replaces upstream `Main.cpp` in the build |
 | `src/server/{game,scripts,database,shared}`, `src/common` | upstream, 173 modified and 232 added files under `src/server`, 17 modified under `src/common` | AzerothCore with forge hooks |
-| `src/test/` | upstream test harness; 48 forge-added files | GTests ([tests.md](tests.md)) |
 | `apps/forge/` | forge | learner (`python/`), `forgectl`, tools, patches, `cluster.toml` (207 added files) |
 | `apps/docker/` | upstream, 2 added (`forge-worldserver.sh`, `animus-venv.sh`), 2 modified | container files |
 | `apps/{compiler,installer,codestyle,...}` | upstream | AzerothCore helper scripts (`acore.sh` drives `apps/compiler`) |
@@ -108,7 +106,7 @@ From `.gitignore` (excerpt): `/conf/*` except `conf/dist`, `/modules/*` except l
   `shared/runs/<stage>/` holds `progress.json`, `metrics.csv`, `eval.jsonl`, `latest.pt`, `best.pt`, `stage.json`),
   `var/build` and `var/ccache` are the compose volumes' mount points for the build tree and ccache (`docker-compose.yml`
   volumes), `var/client` is the extractor client folder, `var/syntax-*`/`var/forgectl-build-*` are throwaway cmake
-  trees (`forgectl-test.sh`, the owner's syntax-check helper: UNVERIFIED how `var/syntax-forge` is made), the rest
+  trees (the owner's syntax-check helper: UNVERIFIED how `var/syntax-forge` is made), the rest
   (`m3`, `lakes`, `smoke`, `prof`, `realm-*`, `stock-*`, `model-archive`, `backups`, `bench-vision`, `camera`, `cores`,
   `cfgcheck`, `claude`, `cluster-worker-logs*`, `extractors`, ...) are ad hoc scratch: UNVERIFIED purpose of each,
   none is read by repository code except as listed here. `var/gate/NOTES.txt` is where deploy-gate.md asks the
@@ -164,10 +162,7 @@ From `.gitignore` (excerpt): `/conf/*` except `conf/dist`, `/modules/*` except l
    md5 of `/proc/cpuinfo` vendor/family/model/flags in `env/dist/.forge-build-cpu` and rebuilds when it differs.
 5. `FORGE_PYTHON_DIR` (`src/server/game/CMakeLists.txt:55-56`) bakes `${CMAKE_SOURCE_DIR}/apps/forge/python` into the
    binary as the default learner work directory (and via its parent, models and probes).
-6. Unit-test builds are separate: `forgectl-test.sh` configures a throwaway tree with clang, `-DBUILD_TESTING=ON`,
-   `-DMODULES=static -DSCRIPTS=static -DAPPS_BUILD=all -DTOOLS_BUILD=none -DUSE_COREPCH=OFF -DUSE_SCRIPTPCH=OFF`
-   (`forgectl-test.sh:33-38`).
-7. The compose `ac-worldserver` mounts the whole checkout at `/azerothcore` (`docker-compose.yml`
+6. The compose `ac-worldserver` mounts the whole checkout at `/azerothcore` (`docker-compose.yml`
    `${DOCKER_VOL_ROOT:-.}:/azerothcore:cached`), the volumes `ac-animus-forge-build-dev` at `/azerothcore/var/build`
    and `ac-animus-forge-ccache-dev` at `/azerothcore/var/ccache`, and the client-data volume at `env/dist/data`
    read-only. The override sets `CCUSTOMOPTIONS=-DMODULE_MOD-ANIMUS=disabled` so `mod-animus` is never built into the
@@ -183,7 +178,7 @@ From `.gitignore` (excerpt): `/conf/*` except `conf/dist`, `/modules/*` except l
 | `ac-animus-forge-client-data-init` | compose `ac-client-data-init` | populates the `ac-animus-forge-client-data` volume |
 | `ac-animus-forge-db-import`, `-authserver` | profile `stock` | upstream services, not used for training |
 | `ac-animus-forge-tools` | profile `tools` | map extractors |
-| `claude-syntax` | not defined in this repository | the container `forgectl test` and the deploy-gate commands `docker exec` into (`cluster.toml` `[dev]`); UNVERIFIED how it is created |
+| `claude-syntax` | not defined in this repository | the container the deploy-gate commands `docker exec` into (formerly also `forgectl test`) (`cluster.toml` `[dev]`); UNVERIFIED how it is created |
 
 `docker-compose.cluster.yml` (use on every cluster machine, in `.env`:
 `COMPOSE_FILE=docker-compose.yml:docker-compose.override.yml:docker-compose.cluster.yml`) switches `ac-worldserver` to
@@ -198,28 +193,28 @@ ROCm torch index and `CCUSTOMOPTIONS` for both `ac-worldserver` and `ac-dev-serv
 
 Safety column: "reads" = never writes outside stdout (or a named output); "writes" names what.
 
-| Tool | Purpose | Arguments | Inputs / outputs | Safety | Tests |
-|---|---|---|---|---|---|
-| `conf_prune.py` | list/comment-out `AnimusForge.*` keys the build no longer reads; list/restore backups; which keys a rev range removed | `--removed OLD NEW`; `--check CONF`; `--prune CONF`; `--ssh user@host:PATH`; `--list-backups`; `--restore STAMP`; `--dist FILE`, `--dist-rev REV`, `--old REV`, `--no-stage-check`, `--repo` (`conf_prune.py:282-295`) | reads `worldserver.conf.dist` (checkout or `git show REV:path`), the C++ for key families, the conf; `--prune` writes `<conf>.bak-<stamp>` then the conf with unknown lines turned into `#pruned <stamp> (<why>): <line>` (never deleted); `--restore` keeps the current file as `<conf>.pre-restore-<now>` | `--check`, `--removed`, `--list-backups` read; `--prune`/`--restore` write the conf (local or over ssh, BatchMode) | `test_conf_prune.py` |
-| `resume_check.py` | dry-run `forge resume` or a fresh start of a stage on CPU, no sim | `RUN_DIR`, `--stage-json`, `--config`, `--spec`, `--checkpoint`, `--set`, `--overlay`, `--fresh`, `--stage`, `--all`, `--stage-json-dir`, `--state-dim`, `--goal-count` (`resume_check.py:458-470`) | reads checkpoint, stage.json, yaml; prints PASS/FAIL per check; exit 0/1/2; `STATE_DIM` and `GOAL_COUNT` constants stand in for values stage.json lacks (UNVERIFIED: whether the constants match the live sim) | reads only (docstring: never writes into RUN_DIR); needs torch | `test_resume_check.py` |
-| `run_snapshot.py` | a run's readings (last evaluation headline, medians of `approx_kl`, `env_steps_per_sec`, `update_seconds`, `entropy`, rung) and a before/after comparison | `RUN_DIR [--config] [--last N] [--json OUT]`; `--compare BEFORE AFTER` (`run_snapshot.py:157-161`) | reads `metrics.csv`, `eval.jsonl`, yaml; `--json` writes OUT | reads, plus OUT | `test_run_snapshot.py` |
-| `sim_metrics.py` | the metric names each stage's sim reports, parsed from the C++ (`Stages.cpp`, `StageScenario.cpp`, `StandInSeat.cpp`, `Encounters/*.cpp`, `CombatReward.cpp`); `--check` compares with real `stage.json` `episode_info` | `--stage NAME`; `--check STAGE_JSON...` (`sim_metrics.py:547-548`) | stdout | reads | `test_metric_names.py` |
-| `stage_json_diff.py` | what changed between two `stage.json`: header, layouts, shapes, actions, blocks, obs names, sets, episode info, categories, reward terms, tuning, arenas | `old.json new.json [--allow-removed-terms] [--allow-removed-keys] [--allow-removed-columns]` | stdout; exit 0 identical/allowed, 1 other, 2 bad input | reads | `test_stage_json_diff.py` |
-| `gen_config_reference.py` | regenerate the key table in [config-keys.md](config-keys.md) | `--check`, `--stdout` | reads conf.dist and sources; writes only between its two marker lines | writes one docs file | none |
-| `collect-videos.sh` | copy workers' `runs/<stage>/videos` PNGs, JSON and HTML by `ssh ... find ... \| tar` into `runs/<stage>/videos/from-<worker>/` | `[--dry-run \| --check] [--workers "u@h ..."] [--remote-dir D] [--runs-dir D] <stage>` | default workers list includes sarah (the host) and omits eli (`collect-videos.sh:23`) | `--dry-run` prints; `--check` read-only ssh; default writes the local run folder | `test_dungeon_stages.py`, `test_forgectl.py` (dry-run output) |
-| `cluster-pull.sh` | on one machine: `git pull --ff-only <origin user@host>:git/animus-forge.git forge`; clone or pull `apps/forge/probes` from `animus-probes.git` (`main`); touch `env/dist/.forge-build`; `docker compose up -d --force-recreate ac-worldserver` | `[user@host]` | modifies the checkout, probe data and containers of the machine it runs on | writes; moves an existing non-git `probes/` to `probes.before-clone` | exercised only as a string in `test_forgectl.py:631` |
-| `forgectl-test.sh` | configure, build `unit_tests`, relink with llvm-17 runtime, run GTests, run pytest | `--src --build --python [--gpu] [--jobs N]` | prints `STEP`, `UNIT_*`, `PYTEST_*`, `FATAL` lines; logs `<build>.{configure,build,link,unit,pytest}.log` | writes only the build tree | `test_forgectl.py:887` |
-| `forge_classes.py` | one training server per class, `ANIMUS_FORGE_PARALLEL` at a time, via generated compose files `env/instances/<class>.yml` | `run CLASS...`, `status`; env `ANIMUS_FORGE_INSTANCE` for `attach\|stop\|logs`, `ANIMUS_FORGE_CLASS_QUEUE` | docker compose, `var/animus-forge/<class>` | starts containers | none |
-| `rename_runs.py` | rename run directories from first-curriculum names to the renumbered ones | `<animus-forge dir> [--apply]` | moves directories (dry run by default) | writes with `--apply` | none |
-| `spec_builds/{builds,generate,validate}.py` | author the talent-build data; validate against DBC; generate `SpecBuilds.cpp` | `validate.py <dbc dir>`; `generate.py` | see Observed issues | `generate.py` writes a C++ file | none (`test_spec_builds.py` reads the generated `.cpp` only) |
-| `patches/amdl8-check/*` | compare the in-game model reader (`mod-animus` `MlpPolicy`) to the learner's golden vectors; time a decision | `prep.py <dir>`, `run.py <dir> [Model dir]`, `bench.py <dir>` | needs `modules/mod-animus` and `var/syntax-build-animus/compile_commands.json` | writes in `<dir>` | none |
+| Tool | Purpose | Arguments | Inputs / outputs | Safety |
+|---|---|---|---|---|
+| `conf_prune.py` | list/comment-out `AnimusForge.*` keys the build no longer reads; list/restore backups; which keys a rev range removed | `--removed OLD NEW`; `--check CONF`; `--prune CONF`; `--ssh user@host:PATH`; `--list-backups`; `--restore STAMP`; `--dist FILE`, `--dist-rev REV`, `--old REV`, `--no-stage-check`, `--repo` (`conf_prune.py:282-295`) | reads `worldserver.conf.dist` (checkout or `git show REV:path`), the C++ for key families, the conf; `--prune` writes `<conf>.bak-<stamp>` then the conf with unknown lines turned into `#pruned <stamp> (<why>): <line>` (never deleted); `--restore` keeps the current file as `<conf>.pre-restore-<now>` | `--check`, `--removed`, `--list-backups` read; `--prune`/`--restore` write the conf (local or over ssh, BatchMode) |
+| `resume_check.py` | dry-run `forge resume` or a fresh start of a stage on CPU, no sim | `RUN_DIR`, `--stage-json`, `--config`, `--spec`, `--checkpoint`, `--set`, `--overlay`, `--fresh`, `--stage`, `--all`, `--stage-json-dir`, `--state-dim`, `--goal-count` (`resume_check.py:458-470`) | reads checkpoint, stage.json, yaml; prints PASS/FAIL per check; exit 0/1/2; `STATE_DIM` and `GOAL_COUNT` constants stand in for values stage.json lacks (UNVERIFIED: whether the constants match the live sim) | reads only (docstring: never writes into RUN_DIR); needs torch |
+| `run_snapshot.py` | a run's readings (last evaluation headline, medians of `approx_kl`, `env_steps_per_sec`, `update_seconds`, `entropy`, rung) and a before/after comparison | `RUN_DIR [--config] [--last N] [--json OUT]`; `--compare BEFORE AFTER` (`run_snapshot.py:157-161`) | reads `metrics.csv`, `eval.jsonl`, yaml; `--json` writes OUT | reads, plus OUT |
+| `sim_metrics.py` | the metric names each stage's sim reports, parsed from the C++ (`Stages.cpp`, `StageScenario.cpp`, `StandInSeat.cpp`, `Encounters/*.cpp`, `CombatReward.cpp`); `--check` compares with real `stage.json` `episode_info` | `--stage NAME`; `--check STAGE_JSON...` (`sim_metrics.py:547-548`) | stdout | reads |
+| `stage_json_diff.py` | what changed between two `stage.json`: header, layouts, shapes, actions, blocks, obs names, sets, episode info, categories, reward terms, tuning, arenas | `old.json new.json [--allow-removed-terms] [--allow-removed-keys] [--allow-removed-columns]` | stdout; exit 0 identical/allowed, 1 other, 2 bad input | reads |
+| `gen_config_reference.py` | regenerate the key table in [config-keys.md](config-keys.md) | `--check`, `--stdout` | reads conf.dist and sources; writes only between its two marker lines | writes one docs file |
+| `collect-videos.sh` | copy workers' `runs/<stage>/videos` PNGs, JSON and HTML by `ssh ... find ... \| tar` into `runs/<stage>/videos/from-<worker>/` | `[--dry-run \| --check] [--workers "u@h ..."] [--remote-dir D] [--runs-dir D] <stage>` | default workers list includes sarah (the host) and omits eli (`collect-videos.sh:23`) | `--dry-run` prints; `--check` read-only ssh; default writes the local run folder |
+| `cluster-pull.sh` | on one machine: `git pull --ff-only <origin user@host>:git/animus-forge.git forge`; clone or pull `apps/forge/probes` from `animus-probes.git` (`main`); touch `env/dist/.forge-build`; `docker compose up -d --force-recreate ac-worldserver` | `[user@host]` | modifies the checkout, probe data and containers of the machine it runs on | writes; moves an existing non-git `probes/` to `probes.before-clone` |
+| `forge_classes.py` | one training server per class, `ANIMUS_FORGE_PARALLEL` at a time, via generated compose files `env/instances/<class>.yml` | `run CLASS...`, `status`; env `ANIMUS_FORGE_INSTANCE` for `attach\|stop\|logs`, `ANIMUS_FORGE_CLASS_QUEUE` | docker compose, `var/animus-forge/<class>` | starts containers |
+| `rename_runs.py` | rename run directories from first-curriculum names to the renumbered ones | `<animus-forge dir> [--apply]` | moves directories (dry run by default) | writes with `--apply` |
+| `spec_builds/{builds,generate,validate}.py` | author the talent-build data; validate against DBC; generate `SpecBuilds.cpp` | `validate.py <dbc dir>`; `generate.py` | see Observed issues | `generate.py` writes a C++ file |
+| `patches/amdl8-check/*` | compare the in-game model reader (`mod-animus` `MlpPolicy`) to the learner's golden vectors; time a decision | `prep.py <dir>`, `run.py <dir> [Model dir]`, `bench.py <dir>` | needs `modules/mod-animus` and `var/syntax-build-animus/compile_commands.json` | writes in `<dir>` |
 
 ## forgectl code map
 
 Usage and behaviour are in [../forgectl.md](../forgectl.md); this is where each piece lives.
 
 - `__main__.py`: `parser()` defines `cluster [--all] [move-host]`, `status`, `stage {status,start,resume,pause,cancel}`,
-  `logs`, `build`, `conf-sync`, `test`, `videos`. `changes_state` (`__main__.py:125-138`) decides which invocations are
+  `logs`, `build`, `conf-sync`, `videos` (`forgectl test` and `testcmd.py` were removed with the test suites, see
+  [tests.md](tests.md)). `changes_state` (`__main__.py:125-138`) decides which invocations are
   audited
   (everything except read-only forms); `planned_machines` names the machines on the intent line; `main` writes the
   intent before running and the result in `finally`, and maps `ConfigError/Failure/AuditError` to exit 1, Ctrl-C to 130.
@@ -247,9 +242,7 @@ Usage and behaviour are in [../forgectl.md](../forgectl.md); this is where each 
 - `logs.py`: one remote script collects `docker logs`, `Errors.log`, the learner log; `problems` filters with the
   `PROBLEM`
   and `NOISE` regexes.
-- `videos.py`, `testcmd.py`: argv builders for the two shell scripts; `testcmd.parse_output` turns the script's
-  `UNIT_*`/`PYTEST_*` lines into the summary; `container_path` finds the checkout's path inside `claude-syntax` from its
-  mounts (`docker inspect`).
+- `videos.py`: argv builder for `collect-videos.sh`.
 - `audit.py`: `begin/intent/touch/note/confirmed/finish`; the intent line must be written or the command is refused.
 
 Config keys forgectl itself reads: none of the `AnimusForge.*` keys except `Cluster.Role` and `Cluster.Host`, which
@@ -264,8 +257,7 @@ Config keys forgectl itself reads: none of the `AnimusForge.*` keys except `Clus
   or the tool needs a path fix.
 - `forge_classes.py` and `rename_runs.py` refer to the archived first curriculum (`stage1_move` ... `stage29_*`); the
   docstring of `forge_classes.py` cites `docs/manual/07-operations.md`; there is no `docs/manual` (only `docs/forge`).
-  They have no tests and
-  are candidates for deletion (principle 17: dead code is deleted).
+  They are candidates for deletion (principle 17: dead code is deleted).
 - `collect-videos.sh:23` lists sarah in its default workers although sarah is the host; with `forgectl videos` run on
   the host this copies the host's own videos onto themselves (`from-sarah/`). UNVERIFIED whether that is wanted.
 - `cluster.toml` repeats ports (7700-7702) that also live in each machine's conf; they are not read from the conf, so a
@@ -275,11 +267,6 @@ Config keys forgectl itself reads: none of the `AnimusForge.*` keys except `Clus
 - `docker-compose.yml:125` says "Every start retrains the queue from scratch" next to `restart: "no"`; stale, since the
   sim starts idle and trains nothing until `forge start` (conf.dist `AnimusForge.Queue` text).
 - `.gitignore` ignores `*.patch`; tracked patches survive only because they were force-added.
-- `forgectl-test.sh` relies on `/usr/lib/llvm-17` existing in the container and on `link.txt` containing
-  `/usr/bin/clang++` verbatim (`forgectl-test.sh:57-58`); a different compiler path silently skips the substitution.
-- The pytest run in `forgectl-test.sh:74` uses the pyproject `addopts = -m 'not slow'`, so `forgectl test` never runs
-  the
-  `slow` tests ([tests.md](tests.md)).
 - `deploy.py` `deploy_one` assumes each machine's `origin` remote is the dev machine (`cluster-pull.sh:24`); a worker
   whose `origin` points to GitHub would pull from there (UNVERIFIED: the workers' remotes were not read).
 
