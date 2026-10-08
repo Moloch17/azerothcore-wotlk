@@ -35,12 +35,56 @@ namespace Animus::Vision
 {
     /// A terrain grid as the camera needs it: whether it is loaded (a ray leaving the loaded grids is sky), whether
     /// it has heights and its highest point (the map file's height header), and whether it has any liquid.
+    ///
+    /// **Culling ranges** (baked scenes, format 3): a world that has them fills `Ranged` and the rest, and the terrain
+    /// cast then skips what cannot be hit; a world without them leaves `Ranged` false and is cast cell by cell. The
+    /// ranges only ever skip cells no ray could hit, so a cast gives the same hits either way. MinHeight and GroundMax
+    /// bound the ground's heights; GroundBlocks (null for a flat tile) and LiquidBlocks (null for a tile with no
+    /// liquid) hold, for each of the tile's 16 x 16 blocks of 8 x 8 cells (index bx * 16 + by), a lowest and a highest
+    /// height or liquid level, interleaved: [index * 2] and [index * 2 + 1]. LiquidMin / LiquidMax bound the liquid.
+    /// The contract the cast relies on: a Ranged tile with Liquid has LiquidBlocks, LiquidSupers, Level and Kind; one
+    /// with Heights has MinHeight and GroundMax, and, unless Flat, GroundBlocks, GroundSupers, V9 and V8.
     struct TerrainTile
     {
         bool Loaded = false;
         bool Heights = false;
         float MaxHeight = 0.0f;
         bool Liquid = false;
+        bool Ranged = false;
+        float MinHeight = 0.0f;
+        float GroundMax = 0.0f;
+        float LiquidMin = 0.0f;
+        float LiquidMax = 0.0f;
+        float const* GroundBlocks = nullptr;
+        float const* LiquidBlocks = nullptr;
+        /// The same over 4 x 4 blocks (32 x 32 cells), 4 x 4 of them to a grid, index sx * 4 + sy; derived from the
+        /// blocks (null where the blocks are).
+        float const* GroundSupers = nullptr;
+        float const* LiquidSupers = nullptr;
+        /// The tile's cell data, for CellFromTile (a ranged tile's cells are read straight from it, with no call
+        /// into the world): V9 (129 x 129, index x * 129 + y) and V8 (128 x 128) heights of a non-flat tile, the
+        /// hole words (null: none), the liquid level and kind per cell (128 x 128 each; null: no liquid).
+        bool Flat = false;
+        float FlatHeight = 0.0f;
+        float const* V9 = nullptr;
+        float const* V8 = nullptr;
+        uint16_t const* Holes = nullptr;
+        float const* Level = nullptr;
+        uint8_t const* Kind = nullptr;
+    };
+
+    /// The lowest and highest ground height and liquid level over the whole terrain a world has (a baked scene's
+    /// header), for a ray to be clipped to the heights where the terrain is before it walks a single grid. `Known`
+    /// false: no such bound (the cast then walks the whole path).
+    struct TerrainExtent
+    {
+        bool Known = false;
+        bool HasGround = false;
+        bool HasLiquid = false;
+        float GroundMin = 0.0f;
+        float GroundMax = 0.0f;
+        float LiquidMin = 0.0f;
+        float LiquidMax = 0.0f;
     };
 
     /// One terrain cell (GRID_SIZE / 128 yards a side): its heights at the corners (u, v), (u + 1, v), (u, v + 1),
@@ -55,6 +99,61 @@ namespace Animus::Vision
         float Level = 0.0f;
         bool Deadly = false;
     };
+
+    /// A cell of a ranged tile (see TerrainTile), as GridTerrainData reads it: the four corners and the centre (a hole
+    /// is not Solid), its liquid level when `liquid` is asked for and it has one. The one place this decoding lives:
+    /// BakedWorld::Cell and the terrain cast both call it.
+    [[nodiscard]] inline TerrainCell CellFromTile(TerrainTile const& tile, int32_t cellX, int32_t cellY, bool liquid)
+    {
+        TerrainCell cell;
+        if (cellX < 0 || cellY < 0 || cellX >= GRID_CELLS || cellY >= GRID_CELLS)
+            return cell;
+        if (tile.Heights)
+        {
+            if (tile.Flat)
+            {
+                cell.Solid = true;
+                for (float& corner : cell.Corner)
+                    corner = tile.FlatHeight;
+                cell.Centre = tile.FlatHeight;
+            }
+            else
+            {
+                bool hole = false;
+                if (tile.Holes)
+                {
+                    // GridTerrainData::isHole: 16 x 16 words, each four bits a side of two-by-two cells.
+                    constexpr uint16_t horizontal[4] = { 0x1111, 0x2222, 0x4444, 0x8888 };
+                    constexpr uint16_t vertical[4] = { 0x000F, 0x00F0, 0x0F00, 0xF000 };
+                    int32_t const cellRow = cellX / 8;
+                    int32_t const cellCol = cellY / 8;
+                    hole = (tile.Holes[cellRow * 16 + cellCol] & horizontal[(cellY - cellCol * 8) / 2]
+                        & vertical[cellX % 8 / 2]) != 0;
+                }
+                if (!hole)
+                {
+                    std::size_t const base = std::size_t(cellX) * (GRID_CELLS + 1) + std::size_t(cellY);
+                    cell.Solid = true;
+                    cell.Corner[0] = tile.V9[base];
+                    cell.Corner[1] = tile.V9[base + GRID_CELLS + 1];
+                    cell.Corner[2] = tile.V9[base + 1];
+                    cell.Corner[3] = tile.V9[base + GRID_CELLS + 2];
+                    cell.Centre = tile.V8[std::size_t(cellX) * GRID_CELLS + std::size_t(cellY)];
+                }
+            }
+        }
+        if (liquid && tile.Level)
+        {
+            std::size_t const index = std::size_t(cellX) * GRID_CELLS + std::size_t(cellY);
+            if (tile.Kind[index] != 0)
+            {
+                cell.Level = tile.Level[index];
+                cell.Liquid = true;
+                cell.Deadly = tile.Kind[index] == 3;
+            }
+        }
+        return cell;
+    }
 
     /// A collision tree's first solid along a segment: how far along it (< 0 for none) and the hit triangle's normal
     /// z, turned to face the segment's start -- 1 a floor seen from above, 0 a wall, below 0 a ceiling from under it.
@@ -91,6 +190,14 @@ namespace Animus::Vision
         [[nodiscard]] virtual bool DynamicAnyHit(Vec3 from, Vec3 to) const = 0;
         /// Terrain grid (tileX, tileY), as GridCoord numbers them (u / 128, v / 128).
         [[nodiscard]] virtual TerrainTile Tile(int32_t tileX, int32_t tileY) const = 0;
+        /// The heights of all the terrain (see TerrainExtent); unknown unless a world overrides it.
+        [[nodiscard]] virtual TerrainExtent const& Extent() const
+        {
+            static TerrainExtent const unknown;
+            return unknown;
+        }
+        /// Whether grid (tileX, tileY) is loaded (Tile(...).Loaded, which a world may answer more cheaply).
+        [[nodiscard]] virtual bool GridLoaded(int32_t tileX, int32_t tileY) const { return Tile(tileX, tileY).Loaded; }
         /// Cell (cellX, cellY), 0 to 127, of that grid; its liquid only when `liquid` is asked for.
         [[nodiscard]] virtual TerrainCell Cell(int32_t tileX, int32_t tileY, int32_t cellX, int32_t cellY,
             bool liquid) const = 0;
@@ -180,6 +287,8 @@ namespace Animus::Vision
         uint32_t LiquidCasts = 0;
         uint32_t TerrainTiles = 0;  // grids a ray's terrain cast entered
         uint32_t TerrainCells = 0;  // cells whose triangles or liquid it tested
+        uint32_t TerrainSupers = 0; // super-blocks / blocks of a ranged grid it looked at
+        uint32_t TerrainBlocks = 0;
         uint32_t HazardTests = 0;   // hazard discs tested against a floor hit
     };
 

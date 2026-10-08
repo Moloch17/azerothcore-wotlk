@@ -34,7 +34,7 @@ namespace
             "  %1$s ensure <data dir> <scene dir> <map id>...\n"
             "                                              what the worldserver does at startup: load each scene if it\n"
             "                                              is whole and current, else bake it (and say why)\n"
-            "  %1$s info <scene file>                      print a scene's header\n"
+            "  %1$s info <scene file> [data dir]          print a scene's header (and its files digest)\n"
             "  %1$s bench <scene> <poses.txt> <out dir> [reps]\n"
             "                                              render each pose (name x y z yawDeg pitchDeg zoom a line)\n"
             "                                              with Vision::Render, time it, write the images\n"
@@ -89,7 +89,8 @@ int main(int argc, char** argv)
                 ++failed;
                 continue;
             }
-            std::string const how = result.Baked ? "baked (" + result.Reason + ")" : "loaded";
+            std::string const how = result.Baked ? "baked (" + result.Reason + ")"
+                : "loaded, current by " + result.Check + " in " + std::to_string(result.IdentitySeconds * 1e3) + " ms";
             std::printf("map %u %s: %u triangles, %u nodes, %u terrain tiles, %llu bytes, checksum %016llx, "
                 "%.3f s\n", mapId, how.c_str(), result.Triangles, result.Nodes, result.TerrainTiles,
                 (unsigned long long)result.Bytes, (unsigned long long)result.Checksum, result.Seconds);
@@ -112,6 +113,20 @@ int main(int argc, char** argv)
             (unsigned long long)h.SourceHash, h.SolidMin[0],
             h.SolidMin[1], h.SolidMin[2], h.SolidMax[0], h.SolidMax[1], h.SolidMax[2], h.TriCount, h.NodeCount,
             h.LiquidTriCount, h.LiquidNodeCount, h.SourceSpawnCount, h.SourceM2Count, h.TerrainTileCount);
+        std::printf("  terrain heights %.3f .. %.3f, liquid levels %.3f .. %.3f; %zu bytes of source model names; "
+            "files digest %016llx", h.TerrainHeightMin, h.TerrainHeightMax, h.TerrainLiquidMin, h.TerrainLiquidMax,
+            world.SourceModels().size(), (unsigned long long)h.SourceFilesDigest);
+        if (argc >= 4)
+        {
+            uint64_t digest = 0;
+            std::string digestError;
+            bool const ok = SceneBaker::SourceDigest(argv[3], h.MapId, world.SourceModels(), digest, digestError);
+            if (ok)
+                std::printf(" (now %016llx)", (unsigned long long)digest);
+            else
+                std::printf(" (now unreadable: %s)", digestError.c_str());
+        }
+        std::printf("\n");
         return 0;
     }
 

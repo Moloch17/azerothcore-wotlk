@@ -31,7 +31,7 @@ namespace SceneBaker
 {
     /// Bump when the baker's output for the same source could differ (a fix, a new field): every scene baked by an
     /// older baker is then invalid and is baked again.
-    constexpr uint32_t BAKER_VERSION = 1;
+    constexpr uint32_t BAKER_VERSION = 2;
 
     /// What a bake did, for the log.
     struct BakeReport
@@ -66,6 +66,19 @@ namespace SceneBaker
     /// map has no vmap tree or a file cannot be read.
     [[nodiscard]] bool SourceIdentity(std::string const& dataDir, uint32_t mapId, uint64_t& hash,
         std::string& error);
+
+    /// **The cheap pre-check of the identity** (scene format 3): FNV-1a 64 over the name, size and modification time
+    /// (nanoseconds) of every source file the identity covers -- LiquidType.dbc, the map's .vmtree and .vmtile files,
+    /// the model files named in `modelNames` (the scene SLOT_SOURCE_MODELS: file names, each NUL-ended) and every .map
+    /// tile -- without reading any of them. False, with `error`, when one cannot be stat'ed. Machine-specific (file
+    /// times), so a scene keeps it outside its checksum. The rule at startup (SceneRegistry::Ensure): a scene whose stored digest equals
+    /// this one is current; otherwise the content hash (SourceIdentity) decides, and when it equals the scene's the
+    /// digest is refreshed (RefreshDigest). The content hash alone is authoritative for correctness.
+    [[nodiscard]] bool SourceDigest(std::string const& dataDir, uint32_t mapId, std::string const& modelNames,
+        uint64_t& digest, std::string& error);
+
+    /// Rewrites the digest field of the scene file `scenePath` in place (eight bytes; the checksum does not cover it).
+    [[nodiscard]] bool RefreshDigest(std::string const& scenePath, uint64_t digest, std::string& error);
 
     /// Bakes map `mapId` from `dataDir` (the server's DataDir: vmaps/, maps/, dbc/) to the scene file `outPath`,
     /// written to a temporary name beside it and renamed into place, so a reader never sees half a file and two
