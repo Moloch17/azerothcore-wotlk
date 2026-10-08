@@ -33,6 +33,7 @@
 #include "GridNotifiersImpl.h"
 #include "Player.h"
 #include "UnitBody.h"
+#include <algorithm>
 
 Animus::Vision::SurfaceHit Animus::Vision::MapVisionWorld::StaticHit(Vec3 from, Vec3 to) const
 {

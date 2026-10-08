@@ -458,7 +458,6 @@ void Animus::Vision::MentalMap::WriteFrame(FrameHits const& hits, float feetZ, f
             ++stats->Hits;
         switch (ray.What)
         {
-            case Class::GroundHazard:       // a floor with a hazard painted on it (the list marks the hazard itself)
             case Class::Terrain:
             case Class::Model:
             {

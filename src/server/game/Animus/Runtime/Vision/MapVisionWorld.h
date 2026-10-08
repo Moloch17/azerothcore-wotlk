@@ -34,10 +34,11 @@ class Unit;
 class WorldObject;
 
 /// The camera's VisionWorld over a live map: the static and dynamic collision trees cast apart (and tested for any
-/// hit, for the entity sensor's shadow rays), the static tree's WMO liquids, the loaded grids' terrain cells and liquids as GridTerrainData holds them (never creating a grid: a grid
-/// not created is where a ray leaves the world it can see), and floors through an uncounted MapWorldQuery (the
-/// controller's cost line keeps only the controller's rays). A tree hit's slope is its triangle's own. Read from the map's own update, as
-/// the rest of a seat's observation is.
+/// hit, for the entity sensor's shadow rays), the static tree's WMO liquids, the loaded grids' terrain cells and
+/// liquids as GridTerrainData holds them (never creating a grid: a grid not created is where a ray leaves the world
+/// it can see), and floors through an uncounted MapWorldQuery (the controller's cost line keeps only the controller's
+/// rays). A tree hit's slope is its triangle's own. Read from the map's own update, as the rest of a seat's
+/// observation is.
 namespace Animus::Vision
 {
     class MapVisionWorld final : public VisionWorld

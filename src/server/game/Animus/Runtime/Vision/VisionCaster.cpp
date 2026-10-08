@@ -589,10 +589,10 @@ uint32_t Animus::Vision::Render(Settings const& settings, Rig const& rig, Pose c
         {
             Vec3 const dir = PixelDirection(rig, cast, row, col);
             Hit hit = CastStatic(rig.Camera, dir, world, breakdown);
-            // The map reads the static world under a hazard; the pixel reads the hazard painted on it.
+            PaintHazards(hit, rig.Camera, dir, sight, breakdown);
+            // The map reads what the pixel does, a hazard painted on the floor included: its class marks the area.
             if (hits)
                 hits->Rays.push_back({ dir, hit.Distance, hit.Z, hit.NormalZ, hit.What });
-            PaintHazards(hit, rig.Camera, dir, sight, breakdown);
             // From the camera to the hit, or to where the ray left the loaded grids on sky (R12).
             bool const flag = ObjectiveFlag(rig.Camera, dir, hit.Distance, objective, objectiveRadius) > 0.5f;
             EncodePixel(hit, pose.Z, flag, target + (std::size_t(row) * cast.Width + col) * BYTES_PER_PIXEL);

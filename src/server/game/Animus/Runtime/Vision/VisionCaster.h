@@ -238,9 +238,9 @@ namespace Animus::Vision
     /// pixel's and the boom's).
     ///
     /// **The frame's rays for the mental map** (perception-goals REDESIGN §3, amendment 2): `hits`, when given, takes
-    /// every cast pixel's ray -- its direction, its hit's distance, height and normal z, and its class (the static
-    /// world's, before a hazard is painted on it) -- at the size the frame was cast at, not the canonical image's
-    /// upscaled copies.
+    /// every cast pixel's ray -- its direction, its hit's distance, height and normal z, and its class (a hazard
+    /// painted on the floor included, as the pixel has it) -- at the size the frame was cast at, not the canonical
+    /// image's upscaled copies.
     uint32_t Render(Settings const& settings, Rig const& rig, Pose const& pose, CameraState const& camera,
         VisionWorld const& world, Sight const& sight, Vec3 const* objective, uint8_t* image, float* scalars,
         Breakdown* breakdown = nullptr, float objectiveRadius = OBJECTIVE_RADIUS, FrameHits* hits = nullptr);

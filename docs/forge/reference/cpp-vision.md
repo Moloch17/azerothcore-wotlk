@@ -143,8 +143,8 @@ the frame's hazard discs (`sight`). In order:
    normal is flipped to point up); a liquid plane is tested only when the ray descends and counts only if the ground at the crossing is not above the level. Liquid is read at the
    cell centre but treated as a plane over the whole cell.
 8. `PaintHazards` (decision D5): a hit on terrain or a model with `NormalZ >= FLOOR_NORMAL (0.7)` inside a `HazardDisc` (`dx^2 + dy^2 <= r^2`, `|hit.z - disc.Z| <= HAZARD_REACH 0.5`)
-   reads `Class::GroundHazard`. A flat decal: it hides nothing behind it (the ray ended where it did). `FrameHits` keeps the class under the paint, so the map still writes the
-   floor; the sensor's list marks the hazard itself. Cost: floor pixels x hazards (usually 0 to 3).
+   reads `Class::GroundHazard`. A flat decal: it hides nothing behind it (the ray ended where it did). `FrameHits` carries the painted class, as the pixel has it, so the map
+   marks the hazard's area as an entity class (as the old disc cylinder did; the floor under it is not written from those rays). Cost: floor pixels x hazards (usually 0 to 3).
 9. `ObjectiveFlag`: 1 when the segment from the camera to the hit (or to the reach for sky) passes within `radius` of the objective (default 1 yd; an object seen by the seek
     stage uses `ObjectiveRadiusFor(bound) = min(bound + 0.25, 1)`).
 10. `EncodePixel` (4 bytes); `Upscale` if scaled. `hits`, when asked for, receives each cast pixel's `{Dir, Distance, Z, NormalZ, What}` at the cast size (not upscaled).
