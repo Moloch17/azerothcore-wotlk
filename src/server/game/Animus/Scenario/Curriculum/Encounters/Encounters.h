@@ -284,6 +284,8 @@ namespace Animus::Curriculum
         [[nodiscard]] static bool Usable(GameObject const* object);
         /// The items the locks of a map's game objects take (LOCK_KEY_ITEM): each seat carries them from the door.
         [[nodiscard]] static std::vector<uint32> const& KeyItems(uint32 mapId);
+        /// The dungeon's enemies and what the party can use, once per decision (UpdateEnemies calls it).
+        void UpdateWingEnemies(Env& env, EnvInstance& fight);
         /// The dead rise at the entrance after Respawn.DelayMs and walk back (I4); the rejoins counted.
         void RiseDead(Env& env, EnvInstance& fight);
         /// A sight stage's goal places in a dungeon (SeenPlaces): what `seat` saw and remembers, its map's frontier,
