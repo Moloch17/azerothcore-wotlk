@@ -276,10 +276,9 @@ class _Decided:
     """An actor decision whose results are still on their way to the host: finish() hands them out and updates the
     acting state from them."""
 
-    def __init__(self, trainer, state, layout, envs, agents):
+    def __init__(self, trainer, state, layout):
         self.trainer, self.state, self.layout = trainer, state, layout
         self.goal_t = None
-        self.goal_chosen = None
         self.goal_chosen_at = None
         self.slow_before_at = self.slow_after_at = self.slow_value_at = None
         self.goal_at = self.goal_log_prob_at = self.foresight_at = self.memory_at = None
@@ -788,8 +787,8 @@ class MappoTrainer:
             if actor is not None and actor.goal_head is not None:
                 actor.goal_head.set_space(goals["accepts"], block_at)
 
-    def director_columns_clear(self) -> bool:
-        """Whether no layout's adapter reads its camera's columns (the name is the one resume_check.py calls)."""
+    def camera_columns_clear(self) -> bool:
+        """Whether no layout's adapter reads its camera's columns (the resume guard: resume_check.py calls it too)."""
         for network in (self.actor, self.critic):
             for index in range(len(network.adapters)):
                 for tag in ("vision",):
@@ -855,9 +854,6 @@ class MappoTrainer:
         if state is None:
             return "this call has no acting state"
         return None
-
-    def _graphs_apply(self, state: "ActingState | None") -> bool:
-        return self._graphs_off_reason(state) is None
 
     def _rollout_graph(self, obs, mask, layout, state_features, deterministic: bool,
                        state: "ActingState | None") -> "_RolloutGraph | None":
@@ -994,7 +990,7 @@ class MappoTrainer:
         features = self._rollout_actor.features(
             obs_t, layout_t, self._memory_tensor(memory, rows) if self.recurrent_size else None, groups, image_t)
 
-        decided = _Decided(self, state, layout, envs, agents)
+        decided = _Decided(self, state, layout)
         if self.goal_count and state is not None:
             # A goal is chosen on its own clock and kept in between; a cleared state (a new episode) chooses at once.
             clock = self._tensor((state.age % max(1, self.config.goal_every_decisions)) == 0).reshape(rows).bool()

@@ -89,7 +89,7 @@ class LayoutState:
         """The signals this class has not satisfied over the window (empty = converged)."""
         c = config.convergence
         out = []
-        if len(self.scores) < evals_needed or not self.tracker.converged(0, 0):
+        if len(self.scores) < evals_needed or not self.tracker.converged():
             out.append("score")
         window = self.kl[-evals_needed:]
         if len(window) < evals_needed or any(value > c.kl for value in window):
@@ -150,7 +150,7 @@ class ShapingFade:
         self.gate_value = float(getattr(fade, "gate_value", 0.0))
         self.require_plateau = bool(getattr(fade, "require_plateau", True)) or not self.gate_metric
         self.gate_seen: float | None = None
-        self.rungs = tuple(float(scale) for scale in fade.rungs) or (1.0,)
+        self.rungs = tuple(float(scale) for scale in fade.rungs)
         self.window = max(1, int(fade.window))
         self.regress_z = float(fade.regress_z)
         self.give_up = max(1, int(fade.give_up))
@@ -268,7 +268,7 @@ class ShapingFade:
 
     def _plateaued(self, env_steps: int, waited: int) -> bool:
         """The rung has been played long enough and the score has plateaued on it."""
-        return waited >= self.window and self.tracker.converged(env_steps, 0)
+        return waited >= self.window and self.tracker.converged()
 
     def _earned(self, env_steps: int, waited: int) -> bool:
         """Plateaued, and the stage's own measure there (the gate) when the ladder has one; or, with require_plateau off,
@@ -458,9 +458,7 @@ def restore_evaluation_state(tracker: ConvergenceTracker, controller: "Convergen
 
 
 class ConvergenceController:
-    def __init__(self, config: TrainConfig, layout_names: list[str] | tuple[str, ...] = (),
-                 sim_fallback_ceiling: float = 0.0):
-        """`sim_fallback_ceiling` is ignored: tools/resume_check.py still passes it (the fallback signal is gone)."""
+    def __init__(self, config: TrainConfig, layout_names: list[str] | tuple[str, ...] = ()):
         self.config = config
         c = config.convergence
         self.evaluating = config.eval.every_env_steps > 0
@@ -569,7 +567,7 @@ class ConvergenceController:
         # A gate-stepped fade (difficulty rungs) is climbing until its last rung: no plateau, and no class converged, on
         # an intermediate one (its score falls at each step by design; a class held out of the draw cannot meet the gate).
         anneal_ready = costs_ready and (self.fade.require_plateau or self.fade.settled)
-        if self.plateau_env_steps is None and anneal_ready and self.tracker.converged(env_steps, 0):
+        if self.plateau_env_steps is None and anneal_ready and self.tracker.converged():
             self.plateau_env_steps = env_steps
         # Read before this evaluation's rungs join the classes' lists below: the ladder as it stood over the window.
         anneal_starting = self.plateau_env_steps == env_steps

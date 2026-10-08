@@ -77,8 +77,7 @@ ladders are settled, or at `total_env_steps`; then `latest.pt` and `finished.jso
 1. `convergence.patience = 0` does not by itself force a full budget (the stage-ending rule never reads the overall
    tracker); the sim's comments say it does. UNVERIFIED by test.
 2. Distillation (`distill.py`) refuses camera teachers, export (`export.py`) refuses camera checkpoints, and every live
-   stage has a camera: both are unusable in the live curriculum. `Distiller.__call__`, `.kl`, `.begin_sequence` are
-dead.
+   stage has a camera: both are unusable in the live curriculum. (`Distiller.__call__`, `.kl`, `.begin_sequence` were dead and are deleted.)
 3. The cost ladder can never be gate-stepped, so it has no re-baselining, rung archives or alarms.
 4. `init_from_checkpoint` replaces an explicit `best.pt` by `latest.pt` by default (tested, intentional), while two
    config comments say otherwise.

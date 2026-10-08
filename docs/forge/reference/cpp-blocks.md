@@ -168,7 +168,7 @@ What the C++ side promises; the implementation is `apps/forge/python/animus/boot
 4. Width differs, same revision: the core block is re-matched action by action by name (`_core_by_name`, uses
    `CORE_GLOBAL_FEATURES = 91`, `CORE_ACTION_FEATURES = 8`, rank-tier actions recognised by the `rank_` prefix); a block
    with a seat set whose only change is slot count is re-matched by slot (`_slots_grown`; the only set the C++ writes is
-   the pack's "enemies", `Blocks.cpp:69`); `GROWS_AT_END = {"crowd"}` is a dead entry (no crowd block exists). Anything
+   the pack's "enemies", `Blocks.cpp:69`); the dead `GROWS_AT_END = {"crowd"}` entry was deleted. Anything
    else starts fresh (the rest of the layout still seeds).
 5. Actions carry by name only where the block is re-matched by name. Appending actions at the END of a block is safe
    only through paths 4; otherwise the width change restarts the block.
@@ -562,7 +562,6 @@ ender targets that nothing populates.
 - `Layout/Block.h` comments reference deleted blocks (PartyBlock, CompanionBlock, CrowdBlock, HostilesBlock,
   SupportBlock) and `SeatView.h` references WorldBlock.
 - Goal block order columns (45-86) are dead.
-- `bootstrap.GROWS_AT_END = {"crowd"}` refers to a deleted block.
 - `MovePrice::BearingSwing`/`Undone` only used by tests.
 - Duel `OBS_BOT_MOVING` and gauntlet `movespline->Finalized()` read spline state that controller-moved seats never set.
 - Core mask hides heal-on-full-health and refresh-with-plenty-left spells, and `SeatMemory` pacing masks repeats

@@ -69,7 +69,7 @@ Call chain (`train.py:502-531`, also used by `tools/resume_check.py` and `tests/
      of (trained tensor, rollout tensor) pairs for in-place sync (`_pair_tensors`, `trainer.py:703`).
 5. `train.py:731` then calls `set_goal_space(stage, names)` (`trainer.py:806`), which writes the goal `accepts` table
    and each layout's goal-block start column into the actor's `GoalHead` buffers (and the rollout copy's).
-6. After seed or resume `train.py:735-738` checks `director_columns_clear()` (resume) or calls `clear_blind_columns()`
+6. After seed or resume `train.py:735-738` checks `camera_columns_clear()` (resume) or calls `clear_blind_columns()`
    (fresh/seeded): the adapters' camera and set columns are zeroed again (see the networks document, "blind columns").
 
 What the `stage.json` has to contain for each network feature (`networks.py` readers):
@@ -267,11 +267,7 @@ block (`trainer.py:620`).
    intended is UNVERIFIED (nothing says so).
 3. `_update_recurrent`'s docstring says "The critic has the global state and stays feed-forward" (`trainer.py:1608`);
    the code replays the critic's GRU (`:1899-1903`). Comment and code disagree.
-4. `GoalHead.ended()` (`networks.py:583`) has no caller anywhere in `animus/`, `tests/` or `tools/`: dead code.
-5. `_graphs_apply` (`trainer.py:897`) is a one-line wrapper over `_graphs_off_reason` (`:883`) and is called only by
-   tests; production code calls `_graphs_off_reason` via `_rollout_graph` (`:905`). See the trainer document.
-6. `MappoTrainer.director_columns_clear` (`trainer.py:825`) is named after the removed director; it checks the camera
-   blind columns. The name is kept because `tools/resume_check.py:242` calls it.
+6. (`director_columns_clear` was renamed `camera_columns_clear`.)
 7. `update()` creates `_updates_since_sync` lazily with `getattr` (`trainer.py:1480`); it is not set in `__init__`.
 8. The long comment explaining the foresight heads (`trainer.py:90-94`) sits above `recurrent_size` (`:102`), not above
    `foresight_coef` (`:173`).

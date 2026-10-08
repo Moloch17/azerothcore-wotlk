@@ -110,20 +110,14 @@ action logits, the sample, the look, foresight and memory outputs.
 The commit message of `632754d80` states the trim touched rollout-graph code in three places, with "the captured body
 and the `_Packed` layouts untouched":
 
-- `_graphs_apply`: dropped the terms `self.slow_layout >= 0` and `self.director is not None`. **That three-term
-  expression is no longer in the code.** A later commit (`4e45ed18c`, "log once when a rollout graph is first
-  captured...") split the decision into `_graphs_off_reason` (`:883`, returns the reason string) and left
-  `_graphs_apply` (`:897`) as `return self._graphs_off_reason(state) is None`. Production code calls
-  `_graphs_off_reason` through `_rollout_graph` (`:905`); `_graphs_apply` is called only by tests
-  (`test_vision_encoder.py:468`, `test_sight.py:225`, `test_mental_map.py:235`).
+- `_graphs_apply` (a one-line wrapper over `_graphs_off_reason`, called only by tests) was deleted.
 - `_RolloutGraph.run` now returns the five-value tuple (`:585`) instead of six (the sixth, `chosen`, was the slow
   layout's).
 - `_Decided.finish` now returns four values (`:336`); `_decide` and `act` unpack four (`:960`), `act_and_value` unpacks
   four (`:1006`).
 
 Only GPU tests cover these (they skip on CPU), so the edit was verified on CPU only by the golden test, which uses the
-eager path (`test_golden_update.py` builds the trainer with `device="cpu"`). Residue of the trim still visible:
-`_Decided.__init__` takes `envs, agents` it does not use and sets `goal_chosen = None` (`:305`), never read.
+eager path (`test_golden_update.py` builds the trainer with `device="cpu"`). The residue of the trim (`_Decided`'s unused `envs`, `agents`, `goal_chosen`) was deleted.
 
 ## The update
 
@@ -237,10 +231,7 @@ what the failure looks like; torch raises on a group size mismatch).
 
 1. `slow_opt` neither saved nor learning-rate-scaled (see [py-mappo.md](py-mappo.md) issues 1-2).
 2. `_update_recurrent` docstring says the critic is feed-forward; it is recurrent (`:1608` vs `:1899`).
-3. `_graphs_apply` kept only for tests; two names for one decision.
-4. `director_columns_clear` name.
 5. `epochs_run` and `epochs_done` duplicate each other (`:1979-1982`).
-6. `_Decided` carries unused `goal_chosen`, `envs`, `agents`.
 7. `_updates_since_sync` set via `getattr` (`:1480`).
 8. `reset_optimizers` also resets `layout_stats` and `frozen_layouts` (`:750-751`): it is called only from `__init__`
    (checked by grep), so a stage restart never resets Adam state in the live code even though the docstring says "after

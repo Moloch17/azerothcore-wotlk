@@ -362,9 +362,6 @@ class Partners:
         self.partner_rows_total += int(rows.sum())
         return rows
 
-    def act(self, step, live_actions: np.ndarray, rows: np.ndarray) -> np.ndarray:
-        return self.act_and_look(step, live_actions, rows)[0]
-
     def act_and_look(self, step, live_actions: np.ndarray, rows: np.ndarray,
                      look: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray | None]:
         """The partner rows' actions over `live_actions` and their look over `look` (the live policy's [E, A, heads],

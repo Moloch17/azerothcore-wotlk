@@ -580,13 +580,6 @@ class GoalHead(nn.Module):
         allowed[:, 0] = True
         return masked_logits(joint.reshape(features.shape[0], -1), allowed)
 
-    def ended(self, obs: torch.Tensor, layout: torch.Tensor) -> torch.Tensor:
-        """Rows whose goal the sim says has just ended (GoalBlock::OBS_ENDED): they choose again now."""
-        if self.targets <= 1:
-            return torch.zeros(obs.reshape(-1, obs.shape[-1]).shape[0], dtype=torch.bool, device=obs.device)
-        block, has = self._block(obs.reshape(-1, obs.shape[-1]), layout.reshape(-1))
-        return block[:, self.kinds + self.targets] & has
-
 
 class _Factored(nn.Module):
     """A score per (kind, target) pair: the kind's plus the target's plus a table of the pair, as GoalHead's logits

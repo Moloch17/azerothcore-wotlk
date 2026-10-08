@@ -149,7 +149,7 @@ that multiplies the gradient by it, so those weight columns stay exactly zero th
 re-zeroes after a seed or load. The keep buffers are **saved** in checkpoints (they are persistent buffers; see the
 golden key list) but **dropped on load** (`without_blind_columns`, `:1936`; `load_actor_state` `:1943`;
 `MappoTrainer.load_state_dict` `trainer.py:2039`): the network's own masks, built from the current stage, win.
-Resume safety check: `MappoTrainer.director_columns_clear()` (`trainer.py:825`) fails the resume if any adapter weight
+Resume safety check: `MappoTrainer.camera_columns_clear()` (`trainer.py:825`) fails the resume if any adapter weight
 is non-zero at a blind column (`train.py:735`).
 Quirk: the gradient hook captures the network and looks the buffer up by name (`:816`); a deepcopy of the network (the
 rollout copy) carries its own copy of the hook closure's `network` argument default, which is the original network. The
@@ -299,8 +299,7 @@ Tests: `test_recurrent.py::test_critic_*`.
 
 ## Observed issues
 
-1. `GoalHead.ended` (`:583`) is dead.
-2. `LayoutActor.features` (`:2115`) takes no `vision_embedding` although `encode` does; callers that want the shared
+1. `LayoutActor.features` (`:2115`) takes no `vision_embedding` although `encode` does; callers that want the shared
    embedding (the update) call `encode` directly.
 3. `VisionEncoder.PATCH` is both a class constant and per-instance state (`:1570`, `:1582`).
 4. `GoalHead.slot_entropy_weight` is a public attribute defaulting to 0.1 that the trainer overwrites after construction

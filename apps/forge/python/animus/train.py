@@ -719,7 +719,7 @@ class TrainingRun:
         # A seed brings the parent's adapters whole: their camera columns are made blind. A resumed
         # run's must already be -- their gradient is masked -- and anything else is a checkpoint to stop on, not fix.
         if self.resume_path:
-            if not self.trainer.director_columns_clear():
+            if not self.trainer.camera_columns_clear():
                 raise SystemExit(f"{self.resume_path}: an adapter learned its blind columns; not resuming")
         else:
             self.trainer.clear_blind_columns()

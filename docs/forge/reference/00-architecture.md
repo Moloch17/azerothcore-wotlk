@@ -453,7 +453,6 @@ The plain bools `_decisionTick` and `_applyTick` are read by map tasks without a
 - `train.py:4` docstring uses `configs/stage4_duel.yaml`; `train.py` comment "stage4_duel sets 128"; `LearnerProcess.cpp`
   comment "stage8_duel's networks": v1 stage names.
 - `stage.py:1-30` docstring says a class has converged when "all four" hold and then lists five.
-- `stage.py:461-463`: constructor parameter `sim_fallback_ceiling` is ignored ("tools/resume_check.py still passes it").
 - `progress.py` docstring cites `src/Console/Progress.cpp`; the file is `src/server/game/Animus/Console/Progress.cpp`.
 - `LearnerProcess.cpp` `LearnerArgs`: `mappo.rank_sync` is only set when `DistWorld > 1` (a cluster); a purely local multi-rank
   run (`LearnerRanks > 1`, `DistWorld <= 1`) passes no `rank_sync` and the learner's yaml default applies. UNVERIFIED: that

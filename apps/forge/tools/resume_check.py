@@ -239,7 +239,7 @@ def check_resume(run_dir: Path, stage_json: Path, config_path: Path, checkpoint_
         trainer.load_state_dict(state)
         report.add("PASS", "MappoTrainer.load_state_dict (the call the resume makes, optimizers included)")
         trainer.set_goal_space(stage, [layout.name for layout in spec.layouts])
-        clear = trainer.director_columns_clear()
+        clear = trainer.camera_columns_clear()
         report.add("PASS" if clear else "FAIL", "camera blind columns still read nothing (resume's guard)")
     except (RuntimeError, ValueError, KeyError) as error:
         report.add("FAIL", "MappoTrainer.load_state_dict", str(error).splitlines()[0][:400])
@@ -247,9 +247,7 @@ def check_resume(run_dir: Path, stage_json: Path, config_path: Path, checkpoint_
     # 5. The saved evaluation and ladder state, into the stage's own objects.
     wanted = config.eval.score_column()
     score_kind = wanted if wanted in spec.episode_info_names else ""
-    controller = ConvergenceController(
-        config, [layout.name for layout in spec.layouts],
-        sim_fallback_ceiling=float((stage.get("tuning") or {}).get("Markers.FallbackCeiling", 0.0)))
+    controller = ConvergenceController(config, [layout.name for layout in spec.layouts])
     try:
         dropped = restore_evaluation_state(controller.tracker, controller, checkpoint, score_kind)
     except Exception as error:  # noqa: BLE001 - whatever the state is, say what it did
@@ -397,8 +395,7 @@ def check_fresh(stage_name: str, stage_json: Path, config_path: Path | None = No
         score = config.eval.score_column()
         if score and score not in columns:
             raise ValueError(f"the evaluation scores on {score!r}, which the stage's episode columns do not have")
-        controller = ConvergenceController(
-            config, names, sim_fallback_ceiling=float((stage.get("tuning") or {}).get("Markers.FallbackCeiling", 0.0)))
+        controller = ConvergenceController(config, names)
         lines = []
         for label, ladder in (("fade", controller.fade), ("costs", controller.costs)):
             if not ladder.enabled:

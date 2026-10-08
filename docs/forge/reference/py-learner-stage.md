@@ -33,10 +33,8 @@ A `@dataclass` with `patience=0, window=4, z=2.0, min_improvement=0.02, min_impr
   is no best or `score > best + margin`. A new best resets `evals_since_best`; otherwise it increments.
 - `projected_gain()` (`:666`): over the last `max(3, window)` history points, the least-squares slope times the mean
   spacing times `patience`. None below 3 points or if all env_steps are equal.
-- `converged(env_steps, min_env_steps=0)` (`:679`): False if `patience <= 0` or `evals_since_best < patience`. Then
+- `converged()` (`:679`): False if `patience <= 0` or `evals_since_best < patience`. Then
   True if there is no projected gain, else `gain <= margin(mean stderr of the recent points)`.
-  Every caller passes `min_env_steps=0` (`stage.py:92`, `:572`, `:271`), so that parameter is unused in production.
-- `promote` (`:691`) has no caller in the package or tests (dead).
 - `forget_scores` (`:708`) clears best, history and margin. `load_state_dict` (`:719`) uses `.get` with defaults and
   does not restore `last_margin` (it stays 0 until the next `observe`).
 - `state_dict` (`:699`) saves best, best_stderr, best_env_steps, evals_since_best, history.
@@ -250,9 +248,6 @@ lr_hold_until_plateau, top_rung, measure), `fade.*` and `costs.*`, `entropy_floo
 ## Observed issues
 
 - `stage.py:8` says "all four" signals and lists five.
-- `stage.py:462-463`: `sim_fallback_ceiling` is accepted and ignored; `tools/resume_check.py` still passes it.
-- `stage.py:153`: `or (1.0,)` is unreachable past `FadeConfig.__post_init__` (rungs cannot be empty).
-- `evaluation.py:691` `promote` and the `min_env_steps` argument of `converged` are unused.
 - `CostLadder` can never be gate-stepped (no `require_plateau` in `CostLadderConfig`), so `baselined["costs"]` never
   moves
   and its rung steps are never re-baselined, archived (`best_<ladder>_rung<k>.pt`) or watched by an alarm. The

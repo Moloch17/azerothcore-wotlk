@@ -125,18 +125,11 @@ class CastActor:
             raise ValueError(f"{self.path}: the camera rows are {taken.shape[-1]} bytes, the checkpoint reads {width}")
         return taken[:, :width].to(self.device, torch.uint8)
 
-    def act(self, obs: np.ndarray, mask: np.ndarray, layout: np.ndarray, rows: np.ndarray,
-            fallback: np.ndarray, image=None) -> np.ndarray:
-        """Actions for the `rows` of obs [E, A, O] / mask [E, A, N] / layout [E, A]; other rows keep `fallback`.
-        A row whose layout the checkpoint lacks, or whose legal actions it has none of, keeps its fallback too.
-        `image` [E, A, I]: the step's camera rows, for a checkpoint with a camera. The look it chose is self.look."""
-        return self.decide(obs, mask, layout, rows, fallback, image)[0]
-
     @torch.no_grad()
     def decide(self, obs: np.ndarray, mask: np.ndarray, layout: np.ndarray, rows: np.ndarray,
                fallback: np.ndarray, image=None,
                look: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray | None]:
-        """act(), and the look: `look` [E, A, heads] (the live policy's, or None) with the rows this actor played
+        """The actions of the `rows` over `fallback` (other rows, and rows this actor cannot play, keep it), and the look: `look` [E, A, heads] (the live policy's, or None) with the rows this actor played
         replaced by its own look -- its LookHead's choice with a camera, else the hold (protocol.LOOK_HOLD) -- as
         the ACT's look section carries them. None when the sim takes no look and none was given."""
         envs, agents = layout.shape

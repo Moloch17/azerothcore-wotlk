@@ -676,10 +676,8 @@ class ConvergenceTracker:
         spacing = np.ptp(steps) / (len(points) - 1)
         return float(slope * spacing * self.patience)
 
-    def converged(self, env_steps: int, min_env_steps: int = 0) -> bool:
+    def converged(self) -> bool:
         if self.patience <= 0 or self.evals_since_best < self.patience:
-            return False
-        if env_steps < min_env_steps:
             return False
         gain = self.projected_gain()
         if gain is None:
@@ -687,14 +685,6 @@ class ConvergenceTracker:
         recent = self.history[-max(3, self.window):]
         stderr = float(np.mean([point[2] for point in recent]))
         return gain <= self.margin(stderr)
-
-    def promote(self, score: float, env_steps: int, stderr: float = 0.0) -> None:
-        """Make the latest evaluation (already observed) the best whatever its score: one that passes the stage
-        target outranks a higher score that does not."""
-        self.best = score
-        self.best_stderr = stderr
-        self.best_env_steps = env_steps
-        self.evals_since_best = 0
 
     def state_dict(self) -> dict:
         return {

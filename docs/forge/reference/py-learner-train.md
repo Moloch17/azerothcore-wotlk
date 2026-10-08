@@ -91,7 +91,7 @@ returned
    `score_kind` = `eval.score_column()` if the sim reports that column, else "" (the return).
 7. Go-Explore archive (`explore.enabled` and a stage that reports wing cells). A follower fetches shared files.
 8. `_make_style()`, then `_load_or_seed()` (below), `trainer.set_goal_space`, then either
-   `director_columns_clear()` (resume, else `SystemExit`) or `clear_blind_columns()` (fresh).
+   `camera_columns_clear()` (resume, else `SystemExit`) or `clear_blind_columns()` (fresh).
 9. Broadcast `(update, env_steps)` from the leader and `broadcast_module` each network, value_norm, style disc.
    Async: leader creates `Hub`, a follower `Link`, takes the leader's counters and sets `evaluating = False`.
 10. `trainer.sync_rollout()`; `RolloutBuffer` (and a spare when `overlap_updates`); `acting_state`; the SIL note;

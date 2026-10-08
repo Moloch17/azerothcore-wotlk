@@ -62,7 +62,7 @@ and the actor head. With block spans in both stage.jsons (`stages.block_spans`) 
 `_common_blocks` yields (old spans, new spans) for every block both layouts have:
 - Revision differs (stage.json `blocks[].revision`): the block starts fresh (printed), later possibly carried by name.
 - Same size: whole block copied.
-- Size changed: `GROWS_AT_END = {"crowd"}` carries the old columns when only features were added at the end; the
+- Size changed: the
   `core` block with both action-name lists is matched action by action (`_core_by_name`, using
   `CORE_GLOBAL_FEATURES = 91`, per-action features from stage.json `action_features` default 6, `CORE_ACTION_FEATURES =
 8`,
@@ -200,7 +200,7 @@ and the restricted-stage overlay (`train.py:1019-1024`) would raise the same err
 In the update the trainer calls only `Distiller.sequence_loss` (`mappo/trainer.py:1753-1763`) and refuses an auxiliary
 without it (`:1499`). It returns `coef * mean KL(teacher || policy)` over taught rows (the arena's rows, over actions
 both have and the stage's mask allows, renormalised). Recurrent teachers are replayed in order per sequence.
-`Distiller.__call__`, `.kl` and `.begin_sequence` are not called in production (dead; `.kl` is only used by `__call__`).
+(`Distiller.__call__`, `.kl` and `.begin_sequence`, never called in production, were deleted.)
 `test_distill.py` is an empty file (one newline, no tests); distillation is exercised by `test_cast_vision.py` and a
 fake
 distiller in `test_recurrent.py`.
@@ -221,7 +221,6 @@ resume guard: one text entry per layout whose signature differs, empty if either
 - `partners.py:246`: retired members keep their actors (device memory) for the rest of the run.
 - Pool scores do not survive a resume; the resumed pool draws with all members "unmet" (normalised 0).
 - `config.py:649-650` and `:627-630` comments contradict `init_from_checkpoint` (see above).
-- `distill.py`: dead `__call__`, `kl`, `begin_sequence`; `stage21_ship` mentioned in a comment; unusable with cameras.
+- `distill.py`: `stage21_ship` mentioned in a comment; unusable with cameras.
 - `partners.py:323-355`: an episode where only the stand-in seat is assigned (share draw skipped) is not counted in
   `episodes_with` (`:355` is after the `continue`).
-- `Partners.act` and `CastActor.act` are used only by tests.

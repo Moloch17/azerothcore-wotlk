@@ -223,11 +223,6 @@ def _seed_grown_slot_norms(new: dict, prefix: str, old_sets: list[dict], new_set
                     stat[first + slot * stride : first + (slot + 1) * stride] = source
 
 
-#: Blocks whose observation only ever grows at its end (new features after the old ones, the actions unchanged), so a
-#: checkpoint from before the growth seeds their old columns as they were. CrowdBlock.h's tail features (2026-10-03).
-GROWS_AT_END = frozenset({"crowd"})
-
-
 def _common_blocks(old: dict[str, tuple[Span, Span]], new: dict[str, tuple[Span, Span]], name: str,
                    old_names: list[str] | None = None, new_names: list[str] | None = None,
                    revisions: tuple[dict[str, int], dict[str, int]] | None = None, source: str = "",
@@ -251,12 +246,6 @@ def _common_blocks(old: dict[str, tuple[Span, Span]], new: dict[str, tuple[Span,
             continue
         if old_obs[1] != new_obs[1] or old_actions[1] != new_actions[1]:
             segments = None
-            if (block in GROWS_AT_END and old_actions[1] == new_actions[1] and new_obs[1] > old_obs[1]):
-                # Columns added after the old ones: those carry over where they were, the new ones start at zero.
-                print(f"  {name}: block {block} grew from {old_obs[1]} to {new_obs[1]} features: the first "
-                      f"{old_obs[1]} carry over", flush=True)
-                common.append(((old_obs, old_actions), ((new_obs[0], old_obs[1]), new_actions)))
-                continue
             if block == "core" and old_names and new_names:
                 segments = _core_by_name((old_obs, old_actions), (new_obs, new_actions), old_names, new_names,
                                          *core_features)
