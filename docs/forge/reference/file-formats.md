@@ -139,14 +139,17 @@ Columns are fixed at start (train.py:785-855): `update, env_steps, env_steps_per
 `episode_<name>` for every SPEC episode-info name, then `policy_loss, value_loss, entropy, entropy_coef, clip_frac, approx_kl, explained_variance,
 actor_grad_norm, critic_grad_norm, epochs_run, allowed_actions, approx_kl_move, epochs_done, minibatches_done, lr_scale, shaping_scale, cost_scale,
 ladder_collapsed, ladder_stalled, frozen_layouts, cast_rows, cast_fallback_rows, partner_rows, partner_fallback_rows, partner_members,
-partner_episodes, stand_in_episodes, stand_in_unfielded, elapsed_seconds, update_compute_seconds, distill_coef, distill_kl, distill_rows`, then
+partner_episodes, stand_in_episodes, stand_in_unfielded, elapsed_seconds, update_compute_seconds, distill_coef, distill_kl, distill_rows, wall_steps_per_sec, rollout_seconds, wait_seconds, update_bound`, then
 optional groups: style (`style_reward, style_scale, style_disc_human, style_disc_bot, style_gp, style_disc_loss, style_reward_<context>`),
 explore (`explore_cells, explore_deepest`), goal head (`goal_swap_action_change, hindsight_loss, hindsight_rows, goal_entropy,
 goal_kept_share, goal_<i>_share, goal_targeted_share`), look head (`look_entropy, look_turning, look_pitching, look_zooming`, and the five
 `LOOK_COMMANDS` shares), slow goal loop (`slow_policy_loss, slow_value_loss, slow_approx_kl, goal_reached_share, lookahead_loss, lookahead_brier,
 lookahead_brier_base, lookahead_duration_error, goal_best_by_lookahead`) and foresight (`foresight_loss, forecast_health_8_error,
 forecast_health_20_error, forecast_goal_reached_16_brier`). `episode_<name>` is the mean over the episodes that ended in this update, with the
-per-event weighting of `episode_means.PER_EVENT` (metrics.md). Columns absent in an update (no episodes ended) are blank. `weight_sync_seconds`
+per-event weighting of `episode_means.PER_EVENT` (metrics.md). Columns absent in an update (no episodes ended) are blank. `wall_steps_per_sec` is env steps over the whole cycle (rollout plus the wait for the update; evaluations and checkpoints are not in it), `wait_seconds` the
+sim's wait (the same value as `update_seconds`), `update_bound` 1.0 when that wait exceeds 20% of the cycle, else 0.0; `env_steps_per_sec` stays the rollout
+phase only. These four columns are new: the first resume of an older run finds another header and `_rotate` moves metrics.csv aside once
+(`metrics-before-<stamp>.csv`). `weight_sync_seconds`
 and other `stats` keys reach `row.update(stats)` but are written only if they are in the fixed column list (extrasaction ignore).
 The live run's file has 327 columns (older build: includes `hint_*`, `scripted_share`, `cast_members` that the current code no longer lists).
 Rows hold training-time, sampled-policy numbers; evaluation numbers are in eval.* and progress.json. The same row (minus ignored keys) is sent to TensorBoard

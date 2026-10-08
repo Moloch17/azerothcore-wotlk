@@ -162,7 +162,7 @@ far side (cast, partners); write progress; run an evaluation if `eval.at_start` 
 build the row (counters, scales, ladder alarms as rung or -1, `frozen_layouts`, cast/partner stats, distill coef,
 explore, style), add `episode_<name>` means via `episode_means.means` (per-event columns weighted by their event count,
 NaN when none) and the update `stats`; `observe_entropy`; `audit_reward`; `audit_progress`; `logger.log`;
-`progress.training`/`write`; one console line `update N | steps S | sps | rollout .. compute .. | ...`.
+`progress.training`/`write`; one console line `update N | steps S | R sps | rollout .. compute .. [sync ..] wall W sps [update-bound] | ...` (W = steps over the whole cycle, `wall_steps_per_sec`; "update-bound" when the sim waited over 20% of the cycle).
 `audit_progress` prints "learning has stalled" when the KL divided by lr scale stays under `STALL_KL = 0.0015` for
 `STALL_WINDOW = 10` updates after `STALL_MIN_UPDATES = 20`, repeating no more often than `WARN_EVERY = 25` updates
 (`rewards.py:146`). `audit_reward` (`rewards.py`) prints when the largest shaping term earns more than

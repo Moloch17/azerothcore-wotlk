@@ -61,6 +61,8 @@ from .style import HumanWindows, StyleReward, startup_line as style_line
 STALL_KL = 0.0015
 STALL_WINDOW = 10
 STALL_MIN_UPDATES = 20
+#: update_bound: the sim waited for the update for more than this share of the cycle (efficiency audit R3).
+UPDATE_BOUND_WAIT = 0.2
 from .runs import (FINISHED_FILE, archive_run, archive_rung_best, prune_checkpoints, resume_checkpoint_path,
                    resume_mismatch)
 from .stage import ADVANCE, ConvergenceController, Outcome, restore_evaluation_state
@@ -782,6 +784,7 @@ class TrainingRun:
             "partner_rows", "partner_fallback_rows", "partner_members", "partner_episodes", "stand_in_episodes",
             "stand_in_unfielded",
             "elapsed_seconds", "update_compute_seconds", "distill_coef", "distill_kl", "distill_rows",
+            "wall_steps_per_sec", "rollout_seconds", "wait_seconds", "update_bound",
         ]
         if self.style is not None:
             # The style reward (animus.style): what it paid a decision, the scale it was paid at, and the
@@ -1974,11 +1977,21 @@ class TrainingRun:
         if self.update % config.log_every != 0:
             return
 
+        steps = config.rollout_length * self.run_envs * spec.agents_per_env
+        cycle = time.perf_counter() - started
+        wait = cycle - rollout_seconds
         row: dict[str, float] = {
             "update": self.update,
             "env_steps": self.env_steps,
-            "env_steps_per_sec": config.rollout_length * self.run_envs * spec.agents_per_env / rollout_seconds,
-            "update_seconds": time.perf_counter() - started - rollout_seconds,
+            "env_steps_per_sec": steps / rollout_seconds,
+            "update_seconds": wait,
+            # The rate over the whole cycle (rollout plus the wait for the update), which is what a run really gets;
+            # env_steps_per_sec above counts the rollout phase only. Evaluations and checkpoints (they run between
+            # cycles) are not in it. update_bound: the sim waited for the update for over a fifth of the cycle.
+            "wall_steps_per_sec": steps / cycle,
+            "rollout_seconds": rollout_seconds,
+            "wait_seconds": wait,
+            "update_bound": 1.0 if wait > UPDATE_BOUND_WAIT * cycle else 0.0,
             "reward_per_decision": self.rollout_reward,
             # Entropy is only readable against how many actions were legal to begin with.
             "allowed_actions": self.rollout_allowed_actions,
@@ -2024,6 +2037,9 @@ class TrainingRun:
         # Each rank's own clock, so a cluster's slow rank and phase show in its learner log.
         timing = (f"rollout {rollout_seconds:.2f}s compute {float(stats.get('update_compute_seconds', 0.0)):.2f}s"
                   + (f" sync {float(stats['weight_sync_seconds']):.2f}s" if "weight_sync_seconds" in stats else ""))
+        # The wall rate and the update-bound note ride in the timing part, so the " | N sps | rollout .." shape that
+        # forgectl parses is unchanged.
+        timing += f" wall {row['wall_steps_per_sec']:.0f} sps" + (" update-bound" if row["update_bound"] else "")
         print(f"update {self.update} | steps {self.env_steps} | {row['env_steps_per_sec']:.0f} sps | {timing} | "
               f"{summary}",
               flush=True)
