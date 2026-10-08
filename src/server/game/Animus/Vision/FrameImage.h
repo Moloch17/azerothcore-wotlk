@@ -20,17 +20,29 @@
 #define ANIMUS_VISION_FRAME_IMAGE_H
 
 #include "Camera.h"
+#include "Identity.h"
 #include <array>
 #include <string>
 #include <vector>
 
 /// **A frame as a person looks at it**: the bytes a seat's camera sent (Camera.h, BYTES_PER_PIXEL a pixel), decoded as
 /// the learner decodes them, drawn as one PNG for `forge camera snapshot` and the training audit
-/// (AnimusForge.Vision.AuditInterval).
+/// (AnimusForge.Vision.AuditInterval). The image is the static world only (entity-sensing), so the listed entities
+/// are drawn over it as boxes (EntityMark) where the caller has them: at the angular centre and size the entity list
+/// holds, in the class's colour, dashed when only part of the entity has a clear line.
 namespace Animus::Vision
 {
     /// A class's colour in the class panel and the composite (the objective's pixels are white whatever they hit).
     extern uint8_t const CLASS_COLOURS[CLASSES][3];
+
+    /// One entity box over a picture `scale` times the frame's size (entity-sensing): the mark's direction and angular
+    /// size placed in `settings`' field of view, at least MARK_MIN_SIDE output pixels a side, one pixel thick. A mark
+    /// with a line-of-sight share under 1 is dashed.
+    constexpr uint32_t MARK_MIN_SIDE = 5;
+    /// The colour of output pixel (x, y) when a mark's outline passes through it (the last mark drawn wins); false
+    /// when none does.
+    [[nodiscard]] bool MarkAt(Settings const& settings, uint32_t scale, std::vector<EntityMark> const& marks,
+        uint32_t x, uint32_t y, uint8_t* rgb);
 
     /// Pixels of each class in a frame.
     [[nodiscard]] std::array<uint32_t, CLASSES> ClassCounts(Settings const& settings, uint8_t const* image);
@@ -45,9 +57,10 @@ namespace Animus::Vision
     /// - height over the feet: mid-grey at the feet, lighter above, darker below;
     /// - slope: the surface's normal z, white for level ground, black for a wall (and sky);
     /// and with `map` (the seat's mental map crop, Vision::CROP_BYTES; perception-goals REDESIGN §3) a fifth, square
-    /// panel as tall as the others: the crop, heading-up, coloured by MapColour.
+    /// panel as tall as the others: the crop, heading-up, coloured by MapColour. `marks`, when given, are drawn over
+    /// the class panel (MarkAt).
     [[nodiscard]] std::string FramePng(Settings const& settings, uint8_t const* image, uint32_t scale,
-        uint8_t const* map = nullptr);
+        uint8_t const* map = nullptr, std::vector<EntityMark> const* marks = nullptr);
 
     /// **The map panel's colours** (the audit): a crop cell's code -- unknown near black, floor green (brighter the
     /// newer its look), wall light grey, door orange, hazard blue -- with the body's cells red at the centre, frontier
@@ -69,9 +82,10 @@ namespace Animus::Vision
     /// fogged by the distance (min(1, yards / 80)^0.7 towards COMPOSITE_HAZE x 0.6), and darkened to 0.35 where the
     /// pixel and its right or lower neighbour lie across a whole yard of height over the feet (a contour line;
     /// within the height channel's range only).
-    /// With `map`, a mini-map inset in its top right corner: MapPanel, half the picture's height, framed.
+    /// With `map`, a mini-map inset in its top right corner: MapPanel, half the picture's height, framed. With
+    /// `marks`, the listed entities' boxes over the picture (MarkAt), under the inset.
     [[nodiscard]] std::string CompositePng(Settings const& settings, uint8_t const* image, uint32_t scale,
-        uint8_t const* map = nullptr);
+        uint8_t const* map = nullptr, std::vector<EntityMark> const* marks = nullptr);
 
     /// A picture as RGB: Width x Height pixels, row by row from the top, 3 bytes a pixel.
     struct RgbImage
@@ -83,7 +97,7 @@ namespace Animus::Vision
 
     /// CompositePng's picture before it is packed: width x scale by height x scale, the inset included.
     [[nodiscard]] RgbImage CompositeRgb(Settings const& settings, uint8_t const* image, uint32_t scale,
-        uint8_t const* map = nullptr);
+        uint8_t const* map = nullptr, std::vector<EntityMark> const* marks = nullptr);
 
     /// An RGB PNG of the picture (filter 0, one IDAT); empty on failure.
     [[nodiscard]] std::string RgbPng(RgbImage const& picture);

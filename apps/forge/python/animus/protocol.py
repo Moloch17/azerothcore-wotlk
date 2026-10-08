@@ -11,7 +11,11 @@ from enum import IntEnum
 
 import numpy as np
 
-PROTOCOL_VERSION = 25
+PROTOCOL_VERSION = 26
+# 26: entity sensing (vision block revision 6): a camera pixel is four bytes again -- distance, height, normal, the
+# class and objective byte, no entity slot -- of the static world alone, so Spec.image_bytes is height x width x 4;
+# the entity list's columns 16-18 are los, ang_width and ang_height (entities block revision 2, sight block revision
+# 3). The messages' layout is protocol 25's.
 # 25: a STEP's present is 2 for the "human" stand-in's row (Step.stand_in), which the learner plays with a frozen
 # partner and never trains on (it was 0, the sim's script's); MODE_FLAG_STAND_IN in a training MODE says the learner
 # can field one. The messages' layout is protocol 24's.
@@ -19,7 +23,7 @@ PROTOCOL_VERSION = 25
 # and a stage with one ends each STEP with every agent's map crop and the ended envs' final crops, after the images.
 # The crops are always on the socket, even with device buffers. A stage without one sends protocol 23's STEP.
 # 23: identity (perception-goals P2): a camera pixel is five bytes -- the class byte (class and objective) and the
-# entity slot -- so Spec.image_bytes is height x width x 5; the messages' layout is protocol 22's.
+# entity slot -- so Spec.image_bytes is height x width x 5 (x 4 again at 26); the messages' layout is protocol 22's.
 # 20: SPEC announces a kinematics width after the scenario name, and every STEP ends with one kinematic sample per
 # agent (FORMAT.md section 3, animus.human.motion): the body the style reward and the realism score read.
 # 21: the camera's image travels as bytes (camera-vision.BYTES.md): SPEC ends with the image bytes per agent (0 without
@@ -83,14 +87,14 @@ DEVICE_IMAGE = struct.Struct("<64s")
 DEVICE_ACK = struct.Struct("<I")
 # What a STEP leaves out when the learner reads them from the device buffers.
 DEVICE_FIELDS = ("obs", "state", "mask", "image")
-# The camera's image as bytes (protocol 23, Vision::EncodePixel): 5 a pixel, [row][col][byte]. A row without a frame
+# The camera's image as bytes (protocol 26, Vision::EncodePixel): 4 a pixel, [row][col][byte]. A row without a frame
 # (no character, a director, no map) is every pixel NO_FRAME_PIXEL (Vision::FillNoFrame): sky, height 0, class sky
-# with no objective, no entity.
+# with no objective.
 IMAGE_FIELDS = ("image", "final_image")
 # The mental map's crop as bytes (protocol 24, Vision::MentalMap::Crop): 48 x 48 cells of 6 bytes, [row][col][channel].
 # A row without a map (no character, a director) is all zeros: every cell unknown, never seen.
 MAP_FIELDS = ("map", "final_map")
-NO_FRAME_PIXEL = (255, 128, 0, 0, 0)
+NO_FRAME_PIXEL = (255, 128, 0, 0)
 # The look choice that changes nothing (protocol 22, revision 4's heads [7, 5, 5]): yaw rate 0, pitch rate 0, hold.
 # What an ACT carries for agents nobody chose a look for (a scripted baseline's evaluation): in range, and still.
 LOOK_HOLD = (3, 2, 0)

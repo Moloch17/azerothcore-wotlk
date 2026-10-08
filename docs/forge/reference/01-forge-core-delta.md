@@ -153,8 +153,8 @@ them forward:
 | `src/server/game/Instances/InstanceScript.cpp` | +4 -0 | C | `LoadInstanceSavedGameobjectStateData` returns on a sealed pool |
 | `src/server/game/Maps/Map.cpp` | +153 -13 | F | phase timing, unseen-spawn skipping, `_playersByGuid`, `OnCreateMap` for replicas, update-list removal fix, `SendObjectUpdates` drains without a client, sealed-pool guards |
 | `src/server/game/Maps/Map.h` | +123 -0 | F | `UpdateTiming`, `TaskSample`, accrued diff, `GetPlayerByGuid`, `GetCreatedGridTerrainData` |
-| `src/server/game/Maps/MapCollisionData.cpp` | +114 -0 | G | `GetLiquidHit`, `GetSurfaceHit` (static and dynamic), `ThreadQueryScope` |
-| `src/server/game/Maps/MapCollisionData.h` | +30 -0 | G | declarations |
+| `src/server/game/Maps/MapCollisionData.cpp` | +136 -0 | G | `GetLiquidHit`, `GetSurfaceHit` (static and dynamic), `AnyHit` (static and dynamic), `ThreadQueryScope` |
+| `src/server/game/Maps/MapCollisionData.h` | +39 -0 | G | declarations |
 | `src/server/game/Maps/MapInstanced.cpp` | +49 -12 | F | empty children are not ticked; half-batch freeze; heap-trim notice |
 | `src/server/game/Maps/MapMgr.cpp` | +275 -31 | F | uniform per-tick map update, continent replicas, deferred tile loads, heap trim, task timing |
 | `src/server/game/Maps/MapMgr.h` | +100 -10 | F | declarations for the above |
@@ -404,6 +404,11 @@ on the GPU. The core gained read-only access, with no change to any existing que
   `HasLiquid`, `GetLiquidSurface`; `Map::GetCreatedGridTerrainData` (never creates a grid).
 - `StaticVMapCollisionData::GetLiquidHit/GetSurfaceHit`, `DynamicVMapCollisionData::GetSurfaceHit`
   (`MapCollisionData.cpp:117,148,230`).
+- `StaticVMapCollisionData::AnyHit` and `DynamicVMapCollisionData::AnyHit` (entity-sensing): ungated any-hit segment
+  tests for the entity sensor's shadow rays. The static one is `StaticMapTree::isInLineOfSight` with
+  `ModelIgnoreFlags::Nothing`, NOT `StaticVMapCollisionData::isInLineOfSight` (gated by `CONFIG_VMAP_ENABLE_LOS` and the
+  disable table, so it could disagree with the pixels); the dynamic one is `DynamicMapTree::isInLineOfSight`. Used by
+  `MapVisionWorld::Blocked`.
 - A hardening fix: `BIH` leaves out a primitive whose bounds are not finite or inside out
   (`BoundingIntervalHierarchy.h:89-92`; seen as `std::terminate` from `BIH::subdivide`).
 

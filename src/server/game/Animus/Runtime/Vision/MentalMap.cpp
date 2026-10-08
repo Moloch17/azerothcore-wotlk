@@ -531,6 +531,23 @@ void Animus::Vision::MentalMap::WriteFrame(FrameHits const& hits, float feetZ, f
     }
 }
 
+void Animus::Vision::MentalMap::WriteEntities(SeenList const& seen, MapWriteStats* stats)
+{
+    uint16_t const stamp = Stamp();
+    for (uint32_t slot = 0; slot < seen.Count && slot < ENTITY_SLOTS; ++slot)
+    {
+        EntityInfo const& info = seen.Info[slot];
+        if (!IsEntityClass(info.Id.What))
+            continue;
+        MapCell& cell = Touch(CellOf(info.Centre.X), CellOf(info.Centre.Y));
+        if (info.Id.What == Class::Door)
+            cell.Flags |= MAP_DOOR;
+        WriteEntity(cell, info.Id.What, stamp);
+        if (stats)
+            ++stats->Entities;
+    }
+}
+
 void Animus::Vision::MentalMap::WriteBody(float x, float y, float z, bool grounded)
 {
     uint16_t const stamp = Stamp();

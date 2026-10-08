@@ -1,4 +1,4 @@
-# The sim-learner protocol (version 25) and the cluster messages
+# The sim-learner protocol (version 26) and the cluster messages
 
 Purpose and scope: a byte-exact description of what the C++ sim and the Python learner say to each other, and of the
 text lines the cluster machines exchange. Written from the code at `forge` bd32b9dc8. "Wire" means the lock-step
@@ -85,7 +85,7 @@ learner with "sent message type N with M bytes where ACT, MODE, WEIGHTS or REPLA
 
 | Field | Type | Meaning |
 |---|---|---|
-| Version | u32 | `PROTOCOL_VERSION` (25). The learner refuses a mismatch (env.py:41). |
+| Version | u32 | `PROTOCOL_VERSION` (26). The learner refuses a mismatch (env.py:41). |
 | NumEnvs | u32 | This rank's envs (`RankEnvs(rank)`), not the pool's. |
 | AgentsPerEnv | u32 | Agent rows per env (seats plus any cast owner row). |
 | ObsDim | u32 | The largest layout's observation width; all rows padded to it. |
@@ -99,7 +99,7 @@ learner with "sent message type N with M bytes where ACT, MODE, WEIGHTS or REPLA
 | EnvGroups | u32 | 1, or 2 for half-batch (STEPs and ACTs cover contiguous halves, first half first). |
 | Scenario | char[32] | NUL-padded name; at most 31 chars (`strncpy(..., 31)`). |
 | KinematicsDim | u32 | `Kinematics::SAMPLE_DIM` = 10 (protocol 20). |
-| ImageBytes | u32 | Bytes per agent of the camera image: height x width x 5; 0 without a vision block (21, 23). |
+| ImageBytes | u32 | Bytes per agent of the camera image: height x width x 4 (x 5 at 23-25); 0 without a vision block (21, 26). |
 | LookHeads | u32 | `FreeLook::HEADS` (3) with a vision block, else 0 (22). |
 | MapBytes | u32 | 13,824 (48 x 48 x 6) with a map block, else 0 (24). |
 
@@ -149,7 +149,7 @@ among those E (the code is `Spec.step_layout`, protocol.py:157, and the chunk li
 | 11 | episode_info | f32 | [D,A,K] | Per-agent totals of each ended episode (protocol 18: ended envs only). |
 | 12 | episode_seed | u32 | [E] | Evaluation seed index of the ended episode (valid if done); `NO_EPISODE_SEED` = 0xFFFFFFFF for training. Sent for all E envs. |
 | 13 | kinematics | f32 | [E,A,10] | `[t, x, y, z, yaw, pitch, mode, mounted, speed, in_combat]` after the transition; the new episode's first sample where done; zeros for an agent without a body. Kinematics.h. |
-| 14 | image | u8 | [E,A,I] | Only if I > 0 and not in device buffers. `[row][col][byte]`, row 0 top, 5 bytes a pixel. Rows without a frame are `Vision::FillNoFrame` = pixel `(255,128,0,0,0)` (`NO_FRAME_PIXEL`, protocol.py:93). |
+| 14 | image | u8 | [E,A,I] | Only if I > 0 and not in device buffers. `[row][col][byte]`, row 0 top, 4 bytes a pixel (distance, height, normal, class + objective; the static world only). Rows without a frame are `Vision::FillNoFrame` = pixel `(255,128,0,0)` (`NO_FRAME_PIXEL`, protocol.py). |
 | 15 | final_image | u8 | [D,A,I] | Whenever the stage has a vision block (sent even with device buffers). |
 | 16 | map | u8 | [E,A,M] | Only if M > 0; always on the socket. 48 x 48 cells of 2 yd, heading-up, `[row][col][channel]`, 6 channels (code, height, visited, age, class, frontier); zeros for no map. |
 | 17 | final_map | u8 | [D,A,M] | Likewise for ended envs. |
@@ -271,6 +271,7 @@ into the core (`359b303c4`); their content is UNVERIFIED (no comment survives; c
 | 23 | Pixel = 5 bytes (class + entity slot); layout otherwise protocol 22's. | c20dc0c1a |
 | 24 | SPEC MapBytes; map/final_map after the images. | 8452ff458 |
 | 25 | `present` 2 = stand-in row played by a frozen partner; `MODE_FLAG_STAND_IN` in training MODE. | Protocol.h:178; ac9873986, 641cf015c, aa303bc33 (scripted stand-in removed) |
+| 26 | Entity sensing (vision block 6): pixel = 4 bytes again (no entity slot), the static world only, so ImageBytes is height x width x 4; entities block 2 (columns 16-18 los, ang_width, ang_height), sight block 3. Message layout otherwise protocol 25's. | entity-sensing (this change) |
 
 Commit-date mapping for 15-25 was taken from `git log` subjects and is approximate: the commit that sets the constant
 (`git log -S"PROTOCOL_VERSION = N;"`) was checked only for 24 and 25 (both 641cf015c on 2026-10-07; 24 first at 8452ff458,

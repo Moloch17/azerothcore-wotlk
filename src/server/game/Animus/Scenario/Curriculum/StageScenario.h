@@ -139,6 +139,7 @@ namespace Animus::Curriculum
         /// through ApplySeatAction: looking is free, and nothing that prices or tallies an action sees it (R1).
         void ApplyLook(Env& env, int32 const* look) override;
         [[nodiscard]] std::pair<uint32, uint32> CameraRenderSize(Env const& env, uint32 agent) const override;
+        [[nodiscard]] int32 EntitiesFirst(uint16 layout) const override;
         void Observe(Env& env, float* obs, float* state, uint8* mask, uint8* image, uint8* map) override;
         void AgentLayouts(Env const& env, uint16* layout) const override;
         void AgentPresence(Env const& env, uint8* present) const override;

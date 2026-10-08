@@ -20,6 +20,7 @@
 #define ANIMUS_VISION_EVAL_VIDEO_H
 
 #include "Camera.h"
+#include "Identity.h"
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -36,7 +37,7 @@
 /// filmed as the bot saw them, one frame a decision, each frame the composite (CompositeRgb, the mini-map inset where
 /// the stage has a map), written as an animated PNG with a JSON sidecar under runs/<scenario>/videos/<env steps>/.
 ///
-/// The world thread only copies the bytes the learner was sent (the camera image and the map crop, ~54 KB a seat);
+/// The world thread only copies the bytes the learner was sent (the camera image and the map crop, ~47 KB a seat);
 /// a worker thread composites, scales, deflates and writes, so training never waits on a video.
 namespace Animus::Vision
 {
@@ -142,8 +143,11 @@ namespace Animus::Vision
 
         /// The episode starts being filmed: its env's frames go to it until Finish.
         void Start(EvalVideoEpisode episode);
-        /// A decision's frame: the camera's ImageBytes and the map's MapBytes (null without a map), copied.
-        void Frame(uint32_t env, uint8_t const* image, uint8_t const* map);
+        /// A decision's frame: the camera's ImageBytes and the map's MapBytes (null without a map), copied; and the
+        /// entities the frame listed (EntityMark, null for none), which the worker draws over the picture: the image
+        /// is the static world only, so who was in view is the marks'.
+        void Frame(uint32_t env, uint8_t const* image, uint8_t const* map,
+            std::vector<EntityMark> const* marks = nullptr);
         /// The episode ended with info row `info` (InfoNames' columns; null when it did not end): its video is written.
         void Finish(uint32_t env, float const* info);
 
@@ -173,6 +177,7 @@ namespace Animus::Vision
             std::shared_ptr<Evaluation> Of;
             std::shared_ptr<Reel> Film;
             std::vector<uint8_t> Bytes;         // Frame: the image, then the map
+            std::vector<EntityMark> Marks;      // Frame: the entities listed, drawn over the picture
             std::vector<float> Info;            // Close: the info row, empty when the episode did not end
         };
 

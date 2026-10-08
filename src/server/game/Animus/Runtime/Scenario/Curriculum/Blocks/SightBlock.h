@@ -30,13 +30,14 @@ namespace Animus::Curriculum
     /// **What the seat sees and remembers, and acting on it** (dungeon-curriculum I1 and I2; perception-goals 2a, 3).
     ///
     /// **The list**: SIGHT_SLOTS slots, the first SIGHT_VISIBLE_SLOTS the camera's visible entities in the entities
-    /// block's slot order (slot s is pixel slot s + 1), the rest the SIGHT_RECALLED_SLOTS most relevant entities the
+    /// block's slot order, the rest the SIGHT_RECALLED_SLOTS most relevant entities the
     /// seat's entity memory holds that this frame did not show (EntityMemory::Recall), most relevant first. A slot's
     /// first EntitiesBlock::ENTITY_FEATURES columns mean what the entities block's do -- for a remembered entity,
     /// its class, template, level, health and nameplate as last seen, its direction and distance from the camera to
-    /// where it was last seen, no pixels -- so the learner reads both halves with the entity list's own encoder; then
-    /// the memory's: visible now, how long since it was seen, dead, open, used, the way it faced and its course
-    /// (speed and direction, from its last sightings: a patrol's), and whether it is the selection or the focus.
+    /// where it was last seen, its size as it looked there, no line of sight -- so the learner reads both halves with
+    /// the entity list's own encoder; then the memory's: visible now, how long since it was seen, dead, open, used,
+    /// the way it faced and its course (speed and direction, from its last sightings: a patrol's), and whether it is
+    /// the selection or the focus.
     /// Every remembered fact is a last-seen one (EntityMemory: written only from sight), never the server's.
     ///
     /// **The presses** (EntityActions): SIGHT_SLOTS of each -- select, interact or use, use the key item on, assist,
@@ -106,8 +107,9 @@ namespace Animus::Curriculum
         static constexpr float SPEED_SCALE = 7.0f;
 
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
-        /// 2: the named row after the slots (M3 interact).
-        [[nodiscard]] uint32 Revision() const override { return 2; }
+        /// 2: the named row after the slots (M3 interact). 3: entity sensing: the entity columns 16-18 are los,
+        /// ang_width and ang_height (EntitiesBlock revision 2).
+        [[nodiscard]] uint32 Revision() const override { return 3; }
         /// "sight": { name "sight", slots, visible_slots, recalled_slots, width (SIGHT_FEATURES), first, present,
         /// class_column, type_column, object_column, memory_column, visible_column, classes, type_buckets,
         /// memory_ids (the id table the learner embeds, MEMORY_TRAINING_CAP), features [names], pointers [{press,

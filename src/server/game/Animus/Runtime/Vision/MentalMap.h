@@ -19,6 +19,7 @@
 #define ANIMUS_VISION_MENTAL_MAP_H
 
 #include "Camera.h"
+#include "Identity.h"
 #include <algorithm>
 #include <array>
 #include <climits>
@@ -245,6 +246,11 @@ namespace Animus::Vision
         /// Write a frame's rays (amendment 2): `feetZ` and `bodyHeight` are the seat's, for the band "seen free" and a
         /// wall are judged in.
         void WriteFrame(FrameHits const& hits, float feetZ, float bodyHeight, MapWriteStats* stats = nullptr);
+        /// Write the entities the sensor listed (entity-sensing): the image no longer draws units or objects, so a
+        /// frame's rays leave no entity class on the map. Each listed entity marks the cell at its middle with its
+        /// class (WriteEntity), a door (open or closed) with MAP_DOOR as well. Called after WriteFrame, the same
+        /// decision.
+        void WriteEntities(SeenList const& seen, MapWriteStats* stats = nullptr);
         /// Write where the body stands: visited, seen, and on the ground its floor; the cells on the line from where
         /// it last stood are visited too (a fast body crosses more than one a decision).
         void WriteBody(float x, float y, float z, bool grounded);

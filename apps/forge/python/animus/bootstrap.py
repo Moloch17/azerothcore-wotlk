@@ -456,13 +456,18 @@ SIGHT_POINTERS = "sight_pointers."
 SIGHT_EXTRA = "vision.sight.extra.weight"
 
 
-def _vision_revision(stage: dict | None) -> int | None:
-    """The vision block's revision in the first layout of `stage` that has one; None for a stage without a camera."""
+def _block_revision(stage: dict | None, name: str) -> int | None:
+    """The revision of block `name` in the first layout of `stage` that has it; None for a stage without the block."""
     for entry in ((stage or {}).get("layouts") or {}).values():
         for block in entry.get("blocks", ()):
-            if block.get("name") == "vision":
+            if block.get("name") == name:
                 return int(block.get("revision", 0))
     return None
+
+
+def _vision_revision(stage: dict | None) -> int | None:
+    """The vision block's revision in the first layout of `stage` that has one; None for a stage without a camera."""
+    return _block_revision(stage, "vision")
 
 
 def _seed_vision(new: dict, old: dict, new_stage: dict | None, old_stage: dict | None) -> str | None:
@@ -511,13 +516,23 @@ def _seed_map(new: dict, old: dict) -> str | None:
     return "carried"
 
 
-def _seed_sight(new: dict, old: dict) -> str | None:
+def _seed_sight(new: dict, old: dict, new_stage: dict | None = None, old_stage: dict | None = None) -> str | None:
     """Carry the sight list's encoder and pointer queries from a checkpoint that has them, key by key where the shapes
     agree; else they start fresh, the list's pool zeroed so the seeded policy acts as it did (the presses are new
-    actions, whose logits the pointers give). None when this network has no sight list."""
+    actions, whose logits the pointers give). A changed sight block revision starts them fresh whatever the shapes
+    (revision 3, entity sensing, re-laid the entity columns the tokens read: the same weights would read the new
+    los / ang_width / ang_height columns as the old centroid_x / centroid_y / share). None when this network has no
+    sight list."""
     keys = [key for key in new if key.startswith((SIGHT, SIGHT_POINTERS))]
     if not keys:
         return None
+    if any(key.startswith((SIGHT, SIGHT_POINTERS)) for key in old) \
+            and _block_revision(new_stage, "sight") != _block_revision(old_stage, "sight"):
+        for key in keys:
+            if key.startswith(SIGHT_ZEROED):
+                new[key].zero_()
+        return (f"fresh (sight revision {_block_revision(old_stage, 'sight')} -> {_block_revision(new_stage, 'sight')}"
+                f"), its pool at zero")
     carried = [key for key in keys if key in old and old[key].shape == new[key].shape]
     for key in carried:
         new[key].copy_(old[key])
@@ -620,7 +635,7 @@ def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, ove
         _seed_map(critic, old["critic"])
         if crop is not None:
             print(f"  map encoder: {crop}", flush=True)
-        sight = _seed_sight(actor, old["actor"])
+        sight = _seed_sight(actor, old["actor"], stage, old_stage)
         if sight is not None:
             print(f"  sight list: {sight}", flush=True)
         look = _seed_look(actor, old["actor"], stage, old_stage)

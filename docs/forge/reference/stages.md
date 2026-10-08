@@ -11,6 +11,8 @@ stage is [../04-curriculum.md](../04-curriculum.md). Related references: [00-arc
 [config-yaml.md](config-yaml.md), [config-keys.md](config-keys.md), [metrics.md](metrics.md), [tests.md](tests.md),
 [known-issues.md](known-issues.md), [glossary.md](glossary.md), [../decisions/README.md](../decisions/README.md).
 
+**Seeding note (entity sensing, protocol 26).** The per-stage "Seed" notes below that say the camera, entities or sight list "carry" predate vision block revision 6, entities revision 2 and sight revision 3: seeding from a checkpoint of the earlier revisions starts the whole perception stack (`vision.*` but for the map and sight sub-modules, the look head, and the sight list) fresh with the joins zeroed; the trunk, goals and per-layout adapters and heads still carry (bootstrap.py `_seed_vision`, `_seed_sight`, `_seed_look`).
+
 ## Map of the source files this document is written from
 
 | Path | Lines | Role |

@@ -113,7 +113,7 @@ casting draw).
 
 **B2.** `MODE_FLAG` bit 1 is unused (`Bridge/Protocol.h:274` defines only `MODE_FLAG_STAND_IN = 2`); the old
 `MODE_FLAG_SCRIPTED_OPPONENTS` is gone but the value is reserved until the next protocol change (commit aa303bc33).
-Decide whether to renumber at the next bump (protocol 25 now).
+Decide whether to renumber at the next bump (protocol 26 now).
 
 **B3.** `GoalBlock`'s order columns (`OBS_FROM_ORDER`, `OBS_ORDER_KIND_FIRST`, `OBS_ORDER_TARGET_FIRST`,
 `Blocks/GoalBlock.h:50-52`) are always zero since the director was deleted, but stay in the layout (128 observations in

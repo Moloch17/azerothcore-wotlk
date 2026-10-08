@@ -136,6 +136,11 @@ namespace Animus
             return { 0, 0 };
         }
 
+        /// The observation column where layout `layout`'s entity list starts (the entities block: ENTITY_SLOTS slots
+        /// of EntitiesBlock::ENTITY_FEATURES), or -1 for a layout without a camera. The audit and the evaluation
+        /// videos read the listed entities back from an observation row to draw them over the image.
+        [[nodiscard]] virtual int32 EntitiesFirst(uint16 /*layout*/) const { return -1; }
+
         /// obs: [AgentsPerEnv * ObsDim], state: [StateDim], mask: [AgentsPerEnv * NumActions]. `mask` is null for an
         /// ended episode's final observation, which needs no actions: skip the (costly) cast checks then. image:
         /// [AgentsPerEnv * Spec().ImageBytes] each agent's camera image, null when ImageBytes is 0. map:

@@ -252,7 +252,8 @@ void Vi::EvalVideoRecorder::Start(EvalVideoEpisode episode)
     _open[env] = std::move(film);
 }
 
-void Vi::EvalVideoRecorder::Frame(uint32_t env, uint8_t const* image, uint8_t const* map)
+void Vi::EvalVideoRecorder::Frame(uint32_t env, uint8_t const* image, uint8_t const* map,
+    std::vector<EntityMark> const* marks)
 {
     auto const itr = _open.find(env);
     if (itr == _open.end() || !image)
@@ -284,6 +285,8 @@ void Vi::EvalVideoRecorder::Frame(uint32_t env, uint8_t const* image, uint8_t co
     std::copy_n(image, options.ImageBytes, job.Bytes.data());
     if (map && options.MapBytes)
         std::copy_n(map, options.MapBytes, job.Bytes.data() + options.ImageBytes);
+    if (marks)
+        job.Marks = *marks;
     ++film.Frames;
     Push(std::move(job));
 }
@@ -361,7 +364,8 @@ void Vi::EvalVideoRecorder::WriteFrame(Job const& job)
     EvalVideoOptions const& options = job.Of->Options;
     Reel& film = *job.Film;
     uint8_t const* map = job.Bytes.size() > options.ImageBytes ? job.Bytes.data() + options.ImageBytes : nullptr;
-    RgbImage const frame = CompositeRgb(options.Camera, job.Bytes.data(), options.Scale, map);
+    RgbImage const frame = CompositeRgb(options.Camera, job.Bytes.data(), options.Scale, map,
+        job.Marks.empty() ? nullptr : &job.Marks);
     if (!film.Writer)
         film.Writer = std::make_unique<ApngWriter>(frame.Width, frame.Height,
             uint16_t(std::clamp<uint32_t>(options.DecisionMs, 1, 65535)), uint16_t(1000));

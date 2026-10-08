@@ -29,6 +29,7 @@
 #include "AnimusHooks.h"
 #include "ClientMovement.h"
 #include "ControllerCost.h"
+#include "EntitiesBlock.h"
 #include "VisionCost.h"
 #include "FrameImage.h"
 #include "FreeLook.h"
@@ -1393,7 +1394,7 @@ void AnimusForge::Forge::MaybeAuditCamera()
     {
         csv << "time,scenario_seconds,decision,env,agent,layout,class,race,level,map,instance,x,y,z,orientation,"
                "episode_seconds,render";
-        // Pixels of each class (perception-goals 1a), and the entities the frame lists (its distinct slots).
+        // Pixels of each class (perception-goals 1a: the static world's only), and the entities the sensor listed.
         for (char const* name : Vi::CLASS_NAMES)
             csv << ',' << name;
         csv << ",entities,file\n";
@@ -1419,10 +1420,16 @@ void AnimusForge::Forge::MaybeAuditCamera()
         Animus::Env const& env = _pool->EnvAt(e);
         Player const* bot = env.FindBot(a);
 
+        // The entities the sensor listed, read back from the seat's observation row: drawn over the pictures.
+        std::vector<Vi::EntityMark> marks;
+        if (int32 const entities = _pool->EntitiesFirst(layoutIndex); entities >= 0 && !_pool->Obs.empty())
+            Animus::Curriculum::EntitiesBlock::ReadMarks(&_pool->Obs[std::size_t(seat) * spec.ObsDim + entities],
+                marks);
+
         std::string const file = Acore::StringFormat("{}-e{}a{}-{}.png", stamp, e, a, layout);
         // A 128-wide frame at 2x, a 64-wide one at 4x: about 256 pixels a panel whatever the canonical size.
         uint32 const scale = std::max<uint32>(1, 256 / std::max<uint32>(1, settings.Width));
-        std::string const png = Vi::FramePng(settings, image, scale, crop);
+        std::string const png = Vi::FramePng(settings, image, scale, crop, &marks);
         std::ofstream out(dir / file, std::ios::binary);
         out << png;
         if (png.empty() || !out)
@@ -1433,7 +1440,7 @@ void AnimusForge::Forge::MaybeAuditCamera()
         ++saved;
         // Every layer in one picture beside it (Vi::CompositePng), named after the frame: no CSV column needed.
         std::string const compositeFile = Acore::StringFormat("{}-e{}a{}-{}-composite.png", stamp, e, a, layout);
-        std::string const composite = Vi::CompositePng(settings, image, scale, crop);
+        std::string const composite = Vi::CompositePng(settings, image, scale, crop, &marks);
         std::ofstream compositeOut(dir / compositeFile, std::ios::binary);
         compositeOut << composite;
         if (composite.empty() || !compositeOut)
@@ -1456,10 +1463,7 @@ void AnimusForge::Forge::MaybeAuditCamera()
             csv << renderWidth << 'x' << renderHeight;
         for (uint32 count : Vi::ClassCounts(settings, image))
             csv << ',' << count;
-        std::array<bool, 256> listed{};
-        for (uint32 pixel = 0; pixel < settings.Width * settings.Height; ++pixel)
-            listed[image[std::size_t(pixel) * Vi::BYTES_PER_PIXEL + Vi::SLOT_BYTE]] = true;
-        csv << ',' << std::count(listed.begin() + 1, listed.end(), true);
+        csv << ',' << marks.size();
         csv << ',' << file << '\n';
         _vision.LastAudit = file;
     }
@@ -1533,6 +1537,18 @@ void AnimusForge::Forge::CaptureEvalVideos(uint32 group)
     Animus::ScenarioSpec const& spec = _pool->Spec();
     uint32 const agents = spec.AgentsPerEnv;
     bool const maps = spec.MapBytes && !_pool->MapCrop.empty() && !_pool->FinalMapCrop.empty();
+    // The entities a seat's observation row lists (Scenario::EntitiesFirst, EntitiesBlock::ReadMarks): the video
+    // draws them over the static image.
+    std::vector<Vi::EntityMark> marks;
+    auto const marksOf = [&](std::vector<float> const& obs, std::size_t seat) -> std::vector<Vi::EntityMark> const*
+    {
+        marks.clear();
+        int32 const first = _pool->EntitiesFirst(_pool->Layout[seat]);
+        if (first < 0 || obs.empty())
+            return nullptr;
+        Animus::Curriculum::EntitiesBlock::ReadMarks(&obs[seat * spec.ObsDim + first], marks);
+        return &marks;
+    };
     auto const [begin, count] = _pool->GroupRange(group);
     for (uint32 e = begin; e < begin + count; ++e)
     {
@@ -1544,13 +1560,13 @@ void AnimusForge::Forge::CaptureEvalVideos(uint32 group)
             if (_pool->Done[e])
             {
                 _evalVideos.Frame(e, &_pool->FinalImage[seat * spec.ImageBytes],
-                    maps ? &_pool->FinalMapCrop[seat * spec.MapBytes] : nullptr);
+                    maps ? &_pool->FinalMapCrop[seat * spec.MapBytes] : nullptr, marksOf(_pool->FinalObs, seat));
                 bool const same = _pool->EpisodeSeed[e] == _evalVideos.Seed(e);
                 _evalVideos.Finish(e, same ? &_pool->EpisodeInfo[seat * spec.EpisodeInfoDim] : nullptr);
             }
             else
                 _evalVideos.Frame(e, &_pool->Image[seat * spec.ImageBytes],
-                    maps ? &_pool->MapCrop[seat * spec.MapBytes] : nullptr);
+                    maps ? &_pool->MapCrop[seat * spec.MapBytes] : nullptr, marksOf(_pool->Obs, seat));
         }
 
         // A chosen seed's episode starting: filmed from its first frame. Whom: of the seats the learner plays (the
@@ -1588,7 +1604,7 @@ void AnimusForge::Forge::CaptureEvalVideos(uint32 group)
         std::tie(episode.RenderWidth, episode.RenderHeight) = _pool->CameraRenderSize(e, agent);
         _evalVideos.Start(std::move(episode));
         _evalVideos.Frame(e, &_pool->Image[seat * spec.ImageBytes], maps ? &_pool->MapCrop[seat * spec.MapBytes]
-            : nullptr);
+            : nullptr, marksOf(_pool->Obs, seat));
     }
     _evalVideoCaptureNs += uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::steady_clock::now() - started).count());

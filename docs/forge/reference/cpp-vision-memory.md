@@ -16,7 +16,7 @@ Read from `forge` bd32b9dc8; paths relative to `src/server/game/Animus/`. Part o
 ## Where they live and what drives them
 
 Both are per-seat members of `SeatState` (`Scenario/Curriculum/StageState.h:206` `Map`, `:217` `Recall`), written only from the seat's own sight:
-- `MapBlock::Observe` (`Blocks/MapBlock.cpp:~101`): `map->Advance(decisionSeconds)`, `WriteFrame(*view.Hits, z, bodyHeight)` (when the vision block left rays), `WriteBody(x,y,z,grounded)`,
+- `MapBlock::Observe` (`Blocks/MapBlock.cpp:~101`): `map->Advance(decisionSeconds)`, `WriteFrame(*view.Hits, z, bodyHeight)` (when the vision block left rays), `WriteEntities(*view.Seen)` (the entities the sensor listed; entity sensing), `WriteBody(x,y,z,grounded)`,
   then `Crop(x, y, z, facing, row)` into the STEP's map section; the block's 4 float columns are known/frontier/visited share of the crop's cells and a "kept" flag
   (golden: `map id=22 rev=1 obs=4`).
 - `EntitiesBlock::Observe` (`Blocks/EntitiesBlock.cpp:~76`): `memory->Advance(decisionSeconds)` then `memory->Write(*view.Seen)` (the only write), only if the seat has a `SeenList`
@@ -56,6 +56,7 @@ coarse 8-yd tiles when `CoarseTiles > 0` (`Fold`, :275: floors as layers, flags 
 2. If the ray hit something within 64 yd (not sky): Terrain/Model with normal z >= 0.7 writes a floor at the hit height (`WriteFloor`: `InsertFloor` merges within 1.5 yd of a layer, else uses a free layer, else replaces the nearer; sets EDGE on the cell and a neighbour whose nearest floor differs by more than
    1 yd); normal z <= -0.3 (ceiling seen from under) writes nothing; in between is a wall: the reference floor is this cell's highest layer at or below `hitZ + 0.5`, else a neighbour's, else the feet; it is marked only when the hit lies within `reference + bodyHeight + 0.5` (or within `[feet-2, feet+body+0.5]` with no reference);
    Water/Deadly mark HAZARD; Door and every other entity class (`class >= Door` except those handled above: `IsEntityClass`) write the class (and DOOR for a door) with a fresh age.
+   Entity sensing: units and objects are no longer in the image, so only Door reaches the entity branch from the rays (and a `GroundHazard` ray, a hazard painted on the floor: `FrameHits` carries the class as the pixel has it, so the hazard's area is marked as an entity class, as before). `WriteEntities(SeenList)` then writes, for each listed entity whose class is an entity class, the cell at its middle with its class (`WriteEntity`), and `MAP_DOOR` for a door (open or closed): one loop of at most 32 cells, called from `MapBlock::Observe` right after `WriteFrame` (the entities block precedes the map block in every layout). Rays no longer stop at a unit, so the map sees the wall behind it.
 `WriteBody(x,y,z,grounded)` (:534): marks the cells on the line from the last body position (when within 8 yd, `BODY_STEP_MAX`, half-yard steps) and the current cell VISITED and seen; if grounded inserts the feet height as a floor.
 
 ### The crop (read) - byte-exact
@@ -90,7 +91,7 @@ crop's cost besides `WriteFrame` (up to 64 grid steps per ray, about 2056 rays) 
 ## EntityMemory
 
 In-process only: `Remembered` is never serialized (a grep of `Vision/` finds no serialization; UNVERIFIED: nothing else in the tree persists it, the sight block reads it through `Find/Recall` each decision). Fields in order (EntityMemory.h:61): `u64 Guid` (0 = free entry), `u16 MemoryId` (index + 1), `Identity Id`, `u32 Entry`, `bool GameObject`, `float Level`,
-`Health`, `i8 Reaction`, `bool Dead`, `Open`, `Used`, `Vec3 Position` (its middle, as seen), `float Heading`, `Vec3 Velocity`, `bool Moving`, `double LastSeen`, `u64 LastWrite`.
+`Health`, `i8 Reaction`, `bool Dead`, `Open`, `Used`, `Vec3 Position` (its middle, as seen), `float Radius`, `float Height` (its size, as seen; the recalled slot's angular size), `float Heading`, `Vec3 Velocity`, `bool Moving`, `double LastSeen`, `u64 LastWrite`.
 
 - Written only from sight: `Write(SeenList)` (cpp:107) records each listed entity (made on first sight), the rest keep their last-seen values (alive stays alive until seen dead). Every `Write` counts, even with nothing listed.
 - Ids: the entry's index + 1, stable while remembered; `Configure` with a different cap forgets everything (ids are places) but keeps the clock; full: `Make` evicts the entry with the smallest `LastSeen` among those not shown by this write (ties: lowest index), and its id is reused. `Make` can return null only if every entry was shown by this write (needs cap < listed count; unreachable at cap 64 with 32 slots).

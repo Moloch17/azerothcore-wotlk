@@ -341,5 +341,5 @@ seek stage's costs, not `SeekTuning` (that struct, `Seek.h:31`, takes defaults).
 8. `FlagsOf` sets ROOT for a rooted client but the server strips a client's ROOT (`FlagRules.h:56-57`); intentional, but the bot path leans on
    `PlayerLink::Apply`'s ack handling instead.
 9. `Replay::Report` and `Movement::Report` (Client.h) are different types with the same name in sibling namespaces.
-10. `Protocol.h:73` says images are 4 bytes a pixel; see cpp-vision.md (not a Movement issue, noted here for the same reader).
+10. (`Protocol.h` said images were 4 bytes a pixel while the code was five; since protocol 26 they are four. See cpp-vision.md.)
 11. `Seek.h` scripted mover for the M4 leader: principle 14 forbids scripted players; the known-fact list records it as still scripted.

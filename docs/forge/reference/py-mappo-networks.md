@@ -160,20 +160,20 @@ irrelevant for the rollout copies, which never backpropagate.
 ## stage.json readers (`:843-1107`)
 
 Constants: `VISION_BLOCK="vision"`, `ENTITIES_BLOCK="entities"`, `SIGHT_BLOCK="sight"`, `MAP_BLOCK="map"`,
-`IMAGE_BYTES_PER_PIXEL=5`, `IMAGE_CHANNELS=5`, `IMAGE_CLASS_CHANNEL=3`, `CLASS_MASK=0x1F`, `SLOT_BYTE=4`,
+`IMAGE_BYTES_PER_PIXEL=4`, `IMAGE_CHANNELS=5`, `IMAGE_CLASS_CHANNEL=3`, `CLASS_MASK=0x1F`,
 `CLASS_LIMIT=32`, `DEFAULT_PATCH=4`, `MAP_CHANNELS=6`, `MAP_CODES=5`, `MAP_HEIGHT_ZERO=128`.
 `vision_of(stage, layout_names)` (`:968`) returns per layout `{first, height, width, channels, classes, class_channel,
-scalars, bytes_per_pixel, patch, class_limit, render_sizes, look, look_names, image_bytes, entities, map, camera_bytes,
-[sight]}` or None; None altogether if no layout has a camera. Revisions older than 5 (4 bytes/pixel, no class table) are
-refused by name. `vision_image_bytes` returns `camera_bytes` (image + map crop) (`:1068`); `vision_look_heads` the
-`(7,5,5)` tuple. Duplicate knowledge hazard: the byte layout (5 bytes/pixel, class in the low 5 bits of byte 3, the
-objective in bit 5, slot in byte 4; map channels order) is re-implemented here and in C++ `Vision::DecodePixel` /
+scalars, bytes_per_pixel, pixel_classes, patch, class_limit, render_sizes, look, look_names, image_bytes, entities, map,
+camera_bytes, [sight]}` or None; None altogether if no layout has a camera. Revisions older than 6 (no `pixel_classes`; 4
+bytes/pixel with kinds, or 5 with an entity slot) are refused by name (`bytes_per_pixel` must be 4). `vision_image_bytes` returns `camera_bytes` (image + map crop) (`:1068`); `vision_look_heads` the
+`(7,5,5)` tuple. Duplicate knowledge hazard: the byte layout (4 bytes/pixel, class in the low 5 bits of byte 3, the
+objective in bit 5; map channels order) is re-implemented here and in C++ `Vision::DecodePixel` /
 `DecodeCropCell`; `test_vision_bytes.py::test_decoding_every_byte_is_the_sims_decode_pixel_exactly` and
 `test_mental_map.py::test_the_crop_decodes_as_the_sim_encodes_it` pin it.
 
-`decode_image` (`:1110`): `[N, H*W*5] uint8 -> [N,H,W,5] float32`: distance `255 -> 1.0 else b/254`, height
-`(b-128)/125`, normal `b/255`, class `b & 31`, objective `(b>>5)&1`. `decode_slots` (`:1127`): byte 4 as long.
-`decode_map`
+`decode_image`: `[N, H*W*4] uint8 -> [N,H,W,5] float32`: distance `255 -> 1.0 else b/254`, height
+`(b-128)/125`, normal `b/255`, class `b & 31`, objective `(b>>5)&1`. (`decode_slots` and `SLOT_BYTE` are gone with the
+entity slot.) `decode_map`
 (`:1133`): code (clamped to 0..4), class, and 5 float values (height `(b-128)/127` where known, known, visited, age/255,
 frontier).
 
@@ -195,11 +195,12 @@ Tests: `test_mental_map.py`.
 state-dict keys and shapes are unchanged) (32 slots x 20 columns for the live M2/M1): its slot
 token is `[kept columns (18), class embedding (6, the camera's table), type embedding (8, hashed
 `(entry*2 + is_object) mod 4096`)]` -> `32 -> 64 -> 64` tanh MLP; the `memory` column is zeroed (read as 0 here) and the
-token also adds `link(patch features under the slot's pixels)` (`encode_linked :1349`). The pooled mean+max goes through
+token is its columns alone (`encode`; the old `link` of the patch features under the slot's pixels is gone: the image carries
+no entities, and the list's `los`, `ang_width` and `ang_height` columns, entities revision 2, say where and how big). The pooled mean+max goes through
 `pool` to 256 and is added to the camera embedding. No pointer heads.
 `SightEntities` (dungeon stages only; absent in the M1/M2 fixtures): reads a sight list (visible half first = the
 entity list, then remembered entities) with **the entity list's encoder** (`self.shared`, held by reference), plus
-`extra` Linear over the memory columns, a `memory_embed` (ids folded onto the table), the link for the visible half; the
+`extra` Linear over the memory columns, a `memory_embed` (ids folded onto the table); the
 optional **named row** (sight revision 2, M3): a token for "what the goal names" with a `named_task`, a match score
 softmax over present slots, `named_pool`, and per-press `named_gain` (starts at 0) added to the pointer scores.
 `SightPointers` holds one query Linear per press (head_width -> 64, gain 0.01), the actor's own. `with_pointers`
@@ -207,20 +208,21 @@ softmax over present slots, `named_pool`, and per-press `named_gain` (starts at 
 Invariants: all layouts' lists must agree on slots/width/presses (raises otherwise, `:1391`); the sight list's leading
 columns equal the entity list's (`_sight_of`).
 Tests: `test_sight.py`, `test_interact.py`, `test_vision_identity.py`.
-Quirk: pointer logits use token encodings **without** pixels (an action's logits are computed from the observation
-alone), so the scoring ignores the link (`:1456`).
+Pointer logits use the same tokens as the camera embedding (`tokens(obs, layout)`: both are from the observation alone).
 
 ## `VisionEncoder` (`:1541`)
 
 Camera for all layouts. Constants: `PATCH` (class default 4, per instance the manifest's `patch`, 8 live; the instance
-attribute shadows the class attribute `:1582`), `WIDTHS=(64,64)`, `EMBED=256`, `CLASS_EMBED=6`. Parameters (M2):
-`class_embed [32,6]`, `patch`, `mix`, `embed [256, 2*64+scalars]`, plus sub-modules `entities`, `map`, `sight`.
+attribute shadows the class attribute `:1582`), `WIDTHS=(64,64)`, `EMBED=256`, `CLASS_EMBED=6` (the entity tokens' and the map's class table, not
+the pixels'). Parameters (M2): `class_embed [32,6]`, `patch` (`PATCH^2 x (4 + P)` inputs: 704 at patch 8 with P = 7 pixel classes), `mix`,
+`embed [256, 2*64+scalars]`, plus sub-modules `entities`, `map`, `sight`.
 `forward(obs, layout, image)` (`:1710`): gather the layout's scalars and decode; planes = 4 non-class channels + the
-class embedding; patches row-major; features; keypoints; `embed`; add map, entities (link), sight; `silu`. A layout
+class as a one-hot over `pixel_classes` (`planes`: a comparison against a buffer, float data planes, no learned embedding and no scatter
+backward on the pixel path); patches row-major; features; keypoints; `embed`; add map, entities, sight; `silu`. A layout
 without a camera reads garbage columns and is zeroed by `VisionJoin`/`has_vision` (`:1654`). The encoder is **owned by
 the actor** (its state dict) and referenced by the critic; `vision_parameters()` (`trainer.py:726`) feeds a separate
 Adam (`vision_opt`) stepped once per minibatch. `blind` collects columns the adapters/normalisers must not read
-(`:1638`). `link_features` (`:1696`) pools patch features by slot via a `scatter_add` histogram.
+(`:1638`).
 Mixed resolution: the sim renders at several sizes (`render_sizes` 32x16 ... 128x64) and scales to the canonical
 128x64 before sending, so the learner always sees 128x64 (`vision_of` validates each size is within the canonical one).
 Tests: `test_vision_encoder.py`, `test_free_look.py`, `test_vision_identity.py`.

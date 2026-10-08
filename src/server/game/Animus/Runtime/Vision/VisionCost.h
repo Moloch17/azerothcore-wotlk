@@ -36,6 +36,14 @@ namespace Animus::Vision::Cost
         Rays.fetch_add(rays, std::memory_order_relaxed);
     }
 
+    /// The entity sensor's shadow rays (entity-sensing), beside the pixel rays above.
+    inline std::atomic<uint64_t> SensorRays{ 0 };
+
+    inline void AddSensor(uint64_t rays)
+    {
+        SensorRays.fetch_add(rays, std::memory_order_relaxed);
+    }
+
     /// The mental map's (perception-goals REDESIGN §3, amendment 2: measured in the vision row): thread time writing
     /// a frame and the body into the map and cropping it, the writes, and the tiles kept (summed over the writes, for
     /// the mean a seat keeps).

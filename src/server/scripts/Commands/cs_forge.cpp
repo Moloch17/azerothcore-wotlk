@@ -300,13 +300,16 @@ namespace
             std::vector<uint8> image(Vi::ImageBytes(settings));
             std::array<float, Vi::SCALARS> scalars{};
 
-            // Once as the block renders (no clock inside), once with the breakdown's clocks.
+            // Once as the block renders (no clock inside), once with the breakdown's clocks. The static world only
+            // (no seat here to sense entities for): the camera placed once, as the block places it.
+            Vi::Rig const rig = Vi::PlaceCamera(pose, camera, world);
             auto const start = std::chrono::steady_clock::now();
-            uint32 const rays = Vi::Render(settings, pose, camera, world, {}, nullptr, image.data(), scalars.data());
+            uint32 const rays = Vi::Render(settings, rig, pose, camera, world, {}, nullptr, image.data(),
+                scalars.data());
             double const wallUs = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now()
                 - start).count();
             Vi::Breakdown breakdown;
-            Vi::Render(settings, pose, camera, world, {}, nullptr, image.data(), scalars.data(), &breakdown);
+            Vi::Render(settings, rig, pose, camera, world, {}, nullptr, image.data(), scalars.data(), &breakdown);
 
             std::string const base = file.value_or("camera-snapshot");
             uint32 const width = settings.Width;
@@ -364,10 +367,10 @@ namespace
             handler->PSendSysMessage("  {} rays in {:.0f} us ({:.2f} us a ray)", rays, wallUs,
                 rays ? wallUs / double(rays) : 0.0);
             handler->PSendSysMessage("  with the breakdown's clocks: trees {:.0f} us ({} casts), WMO liquids {:.0f} us "
-                "({} casts), terrain {:.0f} us ({} grids, {} cells), units {:.0f} us ({} tests)",
+                "({} casts), terrain {:.0f} us ({} grids, {} cells), hazards {:.0f} us ({} tests)",
                 double(breakdown.TreeNs) / 1e3, breakdown.TreeCasts, double(breakdown.LiquidNs) / 1e3,
                 breakdown.LiquidCasts, double(breakdown.TerrainNs) / 1e3, breakdown.TerrainTiles,
-                breakdown.TerrainCells, double(breakdown.UnitNs) / 1e3, breakdown.UnitTests);
+                breakdown.TerrainCells, double(breakdown.HazardNs) / 1e3, breakdown.HazardTests);
             handler->PSendSysMessage("  boom {:.2f} yd, pivot above floor {:.2f} (/10), underwater {}, airborne {}",
                 scalars[Vi::SCALAR_BOOM] * Vi::ZOOM_SCALE, scalars[Vi::SCALAR_PIVOT_HEIGHT],
                 scalars[Vi::SCALAR_UNDERWATER] > 0.5f ? "yes" : "no",
