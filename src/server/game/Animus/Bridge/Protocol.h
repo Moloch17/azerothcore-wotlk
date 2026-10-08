@@ -29,8 +29,8 @@
  *                            (no terminator). ObsDim and NumActions are the largest layout's. SpecMsg ends with
  *                            u32 KinematicsDim, the floats per agent of each STEP's kinematics (protocol 20), and
  *                            u32 ImageBytes, the bytes per agent of each STEP's camera images, I below: the vision
- *                            block's height x width x 5 (protocol 23; x 4 at 21 and 22), 0 for a stage without one
- *                            (protocol 21); then u32
+ *                            block's height x width x 4 (protocol 26; x 5 at 23 to 25, x 4 at 21 and 22), 0 for a
+ *                            stage without one (protocol 21); then u32
  *                            LookHeads, the look head's categoricals per agent in ACT (Vision::FreeLook::HEADS, 3)
  *                            with a vision block, 0 without one (protocol 22); then u32 MapBytes, the bytes per
  *                            agent of each STEP's mental map crops, M below: the map block's 48 x 48 x 6 (13,824), 0
@@ -68,7 +68,7 @@
  *                                                     zeros for an agent without a body (protocol 20)
  *                            and, only in a stage with a vision block (I = SPEC's ImageBytes > 0; protocol 21):
  *                              u8  image[E*A*I]       each agent's camera image after any auto-reset, [row][col][byte]
- *                                                     row 0 at the top, 5 bytes a pixel (Vision::EncodePixel,
+ *                                                     row 0 at the top, 4 bytes a pixel (Vision::EncodePixel,
  *                                                     camera-vision.BYTES.md); for an agent with no frame,
  *                                                     Vision::FillNoFrame's pattern (sky, height 0). Absent
  *                                                     when the learner reads it from the device buffers (DEVICE)
@@ -177,7 +177,11 @@ namespace AnimusForge
     // 23's STEP; every SPEC is four bytes longer.
     // 25: present 2 is the "human" stand-in's row, which the learner plays with a frozen partner (it was 0, the sim's
     // script), and MODE_FLAG_STAND_IN in a training MODE says the learner can field one.
-    constexpr uint32 PROTOCOL_VERSION = 25;
+    // 26: entity sensing (vision block revision 6): a camera pixel is four bytes again (distance, height, normal, the
+    // class and objective byte -- no entity slot), of the static world alone, so ImageBytes is height x width x 4; the
+    // entity list's columns 16-18 are los, ang_width and ang_height (entities block revision 2, sight block revision
+    // 3). The messages' layout is protocol 25's.
+    constexpr uint32 PROTOCOL_VERSION = 26;
     constexpr uint32 SCENARIO_NAME_SIZE = 32;
     constexpr uint32 POLICY_NAME_SIZE = 32;
     constexpr uint32 LAYOUT_NAME_SIZE = 48;

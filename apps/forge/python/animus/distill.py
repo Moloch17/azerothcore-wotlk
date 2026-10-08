@@ -28,7 +28,7 @@ from .stages import Span, arena_names, arena_state_span, block_spans, revised_bl
 CAMERA_BLOCKS = ("vision", "map", "entities", "sight")
 #: What a camera's image has to agree on for one encoder to read another sim's bytes (vision_of's description).
 IMAGE_KEYS = ("height", "width", "channels", "classes", "class_channel", "class_limit", "bytes_per_pixel",
-              "image_bytes")
+              "pixel_classes", "image_bytes")
 MAP_KEYS = ("height", "width", "channels", "codes", "classes", "map_bytes")
 
 

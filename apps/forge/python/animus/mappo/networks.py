@@ -635,17 +635,16 @@ def clear_blind_columns(network: nn.Module) -> None:
 VISION_BLOCK = "vision"
 
 
-#: The camera's bytes a pixel (protocol 23, Vision::BYTES_PER_PIXEL): distance, height, normal, the class byte (the
-#: semantic class and the objective bit) and the entity slot (perception-goals 1a, vision block revision 5).
-IMAGE_BYTES_PER_PIXEL = 5
+#: The camera's bytes a pixel (protocol 26, Vision::BYTES_PER_PIXEL): distance, height, normal and the class byte (the
+#: semantic class and the objective bit), of the static world alone (vision block revision 6: units and objects are
+#: in the entity list, not the image).
+IMAGE_BYTES_PER_PIXEL = 4
 #: The decoded image channels, as the sim's Vision::DecodePixel lays them out: the class is channel 3 (an index, which
-#: the encoder embeds), the objective channel 4. The slot byte is no image channel (perception-goals amendment 10): it
-#: only pools the patch features under each listed entity (1c).
+#: the encoder reads as one-hot planes over the manifest's pixel_classes), the objective channel 4.
 IMAGE_CHANNELS = 5
 IMAGE_CLASS_CHANNEL = 3
-#: The class byte's bits (Camera.h): the class in the low five, the objective in bit 5; byte 4 is the slot.
+#: The class byte's bits (Camera.h): the class in the low five, the objective in bit 5.
 CLASS_MASK = 0x1F
-SLOT_BYTE = 4
 #: The classes the wire can carry (5 bits): the size of the class embedding's table, so a class added later needs no
 #: new shape.
 CLASS_LIMIT = 32
@@ -759,7 +758,8 @@ def _sight_of(entry: dict, name: str, entities: dict | None) -> dict | None:
 def vision_of(stage: dict | None, layout_names: Sequence[str]) -> list[dict | None] | None:
     """Per layout, in `layout_names` order, its camera as the vision block of stage.json describes it -- {"first": the
     block's first observation column (its scalars), "height", "width", "channels", "classes", "class_channel",
-    "scalars", "bytes_per_pixel", "patch", "render_sizes", "look", "look_names", "image_bytes", "entities"} -- or None
+    "scalars", "bytes_per_pixel", "pixel_classes", "patch", "render_sizes", "look", "look_names", "image_bytes",
+    "entities"} -- or None
     for a layout without one; None altogether when no layout has a camera (no encoder, nothing new in the networks).
     The block's first column differs per layout (the core block before it is as wide as the class's spells), so every
     layout keeps its own; so does its entity list ("entities", _entities_of: the entities block after the camera).
@@ -768,9 +768,11 @@ def vision_of(stage: dict | None, layout_names: Sequence[str]) -> list[dict | No
     scalars alone. Revision 4 (camera-vision.FREELOOK.md) added the encoder's "patch" (4 when absent), the
     "render_sizes" the sim draws from (scaled up to the canonical height x width it sends) and the free look's heads,
     `"look": {"heads": [7, 5, 5], "names": [...]}` (() when absent: no look head). Revision 5 (perception-goals P2):
-    five bytes a pixel, the semantic class in place of the kind and the entity slot. Refused: a vision block without
-    its image, or from before revision 5 (its kinds, four bytes a pixel), layouts whose images differ (one encoder
-    reads them all), and a block whose width is not its scalars."""
+    the semantic class in place of the kind, and an entity slot as a fifth byte. Revision 6 (entity sensing): four
+    bytes a pixel again, of the static world alone, and `"pixel_classes"`, the classes a pixel can carry (the
+    encoder's one-hot planes, in that order). Refused: a vision block without its image, or from before revision 6
+    (no pixel classes, five bytes a pixel), layouts whose images differ (one encoder reads them all), and a block
+    whose width is not its scalars."""
     if stage is None:
         return None
     layouts = stage.get("layouts") or {}
@@ -790,14 +792,19 @@ def vision_of(stage: dict | None, layout_names: Sequence[str]) -> list[dict | No
             raise ValueError(f"{name}: the vision block's image is not sent as bytes (transport "
                              f"{image.get('transport')!r}): a sim from before protocol 21, which this learner does "
                              f"not read")
-        if "classes" not in image:
-            raise ValueError(f"{name}: the vision block's image has no class table (revision "
+        if "classes" not in image or "pixel_classes" not in image:
+            raise ValueError(f"{name}: the vision block's image has no class table or no pixel classes (revision "
                              f"{block.get('revision')}, {image.get('bytes_per_pixel')} bytes a pixel): a sim from "
-                             f"before revision 5 (protocol 23), which this learner does not read")
+                             f"before revision 6 (protocol 26), which this learner does not read")
         described = {key: int(image[key]) for key in ("height", "width", "channels", "classes", "class_channel",
                                                       "scalars", "bytes_per_pixel")}
         described["patch"] = int(image.get("patch", DEFAULT_PATCH))
         described["class_limit"] = int(image.get("class_limit", CLASS_LIMIT))
+        described["pixel_classes"] = tuple(int(value) for value in image["pixel_classes"])
+        if not described["pixel_classes"] or len(set(described["pixel_classes"])) != len(described["pixel_classes"]) \
+                or any(not 0 <= value < described["class_limit"] for value in described["pixel_classes"]):
+            raise ValueError(f"{name}: the vision block's pixel classes {list(described['pixel_classes'])} are not "
+                             f"distinct classes of the {described['class_limit']} the wire carries")
         described["render_sizes"] = tuple(tuple(int(v) for v in size) for size in image.get("render_sizes", ()))
         look = block.get("look") or image.get("look") or {}
         heads = tuple(int(head) for head in look.get("heads", ()))
@@ -890,10 +897,9 @@ def check_image_bytes(vision: list[dict | None] | None, spec_image_bytes: int, s
 
 
 def decode_image(image: torch.Tensor, height: int, width: int) -> torch.Tensor:
-    """The camera's bytes [N, H x W x 5] uint8 as its five float image channels [N, H, W, 5] -- distance, height,
+    """The camera's bytes [N, H x W x 4] uint8 as its five float image channels [N, H, W, 5] -- distance, height,
     normal, class, objective -- exactly as Vision::DecodePixel: 255 -> 1.0 (sky) else b / 254; (b - 128) / 125;
-    b / 255; b & 31; (b >> 5) & 1. The slot byte is not among them (decode_slots). On the device: the bytes are what
-    the rollout keeps."""
+    b / 255; b & 31; (b >> 5) & 1. On the device: the bytes are what the rollout keeps."""
     pixels = image.reshape(-1, height, width, IMAGE_BYTES_PER_PIXEL)
     distance, rise, normal, flags = pixels[..., 0], pixels[..., 1], pixels[..., 2], pixels[..., 3]
     as_float = lambda value: value.to(torch.float32)
@@ -904,12 +910,6 @@ def decode_image(image: torch.Tensor, height: int, width: int) -> torch.Tensor:
         as_float(flags & CLASS_MASK),
         as_float((flags >> 5) & 1),
     ], dim=-1)
-
-
-def decode_slots(image: torch.Tensor, height: int, width: int) -> torch.Tensor:
-    """Each pixel's entity slot, [N, H, W] long: 0 none, else s, the entity list's s-th entry (Vision::DecodePixel's
-    sixth value)."""
-    return image.reshape(-1, height, width, IMAGE_BYTES_PER_PIXEL)[..., SLOT_BYTE].long()
 
 
 def decode_map(crops: torch.Tensor, height: int, width: int) -> dict[str, torch.Tensor]:
@@ -1016,21 +1016,20 @@ class MapEncoder(nn.Module):
 
 
 class VisibleEntities(nn.Module):
-    """**The entity list** (perception-goals 1b and 1c): the entities block's slots read as a set -- one encoder shared
-    by every slot and layout, the present slots pooled (mean and max) -- with two changes to how a slot is encoded:
-    - the class and the type are embedded, never one-hot (amendment 10): the class through the camera's own class
-      embedding (one table for the pixels and the list), the type -- the creature or game object entry, raw in its
-      column -- hashed into TYPE_EMBED-wide buckets, (entry x 2 + is object) mod the manifest's type_buckets; the
-      slot's other columns go in as they are;
-    - **the link** (1c): each slot's token adds a projection of the mean patch feature under its own pixels (the
-      slots' masks pooled at patch resolution: `linked`), so a token knows what its shape looks like.
+    """**The entity list** (perception-goals 1b; entity sensing): the entities block's slots read as a set -- one
+    encoder shared by every slot and layout, the present slots pooled (mean and max) -- with a change to how a slot is
+    encoded: the class and the type are embedded, never one-hot (amendment 10): the class through the camera's own
+    class embedding (one table for the list and the map), the type -- the creature or game object entry, raw in its
+    column -- hashed into TYPE_EMBED-wide buckets, (entry x 2 + is object) mod the manifest's type_buckets; the
+    slot's other columns go in as they are, among them the line of sight (los) and the angular width and height the
+    sensor measured (revision 2). The list is geometric, so a slot reads the same at every render size.
     The pool (Linear onto the camera's embedding width) is added to the camera's embedding; a layout without a list
     adds zero. The sight list (SightEntities) shares the encoder and points at the slots."""
 
     TYPE_EMBED = 8
 
-    def __init__(self, descriptors: Sequence[dict | None], class_embedding: nn.Embedding, feature_width: int,
-                 out_width: int, embed: int = 64):
+    def __init__(self, descriptors: Sequence[dict | None], class_embedding: nn.Embedding, out_width: int,
+                 embed: int = 64):
         super().__init__()
         entries = [entry for entry in descriptors if entry is not None]
         spec = entries[0]
@@ -1051,7 +1050,6 @@ class VisibleEntities(nn.Module):
                                                                 _linear(embed, embed, math.sqrt(2)), nn.Tanh())})
         self.pool = _linear(2 * embed, out_width, 1.0)
         self.type_embed = nn.Embedding(self.buckets, self.TYPE_EMBED)
-        self.link = _linear(feature_width, embed, 1.0)
         # Per layout: [layouts, slots * width] observation columns and [layouts, slots] present columns (-1: the layout
         # has no list). Derived from stage.json, not learned: kept out of the state dict.
         layouts = len(descriptors)
@@ -1076,7 +1074,7 @@ class VisibleEntities(nn.Module):
         self.register_buffer("column_keep", keep, persistent=False)
 
     def token(self, raw: torch.Tensor) -> torch.Tensor:
-        """Slots' tokens [..., embed] from their entity-list columns [..., width] alone (no pixels): the class and the
+        """Slots' tokens [..., embed] from their entity-list columns [..., width] alone: the class and the
         type embedded, the memory id read as 0, the rest as they are. The sight list reads its slots so too."""
         dtype = self.pool.weight.dtype
         raw = raw * self.column_keep.to(raw.dtype)
@@ -1088,15 +1086,12 @@ class VisibleEntities(nn.Module):
                        self.type_embed(bucket).to(dtype)], dim=-1)
         return self.encoders["visible"](x)
 
-    def encode_linked(self, obs: torch.Tensor, layout: torch.Tensor,
-                      linked: torch.Tensor) -> dict[str, tuple[torch.Tensor, torch.Tensor]]:
-        """The slots' tokens [N, slots, embed] (with the patch features under each, `linked` [N, slots, F]) and which
-        are present."""
+    def encode(self, obs: torch.Tensor, layout: torch.Tensor) -> dict[str, tuple[torch.Tensor, torch.Tensor]]:
+        """The slots' tokens [N, slots, embed] and which are present."""
         rows = obs.shape[0]
         layout = layout.reshape(-1).long()
         raw = obs.gather(1, self.columns_visible[layout]).reshape(rows, self.slots, self.width_)
-        dtype = self.pool.weight.dtype
-        codes = self.token(raw) + self.link(linked.to(dtype))
+        codes = self.token(raw)
         present_at = self.present_visible[layout]
         present = (present_at >= 0) & (obs.gather(1, present_at.clamp(min=0)) > 0.5)
         return {"visible": (codes, present)}
@@ -1118,7 +1113,6 @@ class SightEntities(nn.Module):
     the camera's visible entities first, in the entity list's order, then the most relevant remembered ones -- read by
     the entity list's own encoder (VisibleEntities.token: the same weights, shared by reference, not a copy), each
     token plus:
-    - the patch features under its pixels (the list's link), for the visible half, when the image is there;
     - a projection of the memory's columns (visible now, age, dead, open, used, heading, course, selected, focused);
     - an embedding of its memory id (a label stable while the entity is remembered, ids past `memory_ids` folded onto
       the table; 0 none).
@@ -1204,18 +1198,14 @@ class SightEntities(nn.Module):
         self.register_buffer("named_columns", named, persistent=False)
         self.register_buffer("has_named", has_named, persistent=False)
 
-    def tokens(self, obs: torch.Tensor, layout: torch.Tensor,
-               linked: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
-        """The slots' tokens [N, slots, embed] and which are present [N, slots]; `linked` [N, visible_slots, F] the
-        patch features under the visible half's pixels (None: without them, as the pointers read the list)."""
+    def tokens(self, obs: torch.Tensor, layout: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """The slots' tokens [N, slots, embed] and which are present [N, slots], from the observation alone (the
+        pointers read the list so too)."""
         rows = obs.shape[0]
         layout = layout.reshape(-1).long()
         raw = obs.gather(1, self.columns[layout]).reshape(rows, self.slots, self.width_)
         dtype = self.pool.weight.dtype
         codes = self.shared.token(raw[..., : self.base])
-        if linked is not None:
-            link = self.shared.link(linked.to(dtype))
-            codes = codes + nn.functional.pad(link, (0, 0, 0, self.slots - self.visible_slots))
         codes = codes + self.extra(raw[..., self.base:].to(dtype))
         ids = raw[..., self.memory_column].round().clamp(min=0).long()
         ids = torch.where(ids > 0, (ids - 1) % self.memory_ids + 1, ids)
@@ -1292,25 +1282,28 @@ class SightPointers(nn.Module):
 
 
 class VisionEncoder(nn.Module):
-    """**The camera** (camera-vision): a seat's H x W image of what its camera's rays hit, encoded by one small
+    """**The camera** (camera-vision): a seat's H x W image of the static world its camera's rays hit (terrain,
+    models, closed doors, liquids, ground hazards: units and objects are the entity list's), encoded by one small
     network shared by every layout, as VisibleEntities shares its encoder.
 
-    The image arrives as bytes beside the observation (protocol 23: [N, H x W x 5] uint8, [row][col][byte]) and is
+    The image arrives as bytes beside the observation (protocol 26: [N, H x W x 4] uint8, [row][col][byte]) and is
     decoded on the device to its five channels, channels last (decode_image); the block's scalars are gathered from
     each row's own layout's columns (a table by layout id: the vision block starts at a different column in every
-    class). **The class is embedded** (perception-goals amendment 10): a learned CLASS_EMBED-wide vector a class, from
-    a table of CLASS_LIMIT (the wire's 5 bits), so 4 + CLASS_EMBED planes a pixel (10). **Patches**, not
+    class). **The class is a one-hot** over the manifest's pixel_classes (7: sky, terrain, model, door, water, deadly,
+    ground hazard), a float data plane compared against the class channel, so 4 + 7 planes a pixel (11) and no
+    learned embedding on the pixel path (an embedding's scatter backward was a third of the CPU update). The class
+    table `class_embed` stays for the entity tokens and the map. **Patches**, not
     convolutions: the image is cut into PATCH x PATCH squares (128 x 64 with patch 8 -> a 16 x 8 grid), each square's
-    pixels and planes (8 x 8 x 10 = 640 features, ordered row in the patch, column in the patch, plane) go through
+    pixels and planes (8 x 8 x 11 = 704 features, ordered row in the patch, column in the patch, plane) go through
     one shared Linear -> 64 + SiLU and Linear 64 -> 64 + SiLU, a spatial softmax per channel over the patch grid gives
     its expected (x, y) in [-1, 1] (128 keypoints), the block's scalars join them, and Linear -> 256: the camera's
     embedding, after SiLU. PATCH is the manifest's "patch" (4 when it names none). Each network reads it through a
     `vision_join` of its own, a Linear onto its adapters' output width (VisionJoin).
 
-    **The entity list** (perception-goals 1b, 1c; VisibleEntities): where the layouts have one, its slots are read as
-    a set, each slot's token joined with the mean patch feature under its own pixels -- the slot byte, pooled at patch
-    resolution (link_features) -- and the set's pool is added to the embedding before the SiLU. The slot byte is
-    used for nothing else: it is not an image channel.
+    **The entity list** (perception-goals 1b; VisibleEntities): where the layouts have one, its slots are read as a
+    set and the set's pool is added to the embedding before the SiLU. The image carries no entities, so a token does
+    not look at pixels: what it knows of where and how big it is, is its columns (direction, distance, angular size,
+    line of sight).
 
     **One encoder for the actor and the critic** (MappoTrainer): the actor owns it -- it is in the actor's state dict,
     so a policy alone (export, distillation, the league) carries its camera -- and the critic holds a reference that
@@ -1329,14 +1322,15 @@ class VisionEncoder(nn.Module):
     def update_bytes_per_row(cls, image: dict) -> int:
         """Roughly the device memory one row's camera (and map) keeps for the update's backward pass, in bytes, from the
         stage's vision descriptor: float32 tensors the encoder saves per pixel (the decoded channels, the planes
-        without the class, the class embedding, the concatenated planes and the patch copy of them) and per map
+        without the class, the concatenated planes with the class one-hot and the patch copy of them) and per map
         cell (the code and class embeddings, the values, the planes and their patch copy, and the int64 decode).
-        For the 128 x 64 camera that is 1.15 MB a row against the 0.98 MB measured (5.6 GiB over 6,144 rows,
-        move1_controls.yaml); the map adds 0.45 MB."""
+        The pixel class is a one-hot (no embedding output kept), so a row of the 128 x 64 camera is 1.0 MB against the
+        embedded design's 1.15 MB (0.98 MB measured then, 5.6 GiB over 6,144 rows, move1_controls.yaml); not
+        re-measured. The map adds 0.45 MB."""
         channels = int(image["channels"])
-        planes = channels - 1 + cls.CLASS_EMBED
+        planes = channels - 1 + len(image["pixel_classes"])
         pixels = int(image["height"]) * int(image["width"])
-        total = 4 * pixels * (channels + (channels - 1) + cls.CLASS_EMBED + 2 * planes)
+        total = 4 * pixels * (channels + (channels - 1) + 2 * planes)
         crop = image.get("map")
         if crop is not None:
             cells = int(crop["height"]) * int(crop["width"])
@@ -1351,6 +1345,7 @@ class VisionEncoder(nn.Module):
         self.channels, self.classes = image["channels"], image["classes"]
         self.class_channel, self.scalars = image["class_channel"], image["scalars"]
         self.class_limit = int(image.get("class_limit", CLASS_LIMIT))
+        self.pixel_classes = tuple(image["pixel_classes"])
         self.PATCH = int(image.get("patch", DEFAULT_PATCH))
         if self.height % self.PATCH or self.width % self.PATCH:
             raise ValueError(f"the camera's image is {self.width} x {self.height}; the vision encoder cuts it into "
@@ -1359,7 +1354,7 @@ class VisionEncoder(nn.Module):
         self.image_bytes = image["image_bytes"]
         self.span = self.scalars
         self.class_embed = nn.Embedding(self.class_limit, self.CLASS_EMBED)
-        self.planes_per_pixel = self.channels - 1 + self.CLASS_EMBED
+        self.planes_per_pixel = self.channels - 1 + len(self.pixel_classes)
         self.grid = (self.height // self.PATCH, self.width // self.PATCH)
         features = self.PATCH * self.PATCH * self.planes_per_pixel
         self.patch = nn.Linear(features, self.WIDTHS[0])
@@ -1375,16 +1370,15 @@ class VisionEncoder(nn.Module):
                                         torch.linspace(-1.0, 1.0, self.grid[1]), indexing="ij")
         self.register_buffer("grid_x", grid_x.reshape(-1), persistent=False)
         self.register_buffer("grid_y", grid_y.reshape(-1), persistent=False)
-        # Each pixel's patch (row-major over the grid, as `patches` orders them), for the link's pooling.
-        rows = torch.arange(self.height)[:, None] // self.PATCH
-        cols = torch.arange(self.width)[None, :] // self.PATCH
-        self.register_buffer("patch_of", (rows * self.grid[1] + cols).reshape(-1), persistent=False)
+        # The classes a pixel can carry, in plane order: the one-hot compares the class channel against them. Derived
+        # from the manifest, not learned.
+        self.register_buffer("pixel_class_ids", torch.tensor(self.pixel_classes, dtype=torch.long), persistent=False)
         # The entity list, where the layouts have one (every revision 5 stage does).
         lists = [entry.get("entities") if entry is not None else None for entry in descriptors]
         self.entities = None
         self.slots = 0
         if any(entry is not None for entry in lists):
-            self.entities = VisibleEntities(lists, self.class_embed, self.WIDTHS[1], self.EMBED)
+            self.entities = VisibleEntities(lists, self.class_embed, self.EMBED)
             self.slots = self.entities.slots
         # The mental map, where the layouts have one (perception-goals REDESIGN §3): its crop follows the image in
         # each row's bytes, and its encoder adds to the embedding.
@@ -1439,11 +1433,13 @@ class VisionEncoder(nn.Module):
         return rows[:, :self.image_bytes] if self.map_bytes else rows
 
     def planes(self, image: torch.Tensor) -> torch.Tensor:
-        """[N, H, W, C] -> [N, H, W, C - 1 + CLASS_EMBED]: every channel but the class as it is, then the class's
-        embedding (the class rounded and clamped to the table)."""
-        classes = image[..., self.class_channel].round().clamp(0, self.class_limit - 1).long()
+        """[N, H, W, C] -> [N, H, W, C - 1 + P]: every channel but the class as it is, then the class as a one-hot over
+        the P pixel classes (the class rounded; a class past the list is all zeros). Data planes: nothing here needs a
+        gradient, so there is no embedding to scatter into."""
+        classes = image[..., self.class_channel].round().long()
         rest = torch.cat([image[..., : self.class_channel], image[..., self.class_channel + 1:]], dim=-1)
-        return torch.cat([rest, self.class_embed(classes).to(rest.dtype)], dim=-1)
+        onehot = classes[..., None] == self.pixel_class_ids
+        return torch.cat([rest, onehot.to(rest.dtype)], dim=-1)
 
     def patches(self, planes: torch.Tensor) -> torch.Tensor:
         """[N, H, W, P] -> [N, patches, PATCH x PATCH x P]: the grid's patches row by row, each its pixels row by
@@ -1465,20 +1461,6 @@ class VisionEncoder(nn.Module):
         y = (weights * self.grid_y.to(weights.dtype)).sum(-1)
         return torch.cat([x, y], dim=-1)
 
-    def link_features(self, features: torch.Tensor, slots: torch.Tensor) -> torch.Tensor:
-        """**The link** (perception-goals 1c): per listed slot, the mean of the patch features under its pixels, each
-        patch weighted by how many of its pixels are the slot's -- [N, slots, F] from the features [N, patches, F]
-        and the pixels' slots [N, H, W] (0 none). A slot with no pixel reads zeros. A histogram at patch resolution
-        (scatter_add), never a one-hot of the image."""
-        n, patches = features.shape[0], features.shape[1]
-        bins = self.slots + 1
-        index = self.patch_of[None, :] * bins + slots.reshape(n, -1).clamp(0, self.slots)
-        counts = torch.zeros(n, patches * bins, dtype=torch.float32, device=features.device)
-        counts.scatter_add_(1, index, torch.ones(1, 1, dtype=torch.float32, device=features.device).expand_as(index))
-        weights = counts.view(n, patches, bins)[:, :, 1:].transpose(1, 2)
-        pooled = torch.bmm(weights.to(features.dtype), features)
-        return pooled / weights.sum(-1, keepdim=True).clamp(min=1.0).to(features.dtype)
-
     def forward(self, obs: torch.Tensor, layout: torch.Tensor, image: torch.Tensor | None) -> torch.Tensor:
         """The camera's embedding of rows `obs` [N, O] with their images `image` [N, I] uint8, [N, 256] (a layout
         without the camera's rows are zeroed by the join)."""
@@ -1489,12 +1471,10 @@ class VisionEncoder(nn.Module):
             crops = image.reshape(-1, self.image_bytes + self.map_bytes)[:, self.image_bytes:]
             out = out + self.map(obs, layout, crops).to(out.dtype)
         if self.entities is not None:
-            slots = decode_slots(self.pixels(image), self.height, self.width)
-            linked = self.link_features(features, slots)
-            encoded = self.entities.encode_linked(obs, layout, linked)
+            encoded = self.entities.encode(obs, layout)
             out = out + self.entities.pooled(obs, layout, encoded).to(out.dtype)
             if self.sight is not None:
-                codes, present = self.sight.tokens(obs, layout, linked)
+                codes, present = self.sight.tokens(obs, layout)
                 out = out + self.sight.pooled(codes, present, layout, obs).to(out.dtype)
         return nn.functional.silu(out)
 
