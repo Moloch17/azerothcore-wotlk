@@ -15,7 +15,7 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "Bake.h"
+#include "SceneBaker.h"
 #include "BakedWorld.h"
 #include "Bench.h"
 #include <cstdio>
@@ -29,7 +29,7 @@ namespace
     {
         std::printf(
             "usage:\n"
-            "  %1$s bake <data dir> <map id> [out file]    bake <data dir>/scenes/<map>.scene from vmaps/ and dbc/\n"
+            "  %1$s bake <data dir> <map id> [out file]    bake <data dir>/scenes/<map>.scene from vmaps/, maps/ and dbc/\n"
             "  %1$s info <scene file>                      print a scene's header\n"
             "  %1$s bench <scene> <poses.txt> <out dir> [reps]\n"
             "                                              render each pose (name x y z yawDeg pitchDeg zoom a line)\n"
@@ -51,10 +51,8 @@ int main(int argc, char** argv)
     if (command == "bake" && argc >= 4)
     {
         uint32_t const mapId = uint32_t(std::strtoul(argv[3], nullptr, 10));
-        char name[16];
-        std::snprintf(name, sizeof(name), "%03u.scene", mapId);
         std::string const out = argc >= 5 ? argv[4]
-            : (std::filesystem::path(argv[2]) / "scenes" / name).string();
+            : (std::filesystem::path(argv[2]) / "scenes" / SceneBaker::SceneFileName(mapId)).string();
         SceneBaker::BakeReport report;
         if (!SceneBaker::BakeMap(argv[2], mapId, out, report, error))
         {
@@ -64,10 +62,13 @@ int main(int argc, char** argv)
         std::printf("map %u -> %s\n  %u spawns (%u M2), %u distinct models, worst vertex outside a spawn bound "
             "%.4f yd\n"
             "  %u solid triangles (%u dropped), %u BVH nodes; %u liquid triangles (%u unknown liquid types), %u nodes; "
-            "max depth %u\n  %llu bytes, checksum %016llx, %.2f s\n", mapId, out.c_str(), report.Spawns,
+            "max depth %u\n  terrain: %u tiles (%u with heights, %u with holes, %u with liquid)\n"
+            "  %llu bytes, checksum %016llx, source %016llx, %.2f s\n", mapId, out.c_str(), report.Spawns,
             report.M2Spawns, report.Models, report.WorstBoundExcess, report.Triangles, report.DroppedTriangles,
             report.Nodes, report.LiquidTriangles, report.UnknownLiquidTypes, report.LiquidNodes, report.MaxDepth,
-            (unsigned long long)report.FileBytes, (unsigned long long)report.Checksum, report.Seconds);
+            report.TerrainTiles, report.TerrainHeightTiles, report.TerrainHoleTiles, report.TerrainLiquidTiles,
+            (unsigned long long)report.FileBytes, (unsigned long long)report.Checksum,
+            (unsigned long long)report.SourceHash, report.Seconds);
         return 0;
     }
 
@@ -80,11 +81,12 @@ int main(int argc, char** argv)
             return 1;
         }
         auto const& h = world.Header();
-        std::printf("map %u, version %u, flags %x, %zu bytes, checksum %016llx\n  solid box (%.2f %.2f %.2f) - "
-            "(%.2f %.2f %.2f)\n  %u triangles, %u nodes; %u liquid triangles, %u nodes; %u spawns (%u M2)\n",
-            h.MapId, h.Version, h.Flags, world.FileBytes(), (unsigned long long)h.Checksum, h.SolidMin[0],
+        std::printf("map %u, version %u (baker %u), flags %x, %zu bytes, checksum %016llx, source %016llx\n  solid box (%.2f %.2f %.2f) - "
+            "(%.2f %.2f %.2f)\n  %u triangles, %u nodes; %u liquid triangles, %u nodes; %u spawns (%u M2); %u terrain tiles\n",
+            h.MapId, h.Version, h.BakerVersion, h.Flags, world.FileBytes(), (unsigned long long)h.Checksum,
+            (unsigned long long)h.SourceHash, h.SolidMin[0],
             h.SolidMin[1], h.SolidMin[2], h.SolidMax[0], h.SolidMax[1], h.SolidMax[2], h.TriCount, h.NodeCount,
-            h.LiquidTriCount, h.LiquidNodeCount, h.SourceSpawnCount, h.SourceM2Count);
+            h.LiquidTriCount, h.LiquidNodeCount, h.SourceSpawnCount, h.SourceM2Count, h.TerrainTileCount);
         return 0;
     }
 

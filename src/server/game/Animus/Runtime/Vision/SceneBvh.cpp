@@ -15,7 +15,7 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "Bvh.h"
+#include "SceneBvh.h"
 #include <algorithm>
 #include <array>
 #include <limits>
