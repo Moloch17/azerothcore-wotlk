@@ -28,8 +28,10 @@
 /// client-side only -- never in Movement::ControlState or the Body, so it sends nothing -- turned by the seat's own
 /// look head (free look: FreeLook.h, camera-vision.FREELOOK.md). Each frame is a W x H grid of rays from the camera, each pixel
 /// five channels: distance, height of the hit over the feet, the surface's normal z, what was hit (its semantic
-/// class), and whether the ray passed the objective; and which listed entity it hit (perception-goals 1a). A ray has
-/// no range: it ends at what it hits, or reads sky where nothing loaded is left
+/// class), and whether the ray passed the objective. **The image is the static world only** (entity-sensing): the
+/// terrain, the models, the closed doors, the liquids and the ground hazards; units and objects are never drawn --
+/// who is in view is the entity list's (EntitySensor: a line-of-sight test on the frustum, not a pixel's ray). A ray
+/// has no range: it ends at what it hits, or reads sky where nothing loaded is left
 /// for it to hit (camera-vision.RAYCAST.md). Pure: the settings, the kinds and the geometry, with no core types.
 namespace Animus::Vision
 {
@@ -111,7 +113,8 @@ namespace Animus::Vision
         return sizes.back();        // a roll at the very top of the range (rounding)
     }
 
-    /// **What a pixel's ray hit: the semantic class** (perception-goals 1a, vision block revision 5). A fixed table:
+    /// **What a thing is: the semantic class** (perception-goals 1a; the entity list's, the mental map's, and, of the
+    /// image, the PIXEL_CLASSES alone as of vision block revision 6). A fixed table:
     /// a value never changes meaning, new classes take the next free one, and the wire has room for CLASS_LIMIT. The
     /// first six are revision 4's kinds, unchanged; the rest tell apart what revision 4 called "door" (any game
     /// object) and "hostile" or "other" (any unit), as a player's client does with nameplates, tooltips, quest marks
@@ -122,7 +125,7 @@ namespace Animus::Vision
         Sky = 0,                // nothing hit: past the loaded grids
         Terrain = 1,            // the heightfield
         Model = 2,              // the static tree: a WMO or an M2
-        Door = 3,               // a door or button, or a collision game object the seat does not know (out of range)
+        Door = 3,               // in a pixel: any closed collision game object (the dynamic tree); in the list: a door
         Water = 4,              // a liquid's surface
         Deadly = 5,             // magma or slime
         HostileCreature = 6,    // a living creature hostile to the seat
@@ -199,58 +202,32 @@ namespace Animus::Vision
         }
     }
 
-    /// The decoded image channels the learner's encoder reads (the slot is not one of them: perception-goals
-    /// amendment 10), and the scalars.
+    /// **The classes a pixel can carry** (vision block revision 6): the static world's. Units, objects and pickups
+    /// are in the entity list, not the image, so the learner's pixel one-hot has this many planes; the manifest's
+    /// "pixel_classes" lists them, in this order (a plane is its position here).
+    constexpr uint32_t PIXEL_CLASS_COUNT = 7;
+    constexpr Class PIXEL_CLASSES[PIXEL_CLASS_COUNT] = { Class::Sky, Class::Terrain, Class::Model, Class::Door,
+        Class::Water, Class::Deadly, Class::GroundHazard };
+
+    /// The decoded image channels the learner's encoder reads, and the scalars.
     constexpr uint32_t CHANNELS = 5;
     constexpr uint32_t CLASS_CHANNEL = 3;
     constexpr uint32_t SCALARS = 11;
 
-    /// **The entity list** (perception-goals 1b): the visible entities a frame names, nearest first. A frame numbers
-    /// up to MAX_SEEN of the entities round the seat while it is cast (byte 4 holds that number until the frame is
-    /// done); those with a pixel take the list's ENTITY_SLOTS slots in that order.
+    /// **The entity list** (perception-goals 1b; entity-sensing): the visible entities a frame names, nearest the
+    /// camera first. An entity is visible when one of its sample points is inside the frame and has a clear segment
+    /// from the camera (EntitySensor); the first ENTITY_SLOTS take the list's slots.
     constexpr uint32_t ENTITY_SLOTS = 32;
-    constexpr uint32_t MAX_SEEN = 255;
 
-    /// One entity's pixels in a frame, at the size it was cast at (perception-goals amendment 11: what the GPU's
-    /// reduction writes, and the CPU's): its number (Entity, 1 to MAX_SEEN), how many pixels, and the sums of their
-    /// rows and columns -- integers, so both casters agree to the bit whatever order they add in.
-    struct SlotStat
-    {
-        uint32_t Entity = 0;
-        uint32_t Pixels = 0;
-        uint32_t SumRow = 0;
-        uint32_t SumCol = 0;
-
-        [[nodiscard]] bool operator==(SlotStat const& other) const = default;
-    };
-
-    /// Where in the image an entity's pixels are, on average: x from -1 (left) to 1 (right), y from -1 (bottom) to 1
-    /// (top), the pixels' centres; and their share of the frame's pixels.
-    inline void SlotCentroid(SlotStat const& stat, uint32_t width, uint32_t height, float& x, float& y, float& share)
-    {
-        if (!stat.Pixels || !width || !height)
-        {
-            x = y = share = 0.0f;
-            return;
-        }
-        float const col = (float(stat.SumCol) / float(stat.Pixels) + 0.5f) / float(width);
-        float const row = (float(stat.SumRow) / float(stat.Pixels) + 0.5f) / float(height);
-        x = 2.0f * col - 1.0f;
-        y = 1.0f - 2.0f * row;
-        share = float(stat.Pixels) / float(width * height);
-    }
-
-    /// **A pixel on the wire** (camera-vision.BYTES.md, perception-goals 1a; vision block revision 5): five bytes,
-    /// which the learner decodes back to the five image channels below and the entity slot.
+    /// **A pixel on the wire** (camera-vision.BYTES.md, perception-goals 1a; vision block revision 6): four bytes,
+    /// which the learner decodes back to the five image channels below.
     ///   0 distance: SKY_BYTE for sky, else round(254 x the log-scaled distance, 0..1);
     ///   1 height over the feet: HEIGHT_ZERO + clamp(round(dz / HEIGHT_STEP), -HEIGHT_LIMIT, HEIGHT_LIMIT); sky 128;
     ///   2 normal z: round(255 x clamp(nz, 0, 1));
-    ///   3 the class in the low five bits (CLASS_MASK), the objective flag in bit 5 (OBJECTIVE_BIT); bits 6-7 are
-    ///     reserved, 0;
-    ///   4 the entity slot: 0 none, else s (1 to ENTITY_SLOTS), the entity list's s-th entry.
-    constexpr uint32_t BYTES_PER_PIXEL = 5;
+    ///   3 the class in the low five bits (CLASS_MASK; one of PIXEL_CLASSES), the objective flag in bit 5
+    ///     (OBJECTIVE_BIT); bits 6-7 are reserved, 0.
+    constexpr uint32_t BYTES_PER_PIXEL = 4;
     constexpr uint32_t CLASS_BYTE = 3;
-    constexpr uint32_t SLOT_BYTE = 4;
     constexpr uint8_t SKY_BYTE = 255;
     constexpr float DISTANCE_LEVELS = 254.0f;
     constexpr uint8_t HEIGHT_ZERO = 128;
@@ -267,8 +244,6 @@ namespace Animus::Vision
         CHANNEL_NORMAL = 2,
         CHANNEL_CLASS = CLASS_CHANNEL,
         CHANNEL_OBJECTIVE = 4,
-        /// DecodePixel's sixth value: the entity slot (not an image channel).
-        CHANNEL_SLOT = 5,
         DECODED_VALUES
     };
 
@@ -346,7 +321,7 @@ namespace Animus::Vision
     }
 
     /// A row with no frame (a director, an absent agent, a seat with no character or no map): every pixel
-    /// { SKY_BYTE, HEIGHT_ZERO, 0, 0, 0 } -- sky, height 0, normal 0, class sky with no objective, no entity --
+    /// { SKY_BYTE, HEIGHT_ZERO, 0, 0 } -- sky, height 0, normal 0, class sky with no objective --
     /// "nothing seen", in the range the network trains on, where zeros would read as a wall at the camera a yard
     /// below the feet.
     inline void FillNoFrame(uint8_t* image, uint32_t bytes)
@@ -357,7 +332,6 @@ namespace Animus::Vision
             image[at + 1] = HEIGHT_ZERO;
             image[at + 2] = 0;
             image[at + 3] = 0;
-            image[at + 4] = 0;
         }
     }
 

@@ -2699,6 +2699,13 @@ std::pair<uint32, uint32> Animus::Curriculum::StageScenario::CameraRenderSize(En
     return { render.Width, render.Height };
 }
 
+int32 Animus::Curriculum::StageScenario::EntitiesFirst(uint16 layout) const
+{
+    if (layout >= _layouts.size() || !_layouts[layout].Has(BlockId::Entities))
+        return -1;
+    return int32(_layouts[layout].Slice(BlockId::Entities).ObsFirst);
+}
+
 bool Animus::Curriculum::StageScenario::GoalHeld(Env const& env, uint32 seatIndex, Player* bot,
     Unit const* target) const
 {

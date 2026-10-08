@@ -258,6 +258,9 @@ namespace Animus
             return _scenario.CameraRenderSize(_envs[e], agent);
         }
 
+        /// Scenario::EntitiesFirst: the observation column where layout `layout`'s entity list starts, -1 for none.
+        [[nodiscard]] int32 EntitiesFirst(uint16 layout) const { return _scenario.EntitiesFirst(layout); }
+
     private:
         /// Env `e`'s rows of an image array, or null when the stage has no camera.
         [[nodiscard]] uint8* ImageRows(std::vector<uint8>& image, uint32 e)

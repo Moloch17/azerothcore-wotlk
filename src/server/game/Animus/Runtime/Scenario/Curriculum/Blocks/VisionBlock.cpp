@@ -18,6 +18,7 @@
 
 #include "VisionBlock.h"
 #include "Camera.h"
+#include "EntitySensor.h"
 #include "FreeLook.h"
 #include "MapVisionWorld.h"
 #include "Player.h"
@@ -46,16 +47,19 @@ void Animus::Curriculum::VisionBlock::DescribeManifest(Layout const& /*layout*/,
     image["width"] = settings.Width;
     image["channels"] = Vi::CHANNELS;
     image["scalars"] = Vi::SCALARS;
-    // Revision 3: the image is not in the float columns but its own byte section of the STEP. Revision 5: five
-    // bytes a pixel -- the class (and the objective bit) in byte 3, the entity slot in byte 4 (Camera.h).
+    // Revision 3: the image is not in the float columns but its own byte section of the STEP. Revision 6: four
+    // bytes a pixel -- the class (and the objective bit) in byte 3 (Camera.h) -- of the static world alone.
     image["transport"] = "bytes";
     image["bytes_per_pixel"] = Vi::BYTES_PER_PIXEL;
     image["class_channel"] = Vi::CLASS_CHANNEL;
     image["class_byte"] = Vi::CLASS_BYTE;
-    image["slot_byte"] = Vi::SLOT_BYTE;
     image["classes"] = Vi::CLASSES;
     image["class_limit"] = Vi::CLASS_LIMIT;
-    image["entity_slots"] = Vi::ENTITY_SLOTS;
+    // The classes a pixel can carry (the learner's one-hot planes, in this order); the rest are the entity list's.
+    boost::json::array pixelClasses;
+    for (Vi::Class const value : Vi::PIXEL_CLASSES)
+        pixelClasses.push_back(uint32(value));
+    image["pixel_classes"] = std::move(pixelClasses);
     // The class table, by value, and each class's revision-4 kind (Vi::KindOf), which follows from it.
     boost::json::array classNames;
     boost::json::array coarse;
@@ -110,10 +114,10 @@ void Animus::Curriculum::VisionBlock::DescribeManifest(Layout const& /*layout*/,
     camera["zoom_levels"] = std::move(zoomLevels);
     camera["fov_h"] = double(settings.FovH);
     camera["fov_v"] = double(settings.FovV);
-    // A ray has no range: the distance channel is log-scaled to a fixed reference, and Range is the units' radius.
+    // A ray has no range: the distance channel is log-scaled to a fixed reference, and Range is the entities' radius.
     camera["distance_reference"] = double(Vi::DISTANCE_REFERENCE);
     camera["unit_range"] = double(settings.Range);
-    camera["caster"] = "raycast";
+    camera["caster"] = "raycast+sight";
     camera["zoom"] = double(settings.Zoom);
     camera["pitch"] = double(settings.Pitch);
     camera["yaw_offset"] = 0.0;
@@ -184,36 +188,33 @@ void Animus::Curriculum::VisionBlock::Observe(SeatView const& view, float* obs, 
     }
 
     Vi::MapVisionWorld const world(map, bot->GetPhaseMask());
-    // The entities within range of where the camera can be: the pivot, with the zoom added to the reach -- units,
-    // game objects, what each is to this seat, numbered nearest first (perception-goals 1a).
-    thread_local Vi::SightStore sight;
-    Vi::Vec3 const pivot{ pose.X, pose.Y, pose.Z + Vi::PIVOT_SHARE * pose.BodyHeight };
-    Vi::GatherSight(bot, pivot, settings.Range + camera.Zoom, sight);
+    // The camera, placed once: the boom's pull-in, then the view the sensor and the pixels both read.
+    Vi::Rig const rig = Vi::PlaceCamera(pose, camera, world);
+
+    // Who is in view: the entities within range of where the camera can be (the pivot, with the zoom added to the
+    // reach), found by line of sight from the camera, and told apart (what each is to this seat) for the survivors
+    // alone (entity-sensing). No frame is needed: a seat with no image still has its list.
+    thread_local Vi::GatheredSight gathered;
+    thread_local Vi::SensorOutput sensed;
+    Vi::Breakdown* breakdown = nullptr;
+    Vi::GatherCandidates(bot, rig.Pivot, settings.Range + camera.Zoom, gathered);
+    Vi::Sense(rig, settings, world, gathered.Candidates, sensed, breakdown);
+    if (Vi::SeenList* seen = view.Seen)
+    {
+        Vi::ClassifySeen(bot, gathered, sensed, *seen);
+        seen->Camera = rig.Camera;
+        seen->Azimuth = rig.Azimuth;
+        seen->Elevation = rig.Elevation;
+        seen->SeatLevel = float(bot->GetLevel());
+    }
 
     Vi::Vec3 const objective{ view.Objective.GetPositionX(), view.Objective.GetPositionY(),
         view.Objective.GetPositionZ() };
-    // The image into the seat's byte row (none: the scalars alone, and no pixel cast), the scalars into the columns.
-    thread_local Vi::FrameSlots slots;
-    uint32 const rays = Vi::Render(settings, pose, camera, world, sight.View(),
-        view.HasObjective ? &objective : nullptr, view.Image, obs, nullptr, view.ObjectiveRadius, &slots, view.Hits);
-
-    // The frame's entity list for the entities block: slot s's entity, as the gather saw it.
-    if (Vi::SeenList* seen = view.Seen)
-    {
-        seen->Count = slots.Count;
-        seen->CastWidth = slots.CastWidth;
-        seen->CastHeight = slots.CastHeight;
-        seen->Camera = slots.Camera;
-        seen->Azimuth = slots.Azimuth;
-        seen->Elevation = slots.Elevation;
-        seen->SeatLevel = float(bot->GetLevel());
-        for (uint32 slot = 0; slot < slots.Count; ++slot)
-        {
-            uint32 const number = slots.Slots[slot].Entity;
-            seen->Stats[slot] = slots.Slots[slot];
-            seen->Info[slot] = number < sight.Entities.size() ? sight.Entities[number] : Vi::EntityInfo();
-        }
-    }
+    // The static world into the seat's byte row (none: the scalars alone, and no pixel cast), the scalars into the
+    // columns; the hazards found are painted on the floor.
+    uint32 const rays = Vi::Render(settings, rig, pose, camera, world, sensed.Hazards,
+        view.HasObjective ? &objective : nullptr, view.Image, obs, breakdown, view.ObjectiveRadius, view.Hits);
+    Vi::Cost::AddSensor(sensed.Rays);
     Vi::Cost::Add(uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()
         - start).count()), rays);
 }

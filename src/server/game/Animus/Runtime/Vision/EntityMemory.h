@@ -72,6 +72,8 @@ namespace Animus::Vision
         bool Open = false;
         bool Used = false;
         Vec3 Position;              // its middle in the world, as seen
+        float Radius = 0.0f;        // its size, as seen (the recalled slot's angular size)
+        float Height = 0.0f;
         float Heading = 0.0f;       // the way it faced
         Vec3 Velocity;              // its course between its last two close sightings, yards a second
         bool Moving = false;        // ... faster than MOVING_SPEED

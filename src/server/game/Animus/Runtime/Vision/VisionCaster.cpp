@@ -155,9 +155,8 @@ namespace
     }
 
     /// The nearest hit along the ray within `limit`: the trees, the WMO liquids and the terrain (its liquids when
-    /// `liquids`), then the units and the boxes. The boom casts with no liquids, units or boxes.
-    Hit Nearest(Vec3 origin, Vec3 dir, float limit, VisionWorld const& world, Sight const& sight, bool liquids,
-        Breakdown* breakdown)
+    /// `liquids`). The static world only: the boom casts with no liquids.
+    Hit Nearest(Vec3 origin, Vec3 dir, float limit, VisionWorld const& world, bool liquids, Breakdown* breakdown)
     {
         Clock::time_point mark = breakdown ? Clock::now() : Clock::time_point();
         if (breakdown)
@@ -180,16 +179,8 @@ namespace
             bool const isDoor = doorHit && (!modelHit || door.Distance < model.Distance);
             SurfaceHit const& hit = isDoor ? door : model;
             best.Distance = hit.Distance;
+            // Every closed collision game object reads as a door; who it is, the entity list says.
             best.What = isDoor ? Class::Door : Class::Model;
-            // A game object model the frame knows is what it is (its class and number); one it does not, a door.
-            if (isDoor && hit.Object)
-                for (DoorShape const& shape : sight.Doors)
-                    if (shape.Model == hit.Object)
-                    {
-                        best.What = shape.What;
-                        best.Entity = shape.Entity;
-                        break;
-                    }
             best.Z = (origin + dir * best.Distance).Z;
             // The hit triangle's own slope: a floor reads its tilt, a wall 0, a ceiling seen from under it below 0
             // (the encoding clamps it to 0, a wall's).
@@ -219,43 +210,40 @@ namespace
             best = terrain;
         Charge(breakdown, &Breakdown::TerrainNs, mark);
 
-        // 4. Every unit's cylinder but the seat's own (every ray against every unit).
-        for (UnitShape const& unit : sight.Units)
-        {
-            if (unit.Self)
-                continue;
-            if (breakdown)
-                ++breakdown->UnitTests;
-            bool top = false;
-            float const distance = RayCylinder(origin, dir, best.Distance, unit, top);
-            if (distance >= 0.0f && distance < best.Distance)
-            {
-                best.Distance = distance;
-                best.What = unit.What;
-                best.Entity = unit.Entity;
-                best.Z = origin.Z + dir.Z * distance;
-                best.NormalZ = top ? 1.0f : 0.0f;
-            }
-        }
-
-        // 5. Every colliderless game object's box.
-        for (BoxShape const& box : sight.Boxes)
-        {
-            if (breakdown)
-                ++breakdown->UnitTests;
-            float normalZ = 0.0f;
-            float const distance = RayBox(origin, dir, best.Distance, box, normalZ);
-            if (distance >= 0.0f && distance < best.Distance)
-            {
-                best.Distance = distance;
-                best.What = box.What;
-                best.Entity = box.Entity;
-                best.Z = origin.Z + dir.Z * distance;
-                best.NormalZ = normalZ;
-            }
-        }
-        Charge(breakdown, &Breakdown::UnitNs, mark);
         return best;
+    }
+
+    /// The static world along an unbounded ray: as far as the loaded grids go.
+    Hit CastStatic(Vec3 origin, Vec3 dir, VisionWorld const& world, Breakdown* breakdown)
+    {
+        // No range: as far as the loaded grids go, which is where the terrain ends too.
+        Clock::time_point mark = breakdown ? Clock::now() : Clock::time_point();
+        float const reach = Reach(origin, dir, world);
+        Charge(breakdown, &Breakdown::TerrainNs, mark);
+        return Nearest(origin, dir, reach, world, true, breakdown);
+    }
+
+    /// A floor hit inside a hazard disc reads as the hazard (a flat decal: the ray ends where it did).
+    void PaintHazards(Hit& hit, Vec3 origin, Vec3 dir, Sight const& sight, Breakdown* breakdown)
+    {
+        if (sight.empty() || hit.NormalZ < FLOOR_NORMAL
+            || (hit.What != Class::Terrain && hit.What != Class::Model))
+            return;
+        Clock::time_point mark = breakdown ? Clock::now() : Clock::time_point();
+        Vec3 const at = origin + dir * hit.Distance;
+        for (HazardDisc const& disc : sight)
+        {
+            if (breakdown)
+                ++breakdown->HazardTests;
+            float const dx = at.X - disc.X;
+            float const dy = at.Y - disc.Y;
+            if (dx * dx + dy * dy <= disc.Radius * disc.Radius && std::fabs(at.Z - disc.Z) <= HAZARD_REACH)
+            {
+                hit.What = Class::GroundHazard;
+                break;
+            }
+        }
+        Charge(breakdown, &Breakdown::HazardNs, mark);
     }
 }
 
@@ -466,7 +454,7 @@ Animus::Vision::Rig Animus::Vision::PlaceCamera(Pose const& pose, CameraState co
     {
         // One cast from the pivot back along the view, against the trees and the terrain: the camera pulls in to
         // BOOM_BACKOFF short of what it meets, never nearer than BOOM_MIN (or the zoom, when that is nearer still).
-        Hit const back = Nearest(rig.Pivot, forward * -1.0f, zoom, world, Sight(), false, breakdown);
+        Hit const back = Nearest(rig.Pivot, forward * -1.0f, zoom, world, false, breakdown);
         if (back.What != Class::Sky)
             rig.Boom = std::min(zoom, std::max(std::min(BOOM_MIN, zoom), back.Distance - BOOM_BACKOFF));
     }
@@ -493,144 +481,41 @@ Animus::Vision::Vec3 Animus::Vision::PixelDirection(Rig const& rig, Settings con
 Animus::Vision::Hit Animus::Vision::CastRay(Vec3 origin, Vec3 dir, VisionWorld const& world,
     Sight const& sight, Breakdown* breakdown)
 {
-    // No range: as far as the loaded grids go, which is where the terrain ends too.
-    Clock::time_point mark = breakdown ? Clock::now() : Clock::time_point();
-    float const reach = Reach(origin, dir, world);
-    Charge(breakdown, &Breakdown::TerrainNs, mark);
-    return Nearest(origin, dir, reach, world, sight, true, breakdown);
+    Hit hit = CastStatic(origin, dir, world, breakdown);
+    PaintHazards(hit, origin, dir, sight, breakdown);
+    return hit;
 }
 
-float Animus::Vision::RayCylinder(Vec3 origin, Vec3 dir, float limit, UnitShape const& unit, bool& top)
+bool Animus::Vision::SegmentBlocked(VisionWorld const& world, Vec3 from, Vec3 to, void const* ignore,
+    Breakdown* breakdown)
 {
-    top = false;
-    float best = -1.0f;
-    float const ox = origin.X - unit.X;
-    float const oy = origin.Y - unit.Y;
-    float const r2 = unit.Radius * unit.Radius;
-    float const bottom = unit.Z;
-    float const head = unit.Z + unit.Height;
-
-    // The side: the nearer root of the ray's horizontal distance reaching the radius, from outside.
-    float const a = dir.X * dir.X + dir.Y * dir.Y;
-    float const c = ox * ox + oy * oy - r2;
-    if (a > 1e-9f && c > 0.0f)
+    Vec3 const span = to - from;
+    float length = Length(span);
+    if (!(length > 1e-4f) || !std::isfinite(length))
+        return false;
+    Vec3 const dir = span * (1.0f / length);
+    if (breakdown)
+        ++breakdown->SegmentRays;
+    Vec3 end = to;
+    if (ignore)
     {
-        float const b = 2.0f * (ox * dir.X + oy * dir.Y);
-        float const discriminant = b * b - 4.0f * a * c;
-        if (discriminant >= 0.0f)
+        // The target is itself in the dynamic tree: a nearer model blocks; the target's own surface ends the test.
+        SurfaceHit const door = world.DynamicHit(from, to);
+        if (door.Distance >= 0.0f)
         {
-            float const t = (-b - std::sqrt(discriminant)) / (2.0f * a);
-            float const z = origin.Z + dir.Z * t;
-            if (t >= 0.0f && t <= limit && z >= bottom && z <= head)
-                best = t;
+            if (door.Object != ignore)
+                return true;
+            end = from + dir * door.Distance;
+            length = door.Distance;
         }
     }
-
-    // The caps: the top seen from above, the bottom from below.
-    auto const cap = [&](float plane, bool isTop)
-    {
-        if (std::fabs(dir.Z) < 1e-9f)
-            return;
-        float const t = (plane - origin.Z) / dir.Z;
-        if (t < 0.0f || t > limit || (best >= 0.0f && t >= best))
-            return;
-        float const x = ox + dir.X * t;
-        float const y = oy + dir.Y * t;
-        if (x * x + y * y > r2)
-            return;
-        best = t;
-        top = isTop;
-    };
-    if (origin.Z > head && dir.Z < 0.0f)
-        cap(head, true);
-    if (origin.Z < bottom && dir.Z > 0.0f)
-        cap(bottom, false);
-    return best;
-}
-
-float Animus::Vision::RayBox(Vec3 origin, Vec3 dir, float limit, BoxShape const& box, float& normalZ)
-{
-    // Into the box's space: rotated, not scaled, so a distance there is a distance in the world.
-    Vec3 const rel = origin - Vec3{ box.X, box.Y, box.Z };
-    float const* m = box.InvRot;
-    float const o[3] = { m[0] * rel.X + m[1] * rel.Y + m[2] * rel.Z, m[3] * rel.X + m[4] * rel.Y + m[5] * rel.Z,
-        m[6] * rel.X + m[7] * rel.Y + m[8] * rel.Z };
-    float const d[3] = { m[0] * dir.X + m[1] * dir.Y + m[2] * dir.Z, m[3] * dir.X + m[4] * dir.Y + m[5] * dir.Z,
-        m[6] * dir.X + m[7] * dir.Y + m[8] * dir.Z };
-    // The slabs: the latest entry and the earliest exit, and the axis entered last.
-    float enter = -INF;
-    float leave = INF;
-    int32_t axis = -1;
-    for (int32_t i = 0; i < 3; ++i)
-    {
-        if (std::fabs(d[i]) < 1e-12f)
-        {
-            if (o[i] < box.Low[i] || o[i] > box.High[i])
-                return -1.0f;
-            continue;
-        }
-        float const inv = 1.0f / d[i];
-        float entry = (box.Low[i] - o[i]) * inv;
-        float exit = (box.High[i] - o[i]) * inv;
-        if (entry > exit)
-            std::swap(entry, exit);
-        if (entry > enter)
-        {
-            enter = entry;
-            axis = i;
-        }
-        if (exit < leave)
-            leave = exit;
-    }
-    if (axis < 0 || enter > leave || enter < 0.0f || enter > limit)
-        return -1.0f;
-    // The entered face's normal is -sign(d) along the axis in the box's space: back in the world, its z is that
-    // axis's row of InvRot (the inverse's transpose is the rotation).
-    normalZ = (d[axis] > 0.0f ? -1.0f : 1.0f) * m[axis * 3 + 2];
-    return enter;
-}
-
-void Animus::Vision::NumberNearest(std::span<float const> distances, std::span<uint8_t> numbers)
-{
-    std::vector<uint32_t> order(distances.size());
-    for (uint32_t i = 0; i < order.size(); ++i)
-        order[i] = i;
-    std::stable_sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) { return distances[a] < distances[b]; });
-    for (uint32_t rank = 0; rank < order.size(); ++rank)
-        numbers[order[rank]] = rank < MAX_SEEN ? uint8_t(rank + 1) : 0;
-}
-
-void Animus::Vision::CountEntities(uint8_t const* frame, uint32_t width, uint32_t height,
-    std::array<SlotStat, MAX_SEEN + 1>& counts)
-{
-    counts.fill(SlotStat());
-    for (uint32_t row = 0; row < height; ++row)
-        for (uint32_t col = 0; col < width; ++col)
-        {
-            uint8_t const number = frame[(std::size_t(row) * width + col) * BYTES_PER_PIXEL + SLOT_BYTE];
-            SlotStat& count = counts[number];
-            ++count.Pixels;
-            count.SumRow += row;
-            count.SumCol += col;
-        }
-    for (uint32_t number = 0; number <= MAX_SEEN; ++number)
-        counts[number].Entity = number;
-}
-
-void Animus::Vision::AssignSlots(std::array<SlotStat, MAX_SEEN + 1> const& counts, FrameSlots& slots,
-    std::array<uint8_t, MAX_SEEN + 1>& slotOf)
-{
-    slotOf.fill(0);
-    slots.Count = 0;
-    slots.Slots.fill(SlotStat());
-    for (uint32_t number = 1; number <= MAX_SEEN && slots.Count < ENTITY_SLOTS; ++number)
-    {
-        if (!counts[number].Pixels)
-            continue;
-        slots.Slots[slots.Count] = counts[number];
-        ++slots.Count;
-        slotOf[number] = uint8_t(slots.Count);
-    }
+    else if (world.DynamicAnyHit(from, to))
+        return true;
+    if (!(length > 1e-4f))
+        return false;
+    if (world.StaticAnyHit(from, end))
+        return true;
+    return CastTerrain(from, dir, length, world, false, breakdown).What != Class::Sky;
 }
 
 float Animus::Vision::ObjectiveFlag(Vec3 origin, Vec3 dir, float distance, Vec3 const* objective, float radius)
@@ -642,7 +527,7 @@ float Animus::Vision::ObjectiveFlag(Vec3 origin, Vec3 dir, float distance, Vec3 
     return Length(toward - dir * along) <= radius ? 1.0f : 0.0f;
 }
 
-void Animus::Vision::EncodePixel(Hit const& hit, float feetZ, bool objective, uint8_t slot, uint8_t* out)
+void Animus::Vision::EncodePixel(Hit const& hit, float feetZ, bool objective, uint8_t* out)
 {
     bool const sky = hit.What == Class::Sky;
     float const distance = std::clamp(std::log(std::max(hit.Distance, NEAR) / NEAR)
@@ -652,7 +537,6 @@ void Animus::Vision::EncodePixel(Hit const& hit, float feetZ, bool objective, ui
     out[1] = sky ? HEIGHT_ZERO : uint8_t(int32_t(HEIGHT_ZERO) + steps);
     out[2] = uint8_t(std::lround(255.0f * std::clamp(hit.NormalZ, 0.0f, 1.0f)));
     out[CLASS_BYTE] = uint8_t((uint8_t(hit.What) & CLASS_MASK) | (objective ? OBJECTIVE_BIT : 0));
-    out[SLOT_BYTE] = slot;
 }
 
 void Animus::Vision::DecodePixel(uint8_t const* in, float* out)
@@ -662,14 +546,12 @@ void Animus::Vision::DecodePixel(uint8_t const* in, float* out)
     out[CHANNEL_NORMAL] = float(in[2]) / 255.0f;
     out[CHANNEL_CLASS] = float(in[CLASS_BYTE] & CLASS_MASK);
     out[CHANNEL_OBJECTIVE] = (in[CLASS_BYTE] & OBJECTIVE_BIT) ? 1.0f : 0.0f;
-    out[CHANNEL_SLOT] = float(in[SLOT_BYTE]);
 }
 
-uint32_t Animus::Vision::Render(Settings const& settings, Pose const& pose, CameraState const& camera,
-    VisionWorld const& world, Sight const& sight, Vec3 const* objective, uint8_t* image, float* scalars,
-    Breakdown* breakdown, float objectiveRadius, FrameSlots* slots, FrameHits* hits)
+uint32_t Animus::Vision::Render(Settings const& settings, Rig const& rig, Pose const& pose,
+    CameraState const& camera, VisionWorld const& world, Sight const& sight, Vec3 const* objective, uint8_t* image,
+    float* scalars, Breakdown* breakdown, float objectiveRadius, FrameHits* hits)
 {
-    Rig const rig = PlaceCamera(pose, camera, world, breakdown);
     Mv::Liquid const liquid = world.LiquidAt(rig.Camera.X, rig.Camera.Y, rig.Camera.Z);
     bool const underwater = liquid.Present && rig.Camera.Z < liquid.Level;
 
@@ -706,37 +588,16 @@ uint32_t Animus::Vision::Render(Settings const& settings, Pose const& pose, Came
         for (uint32_t col = 0; col < cast.Width; ++col)
         {
             Vec3 const dir = PixelDirection(rig, cast, row, col);
-            Hit const hit = CastRay(rig.Camera, dir, world, sight, breakdown);
+            Hit hit = CastStatic(rig.Camera, dir, world, breakdown);
+            // The map reads the static world under a hazard; the pixel reads the hazard painted on it.
             if (hits)
                 hits->Rays.push_back({ dir, hit.Distance, hit.Z, hit.NormalZ, hit.What });
+            PaintHazards(hit, rig.Camera, dir, sight, breakdown);
             // From the camera to the hit, or to where the ray left the loaded grids on sky (R12).
             bool const flag = ObjectiveFlag(rig.Camera, dir, hit.Distance, objective, objectiveRadius) > 0.5f;
-            // Byte 4 holds the entity's number until the frame's slots are known.
-            EncodePixel(hit, pose.Z, flag, hit.Entity, target + (std::size_t(row) * cast.Width + col)
-                * BYTES_PER_PIXEL);
+            EncodePixel(hit, pose.Z, flag, target + (std::size_t(row) * cast.Width + col) * BYTES_PER_PIXEL);
         }
 
-    // The entity list: the numbers with a pixel, nearest first, take the slots; byte 4 becomes the slot.
-    thread_local FrameSlots listed;
-    FrameSlots& list = slots ? *slots : listed;
-    list = FrameSlots();
-    list.CastWidth = cast.Width;
-    list.CastHeight = cast.Height;
-    list.Camera = rig.Camera;
-    list.Azimuth = rig.Azimuth;
-    list.Elevation = rig.Elevation;
-    if (target)
-    {
-        thread_local std::array<SlotStat, MAX_SEEN + 1> counts;
-        thread_local std::array<uint8_t, MAX_SEEN + 1> slotOf;
-        CountEntities(target, cast.Width, cast.Height, counts);
-        AssignSlots(counts, list, slotOf);
-        for (std::size_t pixel = 0; pixel < std::size_t(cast.Width) * cast.Height; ++pixel)
-        {
-            uint8_t& slot = target[pixel * BYTES_PER_PIXEL + SLOT_BYTE];
-            slot = slotOf[slot];
-        }
-    }
     if (image && scaled)
         Upscale(target, cast.Width, cast.Height, image, settings.Width, settings.Height);
 

@@ -19,6 +19,7 @@
 #define ANIMUS_VISION_MAP_VISION_WORLD_H
 
 #include "Define.h"
+#include "EntitySensor.h"
 #include "Identity.h"
 #include "MapWorldQuery.h"
 #include "VisionCaster.h"
@@ -30,9 +31,10 @@ class GameObject;
 class Map;
 class Player;
 class Unit;
+class WorldObject;
 
-/// The camera's VisionWorld over a live map: the static and dynamic collision trees cast apart, the static tree's WMO
-/// liquids, the loaded grids' terrain cells and liquids as GridTerrainData holds them (never creating a grid: a grid
+/// The camera's VisionWorld over a live map: the static and dynamic collision trees cast apart (and tested for any
+/// hit, for the entity sensor's shadow rays), the static tree's WMO liquids, the loaded grids' terrain cells and liquids as GridTerrainData holds them (never creating a grid: a grid
 /// not created is where a ray leaves the world it can see), and floors through an uncounted MapWorldQuery (the
 /// controller's cost line keeps only the controller's rays). A tree hit's slope is its triangle's own. Read from the map's own update, as
 /// the rest of a seat's observation is.
@@ -47,6 +49,8 @@ namespace Animus::Vision
         [[nodiscard]] SurfaceHit StaticHit(Vec3 from, Vec3 to) const override;
         [[nodiscard]] SurfaceHit DynamicHit(Vec3 from, Vec3 to) const override;
         [[nodiscard]] LiquidHit ModelLiquid(Vec3 from, Vec3 to) const override;
+        [[nodiscard]] bool StaticAnyHit(Vec3 from, Vec3 to) const override;
+        [[nodiscard]] bool DynamicAnyHit(Vec3 from, Vec3 to) const override;
         [[nodiscard]] TerrainTile Tile(int32_t tileX, int32_t tileY) const override;
         [[nodiscard]] TerrainCell Cell(int32_t tileX, int32_t tileY, int32_t cellX, int32_t cellY,
             bool liquid) const override;
@@ -59,35 +63,30 @@ namespace Animus::Vision
         Movement::MapWorldQuery _query;
     };
 
-    /// **What a seat's camera can see round it** (perception-goals 1a and 1b): the shapes the caster reads and what
-    /// each numbered entity is. Entities[n] is entity number n's (1 to MAX_SEEN; [0] is unused).
-    struct SightStore
+    /// **Who a seat's camera might see round it** (entity-sensing): the sensor's candidates, and the core object
+    /// behind each (the same index), so the survivors can be classified. Valid for the one call chain that gathered
+    /// them, on the seat's own map thread: the pointers are not kept.
+    struct GatheredSight
     {
-        std::vector<UnitShape> Units;
-        std::vector<BoxShape> Boxes;
-        std::vector<DoorShape> Doors;
-        std::vector<EntityInfo> Entities;
-
-        [[nodiscard]] Sight View() const
-        {
-            Sight sight;
-            sight.Units = Units;
-            sight.Boxes = Boxes;
-            sight.Doors = Doors;
-            return sight;
-        }
+        std::vector<SensorCandidate> Candidates;
+        std::vector<WorldObject*> Objects;
     };
 
-    /// The entities a seat's camera can see, within `range` of `pivot` (its head), as this seat's client knows them:
+    /// Everything the seat can see or detect within `range` of `pivot` (its head), and nothing more of it than the
+    /// sensor needs to place it -- no facts, no class, no quest status, which cost most of the visit:
     /// - every creature and player it can see or detect, the dead included (a corpse is in the world, and in the
-    ///   way), the seat itself marked Self, each a cylinder of its class (Classify over FactsOf);
+    ///   way), as a cylinder from its feet (the seat itself is not a candidate);
     /// - every spawned game object it can see: one with an enabled collision model (in the dynamic tree) by its
-    ///   model (a DoorShape); one with none, or a disabled one (an opened chest, an open door: still drawn by the
-    ///   client), by its display's bounding box (a BoxShape) -- an open door by the band at the top of its frame
-    ///   (OpenDoorBox: the doorway clear under it), listed with Open set;
-    /// - numbered nearest the head first (NumberNearest), MAX_SEEN of them at most, each number's EntityInfo kept.
+    ///   model's bounds; one with none, or a disabled one (an opened chest, an open door), by its display's
+    ///   bounding box, turned as it is;
+    /// - every hostile ground effect, as a disc.
     /// Visits the grid around the seat: on the seat's own map thread only (not under AnimusForge.ObserveAfterJoin).
-    void GatherSight(Player* seat, Vec3 pivot, float range, SightStore& out);
+    void GatherCandidates(Player* seat, Vec3 pivot, float range, GatheredSight& out);
+
+    /// The entity list from what the sensor found: for each of `sensed` (at most ENTITY_SLOTS, nearest first), as
+    /// this seat's client knows it (Classify over FactsOf: the class, the level, the nameplate, the quest marks, a
+    /// door's state), with its size and line-of-sight share. Fills `seen`'s Count and Info; the rest is the caller's.
+    void ClassifySeen(Player* seat, GatheredSight const& gathered, SensorOutput const& sensed, SeenList& seen);
 
     /// A ground effect this seat's camera draws as a hazard (Class::GroundHazard): an area spell's persistent area,
     /// harmful, its caster (when there is one) not friendly to the seat.

@@ -92,7 +92,8 @@ namespace Animus::Vision
 
     /// An entity of a frame, as the entity list reads it (perception-goals 1b): what it is to the seat, its template
     /// (a creature's or game object's entry; 0 for a player), its level and health (a game object's 0 and 1), how its
-    /// nameplate reads, and its middle (the list's distance and direction are to it).
+    /// nameplate reads, its middle (the list's distance and direction are to it), and its size and how much of it the
+    /// camera has a clear line to (entity-sensing: the list's angular size and line-of-sight columns).
     ///
     /// What entity memory (perception-goals 3) keeps of it besides: its GUID, raw -- the sim's own handle, never
     /// observed (the observation gets a memory id) -- the way it faces, and the state a player reads off it: dead, a
@@ -112,26 +113,41 @@ namespace Animus::Vision
         bool Dead = false;
         bool Open = false;
         bool Used = false;
-        /// A ground hazard's radius, as its disc is drawn (0 for anything else): how far its edge is, as a player reads
-        /// it off the visual.
+        /// Its radius: a unit's collision radius, a game object's bounding radius, a ground hazard's area radius (how
+        /// far its edge is, as a player reads it off the visual).
         float Radius = 0.0f;
+        /// Its height: a unit's collision height, a game object's bounding height, a hazard's disc thickness.
+        float Height = 0.0f;
+        /// The share of its sample points with a clear line from the camera, in (0, 1] for a listed entity
+        /// (EntitySensor); 0 for a remembered one.
+        float Los = 0.0f;
     };
 
-    /// **A seat's entity list for this decision** (perception-goals 1b): what its last frame saw, in slot order --
-    /// Info[s - 1] and Stats[s - 1] are pixel slot s's entity -- the size it was cast at, and the camera it was seen
-    /// from (the list's directions are to it). Written by the vision block, read by the entities block; Count 0
-    /// when nothing was rendered.
+    /// **A seat's entity list for this decision** (perception-goals 1b; entity-sensing): what the sensor found in view,
+    /// in slot order (nearest the camera first), and the camera it was seen from (the list's directions are to it).
+    /// Written by the vision block, read by the entities block; Count 0 when nothing was sensed.
     struct SeenList
     {
         uint32_t Count = 0;
-        uint32_t CastWidth = 0;
-        uint32_t CastHeight = 0;
         Vec3 Camera;
         float Azimuth = 0.0f;
         float Elevation = 0.0f;
         float SeatLevel = 0.0f;
         std::array<EntityInfo, ENTITY_SLOTS> Info{};
-        std::array<SlotStat, ENTITY_SLOTS> Stats{};
+    };
+
+    /// **One listed entity as the audit draws it** (entity-sensing): its class, where in the frame (the yaw off the
+    /// view's azimuth, + left, and the pitch off its elevation, radians), how big (angular width and height, as
+    /// shares of the field of view) and its line-of-sight share. What EntitiesBlock::ReadMarks reads back from the
+    /// list's columns, so a picture can be drawn from the observation row alone.
+    struct EntityMark
+    {
+        Class What = Class::OtherObject;
+        float Yaw = 0.0f;
+        float Pitch = 0.0f;
+        float Width = 0.0f;
+        float Height = 0.0f;
+        float Los = 0.0f;
     };
 }
 

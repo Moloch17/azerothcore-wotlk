@@ -169,6 +169,40 @@ std::vector<std::array<uint8_t, 3>> Vi::MapPanel(uint8_t const* map, uint32_t si
     return out;
 }
 
+bool Vi::MarkAt(Settings const& settings, uint32_t scale, std::vector<EntityMark> const& marks, uint32_t x,
+    uint32_t y, uint8_t* rgb)
+{
+    bool drawn = false;
+    float const width = float(settings.Width * scale);
+    float const height = float(settings.Height * scale);
+    float const fovH = std::max(settings.FovH * DEGREES, 1e-3f);
+    float const fovV = std::max(settings.FovV * DEGREES, 1e-3f);
+    for (EntityMark const& mark : marks)
+    {
+        // Yaw is + to the left, the image's x + to the right; pitch + up, y + down.
+        float const centreX = (0.5f - mark.Yaw / fovH) * width;
+        float const centreY = (0.5f - mark.Pitch / fovV) * height;
+        float const halfW = std::max(0.5f * mark.Width * width, 0.5f * float(MARK_MIN_SIDE));
+        float const halfH = std::max(0.5f * mark.Height * height, 0.5f * float(MARK_MIN_SIDE));
+        float const fx = float(x) + 0.5f;
+        float const fy = float(y) + 0.5f;
+        float const dx = std::fabs(fx - centreX);
+        float const dy = std::fabs(fy - centreY);
+        if (dx > halfW + 0.5f || dy > halfH + 0.5f)
+            continue;
+        bool const edge = dx >= halfW - 0.5f || dy >= halfH - 0.5f;
+        if (!edge)
+            continue;
+        if (mark.Los < 0.999f && ((x + y) / 2) % 2)
+            continue;
+        uint32_t const what = std::min<uint32_t>(uint32_t(mark.What), CLASSES - 1);
+        for (uint32_t c = 0; c < 3; ++c)
+            rgb[c] = CLASS_COLOURS[what][c];
+        drawn = true;
+    }
+    return drawn;
+}
+
 std::array<uint32_t, Vi::CLASSES> Vi::ClassCounts(Settings const& settings, uint8_t const* image)
 {
     std::array<uint32_t, CLASSES> counts{};
@@ -179,7 +213,8 @@ std::array<uint32_t, Vi::CLASSES> Vi::ClassCounts(Settings const& settings, uint
     return counts;
 }
 
-std::string Vi::FramePng(Settings const& settings, uint8_t const* image, uint32_t scale, uint8_t const* map)
+std::string Vi::FramePng(Settings const& settings, uint8_t const* image, uint32_t scale, uint8_t const* map,
+    std::vector<EntityMark> const* marks)
 {
     scale = std::max<uint32_t>(scale, 1);
     uint32_t const width = settings.Width;
@@ -227,8 +262,12 @@ std::string Vi::FramePng(Settings const& settings, uint8_t const* image, uint32_
             for (uint32_t x = 0; x < panelWidth; ++x)
             {
                 std::array<uint8_t, 3 * PANELS> const& source = colours[std::size_t(row) * width + x / scale];
-                for (uint32_t c = 0; c < 3; ++c)
-                    raw += char(source[panel * 3 + c]);
+                uint8_t rgb[3] = { source[panel * 3], source[panel * 3 + 1], source[panel * 3 + 2] };
+                // The listed entities, over the class panel.
+                if (marks && panel == 1)
+                    MarkAt(settings, scale, *marks, x, y, rgb);
+                for (uint8_t c : rgb)
+                    raw += char(c);
             }
         }
         if (map)
@@ -243,12 +282,14 @@ std::string Vi::FramePng(Settings const& settings, uint8_t const* image, uint32_
     return WritePng(outWidth, outHeight, raw);
 }
 
-std::string Vi::CompositePng(Settings const& settings, uint8_t const* image, uint32_t scale, uint8_t const* map)
+std::string Vi::CompositePng(Settings const& settings, uint8_t const* image, uint32_t scale, uint8_t const* map,
+    std::vector<EntityMark> const* marks)
 {
-    return RgbPng(CompositeRgb(settings, image, scale, map));
+    return RgbPng(CompositeRgb(settings, image, scale, map, marks));
 }
 
-Vi::RgbImage Vi::CompositeRgb(Settings const& settings, uint8_t const* image, uint32_t scale, uint8_t const* map)
+Vi::RgbImage Vi::CompositeRgb(Settings const& settings, uint8_t const* image, uint32_t scale, uint8_t const* map,
+    std::vector<EntityMark> const* marks)
 {
     scale = std::max<uint32_t>(scale, 1);
     uint32_t const width = settings.Width;
@@ -315,6 +356,8 @@ Vi::RgbImage Vi::CompositeRgb(Settings const& settings, uint8_t const* image, ui
         for (uint32_t x = 0; x < outWidth; ++x)
         {
             std::array<uint8_t, 3> pixel = colours[std::size_t(y / scale) * width + x / scale];
+            if (marks)
+                MarkAt(settings, scale, *marks, x, y, pixel.data());
             if (map && x + 1 >= left && x <= left + side && y <= side + 1)
             {
                 bool const frame = x + 1 == left || x == left + side || y == side + 1;

@@ -129,6 +129,9 @@ void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uin
     map->Advance(float(view.DecisionMs) / 1000.0f);
     if (view.Hits && !view.Hits->Rays.empty())
         map->WriteFrame(*view.Hits, z, bodyHeight);
+    // The entities the sensor listed this decision (the image no longer carries them).
+    if (view.Seen)
+        map->WriteEntities(*view.Seen);
     map->WriteBody(x, y, z, grounded);
 
     thread_local std::vector<uint8> scratch(Vi::CROP_BYTES);

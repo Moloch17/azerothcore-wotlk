@@ -41,7 +41,7 @@ namespace
         "heading_cos", "speed", "course_sin", "course_cos", "selected", "focused" };
     constexpr char const* ENTITY_NAMES[Entities::ENTITY_FEATURES] = { "present", "class", "type", "object", "level",
         "level_delta", "health", "reaction", "quest", "lootable", "usable", "distance", "yaw_sin", "yaw_cos",
-        "pitch_sin", "pitch_cos", "centroid_x", "centroid_y", "share", "memory" };
+        "pitch_sin", "pitch_cos", "los", "ang_width", "ang_height", "memory" };
     constexpr char const* PRESS_NAMES[uint32(Animus::Curriculum::EntityActions::Press::Count)] = { "select",
         "interact", "use_item", "assist", "focus" };
     constexpr uint32 NAMED_TASKS = uint32(Sight::NAMED_FEATURES) - uint32(Entities::ENTITY_FEATURES);
@@ -74,7 +74,10 @@ namespace
         out[Entities::ENTITY_YAW_COS] = std::cos(yaw);
         out[Entities::ENTITY_PITCH_SIN] = std::sin(pitch);
         out[Entities::ENTITY_PITCH_COS] = std::cos(pitch);
-        // No pixels: the centroid and the share stay 0.
+        // Not in view: no line of sight, and the size it looked from where it was last seen.
+        out[Entities::ENTITY_LOS] = 0.0f;
+        Entities::AngularSize(distance, entry.Radius, entry.Height, out[Entities::ENTITY_ANG_WIDTH],
+            out[Entities::ENTITY_ANG_HEIGHT]);
         out[Entities::ENTITY_MEMORY] = float(entry.MemoryId);
     }
 
@@ -195,6 +198,8 @@ void Animus::Curriculum::SightBlock::Write(Vision::SeenList const& seen, Vision:
             // Not kept (a memory too small for the frame): what the frame shows of it.
             Vi::Remembered shown;
             shown.Guid = info.Guid;
+            shown.Radius = info.Radius;
+            shown.Height = info.Height;
             shown.Dead = info.Dead;
             shown.Open = info.Open;
             shown.Used = info.Used;

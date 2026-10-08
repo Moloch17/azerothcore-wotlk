@@ -79,6 +79,16 @@ Animus::Vision::LiquidHit Animus::Vision::MapVisionWorld::ModelLiquid(Vec3 from,
     return hit;
 }
 
+bool Animus::Vision::MapVisionWorld::StaticAnyHit(Vec3 from, Vec3 to) const
+{
+    return _map->GetMapCollisionData().GetStaticTree().AnyHit(from.X, from.Y, from.Z, to.X, to.Y, to.Z);
+}
+
+bool Animus::Vision::MapVisionWorld::DynamicAnyHit(Vec3 from, Vec3 to) const
+{
+    return _map->GetMapCollisionData().GetDynamicTree().AnyHit(_phaseMask, from.X, from.Y, from.Z, to.X, to.Y, to.Z);
+}
+
 Animus::Vision::TerrainTile Animus::Vision::MapVisionWorld::Tile(int32_t tileX, int32_t tileY) const
 {
     TerrainTile tile;
@@ -244,8 +254,9 @@ namespace
 {
     namespace Vi = Animus::Vision;
 
-    /// A game object's display bounds as its box (BoxShape): scaled, turned by its rotation, about its position.
-    bool BoxOf(GameObject const* object, Vi::BoxShape& box)
+    /// A game object's display bounds as a box candidate: scaled, turned by its rotation, about its position. The
+    /// box's middle and half-extents are in the world's units, its axes (the rotation's columns) in Rot.
+    bool BoxOf(GameObject const* object, Vi::SensorCandidate& box)
     {
         GameObjectDisplayInfoEntry const* display = sGameObjectDisplayInfoStore.LookupEntry(object->GetDisplayId());
         if (!display)
@@ -256,29 +267,22 @@ namespace
         for (int32 i = 0; i < 3; ++i)
             if (!(high[i] > low[i]))
                 return false;
-        box.X = object->GetPositionX();
-        box.Y = object->GetPositionY();
-        box.Z = object->GetPositionZ();
-        // The rotation's inverse is its transpose: row r of InvRot is column r of the rotation.
         G3D::Matrix3 const rotation = object->GetFinalWorldRotation().toRotationMatrix();
-        for (int32 r = 0; r < 3; ++r)
-            for (int32 c = 0; c < 3; ++c)
-                box.InvRot[r * 3 + c] = rotation[c][r];
+        float mid[3];
         for (int32 i = 0; i < 3; ++i)
         {
-            box.Low[i] = low[i];
-            box.High[i] = high[i];
+            mid[i] = 0.5f * (low[i] + high[i]);
+            box.Half[i] = 0.5f * (high[i] - low[i]);
         }
+        // The box's middle back in the world: the object's position plus its local middle through the rotation.
+        for (int32 r = 0; r < 3; ++r)
+            for (int32 c = 0; c < 3; ++c)
+                box.Rot[r * 3 + c] = rotation[r][c];
+        box.Centre = { object->GetPositionX() + box.Rot[0] * mid[0] + box.Rot[1] * mid[1] + box.Rot[2] * mid[2],
+            object->GetPositionY() + box.Rot[3] * mid[0] + box.Rot[4] * mid[1] + box.Rot[5] * mid[2],
+            object->GetPositionZ() + box.Rot[6] * mid[0] + box.Rot[7] * mid[1] + box.Rot[8] * mid[2] };
         return true;
     }
-
-    /// One entity before it is numbered: which shape it is, and its distance from the head.
-    struct Candidate
-    {
-        enum class Shape : uint8 { Unit, Box, Door } Of;
-        std::size_t Index;
-        Vi::EntityInfo Info;
-    };
 }
 
 bool Animus::Vision::HostileGround(Player* seat, DynamicObject const* area)
@@ -293,18 +297,13 @@ bool Animus::Vision::HostileGround(Player* seat, DynamicObject const* area)
     return info && !info->IsPositive() && (!caster || !seat->IsFriendlyTo(caster));
 }
 
-void Animus::Vision::GatherSight(Player* seat, Vec3 pivot, float range, SightStore& out)
+void Animus::Vision::GatherCandidates(Player* seat, Vec3 pivot, float range, GatheredSight& out)
 {
-    out.Units.clear();
-    out.Boxes.clear();
-    out.Doors.clear();
-    out.Entities.assign(1, EntityInfo());
+    out.Candidates.clear();
+    out.Objects.clear();
     if (!seat || !seat->IsInWorld())
         return;
 
-    std::vector<uint32> const killTargets = KillTargets(seat);
-    thread_local std::vector<Candidate> candidates;
-    candidates.clear();
     float const range2 = range * range;
     auto const within = [&](WorldObject const* object)
     {
@@ -320,103 +319,69 @@ void Animus::Vision::GatherSight(Player* seat, Vec3 pivot, float range, SightSto
             return;
         if (Unit* unit = object->ToUnit())
         {
-            bool const self = unit == seat;
-            if (!self && (!within(unit) || !seat->CanSeeOrDetect(unit)))
+            if (unit == seat || !within(unit) || !seat->CanSeeOrDetect(unit))
                 return;
             Movement::Body const shape = Movement::ShapeOf(unit);
-            UnitShape entry;
-            entry.X = unit->GetPositionX();
-            entry.Y = unit->GetPositionY();
-            entry.Z = unit->GetPositionZ();
-            entry.Radius = shape.Radius;
-            entry.Height = shape.Height;
-            entry.Self = self;
-            if (!self)
-            {
-                Candidate candidate{ Candidate::Shape::Unit, out.Units.size(), EntityInfo() };
-                EntityInfo& info = candidate.Info;
-                info.Id = Classify(FactsOf(seat, unit, killTargets));
-                info.Entry = unit->IsPlayer() ? 0 : unit->GetEntry();
-                info.Level = float(unit->GetLevel());
-                info.Health = unit->GetMaxHealth() ? float(unit->GetHealth()) / float(unit->GetMaxHealth()) : 0.0f;
-                info.Reaction = seat->IsHostileTo(unit) ? -1 : (seat->IsFriendlyTo(unit) ? 1 : 0);
-                info.Centre = { entry.X, entry.Y, entry.Z + 0.5f * entry.Height };
-                info.Guid = unit->GetGUID().GetRawValue();
-                info.Orientation = unit->GetOrientation();
-                info.Dead = !unit->IsAlive();
-                entry.What = info.Id.What;
-                candidates.push_back(candidate);
-            }
-            out.Units.push_back(entry);
+            SensorCandidate candidate;
+            candidate.Shape = SensedShape::Unit;
+            candidate.Guid = unit->GetGUID().GetRawValue();
+            candidate.Feet = { unit->GetPositionX(), unit->GetPositionY(), unit->GetPositionZ() };
+            candidate.Radius = shape.Radius;
+            candidate.Height = shape.Height;
+            candidate.Centre = { candidate.Feet.X, candidate.Feet.Y, candidate.Feet.Z + 0.5f * shape.Height };
+            out.Candidates.push_back(candidate);
+            out.Objects.push_back(unit);
             return;
         }
 
-        // A hostile ground effect (an area spell's persistent area): drawn as its visual, a disc at its radius.
+        // A hostile ground effect (an area spell's persistent area): a disc at its radius.
         if (DynamicObject* area = object->ToDynObject())
         {
             if (!HostileGround(seat, area) || !within(area))
                 return;
-            UnitShape const disc = HazardDisc(area->GetPositionX(), area->GetPositionY(), area->GetPositionZ(),
-                area->GetRadius());
-            Candidate candidate{ Candidate::Shape::Unit, out.Units.size(), EntityInfo() };
-            EntityInfo& info = candidate.Info;
-            info.Id.What = Class::GroundHazard;
-            // Not a unit and not to be selected: listed as an object (the sight list masks select on one).
-            info.GameObject = true;
-            info.Reaction = -1;
-            info.Centre = { disc.X, disc.Y, disc.Z + 0.5f * disc.Height };
-            info.Guid = area->GetGUID().GetRawValue();
-            info.Radius = disc.Radius;
-            candidates.push_back(candidate);
-            out.Units.push_back(disc);
+            SensorCandidate candidate;
+            candidate.Shape = SensedShape::Hazard;
+            candidate.Guid = area->GetGUID().GetRawValue();
+            candidate.Feet = { area->GetPositionX(), area->GetPositionY(), area->GetPositionZ() };
+            candidate.Radius = area->GetRadius();
+            candidate.Height = HAZARD_THICKNESS;
+            candidate.Centre = { candidate.Feet.X, candidate.Feet.Y,
+                candidate.Feet.Z - HAZARD_SINK + 0.5f * HAZARD_THICKNESS };
+            out.Candidates.push_back(candidate);
+            out.Objects.push_back(area);
             return;
         }
 
         GameObject* go = object->ToGameObject();
         if (!go || !go->isSpawned() || !within(go) || !seat->CanSeeOrDetect(go))
             return;
-        EntityInfo info;
-        info.Id = Classify(FactsOf(seat, go));
-        info.Entry = go->GetEntry();
-        info.GameObject = true;
-        info.Guid = go->GetGUID().GetRawValue();
-        info.Orientation = go->GetOrientation();
-        bool const door = go->GetGoType() == GAMEOBJECT_TYPE_DOOR || go->GetGoType() == GAMEOBJECT_TYPE_BUTTON;
-        // A door or button stands open in either of its active states (the cannon blows the Iron Clad Door into the
-        // alternative one).
-        info.Open = door ? go->GetGoState() != GO_STATE_READY : go->GetGoState() == GO_STATE_ACTIVE;
-        info.Used = info.Open || go->getLootState() != GO_READY;
+        SensorCandidate candidate;
+        candidate.Guid = go->GetGUID().GetRawValue();
         GameObjectModel const* model = go->m_model;
         if (model && model->isEnabled())
         {
-            DoorShape shape;
-            shape.Model = model;
-            shape.X = go->GetPositionX();
-            shape.Y = go->GetPositionY();
-            shape.Z = go->GetPositionZ();
-            shape.What = info.Id.What;
-            G3D::Vector3 const centre = model->GetBounds().center();
-            info.Centre = { centre.x, centre.y, centre.z };
-            candidates.push_back({ Candidate::Shape::Door, out.Doors.size(), info });
-            out.Doors.push_back(shape);
-            return;
+            // In the dynamic tree: by its model's bounds; its own shadow rays do not stop at its surface.
+            G3D::AABox const bounds = model->GetBounds();
+            G3D::Vector3 const centre = bounds.center();
+            G3D::Vector3 const extent = bounds.extent();
+            candidate.Shape = SensedShape::Model;
+            candidate.Model = model;
+            candidate.Centre = { centre.x, centre.y, centre.z };
+            for (int32 i = 0; i < 3; ++i)
+                candidate.Half[i] = 0.5f * extent[i];
         }
-        // Anything else by its box: an open door as the band its raised gate leaves at the top of its frame
-        // (OpenDoorBox: the doorway clear, the door still there to the camera, listed open), an open button whole.
-        BoxShape box;
-        if (!BoxOf(go, box))
-            return;
-        if (info.Open && go->GetGoType() == GAMEOBJECT_TYPE_DOOR)
-            box = OpenDoorBox(box);
-        box.What = info.Id.What;
-        // The box's middle, back in the world (its space's middle through the rotation, the transpose of InvRot).
-        float const mid[3] = { 0.5f * (box.Low[0] + box.High[0]), 0.5f * (box.Low[1] + box.High[1]),
-            0.5f * (box.Low[2] + box.High[2]) };
-        info.Centre = { box.X + box.InvRot[0] * mid[0] + box.InvRot[3] * mid[1] + box.InvRot[6] * mid[2],
-            box.Y + box.InvRot[1] * mid[0] + box.InvRot[4] * mid[1] + box.InvRot[7] * mid[2],
-            box.Z + box.InvRot[2] * mid[0] + box.InvRot[5] * mid[1] + box.InvRot[8] * mid[2] };
-        candidates.push_back({ Candidate::Shape::Box, out.Boxes.size(), info });
-        out.Boxes.push_back(box);
+        else
+        {
+            // Anything else (a herb, a chest, an open door) by its display's box.
+            candidate.Shape = SensedShape::Box;
+            if (!BoxOf(go, candidate))
+                return;
+        }
+        candidate.Feet = { go->GetPositionX(), go->GetPositionY(), go->GetPositionZ() };
+        candidate.Radius = std::max(candidate.Half[0], candidate.Half[1]);
+        candidate.Height = 2.0f * candidate.Half[2];
+        out.Candidates.push_back(candidate);
+        out.Objects.push_back(go);
     };
 
     // Around the seat, out to the range plus the boom: the camera is never further than the zoom from the pivot.
@@ -426,36 +391,73 @@ void Animus::Vision::GatherSight(Player* seat, Vec3 pivot, float range, SightSto
         GRID_MAP_TYPE_MASK_CREATURE | GRID_MAP_TYPE_MASK_PLAYER | GRID_MAP_TYPE_MASK_GAMEOBJECT
         | GRID_MAP_TYPE_MASK_DYNAMICOBJECT);
     Cell::VisitObjects(seat, searcher, reach);
+}
 
-    // Numbered nearest the head first: the frame's slots go in that order.
-    thread_local std::vector<float> distances;
-    thread_local std::vector<uint8> numbers;
-    distances.resize(candidates.size());
-    numbers.resize(candidates.size());
-    for (std::size_t i = 0; i < candidates.size(); ++i)
+void Animus::Vision::ClassifySeen(Player* seat, GatheredSight const& gathered, SensorOutput const& sensed,
+    SeenList& seen)
+{
+    seen.Count = 0;
+    // The seat's quest log is read once, for the first unit that needs it (a quest's kill targets).
+    std::vector<uint32> killTargets;
+    bool haveTargets = false;
+    for (SensedEntity const& found : sensed.Seen)
     {
-        Vec3 const offset = candidates[i].Info.Centre - pivot;
-        distances[i] = Dot(offset, offset);
-    }
-    NumberNearest(distances, numbers);
-    out.Entities.resize(std::min<std::size_t>(candidates.size(), MAX_SEEN) + 1);
-    for (std::size_t i = 0; i < candidates.size(); ++i)
-    {
-        uint8 const number = numbers[i];
-        Candidate const& candidate = candidates[i];
-        switch (candidate.Of)
+        if (seen.Count >= ENTITY_SLOTS || found.Index >= gathered.Candidates.size())
+            break;
+        SensorCandidate const& candidate = gathered.Candidates[found.Index];
+        WorldObject* object = gathered.Objects[found.Index];
+        EntityInfo info;
+        info.Guid = candidate.Guid;
+        info.Centre = candidate.Centre;
+        info.Radius = candidate.Radius;
+        info.Height = candidate.Height;
+        info.Los = found.Los;
+        switch (candidate.Shape)
         {
-            case Candidate::Shape::Unit:
-                out.Units[candidate.Index].Entity = number;
+            case SensedShape::Unit:
+            {
+                Unit* unit = object->ToUnit();
+                if (!unit)
+                    continue;
+                if (!haveTargets)
+                {
+                    killTargets = KillTargets(seat);
+                    haveTargets = true;
+                }
+                info.Id = Classify(FactsOf(seat, unit, killTargets));
+                info.Entry = unit->IsPlayer() ? 0 : unit->GetEntry();
+                info.Level = float(unit->GetLevel());
+                info.Health = unit->GetMaxHealth() ? float(unit->GetHealth()) / float(unit->GetMaxHealth()) : 0.0f;
+                info.Reaction = seat->IsHostileTo(unit) ? -1 : (seat->IsFriendlyTo(unit) ? 1 : 0);
+                info.Orientation = unit->GetOrientation();
+                info.Dead = !unit->IsAlive();
                 break;
-            case Candidate::Shape::Box:
-                out.Boxes[candidate.Index].Entity = number;
+            }
+            case SensedShape::Hazard:
+                info.Id.What = Class::GroundHazard;
+                // Not a unit and not to be selected: listed as an object (the sight list masks select on one).
+                info.GameObject = true;
+                info.Reaction = -1;
                 break;
-            case Candidate::Shape::Door:
-                out.Doors[candidate.Index].Entity = number;
+            case SensedShape::Model:
+            case SensedShape::Box:
+            {
+                GameObject* go = object->ToGameObject();
+                if (!go)
+                    continue;
+                info.Id = Classify(FactsOf(seat, go));
+                info.Entry = go->GetEntry();
+                info.GameObject = true;
+                info.Orientation = go->GetOrientation();
+                bool const door = go->GetGoType() == GAMEOBJECT_TYPE_DOOR || go->GetGoType() == GAMEOBJECT_TYPE_BUTTON;
+                // A door or button stands open in either of its active states (the cannon blows the Iron Clad Door
+                // into the alternative one).
+                info.Open = door ? go->GetGoState() != GO_STATE_READY : go->GetGoState() == GO_STATE_ACTIVE;
+                info.Used = info.Open || go->getLootState() != GO_READY;
                 break;
+            }
         }
-        if (number)
-            out.Entities[number] = candidate.Info;
+        seen.Info[seen.Count] = info;
+        ++seen.Count;
     }
 }

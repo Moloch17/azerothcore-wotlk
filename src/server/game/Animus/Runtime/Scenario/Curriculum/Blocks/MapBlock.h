@@ -26,7 +26,9 @@ namespace Animus::Curriculum
 {
     /// **What the seat remembers of the place** (perception-goals REDESIGN §3 and the Change): its mental map
     /// (Vision::MentalMap, SeatState::Map), written every decision from that decision's camera frame as cast (the
-    /// vision block leaves its rays on the seat, Vision::FrameHits) and from the seat's own body, then read as one
+    /// vision block leaves its rays on the seat, Vision::FrameHits), from the entities the sensor listed (the
+    /// entities block's list, Vision::SeenList: where each stood, as its class) and from the seat's own body, then
+    /// read as one
     /// egocentric, heading-up crop of Vision::CROP x CROP cells of Vision::CROP_CELL yards, six bytes a cell
     /// (Vision::CropChannel: the code, the floor's height over the feet, visited, the newest look's age, the most
     /// recent entity's class, the frontier). After the vision block (its frame is this decision's). No actions.

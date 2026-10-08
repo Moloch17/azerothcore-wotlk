@@ -144,6 +144,8 @@ void Animus::Vision::EntityMemory::Write(SeenList const& seen)
         entry->Open = info.Open;
         entry->Used = info.Used;
         entry->Position = info.Centre;
+        entry->Radius = info.Radius;
+        entry->Height = info.Height;
         entry->Heading = info.Orientation;
         entry->LastSeen = _clock;
         entry->LastWrite = _writes;

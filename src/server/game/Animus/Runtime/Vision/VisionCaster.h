@@ -21,16 +21,16 @@
 #include "Camera.h"
 #include "MentalMap.h"
 #include "PlayerController.h"
-#include <array>
 #include <span>
 #include <vector>
 
 /// **The caster** (camera-vision INTERFACE, "What a ray hits"; camera-vision.RAYCAST.md): every pixel's ray cast
 /// exactly against what the server has loaded -- the static and dynamic collision trees (two casts, the nearer kept),
 /// the WMO liquids in the static tree, the terrain's own triangles cell by cell along the ray's path with each cell's
-/// liquid surface, and every visible unit's cylinder. Nothing is marched, baked, cached or skipped: a ray ends at its
-/// first hit, or is sky once it has left the loaded grids. Pure over VisionWorld, so it is tested on fake worlds
-/// (VisionTest) and run on a live map (MapVisionWorld).
+/// liquid surface, and the frame's ground hazards painted on the floor. The static world only: units and objects are
+/// not drawn (EntitySensor finds them by line of sight). Nothing is marched, baked, cached or skipped: a ray ends at
+/// its first hit, or is sky once it has left the loaded grids. Pure over VisionWorld, run on a live map
+/// (MapVisionWorld).
 namespace Animus::Vision
 {
     /// A terrain grid as the camera needs it: whether it is loaded (a ray leaving the loaded grids is sky), whether
@@ -58,8 +58,8 @@ namespace Animus::Vision
 
     /// A collision tree's first solid along a segment: how far along it (< 0 for none) and the hit triangle's normal
     /// z, turned to face the segment's start -- 1 a floor seen from above, 0 a wall, below 0 a ceiling from under it.
-    /// Object, for the dynamic tree, is the game object model hit (its GameObjectModel, opaque here): the frame's
-    /// DoorShape of it says what it is (perception-goals 1a).
+    /// Object, for the dynamic tree, is the game object model hit (its GameObjectModel, opaque here): the entity
+    /// sensor ignores the one it is looking at.
     struct SurfaceHit
     {
         float Distance = -1.0f;
@@ -84,6 +84,11 @@ namespace Animus::Vision
         [[nodiscard]] virtual SurfaceHit DynamicHit(Vec3 from, Vec3 to) const = 0;
         /// The first WMO liquid surface along the segment (the static tree's group liquids).
         [[nodiscard]] virtual LiquidHit ModelLiquid(Vec3 from, Vec3 to) const = 0;
+        /// Whether anything solid of the static tree (WMOs and M2s alike) lies on the segment: an any-hit test, which
+        /// stops at the first thing found (entity-sensing's shadow rays).
+        [[nodiscard]] virtual bool StaticAnyHit(Vec3 from, Vec3 to) const = 0;
+        /// ... of the dynamic tree (enabled collision game objects, phase-masked).
+        [[nodiscard]] virtual bool DynamicAnyHit(Vec3 from, Vec3 to) const = 0;
         /// Terrain grid (tileX, tileY), as GridCoord numbers them (u / 128, v / 128).
         [[nodiscard]] virtual TerrainTile Tile(int32_t tileX, int32_t tileY) const = 0;
         /// Cell (cellX, cellY), 0 to 127, of that grid; its liquid only when `liquid` is asked for.
@@ -94,96 +99,26 @@ namespace Animus::Vision
         [[nodiscard]] virtual float FloorBelow(float x, float y, float z, float search) const = 0;
     };
 
-    /// A unit as a ray sees it: a vertical cylinder from its feet. `Self` is the seat's own character, never seen.
-    /// Entity is its number in the frame (NumberNearest: 1 the nearest), 0 past MAX_SEEN or not numbered.
-    struct UnitShape
+    /// **A ground hazard as a ray sees it** (Class::GroundHazard): a flat disc on the ground at the area's centre
+    /// (Z the floor there) with its radius -- what the client draws of a fire pool or a poison cloud. A ray that
+    /// meets the floor (a normal z of FLOOR_NORMAL or more) within the disc, and within HAZARD_REACH of its height,
+    /// reads the hazard's class instead of the terrain's. A flat decal: it hides nothing behind it.
+    struct HazardDisc
     {
         float X = 0.0f;
         float Y = 0.0f;
         float Z = 0.0f;
         float Radius = 0.0f;
-        float Height = 0.0f;
-        /// What it is to the seat (Classify): its pixels' class.
-        Class What = Class::NeutralCreature;
-        bool Self = false;
-        uint8_t Entity = 0;
     };
 
-    /// **A ground hazard as a ray sees it** (Class::GroundHazard): a flat disc, HAZARD_THICKNESS yards thick, lying on
-    /// the ground at the area's centre with its radius -- what the client draws of a fire pool or a poison cloud. It is
-    /// a UnitShape (a vertical cylinder), so VisionCaster's CastRay draws it as it draws any unit.
+    /// The disc's thickness as the entity list sizes it, and how far below the area's centre its middle sits.
     constexpr float HAZARD_THICKNESS = 0.2f;
-    /// How far below the area's centre the disc starts, so ground a little uneven under it does not hide it.
     constexpr float HAZARD_SINK = 0.05f;
-    [[nodiscard]] inline UnitShape HazardDisc(float x, float y, float z, float radius, uint8_t entity = 0)
-    {
-        UnitShape disc;
-        disc.X = x;
-        disc.Y = y;
-        disc.Z = z - HAZARD_SINK;
-        disc.Radius = radius;
-        disc.Height = HAZARD_THICKNESS;
-        disc.What = Class::GroundHazard;
-        disc.Entity = entity;
-        return disc;
-    }
+    /// A floor hit is painted when its height is within this of the disc's.
+    constexpr float HAZARD_REACH = 0.5f;
 
-    /// **A game object with no collision model** (a herb, most chests, a mailbox) as a ray sees it: its display's
-    /// bounding box (GameObjectDisplayInfo's bounds, scaled), turned as the object is (perception-goals 1a: cast as
-    /// its bounding shape, as a unit is a cylinder). The box's space is the object's: a point p is at
-    /// InvRot (p - origin) there, InvRot row-major (the inverse of the object's rotation).
-    struct BoxShape
-    {
-        float X = 0.0f;
-        float Y = 0.0f;
-        float Z = 0.0f;
-        float InvRot[9] = { 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f };
-        float Low[3] = {};
-        float High[3] = {};
-        Class What = Class::OtherObject;
-        uint8_t Entity = 0;
-    };
-
-    /// A game object with a collision model, in the dynamic tree: what a ray that hits `Model` (its GameObjectModel)
-    /// has hit. A dynamic hit on a model no DoorShape names is a door with no entity (Class::Door).
-    struct DoorShape
-    {
-        void const* Model = nullptr;
-        float X = 0.0f;
-        float Y = 0.0f;
-        float Z = 0.0f;
-        Class What = Class::Door;
-        uint8_t Entity = 0;
-    };
-
-    /// **The entities a frame can see**, as the caster reads them: the units' cylinders, the colliderless game
-    /// objects' boxes and the collision game objects' identities. Built from units alone where there is nothing
-    /// else (the tests).
-    struct Sight
-    {
-        Sight() = default;
-        Sight(std::span<UnitShape const> units) : Units(units) { }
-        Sight(std::vector<UnitShape> const& units) : Units(units) { }
-
-        std::span<UnitShape const> Units;
-        std::span<BoxShape const> Boxes;
-        std::span<DoorShape const> Doors;
-    };
-
-    /// **A frame's entity list**, as the frame decided it (perception-goals 1b): Slots[s - 1] is pixel slot s's
-    /// entity (its number) and its pixels at the size the frame was cast at (CastWidth x CastHeight), the nearest
-    /// first.
-    struct FrameSlots
-    {
-        uint32_t Count = 0;
-        uint32_t CastWidth = 0;
-        uint32_t CastHeight = 0;
-        std::array<SlotStat, ENTITY_SLOTS> Slots{};
-        /// The camera the frame was seen from (Render fills it): where it was, and the view's azimuth and elevation.
-        Vec3 Camera;
-        float Azimuth = 0.0f;
-        float Elevation = 0.0f;
-    };
+    /// **The hazards a frame paints**: the static world's pixels read these on the floor. Empty is a frame with none.
+    using Sight = std::span<HazardDisc const>;
 
     /// Where the seat is: its feet, its facing (radians, WoW's counter-clockwise yaw), its body height.
     struct Pose
@@ -227,7 +162,6 @@ namespace Animus::Vision
         Class What = Class::Sky;
         float Z = 0.0f;             // the hit's height
         float NormalZ = 0.0f;
-        uint8_t Entity = 0;         // the entity's number in the frame (NumberNearest), 0 none
     };
 
     /// Where a frame's time and work went: filled only when asked for (the snapshot and the timing test), since
@@ -237,14 +171,23 @@ namespace Animus::Vision
         uint64_t TreeNs = 0;        // the static and dynamic casts
         uint64_t LiquidNs = 0;      // the WMO liquids
         uint64_t TerrainNs = 0;     // the loaded grids' extent and the terrain cells (their triangles and liquid)
-        uint64_t UnitNs = 0;        // the cylinders
+        uint64_t HazardNs = 0;      // the hazard discs on a floor hit
         uint32_t Rays = 0;          // pixel rays and the boom
+        uint32_t SegmentRays = 0;   // the entity sensor's shadow rays (SegmentBlocked)
         uint32_t TreeCasts = 0;
         uint32_t LiquidCasts = 0;
         uint32_t TerrainTiles = 0;  // grids a ray's terrain cast entered
         uint32_t TerrainCells = 0;  // cells whose triangles or liquid it tested
-        uint32_t UnitTests = 0;
+        uint32_t HazardTests = 0;   // hazard discs tested against a floor hit
     };
+
+    /// **A segment's line of sight** (entity-sensing's shadow ray): whether anything solid lies on the open segment
+    /// from `from` to `to` -- the static tree (any-hit), the dynamic tree, and the terrain from above; no liquids, no
+    /// units. `ignore`, a game object model (SurfaceHit::Object), is the target itself: a model between the ends that
+    /// is the target does not block, and the rest of the segment is tested only as far as its surface. Counts into
+    /// `breakdown` as one ray.
+    [[nodiscard]] bool SegmentBlocked(VisionWorld const& world, Vec3 from, Vec3 to, void const* ignore = nullptr,
+        Breakdown* breakdown = nullptr);
 
     /// The pivot, the boom's pull-in (one cast from the pivot back along the view, against the trees and the
     /// terrain) and the camera.
@@ -270,76 +213,37 @@ namespace Animus::Vision
 
     /// The nearest thing along `dir` (a unit vector) from `origin`: nothing is a range, only the loaded grids'
     /// extent (Reach), at which the ray is Sky. A liquid's surface is only ever entered from above, so a camera
-    /// under one sees through it upwards. In order: the trees (a dynamic hit is its model's DoorShape), the WMO
-    /// liquids, the terrain, the units' cylinders, the boxes; the nearest wins, the earlier on a tie.
+    /// under one sees through it upwards. In order: the trees (a dynamic hit is a door), the WMO liquids, the
+    /// terrain; the nearest wins, the earlier on a tie. A floor hit within a hazard disc of `sight` reads as the
+    /// hazard.
     [[nodiscard]] Hit CastRay(Vec3 origin, Vec3 dir, VisionWorld const& world, Sight const& sight,
         Breakdown* breakdown = nullptr);
-
-    /// The distance along `dir` at which the ray meets the cylinder, or < 0 for a miss; `top` says the cap was hit.
-    [[nodiscard]] float RayCylinder(Vec3 origin, Vec3 dir, float limit, UnitShape const& unit, bool& top);
-
-    /// The distance along `dir` at which the ray enters the box from outside, within `limit`, or < 0 for a miss (a
-    /// ray from inside sees none of it, as with a cylinder); `normalZ` takes the entered face's world normal z,
-    /// turned to face the ray (1 a top seen from above).
-    [[nodiscard]] float RayBox(Vec3 origin, Vec3 dir, float limit, BoxShape const& box, float& normalZ);
-
-    /// **An open door as a ray sees it** (M3 interact): a door that stands open (its GO state not ready, its model out
-    /// of the collision tree) is still drawn, as a client still shows it -- not as the slab it was across the doorway,
-    /// which would read as shut, but as the band at the top of its frame a raised gate leaves showing (the
-    /// Deadmines' doors lift): the top OPEN_DOOR_BAND of its closed box, the doorway under it clear. Its pixels keep
-    /// the door class and its entity (listed with EntityInfo::Open), so the camera and memory tell an open door from
-    /// no door. Both casters draw it as any other box.
-    constexpr float OPEN_DOOR_BAND = 0.15f;
-    [[nodiscard]] inline BoxShape OpenDoorBox(BoxShape closed)
-    {
-        float const height = closed.High[2] - closed.Low[2];
-        closed.Low[2] = closed.High[2] - OPEN_DOOR_BAND * height;
-        return closed;
-    }
-
-    /// Numbers a frame's entities nearest first (perception-goals 1b): numbers[i] is 1 + the rank of distances[i]
-    /// (squared distances from the seat's head; a tie goes to the lower i) when that rank is below MAX_SEEN, else
-    /// 0 -- an entity past the cap is still cast, with its class, and never listed.
-    void NumberNearest(std::span<float const> distances, std::span<uint8_t> numbers);
 
     /// 1 when the closed segment from `origin` to `distance` along `dir` (the hit, or the reach on sky) comes within
     /// `radius` (OBJECTIVE_RADIUS, or an object's ObjectiveRadiusFor) of the objective, else 0 (and 0 with none).
     [[nodiscard]] float ObjectiveFlag(Vec3 origin, Vec3 dir, float distance, Vec3 const* objective,
         float radius = OBJECTIVE_RADIUS);
 
-    /// A pixel's five bytes (Camera.h, BYTES_PER_PIXEL): `slot` is byte 4 as it is (while a frame is cast, the
-    /// hit's entity number; Render then makes it the slot).
-    void EncodePixel(Hit const& hit, float feetZ, bool objective, uint8_t slot, uint8_t* out);
+    /// A pixel's four bytes (Camera.h, BYTES_PER_PIXEL).
+    void EncodePixel(Hit const& hit, float feetZ, bool objective, uint8_t* out);
     /// The learner's decode of them: the five image channels (distance, height, normal, class, objective), quantised,
-    /// then the entity slot (CHANNEL_SLOT), DECODED_VALUES in all. For `forge camera snapshot` and the tests; the
-    /// network decodes its own.
+    /// DECODED_VALUES in all. For `forge camera snapshot` and the audit; the network decodes its own.
     void DecodePixel(uint8_t const* in, float* out);
 
-    /// A whole frame: the image into `image` (ImageBytes, [row][col][byte] with row 0 at the top; null to cast no
-    /// pixel), the eleven scalars into `scalars`. `settings` is the canonical size; the pixels are cast at the
-    /// camera's RenderWidth x RenderHeight (the same field of view, fewer and wider rays) and scaled up into the
-    /// image by nearest pixel (Upscale). Returns the rays actually cast (every cast pixel's and the boom's).
-    ///
-    /// **The entity slots** (perception-goals 1b): the cast frame's pixels are counted by entity number
-    /// (CountEntities), the entities with a pixel take the slots in number order -- the nearest first -- up to
-    /// ENTITY_SLOTS (AssignSlots), and byte 4 becomes each pixel's slot (0 past the cap, its class kept) before the
-    /// frame is scaled up. `slots`, when given, takes the list.
+    /// A whole frame's static world: the image into `image` (ImageBytes, [row][col][byte] with row 0 at the top; null
+    /// to cast no pixel), the eleven scalars into `scalars`. `rig` is the camera as PlaceCamera placed it (once a
+    /// decision: the sensor reads it too). `settings` is the canonical size; the pixels are cast at the camera's
+    /// RenderWidth x RenderHeight (the same field of view, fewer and wider rays) and scaled up into the image by
+    /// nearest pixel (Upscale). `sight` takes the frame's ground hazards. Returns the rays actually cast (every cast
+    /// pixel's and the boom's).
     ///
     /// **The frame's rays for the mental map** (perception-goals REDESIGN §3, amendment 2): `hits`, when given, takes
-    /// every cast pixel's ray -- its direction, its hit's distance, height and normal z, and its class -- at the size
-    /// the frame was cast at, not the canonical image's upscaled copies.
-    uint32_t Render(Settings const& settings, Pose const& pose, CameraState const& camera, VisionWorld const& world,
-        Sight const& sight, Vec3 const* objective, uint8_t* image, float* scalars, Breakdown* breakdown = nullptr,
-        float objectiveRadius = OBJECTIVE_RADIUS, FrameSlots* slots = nullptr, FrameHits* hits = nullptr);
-
-    /// A cast frame's pixels per entity number (byte 4): counts[n] -- its pixels and the sums of their rows and
-    /// columns -- for n from 1 to MAX_SEEN (counts[0] holds the pixels of no entity).
-    void CountEntities(uint8_t const* frame, uint32_t width, uint32_t height,
-        std::array<SlotStat, MAX_SEEN + 1>& counts);
-    /// The slots from the counts: the numbers with a pixel, ascending, up to ENTITY_SLOTS; slotOf[n] the slot of
-    /// number n (0 none).
-    void AssignSlots(std::array<SlotStat, MAX_SEEN + 1> const& counts, FrameSlots& slots,
-        std::array<uint8_t, MAX_SEEN + 1>& slotOf);
+    /// every cast pixel's ray -- its direction, its hit's distance, height and normal z, and its class (the static
+    /// world's, before a hazard is painted on it) -- at the size the frame was cast at, not the canonical image's
+    /// upscaled copies.
+    uint32_t Render(Settings const& settings, Rig const& rig, Pose const& pose, CameraState const& camera,
+        VisionWorld const& world, Sight const& sight, Vec3 const* objective, uint8_t* image, float* scalars,
+        Breakdown* breakdown = nullptr, float objectiveRadius = OBJECTIVE_RADIUS, FrameHits* hits = nullptr);
 }
 
 #endif

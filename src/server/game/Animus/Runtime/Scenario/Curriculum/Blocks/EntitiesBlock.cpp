@@ -31,7 +31,7 @@ namespace
 {
     constexpr char const* FEATURE_NAMES[Animus::Curriculum::EntitiesBlock::ENTITY_FEATURES] = { "present", "class",
         "type", "object", "level", "level_delta", "health", "reaction", "quest", "lootable", "usable", "distance",
-        "yaw_sin", "yaw_cos", "pitch_sin", "pitch_cos", "centroid_x", "centroid_y", "share", "memory" };
+        "yaw_sin", "yaw_cos", "pitch_sin", "pitch_cos", "los", "ang_width", "ang_height", "memory" };
 }
 
 Animus::Curriculum::BlockSize Animus::Curriculum::EntitiesBlock::Size(Layout const& /*layout*/) const
@@ -113,12 +113,37 @@ void Animus::Curriculum::EntitiesBlock::WriteSlot(Vision::SeenList const& seen, 
     out[ENTITY_PITCH_SIN] = std::sin(pitch);
     out[ENTITY_PITCH_COS] = std::cos(pitch);
 
-    float x = 0.0f;
-    float y = 0.0f;
-    float share = 0.0f;
-    Vi::SlotCentroid(seen.Stats[slot], seen.CastWidth, seen.CastHeight, x, y, share);
-    out[ENTITY_CENTROID_X] = x;
-    out[ENTITY_CENTROID_Y] = y;
-    out[ENTITY_SHARE] = share;
+    out[ENTITY_LOS] = std::clamp(info.Los, 0.0f, 1.0f);
+    AngularSize(distance, info.Radius, info.Height, out[ENTITY_ANG_WIDTH], out[ENTITY_ANG_HEIGHT]);
     out[ENTITY_MEMORY] = float(memoryId);
+}
+
+void Animus::Curriculum::EntitiesBlock::AngularSize(float distance, float radius, float height, float& width,
+    float& tall)
+{
+    Vi::Settings const& settings = Vi::Current();
+    float const away = std::max(distance, 0.1f);
+    float const fovH = std::max(settings.FovH * Vi::DEGREES, 1e-3f);
+    float const fovV = std::max(settings.FovV * Vi::DEGREES, 1e-3f);
+    width = std::clamp(2.0f * std::atan(std::max(radius, 0.0f) / away) / fovH, 0.0f, 1.0f);
+    tall = std::clamp(2.0f * std::atan(0.5f * std::max(height, 0.0f) / away) / fovV, 0.0f, 1.0f);
+}
+
+void Animus::Curriculum::EntitiesBlock::ReadMarks(float const* row, std::vector<Vision::EntityMark>& out)
+{
+    out.clear();
+    for (uint32 slot = 0; slot < Vi::ENTITY_SLOTS; ++slot)
+    {
+        float const* in = row + slot * ENTITY_FEATURES;
+        if (in[ENTITY_PRESENT] < 0.5f)
+            continue;
+        Vi::EntityMark mark;
+        mark.What = Vi::Class(std::clamp<uint32>(uint32(std::lround(in[ENTITY_CLASS])), 0, Vi::CLASSES - 1));
+        mark.Yaw = std::atan2(in[ENTITY_YAW_SIN], in[ENTITY_YAW_COS]);
+        mark.Pitch = std::atan2(in[ENTITY_PITCH_SIN], in[ENTITY_PITCH_COS]);
+        mark.Width = in[ENTITY_ANG_WIDTH];
+        mark.Height = in[ENTITY_ANG_HEIGHT];
+        mark.Los = in[ENTITY_LOS];
+        out.push_back(mark);
+    }
 }
