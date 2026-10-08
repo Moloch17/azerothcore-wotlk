@@ -35,7 +35,7 @@ namespace Animus::Vision::Scene
     static_assert(std::endian::native == std::endian::little, "scene files are little-endian");
 
     constexpr uint32_t MAGIC = 0x43534241;          // "ABSC"
-    constexpr uint32_t VERSION = 1;
+    constexpr uint32_t VERSION = 2;
     constexpr uint32_t HEADER_BYTES = 512;
     constexpr uint32_t SECTION_ALIGN = 16;
     constexpr uint32_t MAX_LEAF = 4;                // triangles in a leaf, at most
@@ -44,10 +44,10 @@ namespace Animus::Vision::Scene
     /// SceneHeader::Flags.
     enum Flag : uint32_t
     {
-        HAS_TERRAIN = 1u << 0,          // v1: always 0 (the baker refuses a map with terrain tiles)
+        HAS_TERRAIN = 1u << 0,          // the terrain index holds at least one tile (a .map file of the map)
         HAS_MODEL_LIQUID = 1u << 1,     // the liquid sections hold at least one triangle
-        HAS_TERRAIN_LIQUID = 1u << 2,   // v1: always 0
-        HAS_INSTANCES = 1u << 3,        // v1: always 0 (phase 2: door models)
+        HAS_TERRAIN_LIQUID = 1u << 2,   // at least one terrain tile has liquid
+        HAS_INSTANCES = 1u << 3,        // always 0 (phase 2: door models)
         TILED = 1u << 4                 // the source map is tiled (a continent)
     };
 
@@ -63,9 +63,10 @@ namespace Animus::Vision::Scene
         SLOT_LIQ_NODES,
         SLOT_MODEL_TABLE,       // reserved (phase 2)
         SLOT_INSTANCE_TABLE,    // reserved (phase 2)
-        SLOT_TERRAIN_INDEX,     // reserved
-        SLOT_TERRAIN_HEIGHTS,   // reserved
-        SLOT_TERRAIN_LIQUID,    // reserved
+        SLOT_TERRAIN_INDEX,     // TerrainRec per tile, sorted by (TileX, TileY)
+        SLOT_TERRAIN_HEIGHTS,   // floats: per height-bearing, non-flat tile, V9 (129 x 129) then V8 (128 x 128)
+        SLOT_TERRAIN_LIQUID,    // per liquid tile: float Level[128 * 128], then uint8 Kind[128 * 128]
+        SLOT_TERRAIN_HOLES,     // uint16 [256] per tile with holes (the map file's hole words)
         SLOT_COUNT = 16
     };
 
@@ -81,6 +82,40 @@ namespace Animus::Vision::Scene
     constexpr uint8_t LIQUID_TYPE_MASK = 0x03;
     constexpr uint8_t LIQUID_DEADLY = 0x04;
 
+    /// One terrain tile (a grid of 128 x 128 cells, the map file of the same name). Heights are the file's, decoded to
+    /// float at bake: V9 indexed x * 129 + y, V8 x * 128 + y, as the core's GridTerrainData indexes them.
+    enum TerrainFlag : uint32_t
+    {
+        TERRAIN_HEIGHTS = 1u << 0,      // the file has a height section (an absent one is a tile with no ground)
+        TERRAIN_FLAT = 1u << 1,         // heights are all FlatHeight (no arrays); holes are not read, as the core
+        TERRAIN_HOLES = 1u << 2,        // HoleIndex names this tile's hole words
+        TERRAIN_LIQUID = 1u << 3        // LiquidIndex names this tile's liquid
+    };
+
+    constexpr uint32_t TERRAIN_CELLS = 128;
+    constexpr uint32_t TERRAIN_V9 = 129;
+    constexpr uint32_t TERRAIN_NONE = 0xFFFFFFFFu;
+    constexpr uint8_t TERRAIN_LIQUID_NONE = 0;
+    constexpr uint8_t TERRAIN_LIQUID_WATER = 1;
+    constexpr uint8_t TERRAIN_LIQUID_DEADLY = 3;    // magma or slime (bit 0 is "has liquid", bit 1 deadly)
+
+    struct TerrainRec
+    {
+        int32_t TileX;
+        int32_t TileY;
+        uint32_t Flags;
+        float MaxHeight;            // the tile's highest point, as the map file's height header has it
+        float FlatHeight;           // the height of a flat tile
+        uint32_t HeightIndex;       // tile number in SLOT_TERRAIN_HEIGHTS, or TERRAIN_NONE
+        uint32_t HoleIndex;         // tile number in SLOT_TERRAIN_HOLES, or TERRAIN_NONE
+        uint32_t LiquidIndex;       // tile number in SLOT_TERRAIN_LIQUID, or TERRAIN_NONE
+        uint32_t Reserved;
+    };
+    static_assert(sizeof(TerrainRec) == 36);
+
+    constexpr std::size_t TERRAIN_HEIGHT_FLOATS = TERRAIN_V9 * TERRAIN_V9 + TERRAIN_CELLS * TERRAIN_CELLS;
+    constexpr std::size_t TERRAIN_LIQUID_BYTES = TERRAIN_CELLS * TERRAIN_CELLS * (sizeof(float) + 1);
+
     struct SectionEntry
     {
         uint64_t Offset = 0;        // from the start of the file; 0 for an absent section
@@ -94,7 +129,7 @@ namespace Animus::Vision::Scene
         uint32_t HeaderBytes = HEADER_BYTES;
         uint32_t MapId = 0;
         uint32_t Flags = 0;
-        uint32_t Reserved0 = 0;
+        uint32_t BakerVersion = 0;          // SceneBaker::BAKER_VERSION that wrote the file
         float SolidMin[3] = {};
         float SolidMax[3] = {};
         float LiquidMin[3] = {};
@@ -108,11 +143,15 @@ namespace Animus::Vision::Scene
         uint32_t SourceSpawnCount = 0;      // vmap instances baked (statistics)
         uint32_t SourceM2Count = 0;         // ... of them M2
         uint64_t Checksum = 0;              // FNV-1a 64 of the file with these eight bytes read as zero
-        uint8_t Reserved1[144] = {};
+        uint64_t SourceHash = 0;            // FNV-1a 64 over the contents of every source file the bake read
+        uint32_t TerrainTileCount = 0;
+        uint32_t Reserved2 = 0;
+        uint8_t Reserved1[128] = {};
         SectionEntry Sections[SLOT_COUNT] = {};
     };
     static_assert(sizeof(SceneHeader) == HEADER_BYTES, "the scene header is 512 bytes");
     static_assert(offsetof(SceneHeader, Checksum) == 104, "the checksum sits at byte 104");
+    static_assert(offsetof(SceneHeader, SourceHash) == 112, "the source hash sits at byte 112");
     static_assert(offsetof(SceneHeader, Sections) == 256, "the section table starts at byte 256");
 
     /// A triangle as the tracer reads it: vertex 0 and the two edges from it, world space.

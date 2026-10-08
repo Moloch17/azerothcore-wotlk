@@ -207,8 +207,19 @@ and has no mask (`Valid` rejects an out-of-range row, which then leaves the stat
 
 ## MapVisionWorld (MapVisionWorld.h/.cpp)
 
-`VisionWorld` over a `Map` (`StaticHit/DynamicHit/ModelLiquid/StaticAnyHit/DynamicAnyHit` call the forge-added tree accessors; `Tile/Cell` read created grids only (`IsGridCreated`, `GetCreatedGridTerrainData`
-never create a grid); `LiquidAt/FloorBelow` use an uncounted `MapWorldQuery`).
+`VisionWorld` over a `Map`, composed of two halves (decision 0020). The static half -- `StaticHit`, `StaticAnyHit`, `ModelLiquid`, `Tile`, `Cell` -- is the map's `BakedWorld`, found in the
+constructor by `SceneRegistry::Instance().Get(map->GetId())` (one immutable copy per map id, shared by every env and thread; `HasScene()` says whether the map has one; a map with none draws no static world and
+logs once). The dynamic half -- `DynamicHit`, `DynamicAnyHit` -- is the live `DynamicMapTree` of the map (closed doors and other collision game objects, phase masked); `LiquidAt/FloorBelow` use an uncounted
+`MapWorldQuery`. There is no fallback to the live static tree.
+
+## Baked scenes (BakedScene.h, BakedWorld, SceneBaker, SceneBvh, SceneRegistry)
+
+`BakedScene.h` is the scene file (format version 2: 512-byte header with the baker version and `SourceHash`, then 16-byte-aligned sections: triangles with normals and kinds, the BVH, WMO liquid triangles and BVH, the terrain
+index, V9/V8 height floats, hole words and per-cell liquid level and kind). `BakedWorld` loads one file and answers the static half of `VisionWorld`. `SceneBaker::BakeMap(dataDir, mapId, outPath, ...)` makes it from the
+extracted `vmaps/`, `maps/` and `dbc/LiquidType.dbc` of a server's DataDir (stock public collision APIs and a hand-read `.map` and `.dbc`; compiled with `-ffp-contract=off`, placement math in double, so the bytes are
+machine-independent); `SourceIdentity` is the content hash it stores. `SceneRegistry::Ensure(dataDir, sceneDir, mapId, ...)` loads a scene if it is whole, of this baker's version and built from the data on disk, else bakes
+it (temporary file, then rename) and loads it; `Get(mapId)` and `Checksums()` read the loaded set. The forge calls `Ensure` for every map of `StageMaps` at startup (`Forge::PrepareScenes`), into
+`<AnimusForge.DataDir>/scenes`; the `scene_baker` tool is a command line over the same code (`bake`, `ensure`, `info`, `bench`, `verify`).
 
 `GatherCandidates(seat, pivot, range, GatheredSight&)` (map thread of the seat only, hence `AnimusForge.ObserveAfterJoin` is refused for vision stages): searches `range + |pivot - seat|` round the seat
 (`Cell::VisitObjects`); keeps units within `range` of the pivot that `seat->CanSeeOrDetect` (the seat itself is not a candidate), hostile ground effects (`HostileGround`: an area spell's persistent area,
@@ -236,12 +247,10 @@ What stays of `Gpu/` is the device-library loader and the device-buffer exchange
 
 ## Accessors the forge added to upstream code (see 01-forge-core-delta.md)
 
-Used by the camera (read-only, opt-in): `StaticVMapCollisionData::GetLiquidHit(x1,y1,z1,x2,y2,z2,float& distance, uint32& liquidType)` and `::GetSurfaceHit(..., float& distance, float& normalZ)`
-(`src/server/game/Maps/MapCollisionData.cpp:117,148`); `DynamicVMapCollisionData::GetSurfaceHit(phase, ..., float& normalZ, GameObjectModel const** model)` (:230);
-`StaticVMapCollisionData::AnyHit` and `DynamicVMapCollisionData::AnyHit` (entity sensing: ungated any-hit segment tests; the static one is `StaticMapTree::isInLineOfSight` with `ModelIgnoreFlags::Nothing`); `StaticMapTree::GetSurfaceIntersection/GetLiquidIntersection`
-(`src/common/Collision/Maps/MapTree.cpp`), `DynamicMapTree::GetIntersectionTime(..., G3D::Vector3* normal, GameObjectModel const** model)`, the `normal` out-parameter threaded through `ModelInstance::intersectRay`,
-`WorldModel/GroupModel::IntersectRay` and `WmoLiquid::IntersectRay`, `ModelInstance::intersectLiquid`, `GroupModel::IntersectLiquid`; `GridTerrainData::HasHeights/GetMaxHeight/GetCellHeights/HasLiquid/GetLiquidSurface`
-(`src/server/game/Grids/GridTerrainData.h:262-271`, `.cpp:638-693`, plus `LoadedHeightData::gridMaxHeight`); `Map::GetCreatedGridTerrainData` (`Map.cpp:220`). For movement: `ClientMovement::{Verify,Apply,Relocate}`,
+Used by the camera (read-only, opt-in), the dynamic path only (the static world is baked; the static additions were deleted in stage 2): `DynamicVMapCollisionData::GetSurfaceHit(phase, ..., float& normalZ,
+GameObjectModel const** model)` and `DynamicVMapCollisionData::AnyHit` (entity sensing: ungated any-hit segment tests, `DynamicMapTree::isInLineOfSight` with `ModelIgnoreFlags::Nothing`)
+(`src/server/game/Maps/MapCollisionData.cpp`), `DynamicMapTree::GetIntersectionTime(..., G3D::Vector3* normal, GameObjectModel const** model)` and the `normal` out-parameter threaded through
+`GameObjectModel::intersectRay` and `WorldModel/GroupModel::IntersectRay`. For movement: `ClientMovement::{Verify,Apply,Relocate}`,
 `WorldSession::SanitizeMovementFlags`, `WorldSession::MovementOrders` and the `SendPacket` order filter.
 
 ## Tests

@@ -9,6 +9,11 @@ with descriptions is `src/server/apps/worldserver/worldserver.conf.dist` (the `A
 
 ## Where the values come from
 
+`AnimusForge.DataDir` (`ForgeConfig::DataDir`, relative to the directory of `worldserver.conf` or absolute, default `<config dir>/modules/animus`, per machine and never compared by `forgectl`): the folder for what
+Animus generates or ships as data. Its `scenes/` subfolder holds the baked camera scenes (`<map id padded to 3>.scene`), which `Forge::PrepareScenes` loads or first bakes at startup (decision 0020); it must be writable and
+should be persisted. The config directory is the one `sConfigMgr` loaded `worldserver.conf` from (`ConfigDir`), which is also what a stock realm's module sees; the folder is where a realm's module installs its models
+(`ANIMUS_MODELS_INSTALL_DIR`), and a module follow-up should expose the same setting (`Animus.DataDir`) and pass `<DataDir>/scenes` to `SceneRegistry::Ensure`.
+
 `ForgeMain.cpp:346-361`: `worldserver.conf` is loaded; then, if `<config dir>/modules/mod_animus_forge.conf` exists, it is merged in
 full by `Config::LoadAdditionalFile(forgeConf, false)` after it, so a legacy module file **wins** over `worldserver.conf`.
 `ForgeConfig::Load` runs in `Forge::OnStartup` (`AnimusForge.cpp:156`), once; there is no reload (`forge bench auto/apply`

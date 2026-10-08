@@ -155,7 +155,6 @@ struct LoadedHeightData
     };
 
     float gridHeight;
-    float gridMaxHeight;    // the tile's highest point, as the map file's height header has it
     std::unique_ptr<Uint16HeightData> uint16HeightData;
     std::unique_ptr<Uint8HeightData> uint8HeightData;
     std::unique_ptr<FloatHeightData> floatHeightData;
@@ -241,10 +240,6 @@ class GridTerrainData
     float getHeightFromUint8(float x, float y) const;
     float getHeightFromFlat(float x, float y) const;
 
-    // The liquid of the cell holding (x, y), its type resolved as GetLiquidData does (area overrides included).
-    bool resolveLiquid(float x, float y, Optional<uint8> ReqLiquidType, uint32& entry, uint32& type,
-        float& level) const;
-
 public:
     GridTerrainData();
     ~GridTerrainData() { };
@@ -255,20 +250,6 @@ public:
     float getMinHeight(float x, float y) const;
     float getLiquidLevel(float x, float y) const;
     LiquidData const GetLiquidData(float x, float y, float z, float collisionHeight, Optional<uint8> ReqLiquidType) const;
-
-    // Read-only views of the loaded data, for an exact ray cast over the heightfield (the bots' camera). Cells
-    // are indexed as getHeight indexes them: x = (int)(MAP_RESOLUTION * (32 - worldX / SIZE_OF_GRIDS)) & 127, y
-    // likewise from worldY.
-    [[nodiscard]] bool HasHeights() const { return _loadedHeightData != nullptr; }
-    // The tile's highest terrain point (the height header's), or INVALID_HEIGHT with no heights.
-    [[nodiscard]] float GetMaxHeight() const;
-    // A cell's four corner heights (V9: (x, y), (x + 1, y), (x, y + 1), (x + 1, y + 1)) and its centre's (V8), as
-    // getHeight decodes them; false for a hole or no heights. The cell is four triangles round its centre.
-    bool GetCellHeights(int x, int y, float (&corners)[4], float& centre) const;
-    [[nodiscard]] bool HasLiquid() const;
-    // The liquid surface's level and type flags (MAP_LIQUID_TYPE_*) in the cell holding (x, y), whatever the
-    // ground there: GetLiquidData without its height checks.
-    bool GetLiquidSurface(float x, float y, float& level, uint32& typeFlags) const;
 };
 
 #endif

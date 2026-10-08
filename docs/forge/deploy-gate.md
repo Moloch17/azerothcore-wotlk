@@ -506,9 +506,10 @@ Success, on every machine: the log shows `AzerothCore rev. <the new short sha> .
 for m in ...; do ssh $m 'docker logs ac-animus-forge-worldserver 2>&1 | grep "Cluster fingerprint" | tail -1'; done
 ```
 
-prints **identical** lines (`src=... protocol=25 curriculum=... decision=...`) on the host and every
-worker. A worker that differs is refused (`Cluster: refused the worker at ...` in the host's log); compare the four
-parts to see which differs (a stale checkout: `src`; tuned curriculum keys: `curriculum`).
+prints **identical** lines (`src=... protocol=25 curriculum=... decision=... scenes=...`) on the host and every
+worker. A worker that differs is refused (`Cluster: refused the worker at ...` in the host's log); compare the five
+parts to see which differs (a stale checkout: `src`; tuned curriculum keys: `curriculum`; a scene baked from different
+map data: `scenes`, see `forgectl doctor`).
 The `curriculum=` value differs from before the deploy on every machine, because the removed keys left the hash:
 that is expected, only equality across machines matters. (`forgectl cluster` should then show one revision, the new
 one, with no `*`.)

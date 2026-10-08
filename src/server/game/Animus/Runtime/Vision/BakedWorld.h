@@ -53,10 +53,10 @@ namespace Animus::Vision
         [[nodiscard]] bool StaticAnyHit(Vec3 from, Vec3 to) const;
         /// The nearest liquid surface on the segment, either side (the caller casts it for descending rays only).
         [[nodiscard]] LiquidHit ModelLiquid(Vec3 from, Vec3 to) const;
-        /// Loaded for the terrain grids the scene's footprint overlaps (a ray leaves the world there), never with
-        /// heights or liquid: a scene of this version has no terrain.
+        /// Loaded for the terrain grids the scene's footprint and terrain tiles overlap (a ray leaves the world
+        /// there); with heights and liquid where the map has a .map file of the tile.
         [[nodiscard]] TerrainTile Tile(int32_t tileX, int32_t tileY) const;
-        /// No solid terrain cell, no liquid: Tile never offers one.
+        /// As GridTerrainData reads it: the cell's four corners and centre (a hole is not Solid), its liquid level.
         [[nodiscard]] TerrainCell Cell(int32_t tileX, int32_t tileY, int32_t cellX, int32_t cellY, bool liquid) const;
 
         /// Whether the scene has any liquid triangle (its header flag): a cast with none is skipped by the caller.
@@ -71,6 +71,9 @@ namespace Animus::Vision
         [[nodiscard]] Scene::TriGeom const* LiquidTriangles() const { return _liqTris; }
         [[nodiscard]] uint8_t const* LiquidKinds() const { return _liqKinds; }
 
+        /// The terrain record of tile (tileX, tileY), or null.
+        [[nodiscard]] Scene::TerrainRec const* FindTerrain(int32_t tileX, int32_t tileY) const;
+
     private:
         std::vector<uint32_t> _buffer;
         std::size_t _bytes = 0;
@@ -82,6 +85,11 @@ namespace Animus::Vision
         Scene::TriGeom const* _liqTris = nullptr;
         uint8_t const* _liqKinds = nullptr;
         Scene::Node const* _liqNodes = nullptr;
+        Scene::TerrainRec const* _terrain = nullptr;
+        float const* _terrainHeights = nullptr;
+        uint16_t const* _terrainHoles = nullptr;
+        uint8_t const* _terrainLiquid = nullptr;
+        std::vector<int32_t> _tileGrid;    // terrain record per tile of the footprint, or -1
         int32_t _tileLow[2] = {};
         int32_t _tileHigh[2] = {};
     };

@@ -41,20 +41,6 @@ public:
     bool isInLineOfSight(float x1, float y1, float z1, float x2, float y2, float z2, VMAP::ModelIgnoreFlags ignoreFlags) const;
     bool GetObjectHitPos(float x1, float y1, float z1, float x2, float y2, float z2, float& rx, float& ry, float& rz, float modifyDist) const;
     float getHeight(float x, float y, float z, float maxSearchDist) const;
-    /// How far along the segment the first WMO liquid surface is, and its type (LiquidType.dbc), or false when the
-    /// segment crosses none (VMAP::StaticMapTree::GetLiquidIntersection; the bots' camera, nothing else).
-    bool GetLiquidHit(float x1, float y1, float z1, float x2, float y2, float z2, float& distance,
-        uint32& liquidType) const;
-    /// How far along the segment the first solid of the tree is, and the hit triangle's normal z turned to face
-    /// the segment's start (1 a floor seen from above, 0 a wall, below 0 a ceiling seen from under it), or false
-    /// when the segment meets none (the bots' camera, nothing else).
-    bool GetSurfaceHit(float x1, float y1, float z1, float x2, float y2, float z2, float& distance,
-        float& normalZ) const;
-    /// Whether any solid of the tree (WMOs and M2s alike: ModelIgnoreFlags::Nothing, as GetSurfaceHit casts) lies on
-    /// the segment, stopping at the first the traversal finds. Not isInLineOfSight: that one is gated by the LOS
-    /// config and the disable table, and would disagree with the camera's pixels (the bots' entity sensor, nothing
-    /// else).
-    bool AnyHit(float x1, float y1, float z1, float x2, float y2, float z2) const;
     bool GetAreaAndLiquidData(float x, float y, float z, Optional<uint8> reqLiquidType, VMAP::AreaAndLiquidData& data) const;
 protected:
     // _staticTree is a shared_ptr as it will point to a parent maps static tree (if exists) to save on memory

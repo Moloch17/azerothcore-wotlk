@@ -15,8 +15,8 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef SCENE_BAKER_BVH_H
-#define SCENE_BAKER_BVH_H
+#ifndef ANIMUS_VISION_SCENE_BVH_H
+#define ANIMUS_VISION_SCENE_BVH_H
 
 #include "BakedScene.h"
 #include <cstdint>

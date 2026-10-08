@@ -19,6 +19,7 @@ runs = "var/animus-forge/shared/runs"
 learner_log = "env/dist/logs/animus-learner.log"
 server_log = "env/dist/logs/Server.log"
 errors_log = "env/dist/logs/Errors.log"
+scenes = "env/dist/etc/modules/animus/scenes"   # baked camera scenes (AnimusForge.DataDir/scenes)
 
 [dev]                   # the dev container (local builds)
 container = "claude-syntax"

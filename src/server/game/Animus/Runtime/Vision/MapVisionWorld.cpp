@@ -16,6 +16,7 @@
  */
 
 #include "MapVisionWorld.h"
+#include "SceneRegistry.h"
 #include "Cell.h"
 #include "CellImpl.h"
 #include "Creature.h"
@@ -25,7 +26,6 @@
 #include "DBCStores.h"
 #include "GameObject.h"
 #include "GameObjectModel.h"
-#include "GridTerrainData.h"
 #include "Map.h"
 #include "ObjectMgr.h"
 #include "QuestDef.h"
@@ -34,19 +34,26 @@
 #include "Player.h"
 #include "UnitBody.h"
 #include <algorithm>
+#include <mutex>
+#include <set>
+
+Animus::Vision::MapVisionWorld::MapVisionWorld(Map* map, uint32 phaseMask) : _map(map), _phaseMask(phaseMask),
+    _query(map, phaseMask, false), _scene(SceneRegistry::Instance().Get(map->GetId()))
+{
+    if (_scene)
+        return;
+    // PrepareScenes bakes or loads every map a stage runs on and refuses to start without one: reaching here is an
+    // ad hoc camera on a map no stage uses, which sees an empty world (and is told so once).
+    static std::mutex warnLock;
+    static std::set<uint32> warned;
+    std::lock_guard lock(warnLock);
+    if (warned.insert(map->GetId()).second)
+        LOG_ERROR("module.animus", "No baked camera scene for map {}: its static world is not drawn", map->GetId());
+}
 
 Animus::Vision::SurfaceHit Animus::Vision::MapVisionWorld::StaticHit(Vec3 from, Vec3 to) const
 {
-    SurfaceHit hit;
-    float distance = 0.0f;
-    float normalZ = 0.0f;
-    if (_map->GetMapCollisionData().GetStaticTree().GetSurfaceHit(from.X, from.Y, from.Z, to.X, to.Y, to.Z, distance,
-        normalZ))
-    {
-        hit.Distance = distance;
-        hit.NormalZ = normalZ;
-    }
-    return hit;
+    return _scene ? _scene->StaticHit(from, to) : SurfaceHit();
 }
 
 Animus::Vision::SurfaceHit Animus::Vision::MapVisionWorld::DynamicHit(Vec3 from, Vec3 to) const
@@ -67,22 +74,12 @@ Animus::Vision::SurfaceHit Animus::Vision::MapVisionWorld::DynamicHit(Vec3 from,
 
 Animus::Vision::LiquidHit Animus::Vision::MapVisionWorld::ModelLiquid(Vec3 from, Vec3 to) const
 {
-    LiquidHit hit;
-    float distance = 0.0f;
-    uint32 type = 0;
-    if (!_map->GetMapCollisionData().GetStaticTree().GetLiquidHit(from.X, from.Y, from.Z, to.X, to.Y, to.Z, distance,
-        type))
-        return hit;
-    hit.Distance = distance;
-    // LiquidType.dbc's kind: 0 water, 1 ocean, 2 magma, 3 slime (the bits of MAP_LIQUID_TYPE_*).
-    if (LiquidTypeEntry const* entry = sLiquidTypeStore.LookupEntry(type))
-        hit.Deadly = entry->Type == 2 || entry->Type == 3;
-    return hit;
+    return _scene ? _scene->ModelLiquid(from, to) : LiquidHit();
 }
 
 bool Animus::Vision::MapVisionWorld::StaticAnyHit(Vec3 from, Vec3 to) const
 {
-    return _map->GetMapCollisionData().GetStaticTree().AnyHit(from.X, from.Y, from.Z, to.X, to.Y, to.Z);
+    return _scene && _scene->StaticAnyHit(from, to);
 }
 
 bool Animus::Vision::MapVisionWorld::DynamicAnyHit(Vec3 from, Vec3 to) const
@@ -92,38 +89,13 @@ bool Animus::Vision::MapVisionWorld::DynamicAnyHit(Vec3 from, Vec3 to) const
 
 Animus::Vision::TerrainTile Animus::Vision::MapVisionWorld::Tile(int32_t tileX, int32_t tileY) const
 {
-    TerrainTile tile;
-    GridCoord const coord{ uint32(tileX), uint32(tileY) };
-    tile.Loaded = _map->IsGridCreated(coord);
-    if (!tile.Loaded)
-        return tile;
-    if (GridTerrainData const* terrain = _map->GetCreatedGridTerrainData(coord))
-    {
-        tile.Heights = terrain->HasHeights();
-        tile.MaxHeight = terrain->GetMaxHeight();
-        tile.Liquid = terrain->HasLiquid();
-    }
-    return tile;
+    return _scene ? _scene->Tile(tileX, tileY) : TerrainTile();
 }
 
 Animus::Vision::TerrainCell Animus::Vision::MapVisionWorld::Cell(int32_t tileX, int32_t tileY, int32_t cellX,
     int32_t cellY, bool liquid) const
 {
-    TerrainCell cell;
-    GridTerrainData const* terrain = _map->GetCreatedGridTerrainData(GridCoord(uint32(tileX), uint32(tileY)));
-    if (!terrain)
-        return cell;
-    cell.Solid = terrain->GetCellHeights(cellX, cellY, cell.Corner, cell.Centre);
-    if (liquid && terrain->HasLiquid())
-    {
-        // The cell's liquid, read at its centre (the level is the cell's, as getLiquidLevel reads it).
-        float const x = WorldOfU(float(tileX * GRID_CELLS + cellX) + 0.5f);
-        float const y = WorldOfU(float(tileY * GRID_CELLS + cellY) + 0.5f);
-        uint32 flags = 0;
-        cell.Liquid = terrain->GetLiquidSurface(x, y, cell.Level, flags);
-        cell.Deadly = (flags & (MAP_LIQUID_TYPE_MAGMA | MAP_LIQUID_TYPE_SLIME)) != 0;
-    }
-    return cell;
+    return _scene ? _scene->Cell(tileX, tileY, cellX, cellY, liquid) : TerrainCell();
 }
 
 Animus::Movement::Liquid Animus::Vision::MapVisionWorld::LiquidAt(float x, float y, float z) const

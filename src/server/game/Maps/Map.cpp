@@ -217,14 +217,6 @@ bool Map::IsGridCreated(GridCoord const& gridCoord) const
     return _mapGridManager.IsGridCreated(gridCoord.x_coord, gridCoord.y_coord);
 }
 
-GridTerrainData const* Map::GetCreatedGridTerrainData(GridCoord const& gridCoord) const
-{
-    if (!_mapGridManager.IsGridCreated(gridCoord.x_coord, gridCoord.y_coord))
-        return nullptr;
-    MapGridType* grid = const_cast<MapGridManager&>(_mapGridManager).GetGrid(gridCoord.x_coord, gridCoord.y_coord);
-    return grid ? grid->GetTerrainData() : nullptr;
-}
-
 void Map::LoadGrid(float x, float y)
 {
     EnsureGridLoaded(Cell(x, y));

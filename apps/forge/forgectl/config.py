@@ -142,6 +142,10 @@ def parse(data: dict, file: Path, repo_root: Path) -> Config:
     paths = data.get("paths", {})
     for key in ("conf", "runs", "learner_log", "server_log", "errors_log"):
         _need(paths, key, f"{file}: [paths]", str)
+    # Where a machine's baked camera scenes are (AnimusForge.DataDir/scenes; the default DataDir is modules/animus
+    # beside the conf). A machine whose conf sets another DataDir needs this path to match.
+    paths = {"scenes": "env/dist/etc/modules/animus/scenes", **paths}
+    _need(paths, "scenes", f"{file}: [paths]", str)
     dev = data.get("dev", {})
     for key in ("container", "python", "build_dir_name"):
         _need(dev, key, f"{file}: [dev]", str)

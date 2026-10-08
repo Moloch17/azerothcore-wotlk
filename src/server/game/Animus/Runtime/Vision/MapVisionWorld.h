@@ -20,6 +20,7 @@
 
 #include "Define.h"
 #include "EntitySensor.h"
+#include "BakedWorld.h"
 #include "Identity.h"
 #include "MapWorldQuery.h"
 #include "VisionCaster.h"
@@ -33,19 +34,24 @@ class Player;
 class Unit;
 class WorldObject;
 
-/// The camera's VisionWorld over a live map: the static and dynamic collision trees cast apart (and tested for any
-/// hit, for the entity sensor's shadow rays), the static tree's WMO liquids, the loaded grids' terrain cells and
-/// liquids as GridTerrainData holds them (never creating a grid: a grid not created is where a ray leaves the world
-/// it can see), and floors through an uncounted MapWorldQuery (the controller's cost line keeps only the controller's
-/// rays). A tree hit's slope is its triangle's own. Read from the map's own update, as the rest of a seat's
-/// observation is.
+/// The camera's VisionWorld over a live map, composed of two halves. The static world -- WMOs and M2s, their liquids,
+/// the terrain cells and liquids -- is the map's baked scene (BakedWorld, from SceneRegistry: one immutable copy per
+/// map id, shared by every env and thread, baked at startup from the extracted data and never rebuilt while the server
+/// runs). The dynamic world -- closed doors and other game objects with a collision model, phase
+/// masked -- is the map's live dynamic tree, tested for any hit too for the entity sensor's shadow rays. Floors and
+/// liquid under a point are the controller's, through an uncounted MapWorldQuery (the controller's cost line keeps only
+/// the controller's rays). A hit's slope is its triangle's own. Read from the map's own update, as the rest of a
+/// seat's observation is. There is no fallback to the live static tree: a map with no scene draws no static world.
 namespace Animus::Vision
 {
     class MapVisionWorld final : public VisionWorld
     {
     public:
-        MapVisionWorld(Map* map, uint32 phaseMask) : _map(map), _phaseMask(phaseMask),
-            _query(map, phaseMask, false) { }
+        MapVisionWorld(Map* map, uint32 phaseMask);
+
+        /// Whether the map has a baked scene (every map a stage runs on does: the forge bakes or loads them at
+        /// startup and refuses to start without).
+        [[nodiscard]] bool HasScene() const { return _scene != nullptr; }
 
         [[nodiscard]] SurfaceHit StaticHit(Vec3 from, Vec3 to) const override;
         [[nodiscard]] SurfaceHit DynamicHit(Vec3 from, Vec3 to) const override;
@@ -62,6 +68,7 @@ namespace Animus::Vision
         Map* _map;
         uint32 _phaseMask;
         Movement::MapWorldQuery _query;
+        BakedWorld const* _scene;      // the map's, from SceneRegistry: immutable, shared by every env and thread
     };
 
     /// **Who a seat's camera might see round it** (entity-sensing): the sensor's candidates, and the core object

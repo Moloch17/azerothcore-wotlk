@@ -115,24 +115,6 @@ bool StaticVMapCollisionData::GetObjectHitPos(float x1, float y1, float z1, floa
     return false;
 }
 
-bool StaticVMapCollisionData::GetLiquidHit(float x1, float y1, float z1, float x2, float y2, float z2,
-    float& distance, uint32& liquidType) const
-{
-    if (!_staticTree)
-        return false;
-    G3D::Vector3 const pos1 = VMAP::VMapMgr2::convertPositionToInternalRep(x1, y1, z1);
-    G3D::Vector3 const pos2 = VMAP::VMapMgr2::convertPositionToInternalRep(x2, y2, z2);
-    float const length = (pos2 - pos1).magnitude();
-    if (!(length > 1e-6f) || !std::isfinite(length))
-        return false;
-    G3D::Ray const ray = G3D::Ray::fromOriginAndDirection(pos1, (pos2 - pos1) / length);
-    float reach = length;
-    if (!_staticTree->GetLiquidIntersection(ray, reach, liquidType))
-        return false;
-    distance = reach;
-    return true;
-}
-
 namespace
 {
     /// A hit triangle's normal z, turned to face the ray (the triangles are two-sided) and normalised; 0 for a
@@ -144,40 +126,6 @@ namespace
             return 0.0f;
         return (normal.dot(dir) > 0.0f ? -normal.z : normal.z) / length;
     }
-}
-
-bool StaticVMapCollisionData::GetSurfaceHit(float x1, float y1, float z1, float x2, float y2, float z2,
-    float& distance, float& normalZ) const
-{
-    if (!_staticTree)
-        return false;
-    G3D::Vector3 const pos1 = VMAP::VMapMgr2::convertPositionToInternalRep(x1, y1, z1);
-    G3D::Vector3 const pos2 = VMAP::VMapMgr2::convertPositionToInternalRep(x2, y2, z2);
-    float const length = (pos2 - pos1).magnitude();
-    if (!(length > 1e-6f) || !std::isfinite(length))
-        return false;
-    G3D::Vector3 const dir = (pos2 - pos1) / length;
-    G3D::Ray const ray = G3D::Ray::fromOriginAndDirection(pos1, dir);
-    float reach = length;
-    G3D::Vector3 normal = G3D::Vector3::zero();
-    if (!_staticTree->GetSurfaceIntersection(ray, reach, normal))
-        return false;
-    distance = reach;
-    normalZ = FacingNormalZ(normal, dir);
-    return true;
-}
-
-bool StaticVMapCollisionData::AnyHit(float x1, float y1, float z1, float x2, float y2, float z2) const
-{
-    if (!_staticTree)
-        return false;
-    G3D::Vector3 const pos1 = VMAP::VMapMgr2::convertPositionToInternalRep(x1, y1, z1);
-    G3D::Vector3 const pos2 = VMAP::VMapMgr2::convertPositionToInternalRep(x2, y2, z2);
-    float const length = (pos2 - pos1).magnitude();
-    if (!(length > 1e-6f) || !std::isfinite(length))
-        return false;
-    // StaticMapTree::isInLineOfSight is the first-hit traversal with no gating of its own.
-    return !_staticTree->isInLineOfSight(pos1, pos2, VMAP::ModelIgnoreFlags::Nothing);
 }
 
 float StaticVMapCollisionData::getHeight(float x, float y, float z, float maxSearchDist) const

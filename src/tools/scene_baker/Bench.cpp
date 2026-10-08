@@ -153,6 +153,8 @@ namespace
 
     Stats StatsOf(std::vector<double> values)
     {
+        if (values.empty())
+            return Stats();
         std::sort(values.begin(), values.end());
         Stats stats;
         stats.Min = values.front();

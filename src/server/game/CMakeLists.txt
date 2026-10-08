@@ -84,6 +84,13 @@ set_target_properties(game
     FOLDER
       "server")
 
+# The scene baker's output is compared byte for byte between machines (the cluster fingerprint), so its translation
+# units never fuse a multiply and an add, which a CPU with FMA would round differently (decision 0020).
+set_source_files_properties(
+  "${CMAKE_CURRENT_SOURCE_DIR}/Animus/Runtime/Vision/SceneBaker.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/Animus/Runtime/Vision/SceneBvh.cpp"
+  PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-ffp-contract=off>")
+
 # Generate precompiled header
 if (USE_COREPCH)
   add_cxx_pch(game ${PRIVATE_PCH_HEADER})

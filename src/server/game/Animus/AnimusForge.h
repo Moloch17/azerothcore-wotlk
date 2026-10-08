@@ -353,6 +353,10 @@ namespace AnimusForge
         [[nodiscard]] bool Enabled(LineSink const& out) const;
         /// Whether every curriculum stage is valid (Curriculum::CurriculumProblems); names each one that is not.
         [[nodiscard]] bool CurriculumSound(LineSink const& out) const;
+        /// Loads, or first bakes, the scene file (Vision/SceneRegistry) of every map the curriculum runs on, in
+        /// <AnimusForge.DataDir>/scenes. A map whose scene cannot be had is named in _sceneProblems, which keeps
+        /// CurriculumSound false: no fallback to the live collision trees.
+        void PrepareScenes();
         [[nodiscard]] bool ValidScenario(std::string const& scenario, LineSink const& out) const;
 
         ForgeConfig _config;
@@ -487,6 +491,7 @@ namespace AnimusForge
         bool _benchApply = false;       // `forge bench auto`: apply the winner when done
         bool _autoTuneChecked = false;  // AnimusForge.Bench.AutoTune looked at, once per start
         bool _joinAfterBench = false;   // a worker tuning itself joins its host after
+        std::vector<std::string> _sceneProblems;    // maps whose scene could not be baked or loaded (PrepareScenes)
         /// MapUpdate.Threads as the last applied benchmark set it (0: the config's own).
         static inline uint32 _tunedMapThreads = 0;
         bool _benchLearnerPhase = false;

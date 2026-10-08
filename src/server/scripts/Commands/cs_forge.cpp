@@ -292,6 +292,12 @@ namespace
             pose.Yaw = yaw * Vi::DEGREES;
             pose.BodyHeight = Animus::Movement::Body().Height;
             Vi::MapVisionWorld const world(map, PHASEMASK_NORMAL);
+            if (!world.HasScene())
+            {
+                handler->PSendSysMessage("Map {} has no baked camera scene (no stage runs on it): nothing to draw.",
+                    map->GetId());
+                return true;
+            }
             // The frame as the block sends it: the image's bytes and the scalars.
             std::vector<uint8> image(Vi::ImageBytes(settings));
             std::array<float, Vi::SCALARS> scalars{};
