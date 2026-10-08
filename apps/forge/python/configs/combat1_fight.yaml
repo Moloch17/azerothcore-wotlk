@@ -69,11 +69,13 @@ mappo:
   clip: 0.2
   value_clip: 0.2
   entropy_coef: 0.01
-  # As M1 and M2: a tenth of the actions', so the camera is not pushed to uniform.
-  look_entropy_coef: 0.001
+  # M2's 0.004, not M1's 0.001. This file is a full root (it does not extend move3_interact, whose eval, gates and
+  # fade are not C1's), so M2's tuning is repeated here and reaches C1 to D3 through the extends chain (audit A6).
+  look_entropy_coef: 0.004
   value_coef: 1.0
-  actor_lr: 0.0003
-  critic_lr: 0.0003
+  # M2's rate (half of the 3e-4 this root used to reset it to).
+  actor_lr: 0.00015
+  critic_lr: 0.00015
   lr_final_fraction: 0.1
   entropy_final_fraction: 0.3
   # M2's two epochs (the camera, the map and now the sight list on the host's card).

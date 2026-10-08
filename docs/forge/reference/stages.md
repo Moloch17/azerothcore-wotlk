@@ -151,14 +151,14 @@ The layout pin test covers all twelve (`LiveLayoutPinTest.LiveStageLayoutsAreUnc
 | `move2_seek` | 0.998 | 2 | 1.5e-4 | 0.004 | 128 | vision_chunk_rows 2048 |
 | `move3_interact` | 0.998 (inherited) | 2 | 1.5e-4 | 0.004 | 128 | |
 | `move4_follow` | 0.999 | 2 | 1.5e-4 | 0.004 | 128 | |
-| `combat1_fight` | 0.998 | 2 | 3e-4 | 0.001 | 128 | standalone yaml |
-| `combat2_packs` | 0.999 | 2 | 3e-4 | 0.001 | 128 | |
-| `combat3_survive` | 0.999 | 2 | 3e-4 | 0.001 | 128 | |
-| `group1_roles` | 0.999 | 2 | 3e-4 | 0.001 | 128 | |
-| `group2_corridor` | 0.999 | 2 | 3e-4 | 0.001 | 128 | `goal_entropy_final_fraction: 0.5`, `explore.enabled: false` |
-| `dungeon1_pulls` | 0.998 | 2 | 3e-4 | 0.001 | 128 | |
-| `dungeon2_ragefire` | 0.999 | 2 | 3e-4 | 0.001 | 128 | `explore.enabled: true, share 0.5` |
-| `dungeon3_deadmines` | 0.999 (inherited) | 2 | 3e-4 | 0.001 | 128 | |
+| `combat1_fight` | 0.998 | 2 | 1.5e-4 | 0.004 | 128 | standalone yaml (M2's lr and look entropy repeated, A6) |
+| `combat2_packs` | 0.999 | 2 | 1.5e-4 | 0.004 | 128 | |
+| `combat3_survive` | 0.999 | 2 | 1.5e-4 | 0.004 | 128 | |
+| `group1_roles` | 0.999 | 2 | 1.5e-4 | 0.004 | 128 | |
+| `group2_corridor` | 0.999 | 2 | 1.5e-4 | 0.004 | 128 | `goal_entropy_final_fraction: 0.5`, `explore.enabled: false` |
+| `dungeon1_pulls` | 0.998 | 2 | 1.5e-4 | 0.004 | 128 | |
+| `dungeon2_ragefire` | 0.999 | 2 | 1.5e-4 | 0.004 | 128 | `explore.enabled: true, share 0.5` |
+| `dungeon3_deadmines` | 0.999 (inherited) | 2 | 1.5e-4 | 0.004 | 128 | |
 
 M1's rate 1.5e-4 was halved at 93M steps (comment in the yaml); M2's is the same value for a different reason
 ([../decisions/0013-m2-learning-rate.md](../decisions/0013-m2-learning-rate.md)). The combat line does not inherit
@@ -654,9 +654,9 @@ evaluation).
   x0; the file is a snapshot of a finished ladder, not the design.
 * `configs/move2_seek.yaml` comment says the noise prices "keep M1's cost ladder" gated on `found`; M1's `costs.enabled`
   is false and is inherited, so the cost ladder is off.
-* `configs/combat1_fight.yaml` has no `extends`, repeats the whole MAPPO block and sets `actor_lr` 3e-4 and
-  `look_entropy_coef` 0.001, so M2's tuned values (1.5e-4, 0.004) stop at M4; its comment "As M1 and M2" is stale for
-  look entropy.
+* (Fixed) `configs/combat1_fight.yaml` has no `extends` (it cannot extend `move3_interact` cleanly: its eval, gates and fade
+  are the dungeon plan's) and used to reset `actor_lr`/`critic_lr` to 3e-4 and `look_entropy_coef` to 0.001, so M2's tuned
+  values stopped at M4. It now sets 1.5e-4 and 0.004 itself, and C2 to D3 inherit them through their own `extends` chain.
 * `tests/test_combat_stages.py::test_the_seed_chain_runs_from_m2` asserts C1 extends `move3_interact`; the name is
   stale.
 * `Stages.cpp` comments for the `Opposition::Sight` enum (`StageDefinition.h`) say the ladder "withholds more and more
