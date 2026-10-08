@@ -5,8 +5,8 @@ Purpose and scope. Every field of the learner's configuration (`TrainConfig` and
 where it is read; how a stage yaml inherits (`extends`, `null`, lists, maps); how the sim hands the yaml to the learner;
 and the 12 live yamls compared field by field. The sim's own `AnimusForge.*` keys are in
 [config-keys.md](config-keys.md). What the learner does with the values is in [py-learner.md](py-learner.md) and
-[py-mappo.md](py-mappo.md); what the stages are, in [stages.md](stages.md); the tests that load every yaml, in
-[tests.md](tests.md).
+[py-mappo.md](py-mappo.md); what the stages are, in [stages.md](stages.md). The suites that used to load every yaml
+were removed ([tests.md](tests.md)).
 
 ## Map of the files in this area
 
@@ -27,7 +27,6 @@ and the 12 live yamls compared field by field. The sim's own `AnimusForge.*` key
 | `apps/forge/python/configs/dungeon2_ragefire.yaml` | 97 | extends dungeon1_pulls |
 | `apps/forge/python/configs/dungeon3_deadmines.yaml` | 73 | extends dungeon2_ragefire |
 | `apps/forge/python/configs/fast.yaml` | 44 | overlay for `forge fast`; not a stage (never extended) |
-| `apps/forge/python/tests/fixtures/test_stage.yaml` | 2318 B | the tiny config the learner tests train on |
 
 (Line counts are physical lines, comments included; the 12 live files are 1,307 lines of yaml and comments.)
 
@@ -70,8 +69,7 @@ and the 12 live yamls compared field by field. The sim's own `AnimusForge.*` key
 - `from_dict` (`config.py:829-853`): an unknown key is a `ValueError` naming it (`unknown config keys`); a value of the
   wrong type is an error naming the key; ints fit float fields, bools are never numbers, lists become tuples for tuple
   fields, nested dataclass sections recurse. **Strict for yaml; lenient only for a checkpoint's saved config**
-  (`evaluate.py:mappo_from_checkpoint` drops and names removed `mappo` options: `evaluate.py:36-47`; tests:
-  `test_config_unknown_keys.py`).
+  (`evaluate.py:mappo_from_checkpoint` drops and names removed `mappo` options: `evaluate.py:36-47`).
 - Path-valued fields take `{runs_dir}`, `{run_name}` and (where `format_path` is used) `{shared_runs}`
   (`config.py:685-686`; `shared_runs` is `<runs_dir>/../../shared/runs`).
 - Two roots exist: `move1_controls.yaml` and `combat1_fight.yaml` both carry a full config (97 and 100 flattened keys
@@ -298,11 +296,9 @@ Chain B: `combat1_fight` (root) <- `combat2_packs` <- `combat3_survive` <- `grou
 | `dungeon2_ragefire` (dungeon1_pulls) | `total_env_steps` 1.5B (300M); `mappo.gamma` 0.999 (0.998); `explore.enabled` true (false), `share` 0.5 (default 0.5); `eval.every_env_steps` 20M (10M); `episodes` 64 (192); `sampled_every` 4 (3); `heldout {heldout: 16}`; `report` 49 names; `arms {with_human: 32, with_partners: 32}`; `status.headline` 14; `status.targets` drill_extra nulled; `convergence.measure` full_clear; `fade.gate_metric` full_clear, `gate_value` 0.5 (0.7); `costs.gate_metric` full_clear, 0.5; `layout_sampling.metric` full_clear; `cast.partners.stages` and `eval_partners` [dungeon1_pulls] |
 | `dungeon3_deadmines` (dungeon2_ragefire) | `total_env_steps` 2B (1.5B); `eval.report` 54 names (49); `status.headline` 19 (14); `status.targets` boss_oggleflint, boss_taragaman, boss_jergosh, boss_bazzalan, wing_rejoin_seconds nulled, 7 set; `convergence.measure` bar_clear (full_clear); `fade.gate_metric` bar_clear (gate_value 0.5 restated; `fade.enabled` inherited true); `costs.gate_metric` bar_clear; `layout_sampling.metric` bar_clear; `cast.partners.stages` and `eval_partners` [dungeon2_ragefire] |
 
-Cross-checks that read these yamls: `test_evaluation.py` (every shipped config loads alone and under `fast.yaml`),
-`test_manual.py` (budget rows in `docs/forge/04-curriculum.md` equal `total_env_steps`, `eval.every_env_steps`,
-`eval.episodes`), `test_metric_names.py` (every metric named is one the stage produces), `test_gates.py`,
-`test_stage_names.py` (configs equal the stages in `Stages.cpp`), `test_seed_from.py`, `test_status_headline.py`,
-`test_rung_rebaseline.py`/`test_shaping_fade.py` (ladder fields).
+No automated check reads these yamls any more. By hand: load each with `TrainConfig.load` (a typo is an error), compare
+the `gate_metric`/`measure`/`headline` names with `apps/forge/tools/sim_metrics.py --stage <stage>`, and run
+`apps/forge/tools/resume_check.py --fresh --all` for the learner side.
 
 `fast.yaml` (overlay): `seed_from latest`, `total_env_steps` 10M (fallback; the sim passes the budget), `rollout_length`
 128, `checkpoint_every` 10, `keep_checkpoints` 2, `mappo.minibatches` 4, `eval.every_env_steps` 1M, `eval.episodes` 64,
@@ -342,6 +338,6 @@ Cross-checks that read these yamls: `test_evaluation.py` (every shipped config l
 
 - Moving the sim-injected fields out of `TrainConfig` would let a yaml be validated as a stage definition alone.
 - The `extends` chain makes an old stage's change propagate to every later one (e.g. a `dungeon1_pulls` value reaches
-  both dungeons). Any edit needs the `test_evaluation` load test and the field table above.
+  both dungeons). Any edit should be checked by loading every yaml and with `resume_check.py --fresh --all`.
 - `null` falling back to the dataclass default, not the parent's value, is easy to misread; `move4_follow`'s
   `costs.gate_metric: null` relies on it.
