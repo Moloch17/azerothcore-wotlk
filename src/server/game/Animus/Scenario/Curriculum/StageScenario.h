@@ -153,10 +153,6 @@ namespace Animus::Curriculum
         [[nodiscard]] StageDefinition const& Stage() const { return _stage; }
         /// The env's current episode's arena.
         [[nodiscard]] ArenaDefinition const& Arena(Env const& env) const;
-        /// A start for a training run of `arena` (EXPLORE_STARTS): drawn Share of the time from the table's cells of
-        /// that arena and a row below `rows`, by weight; none otherwise, and the run starts at the door.
-        [[nodiscard]] std::optional<ExploreStart> DrawExploreStart(uint32 arena, uint32 rows) const;
-
         /// Whether the env's current episode uses `encounter`.
         [[nodiscard]] bool Uses(Env const& env, Encounter const& encounter) const;
         /// The encounters the env's current episode uses, in build order.
@@ -342,7 +338,6 @@ namespace Animus::Curriculum
         void SetCostScale(float scale) override;
         bool PinEvaluationArena(uint32 pin) override;
         void SetStandIn(bool standIn) override;
-        void SetExploreStarts(float share, std::vector<ExploreStart> starts) override;
         /// The encounters arena `arena` uses, in build order and in reward order.
         [[nodiscard]] std::vector<Encounter*> const& ActiveRewardOrder(Env const& env) const;
         /// Create and place seat `seat`'s next character (its layout is set). `map` is null for the env's first bot.
@@ -480,10 +475,7 @@ namespace Animus::Curriculum
         /// Whether the learner plays a stand-in's row (MODE_FLAG_STAND_IN): an evaluation then has one in every party,
         /// training in its share of them; without it no party has one.
         std::atomic<bool> _standIn{ false };
-        mutable std::mutex _exploreLock;
-        float _exploreShare = 0.0f;
-        std::vector<ExploreStart> _exploreStarts;
-        /// The running route share of training runs of a whole dungeon (NoteWingRun); runs on several map threads may
+        /// The running cleared share of training runs of a whole dungeon (NoteWingRun); runs on several map threads may
         /// lose a step to each other, which a running average does not mind.
         WingLadder _wingLadder;
         std::mutex _wingLadderLock;

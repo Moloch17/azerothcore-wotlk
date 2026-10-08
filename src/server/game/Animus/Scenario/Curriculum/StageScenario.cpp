@@ -644,8 +644,7 @@ uint32 Animus::Curriculum::StageScenario::DrawArena(bool evaluating) const
         return 0;
 
     // Linear from Weight to WeightFinal over the stage's budget; an evaluation draws by the final weights, so it
-    // measures what the stage is heading for. A held-out arena never (ArenaDrawWeights), and a pull drill in an
-    // evaluation only in a stage of drills.
+    // measures what the stage is heading for. A held-out arena never (ArenaDrawWeights).
     std::vector<uint32> const weights = ArenaDrawWeights(_stage.Arenas, _arenaWeights, _arenaWeightsFinal, evaluating,
         _stageProgress.load(std::memory_order_relaxed));
     uint32 total = 0;
@@ -1246,10 +1245,7 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
         // The seat plan, so the learner can tell a party's arena from a solo seat's.
         entry["plan"] = definition.Seats == SeatPlan::Solo ? "solo" : "party";
         entry["eval_only"] = definition.EvalOnly;
-        // The party stages' arenas (G2, D1-D3): a pull drill, a corridor's length, and the stand-in's share of the
-        // training runs.
-        entry["pull_drill"] = definition.PullDrill;
-        entry["corridor_packs"] = definition.CorridorPacks;
+        // The party stages' arenas (D2, D3): the stand-in's share of the training runs.
         entry["stand_in_share"] = StandInShare(uint32(arena));
         // The seat a drill is about (ArenaDefinition::DrillRole: seat 0), which the learner's co-op partners never
         // play (animus.partners); -1 for an arena that drills no one.
@@ -1380,14 +1376,6 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
     // Episode info columns that index a list of names (the seek stage's room and object): the learner's evaluation
     // tables split by them (animus.evaluation, EvalResult.categories).
     boost::json::object& categories = stageFile["episode_categories"].emplace_object();
-    // A pull drill's pack (drill_pack): the route's packs, pack_1 first, as many as a route's cells can name.
-    if (_stage.AnyArena([](ArenaDefinition const& arena) { return arena.PullDrill; }))
-    {
-        boost::json::array packs;
-        for (uint32 pack = 1; pack <= InstanceEncounter::EXPLORE_PACKS; ++pack)
-            packs.emplace_back(Acore::StringFormat("pack_{}", pack));
-        categories["drill_pack"] = std::move(packs);
-    }
     for (ArenaDefinition const& arena : _stage.Arenas)
         if (arena.Against == Opposition::Seek)
         {
@@ -4553,38 +4541,6 @@ void Animus::Curriculum::StageScenario::SettleIntent(Env& env, SeatState& seat, 
     seat.StepAimless = 0;
     seat.StepEffort = 0.0f;
     seat.StepFidgetMs = 0;
-}
-
-void Animus::Curriculum::StageScenario::SetExploreStarts(float share, std::vector<ExploreStart> starts)
-{
-    share = std::isfinite(share) ? std::clamp(share, 0.0f, 1.0f) : 0.0f;
-    std::erase_if(starts,
-        [](ExploreStart const& start) { return !(start.Weight > 0.0f) || !std::isfinite(start.Weight); });
-    std::lock_guard<std::mutex> guard(_exploreLock);
-    bool const first = _exploreStarts.empty() && !starts.empty();
-    _exploreShare = share;
-    _exploreStarts = std::move(starts);
-    if (first)
-        LOG_INFO("module.animus", "Animus forge: stage {} starts {:.0f}% of its wing runs from the {} cells the "
-            "learner sent (Go-Explore)", _stage.Name, 100.0f * share, _exploreStarts.size());
-}
-
-std::optional<Animus::ExploreStart> Animus::Curriculum::StageScenario::DrawExploreStart(uint32 arena, uint32 rows) const
-{
-    std::lock_guard<std::mutex> guard(_exploreLock);
-    if (_exploreStarts.empty() || frand(0.0f, 1.0f) >= _exploreShare)
-        return std::nullopt;
-    float total = 0.0f;
-    for (ExploreStart const& start : _exploreStarts)
-        if (start.Arena == arena && start.Tier < rows)
-            total += start.Weight;
-    if (total <= 0.0f)
-        return std::nullopt;
-    float pick = frand(0.0f, total);
-    for (ExploreStart const& start : _exploreStarts)
-        if (start.Arena == arena && start.Tier < rows && (pick -= start.Weight) <= 0.0f)
-            return start;
-    return std::nullopt;
 }
 
 bool Animus::Curriculum::StageScenario::PinEvaluationArena(uint32 pin)

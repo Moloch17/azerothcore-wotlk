@@ -32,8 +32,8 @@
  *              ─ move4_follow (dungeon-curriculum I5: a party keeps with a leader through an empty dungeon)
  *   combat     move3_interact ─ combat1_fight ─ combat2_packs ─ combat3_survive (dungeon-curriculum C1-C3, Ragefire Chasm)
  *   party      combat3_survive (+ move4_follow's party frames, merged by name) ─ group1_roles (dungeon-curriculum G1)
- *              ─ group2_corridor ─ dungeon1_pulls ─ dungeon2_ragefire ─ dungeon3_deadmines (dungeon-curriculum G2,
- *              D1-D3: real dungeon wings; Wailing Caverns held out from D2)
+ *              ─ dungeon2_ragefire ─ dungeon3_deadmines (dungeon-curriculum D2, D3: real dungeon wings; Wailing
+ *              Caverns held out; group2_corridor and dungeon1_pulls retired 2026-10-08, vision-only movement)
  *
  * Every movement stage runs 50 ms world ticks (AnimusForge.Stage.<name>.TicksPerDecision in the conf template): the
  * controller's mouse-look facing rule and its heartbeat are checked once a world tick, so a coarser tick would leave
@@ -915,67 +915,23 @@ namespace
             .FocusChance = 100,
         });
 
-        // **The party stages** (dungeon-curriculum G2, D1-D3, 2026-10-07): five seats on a real dungeon's own ground,
-        // its packs and patrols where the world database stands them (InstanceEncounter, InstanceLadder::Wing; a
-        // fresh instance every run), every race and class at the dungeon's levels, seeing what a player sees (the
-        // camera, the sight list, the party and target frames) and moving on the player controller. Nothing ends at a
-        // death: a seat that dies is alive again at the entrance after Respawn.DelayMs and walks back (I4); a wipe is
-        // scored, and only the run's last allowed wipe (Instance.WingWipes, and the ladder's spare ones) ends it. No
-        // looting: what a lock takes (the Deadmines' gunpowder) is carried from the door. The "human" stand-in plays a
-        // fifth of every stage's training runs, leading or following, in any role (I7; ArenaDefinition::StandInShare),
-        // and the learner's with_human arm measures the party with it beside the party without (H).
+        // **The party stages** (dungeon-curriculum D2, D3, 2026-10-07): five seats on a real dungeon's own ground, its
+        // packs and patrols where the world database stands them (InstanceEncounter, InstanceLadder::Wing; a fresh
+        // instance every run), every race and class at the dungeon's levels, seeing what a player sees (the camera, the
+        // sight list, the party and target frames) and moving on the player controller. Nothing ends at a death: a
+        // seat that dies is alive again at the entrance after Respawn.DelayMs and walks back (I4); a wipe is scored,
+        // and only the run's last allowed wipe (Instance.WingWipes, and the ladder's spare ones) ends it. No looting:
+        // what a lock takes (the Deadmines' gunpowder) is carried from the door. The "human" stand-in plays a fifth of
+        // every stage's training runs, leading or following, in any role (I7; ArenaDefinition::StandInShare), and the
+        // learner's with_human arm measures the party with it beside the party without (H). Nothing tells the seats
+        // the way: no route, waypoint or path hint exists for them or for the rewards (decision 0019). The corridor
+        // (group2_corridor) and the pull drill (dungeon1_pulls) were retired with the field route they stood on.
         //
-        // G2 -- corridor: a real dungeon wing's packs in route order, CorridorPacks of them a run, from a pack drawn
-        // each run (the packs before it cleared, the party set down short of it, as a drill's); Ragefire Chasm and the
-        // Deadmines. The loop is pull, fight, rest, ready, next; the party's leader is its tank, or the stand-in when
-        // it leads. The runs climb the whole dungeon's difficulty ladder (StageScenario::WING_RUNGS: levels above the
-        // band and spare wipes, stepping on the probes alone) with nothing scripted beside them. Outcome: each pack cleared in route order (Clear), each pull started with the
-        // party ready (ReadyPull), the corridor's kills; Cost: a second pack drawn into a fight (PullExtra), standing
-        // about (Idle), straying from the leader (Lost), deaths and wipes, the clock.
-        stages.push_back({
-            .Name = "group2_corridor",
-            .Suffix = "_corridor",
-            .Extends = "group1_roles",
-            .Summary = "Ragefire Chasm and the Deadmines, a corridor of their real packs in route order: pull, fight, "
-                "rest, ready, next; the stand-in in a fifth of the runs",
-            .Blocks = DungeonBlocks(),
-            .Arenas = {
-                { .Name = "ragefire", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Instance,
-                    .PartyGroup = true, .Instance = InstanceLadder::Wing, .InstanceRow = 0, .EpisodeSeconds = 900,
-                    .CorridorPacks = 4, .StandInShare = DUNGEON_STAND_IN_SHARE },
-                { .Name = "deadmines", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Instance,
-                    .PartyGroup = true, .Instance = InstanceLadder::Wing, .InstanceRow = 1, .EpisodeSeconds = 1200,
-                    .CorridorPacks = 4, .StandInShare = DUNGEON_STAND_IN_SHARE, .LevelFirst = 17,
-                    .LevelLast = 20 },
-            },
-        });
-
-        // D1 -- pulls: Ragefire Chasm, one pack a run on its own ground (the pull drill, ArenaDefinition::PullDrill):
-        // the packs before it cleared, the party set down short of it, every pack of the route a start (the drill's
-        // Go-Explore). Clean pulls on real geometry, with the patrols the world database walks. The drill's own ladder
-        // opens packs by how far the nearest other stands (30, 22, 14 yd, then any: Instance.PullRung*), stepping on
-        // the clean share alone. Its evaluations drill too (EvaluatesDrills), each seed its pack. Outcome: the pack
-        // pulled and killed on its own (PullClean); Cost: a second pack drawn in (PullExtra), the clock, standing
-        // about, deaths.
-        stages.push_back({
-            .Name = "dungeon1_pulls",
-            .Suffix = "_pulls",
-            .Extends = "group2_corridor",
-            .Summary = "Ragefire Chasm, one pack a run on its own ground: a clean pull and kill, nothing else drawn in",
-            .Blocks = DungeonBlocks(),
-            .Arenas = {
-                { .Name = "ragefire", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Instance,
-                    .PartyGroup = true, .Instance = InstanceLadder::Wing, .InstanceRow = 0, .PullDrill = true,
-                    .EpisodeSeconds = 180, .StandInShare = DUNGEON_STAND_IN_SHARE },
-            },
-        });
-
-        // D2 -- Ragefire: the door to Bazzalan, a full clear -- every pull and side boss (Instance.WingFullClear's
-        // route), deaths and rejoins in play, the levels and spare wipes stepping down the whole dungeon's ladder. Go-Explore
-        // starts from cells earlier runs reached (the learner's explore). Outcome, tier-scaled by the ladder's rung:
-        // the bosses (Kill: Instance.WingMidBoss, WingBoss), the full clear (Clear: Instance.WingClear), the kills,
-        // pulls started ready; Cost: wipes (the second ends the run), deaths, chain pulls, standing about, straying,
-        // the clock (StepCost: Instance.WingClock).
+        // D2 -- Ragefire: the door to Bazzalan, a full clear -- every pull and side boss, deaths and rejoins in play,
+        // the levels and spare wipes stepping down the whole dungeon's ladder. Outcome, tier-scaled by the ladder's
+        // rung: the bosses (Kill: Instance.WingMidBoss, WingBoss), the full clear (Clear: Instance.WingClear), the
+        // kills, a pull started ready; Cost: wipes (the second ends the run), deaths, standing about, straying, the
+        // clock (StepCost: Instance.WingClock; Timeout: the share of the dungeon left).
         //
         // **Held out from here on: Wailing Caverns** (the WING ladder's row 2, door to Lord Serpentis), the arena
         // `heldout` -- never drawn in training (EvalOnly: ArenaDrawWeights), played only by the learner's
@@ -983,7 +939,7 @@ namespace
         stages.push_back({
             .Name = "dungeon2_ragefire",
             .Suffix = "_ragefire",
-            .Extends = "dungeon1_pulls",
+            .Extends = "group1_roles",
             .Summary = "Ragefire Chasm from the door to Bazzalan: a full clear, every pull and side boss, the ladder "
                 "stepping down to its own levels; Wailing Caverns held out",
             .Blocks = DungeonBlocks(),
@@ -1058,15 +1014,10 @@ namespace
             return "a drilled role is a roles arena's";
         if (arena.InstanceRow >= 0 && !instance)
             return "only an instance arena pins a row of its ladder";
-        if (arena.EvalOnly && arena.PullDrill)
-            return "a held-out arena is played by evaluations, which never play a pull drill";
-        // The dungeon curriculum's party stages (G2, D1-D3): a corridor of packs, the level band and the stand-in's
-        // share.
+        // The dungeon curriculum's party stages (D2, D3): the level band and the stand-in's share.
         bool const wing = arena.Instance == InstanceLadder::Wing;
-        if ((arena.CorridorPacks || arena.LevelFirst || arena.LevelLast) && !wing)
-            return "a corridor and a level band are a dungeon wing's (InstanceLadder::Wing)";
-        if (arena.CorridorPacks && (arena.PullDrill || arena.EvalOnly))
-            return "a corridor is a run of packs the party trains and is measured on: no drill or held-out run";
+        if ((arena.LevelFirst || arena.LevelLast) && !wing)
+            return "a level band is a dungeon wing's (InstanceLadder::Wing)";
         if (arena.LevelFirst > arena.LevelLast || (arena.LevelFirst == 0) != (arena.LevelLast == 0))
             return "a level band is its first and last level, in order";
         if (arena.StandInShare > 100 || (arena.StandInShare > 0 && arena.Seats != SeatPlan::Party))
@@ -1297,24 +1248,9 @@ uint32 Animus::Curriculum::ArenaDefinition::SeatCount() const
     return 1;
 }
 
-bool Animus::Curriculum::EvaluatesDrills(std::vector<ArenaDefinition> const& arenas)
-{
-    bool drills = false;
-    for (ArenaDefinition const& arena : arenas)
-    {
-        if (arena.EvalOnly)
-            continue;
-        if (!arena.PullDrill)
-            return false;
-        drills = true;
-    }
-    return drills;
-}
-
 std::vector<uint32> Animus::Curriculum::ArenaDrawWeights(std::vector<ArenaDefinition> const& arenas,
     std::vector<uint32> const& weights, std::vector<uint32> const& finals, bool evaluating, float progress)
 {
-    bool const drills = evaluating && EvaluatesDrills(arenas);
     float const along = evaluating ? 1.0f : std::clamp(progress, 0.0f, 1.0f);
     std::vector<uint32> out(arenas.size(), 0);
     for (std::size_t arena = 0; arena < arenas.size(); ++arena)
@@ -1322,7 +1258,7 @@ std::vector<uint32> Animus::Curriculum::ArenaDrawWeights(std::vector<ArenaDefini
         ArenaDefinition const& definition = arenas[arena];
         // Held out (Wailing Caverns): played only by an evaluation pinned to it, never drawn -- in training least of
         // all, which is what holding it out means.
-        if (definition.EvalOnly || (evaluating && definition.PullDrill && !drills))
+        if (definition.EvalOnly)
             continue;
         float const from = float(arena < weights.size() ? weights[arena] : definition.Weight);
         float const to = float(arena < finals.size() ? finals[arena] : from);

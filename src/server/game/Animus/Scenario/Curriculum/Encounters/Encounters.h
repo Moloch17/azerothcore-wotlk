@@ -19,7 +19,6 @@
 #ifndef ANIMUS_LIB_CURRICULUM_ENCOUNTERS_H
 #define ANIMUS_LIB_CURRICULUM_ENCOUNTERS_H
 
-#include "RouteShortcut.h"
 #include "BotSlot.h"
 #include "InstanceBosses.h"
 #include "Encounter.h"
@@ -27,7 +26,6 @@
 #include "Env.h"
 #include "ObjectGuid.h"
 #include "RewardLedger.h"
-#include "RoutePlanner.h"
 #include "SeatView.h"
 #include "StageDefinition.h"
 #include "StageScenario.h"
@@ -141,19 +139,12 @@ namespace Animus::Curriculum
 
     /// A whole dungeon wing, run by a party (Opposition::Instance, InstanceLadder::Wing): the arena's pinned row of
     /// InstanceBosses fixes the map, the level and the difficulty; the party starts at the instance's front door with
-    /// the trash alive, and the route to the last boss is its objective. Won when the last boss dies, lost on the last
-    /// wipe or on the clock.
+    /// the trash alive and finds its own way to the last boss: no route, waypoint or path hint exists for the seats or
+    /// the rewards (vision-only movement, decision 0019). Won when the last boss dies, lost on the last wipe or on the
+    /// clock.
     class InstanceEncounter final : public Encounter
     {
     public:
-        /// A wing's cells (Go-Explore): the route's packs as EXPLORE_PACK_WORDS words of EXPLORE_PACK_BITS (a float of
-        /// the episode info holds 24 bits exactly), so a route's first 96 packs; the party's yard in buckets.
-        static constexpr uint32 EXPLORE_PACK_WORDS = 4;
-        static constexpr uint32 EXPLORE_PACK_BITS = 24;
-        static constexpr uint32 EXPLORE_PACKS = EXPLORE_PACK_WORDS * EXPLORE_PACK_BITS;
-        static constexpr uint32 EXPLORE_YARD_BUCKET = 16;
-        static constexpr uint32 EXPLORE_MARKS = 8;
-
         InstanceEncounter(StageScenario& scenario, uint32 envs);
 
         /// The level range a dungeon is run at: the dungeon finder's target range for its map and difficulty.
@@ -177,31 +168,19 @@ namespace Animus::Curriculum
         struct SeatInstance
         {
             bool OutcomePaid = false;
-            // A wing's terms paid so far (kills, waypoints, wipes), and whether its death has been.
+            // A wing's terms paid so far (kills, wipes), and whether its death has been.
             uint32 KillsPaid = 0;
             uint32 BossKillsPaid = 0;
-            uint32 WaypointsPaid = 0;
             uint32 WipesPaid = 0;
             bool DeathPaid = false;
-            float Potential = 0.0f;             // the least route ahead it has reached (Instance.WingProgress)
-            bool PotentialReady = false;
             /// Death and the rise at the entrance (dungeon-curriculum I4, EntranceRespawn): out for Respawn.DelayMs,
             /// then alive at the entrance and walking back, rejoined within Respawn.RejoinYards of the party.
             RespawnClock Clock;
-            uint32 Walk = 0;                    // the route point the seat walks to next; back to 0 at the door
             uint32 EngagesPaid = 0;             // EnvInstance::ReadyEngages paid for (ReadyPull, every seat)
-            /// The party stages' terms paid so far (2026-10-07): a corridor's packs cleared in route order, the chain
-            /// pulls, the full clear; and the seat's deaths this run (by role: deaths_tank, ...).
-            uint32 ClearsPaid = 0;
-            uint32 ChainPaid = 0;
+            /// The party stages' terms paid so far (2026-10-07): the full clear; and the seat's deaths this run (by
+            /// role: deaths_tank, ...).
             bool FullClearPaid = false;
             uint32 Deaths = 0;
-            mutable uint32 DenseAt = 0;         // the yard of the dense route it was nearest at its last view
-            /// Off the route out of a fight -- fallen into a cavern, kited away -- its own way back to it,
-            /// planned at DetourMs and again every DETOUR_REPLAN_MS.
-            mutable std::vector<Position> Detour;
-            /// Taken off the route (past 6 yards from it) and not yet back on it (within 4): the way back is the
-            /// detour until then, so a seat at the edge does not swap the two every decision (movement-smooth A8).
             /// The frontier of its own mental map (SeenPlaces::Frontier), refreshed every FRONTIER_MS: its goal places'
             /// way on in a sight stage.
             mutable std::vector<SeenPlaces::Point> Frontier;
@@ -225,27 +204,15 @@ namespace Animus::Curriculum
             bool BossDead = false;
             bool Wiped = false;
             bool Evaded = false;
-            bool Recorded = false;
-            /// A whole wing (InstanceLadder::Wing): the route from the door to the boss and the next point on it, the
-            /// trash killed, the wipes, and the creatures watched for dying.
-            std::vector<Position> Route;
-            std::vector<float> RouteRemain;     // per route point: yards along the route from it to the end
-            /// The route a yard at a time, a yard at a time, and the yard of each route
-            /// point: what the crowd block's advance steps along. Empty when the route is the navmesh's.
-            std::vector<Position> Dense;
-            std::vector<uint32> RouteDense;
-            std::vector<uint32> CornerAhead;    // WingPlan's
-            std::vector<uint32> CornerBack;
-            uint32 RouteNext = 0;
+            /// A whole wing (InstanceLadder::Wing): the trash killed, the wipes, and the creatures watched for dying.
             uint32 TrashKills = 0;
             uint32 BossKills = 0;               // dungeon bosses killed on the way (of the trash kills)
-            /// The last decision the dungeon went forward (a kill, a waypoint) or anything fought the party
-            /// (Instance.WingStall).
+            /// The last decision the dungeon went forward (a kill) or anything fought the party (Instance.WingStall).
             uint32 ProgressMs = 0;
-            uint32 ProgressSeen = 0;            // kills + waypoints at ProgressMs
+            uint32 ProgressSeen = 0;            // kills at ProgressMs
             uint32 Wipes = 0;
             /// The run's rung of the difficulty ladder and the wipes it stands up at the door, fixed when the
-            /// run is drawn; and whether it is an evaluation's, which the running route share leaves out.
+            /// run is drawn; and whether it is an evaluation's, which the running share leaves out.
             uint32 Rung = 0;                    // the ladder's rung the run was drawn on (StageScenario::WING_RUNGS)
             bool Probe = false;                 // a measure of the policy at the rung (Instance.WingProbe)
             uint32 WipesAllowed = 1;
@@ -257,7 +224,6 @@ namespace Animus::Curriculum
                 bool InFight = false;
                 uint32 StartMs = 0;
                 uint32 KillsAtStart = 0;
-                uint32 PointAtStart = 0;
                 uint32 PeakEngaged = 0;
                 uint32 PeakElites = 0;
                 uint32 PeakOnTank = 0;
@@ -280,8 +246,7 @@ namespace Animus::Curriculum
             uint32 Rises = 0;                   // seats that rose at the entrance and walked back (Respawn.*)
             uint32 Rejoins = 0;                 // ... and reached the party again
             uint32 RejoinMsTotal = 0;           // ... in this long altogether
-            /// The instance's entrance, where the dead rise: the door the run came in by, even for a run started
-            /// part-way (Go-Explore), whose packs before its start are gone.
+            /// The instance's entrance, where the dead rise: the door the run came in by.
             Position Entrance;
             WipeLatch Wipe;                     // the party is down and its wipe counted, until somebody stands
             /// The crowd past the pack's slots (CrowdBlock): on the tank, elites, the tank itself, the next enemies,
@@ -301,76 +266,18 @@ namespace Animus::Curriculum
             /// one ahead may bring with it.
             bool HasSecond = false;
             Position Second;
-            /// A pull drill (ArenaDefinition::PullDrill): its rung, the pack it pulls and how far the nearest other
-            /// stands from it, the route point at the pack (RouteNext goes no further), and how it ended -- the pack
-            /// dead with nothing else in the fight, or a second pack joining (the first such creature's entry).
-            bool Drill = false;
-            uint32 DrillRung = 0;
-            uint32 DrillPackIndex = 0;          // the route pack drilled (WingPlan::Packs' index)
-            float DrillGap = 0.0f;
-            uint32 DrillPoint = 0;
-            std::vector<ObjectGuid> DrillPack;
-            /// Every creature left alive and its pack (WingPlan::Packs' index, or one of its own past them): the first
-            /// creature to fight the party makes its pack the drill's, whichever it is -- the party pulls what it
-            /// pulls, and the lesson is one pack at a time.
-            std::vector<std::pair<ObjectGuid, uint32>> DrillGroups;
-            bool DrillLocked = false;
-            bool DrillOther = false;            // the pack pulled was not the route's next
-            bool DrillEngaged = false;
-            bool DrillCleared = false;
-            bool DrillExtra = false;
-            uint32 DrillExtraEntry = 0;
-            uint32 DrillPeak = 0;               // the most on the party at once
             /// Creatures seen in the slots or past them and not yet counted dead; a kill moves from here to Counted,
             /// which keeps it from being watched (and counted) again. Every decision walks Watched, so it holds only
             /// what can still die rather than everything the run has ever seen.
             std::unordered_set<ObjectGuid> Watched;
             std::unordered_set<ObjectGuid> Counted;
-            /// The field route's packs in route order (WingPlan::Packs): where each stands on the route (its yard),
-            /// its members' spawn ids, whether any member has ever been found (its grid loaded), and whether it is
-            /// cleared -- found and none alive, or despawned by a drill; once cleared, cleared for the run
-            /// (UpdateWingEnemies). The goal head's "next pack" places (View). Empty with a navmesh route.
-            struct RoutePack
-            {
-                Position At;
-                std::vector<ObjectGuid::LowType> Members;
-                bool Cleared = false;
-                bool Resolved = false;
-            };
-            std::vector<RoutePack> RoutePacks;
-            /// Each route pack's members' spawn ids -> the pack (its RoutePacks index): what a creature fighting the
-            /// party belongs to, for the chain pull.
-            std::unordered_map<ObjectGuid::LowType, uint32> PackOf;
-            /// A corridor run (ArenaDefinition::CorridorPacks, G2): its packs and which were cleared in route order.
-            bool CorridorRun = false;
-            WingRun::Corridor Corridor;
-            /// The route packs the fight under way has drawn in, and the chain pulls of the run: a pack drawn into a
-            /// fight another pack started (Instance.WingChainPull).
-            WingRun::FightPacks Drawn;
-            uint32 ChainPulls = 0;
-            /// The fights started ready (ReadyEngages) the party is paid for: at most one a route pack.
-            uint32 ReadyPaidCap = 0;
             /// The dungeon bosses killed on the way, by entry (the per-boss measures, boss_<name>); the last boss is
             /// BossDead.
             std::vector<uint32> BossesKilled;
             std::array<SeatInstance, MAX_SEATS> Seats;
-            /// Go-Explore (the learner's EXPLORE_STARTS): a training run started from a cell instead of the door --
-            /// its packs cleared and the party's yard / EXPLORE_YARD_BUCKET -- and the cells the run reached, a mark
-            /// each time the set of cleared packs changed (the start's first), the last EXPLORE_MARKS of them with the
-            /// run's clock: the episode info the learner's archive is built from.
-            bool Started = false;
-            std::array<uint32, EXPLORE_PACK_WORDS> StartPacks{};
-            uint32 StartYard = 0;
-            struct CellMark
-            {
-                std::array<uint32, EXPLORE_PACK_WORDS> Packs{};
-                uint32 Yard = 0;
-                uint32 Ms = 0;
-            };
-            std::vector<CellMark> Marks;
         };
 
-        /// A creature a full clear kills (Instance.WingFullClear): alive, hostile to the party, not a critter, a
+        /// A creature a full clear kills: alive, hostile to the party, not a critter, a
         /// civilian, a totem, a pet or a summon, and attackable.
         [[nodiscard]] static bool Hostile(Player const* seat, Creature const* creature);
         /// A lever, a button, a goober (the Deadmines' cannon) or a closed door, spawned, ready and not locked.
@@ -379,64 +286,18 @@ namespace Animus::Curriculum
         [[nodiscard]] static std::vector<uint32> const& KeyItems(uint32 mapId);
         /// The dead rise at the entrance after Respawn.DelayMs and walk back (I4); the rejoins counted.
         void RiseDead(Env& env, EnvInstance& fight);
-        /// A whole dungeon's way through: its route points every Instance.WingWaypointYards (the last one the boss),
-        /// the route a yard at a time with the yard of each point, and the spawns of the creatures it can reach.
-        /// A pack of the route, in the order the route reaches it: where it is fought from, the route's yard
-        /// there, its creatures' spawns, and how far the nearest creature not cleared before it stands from it.
-        struct WingPack
-        {
-            Position At;
-            uint32 Yard = 0;
-            std::vector<ObjectGuid::LowType> Members;
-            float Gap = 0.0f;
-        };
-        struct WingPlan
-        {
-            std::vector<WingPack> Packs;        // every pack the field route walks to; empty with a navmesh route
-            std::vector<Position> Route;
-            std::vector<Position> Dense;
-            std::vector<uint32> RouteDense;
-            std::vector<ObjectGuid::LowType> Reachable;     // sorted; empty with a navmesh route: every creature
-            bool Field = false;
-            /// For each yard of Dense, the farthest yard on (and back) within RouteShortcut::REACH walked straight:
-            /// the corners an advance runs through (movement-smooth A8). Empty with a navmesh route.
-            std::vector<uint32> CornerAhead;
-            std::vector<uint32> CornerBack;
-        };
-        /// The door-to-boss plan, once per boss: along the server's navmesh (PathGenerator).
-        [[nodiscard]] WingPlan WingRoute(Env const& env, Map* map, Player* seat, Creature* boss) const;
-        void UpdateWingEnemies(Env& env, EnvInstance& fight);
-        /// The pull drill: a pack off the ladder, the packs before it cleared, the party set down short of it.
-        /// False when the route has no packs to drill (a navmesh route); the run is the whole dungeon then.
-        /// `counted`: the spawn ids HostileTotal counted (sorted); what a start despawns comes off it.
-        bool StartDrill(Env& env, Map* map, WingPlan const& plan, std::vector<ObjectGuid::LowType> const& counted);
-        /// A Go-Explore start (EnvInstance::Started): the cell's packs despawned -- a dungeon boss among them killed,
-        /// so its script opens what its death opens -- and marked cleared, the party on the route at the cell's yard
-        /// (back to clear ground), every pay latch at what the start already holds. False, nothing changed, for a
-        /// cell this route cannot have.
-        bool StartAt(Env& env, Map* map, WingPlan const& plan, std::vector<ObjectGuid::LowType> const& counted);
-        /// The party to `start`, the `yard` of the field route: the wipes' spawn, every seat's route point and yard,
-        /// and its waypoints paid up to RouteNext (an offset start is not paid the route it did not walk).
-        void PlaceParty(Env& env, Position const& start, std::size_t yard);
-        /// The run's cleared packs as a cell's words; a mark when they changed (UpdateWingEnemies).
-        [[nodiscard]] static std::array<uint32, EXPLORE_PACK_WORDS> ClearedWords(EnvInstance const& fight);
-        void MarkCell(Env const& env, EnvInstance& fight);
-        /// The drill's pack dead with the fight over, or another creature fighting the party.
-        void UpdateDrill(Env& env, EnvInstance& fight);
-        /// A corridor run (G2): the packs before its first cleared and the party set down short of it, as a cell's
-        /// start (StartAt); its packs to clear in route order. False, nothing changed, when the route has no packs.
-        bool StartCorridor(Env& env, Map* map, WingPlan const& plan, std::vector<ObjectGuid::LowType> const& counted);
-        /// The route packs fighting the party this decision, for the chain pull (EnvInstance::Drawn).
-        void UpdateDrawnPacks(Env& env, EnvInstance& fight);
         /// A sight stage's goal places in a dungeon (SeenPlaces): what `seat` saw and remembers, its map's frontier,
         /// the leader within the minimap's range -- never a pack's or boss's live position or a route.
         void SeenWorld(Env const& env, uint32 seat, SeatView& view) const;
         /// Whether a whole dungeon's run is a full clear: the last boss dead and every creature the clear counts.
         [[nodiscard]] static bool FullClear(EnvInstance const& fight);
-        /// The run's success as the stage counts it: a drill's pack pulled and killed alone, a corridor cleared, a
-        /// whole dungeon's last boss dead (the `cleared` column, the stand-in split's and the videos' outcome).
+        /// The run's success as the stage counts it: the last boss dead (the `cleared` column, the stand-in split's and
+        /// the videos' outcome).
         [[nodiscard]] static bool Succeeded(EnvInstance const& fight);
-        void NoteDrill(uint32 rung, bool clean);
+        /// The share of the dungeon cleared: the creatures killed (the last boss among them) over those a full clear
+        /// counts, +1 for the boss; 0 before the instance is counted. No route and no navmesh: what the clock-out cost
+        /// (Instance.WingTimeout), the ladder's progress and `wing_cleared_share` are measured by.
+        [[nodiscard]] static float ClearedShare(EnvInstance const& fight);
         /// Instance.WingTrace: follow the fight under way, and log what a wipe ended.
         void TraceWing(Env& env, EnvInstance& fight, bool fighting);
         void LogWipe(Env const& env, EnvInstance const& fight) const;
@@ -448,10 +309,6 @@ namespace Animus::Curriculum
 
         std::vector<EnvInstance> _envs;
         std::map<InstanceLadder, std::vector<BossRow const*>> _rows;   // per ladder, the rows the database fields
-        /// The pull drill's ladder (Instance.PullRung*): the rung and the newest rung's drills, clean or not.
-        std::mutex _drillLock;
-        uint32 _drillRung = 0;
-        std::deque<bool> _drillRuns;
     };
 }
 

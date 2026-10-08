@@ -193,11 +193,6 @@ namespace Animus::Curriculum
         /// The ladder's row this arena always runs (Ragefire Chasm, the Deadmines: a stage each); set for every
         /// instance arena.
         int8 InstanceRow = -1;
-        /// InstanceLadder::Wing: one pull a run instead of the whole dungeon -- the party a little way back along the
-        /// route from one pack, the packs before it cleared, the run over when that pack is dead or a second one
-        /// joins (Instance.Pull*). Training only, unless the stage is all drills (EvaluatesDrills: dungeon1_pulls,
-        /// whose evaluation drills the pack its seed names).
-        bool PullDrill = false;
         /// Played only when an evaluation pins it (the learner's eval.heldout, MODE's arena): never drawn in training
         /// nor in an ordinary evaluation, whatever its weight. Content a stage is measured on and never trained on --
         /// a dungeon it has not seen -- so a policy that memorised its own route is told from one that learned to run
@@ -247,12 +242,6 @@ namespace Animus::Curriculum
         /// power at the entrance (EntranceRespawn's RespawnClock and RiseAtEntrance), to walk back on the controller.
         /// The episode goes on (StageScenario::DeadForGood is never true). An instanced arena's, never with DeathRuns.
         bool RespawnAtEntrance = false;
-        /// InstanceLadder::Wing: **a corridor** (dungeon-curriculum G2): a run is this many of the route's packs in
-        /// route order -- the packs before the first cleared as a party that came from the door left them, the
-        /// party set down short of the first, the run won when every one of them is cleared. Pull, fight, rest, ready,
-        /// next. The first pack is drawn each training run and taken from the seed in an evaluation. 0: the whole
-        /// dungeon.
-        uint32 CorridorPacks = 0;
         /// A party arena's share of training episodes with the "human" stand-in in one seat (I7), percent; -1 keeps
         /// StandIn.Share. Overridden by `<TuningPrefix>Arena.<stage>.<arena>.StandInShare`. Evaluations play it only
         /// in the learner's with_human arm, as before.
@@ -265,15 +254,10 @@ namespace Animus::Curriculum
         [[nodiscard]] uint32 SeatCount() const;
     };
 
-    /// Whether a stage's evaluations play its pull drills (ArenaDefinition::PullDrill): a stage whose every trained
-    /// arena is a drill (dungeon1_pulls) is measured on its drills, where a stage that also runs the whole dungeon is
-    /// measured on that and keeps its drills for training.
-    [[nodiscard]] bool EvaluatesDrills(std::vector<ArenaDefinition> const& arenas);
-
     /// **The arena draw's weights** (StageScenario::DrawArena): each arena's share, linear from its weight to its final
     /// weight over the budget (`progress`; an evaluation draws by the final ones). A held-out arena
     /// (ArenaDefinition::EvalOnly: Wailing Caverns) is never drawn this way, in training or evaluation -- only an
-    /// evaluation pinned to it plays it -- and a pull drill only in a stage that EvaluatesDrills.
+    /// evaluation pinned to it plays it.
     [[nodiscard]] std::vector<uint32> ArenaDrawWeights(std::vector<ArenaDefinition> const& arenas,
         std::vector<uint32> const& weights, std::vector<uint32> const& finals, bool evaluating, float progress);
 
