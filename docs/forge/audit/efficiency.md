@@ -457,4 +457,59 @@ log it); have the leader answer a non-finite push with a `reset` control flag. A
 the number of dropped pushes a machine has made. **Verify**: a unit test that poisons one weight and checks the next
 reply heals it. **Risk**: none; the alternative is a machine producing nothing.
 
+## 3. Quick wins
+
+Small, safe, high value. None changes what a policy learns except where marked.
+
+| Id | Change | Where | Why it is safe | Expected effect |
+|---|---|---|---|---|
+| R3 | Log and show `wall_steps_per_sec`, `rollout_s`, `update_compute_s`, `wait_s` next to the rollout rate; say "update-bound" when wait > 20% of the cycle | `train.py:2020-2075`, `forgectl status` | Logging only | Makes every later decision on the right number; the host's 4.3k/s reading is really 2.17k/s |
+| U3a | Choose `vision_chunk_rows` from free device memory at learner start (`torch.cuda.mem_get_info`) instead of one stage-wide 2048 | `trainer.py:1578`, `move2_seek.yaml:49` | Same maths, fewer recomputes; falls back to today's value when memory is short | The owner's own figure: chunking costs ~1.7x the encoder; about 13% of the update on the 24 GB host if the encoder is 3.6 s (estimate) |
+| O4 | A follower that finds non-finite weights takes the centre whole | `async_sync.py:420` | The alternative is a dead machine | A machine's whole contribution after a divergence (2.28 M dropped steps in one session) |
+| R1 | In the eager rollout, encode the image once and pass `vision_embedding=` to the critic | `trainer.py:997`, `networks.py:2309-2325` | Same tensor | -25% of `act_and_value` on CPU learners (verified count: 2 encoder forwards a decision today) |
+| S1 | Last-tile cache in `MentalMap::FindCell` and the free-space walk | `MentalMap.cpp:308-316,420` | Deterministic writes unchanged | 20-60% of `WriteFrame` (estimate); matters when the sim is the slow half |
+| S6 | Pin A/B/C: map pool on the V-cache CCD (0-7,16-23), learner on the other; compare `forge bench` | `worldserver.conf:1336-1337`, `mod_animus_forge.conf:324` | Config only | UNKNOWN, plausibly +-10-20% of rollout speed |
+| U1 | Epochs A/B: `mappo.epochs: 1` against 2 from the same checkpoint, compared on wall-clock | `move2_seek.yaml:34` | Reversible; the quality cost is measured, not guessed | Up to +90% end to end on update-bound machines |
+| O1 | Print `decision_ticks`, `env_groups`, `Envs`, `Cpus` in `forgectl cluster`; add them to `conf-sync --check` | `forgectl/cluster.py`, `confsync.py` | Read-only | Stops a deploy changing the sim's cost by accident |
+| O3 | Evaluate a multiple of the pool (192) or accept 78 and stop running 114 idle envs | `move2_seek.yaml` `eval:` | Statistics only | 2.5x the episodes for the same wall time |
+| R2a | `decode_step` into preallocated arrays; keep the map crop as its own field until the buffer store | `protocol.py:393-429`, `train.py:1883` | Pure copies | About 1 ms of 44 ms a decision, only when rollout-bound |
+
+## 4. Not worth doing
+
+With the reason, so nobody spends a week on them.
+
+- **Moving the camera caster to the GPU for training** (`Gpu/VisionGpu.cpp`, `VisionDevice.h`, 786 + 1,680 lines, used by
+  two console commands only). The host is update-bound, so a faster rollout buys nothing, and the GPU is exactly the
+  resource the update is short of. Revisit only when the update is below the rollout. (`Renderer::Forget` has no
+  production caller, known issue B1.)
+- **The cluster weight exchange.** 41.6 MB a trade (10.4 M float32 parameters of actor and critic, measured from
+  `latest.pt`), about six trades per leader update (12,400 trades in the log), so about 15 MB/s each way on a 125 MB/s
+  link, and the leader's safe point (`flatten`, an `isfinite` scan, `mix`, `assign`) is an estimated 50-100 ms of an 11.3 s
+  cycle. `weight_sync_every` already exists if a thin link ever needs it (followers trading 2,048 steps per 41.6 MB push
+  are the case to watch).
+- **Checkpoint size and frequency, `metrics.csv`, `progress.json`, TensorBoard scalars, `layouts.csv`.** 123 MB twice a
+  25 updates (283 s) is under 1 MB/s; the rows are flushed once an update; the TensorBoard scalars are about 300 floats.
+  `layouts.csv` is 100 MB and `animus-learner.log` 743 MB with no rotation: disk, not time.
+- **Evaluation frequency.** Five gaps over 40 s in 21,662 s (1.4%) including checkpoints and restarts; evaluation of 78
+  episodes every 10 M steps is cheap. D2/D3 evaluations, which the known-issues file says take hours of sim time, are the
+  exception: measure them (plan step 9) before deciding.
+- **The reset path for the movement stages.** The old 6.4 ms (2026-09-17) became 0.77 ms in the parallel-core work
+  (`PLAN.md:562`), `Characters.KeepCasting` keeps a character for up to 4 episodes (`CurriculumTuning.h:64-71`), and M2's
+  hallway rung resets 3.7% of steps. Re-check it when the dungeon stages run (their resets build whole instances).
+- **`LayeredField::Store::Find`'s global shared lock, clock and `shared_ptr` copy** (`LayeredField.cpp:407-420`): three
+  contended atomics a call, but the only caller keeps a per-route map of what it already holds (`FieldRoute.cpp:63`), so
+  it runs once a route plan, not once a step.
+- **`EntityMemory` linear scans** (`EntityMemory.cpp:56-110`): at most 32 seen entities against a cap of at most 1,024
+  entries, a few microseconds a seat.
+- **Rollout graph fallbacks.** The only fallback condition is seat sets, which are off in every live yaml
+  (`trainer.py:883-895`; known issue B4). On a GPU the rollout is one launch and one wait.
+- **`isfinite().all()` per decision** (`train.py:1815-1817`): a device sync only for device observations; the host path is
+  a numpy call on 1.2 MB.
+- **A deeper update/rollout pipeline.** With one update in flight the cycle is already `max(rollout, update)`; a second
+  one cannot make the update shorter, only staler (U1 is the lever).
+- **Whole-update bf16, TunableOp, 48 replicas, the geometry probe** were measured and rejected in the parallel-core
+  plan (`PLAN.md:1326-1337`).
+- **`torch_threads`.** The GPU learner's CPU work is Python and copies on a few threads; `torch_threads: 4` against
+  `Learner.Cpus` 16 is not where the time is.
+
 <!-- END -->
