@@ -22,7 +22,7 @@ suite, and what none of them covers. Related: [tools-and-ops.md](tools-and-ops.m
 | `apps/forge/python/tests/human_capture_writer.py` | 243 | helper: test-only writer of capture records written from the format document |
 | `apps/forge/python/tests/test_*.py` | 17,000 in all (see section 2) | 88 test files |
 | `apps/forge/python/tests/fixtures/` | 6 files | `recorded_m2_episode_info.json`, `seek_spec.json`, `seek_stage.json`, `stage_move1_controls.json`, `stage_move2_seek.json`, `test_stage.yaml` |
-| `apps/forge/python/tests/golden/` | 7 files | `learner_update.json`, `seat_attention.{amdl,json}`, `seat_attention_recurrent.amdl`, `seat_sets.{amdl,json}`, `seat_sets_recurrent.amdl` |
+| `apps/forge/python/tests/golden/` | 7 files | `learner_update.json`, `seat_attention.amdl`, `seat_attention.json`, `seat_attention_recurrent.amdl`, `seat_sets.amdl`, `seat_sets.json`, `seat_sets_recurrent.amdl` |
 | `apps/forge/python/tests/update_stats_reference.json` | 28 | the recurrent update's reported statistics |
 
 ## How to run each suite
