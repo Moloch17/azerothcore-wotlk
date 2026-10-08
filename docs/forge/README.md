@@ -13,6 +13,8 @@ not what comments say, and each ends with its observed issues.
 
 | Document | What it is |
 |---|---|
+| [reference/README.md](reference/README.md) | the index of the reference documents, with a reading order for a review |
+| [04-curriculum.md](04-curriculum.md) | the stages manual: what each of the 12 stages teaches |
 | [01-overview.md](01-overview.md) | what the forge is, the pieces, the twelve stages, a glossary of the core ideas |
 | [principles.md](principles.md) | the rules the project is built to, and the review checklist |
 | [reference/00-architecture.md](reference/00-architecture.md) | the whole system: processes, tick, decision loop, observation/action path, lifecycle, cluster, threading |
@@ -23,7 +25,7 @@ not what comments say, and each ends with its observed issues.
 | Document | What it is |
 |---|---|
 | [07-operations.md](07-operations.md) | first start, the console commands, running and stopping stages, run directories, troubleshooting |
-| [forgectl.md](forgectl.md) | the command line for the cluster (status, stages, builds, conf sync, tests) |
+| [forgectl.md](forgectl.md) | the command line for the cluster (status, stages, builds, conf sync, videos) |
 | [cluster.md](cluster.md) | the machines, ports, how code and runs move between them |
 | [deploy-gate.md](deploy-gate.md) | the ordered checks before a build goes to the cluster |
 | [decisions/0001-control-socket.md](decisions/0001-control-socket.md) | proposal to replace console typing with a control socket |
@@ -56,20 +58,18 @@ not what comments say, and each ends with its observed issues.
 | [reference/metrics.md](reference/metrics.md) | metric and episode-info column names |
 | [reference/config-keys.md](reference/config-keys.md) | every `Forge.*` and `AnimusForge.*` key |
 | [reference/config-yaml.md](reference/config-yaml.md) | the learner's per-stage yaml |
-| [reference/tests.md](reference/tests.md) | what is tested where, and what is not |
+| [reference/tests.md](reference/tests.md) | there are no tests (removed 2026-10-07), and the safety nets that went with them |
 | [reference/tools-and-ops.md](reference/tools-and-ops.md) | `apps/forge/tools`, forgectl internals, scripts |
 | [reference/stages.md](reference/stages.md) | the twelve stages, one section each |
 | [reference/known-issues.md](reference/known-issues.md) | the collected list of bugs, debts and dead ends |
 | [reference/glossary.md](reference/glossary.md) | terms |
 
-## Old chapters (stale, being replaced)
+## Removed chapters
 
-These describe the first curriculum (deleted 2026-10-07, git tags `curriculum-v1` and `pre-cleanup-2026-10-07`) and the
-period when the sim was a separate module. They are kept until the reference documents above replace them; do not
-trust them over the code.
-
-[03-animus-lib.md](03-animus-lib.md), [04-curriculum.md](04-curriculum.md), [05-animus-forge.md](05-animus-forge.md),
-[08-reference.md](08-reference.md).
+The old chapters 03 (animus-lib), 05 (the learner and module) and 08 (reference) described the first curriculum (deleted
+2026-10-07, git tags `curriculum-v1` and `pre-cleanup-2026-10-07`) and the time when the sim was a separate module.
+The reference documents above replace them; they remain in git history
+(`git show pre-cleanup-2026-10-07:docs/forge/05-animus-forge.md`).
 
 ## Repository layout (verified 2026-10-07)
 
@@ -79,7 +79,7 @@ trust them over the code.
 | `src/server/game/Forge/` | `ForgeCore` (playtest flag, `HasClients`, tick override) |
 | `src/server/game/Animus/` | the sim: env pool, bots, bridge, scenarios, blocks, encounters, movement, vision, GPU |
 | `src/server/scripts/Commands/cs_forge.cpp` | the `forge` console commands |
-| `apps/forge/python/` | the learner (`animus/`), per-stage yaml (`configs/`), tests |
+| `apps/forge/python/` | the learner (`animus/`), per-stage yaml (`configs/`) |
 | `apps/forge/forgectl/`, `./forgectl` | the cluster command line |
 | `apps/forge/tools/`, `apps/forge/patches/` | helper scripts, obsolete patches for the realm module |
 | `apps/forge/cluster.toml` | the machines |
