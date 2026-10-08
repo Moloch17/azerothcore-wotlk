@@ -47,7 +47,8 @@ Unit index (line of the definition):
 - `log_prob_of`, `_entropy`: log-softmax gather and entropy computed directly.
 - `sample_logits(logits, deterministic)` (`:63`): Gumbel-max draw `argmax(logits - log(-log U))`; `U` in [0,1) so a
   masked logit cannot win. Returns `(choice, log_prob)`. Used by the graph path and the goal head; the eager path
-  uses `Categorical.sample()` (`trainer.py:1066`), a different random stream (test `test_the_lean_sampler_draws_what_categorical_draws`).
+  uses `Categorical.sample()` (`trainer.py:1066`), a different random stream (test
+  `test_the_lean_sampler_draws_what_categorical_draws`).
 - `skip_distribution_checks()` (`:248`) disables torch's distribution validation globally; called in
   `MappoTrainer.__init__` (`trainer.py:614`).
 
@@ -124,12 +125,14 @@ Public methods:
   (default 0.1, overwritten from `MappoConfig.goal_slot_entropy_weight` by `trainer.py:665`, not by the constructor).
   A primary `given` by an order is conditioned on but contributes no log-prob or entropy.
 - `predictions(features)` (`:555`): `(success logits, sigmoid(duration))` per candidate goal.
-- `set_space(accepts, block_at)` (`:448`), `block_width` (`:433`), `columns` (`:442`): goal block layout (secondary_ended
+- `set_space(accepts, block_at)` (`:448`), `block_width` (`:433`), `columns` (`:442`): goal block layout
+  (secondary_ended
   = base, event, from_order, order_kind, order_target, achieved_kind, achieved_target with base = kinds+targets+2).
 - `ended(obs, layout)` (`:583`): **no caller anywhere**; dead.
 
 Data flow: built in `LayoutActor.__init__` (`:2021`) with width = `slow_size or head_width`. Called from the rollout
-(`decide_goals`) and the update (`_update_goals`, and the fast-loop `goal_distribution` only when there is no slow loop).
+(`decide_goals`) and the update (`_update_goals`, and the fast-loop `goal_distribution` only when there is no slow
+loop).
 Contract: the goal block's column positions must equal `GoalBlock::Obs` in the sim; there is no checksum other than
 `set_goal_space`'s kinds/targets count check ([cpp-blocks.md](cpp-blocks.md)).
 Known quirk: "the goal block's order columns are always zero" ([known-issues.md](known-issues.md)): `from_order` and
@@ -143,14 +146,16 @@ Seat layouts' entities (enemies, members, friends, crowd) as sets: one encoder `
 per set name shared by every slot and layout (`nn.ModuleDict encoders`), mean+max pooling of present slots, a `pool`
 Linear onto the adapter width, and **pointer heads**: one `queries` Linear(head_width -> 64, gain 0.01) per
 (set, n-th pointer range) scoring each slot's encoding to overwrite the logits of the actions that name a slot
-(`with_pointers :763`). `attention=True` (peak-play W7) adds one pre-norm transformer layer (`HEADS = 4`) over the seat's
+(`with_pointers :763`). `attention=True` (peak-play W7) adds one pre-norm transformer layer (`HEADS = 4`) over the
+seat's
 tokens with zero-initialised output projections so it starts as the identity. The per-layout tables (`columns_<set>`,
 `present_<set>`, `first_<kind>`, `has_sets`) are non-persistent buffers computed from the stage.json descriptors.
 `self.blind` lists the columns each adapter must not read (the slot columns).
 **Not used live** (seat_sets false everywhere; see the feature table in [py-mappo.md](py-mappo.md)). Also the base class
 of `VisibleEntities`, which is live (the camera's entity list), so deleting `EntitySets` means folding its encode/pool
 logic into `VisibleEntities`.
-Caveat: `with_pointers` indexes `columns = first + arange(slots)` and writes with `scatter`; the rows whose layout has no
+Caveat: `with_pointers` indexes `columns = first + arange(slots)` and writes with `scatter`; the rows whose layout has
+no
 such set keep their old logits (`torch.where`, `:782`).
 Tests: `test_seat_sets.py`, `test_export_seat_sets.py`.
 
@@ -160,7 +165,8 @@ A layout's adapter must not read some columns (camera scalars, entity-list slots
 slots) because dedicated encoders read them. `attach_blind_columns(network, columns, tag)` registers a buffer
 `<tag>_keep_<index> [1, obs_i]` (1 = keep, 0 = blind), multiplies the adapter weight by it and registers a gradient hook
 that multiplies the gradient by it, so those weight columns stay exactly zero through every update. Tags: `"set"` and
-`"vision"` (`BLIND_KEEP_PREFIXES` `:1933` also lists the retired `"blind_keep_"`). `clear_blind_columns(network)` (`:821`)
+`"vision"` (`BLIND_KEEP_PREFIXES` `:1933` also lists the retired `"blind_keep_"`). `clear_blind_columns(network)`
+(`:821`)
 re-zeroes after a seed or load. The keep buffers are **saved** in checkpoints (they are persistent buffers; see the
 golden key list) but **dropped on load** (`without_blind_columns`, `:1936`; `load_actor_state` `:1943`;
 `MappoTrainer.load_state_dict` `trainer.py:2039`): the network's own masks, built from the current stage, win.
@@ -187,7 +193,8 @@ objective in bit 5, slot in byte 4; map channels order) is re-implemented here a
 `test_mental_map.py::test_the_crop_decodes_as_the_sim_encodes_it` pin it.
 
 `decode_image` (`:1110`): `[N, H*W*5] uint8 -> [N,H,W,5] float32`: distance `255 -> 1.0 else b/254`, height
-`(b-128)/125`, normal `b/255`, class `b & 31`, objective `(b>>5)&1`. `decode_slots` (`:1127`): byte 4 as long. `decode_map`
+`(b-128)/125`, normal `b/255`, class `b & 31`, objective `(b>>5)&1`. `decode_slots` (`:1127`): byte 4 as long.
+`decode_map`
 (`:1133`): code (clamped to 0..4), class, and 5 float values (height `(b-128)/127` where known, known, visited, age/255,
 frontier).
 
@@ -200,8 +207,10 @@ embedding** (held by reference via `__dict__`, `:1238`), five values: 4+6+5 = 15
 `join = Linear(128 -> 256)` (orthogonal init gain sqrt(2)) after a SiLU, added to the camera embedding before its SiLU
 (`VisionEncoder.forward :1716`). `MapValueIteration` (only when `crop["vin"]`, off): a reward map `Conv2d(64+1 -> 1)`
 tanh, `max(grid)` iterations of `Conv2d(2 -> 8, 3x3)` max over 8 move values, read-out of the centre 4x4 plus
-spatial-softmax expected (x,y) -> `Linear(18 -> 128)` zero-initialised. The VIN's goal bit is "any objective pixel in the
-frame" (`:1719`). Fixed shapes, no host reads (graph-capturable). Seeding from a checkpoint without a map zeroes the join
+spatial-softmax expected (x,y) -> `Linear(18 -> 128)` zero-initialised. The VIN's goal bit is "any objective pixel in
+the
+frame" (`:1719`). Fixed shapes, no host reads (graph-capturable). Seeding from a checkpoint without a map zeroes the
+join
 (`bootstrap._seed_map`, [py-learner.md](py-learner.md)).
 Tests: `test_mental_map.py`. Quirk: the VIN's iteration count equals the grid's larger side, so cost is O(grid) conv
 passes; the VIN is off.
@@ -257,7 +266,8 @@ Tests: `test_free_look.py`.
 
 ## `GoalEmbedding` (`:1868`)
 
-Embeds the goal held: `kind` Embedding(kinds,width) + `target` Embedding(targets,width) (zero-init); `paired` (goal_slots
+Embeds the goal held: `kind` Embedding(kinds,width) + `target` Embedding(targets,width) (zero-init); `paired`
+(goal_slots
 > 1): the goal number is a pair `primary*(count+1)+secondary+1` (`goal_pair :1960`, `split_goal_pair :1965`) and the
 secondary adds its embedding through a learned `gate` (init 0.5). The actor builds it `scaled=True`: extra
 `kind_scale`/`target_scale` tables (zero-init) used as FiLM `features*(1+scale)+shift` (`condition :1918`); the critic
@@ -276,7 +286,8 @@ foresight_feedback, lookahead, goal_slots, seat_sets, entity_attention, vision)`
 
 Flow for one decision (`_forward :2248`, used by `forward`/`step`):
 `encode` (`:2081`) = adapters (per-layout loop over `per_layout` groups, or dense on the GPU rollout copy) + seat-set
-pool + camera join, then trunk -> `features_from` (GRU) -> `policy_features` (`:2146`: foresight feedback, then goal FiLM)
+pool + camera join, then trunk -> `features_from` (GRU) -> `policy_features` (`:2146`: foresight feedback, then goal
+FiLM)
 -> `action_logits` (`:2164`: heads, then seat pointers, then sight pointers, then `masked_logits`).
 `decide_goals` (`:2204`) is the single implementation of the goal decision used by the eager path and the graph:
 drop an ended secondary; promote the queue's head if the primary ended; choose on the clock, on `ended`-without-queue,
@@ -307,7 +318,8 @@ Tests: `test_recurrent.py::test_critic_*`.
 - The critic: `MappoTrainer.load_state_dict` (`trainer.py:2038`) does the same without the goal-scale exemption.
 - Cross-stage seeding (a new stage from a parent checkpoint) is not this path; it is by block name in
   `bootstrap.py` ([py-learner.md](py-learner.md)).
-- Checkpoint contents (`train.save_checkpoint`, `train.py:170`): `trainer.state_dict()` = `actor`, `critic`, `value_norm`,
+- Checkpoint contents (`train.save_checkpoint`, `train.py:170`): `trainer.state_dict()` = `actor`, `critic`,
+  `value_norm`,
   `actor_opt`, `critic_opt`, optional `vision_opt`; plus `config`, `spec`, `update`, `env_steps` and `extra`
   (`style`, `explore`, controller and tracker state, `train.py:1124-1127`). Not saved: `slow_opt`, the self-imitation
   replay, the rollout copies.

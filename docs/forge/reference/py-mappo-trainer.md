@@ -2,7 +2,8 @@
 
 Purpose and scope. `apps/forge/python/animus/mappo/trainer.py` (2053 lines) owns the networks, the optimizers, the
 rollout-side decision functions (eager and captured as CUDA/HIP graphs), the PPO update that replays whole rollouts
-through the GRUs, the slow goal update, and the checkpoint state. Networks: [py-mappo-networks.md](py-mappo-networks.md).
+through the GRUs, the slow goal update, and the checkpoint state. Networks:
+[py-mappo-networks.md](py-mappo-networks.md).
 Buffer, GAE and SIL: [py-mappo-buffer.md](py-mappo-buffer.md). Overview and shapes: [py-mappo.md](py-mappo.md). The
 caller is `TrainingRun` in `train.py` ([py-learner.md](py-learner.md)).
 
@@ -138,7 +139,8 @@ parameters every `weight_sync_every` updates (`:1479-1490`) and syncs the rollou
 `_update_recurrent` (`:1603-2025`), step by step:
 
 1. Stats accumulators. If SIL is on: `sil.collect(buffer, sil_gamma)`.
-2. `host = buffer.sequences()` -> device tensors `data` (`:1637`). With hindsight, `achieved` is recomputed on the device
+2. `host = buffer.sequences()` -> device tensors `data` (`:1637`). With hindsight, `achieved` is recomputed on the
+   device
    from the observations (`_achieved_of`, `:1126`). If `chunk_length` applies, arrays are re-cut with `chunked` (`:25`).
 3. Advantages normalised on valid rows, **per layout** when the layout has at least `min_layout_rows` rows else by the
    rollout's statistics (`_normalise_advantages`). `ValueNorm.update(returns)` (all ranks), `returns_target` and
@@ -147,7 +149,8 @@ parameters every `weight_sync_every` updates (`:1479-1490`) and syncs the rollou
 5. Loop `epochs` x minibatches (minibatch = a random subset of envs; `torch.randperm` on the host so the layout groups
    and GRU pieces are cut host-side, `:1683-1703`):
    - camera embedding encoded **once** (`_encode_vision`), handed to both networks as a leaf `seen_leaf`;
-   - actor: `encode` -> `carry` through the GRU (memory = the one stored at step 0 of each env) -> `action_distribution`;
+   - actor: `encode` -> `carry` through the GRU (memory = the one stored at step 0 of each env) ->
+     `action_distribution`;
      `log_probs`, entropies; without a slow loop, the goal head's log-prob (times `goal_chosen`) joins the ratio and its
      entropy (times `goal_entropy_factor`) joins the entropy; the look head's joint log-prob and entropy join;
    - the taught loss from `auxiliary.sequence_loss` if a distiller is teaching;
@@ -234,7 +237,8 @@ Config keys: `slow_goal_*`, `lookahead_coef`, `goal_*`, `epochs`, `clip`, `value
 ## Checkpoint state (`:2027-2053`)
 
 `state_dict()`: `actor`, `critic`, `value_norm`, `actor_opt`, `critic_opt`, `vision_opt` (if present). **`slow_opt` is
-not saved.** `load_state_dict(state, load_optimizers=True)`: `load_actor_state` (tolerates only blind-column masks and the
+not saved.** `load_state_dict(state, load_optimizers=True)`: `load_actor_state` (tolerates only blind-column masks and
+the
 goal-scale tables), critic strict apart from blind-column masks, value norm if both sides have one, optimizers if asked
 (`vision_opt` only if present in the checkpoint), then `_sync_rollout`. The optimizer state loads by parameter order
 within each group; a change that adds, removes or reorders actor parameters breaks loading of `actor_opt` (UNVERIFIED
@@ -262,7 +266,8 @@ what the failure looks like; torch raises on a group size mismatch).
 
 ## Reviewer notes
 
-- Questions: why not save `slow_opt`? Should `set_learning_rate_scale` include `slow_opt`? Is `chunked` + `target_kl` with
+- Questions: why not save `slow_opt`? Should `set_learning_rate_scale` include `slow_opt`? Is `chunked` + `target_kl`
+  with
   `approx_kl_move` consistent (chunk starts are off-policy for memory)? `explained_variance` uses the denormalised
   buffer values versus returns: fine, but it ignores invalid rows only via `rows`.
 - The update is 420 lines in one method; the natural cuts are: data prep, per-minibatch actor half, critic half, stats.

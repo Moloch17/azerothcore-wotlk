@@ -13,8 +13,10 @@ Overview: [py-mappo.md](py-mappo.md); the consumer is [py-mappo-trainer.md](py-m
 
 Tests: `test_gae.py` (hand values, truncation, termination), `slow_gae_reference.py` (a reference used by
 `test_two_clock.py`), `test_span_gae.py`, `test_two_clock.py`, `test_foresight.py`, `test_sil.py`, `test_masking.py`
-(`test_value_norm_follows_a_drifting_return_scale`), `test_vision_bytes.py::test_the_rollout_buffer_keeps_the_images_as_bytes`,
-`test_mental_map.py::test_the_buffer_keeps_camera_rows_with_their_map_as_bytes`, `test_free_look.py::test_the_rollout_buffer_holds_the_look`.
+(`test_value_norm_follows_a_drifting_return_scale`),
+`test_vision_bytes.py::test_the_rollout_buffer_keeps_the_images_as_bytes`,
+`test_mental_map.py::test_the_buffer_keeps_camera_rows_with_their_map_as_bytes`,
+`test_free_look.py::test_the_rollout_buffer_holds_the_look`.
 
 ## `compute_gae` (`buffer.py:16`)
 
@@ -35,7 +37,8 @@ head's own prediction for the ended episode's last state (`final_predictions`), 
 ## `compute_span_gae` (`:83`)
 
 GAE on the slow goal clock. A transition runs from a decision where `chosen` to the next chosen decision of the same
-agent (or the episode end) and carries every reward between (summed, not discounted, inside the span); discounting is per
+agent (or the episode end) and carries every reward between (summed, not discounted, inside the span); discounting is
+per
 chosen decision. Returns `(advantages, returns, valid)`; `valid[t]` is true only for chosen decisions whose span has an
 honest target (it ended with an episode end that terminated, or is followed by another chosen decision). A span cut by
 the rollout's end or by a truncated episode is left out. Vectorised over `[E,A]`.
@@ -60,7 +63,8 @@ that array to its device for good (`setattr`). Fields (shape `[T,E,A,...]` unles
 | `slow_memory`, `slow_values`, `slow_advantages`, `slow_returns`, `slow_valid` | | the slow loop's |
 | `foresight_preds`, `final_foresight`, `foresight_targets`, `foresight_valid` | `[..., foresight]` | |
 
-Methods: `add_decision` (`:214`) records a step; `add_outcome` (`:272`) records the result and advances `cursor`; `finish`
+Methods: `add_decision` (`:214`) records a step; `add_outcome` (`:272`) records the result and advances `cursor`;
+`finish`
 (`:287`) runs GAE (always), span GAE for the slow clock (if `slow_goal` and `slow_goal` size > 0; also narrows
 `goal_chosen` to `chosen & valid`), and the foresight targets (if `foresight` and `last_foresight` given), including the
 observation targets (`obs_targets`: per target a column per layout, `ahead` decisions, `window` = "at any point");
@@ -74,7 +78,8 @@ for a constant that no longer exists.
 
 ## `SelfImitation` (`sil.py:25`)
 
-Keeps the `episodes` best ended episodes by outcome score, each as its tail inside the current rollout (the decisions from
+Keeps the `episodes` best ended episodes by outcome score, each as its tail inside the current rollout (the decisions
+from
 the previous done to the end), with Monte Carlo returns (`_keep :49`: discounted rewards to the episode end; bootstraps
 from `final_values` if cut short, zero if terminated), the stored memories at the tail's first decision, and
 `TAIL_KEYS = obs, mask, layout, actions, samples, state` (+ `goal` if goals). `collect(buffer, gamma)` consumes
@@ -96,7 +101,8 @@ over all ranks in float64) with weight `1 - beta` (`beta` default 0.99); `normal
 deviation under 0.1 are not scaled up. The trainer holds one trained instance and one rollout copy (synced as a buffer
 pair). Saved in the checkpoint as `value_norm`; loaded only if both the config and the checkpoint have one
 (`trainer.py:2046`).
-Tests: `test_masking.py::test_value_norm_follows_a_drifting_return_scale`. Async learners trade its three buffers as part
+Tests: `test_masking.py::test_value_norm_follows_a_drifting_return_scale`. Async learners trade its three buffers as
+part
 of the flat vector ([py-human-and-misc.md](py-human-and-misc.md), `async_sync`).
 
 ## Observed issues

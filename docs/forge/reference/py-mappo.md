@@ -208,7 +208,8 @@ Goal block width 128 per layout: `(kinds 12 + targets 29 + 2) + 3 + 2*(12+29) = 
 (`GoalHead.block_width :433`, stage.json `goals.columns.width`). `drawn` embedding rows: `12*29 + 1 = 349`.
 Foresight outputs: 2 horizons + 1 (episode left) + 3 observation targets = 6. GRU gate rows: `3 x 128 = 384`.
 Layout obs width check: warrior 1555 = core 715 + move 57 + vision 11 + entities 640 + map 4 + goal 128 (stage.json
-block spans: `core [0,715]`, `move [715,57]`, `vision [772,11]`, `entities [783,640]`, `map [1423,4]`, `goal [1427,128]`).
+block spans: `core [0,715]`, `move [715,57]`, `vision [772,11]`, `entities [783,640]`, `map [1423,4]`, `goal
+[1427,128]`).
 
 Critic, per flat row: `state [N,1958]` -> `RunningNorm` -> `Linear 1958->256`; plus the layout's adapter output
 (`obs_i -> 256`) plus the camera join (`Linear 256->256` of the shared embedding) plus (if goals) the goal embedding
@@ -217,7 +218,8 @@ a value in the normalised scale; `ValueNorm.denormalize` is applied in the rollo
 
 Update-time tensors (`_update_recurrent`, `trainer.py:1603`): rollout arrays `[T, E, A, ...]` with T = `rollout_length`
 (128 in the yamls, `move1_controls.yaml:34`); with `chunk_length` L < T they are re-cut to `[L, (T/L)*E, A, ...]`
-(`chunked`, `trainer.py:25`). M2 sets `chunk_length 128` (no chunking, `move2_seek.yaml`); M1 and the combat stages differ
+(`chunked`, `trainer.py:25`). M2 sets `chunk_length 128` (no chunking, `move2_seek.yaml`); M1 and the combat stages
+differ
 (M1: 32, combat1: 128). The minibatch is a subset of the (chunked) envs (`order = randperm(envs)`, `tensor_split` into
 `minibatches` parts), flattened to `rows = steps * envs_here * agents`.
 
@@ -286,7 +288,8 @@ block (`trainer.py:620`).
 10. `SelfImitation` (and the SIL branch of the update) is unreachable on live stages (feature table above); the
     `MappoConfig` comment "on in the wing stages" (`trainer.py:147`) is stale, and `group2_corridor.yaml:31` writes
     `sil_coef: 0.0` as if it were a decision.
-11. The module docstring of `networks.py` (`:1-19`) says an adapter + trunk + head of one layout "is a plain MLP too (see
+11. The module docstring of `networks.py` (`:1-19`) says an adapter + trunk + head of one layout "is a plain MLP too
+    (see
     animus.export)"; with the camera and the GRU this is no longer true, and `export.py:440-449` refuses a camera
     checkpoint. No live model can be exported to the realm format (the realm is parked).
 12. The only test pinning M2's key set is the golden file; any intended shape change must regenerate it with
@@ -301,5 +304,6 @@ block (`trainer.py:620`).
   `test_recurrent.py::test_fused_gru_*`, `test_update_on_two_streams...`).
 - The by-name loading rules (what a checkpoint may lack) are in the networks document ("Loading").
 - Things to decide before refactoring: whether to keep `seat_sets`/`entity_attention`/`SharedInputDense`-adjacent
-  code (off in every live yaml, principle 17 "dead code is deleted"); whether `map_vin` stays; whether SIL stays given it
+  code (off in every live yaml, principle 17 "dead code is deleted"); whether `map_vin` stays; whether SIL stays given
+  it
   is impossible with a camera.
