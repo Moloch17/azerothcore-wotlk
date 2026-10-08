@@ -17,9 +17,9 @@ All statements are about the tree at commit `bd32b9dc8` (branch `forge`). Paths 
 | `Curriculum/StageScenario.cpp` | 5192 | The one Scenario implementation: construction, resets, builds, per-decision flow, observation, rewards, stage.json (split in Parts C1/C2). |
 | `Curriculum/StageScenario.h` | 513 | Class declaration of StageScenario and its public helpers. |
 | `Curriculum/StageState.h` | 684 | Per-env and per-seat state structs and constants of the stage scenario. |
-| `Curriculum/Stages/StageDefinition.h` | 331 | Data model: StageDefinition, ArenaDefinition, enums, authored-ground structs, registry API. |
-| `Curriculum/Stages/Stages.cpp` | 1393 | The twelve live stage definitions, five authored ground tables, validation, registry, arena draw weights. |
-| `Scenario.h` | 231 | Abstract Scenario interface, ScenarioSpec and ExploreStart. |
+| `Curriculum/Stages/StageDefinition.h` | 324 | Data model: StageDefinition, ArenaDefinition, enums, authored-ground structs, registry API. |
+| `Curriculum/Stages/Stages.cpp` | 1334 | The ten live stage definitions, five authored ground tables, validation, registry, arena draw weights. |
+| `Scenario.h` | 218 | Abstract Scenario interface and ScenarioSpec. |
 | `Scenario.cpp` | 45 | CreateScenario / ScenarioNames over the curriculum registry. |
 | `StageSettings.h` | 86 | Host-to-scenario settings struct. |
 | `SpawnArea.h` | 37 | Declarations for clearing database-spawned creatures round a bot. |
@@ -36,9 +36,9 @@ StageState.h and `StageScenario.cpp` lines 1-2631; Part C2 `StageScenario.cpp` l
 
 ## Part A. Stage definitions (`Curriculum/Stages/`)
 
-`StageDefinition.h` (331 lines) declares the data model; `Stages.cpp` (1,393 lines) holds the twelve live definitions,
+`StageDefinition.h` (324 lines) declares the data model; `Stages.cpp` (1,334 lines) holds the ten live definitions,
 the authored ground tables they use, the validation, and the registry. Nothing in this directory runs at episode time
-except the helpers `ArenaDrawWeights`, `EvaluatesDrills` and the two `SeatCount` members; everything else is read once
+except the helpers `ArenaDrawWeights` and the two `SeatCount` members; everything else is read once
 at startup by `CurriculumStages()` and then treated as immutable (a function-local `static const`, `Stages.cpp:1354`).
 
 ### A.1 Layout of `Stages.cpp`
@@ -55,12 +55,12 @@ at startup by `CurriculumStages()` and then treated as immutable (a function-loc
 | 443-588 | `DeadminesSites()`: 4 `InteractSite`s (factory: door 13965, lever 101831; foundry: 16399 / 101834; mast_room: 16400 / 101832; iron_clad: door 16397, opener 16398 = the cannon, `Key` 5397 = Defias Gunpowder) |
 | 592-595 | `DeadminesMiddle()`: `{-150, -576, 19.32, 3.14}`, the interact stage's first spawn |
 | 599-602 | `RagefireEntrance()`: `{3.81, -14.82, -17.84, 4.39}` |
-| 612-616 | `DungeonBlocks()`: the block list of the four dungeon stages |
+| 612-616 | `DungeonBlocks()`: the block list of the dungeon stages |
 | 621 | `DUNGEON_STAND_IN_SHARE = 20` (percent) |
-| 623-1025 | `Definitions()`: the twelve `StageDefinition`s, in training order |
+| 623-1025 | `Definitions()`: the ten `StageDefinition`s, in training order |
 | 1028-1186 | `ArenaProblem()`: per-arena validation |
 | 1189-1280 | `Problem()`: per-stage validation |
-| 1283-1342 | out-of-line `ArenaDefinition::SeatCount`, `EvaluatesDrills`, `ArenaDrawWeights`, `StageDefinition::Has`, `SeatCount` |
+| 1283-1342 | out-of-line `ArenaDefinition::SeatCount`, `ArenaDrawWeights`, `StageDefinition::Has`, `SeatCount` |
 | 1345-1383 | `LeftOut()`, `CurriculumStages()`, `CurriculumProblems()` |
 | 1386-1393 | `FindStage()` |
 
@@ -94,7 +94,6 @@ Kind, Height, Radius), `SightPair` (`:124`: Spawn, Object, Corner; indexes into 
 | `Against` [Instance] | the opposition; the default is `Instance`, so an arena that forgets it is read as a dungeon run |
 | `PartyGroup` [false] | the seats form a core group (PartyEncounter); validated to dungeon-wing or roles arenas only (`:1049`) |
 | `Instance`, `InstanceRow` [None, -1] | which ladder and row an Instance arena runs; the row indexes `InstanceLadderRows(Wing)` (`InstanceBosses.cpp:102`) |
-| `PullDrill` | one pull a run (D1); evaluated only when every training arena is a drill (`EvaluatesDrills`) |
 | `EvalOnly` | never drawn in training or in an ordinary evaluation; only an evaluation pinned to it (`PinEvaluationArena`, `StageScenario.cpp:4624`) plays it |
 | `PartySize` [0] | learned seats of a party; 0 = a whole group (`GROUP_SEATS` = 5). M4 sets 4 (`GROUP_MEMBERS`) |
 | `EpisodeSeconds` [0] | 0 = `StageSettings::EpisodeSeconds` |
@@ -108,7 +107,6 @@ Kind, Height, Radius), `SightPair` (`:124`: Spawn, Object, Corner; indexes into 
 | `Combat`, `Ally` | CombatDrill, and a passive friend the creatures go for first (`guard`) |
 | `Roles` | RolesDrill |
 | `RespawnAtEntrance` | a death rises at the instance entrance after `Respawn.DelayMs` (EntranceRespawn; see [cpp-encounters.md](cpp-encounters.md)) |
-| `CorridorPacks` [0] | Wing: a run is this many packs in route order (G2: 4); 0 = the whole dungeon |
 | `StandInShare` [-1] | percent of training runs with the "human" stand-in; -1 keeps the tuning key `StandIn.Share`; per-arena conf `Arena.<stage>.<arena>.StandInShare`, clamped to -1..100 (`StageScenario.cpp:496-499`) |
 | `LevelFirst`, `LevelLast` | Wing: the level band of the runs before the ladder's lift (Deadmines 17-20); 0 = the dungeon finder's |
 
@@ -119,16 +117,12 @@ C++ reader; python shows it only in test fixtures and `apps/forge/tools/stage_js
 learner code reads `suffix` from a live `stage.json`); `Extends`; `Merges`; `Summary` (written as `summary`,
 `StageScenario.cpp:1257`); `Blocks`; `Arenas`; `MapId`; `SpawnPoints`; `MinLevel` (`StageScenario.cpp:2164`); the focus band (`FocusLevelFirst`,
 `FocusLevelLast`, `FocusChance`, `StageScenario.cpp:2194-2206`); `Level` (`StageScenario.cpp:2204`: every character of
-the stage at this level, raised to the class minimum); `GoalPlaces` [`SeenOnly`; overridden by conf
-`<prefix>Stage.<name>.GoalPlaces`, read at `StageScenario.cpp:509-510`, where the config value `1` means seen only and
-anything else seen and layout]. Members `Has(block)`, `SeatCount()` (the largest arena's), `AnyArena(pred)`.
+the stage at this level, raised to the class minimum). Members `Has(block)`, `SeatCount()` (the largest arena's), `AnyArena(pred)`.
 
-Free functions. `EvaluatesDrills(arenas)` (`Stages.cpp:1295`) is true when at least one non-EvalOnly arena exists and
-every non-EvalOnly arena is a `PullDrill`. `ArenaDrawWeights(arenas, weights, finals, evaluating, progress)` (`:1309`)
+Free functions. `ArenaDrawWeights(arenas, weights, finals, evaluating, progress)` (`:1309`)
 returns `lround(100 * (from + (to - from) * along))` per arena, so the weights are integer percent-scaled; `along` is
 1 when evaluating, else `clamp(progress, 0, 1)`; `from` and `to` come from the passed vectors, falling back to the
-definition's `Weight` and then to `from`. An arena gets 0 if it is `EvalOnly`, or if evaluating a `PullDrill` arena in
-a stage that does not `EvaluatesDrills`. Callers: `StageScenario.cpp:678`; `DungeonStagesTest.cpp:191,229-232`.
+definition's `Weight` and then to `from`. An arena gets 0 if it is `EvalOnly`. Callers: `StageScenario.cpp:678`; `DungeonStagesTest.cpp:191,229-232`.
 
 ### A.3 Registry and validation
 
@@ -163,8 +157,7 @@ earlier valid stage (`:1224-1234`), which gives the same effect.
 - instance and ladder go together; the row is in range; an Instance arena needs the `Pack` block and Party seats;
 - `PartyGroup` needs `PartyFrames` and must be a dungeon group or a roles drill group; `ProperParty` only for a drill
   group; `DrillRole` <= 3 and only with `ProperParty`; `InstanceRow >= 0` only for Instance arenas;
-- `EvalOnly` never with `PullDrill`; corridor and level band only for Wing; a corridor never with a drill or
-  held-out; the level band is both ends or neither, in order; `StandInShare` <= 100 and only for Party seats;
+- the level band only for Wing; the level band is both ends or neither, in order; `StandInShare` <= 100 and only for Party seats;
 - Seek: solo, needs Move and Vision, no Compass, rooms, objects and a positive radius;
 - Sight: solo, no rooms, Move and Compass and Vision, objects, at least 2 spawn points, every `SightPair` indexes two
   different `SpawnPoints`;
@@ -184,9 +177,9 @@ Not checked: that some trained arena has `Weight > 0` (all-held-out is caught, a
 `Suffix` or `Summary` uniqueness, `EpisodeSeconds` ranges, `FocusLevelFirst <= FocusLevelLast`, `Level` against class
 minima, and that a Wing row fits a `LevelFirst` band.
 
-### A.4 The twelve live definitions, field by field
+### A.4 The ten live definitions, field by field
 
-All twelve use the default `GoalPlaces = SeenOnly` (`InDefaultQueue` was deleted: every stage was in the queue); order is that of `Definitions()`
+Order is that of `Definitions()`
 (training order). "Eff. blocks" are after the `Entities` insertion.
 
 | Stage (`Stages.cpp` line), suffix | Extends / Merges | Eff. blocks (layout order) | Map, spawn, level fields |
@@ -199,10 +192,8 @@ All twelve use the default `GoalPlaces = SeenOnly` (`InDefaultQueue` was deleted
 | `combat2_packs` (825) `_packs` | combat1_fight | as combat1 | same |
 | `combat3_survive` (850) `_survive` | combat2_packs | Core, Move, Duel, Pet, Gauntlet, Vision, Entities, Map, Sight, Combat, Goal | same |
 | `group1_roles` (889) `_roles` | combat3_survive; merges `move4_follow` | Core, Move, Duel, Pet, Gauntlet, Vision, Entities, Map, Sight, PartyFrames, Combat, Goal | same |
-| `group2_corridor` (936) `_corridor` | group1_roles | `DungeonBlocks()`: Core, Move, Duel, Pet, Pack, Gauntlet, Vision, Entities, Map, Sight, PartyFrames, Combat, Goal | no stage map: each arena's row fixes it |
-| `dungeon1_pulls` (961) `_pulls` | group2_corridor | DungeonBlocks | same |
-| `dungeon2_ragefire` (984) `_ragefire` | dungeon1_pulls | DungeonBlocks | same |
-| `dungeon3_deadmines` (1007) `_deadmines` | dungeon2_ragefire | DungeonBlocks | same |
+| `dungeon2_ragefire` (940) `_ragefire` | group1_roles | `DungeonBlocks()`: Core, Move, Duel, Pet, Pack, Gauntlet, Vision, Entities, Map, Sight, PartyFrames, Combat, Goal | no stage map: each arena's row fixes it |
+| `dungeon3_deadmines` (963) `_deadmines` | dungeon2_ragefire | DungeonBlocks | same |
 
 `LiveLayoutPinTest.cpp` with `LiveLayoutPin.golden.inc` pins every live stage's resulting layout, so a change to a list
 or to the insertion rule shows there (see [cpp-layout-character.md](cpp-layout-character.md) and
@@ -230,9 +221,6 @@ Arenas (`name (weight)`; fields exactly as in `Definitions()`):
 | group1_roles | `heal_keep` (2) | Roles, Party | 300 | same, `DrillRole 2`, `Keep` |
 | group1_roles | `damage_discipline` (2) | Roles, Party | 240 | same, `DrillRole 3`, `Focus` |
 | group1_roles | `pull` (2) | Roles, Party | 360 | same, `DrillRole 1`, `Pull` |
-| group2_corridor | `ragefire` (1) | Instance, Party | 900 | `PartyGroup`, `Wing`, `InstanceRow 0`, `CorridorPacks 4`, `StandInShare 20` |
-| group2_corridor | `deadmines` (1) | Instance, Party | 1200 | `Wing`, row 1, `CorridorPacks 4`, share 20, levels 17-20 |
-| dungeon1_pulls | `ragefire` (1) | Instance, Party | 180 | `Wing`, row 0, `PullDrill`, share 20 |
 | dungeon2_ragefire | `dungeon` (1) | Instance, Party | 7200 | `Wing`, row 0, share 20 |
 | dungeon2_ragefire | `heldout` (0) | Instance, Party, `EvalOnly` | 10800 | `Wing`, row 2 (Wailing Caverns) |
 | dungeon3_deadmines | `dungeon` (1) | Instance, Party | 14400 | `Wing`, row 1, share 20, levels 17-20 |
@@ -243,14 +231,13 @@ not 5. `PartyGroup` is set on G1 and the dungeon arenas only; M4 forbids it.
 
 ### A.5 Overrides that act on a definition
 
-Keys are `<TuningPrefix>...` with the prefix `AnimusForge.Curriculum.` on the forge: `Stage.<name>.GoalPlaces`
-(`StageScenario.cpp:509`), `Arena.<stage>.<arena>.Weight`, `.WeightFinal` (`:489-494`), `.StandInShare` (`:496-499`).
+Keys are `<TuningPrefix>...` with the prefix `AnimusForge.Curriculum.` on the forge: `Arena.<stage>.<arena>.Weight`, `.WeightFinal` (`:489-494`), `.StandInShare` (`:496-499`).
 The complete key table is [cpp-tuning-keys.md](cpp-tuning-keys.md). The host reads `AnimusForge.Stage.<name>.*`
 separately (not a definition field; see [config-keys.md](config-keys.md)).
 
 ### A.6 Tests
 
-`DungeonStagesTest.cpp` (dungeon stage shape, draw weights, seen-only goal places, stand-in), `RolesStageTest.cpp`,
+`DungeonStagesTest.cpp` (dungeon stage shape, draw weights, stand-in), `RolesStageTest.cpp`,
 `InteractStageTest.cpp`, `SeekEncounterTest.cpp`, `SightEncounterTest.cpp`, `PartyFollowTest.cpp`,
 `CombatPerceptionTest.cpp` (each asserts `CurriculumProblems().empty()`; the last also the focus band),
 `LiveLayoutPinTest.cpp`, `CompassBlockTest.cpp`, and the three data tests above. The python side: see
@@ -263,9 +250,7 @@ separately (not a definition field; see [config-keys.md](config-keys.md)).
   structs would remove most of the 160 lines of `ArenaProblem`.
 - The default `Against = Instance` is a trap for a new arena.
 - `Suffix` and `Summary` have no C++ reader beyond the JSON dump.
-- `WeightFinal` and a non-default `GoalPlaces` are used by no
-  live
-  stage (plumbing and tests only).
+- `WeightFinal` is used by no live stage (plumbing and tests only).
 - PartyFollow caps `PartySize` at 4 while the generic check allows 5 (`:1134`).
 - The block-order rules (Sight after Entities, Combat after Sight, Map after Vision) are enforced here only; the
   encoders assume them.
@@ -297,9 +282,7 @@ implementation is `Curriculum::StageScenario` (grep of `public Scenario` over th
 (`ResetsStayOnMap`, `AgentLayouts`/`AgentKinematics`) say they run "on the thread updating the env's map", so the file
 comment is only partly true: `ResetOnMapThreads` (`StageSettings.h`) moves resets to the map threads.
 
-**Types.** `ExploreStart {Arena, Tier, Packs[4], Yard, Weight}` (`Scenario.h:40-47`): a Go-Explore start for a wing run
-(arena, ladder row, 4 words of cleared-pack bits "24 bits a word, route order", party yard / 16, weight).
-`LayoutSpec {Name, ObsDim, NumActions}`. `ScenarioSpec {AgentsPerEnv, ObsDim, StateDim, NumActions, EpisodeInfoDim,
+**Types.** `LayoutSpec {Name, ObsDim, NumActions}`. `ScenarioSpec {AgentsPerEnv, ObsDim, StateDim, NumActions, EpisodeInfoDim,
 GoalCount, LongestEpisodeSeconds, ImageBytes, LookHeads, MapBytes, Layouts}` (`:61-80`): the tensor shapes the learner
 gets in SPEC ([protocol.md](protocol.md)). `ObsDim` and `NumActions` are the largest layout's; every agent's row is
 padded to it.
@@ -330,7 +313,6 @@ padded to it.
 | `SetLayoutWeights`, `SetStageProgress`, `SetShapingScale`, `SetCostScale` | no-ops | learner's WEIGHTS and PROGRESS messages (protocol 18/19) |
 | `PinEvaluationArena(pin)` | `pin == 0` | the held-out arena of the next evaluation (index + 1); false if it is not held out |
 | `SetStandIn(bool)` | no-op | MODE_FLAG_STAND_IN: play the stand-in row with a frozen partner |
-| `SetExploreStarts(share, starts)` | no-op | Go-Explore table (EXPLORE_STARTS) |
 | `TakeClusterTally`, `AddClusterTally`, `ClusterRung`, `FollowClusterRung`, `ClusterLadderCollapsed` | empty / -1 | the cluster's shared dungeon ladder; see [cpp-encounters.md](cpp-encounters.md) (wing ladder) |
 | `Teardown(env)` | pure | once at shutdown |
 
@@ -340,10 +322,8 @@ Free functions: `CreateScenario(name, settings)` returns `StageScenario` for any
 
 Reviewer notes: the interface was designed for several scenarios ("Adding a standalone scenario = implementing Scenario,
 one branch in CreateScenario", `Scenario.cpp:26-27`) but now has exactly one implementation; a good deal of it
-(`SetExploreStarts`, the cluster tally calls, `FilmedRole`) is wing-ladder or stand-in plumbing that exists only for
-`StageScenario`. The comment on `LayoutSpec` ("One kind of agent: its observation features and actions (a class/role,
-say)") sits above `ExploreStart` (`:36-40`), the `ExploreStart` comment's doc following it, i.e. the doc comment of
-`LayoutSpec` is attached to the wrong struct.
+(the cluster tally calls, `FilmedRole`) is wing-ladder or stand-in plumbing that exists only for
+`StageScenario`.
 
 ### B.2 `StageSettings.h` (86 lines)
 
@@ -359,7 +339,7 @@ points override); `Level` 0 (0 = the curriculum's random levels); `ContinentRepl
 where `stage.json` and layout manifests go); `EventsLog` (the run's `events.log`, appended, empty = nowhere). Which
 conf keys fill these is in [config-keys.md](config-keys.md); the keys under `TuningPrefix` are in
 [cpp-tuning-keys.md](cpp-tuning-keys.md). Note the defaults here (`SpawnMapId` 560, `Level` 0) matter
-only for a stage that has no map of its own; none of the twelve live stages is such.
+only for a stage that has no map of its own; none of the ten live stages is such.
 
 ### B.3 `SpawnArea.h/.cpp` (37 + 66 lines)
 
@@ -459,7 +439,7 @@ Where the 5,192 lines of `StageScenario.cpp` go (start lines come from a grep of
 | 2821-3109 | `StartMover`, `SubTick`, `MayLog`, `WatchFall`, `TrackController`, `CourseKink`, targets | later part |
 | 3110-3531 | `ViewSeat`, `TrackTarget`, `ApplySeatAction`, `Observe`, `AgentLayouts/Presence/Kinematics` | later part |
 | 3532-4589 | `ObserveSeat`, `Paced`, `Press`, goal gap/potential/value, goal signals, `JudgePress`, `LogDeath`, `SettleIntent` | later part |
-| 4590-4721 | explore starts, `PinEvaluationArena`, `SetShapingScale`, `SetCostScale`, `Reward`, `TrackSeatStep` | later part |
+| 4590-4721 | `PinEvaluationArena`, `SetShapingScale`, `SetCostScale`, `Reward`, `TrackSeatStep` | later part |
 | 4722-5192 | hazards, motion, interruptible casts, support, `SeatReward`, `WriteState`, `EpisodeInfo`, `Teardown` | later part |
 
 Constants used throughout (`Layout/Block.h:103-110`, `Character/ClassProfile.h:33`, `Bot/BotAccounts.h:35`):
@@ -498,16 +478,16 @@ Scenario overrides (called by the env pool and the forge): `Name`, `IsTerminal`,
 `EpisodeInfo`, `EpisodeInfoNames`, `SetLayoutWeights`, `Teardown`, `Playable`, `CharactersReused`, `ResetsStayOnMap`,
 `EvaluationPairs`, `FilmedRole`, `TakeClusterTally`, `AddClusterTally`, `ClusterRung`, `FollowClusterRung`,
 `ClusterLadderCollapsed`. The private overrides (`StageScenario.h:342-347`) are `SetStageProgress` (inline, stores the
-atomic `_stageProgress`), `SetShapingScale`, `SetCostScale`, `PinEvaluationArena`, `SetStandIn`, `SetExploreStarts`;
+atomic `_stageProgress`), `SetShapingScale`, `SetCostScale`, `PinEvaluationArena`, `SetStandIn`;
 they are reached through the base-class virtuals, so the `private` is cosmetic.
 
 For the encounters (accessors): `Stage()`, `Arena(env)`, `Uses(env, encounter)`, `ActiveEncounters(env)`, `Tuning()`,
-`GoalPlaces()`, `ShapingScale()`, `SpawnPoint()`, `SpawnGroundFor(env)`, `SpawnPointFor(env)`, `EnvPhase(env)`
+`ShapingScale()`, `SpawnPoint()`, `SpawnGroundFor(env)`, `SpawnPointFor(env)`, `EnvPhase(env)`
 (static), `ReplicaOf(env)`, `SpawnMapId()`, `EpisodeMapId(env)`, `SeatCount()`, `OwnerAgent()`, `CastOwnerActive(env)`,
 `StandInSeat(env)`, `StandInShare(arena)`, `StandInLeads(env)`, `BuildOwnerSeat`, `ReleaseOwnerSeat`,
 `DecisionScale()`, `WingRungNow()`, `NoteWingRun`, `AppendRunEvent`, `DecisionMs()`, `Layouts()`, `CastingCount()`,
-`Data(env)`, `SeatBot`, `SeatBotInWorld`, `SeatTarget`, `PartyTank`, `PrepareFighter`, `DeadForGood`, `SpecName`,
-`DrawExploreStart(arena, rows)`. (`StandInSeat`, `StandInShare`, `StandInLeads`, `DrawStandIn` are defined in
+`Data(env)`, `SeatBot`, `SeatBotInWorld`, `SeatTarget`, `PartyTank`, `PrepareFighter`, `DeadForGood`, `SpecName`.
+(`StandInSeat`, `StandInShare`, `StandInLeads`, `DrawStandIn` are defined in
 `Encounters/StandInSeat.cpp`, not in `StageScenario.cpp`.)
 
 Static movement helpers: `StartMover`, `TrackController`, `CourseKink` (unit-tested:
@@ -543,19 +523,16 @@ Static movement helpers: `StartMover`, `TrackController`, `CourseKink` (unit-tes
 | `_stageProgress`, `_shapingScale`, `_costScale` | learner-driven scalars | `std::atomic<float>`, relaxed |
 | `_evaluationArena` | pinned arena index + 1, 0 = unpinned | atomic |
 | `_standIn` | whether the learner plays a stand-in row (`MODE_FLAG_STAND_IN`) | atomic |
-| `_exploreLock`, `_exploreShare`, `_exploreStarts` | explore starts | mutex |
 | `_wingLadder`, `_wingLadderLock` | the dungeon ladder and its mutex | the mutex guards every use in `NoteWingRun`, `TakeClusterTally`, `FollowClusterRung`; `WingRungNow()` and `ClusterLadderCollapsed()` read the ladder without it (`StageScenario.h:231, 242`) |
 | `_wingFollower`, `_wingTallyProbes/Others/Rung` | cluster worker state | under `_wingLadderLock` |
 | `_partyFollow`, `_party` | raw pointers into `_encounters` | set in the constructor |
 
 ### Observed issues (StageScenario.h)
 
-- Misplaced doc comments: the comment about `ShapingScale` (`StageScenario.h:165-166`) sits above `GoalPlaces()`; the
+- Misplaced doc comments: the comment about `ShapingScale` (`StageScenario.h:165-166`) sits above the next accessor; the
   comment about `SpawnPointFor` (171-173) sits above `SpawnGroundFor`; a doc comment for `SettleIntent`-style judging
   (376-379) is above `IsPartyTank`; 385-387 above `GoalGap`; 415-417 above `TrackInterruptibleCast`. Several private
   methods are indented wrongly (418-425: 4 spaces instead of 8). Cosmetic.
-- `StageScenario.h:156-158` `DrawExploreStart` takes `rows` but the doc and the later definition (4604) decide its
-  meaning; see the later part.
 
 ## S1.2 StageState.h: per-env and per-seat state
 
@@ -722,29 +699,24 @@ stage start. In order:
     `...StandInShare` (default `arena.StandInShare`, clamped -1..100); episode length
     `(arena.EpisodeSeconds ? : settings.EpisodeSeconds) * 1000`; `longestMs` is the maximum and becomes
     `_spec.LongestEpisodeSeconds` (521). Read with `sConfigMgr->GetOption(..., false)`.
-14. `_goalPlaces` (509-511): key `<prefix>Stage.<stage>.GoalPlaces`, default `_stage.GoalPlaces`; a value equal to
-    `int32(SeenPlaces::Source::SeenOnly)` selects SeenOnly, anything else `SeenAndLayout`. The header comment on the
-    stage field says 0 = seen and layout, 1 = seen only (`StageDefinition.h:302`); UNVERIFIED that
-    `SeenOnly == 1` in `SeenPlaces.h`.
-15. Weight fix-ups (513-519): all final weights 0 -> final = initial; all weights 0 -> error log and every weight 1.
-16. `ConsumablePool::Instance()` is touched so the pool exists before play (523).
-17. Episode info (525-573): `AddCoreEpisodeInfo()`, `AddStandInEpisodeInfo()` (in `StandInSeat.cpp`), each
+14. Weight fix-ups (513-519): all final weights 0 -> final = initial; all weights 0 -> error log and every weight 1.
+15. `ConsumablePool::Instance()` is touched so the pool exists before play (523).
+16. Episode info (525-573): `AddCoreEpisodeInfo()`, `AddStandInEpisodeInfo()` (in `StandInSeat.cpp`), each
     encounter's `AddEpisodeInfo` in reward order; then a `reward_<term>` column for every term any encounter pays
     (skipping names already present); then the fixed scenario-paid terms Repeat, Jitter, Aimless, Effort, Fidget,
     SelfHealing, GoalReached, GoalSwitch, Hazard, HealingMana, CombatClock; then `vision_render_width` (vision block
     only) and `score_outcome` (`Rewards.Score()` of the seat, 0 for an agent at or above `_seatCount`). The column
     ORDER is the order of these calls.
-18. `_spec.EpisodeInfoDim = _info.Size()`, `_spec.GoalCount = GOAL_JOINT_COUNT` (575-576).
-19. When `settings.LayoutsDir` is non-empty, `WriteStageFiles(settings)` (578-579).
-20. Debug logs (581-586).
+17. `_spec.EpisodeInfoDim = _info.Size()`, `_spec.GoalCount = GOAL_JOINT_COUNT` (575-576).
+18. When `settings.LayoutsDir` is non-empty, `WriteStageFiles(settings)` (578-579).
+19. Debug logs (581-586).
 
 Contracts: a new encounter has to be added in three places: the `add` (405-456), the `initializer_list` of 460 and the
 `uses` lambda (469-477). `apps/forge/tools/sim_metrics.py` reads these `add(std::make_unique<...>)` lines and the
 `AnyArena(...)` conditions as text (header of that script, lines 14-17), so reformatting this block can break
 `apps/forge/python/tests/test_metric_names.py`.
 
-Config read directly: `<prefix>Arena.<stage>.<arena>.Weight|WeightFinal|StandInShare` and
-`<prefix>Stage.<stage>.GoalPlaces`;
+Config read directly: `<prefix>Arena.<stage>.<arena>.Weight|WeightFinal|StandInShare`;
 everything else through `CurriculumTuning::Load`, `Vision::Current()` and `Vision::MapCurrent()`.
 
 ### Observed issues (constructor)
@@ -776,7 +748,7 @@ everything else through `CurriculumTuning::Load`, `Vision::Current()` and `Visio
   learner's `eval.heldout`) returns `pinned - 1`; (2) a single-arena stage returns 0 unless that arena is `EvalOnly`;
   (3) otherwise `ArenaDrawWeights(arenas, weights, finalWeights, evaluating, progress)` (in the stage definition part;
   per the comment at 675-677 it interpolates Weight to WeightFinal over `_stageProgress`, an evaluation uses the final
-  weights, a held-out arena gets none, a pull drill is dropped from an evaluation except in a stage of drills;
+  weights, a held-out arena gets none;
   UNVERIFIED
   by reading that function, see [cpp-stagescenario.md](cpp-stagescenario.md)); (4) all weights 0 returns the first
   non-`EvalOnly` arena; (5) a weighted `urand` pick from the world thread's engine, so an evaluation's draw
@@ -867,7 +839,7 @@ failure, 1248-1251) and `stage.json`. Every write goes through `WriteIfChanged`.
 | `stage`, `suffix`, `extends`, `summary` | from `StageDefinition` | 1255-1258 |
 | `seats` | `_seatCount` | 1259 |
 | `blocks` | the stage's block names in layout order | 1261-1263 |
-| `arenas[]` | per arena: `name`, `weight` (the configured initial weight), `seats`, `episode_seconds`, `plan` ("solo" or "party"), `eval_only`, `pull_drill`, `corridor_packs`, `stand_in_share` (resolved), `drill_seat` (0 if `DrillRole` else -1) | 1266-1286 |
+| `arenas[]` | per arena: `name`, `weight` (the configured initial weight), `seats`, `episode_seconds`, `plan` ("solo" or "party"), `eval_only`, `stand_in_share` (resolved), `drill_seat` (0 if `DrillRole` else -1) | 1266-1286 |
 | `cast[]` | with `_castOwner`: `{agent: OwnerAgent(), name: "leader"}` (or "owner" when `_partyFollow` is null) | 1289-1296 |
 | `seed_chain` | the `Extends` ancestors, closest first, via `FindStage` | 1299-1301 |
 | `merges` | the stage's `Merges` | 1304-1306 |
@@ -875,7 +847,7 @@ failure, 1248-1251) and `stage.json`. Every write goes through `WriteIfChanged`.
 | `models` | class name -> model name | 1315-1317 |
 | `layouts{class}` | `obs_dim`, `num_actions`, `action_names`, `spec_names`, `spec_roles` ("tank" / "healer" / "damage" by `StatProfile`), `sets` (`DescribeSeatSets`), `blocks[]` | 1320-1403 |
 | `episode_info` | the column names in order | 1405-1407 |
-| `episode_categories` | name lists for categorical columns: `drill_pack` (pull-drill arenas: `pack_1..pack_<EXPLORE_PACKS>`), `seek_room`, `seek_object`, `interact_site`, `interact_object`, `sight_object`, `objective_corner` (`["in_sight","corner"]`) | 1411-1453 |
+| `episode_categories` | name lists for categorical columns: `seek_room`, `seek_object`, `interact_site`, `interact_object`, `sight_object`, `objective_corner` (`["in_sight","corner"]`) | 1411-1453 |
 | `reward_terms` | every `RewardTerm` name -> "outcome", "cost" or "shaping" | 1457-1466 |
 | `goals` | `kinds`, `accepts` (kind by target 0/1 matrix), `targets`, `block` = "goal", `columns` (the goal block's column offsets), `slots_on_wire` | 1471-1503 |
 | `tuning` | `_tuning.Json()`, the effective tuning | 1504 |
@@ -1188,7 +1160,7 @@ Rebirth standing its target up every decision.
    order), the `RewardTerm` order and the text patterns `sim_metrics.py` parses (its header, lines 14-20).
 2. `Data(env)` is unchecked: `_data.size() == settings.Envs` is assumed.
 3. Anything added to `SeatState` needs a decision in `ResetEpisode` (S1.2).
-4. The arena keys and `GoalPlaces` are read in the constructor with `sConfigMgr->GetOption(..., false)`, outside
+4. The arena keys are read in the constructor with `sConfigMgr->GetOption(..., false)`, outside
    `CurriculumTuning`, so they are not in its `Visit` list and probably not in the conf.dist agreement test
    (UNVERIFIED; see [cpp-tuning-keys.md](cpp-tuning-keys.md)).
 5. `stage.json` `format` does not identify the schema (S1.7).
@@ -1211,7 +1183,7 @@ Nothing in this half reads `stage.json`, builds an episode or draws an arena. It
 runtime**: apply the learner's actions, tick the player controller, build each seat's observation, judge presses, pay
 rewards, write the critic state and the episode-info row. The evaluation modes, the cluster rung followers, the
 stand-in draw and the wing-ladder host stepping are NOT in this half; the only traces here are `PinEvaluationArena`
-(4622), `SetExploreStarts`/`DrawExploreStart` (4590-4620), the stand-in column of `AgentPresence` (3475) and the
+(4622), the stand-in column of `AgentPresence` (3475) and the
 shaping/cost scale setters (4637-4651). See S1 and `cpp-encounters.md` (InstanceEncounter, WingLadder) for the rest.
 
 | Lines | Unit | Role |
@@ -1242,7 +1214,6 @@ shaping/cost scale setters (4637-4651). See S1 and `cpp-encounters.md` (Instance
 | 4027-4419 | `JudgePress` | per-press intent verdicts (serves, neutral, aimless) |
 | 4421-4443 | `LogDeath` | one capped log line per seat death |
 | 4445-4588 | `SettleIntent` | step verdicts, jitter, fidget, needless move, and the prices of the noise terms |
-| 4590-4620 | `SetExploreStarts`, `DrawExploreStart` | Go-Explore start cells for wing runs |
 | 4622-4651 | `PinEvaluationArena`, `SetShapingScale`, `SetCostScale` | learner-driven knobs |
 | 4653-4700 | `Reward` | per-decision entry for rewards |
 | 4702-4906 | `TrackSeatStep`, `TrackHazards`, `TrackMotion`, `TrackInterruptibleCast`, `TrackSupport`, `GroupHealer`, `GroupTank` | per-step trackers |
@@ -1270,8 +1241,8 @@ So an observation always follows the reward step of the same decision. The goal 
 the reward row of the decision just rewarded (S2.8, `StepReward`).
 
 Threading: calls above run on the env's map thread (or the world thread on the non-map path, `onMapThread`). The only
-cross-thread state in this half is the atomics `_shapingScale`, `_costScale`, `_evaluationArena`, the `_exploreLock`
-mutex and the `_logged` atomic counters. The learner's scalars arrive on the wire thread (`AnimusForge.cpp:2630-2775`).
+cross-thread state in this half is the atomics `_shapingScale`, `_costScale`, `_evaluationArena`
+and the `_logged` atomic counters. The learner's scalars arrive on the wire thread (`AnimusForge.cpp:2630-2775`).
 
 ## S2.1 Resurrection offers: `AcceptResurrections`, `DeadForGood` (2570-2644)
 
@@ -1654,15 +1625,8 @@ tank_mode_off_role, cast_facing, cast_range, cast_sight, cast_moving, cast_power
   explain the rules but no longer name live stages.
 - The `judgeFor` lambda is about 220 lines, captures everything by reference, and has no unit test.
 
-## S2.12 Explore starts, evaluation pin, shaping and cost scales (4590-4651)
+## S2.12 Evaluation pin, shaping and cost scales (4590-4651)
 
-- **`SetExploreStarts(share, starts)`** (4590): the wire thread hands in Go-Explore start cells for wing runs
-  (`MsgType::ExploreStarts`, `AnimusForge.cpp:2695-2713`, bounded by `MAX_EXPLORE_STARTS` and a size check). It clamps
-  `share` to [0,1] (NaN to 0), drops cells with a non-positive or non-finite weight, and swaps the set under
-  `_exploreLock` (4595). One `LOG_INFO` the first time the set goes from empty to non-empty.
-- **`DrawExploreStart(arena, rows)`** (4604, const, called from `Encounters/InstanceEncounter.cpp:467` on the map
-  thread): `frand(0,1) >= _exploreShare` gives nullopt (4607); else a weighted pick among cells with `Arena == arena &&
-  Tier < rows` (4615). It uses `frand`, the process-wide generator, not the env's seeded one.
 - **`PinEvaluationArena(pin)`** (4622): `pin == 0` means the stage's own arenas; otherwise `pin - 1` must index an arena
   with `EvalOnly` (the held-out arena, 4624), else `LOG_ERROR` and `false`, which makes the learner's MODE refused
   (`AnimusForge.cpp:2764-2765`). Stored in the atomic `_evaluationArena` (4630), read by S1's draw. Only an evaluation
@@ -1813,18 +1777,15 @@ at
 9. `StageScenario.cpp:4993 vs 5009`: `PartyEncounter::Reward` clears `StepRevivedAlly` before `GoalHeld` reads it, so a
    Resurrect goal never matches in party arenas (derived from call order, no test).
 10. `StageScenario.cpp:3749-3750` region (end of `ObserveSeat`, 3716): a stray blank line before the closing brace.
-11. `StageScenario.cpp:4607, 4615`: `DrawExploreStart` uses `frand`, not the env's seeded generator; a Go-Explore start
-    is
-    not reproducible from the episode seed. UNVERIFIED: whether `ReplayTest.cpp` covers wing runs.
-12. `StageScenario.cpp:2892-2896`: the `_logged` caps are never reset; a long process stops logging deaths and voids
+11. `StageScenario.cpp:2892-2896`: the `_logged` caps are never reset; a long process stops logging deaths and voids
     after
     8 lines per layout, across stage runs started in the same process.
-13. Size: `JudgePress` is about 390 lines with a 220-line lambda; `SeatReward` (about 165) and `ObserveSeat` (about 185)
+12. Size: `JudgePress` is about 390 lines with a 220-line lambda; `SeatReward` (about 165) and `ObserveSeat` (about 185)
     are
     long too; all untested.
-14. `StageScenario.h:62-78`: the `STATE_*` enums still name owner and pull columns whose writers belong to encounters;
+13. `StageScenario.h:62-78`: the `STATE_*` enums still name owner and pull columns whose writers belong to encounters;
     any column no live encounter writes is a constant zero input to the critic. UNVERIFIED which.
-15. `StageScenario.cpp:3883-3885`, `2787`: loot goals remain though looting is out of scope.
+14. `StageScenario.cpp:3883-3885`, `2787`: loot goals remain though looting is out of scope.
 
 ## S2.19 Questions for the owner
 

@@ -44,7 +44,6 @@ char const* Animus::Curriculum::CompassBlock::ColumnName(uint32 column)
         case OBS_OBJECTIVE_BEARING_COS: return "objective_bearing_cos";
         case OBS_OBJECTIVE_DISTANCE:    return "objective_distance";
         case OBS_OBJECTIVE_NEAR:        return "objective_near";
-        case OBS_DETOUR:                return "detour";
         default:                        return "";
     }
 }
@@ -64,9 +63,6 @@ void Animus::Curriculum::CompassBlock::Observe(SeatView const& view, float* obs,
         std::fill(obs, obs + OBS_COUNT, 0.0f);
         return;
     }
-
-    // The detour is the scenario's to measure (the travel encounter, at the episode's build): 0 without one.
-    obs[OBS_DETOUR] = std::clamp(view.Detour / 4.0f, 0.0f, 1.0f);
 
     Player* bot = view.Bot;
     if (!bot || !view.HasObjective)

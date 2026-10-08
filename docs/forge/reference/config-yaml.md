@@ -3,7 +3,7 @@
 Purpose and scope. Every field of the learner's configuration (`TrainConfig` and its nested sections in
 `apps/forge/python/animus/config.py`, plus `MappoConfig` in `animus/mappo/trainer.py`): type, default, validation and
 where it is read; how a stage yaml inherits (`extends`, `null`, lists, maps); how the sim hands the yaml to the learner;
-and the 12 live yamls compared field by field. The sim's own `AnimusForge.*` keys are in
+and the 10 live yamls compared field by field. The sim's own `AnimusForge.*` keys are in
 [config-keys.md](config-keys.md). What the learner does with the values is in [py-learner.md](py-learner.md) and
 [py-mappo.md](py-mappo.md); what the stages are, in [stages.md](stages.md). The suites that used to load every yaml
 were removed ([tests.md](tests.md)).
@@ -12,23 +12,21 @@ were removed ([tests.md](tests.md)).
 
 | Path | Lines | Role |
 |---|---|---|
-| `apps/forge/python/animus/config.py` | 853 | the config dataclasses, `load_yaml`, `merge`, `apply_override`, `from_dict`, `resolve_device` |
+| `apps/forge/python/animus/config.py` | 831 | the config dataclasses, `load_yaml`, `merge`, `apply_override`, `from_dict`, `resolve_device` |
 | `apps/forge/python/animus/mappo/trainer.py` | (lines 41-198) | `MappoConfig`, the `mappo:` section |
-| `apps/forge/python/configs/move1_controls.yaml` | 209 | root of the movement chain |
+| `apps/forge/python/configs/move1_controls.yaml` | 207 | root of the movement chain |
 | `apps/forge/python/configs/move2_seek.yaml` | 126 | extends move1_controls |
 | `apps/forge/python/configs/move3_interact.yaml` | 94 | extends move2_seek |
 | `apps/forge/python/configs/move4_follow.yaml` | 93 | extends move2_seek |
-| `apps/forge/python/configs/combat1_fight.yaml` | 173 | root of the combat/party/dungeon chain (extends nothing) |
+| `apps/forge/python/configs/combat1_fight.yaml` | 172 | root of the combat/party/dungeon chain (extends nothing) |
 | `apps/forge/python/configs/combat2_packs.yaml` | 60 | extends combat1_fight |
 | `apps/forge/python/configs/combat3_survive.yaml` | 61 | extends combat2_packs |
 | `apps/forge/python/configs/group1_roles.yaml` | 121 | extends combat3_survive |
-| `apps/forge/python/configs/group2_corridor.yaml` | 122 | extends group1_roles |
-| `apps/forge/python/configs/dungeon1_pulls.yaml` | 78 | extends group2_corridor |
-| `apps/forge/python/configs/dungeon2_ragefire.yaml` | 97 | extends dungeon1_pulls |
-| `apps/forge/python/configs/dungeon3_deadmines.yaml` | 73 | extends dungeon2_ragefire |
+| `apps/forge/python/configs/dungeon2_ragefire.yaml` | 109 | extends group1_roles |
+| `apps/forge/python/configs/dungeon3_deadmines.yaml` | 72 | extends dungeon2_ragefire |
 | `apps/forge/python/configs/fast.yaml` | 44 | overlay for `forge fast`; not a stage (never extended) |
 
-(Line counts are physical lines, comments included; the 12 live files are 1,307 lines of yaml and comments.)
+(Line counts are physical lines, comments included; the 10 live files are 1,115 lines of yaml and comments.)
 
 ## How a config reaches the learner
 
@@ -185,11 +183,6 @@ semantics: every Shaping term (fade) or noise price (costs) is paid times the cu
 `MOTION_WINDOW` (imported from `animus.human.motion`; at least 2); `minibatches` 4, `batch` 512 (each at least 1);
 `ladder` true; `eval_windows` 200,000 (0 or more). Every live yaml has `style.enabled: false` or inherits false.
 
-### `explore:` (`ExploreConfig`, `config.py:321`), read by `explore.py` and `train.py:708-721, 2091`
-
-`enabled` false; `share` 0.5 (within [0,1]); `table_size` 64 (1 to 64); `max_cells` 4096 (at least `table_size`);
-`depth_weight` 1.0.
-
 ### `entropy_floor:` (`EntropyFloorConfig`, `config.py:342`), read by `stage.py:544-555`
 
 `fraction` 0.0 (0 = off), `max_boost` 4.0, `rate` 0.05. No validation.
@@ -265,7 +258,7 @@ validation.
 | `slow_goal_size`, `slow_goal_gamma`, `slow_goal_lambda`, `slow_goal_lr` | 0, 0.993, 0.95, 3e-4 | `trainer.py:654-659, 746`; `train.py:1712` |
 | `goal_lookahead`, `lookahead_coef` | false, 0.5 | `trainer.py:662, 196` |
 
-## The 12 live yamls, field by field
+## The 10 live yamls, field by field
 
 Each row lists what a yaml sets that differs from its parent's effective value (parent in brackets), derived by reading
 the
@@ -275,8 +268,8 @@ files. "Restated" means the key is present with the parent's value (no effect). 
 (from the roots) unless stated.
 
 Chain A (movement): `move1_controls` (root) <- `move2_seek` <- `move3_interact`, and `move2_seek` <- `move4_follow`.
-Chain B: `combat1_fight` (root) <- `combat2_packs` <- `combat3_survive` <- `group1_roles` <- `group2_corridor` <-
-`dungeon1_pulls` <- `dungeon2_ragefire` <- `dungeon3_deadmines`.
+Chain B: `combat1_fight` (root) <- `combat2_packs` <- `combat3_survive` <- `group1_roles` <- `dungeon2_ragefire` <-
+`dungeon3_deadmines`.
 
 | Yaml (parent) | Overrides |
 |---|---|
@@ -288,10 +281,8 @@ Chain B: `combat1_fight` (root) <- `combat2_packs` <- `combat3_survive` <- `grou
 | `combat2_packs` (combat1_fight) | `mappo.gamma` 0.999 (0.998); `eval.report` 34 names (30); `status.headline` 12 (11); `status.targets` kills, kill_seconds, selected_share, ally_deaths nulled and 7 changed; `fade` and `costs` restated (no effect); `total_env_steps` restated |
 | `combat3_survive` (combat2_packs) | `eval.report` 35 names; `status.headline` 12; `status.targets` interrupts, interrupt_earnings, fire_share, target_in_view nulled; `convergence.measure` survived (won); `fade.gate_metric` survived (won); `costs.gate_metric` survived; `layout_sampling.metric` survived |
 | `group1_roles` (combat3_survive) | `total_env_steps` 400M (300M); `eval.episodes` 384 (240); `report` 52 names; `arms {with_human: 64, with_partners: 64}`, `arms_every` 2; `status.headline` 15; `status.targets` survived, packs_cleared, hurt_share nulled, 13 set; `status.excluded {death_knight: ...}`; `convergence.measure` won; `fade.gate_metric` won, `gate_value` 0.6 (0.7); `costs.gate_metric` won, 0.6; `layout_sampling.metric` won; `cast.partners`: stages [combat3_survive], snapshot_every_env_steps 20M, newest_share 0.3, share 0.3, max_partners 2, pool_size 6, keep_newest 2, score won, eval_partners [combat3_survive] |
-| `group2_corridor` (group1_roles) | `total_env_steps` 500M; `goal_entropy_final_fraction` 0.5 (0.05); `explore.enabled` false (default); `eval.episodes` 128 (384); `report` 46 names; `status.headline` 13; `status.targets`: 13 group1 targets nulled (won ... rejoin_seconds), 6 new; `status.excluded` replaced text; `convergence.measure` cleared; `fade.gate_metric` cleared (0.6 restated); `costs.gate_metric` cleared; `layout_sampling.metric` cleared; `cast.partners.stages` and `eval_partners` [group1_roles], `score` cleared |
-| `dungeon1_pulls` (group2_corridor) | `total_env_steps` 300M (500M); `mappo.gamma` 0.998 (0.999); `eval.episodes` 192 (128); `report` 39 names; `status.headline` 11; `status.targets` corridor_in_order, chain_pulls, wing_rejoin_seconds nulled; `status.excluded` text; `fade.gate_value` 0.7 (0.6), `costs.gate_value` 0.7; `cast.partners.stages` and `eval_partners` [group2_corridor] |
-| `dungeon2_ragefire` (dungeon1_pulls) | `total_env_steps` 1.5B (300M); `mappo.gamma` 0.999 (0.998); `explore.enabled` true (false), `share` 0.5 (default 0.5); `eval.every_env_steps` 20M (10M); `episodes` 64 (192); `sampled_every` 4 (3); `heldout {heldout: 16}`; `report` 49 names; `arms {with_human: 32, with_partners: 32}`; `status.headline` 14; `status.targets` drill_extra nulled; `convergence.measure` full_clear; `fade.gate_metric` full_clear, `gate_value` 0.5 (0.7); `costs.gate_metric` full_clear, 0.5; `layout_sampling.metric` full_clear; `cast.partners.stages` and `eval_partners` [dungeon1_pulls] |
-| `dungeon3_deadmines` (dungeon2_ragefire) | `total_env_steps` 2B (1.5B); `eval.report` 54 names (49); `status.headline` 19 (14); `status.targets` boss_oggleflint, boss_taragaman, boss_jergosh, boss_bazzalan, wing_rejoin_seconds nulled, 7 set; `convergence.measure` bar_clear (full_clear); `fade.gate_metric` bar_clear (gate_value 0.5 restated; `fade.enabled` inherited true); `costs.gate_metric` bar_clear; `layout_sampling.metric` bar_clear; `cast.partners.stages` and `eval_partners` [dungeon2_ragefire] |
+| `dungeon2_ragefire` (group1_roles) | `total_env_steps` 1.5B (400M); `mappo.goal_entropy_final_fraction` 0.5 (0.05); `gamma` 0.999 restated; `eval.every_env_steps` 20M (10M); `episodes` 64 (384); `seed` 1000 and `deterministic` true restated; `sampled_every` 4 (3); `heldout {heldout: 16}`; `report` 45 names (52); `arms {with_human: 32, with_partners: 32}`; `status.headline` 13 (15); `status.targets`: the 13 group1 targets nulled, 5 set; `status.excluded` replaced text; `convergence.measure` full_clear (won); `fade.gate_metric` full_clear, `gate_value` 0.5 (0.6); `costs.gate_metric` full_clear, 0.5; `layout_sampling.metric` full_clear; `cast.partners.stages` and `eval_partners` [group1_roles] (was [combat3_survive]) |
+| `dungeon3_deadmines` (dungeon2_ragefire) | `total_env_steps` 2B (1.5B); `eval.report` 50 names (45); `status.headline` 18 (13); `status.targets` boss_oggleflint, boss_taragaman, boss_jergosh, boss_bazzalan, wing_rejoin_seconds nulled, 5 set; `convergence.measure` bar_clear (full_clear); `fade.gate_metric` bar_clear (gate_value 0.5 restated; `fade.enabled` inherited true); `costs.gate_metric` bar_clear; `layout_sampling.metric` bar_clear; `cast.partners.stages` and `eval_partners` [dungeon2_ragefire] |
 
 No automated check reads these yamls any more. By hand: load each with `TrainConfig.load` (a typo is an error), compare
 the `gate_metric`/`measure`/`headline` names with `apps/forge/tools/sim_metrics.py --stage <stage>`, and run
@@ -311,9 +302,9 @@ the `gate_metric`/`measure`/`headline` names with `apps/forge/tools/sim_metrics.
   small differences (chunk_length 128 vs 32, epochs 2 vs 4, vision_chunk_rows auto vs 0; lr and look entropy now equal M2's). A shared
   base
   file would remove the duplication but would change which values a stage inherits.
-- Many "restated" keys (e.g. combat2/3's whole `fade` and `costs` blocks, group2's `eval.seed`/`deterministic`) change
+- Many "restated" keys (e.g. combat2/3's whole `fade` and `costs` blocks, dungeon2's `eval.seed`/`deterministic`) change
   nothing; they make a diff of two yamls read like a change.
-- `distill` and `cast.agents` are set by no live yaml (no `distill:` key in the 13 files); `style:` appears only with
+- `distill` and `cast.agents` are set by no live yaml (no `distill:` key in the 11 files); `style:` appears only with
   `enabled: false` (`move1_controls.yaml:208`, `combat1_fight.yaml:172`).
 - `PartnerConfig.deterministic` and `CastConfig.deterministic` have no reader outside `cast.py`/`partners.py` found by
   the
@@ -331,7 +322,7 @@ the `gate_metric`/`measure`/`headline` names with `apps/forge/tools/sim_metrics.
 ## Reviewer notes
 
 - Moving the sim-injected fields out of `TrainConfig` would let a yaml be validated as a stage definition alone.
-- The `extends` chain makes an old stage's change propagate to every later one (e.g. a `dungeon1_pulls` value reaches
+- The `extends` chain makes an old stage's change propagate to every later one (e.g. a `group1_roles` value reaches
   both dungeons). Any edit should be checked by loading every yaml and with `resume_check.py --fresh --all`.
 - `null` falling back to the dataclass default, not the parent's value, is easy to misread; `move4_follow`'s
   `costs.gate_metric: null` relies on it.

@@ -2454,7 +2454,6 @@ void AnimusForge::Forge::RemoteDecision(uint32 group)
     std::size_t const actionBytes = _pool->Actions.size() * sizeof(int32);
     std::size_t const weightBytes = sizeof(WeightsHeader) + _pool->Spec().Layouts.size() * sizeof(float);
     std::size_t const replayBytes = sizeof(ReplayHeader) + MAX_REPLAY_SEEDS * sizeof(uint32);
-    std::size_t const exploreBytes = sizeof(ExploreStartsHeader) + MAX_EXPLORE_STARTS * sizeof(ExploreCell);
     uint32 const agents = _pool->Spec().AgentsPerEnv;
     // The look head's choices per agent in ACT (protocol 22): 0 without a camera, and ACT is protocol 21's.
     uint32 const lookHeads = _pool->Spec().LookHeads;
@@ -2472,7 +2471,7 @@ void AnimusForge::Forge::RemoteDecision(uint32 group)
         auto const waitFrom = std::chrono::steady_clock::now();
         bool const received = _server.ReceiveAny(type, payload,
             std::max({ sizeof(ActHeader) + (1 + Animus::GOAL_SLOTS_ON_WIRE + lookHeads) * actionBytes,
-                sizeof(ModeMsg), weightBytes, replayBytes, exploreBytes }),
+                sizeof(ModeMsg), weightBytes, replayBytes }),
             onIdle);
         WaitedForLearner(waitFrom);
         if (!received)
@@ -2631,38 +2630,11 @@ void AnimusForge::Forge::RemoteDecision(uint32 group)
             continue;
         }
 
-        if (type == MsgType::ExploreStarts && payload.size() >= sizeof(ExploreStartsHeader))
-        {
-            ExploreStartsHeader header{};
-            std::memcpy(&header, payload.data(), sizeof(header));
-            if (header.Count > MAX_EXPLORE_STARTS
-                || payload.size() != sizeof(ExploreStartsHeader) + header.Count * sizeof(ExploreCell))
-            {
-                LOG_ERROR("module.animus", "Learner sent EXPLORE_STARTS with {} bytes for {} cells", payload.size(),
-                    header.Count);
-                _server.DropClient();
-                return;
-            }
-
-            std::vector<Animus::ExploreStart> starts(header.Count);
-            for (uint32 i = 0; i < header.Count; ++i)
-            {
-                ExploreCell cell{};
-                std::memcpy(&cell, payload.data() + sizeof(ExploreStartsHeader) + i * sizeof(ExploreCell),
-                    sizeof(cell));
-                starts[i] = { cell.Arena, cell.Tier, { cell.Packs[0], cell.Packs[1], cell.Packs[2], cell.Packs[3] },
-                    cell.Yard, cell.Weight };
-            }
-            // Takes effect as envs reset.
-            _pool->SetExploreStarts(header.Share, std::move(starts));
-            continue;
-        }
-
         // CLOSE (the client is already gone), a protocol error, or learners out of step (one evaluating while
         // another trains): the next decision waits for new learners.
         if (type != MsgType::Close)
             LOG_ERROR("module.animus", "Learner rank {} sent message type {} with {} bytes where ACT, MODE, WEIGHTS or "
-                "REPLAY or EXPLORE_STARTS was expected", rank, uint32(type), payload.size());
+                "REPLAY was expected", rank, uint32(type), payload.size());
 
         _server.DropClient();
         return;

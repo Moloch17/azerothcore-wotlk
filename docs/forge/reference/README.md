@@ -50,7 +50,7 @@ person reviewing and refactoring the forge without an assistant.
 | `cpp-vision-video.md` | frame images and the evaluation videos |
 | `cpp-blocks.md` | the 14 live blocks: columns, actions, masks, revisions; the stage-by-block table |
 | `cpp-layout-character.md` | layout building, the manifest, the seat encoder; character building (class, talents, gear) |
-| `cpp-rewards-routing.md` | the reward ledger and all reward terms; the fade and cost ladders (sim side); route and field data |
+| `cpp-rewards-routing.md` | the reward ledger and all reward terms; the fade and cost ladders (sim side) |
 | `cpp-encounters.md` | every encounter: Sight, Seek, Interact, PartyFollow, Combat, Roles, Party, StandIn, Instance, the wing ladder, respawn |
 | `cpp-stagescenario.md` | `Stages.cpp` field by field, `StageScenario.cpp` by line range, the `Scenario` interface and helpers |
 | `cpp-tuning-keys.md` | all `AnimusForge.Curriculum.*` keys: defaults, ranges, readers, live stages |
@@ -69,9 +69,9 @@ person reviewing and refactoring the forge without an assistant.
 | `py-mappo-buffer.md` | the rollout buffer, value normalisation |
 | `py-human-and-misc.md` | the human-capture and parity tools; the smaller learner modules |
 | `config-keys.md` | every non-Curriculum `AnimusForge.*` key (a generated table) |
-| `config-yaml.md` | every learner yaml field and the 12 live yamls' inheritance |
+| `config-yaml.md` | every learner yaml field and the 10 live yamls' inheritance |
 | `tools-and-ops.md` | `apps/forge/tools`, forgectl internals, compose and docker, the repository layout |
-| `stages.md` | the 12 live stages, one section each, with the seed chain |
+| `stages.md` | the 10 live stages, one section each, with the seed chain |
 | `known-issues.md` | the consolidated, ranked list of bugs, debts and refactor candidates |
 | `glossary.md` | the project's terms |
 | `tests.md` | there are no tests; what the removed suites guarded; how to check by hand |

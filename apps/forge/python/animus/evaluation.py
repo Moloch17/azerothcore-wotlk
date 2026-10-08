@@ -348,8 +348,7 @@ def action_mask_table(names, layout_names, action_names: dict[str, list[str]], n
     """An evaluation-only action mask (eval.mask_actions): per layout, which action indexes `names` resolve to, as a
     [layouts, num_actions] table of what to forbid; None when there is nothing to forbid.
 
-    Resolved per layout, because the same action sits at a different index in every class's catalog -- follow_route
-    was index 90 for the warrior alone. A name no layout has is a mistake in the config, and raises rather than
+    Resolved per layout, because the same action sits at a different index in every class's catalog. A name no layout has is a mistake in the config, and raises rather than
     silently masking nothing.
     """
     names = tuple(names or ())

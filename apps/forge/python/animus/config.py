@@ -82,8 +82,8 @@ class EvalConfig:
     sampled_every: int = 0
     # Actions the evaluation may not take, by name, resolved per layout (the same name is a different index in
     # every class): an evaluation-only mask, for measuring what an action carried -- re-scoring a checkpoint with
-    # follow_route and face_objective forbidden says how much of its arrival rate was the pathfinder's. A name no
-    # layout has is refused at startup. Training and the baseline are untouched.
+    # one action forbidden says how much of its result rode on it. A name no layout has is refused at startup.
+    # Training and the baseline are untouched.
     mask_actions: tuple[str, ...] = ()
     # Held-out arenas (their name -> seeded episodes), played after every evaluation and reported apart as
     # `heldout_<arena>`: content the stage never trains on (stage.json "eval_only", ArenaDefinition::EvalOnly), so a
@@ -315,27 +315,6 @@ class StyleConfig:
                              f"{self.batch!r}")
         if self.eval_windows < 0:
             raise ValueError(f"style.eval_windows: expected 0 or more, got {self.eval_windows!r}")
-
-
-@dataclass
-class ExploreConfig:
-    """Go-Explore starts for the dungeon wings (animus.explore, peak-play plan W5): the cells ended training runs
-    reached are archived, and `share` of a wing's training resets start from one of the `table_size` most promising
-    instead of the door. Evaluation always starts at the door. Off, nothing is sent and every run starts at the door."""
-
-    enabled: bool = False
-    share: float = 0.5
-    table_size: int = 64
-    max_cells: int = 4096
-    depth_weight: float = 1.0
-
-    def __post_init__(self) -> None:
-        if not 0.0 <= self.share <= 1.0:
-            raise ValueError(f"explore.share: expected a share within [0, 1], got {self.share!r}")
-        if not 1 <= self.table_size <= 64:
-            raise ValueError(f"explore.table_size: expected 1 to 64 cells (the sim's table), got {self.table_size!r}")
-        if self.max_cells < self.table_size:
-            raise ValueError(f"explore.max_cells: expected at least table_size, got {self.max_cells!r}")
 
 
 @dataclass
@@ -665,7 +644,6 @@ class TrainConfig:
     costs: CostLadderConfig = field(default_factory=CostLadderConfig)
     style: StyleConfig = field(default_factory=StyleConfig)
     status: StatusConfig = field(default_factory=StatusConfig)
-    explore: ExploreConfig = field(default_factory=ExploreConfig)
 
     def __post_init__(self) -> None:
         # Anything else would read as "best" (animus.train.init_from_checkpoint), which a typo must not do quietly.

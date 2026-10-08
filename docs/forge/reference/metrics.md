@@ -9,8 +9,8 @@ wire), [stages.md](stages.md), [config-yaml.md](config-yaml.md), [cpp-rewards-ro
 [cpp-encounters.md](cpp-encounters.md), [py-learner.md](py-learner.md), [known-issues.md](known-issues.md).
 
 Stage abbreviations used in the tables: **M1** move1_controls, **M2** move2_seek, **M3** move3_interact, **M4** move4_follow,
-**C1** combat1_fight, **C2** combat2_packs, **C3** combat3_survive, **G1** group1_roles, **G2** group2_corridor,
-**D1** dungeon1_pulls, **D2** dungeon2_ragefire, **D3** dungeon3_deadmines.
+**C1** combat1_fight, **C2** combat2_packs, **C3** combat3_survive, **G1** group1_roles, **D2** dungeon2_ragefire, **D3** dungeon3_deadmines
+(the old G2 and D1 stages were retired 2026-10-08, decision 0019; D2 and D3 keep their numbers).
 
 ## Map of files
 
@@ -24,8 +24,8 @@ Stage abbreviations used in the tables: **M1** move1_controls, **M2** move2_seek
 | .../Encounters/PartyFollowEncounter.cpp | | M4 columns. |
 | .../Encounters/CombatEncounter.cpp | | C1-C3 columns. |
 | .../Encounters/RolesEncounter.cpp | | G1 columns. |
-| .../Encounters/PartyEncounter.cpp | | Party-seat columns (G1, G2, D1-D3). |
-| .../Encounters/InstanceEncounter.cpp | | G2, D1-D3 columns (wing, corridor, drill, boss, role, stand-in split, Go-Explore marks). |
+| .../Encounters/PartyEncounter.cpp | | Party-seat columns (G1, D2, D3). |
+| .../Encounters/InstanceEncounter.cpp | | D2, D3 columns (wing, boss, role, stand-in split). |
 | .../Encounters/StandInSeat.cpp | | `with_stand_in`, `stand_in_leads`, `stand_in_role`. |
 | .../Rewards/RewardLedger.h | 400 | `RewardTerm`, `RewardCategory`, `RewardTermCategory`, `PricesNoise`, the ledger. |
 | .../Rewards/CombatReward.cpp | | `RewardTermName`: term -> the name in `reward_<name>`. |
@@ -185,7 +185,7 @@ combat_rung (= difficulty = the tier), at_top_rung (tier >= `Combat.MaxTier`).
 won (drill won, `RolesDraw::Won`), drill_hold/keep/focus/pull (episode played that drill), won_hold/keep/focus/pull, hold_share, kept_share, low_mana_seconds, focus_share, pulled_seconds, clean_share, packs_cleared, clean_pulls, extra_pulls, pulls,
 party_deaths, wipes, rises/rejoins/rejoin_seconds/rejoined/dead_seconds/away_seconds, roles_rung (= difficulty), at_top_rung.
 
-### Party seat columns (PartyEncounter; G1, G2, D1-D3)
+### Party seat columns (PartyEncounter; G1, D2, D3)
 
 seat, teammates_died, revives, teammate_damage_taken, teammate_healing, group_kept_share (a healer's effectiveness: member-time alive above half health), healing_coverage (healing over teammate damage taken, capped at 1),
 threat_on_teammates, idle_seconds_in_combat, tank_hold_share (party tank's enemies held), tank_form_share (tank's time in tanking form), tank_target_share (damage on the tank's target), pulled_off_seconds.
@@ -194,21 +194,20 @@ threat_on_teammates, idle_seconds_in_combat, tank_hold_share (party tank's enemi
 
 with_stand_in (the episode had the stand-in in a seat), stand_in_leads, stand_in_role (1 tank, 2 healer, 3 damage, 0 none). All zero where no stand-in plays.
 
-### G2, D1-D3 (InstanceEncounter)
+### D2, D3 (InstanceEncounter)
 
-difficulty / boss_rung (the tier), pull_rung (drill ladder rung; only where evaluations drill, i.e. D1), wing_rung, at_top_rung, instance_map, boss_entry, boss_killed, boss_health_left, engaged, wiped, evaded, wing_trash_kills,
-wing_boss_kills, wing_route_share, wing_wipes, wing_cleared_share, wing_crowd_seconds, wing_probe (a probe run, which steps the ladder), wing_rises, wing_rejoins, wing_rejoin_seconds, wing_level, **cleared** (`Succeeded`: a drill's pack
-alone and dead; a corridor's packs all done; else the last boss dead), **full_clear** (last boss dead and every route pack cleared), **bar_clear** (cleared with at most one wipe), chain_pulls, ready_pulls (pulls started with the party ready,
-capped), corridor_packs / corridor_first / corridor_cleared / corridor_in_order / corridor_share (only stages with a corridor arena: G2), drill_clean / drill_extra / drill_pulled / drill_gap / drill_pack (only with a pull-drill arena: D1;
-`drill_pack` indexes `episode_categories.drill_pack` = pack_1.. ), without_stand_in, clear_standin, clear_allbot, role_tank/role_healer/role_damage (the row's place in the party), deaths_tank/_healer/_damage (the row's deaths in its place),
+difficulty / boss_rung (the tier), wing_rung, at_top_rung, instance_map, boss_entry, boss_killed, boss_health_left, engaged, wiped, evaded, wing_trash_kills,
+wing_boss_kills, wing_wipes, wing_cleared_share, wing_crowd_seconds, wing_probe (a probe run, which steps the ladder), wing_rises, wing_rejoins, wing_rejoin_seconds, wing_level, **cleared** (`Succeeded`: the last
+boss dead), **full_clear** (last boss dead and every counted creature killed), **bar_clear** (cleared with at most one wipe), ready_pulls (pulls started with the party ready,
+capped at one a run, `READY_PULLS_PAID`), without_stand_in, clear_standin, clear_allbot, role_tank/role_healer/role_damage (the row's place in the party), deaths_tank/_healer/_damage (the row's deaths in its place),
 seat_deaths, boss_<name> (that boss killed this run; one per boss of the maps the stage's Wing arenas use: Ragefire Chasm: oggleflint, taragaman, jergosh, bazzalan; Deadmines: rhahkzor, sneed_shredder, sneed, gilnid, smite, greenskin,
-cookie, vancleef; Wailing Caverns (held out, in D2/D3's `heldout` arena): anacondra, cobrahn, kresh, pythas, skum, verdan, serpentis), wing_started, wing_arena, wing_tier, wing_marks, and the families
-`wing_mark<i>_packs<w>`, `wing_mark<i>_yard`, `wing_mark<i>_seconds` for i < `EXPLORE_MARKS` (8) and w < `EXPLORE_PACK_WORDS` (4) (Go-Explore cells reached).
-The sim_metrics extraction lists all boss names for all four stages (a superset; the exact list is stage.json `episode_info`).
+cookie, vancleef; Wailing Caverns (held out, in D2/D3's `heldout` arena): anacondra, cobrahn, kresh, pythas, skum, verdan, serpentis).
+`wing_cleared_share` is min(1, (trash kills + boss dead) / (hostile total + 1)); it is what `Timeout` scales with.
+The sim_metrics extraction lists all boss names for both stages (a superset; the exact list is stage.json `episode_info`).
 
 ### Which stages report what (union checked with `sim_metrics.py`)
 
-M1 221 exact names, M2 225, M3 222, M4 215, C1-C3 228, G1 247, G2/D1/D2/D3 290 + 3 families (a superset where the C++ guards a column by a condition). A name no stage reports but a yaml asks for reads as "never met" and
+M1 221 exact names, M2 225, M3 222, M4 215, C1-C3 228, G1 247, D2/D3 (count not recomputed since the 2026-10-08 removal; a superset where the C++ guards a column by a condition). A name no stage reports but a yaml asks for reads as "never met" and
 silently stalls a ladder (sim_metrics.py docstring); `test_metric_names.py` checks the live yamls against the extraction.
 
 ## 4. Reward columns `reward_<term>`
@@ -225,28 +224,27 @@ One column per term the stage pays: the episode sum of that term for the seat (`
 | door_opened | Outcome | M3 |
 | survived | Outcome | C1 C2 C3 G1 |
 | interrupt_landed | Outcome | C1 C2 C3 |
-| kill | Outcome | C1 C2 C3 G2 D1 D2 D3 |
-| clear | Outcome | C1 C2 C3 G1 G2 D1 D2 D3 |
+| kill | Outcome | C1 C2 C3 D2 D3 |
+| clear | Outcome | C1 C2 C3 G1 D2 D3 |
 | drill_hold, drill_focus, drill_keep | Outcome | G1 |
-| pull_clean | Outcome | G1 G2 D1 D2 D3 |
-| ready_pull | Outcome | G2 D1 D2 D3 |
+| pull_clean | Outcome | G1 |
+| ready_pull | Outcome | D2 D3 |
 | death | Cost | all |
 | step_cost | Cost | all but M4 |
-| timeout | Cost | G2 D1 D2 D3 |
-| teammate_death | Cost | C1 C2 C3 G1 G2 D1 D2 D3 |
-| early_pull | Cost | G1 G2 D1 D2 D3 |
-| pull_extra | Cost | C1 C2 C3 G1 G2 D1 D2 D3 |
+| timeout | Cost | D2 D3 |
+| teammate_death | Cost | C1 C2 C3 G1 D2 D3 |
+| early_pull | Cost | G1 D2 D3 |
+| pull_extra | Cost | C1 C2 C3 G1 |
 | repeat, jitter, aimless, effort, fidget (noise prices) | Cost | all |
 | stuck, wall (noise prices) | Cost | M1 M2 M3 M4 |
-| lost | Cost | M4 G2 D1 D2 D3 |
+| lost | Cost | M4 D2 D3 |
 | wrong_object | Cost | M3 |
 | blocking | Cost | M4 |
-| away | Cost | C1 C2 C3 G1 G2 D1 D2 D3 |
+| away | Cost | C1 C2 C3 G1 D2 D3 |
 | hurt, fire_hurt | Cost | C1 C2 C3 |
-| idle | Cost | G2 D1 D2 D3 |
-| damage_dealt | Shaping | C1 C2 C3 G1 G2 D1 D2 D3 |
-| approach | Shaping | G2 D1 D2 D3 |
-| threat, teammate_threat, teammate_damage_taken, teammate_healing, revive, stall | Shaping | G1 G2 D1 D2 D3 |
+| idle | Cost | D2 D3 |
+| damage_dealt | Shaping | C1 C2 C3 G1 D2 D3 |
+| threat, teammate_threat, teammate_damage_taken, teammate_healing, revive, stall | Shaping | G1 D2 D3 |
 | facing, progress | Shaping | M1 |
 | sighting | Shaping | M2 M3 |
 | new_ground, room_seen | Shaping | M2 |
@@ -267,8 +265,8 @@ From `EvalResult.summary` (evaluation.py):
 | return | mean episode return incl. shaping. | reported beside score. |
 | arrived_at_rung | `p*rate_no + (1-p)*rate_with` where p = mean `compass_withhold_chance`, rate_no = arrived_no_compass / compass_withheld, rate_with = arrived_with_compass / compass_present (evaluation.py ratios). The arrival at the training rung's own mix. | M1 fade and cost gate. |
 | found_deepest | found rate over episodes with `deep_room > 0.5`. | M2 headline/target. |
-| clear_standin, clear_allbot | per-event means (see PER_EVENT) = clear rate with / without the stand-in. | G2, D1-D3 headlines. |
-| standin_gap (progress only) | `eval_clear_allbot - eval_clear_standin`, in `ProgressWriter.arm_evaluated` for arm `with_human` (ARM_SPLITS). | G2, D1-D3 headline (target <= 0.1). |
+| clear_standin, clear_allbot | per-event means (see PER_EVENT) = clear rate with / without the stand-in. | D2, D3 headlines. |
+| standin_gap (progress only) | `eval_clear_allbot - eval_clear_standin`, in `ProgressWriter.arm_evaluated` for arm `with_human` (ARM_SPLITS). | D2, D3 headline (target <= 0.1). |
 | `<metric>_<arm>` | a headline metric named `<metric>_with_human` / `_with_partners` resolves to that arm's reading. | progress.json `eval_<metric>_<arm>`. |
 | bands / layouts / specs / castings / arenas / builds / difficulties / up_to / top_rung / categories | grouped copies of the means, see below. | eval.jsonl, `casting_weights`, convergence. |
 | realism_emd, realism_emd_<context>, realism_disc | earth mover's distance between the seats' motion histograms and the players' (human_reference.json), per context; discriminator mean output. | eval.csv extra columns (only with `style.reference`). |
@@ -300,19 +298,19 @@ Targets are readouts, never gates; convergence alone ends a stage.
 * **Plain evaluation** (`policy: learner`, argmax unless `eval.deterministic: false`): "all bots" (no stand-in unless the stage always has one). `learner_sampled` repeats it with sampled actions every `eval.sampled_every` evaluations and adds `argmax_gap` for score, died, timed_out, arrived.
 * **Arms** (`eval.arms`, `EVAL_ARMS = with_human, with_partners`; every `eval.arms_every` evaluations and on the last): same seeds again. `with_human` sets `MODE_FLAG_STAND_IN` so every party has the stand-in in one seat, its row played by a frozen partner (needs `cast.partners`
   stages/paths; skipped otherwise); `with_partners` puts the fixed partner set (`cast.partners.eval_partners`, default the pool's stage/path members) in some seats of every party. Partner rows are `excluded` (not scored). Reported as separate eval.csv rows
-  `with_human` / `with_partners`, and into progress.json via `arm_evaluated`. Live yamls: G1, G2, D1 use 64 episodes each; D2, D3 32 (arms_every 2; G1-D1 all arms every second evaluation).
+  `with_human` / `with_partners`, and into progress.json via `arm_evaluated`. Live yamls: G1 uses 64 episodes each; D2, D3 32 (arms_every 2; all arms every second evaluation).
 * **Held-out sweeps** (`eval.heldout`, arena -> episodes, validated against stage.json: must exist and be `eval_only`): played on seeds `eval.seed + 7919` with MODE `Arena = index+1`, reported as policy `heldout_<arena>`; due every `heldout_every` evaluations, on the stage's last
   evaluation, and on a new best if `heldout_on_best`. Never read by the tracker or controller. Live: M2 `sweep: 195` (every_eval 1000, not on best: effectively the last), M3 `sweep: 60`, D2 and D3 `heldout: 16` (Wailing Caverns).
 * **Tables inside one summary** (all with the same shape of means): `bands` (by `level`: 1-20, 21-40, 41-60, 61-80), `layouts` (by class, when more than one), `specs` (by build name across classes), `castings` (`<class>_<build>`, the grain `layout_sampling` weights),
   `arenas` (when the stage has more than one arena), `builds` (talent plan standard/noisy/random, when more than one occurs), `difficulties` and `up_to` (by `difficulty` tier, when more than one; `up_to[t]` = tiers <= t, per layout and per casting),
-  `top_rung` (rows with `at_top_rung > 0.5`, else the highest tier; per layout), `categories` (`"<column>=<name>"` for each `episode_categories` column: seek_room/object, interact_site/object, sight_object, objective_corner, drill_pack).
+  `top_rung` (rows with `at_top_rung > 0.5`, else the highest tier; per layout), `categories` (`"<column>=<name>"` for each `episode_categories` column: seek_room/object, interact_site/object, sight_object, objective_corner).
   `format_summary` prints a subset of these as the console table (learner / baseline).
 * **What feeds back**: after the plain evaluation `casting_weights` turns `castings` into the WEIGHTS vector (score shortfall and `layout_sampling.metric` shortfall in standard deviations, role metrics, capped at `max_ratio` 4, mean 1); `failed_seeds(metric)` (rows with value < 1) go to REPLAY at `replay_fraction` 0.2.
 * The two derived summaries named `livelocked` and `clean_kill` were removed in 57206f164 (a live eval.jsonl still holds them).
 
 ## 9. Who uses which measure (live yamls, resolved through `extends`)
 
-Resolved with a small script over the twelve files (`extends` merged, `null` drops a key). `fade`/`costs` gate metrics are at the value shown; `require_plateau: false` on every live fade; M4's cost ladder has no gate. All live stages: `fade.enabled`, `costs.enabled: false`, `layout_sampling.enabled` with `replay_fraction 0.2`.
+Resolved with a small script over the ten files (`extends` merged, `null` drops a key). `fade`/`costs` gate metrics are at the value shown; `require_plateau: false` on every live fade; M4's cost ladder has no gate. All live stages: `fade.enabled`, `costs.enabled: false`, `layout_sampling.enabled` with `replay_fraction 0.2`.
 
 | Stage | convergence.measure | fade gate (value; rungs) | costs gate | layout_sampling.metric | eval episodes / every | arms | held-out |
 |---|---|---|---|---|---|---|---|
@@ -324,8 +322,6 @@ Resolved with a small script over the twelve files (`extends` merged, `null` dro
 | C2 | won | won 0.7 | won 0.7 (off) | won | 240 / 10M | | |
 | C3 | survived | survived 0.7 | survived 0.7 (off) | survived | 240 / 10M | | |
 | G1 | won | won 0.6 | won 0.6 (off) | won | 384 / 10M | human 64, partners 64 | |
-| G2 | cleared | cleared 0.6 | cleared 0.6 (off) | cleared | 128 / 10M | human 64, partners 64 | |
-| D1 | cleared | cleared 0.7 | cleared 0.7 (off) | cleared | 192 / 10M | human 64, partners 64 | |
 | D2 | full_clear | full_clear 0.5 | full_clear 0.5 (off) | full_clear | 64 / 20M | human 32, partners 32 | heldout 16 |
 | D3 | bar_clear | bar_clear 0.5 | bar_clear 0.5 (off) | bar_clear | 64 / 20M | human 32, partners 32 | heldout 16 |
 
@@ -342,10 +338,8 @@ Headlines (`status.headline`) and targets, per stage (target in brackets, a read
 * **C2**: won [>=0.85], survived [>=0.85], packs_cleared [>=3], extra_pulls [<=0.1], interrupts, interrupt_earnings [<=0.3], fire_share [<=0.1], hurt_share [<=1.5], deaths, rejoin_seconds, combat_rung, target_in_view [>=0.8].
 * **C3**: survived [>=0.8], won [>=0.8], packs_cleared [>=3], deaths, rejoined [>=0.9], rejoin_seconds [<=60], dead_seconds, away_seconds, rest_seconds, extra_pulls [<=0.1], hurt_share [<=1.5], combat_rung.
 * **G1**: won [>=0.7], won_hold/keep/focus/pull [>=0.7], hold_share [>=0.8], kept_share [>=0.8], focus_share [>=0.6], clean_share [>=0.9], extra_pulls [<=0.1], party_deaths, wipes [<=0.05], rejoined [>=0.9], rejoin_seconds [<=60], roles_rung. Excluded: death_knight.
-* **G2**: cleared [>=0.7], corridor_share, corridor_in_order [>=3], chain_pulls [<=0.25], ready_pulls, wing_wipes [<=0.3], wing_rejoin_seconds [<=60], clear_allbot, clear_standin, standin_gap [<=0.1], deaths_tank, deaths_healer, wing_rung. Excluded: death_knight.
-* **D1**: cleared [>=0.8], drill_clean, drill_extra [<=0.1], drill_pulled, ready_pulls, wing_wipes [<=0.1], clear_allbot, clear_standin, standin_gap [<=0.1], deaths_tank, pull_rung. Excluded: death_knight.
-* **D2**: full_clear [>=0.7], cleared [>=0.7], wing_cleared_share, wing_wipes [<=1], boss_oggleflint/taragaman/jergosh/bazzalan, chain_pulls [<=1], wing_rejoin_seconds [<=90], clear_allbot, clear_standin, standin_gap [<=0.1], wing_rung.
-* **D3**: bar_clear [>=0.7], cleared [>=0.7], full_clear [>=0.7], wing_wipes [<=1], boss_rhahkzor/sneed/gilnid/smite/greenskin/cookie/vancleef (vancleef [>=0.7]), deaths_tank/healer/damage, chain_pulls [<=1], clear_allbot, clear_standin, standin_gap [<=0.1], wing_rung.
+* **D2**: full_clear [>=0.7], cleared [>=0.7], wing_cleared_share, wing_wipes [<=1], boss_oggleflint/taragaman/jergosh/bazzalan, wing_rejoin_seconds [<=90], clear_allbot, clear_standin, standin_gap [<=0.1], wing_rung.
+* **D3**: bar_clear [>=0.7], cleared [>=0.7], full_clear [>=0.7], wing_wipes [<=1], boss_rhahkzor/sneed/gilnid/smite/greenskin/cookie/vancleef (vancleef [>=0.7]), deaths_tank/healer/damage, clear_allbot, clear_standin, standin_gap [<=0.1], wing_rung.
 
 The `eval.report` lists (what the console and eval.jsonl summaries carry beyond the headline) are each stage's `reward_*` columns plus the stage's own measures; see the yamls ([config-yaml.md](config-yaml.md)). Names in `eval.report` that the stage does not report are ignored
 (`present = [c for c in columns if c in info_names]`).

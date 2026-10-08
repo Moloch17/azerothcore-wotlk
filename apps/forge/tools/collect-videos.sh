@@ -40,7 +40,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ ! "$stage" =~ ^[a-z0-9_]+$ ]]; then
-    echo "Which stage? apps/forge/tools/collect-videos.sh [--dry-run] <stage>   (e.g. group2_corridor)" >&2
+    echo "Which stage? apps/forge/tools/collect-videos.sh [--dry-run] <stage>   (e.g. dungeon2_ragefire)" >&2
     exit 2
 fi
 

@@ -25,8 +25,8 @@ are those of commit `bd32b9dc8`.
 | Blocks/MoveBlock.cpp | 346 | Move observation (controls, body, trail), masks, press application, column names. |
 | Blocks/MoveControls.h | 267 | Pure 25-action key/mouse model, masks, `Press`. |
 | Blocks/MovePrice.h | 90 | Pure steering-reversal pricing helpers. |
-| Blocks/CompassBlock.h | 65 | Compass columns, revision 1. |
-| Blocks/CompassBlock.cpp | 87 | Objective bearing/distance/detour. |
+| Blocks/CompassBlock.h | 66 | Compass columns, revision 2. |
+| Blocks/CompassBlock.cpp | 83 | Objective bearing and distance. |
 | Blocks/DuelBlock.h | 173 | Duel column and action enums. |
 | Blocks/DuelBlock.cpp | 473 | Target/self-state features, consumables, pet-bar-free actions. |
 | Blocks/PackBlock.h | 89 | Pack slots enum. |
@@ -114,7 +114,7 @@ Declared blocks per live stage (exact; from `Stages.cpp:649-1020` and the pin go
 
 | Stage | core | move | compass | duel | pack | gaunt | pet | vision | entities | map | sight | party | combat | goal | class-indep obs / actions |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| move1_controls | x | x | x | | | | | x | x | | | | | x | 842 / 25 |
+| move1_controls | x | x | x | | | | | x | x | | | | | x | 841 / 25 |
 | move2_seek | x | x | | | | | | x | x | x | | | | x | 840 / 25 |
 | move3_interact | x | x | | | | | | x | x | x | x | | | x | 2911 / 346 |
 | move4_follow | x | x | | | | | | x | x | x | | x | | x | 924 / 37 |
@@ -122,10 +122,8 @@ Declared blocks per live stage (exact; from `Stages.cpp:649-1020` and the pin go
 | combat2_packs | x | x | | x | | | x | x | x | x | x | | x | x | 3779 / 350 |
 | combat3_survive | x | x | | x | | x | x | x | x | x | x | | x | x | 3790 / 353 |
 | group1_roles | x | x | | x | | x | x | x | x | x | x | x | x | x | 3874 / 365 |
-| group2_corridor | x | x | | x | x | x | x | x | x | x | x | x | x | x | 4908 / 390 |
-| dungeon1_pulls | same as group2_corridor | | | | | | | | | | | | | | 4908 / 390 |
-| dungeon2_ragefire | same | | | | | | | | | | | | | | 4908 / 390 |
-| dungeon3_deadmines | same | | | | | | | | | | | | | | 4908 / 390 |
+| dungeon2_ragefire | x | x | | x | x | x | x | x | x | x | x | x | x | x | 4908 / 390 |
+| dungeon3_deadmines | same as dungeon2_ragefire | | | | | | | | | | | | | | 4908 / 390 |
 
 "Class-independent" excludes core, duel and pet, whose widths depend on the class (below). The dungeon stages use
 `DungeonBlocks()` = `{Core, Move, Duel, Pet, Pack, Gauntlet, Vision, Entities, Map, Sight, PartyFrames, Combat, Goal}`
@@ -133,12 +131,12 @@ Declared blocks per live stage (exact; from `Stages.cpp:649-1020` and the pin go
 (`SightBlock::Width`, below). Pet contributes 0 for a class without a pet.
 
 Seed lineage (`Extends`): move1 -> move2 -> {move3, move4}; move3 -> combat1 -> combat2 -> combat3 -> group1 (also
-merges move4) -> group2 -> dungeon1 -> dungeon2 -> dungeon3 (`Stages.cpp`).
+merges move4) -> dungeon2 -> dungeon3 (`Stages.cpp`).
 
 ## Pin test and golden
 
 `src/test/server/game/Animus/LiveLayoutPinTest.cpp` (219 lines) with golden
-`src/test/server/game/Animus/LiveLayoutPin.golden.inc` (149 lines). It builds, for the 12 live stages, the block list
+`src/test/server/game/Animus/LiveLayoutPin.golden.inc` (149 lines). It builds, for the live stages, the block list
 and, for every block except core, duel and pet (class-dependent, pinned only by name, id and revision), the obs and
 action counts, the `DescribeColumns` count and an FNV-1a hash over columns, action names and manifest entries. It also
 pins every sizing constant (`PACK_SLOTS=24`, `SIGHT_SLOTS=64`, `GOAL_JOINT_COUNT=348`, `BLOCK_COUNT=27`, state widths,
@@ -148,7 +146,7 @@ shaman:7 mage:8 warlock:9 druid:11` with their spec names. Regenerate only delib
 `_blockMask`, so `Layout::Has` is false for everything while sizing; this is why `SightBlock::Width` reads
 `layout.Blocks` instead of `Has` (`SightBlock.cpp:109`). Any size function that used `Has` would be pinned wrong.
 
-Pinned revisions (golden): core 1, move 5, compass 1, duel 0, pack 0, gauntlet 0, pet 0, vision 5, entities 1, map 1,
+Pinned revisions (golden): core 1, move 5, compass 2, duel 0, pack 0, gauntlet 0, pet 0, vision 5, entities 1, map 1,
 sight 2, party_frames 2, combat 1, goal 0.
 
 ## The by-name seeding contract
@@ -343,20 +341,18 @@ observation of a seat in one decision advances nothing but would add a trail sam
 refers to a deleted TravelBlock. Hazard columns are fed from the aura/area search (`Encoding::TrackNearestHazard`) in
 non-sight stages (see duel notes).
 
-## compass (id 2, revision 1)
+## compass (id 2, revision 2)
 
-Does: whether there is an objective, its bearing, distance and the walking detour; no actions. Size 6 obs, 0 actions
+Does: whether there is an objective, its bearing and distance; no actions. Size 5 obs, 0 actions
 (`CompassBlock.cpp:27`). Columns (named): 0 objective, 1 objective_bearing_sin, 2 objective_bearing_cos, 3
-objective_distance (yards / 500, clamped), 4 objective_near (yards / 40), 5 detour (`view.Detour / 4`, clamped).
+objective_distance (yards / 500, clamped), 4 objective_near (yards / 40).
 Declared
-by move1_controls only. `view.CompassWithheld` zeroes all six (M1's withholding ladder: an input removed, never a mask;
-the detour is also zeroed in that case). Detour is written even when there is no objective. Manifest: `objective_scale
+by move1_controls only. `view.CompassWithheld` zeroes all five (M1's withholding ladder: an input removed, never a
+mask). Manifest: `objective_scale
 500`, `near_scale 40`. Reads `view.Body`, `view.Objective`, `view.Facing`. Revision 1: the columns that were the move
-block's up to its revision 4 (same names). Tests: `CompassBlockTest` (names equal revision 4 move names, nothing without
+block's up to its revision 4 (same names); revision 2 (2026-10-08, decision 0019) dropped the dead sixth column, and
+seeds carry by name. Tests: `CompassBlockTest` (names equal revision 4 move names, nothing without
 an objective, M1 carries it and seek does not), `GoalObjectiveLeakTest` (compass-withheld vs goal place).
-Reviewer notes: `view.Detour` is the encounter's to measure (the travel encounter no longer exists; UNVERIFIED who sets
-it
-now, check `SightEncounter`).
 
 ## duel (id 3, revision 0)
 

@@ -35,17 +35,6 @@ namespace Animus
 
     /// One kind of agent: its observation features and actions (a class/role, say). An agent of a layout fills
     /// only the first ObsDim features and NumActions mask entries of its padded row.
-    /// A start a dungeon wing's training run may take instead of the door (Go-Explore, the learner's EXPLORE_STARTS):
-    /// the arena and row, the route's packs cleared (24 bits a word, route order), the party's yard / 16, the weight.
-    struct ExploreStart
-    {
-        uint32 Arena = 0;
-        uint32 Tier = 0;
-        std::array<uint32, 4> Packs{};
-        uint32 Yard = 0;
-        float Weight = 0.0f;
-    };
-
     struct LayoutSpec
     {
         std::string Name;
@@ -210,10 +199,6 @@ namespace Animus
         /// stand-in" arm), training in its share of them; without it every party is all the learner's. Scenarios
         /// without a stand-in ignore it.
         virtual void SetStandIn(bool /*standIn*/) { }
-        /// The cells training runs of a dungeon wing start from, `share` of the time (EXPLORE_STARTS); replaces the
-        /// last table. Scenarios without wings ignore it.
-        virtual void SetExploreStarts(float /*share*/, std::vector<ExploreStart> /*starts*/) { }
-
         /// A cluster's shared curriculum state (StageScenario's dungeon ladder): a worker's runs since its last
         /// report, as a PROGRESS field (empty for none); the host folds every worker's into its own and sends the
         /// workers what it decided ("RUNG <n>"), which they follow instead of deciding for themselves.

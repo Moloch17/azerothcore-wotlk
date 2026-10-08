@@ -60,12 +60,12 @@ The wire is *only* defined in Protocol.h and protocol.py; the sim-side use is in
 | 9 | Device | sim -> learner | `DeviceMsg` [+ image handle] |
 | 10 | DeviceAck | learner -> sim | `DeviceAckMsg` |
 | 11 | Progress | learner -> sim | `ProgressMsg` |
-| 12 | ExploreStarts | learner -> sim | `ExploreStartsHeader` + cells |
+| 12 | (unused) | - | retired 2026-10-08, decision 0019 |
 
-Sim-to-learner messages are only SPEC, DEVICE and STEP. Everything else is learner-initiated; WEIGHTS, REPLAY, PROGRESS and
-EXPLORE_STARTS get no answer. MODE is answered with fresh STEPs. A type the sim does not expect at that point drops the
-learner with "sent message type N with M bytes where ACT, MODE, WEIGHTS or REPLAY or EXPLORE_STARTS was expected"
-(AnimusForge.cpp:2717; the text omits PROGRESS, which is accepted).
+Sim-to-learner messages are only SPEC, DEVICE and STEP. Everything else is learner-initiated; WEIGHTS, REPLAY and PROGRESS
+get no answer. MODE is answered with fresh STEPs. A type the sim does not expect at that point drops the
+learner with "sent message type N with M bytes where ACT, MODE, WEIGHTS or REPLAY was expected"
+(AnimusForge.cpp; the text omits PROGRESS, which is accepted).
 
 ## 3. Handshake and manifest
 
@@ -106,7 +106,7 @@ learner with "sent message type N with M bytes where ACT, MODE, WEIGHTS or REPLA
 Then `u32 layoutCount`, then `layoutCount` x `LayoutMsg { u32 ObsDim; u32 NumActions; char Name[48]; }` (`"<II48s"`), then the
 episode info column names as comma-separated ASCII filling the rest of the payload, no terminator and no count. Layout
 names are truncated to 47 characters. A name containing a comma would corrupt the list (UNVERIFIED that none does; the
-names are C++ literals and generated `reward_<term>`, `wing_mark<i>_...` families, see metrics.md).
+names are C++ literals and generated `reward_<term>` families, see metrics.md).
 
 `protocol.decode_spec` (protocol.py:323) rebuilds `Spec`; `Spec.layouts` and `Spec.episode_info_names` are tuples.
 Note `Spec.image_bytes` comment (protocol.py:133) still says "height x width x 4"; it is 5 since 23.
@@ -188,7 +188,7 @@ body length is exactly one of the two sizes `CutAct` allows (with or without goa
 messages are pending from another rank. Any mismatch falls to the generic "unexpected message" drop path.
 
 Receive bound: the sim reads at most `max(sizeof(ActHeader) + (1 + 2 + L) * actionBytes, sizeof(ModeMsg), weightBytes,
-replayBytes, exploreBytes)` where `actionBytes = pool actions * 4` (AnimusForge.cpp:2494). See Observed issues for the
+replayBytes)` where `actionBytes = pool actions * 4` (AnimusForge.cpp:2494). See Observed issues for the
 `weightBytes` term.
 
 Half-batch: the learner answers STEPs in the order they came; the sim waits for the answer of the group whose maps tick next
@@ -220,13 +220,9 @@ Half-batch: the learner answers STEPs in the order they came; the sim waits for 
   clamped to [0,1] by the Python encoder; the sim clamps again and logs once if the scales were outside [0,1] (NaN is taken
   as 1). `Progress` selects arena weights that change over a stage (`ArenaDefinition::WeightFinal`); `ShapingScale` multiplies
   every Shaping reward term (`RewardLedger::SetShaping`); `CostScale` multiplies every noise price (`SetCosts`).
-* **EXPLORE_STARTS** `ExploreStartsHeader { f32 Share; u32 Count }` (`"<fI"`) + `Count` x `ExploreCell { u32 Arena; u32 Tier;
-  u32 Packs[4]; u32 Yard; f32 Weight }` (`"<II4IIf"`, 32 bytes), `Count <= 64`. Go-Explore start cells for dungeon wings; replaces
-  the previous table; evaluation never uses it. `Packs` are 4 words of 24 bits (route order, word-major), `Yard` is the
-  party's yard on the route / 16.
 * **CLOSE**: no payload; the server drops the client and waits for a new one.
 
-Applying is *without answer*: after WEIGHTS/PROGRESS/REPLAY/EXPLORE_STARTS the sim loops and waits for the ACT.
+Applying is *without answer*: after WEIGHTS/PROGRESS/REPLAY the sim loops and waits for the ACT.
 
 ## 7. Where the two implementations must agree
 
@@ -238,7 +234,6 @@ Each of these is a duplicated definition; change both and bump `PROTOCOL_VERSION
 | MODE size/flags | `ModeMsg`, `MODE_FLAG_STAND_IN` | `MODE`, `encode_mode` | `test_mode_matches_cpp_layout`, `test_the_stand_in_flag_rides_on_mode` (test_partners.py:99). |
 | STEP array order and dtypes | `SendStep` chunk list | `Spec.step_layout` | `test_step_round_trip_and_size`, `test_episode_info_travels_for_the_ended_envs_only`, `test_kinematics_travel_with_every_step`, `test_a_step_with_a_camera_reads_its_images_as_the_sim_writes_them`, `test_a_step_with_a_map_round_trips_its_own_section_after_the_images`, `test_a_stage_without_a_camera_is_protocol_20_on_the_wire`, `test_a_stage_without_a_map_is_protocol_23_on_the_wire`, `test_with_device_buffers_the_images_leave_the_step_but_the_final_images_stay`. These test Python against Python (a fake sim); there is no byte-level test of `SendStep` itself (UNVERIFIED: check src/test for one; none found). |
 | ACT cuts incl. look | `CutAct`, `BadLookRow` | `encode_act`/`decode_act` | C++ `VisionProtocolTest` (`SpecCarriesLookHeads`, `ActCarriesTheLook`, `ActWithoutVisionIsProtocol21`, `ActRefusesLookOutOfRange`, `LookingIsFree`); Python `test_act_round_trips_with_the_look_agent_major_after_the_goals`, `test_a_stage_without_look_heads_sends_protocol_21s_act`, `test_a_sim_with_look_heads_over_the_socket`, `test_a_sim_speaking_protocol_21_is_refused`. |
-| Explore cell | `ExploreCell` static_assert 32 | `EXPLORE_CELL` | `test_explore_starts_on_the_wire` (test_explore.py:59). |
 | Version refusal | `AcceptClients` | `ForgeEnv.__init__` | `test_a_sim_speaking_another_protocol_is_refused` (test_protocol.py:269). |
 | TCP sim | `tcp://` Listen | `_connect` | `test_a_sim_on_another_machine_is_reached_over_tcp`. |
 | Pixel/class bytes, map channels | Vision::EncodePixel, CropChannel | vision encoder decode | `test_decoding_every_byte_is_the_sims_decode_pixel_exactly`, `test_the_sims_encoding_round_trips_through_the_learners_decoding`, `test_the_crop_decodes_as_the_sim_encodes_it`. |
@@ -263,7 +258,7 @@ into the core (`359b303c4`); their content is UNVERIFIED (no comment survives; c
 | 15 | DEVICE / DEVICE_ACK (GPU IPC buffers). | 57f0d742e |
 | 16 | A goal is `kind * GOAL_TARGETS + target`; SPEC GoalCount is the joint count. | 4efaec381 |
 | 17 | ACT carries two goals per agent; twelfth goal kind (Resurrect); PROGRESS message introduced (`Progress` float). | 3d696b97e, 2a30f118d |
-| 18 | PROGRESS adds ShapingScale; episode_info only for ended envs; MODE gains `Arena` (held-out); EXPLORE_STARTS added. | c0439d055, d75ba4882, c51815bb0, e5c9fa74e |
+| 18 | PROGRESS adds ShapingScale; episode_info only for ended envs; MODE gains `Arena` (held-out); message type 12 added (retired 2026-10-08, see below). | c0439d055, d75ba4882, c51815bb0, e5c9fa74e |
 | 19 | PROGRESS adds CostScale. | 9ec9735b1 |
 | 20 | SPEC KinematicsDim; every STEP ends with kinematics. | 25ce5a6fa |
 | 21 | SPEC ImageBytes; vision stages append image/final_image to STEP and the image handle to DEVICE. | d86feef62 |
@@ -272,6 +267,9 @@ into the core (`359b303c4`); their content is UNVERIFIED (no comment survives; c
 | 24 | SPEC MapBytes; map/final_map after the images. | 8452ff458 |
 | 25 | `present` 2 = stand-in row played by a frozen partner; `MODE_FLAG_STAND_IN` in training MODE. | Protocol.h:178; ac9873986, 641cf015c, aa303bc33 (scripted stand-in removed) |
 | 26 | Entity sensing (vision block 6): pixel = 4 bytes again (no entity slot), the static world only, so ImageBytes is height x width x 4; entities block 2 (columns 16-18 los, ang_width, ang_height), sight block 3. Message layout otherwise protocol 25's. | entity-sensing (this change) |
+
+Message type 12 (added at 18) is unused since 2026-10-08 (decision 0019, vision-only movement). `PROTOCOL_VERSION` stays
+25 in this tree; the next bump folds the removal in (the history comments in Protocol.h and protocol.py say so).
 
 Commit-date mapping for 15-25 was taken from `git log` subjects and is approximate: the commit that sets the constant
 (`git log -S"PROTOCOL_VERSION = N;"`) was checked only for 24 and 25 (both 641cf015c on 2026-10-07; 24 first at 8452ff458,
@@ -315,7 +313,7 @@ then `local + index`), others become sims of the host's learner (`ClusterSims`).
 
 `ClusterEnv` behaviours (env.py): per-worker socket timeout `cluster_timeout` (default 60 s); a failing worker is dropped, its
 envs report `present = 0`, no character, `sat_out` set; `rejoin()` is tried every 10 s between rollouts, only if the returning sim has
-an identical `Spec` (otherwise it "stays out"); weights/replay/explore tables are re-sent to a rejoined sim; `set_mode` shares an
+an identical `Spec` (otherwise it "stays out"); weights and replay tables are re-sent to a rejoined sim; `set_mode` shares an
 evaluation's `episodes` among live sims in proportion to env counts in consecutive seed runs (`_shares`).
 
 ### Learner exchange (7702)

@@ -297,7 +297,7 @@ Tests: `test_recurrent.py::test_critic_*`.
 - Checkpoint contents (`train.save_checkpoint`, `train.py:170`): `trainer.state_dict()` = `actor`, `critic`,
   `value_norm`,
   `actor_opt`, `critic_opt`, optional `vision_opt`; plus `config`, `spec`, `update`, `env_steps` and `extra`
-  (`style`, `explore`, controller and tracker state, `train.py:1124-1127`). `slow_opt` is saved when it exists (optional key); the rollout copies are not.
+  (`style`, controller and tracker state, `train.py:1124-1127`). `slow_opt` is saved when it exists (optional key); the rollout copies are not.
 
 ## Observed issues
 

@@ -33,11 +33,9 @@
 #include "InstanceScript.h"
 #include "Log.h"
 #include "Map.h"
-#include "MotionMaster.h"
 #include "EncoderSupport.h"
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
-#include "PathGenerator.h"
 #include "Player.h"
 #include "StageScenario.h"
 #include "Supplies.h"
@@ -46,11 +44,8 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
-#include <limits>
 #include <map>
 #include <mutex>
-#include <tuple>
 
 Animus::Curriculum::EnemyRank Animus::Curriculum::RankEnemy(Unit const* enemy, Unit const* tank)
 {
@@ -99,46 +94,17 @@ namespace
         float _y;
         float _range;
     };
-    /// Where a dungeon's navmesh does not join two stops, the route steps from creature to creature: to the nearest
-    /// within BREADCRUMB_REACH that is at least BREADCRUMB_MIN_GAIN closer to the far side.
-    constexpr float BREADCRUMB_REACH = 45.0f;
-    constexpr float BREADCRUMB_MIN_GAIN = 3.0f;
     /// How far from its spawn a boss is looked for by entry.
     constexpr float BOSS_SEARCH_YARDS = 100.0f;
-    /// Legs of the entrance-to-boss path: PathGenerator stops at MAX_POINT_PATH_LENGTH points (~296 yd), and the
-    /// deepest boss of a raid is a few of those from the door.
-    constexpr uint32 PATH_LEGS = 16;
     /// A boss back at full health out of combat after having been engaged has evaded: the fight is lost.
     constexpr float EVADED_HEALTH_PCT = 99.0f;
-    /// Trash cleared for the episode stays away this long (it respawns for the next instance anyway).
-    constexpr Seconds TRASH_RESPAWN = Seconds(3600);
-    /// The pull drill's rungs: a pack is drilled once the nearest other creature stands at least this far from it
-    /// (InstanceEncounter::StartDrill), the last rung any pack.
-    constexpr std::array<float, 4> PULL_GAPS = { 30.0f, 22.0f, 14.0f, 0.0f };
-    /// The drill's party stands at least this far from anything left alive, looking no further back than
-    /// PULL_START_MAX_YARDS along the route.
-    constexpr float PULL_START_CLEARANCE = 25.0f;
-    constexpr float PULL_START_MAX_YARDS = 120.0f;
-
-    struct EngageKey
-    {
-        uint32 Map;
-        uint32 Entry;
-        bool operator<(EngageKey const& other) const { return std::tie(Map, Entry) < std::tie(other.Map, other.Entry); }
-    };
-
-    float Distance2d(Position const& a, Position const& b)
-    {
-        float const dx = a.GetPositionX() - b.GetPositionX();
-        float const dy = a.GetPositionY() - b.GetPositionY();
-        return std::sqrt(dx * dx + dy * dy);
-    }
+    /// The fights started ready (ReadyEngages) the party is paid for: once a run (ReadyPull).
+    constexpr uint32 READY_PULLS_PAID = 1;
 }
 
 Animus::Curriculum::InstanceEncounter::InstanceEncounter(StageScenario& scenario, uint32 envs)
     : Encounter(scenario), _envs(envs)
 {
-    _drillRung = std::min<uint32>(scenario.Tuning().Instance.PullRungStart, uint32(PULL_GAPS.size()) - 1);
     // The rows the world database can actually field, per ladder: a wrong entry or a boss with no spawn is a log
     // line at startup, not a crash in the first episode.
     for (ArenaDefinition const& arena : scenario.Stage().Arenas)
@@ -187,9 +153,8 @@ CreatureData const* Animus::Curriculum::InstanceEncounter::FindSpawn(BossRow con
 
 std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::InstanceEncounter::RewardTerms() const
 {
-    return { RewardTerm::StepCost, RewardTerm::Approach, RewardTerm::Kill, RewardTerm::Death, RewardTerm::Timeout,
-        RewardTerm::Threat, RewardTerm::PullClean, RewardTerm::PullExtra, RewardTerm::Clear, RewardTerm::ReadyPull,
-        RewardTerm::Idle, RewardTerm::Lost, RewardTerm::Away };
+    return { RewardTerm::StepCost, RewardTerm::Kill, RewardTerm::Death, RewardTerm::Timeout, RewardTerm::Threat,
+        RewardTerm::Clear, RewardTerm::ReadyPull, RewardTerm::Idle, RewardTerm::Lost, RewardTerm::Away };
 }
 
 void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
@@ -197,21 +162,15 @@ void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     // The rung (the ladder's tier, which the evaluation spreads its seeds over) and the fight's outcome. The rung
     // is `difficulty` -- the column the convergence rule's ladder signal reads; `boss_rung` is the same.
     table.Add("difficulty", [this](Env const& env, uint32) { return float(_envs[env.Index].Tier); });
-    // A stage's rung comes first of the `_rung` columns (the evaluation videos read the first: Vision::
-    // EvalVideoRungColumn): the pull drill's ladder in a stage of drills, the difficulty ladder's otherwise -- the
-    // row a stage pins (boss_rung) is the same every run.
-    if (EvaluatesDrills(_scenario.Stage().Arenas))
-        table.Add("pull_rung", [this](Env const& env, uint32) { return float(_envs[env.Index].DrillRung); });
+    // The difficulty ladder's rung comes first of the `_rung` columns (the evaluation videos read the first: Vision::
+    // EvalVideoRungColumn) -- the row a stage pins (boss_rung) is the same every run.
     table.Add("wing_rung", [this](Env const& env, uint32) { return float(_envs[env.Index].Rung); });
-    // At the top of the run's own ladder (the learner's convergence.top_rung: a stage converges on its real task,
-    // never on an easier rung): a drill's PULL_GAPS, else the difficulty ladder's last rung -- the evaluation's
-    // conditions. A stage's pinned row (difficulty) is the same every run and says nothing.
+    // At the top of the difficulty ladder (the learner's convergence.top_rung: a stage converges on its real task,
+    // never on an easier rung) -- the evaluation's conditions. A stage's pinned row (difficulty) is the same every run
+    // and says nothing.
     table.Add("at_top_rung", [this](Env const& env, uint32)
     {
-        EnvInstance const& fight = _envs[env.Index];
-        bool const top = fight.Drill ? fight.DrillRung + 1 >= PULL_GAPS.size()
-            : fight.Rung + 1 >= StageScenario::WING_RUNGS.size();
-        return top ? 1.0f : 0.0f;
+        return _envs[env.Index].Rung + 1 >= StageScenario::WING_RUNGS.size() ? 1.0f : 0.0f;
     });
     table.Add("boss_rung", [this](Env const& env, uint32) { return float(_envs[env.Index].Tier); });
     table.Add("instance_map", [this](Env const& env, uint32) { return float(_envs[env.Index].MapId); });
@@ -223,19 +182,8 @@ void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     table.Add("evaded", [this](Env const& env, uint32) { return _envs[env.Index].Evaded ? 1.0f : 0.0f; });
     table.Add("wing_trash_kills", [this](Env const& env, uint32) { return float(_envs[env.Index].TrashKills); });
     table.Add("wing_boss_kills", [this](Env const& env, uint32) { return float(_envs[env.Index].BossKills); });
-    table.Add("wing_route_share", [this](Env const& env, uint32)
-    {
-        EnvInstance const& fight = _envs[env.Index];
-        return fight.Route.empty() ? 0.0f : float(std::min<std::size_t>(fight.RouteNext, fight.Route.size()))
-            / float(fight.Route.size());
-    });
     table.Add("wing_wipes", [this](Env const& env, uint32) { return float(_envs[env.Index].Wipes); });
-    table.Add("wing_cleared_share", [this](Env const& env, uint32)
-    {
-        EnvInstance const& fight = _envs[env.Index];
-        return fight.HostileTotal ? std::min(1.0f, float(fight.TrashKills + (fight.BossDead ? 1 : 0))
-            / float(fight.HostileTotal + 1)) : 0.0f;
-    });
+    table.Add("wing_cleared_share", [this](Env const& env, uint32) { return ClearedShare(_envs[env.Index]); });
     table.Add("wing_crowd_seconds", [this](Env const& env, uint32) { return _envs[env.Index].CrowdSeconds; });
     table.Add("wing_probe", [this](Env const& env, uint32) { return _envs[env.Index].Probe ? 1.0f : 0.0f; });
     table.Add("wing_rises", [this](Env const& env, uint32) { return float(_envs[env.Index].Rises); });
@@ -246,11 +194,9 @@ void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
         return fight.Rejoins ? float(fight.RejoinMsTotal) / float(fight.Rejoins) / 1000.0f : 0.0f;
     });
     table.Add("wing_level", [this](Env const& env, uint32) { return float(_scenario.Data(env).EpisodeLevel); });
-    // **The party stages' measures** (dungeon-curriculum G2, D1-D3, 2026-10-07). The run's success as the stage
-    // counts it (`cleared`: a drill's pack alone and dead, a corridor's packs all cleared, a whole dungeon's last
-    // boss), the full clear (every pull of the route and the last boss) and the Deadmines' bar (a clear with at
-    // most
-    // one wipe); a corridor's packs and their order; the chain pulls and the pulls started ready; a drill's end.
+    // **The party stages' measures** (dungeon-curriculum D2, D3, 2026-10-07). The run's success as the stage counts
+    // it (`cleared`: the last boss dead), the full clear (every creature a clear counts, and the last boss) and the
+    // Deadmines' bar (a clear with at most one wipe); the pulls started ready.
     table.Add("cleared", [this](Env const& env, uint32) { return Succeeded(_envs[env.Index]) ? 1.0f : 0.0f; });
     table.Add("full_clear", [this](Env const& env, uint32) { return FullClear(_envs[env.Index]) ? 1.0f : 0.0f; });
     table.Add("bar_clear", [this](Env const& env, uint32)
@@ -258,52 +204,11 @@ void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
         EnvInstance const& fight = _envs[env.Index];
         return Succeeded(fight) && fight.Wipes <= 1 ? 1.0f : 0.0f;
     });
-    table.Add("chain_pulls", [this](Env const& env, uint32) { return float(_envs[env.Index].ChainPulls); });
     table.Add("ready_pulls", [this](Env const& env, uint32)
     {
         EnvInstance const& fight = _envs[env.Index];
-        return float(std::min(fight.ReadyEngages, fight.ReadyPaidCap));
+        return float(std::min(fight.ReadyEngages, READY_PULLS_PAID));
     });
-    if (_scenario.Stage().AnyArena([](ArenaDefinition const& arena) { return arena.CorridorPacks > 0; }))
-    {
-        table.Add("corridor_packs", [this](Env const& env, uint32)
-        {
-            return float(_envs[env.Index].Corridor.Length());
-        });
-        table.Add("corridor_first", [this](Env const& env, uint32)
-        {
-            return float(_envs[env.Index].Corridor.First);
-        });
-        table.Add("corridor_cleared", [this](Env const& env, uint32)
-        {
-            return float(_envs[env.Index].Corridor.Cleared());
-        });
-        table.Add("corridor_in_order", [this](Env const& env, uint32)
-        {
-            return float(_envs[env.Index].Corridor.InOrder);
-        });
-        table.Add("corridor_share", [this](Env const& env, uint32) { return _envs[env.Index].Corridor.Share(); });
-    }
-    if (_scenario.Stage().AnyArena([](ArenaDefinition const& arena) { return arena.PullDrill; }))
-    {
-        table.Add("drill_clean", [this](Env const& env, uint32)
-        {
-            EnvInstance const& fight = _envs[env.Index];
-            return fight.Drill && fight.DrillCleared && !fight.DrillExtra ? 1.0f : 0.0f;
-        });
-        table.Add("drill_extra", [this](Env const& env, uint32)
-        {
-            return _envs[env.Index].Drill && _envs[env.Index].DrillExtra ? 1.0f : 0.0f;
-        });
-        table.Add("drill_pulled", [this](Env const& env, uint32)
-        {
-            return _envs[env.Index].Drill && _envs[env.Index].DrillEngaged ? 1.0f : 0.0f;
-        });
-        table.Add("drill_gap", [this](Env const& env, uint32) { return _envs[env.Index].DrillGap; });
-        // Which of the route's packs the drill pulled (stage.json episode_categories: the evaluation's per-pack
-        // tables, pack_1 the route's first).
-        table.Add("drill_pack", [this](Env const& env, uint32) { return float(_envs[env.Index].DrillPackIndex); });
-    }
     // **H, the stand-in split**: the run's success beside the "human" stand-in, and without it -- each a per-event
     // column over the episodes that had (with_stand_in) or had not (without_stand_in) the stand-in in a seat, so
     // their means are the two clear rates (episode_means.PER_EVENT); the plan's measure is the gap between them.
@@ -365,84 +270,24 @@ void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
             return killed ? 1.0f : 0.0f;
         });
     }
-    // Go-Explore: whether the run started from a cell, its arena and row, and the cells it reached (MarkCell).
-    table.Add("wing_started", [this](Env const& env, uint32) { return _envs[env.Index].Started ? 1.0f : 0.0f; });
-    table.Add("wing_arena", [this](Env const& env, uint32) { return float(_scenario.Data(env).Arena); });
-    table.Add("wing_tier", [this](Env const& env, uint32) { return float(_envs[env.Index].Tier); });
-    table.Add("wing_marks", [this](Env const& env, uint32) { return float(_envs[env.Index].Marks.size()); });
-    for (uint32 mark = 0; mark < EXPLORE_MARKS; ++mark)
-    {
-        auto const at = [this, mark](Env const& env) -> EnvInstance::CellMark const*
-        {
-            EnvInstance const& fight = _envs[env.Index];
-            return mark < fight.Marks.size() ? &fight.Marks[mark] : nullptr;
-        };
-        for (uint32 word = 0; word < EXPLORE_PACK_WORDS; ++word)
-            table.Add(Acore::StringFormat("wing_mark{}_packs{}", mark, word), [at, word](Env const& env, uint32)
-            {
-                EnvInstance::CellMark const* cell = at(env);
-                return cell ? float(cell->Packs[word]) : 0.0f;
-            });
-        table.Add(Acore::StringFormat("wing_mark{}_yard", mark), [at](Env const& env, uint32)
-        {
-            EnvInstance::CellMark const* cell = at(env);
-            return cell ? float(cell->Yard) : 0.0f;
-        });
-        table.Add(Acore::StringFormat("wing_mark{}_seconds", mark), [at](Env const& env, uint32)
-        {
-            EnvInstance::CellMark const* cell = at(env);
-            return cell ? float(cell->Ms) / 1000.0f : 0.0f;
-        });
-    }
 }
 
 void Animus::Curriculum::InstanceEncounter::ResetEpisode(Env& env)
 {
     EnvInstance& fight = _envs[env.Index];
-    // A pull drill: one line (Instance.WingTrace), and its outcome on the drill's own ladder.
-    if (fight.Drill)
-    {
-        if (_scenario.Tuning().Instance.WingTrace)
-            LOG_INFO("module.animus", "Pull drill: env {} rung {} level {} gap {:.0f} yd | {} | peak {} on the party, "
-                "{} wipes, {:.0f}s", env.Index, fight.DrillRung, fight.Level, fight.DrillGap,
-                fight.DrillExtra ? Acore::StringFormat("second pack ({})", fight.DrillExtraEntry)
-                    : fight.DrillCleared ? std::string(fight.DrillOther ? "clean (another pack)" : "clean")
-                    : fight.Wiped ? std::string("wiped")
-                    : fight.DrillEngaged ? std::string("pack alive at the end") : std::string("never pulled"),
-                fight.DrillPeak, fight.Wipes, float(fight.LastMs) / 1000.0f);
-        // An evaluation's drill is a measure, not a step of the drill's ladder.
-        if (fight.Row && !fight.Evaluating)
-            NoteDrill(fight.DrillRung, fight.DrillCleared && !fight.DrillExtra);
-        fight = EnvInstance();
-        return;
-    }
-    // The run just ended counts toward the support's running share (training runs of a whole dungeon only).
     // One line a finished run (Instance.WingTrace): how far it got, what it killed and how it ended.
-    if (!fight.Route.empty() && _scenario.Tuning().Instance.WingTrace)
-        LOG_INFO("module.animus", "Wing run: env {} {}{} rung {} level {} | point {}/{} at the end, {} of {} creatures killed, "
-            "{} bosses, last boss {} | {} wipes, {} rises, {} rejoined | {:.0f}s with no progress at the end | {}",
-            env.Index, fight.Evaluating ? "eval" : fight.Started ? "train from a cell" : "train",
-            fight.Probe ? " probe" : "", fight.Rung, fight.Level,
-            fight.RouteNext, fight.Route.size(), fight.TrashKills, fight.HostileTotal, fight.BossKills,
-            fight.BossDead ? "killed" : "alive", fight.Wipes, fight.Rises, fight.Rejoins,
-            float(fight.LastMs - std::min(fight.LastMs, fight.ProgressMs)) / 1000.0f,
-            fight.CorridorRun ? Acore::StringFormat("corridor packs {}-{}: {} cleared ({} in route order), {} chain "
-                "pulls, {}", fight.Corridor.First + 1, fight.Corridor.End, fight.Corridor.Cleared(),
-                fight.Corridor.InOrder, fight.ChainPulls, fight.Corridor.Done() ? "cleared" : fight.Wiped ? "wiped"
-                : "out of time")
-            : Acore::StringFormat("{} chain pulls{}, {}", fight.ChainPulls, FullClear(fight) ? ", a full clear" : "",
-                fight.BossDead ? "cleared" : fight.Wiped ? "wiped" : "out of time"));
-    // Every training run from the door counts for its rung; the probes are the policy's own. A run started from a
-    // cell (Go-Explore) began part-way and is no measure of the rung.
-    // A corridor's measure is its own packs: the share of them cleared (1 when every one is), whatever the dungeon's.
-    if (!fight.Route.empty() && !fight.Evaluating && !fight.Started)
-    {
-        float const cleared = fight.HostileTotal
-            ? float(fight.TrashKills + (fight.BossDead ? 1 : 0)) / float(fight.HostileTotal + 1) : 0.0f;
-        float const progress = fight.CorridorRun ? fight.Corridor.Share()
-            : fight.BossDead ? 1.0f : std::min(1.0f, cleared);
-        _scenario.NoteWingRun(fight.Rung, fight.Probe, progress);
-    }
+    bool const built = !fight.Boss.IsEmpty();
+    if (built && _scenario.Tuning().Instance.WingTrace)
+        LOG_INFO("module.animus", "Wing run: env {} {}{} rung {} level {} | {} of {} creatures killed, {} bosses, last "
+            "boss {} | {} wipes, {} rises, {} rejoined | {:.0f}s with no progress at the end | {}",
+            env.Index, fight.Evaluating ? "eval" : "train", fight.Probe ? " probe" : "", fight.Rung, fight.Level,
+            fight.TrashKills, fight.HostileTotal, fight.BossKills, fight.BossDead ? "killed" : "alive", fight.Wipes,
+            fight.Rises, fight.Rejoins, float(fight.LastMs - std::min(fight.LastMs, fight.ProgressMs)) / 1000.0f,
+            fight.BossDead ? "cleared" : fight.Wiped ? "wiped" : "out of time");
+    // The run just ended counts toward the support's running share (the training runs of a whole dungeon only; the
+    // probes are the policy's own).
+    if (built && !fight.Evaluating)
+        _scenario.NoteWingRun(fight.Rung, fight.Probe, fight.BossDead ? 1.0f : ClearedShare(fight));
     fight = EnvInstance();
 }
 
@@ -456,19 +301,9 @@ void Animus::Curriculum::InstanceEncounter::BeforeLevel(Env& env)
     if (rows.empty())
         return;
 
-    // An arena runs its pinned row (ArenaDefinition::InstanceRow) every time. A training run may start from a cell the
-    // learner sent (Go-Explore). Evaluation, and the pull drill, start at the door.
-    // A corridor (G2) draws its own start: its first pack, the packs before it cleared (StartCorridor).
+    // An arena runs its pinned row (ArenaDefinition::InstanceRow) every time, from the door.
     ArenaDefinition const& arena = _scenario.Arena(env);
     uint32 const pinned = uint32(arena.InstanceRow);
-    std::optional<ExploreStart> const start = !env.Evaluating && !arena.PullDrill && !arena.CorridorPacks
-        ? _scenario.DrawExploreStart(data.Arena, pinned + 1) : std::nullopt;
-    fight.Started = start && start->Tier == pinned;
-    if (fight.Started)
-    {
-        fight.StartPacks = start->Packs;
-        fight.StartYard = start->Yard;
-    }
     fight.Tier = std::min<uint32>(pinned, uint32(rows.size()) - 1);
     fight.Row = rows[fight.Tier];
     fight.MapId = fight.Row->MapId;
@@ -485,19 +320,12 @@ void Animus::Curriculum::InstanceEncounter::BeforeLevel(Env& env)
     fight.Evaluating = env.Evaluating;
     fight.Rung = env.Evaluating ? uint32(StageScenario::WING_RUNGS.size()) - 1 : _scenario.WingRungNow();
     StageScenario::WingRung const& rung = StageScenario::WING_RUNGS[fight.Rung];
-    // A pull drill is one pull by the learned seats, at about the dungeon's own levels: a party far above them
-    // walks past what a party of the level would pull, and the drill is about what it would pull. No probes, one
-    // wipe. A stage of drills alone (dungeon1_pulls) evaluates them too, each seed its own pack (StartDrill); any
-    // other leaves them to training.
-    fight.Drill = arena.PullDrill && (!env.Evaluating || EvaluatesDrills(_scenario.Stage().Arenas));
-    fight.CorridorRun = arena.CorridorPacks > 0 && !fight.Drill;
-    fight.Probe = !env.Evaluating && !fight.Drill && !fight.Started && frand(0.0f, 1.0f) < tuning.WingProbe;
-    fight.WipesAllowed = fight.Drill ? 1 : tuning.WingWipes + rung.ExtraWipes;
+    fight.Probe = !env.Evaluating && frand(0.0f, 1.0f) < tuning.WingProbe;
+    fight.WipesAllowed = tuning.WingWipes + rung.ExtraWipes;
     // The arena's own band (the Deadmines' bar: 17-20) where it names one, else the dungeon finder's range.
     auto const [low, high] = arena.LevelFirst ? std::pair<uint32, uint32>(arena.LevelFirst, arena.LevelLast)
         : DungeonLevels(*fight.Row);
-    uint32 const lift = fight.Drill ? std::min(rung.Lift, tuning.PullLift) : rung.Lift;
-    data.EpisodeLevel = uint8(std::min<uint32>(urand(low, high) + lift, DEFAULT_MAX_LEVEL));
+    data.EpisodeLevel = uint8(std::min<uint32>(urand(low, high) + rung.Lift, DEFAULT_MAX_LEVEL));
 
     MapEntry const* mapEntry = sMapStore.LookupEntry(fight.Row->MapId);
     bool const raid = mapEntry && mapEntry->IsRaid();
@@ -598,78 +426,13 @@ bool Animus::Curriculum::InstanceEncounter::Build(Env& env, Map* map, uint8 /*le
     fight.BossHealth = std::max<uint32>(1, boss->GetMaxHealth());
 
     EnvState& data = _scenario.Data(env);
-    // The party stays at the door with the trash alive, and the route to the boss is its objective.
-    WingPlan const plan = WingRoute(env, map, seat, boss);
-    fight.Route = plan.Route;
-    fight.Dense = plan.Dense;
-    fight.RouteDense = plan.RouteDense;
-    fight.CornerAhead = plan.CornerAhead;
-    fight.CornerBack = plan.CornerBack;
-    for (SeatInstance& seatState : fight.Seats)
-    {
-        seatState.DenseAt = 0;
-        seatState.Detour.clear();
-    }
-    // The creatures a full clear kills: the ones a seat can walk to, with a field route (WingPlan::Reachable),
-    // and the bosses; every hostile one with the navmesh's.
+    // The party stays at the door with the trash alive. The creatures a full clear kills: every hostile one the
+    // instance holds, bosses among them (an instance loads all its grids when it is created).
     fight.HostileTotal = 0;
-    std::vector<ObjectGuid::LowType> counted;
     for (auto const& [spawnId, creature] : map->GetCreatureBySpawnIdStore())
-        if (Hostile(seat, creature) && (!plan.Field || creature->IsDungeonBoss() || creature->isWorldBoss()
-            || std::binary_search(plan.Reachable.begin(), plan.Reachable.end(), spawnId)))
-        {
+        if (Hostile(seat, creature))
             ++fight.HostileTotal;
-            counted.push_back(spawnId);
-        }
-    std::sort(counted.begin(), counted.end());
-    fight.RouteRemain.assign(fight.Route.size(), 0.0f);
-    for (std::size_t i = fight.Route.size(); i-- > 1;)
-        fight.RouteRemain[i - 1] = fight.RouteRemain[i] + fight.Route[i - 1].GetExactDist(&fight.Route[i]);
-    fight.RoutePacks.clear();
-    fight.PackOf.clear();
-    for (WingPack const& pack : plan.Packs)
-    {
-        for (ObjectGuid::LowType member : pack.Members)
-            fight.PackOf.emplace(member, uint32(fight.RoutePacks.size()));
-        fight.RoutePacks.push_back({ pack.Yard && pack.Yard < fight.Dense.size() ? fight.Dense[pack.Yard] : pack.At,
-            pack.Members, false });
-    }
-    // The dungeon map's layout: the walkable way's ground every LAYOUT_SPACING yards, unordered, no creature on it.
-    {
-        constexpr float LAYOUT_SPACING = 25.0f;
-        std::vector<SeenPlaces::Point> ground;
-        for (Position const& at : fight.Dense.empty() ? fight.Route : fight.Dense)
-            ground.push_back({ at.GetPositionX(), at.GetPositionY(), at.GetPositionZ() });
-        fight.MapLayout = SeenPlaces::Layout(ground, LAYOUT_SPACING);
-    }
-    // The party is paid for a pull started ready at most once a pack (and once on a navmesh route's boss).
-    fight.ReadyPaidCap = std::max<uint32>(1, uint32(fight.RoutePacks.size()));
-    LOG_DEBUG("module.animus", "{}: env {}: {} route places from {} packs and {} route points", _scenario.Name(),
-        env.Index, fight.Row->Name, fight.RoutePacks.size(), fight.Route.size());
     env.Targets.clear();
-    if (fight.Drill && !StartDrill(env, map, plan, counted))
-    {
-        LOG_WARN("module.animus", "{}: env {}: {} has no field route packs to drill; the whole dungeon instead",
-            _scenario.Name(), env.Index, fight.Row->Name);
-        fight.Drill = false;
-    }
-    if (fight.Started && !StartAt(env, map, plan, counted))
-    {
-        LOG_WARN("module.animus", "{}: env {}: {} cannot start from the cell sent ({} packs on its route); "
-            "the door instead", _scenario.Name(), env.Index, fight.Row->Name, plan.Packs.size());
-        fight.Started = false;
-    }
-    if (fight.CorridorRun && !StartCorridor(env, map, plan, counted))
-    {
-        LOG_WARN("module.animus", "{}: env {}: {} has no field route packs for a corridor; the whole dungeon "
-            "instead", _scenario.Name(), env.Index, fight.Row->Name);
-        fight.CorridorRun = false;
-    }
-    // A drill is one pull; a corridor its packs.
-    if (fight.Drill)
-        fight.ReadyPaidCap = 1;
-    else if (fight.CorridorRun)
-        fight.ReadyPaidCap = std::max<uint32>(1, fight.Corridor.Length());
     // Food and water for the whole dungeon, as a party brings: without them nobody could eat or drink between
     // pulls (the gauntlet's encounter was the only one that gave them), and a healer waiting for its mana on
     // natural regeneration held the party for the hour (2026-10-01).
@@ -747,23 +510,11 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
             ++fight.ReadyEngages;
     }
     TraceWing(env, fight, fight.Fighting || !anyoneAlive);
-    if (fight.Drill)
-        UpdateDrill(env, fight);
-    else
-        UpdateDrawnPacks(env, fight);
-    // A corridor's packs found cleared since the last decision, in route order or not (WingRun::Corridor).
-    if (fight.CorridorRun)
-    {
-        std::vector<bool> cleared(fight.RoutePacks.size(), false);
-        for (std::size_t pack = 0; pack < fight.RoutePacks.size(); ++pack)
-            cleared[pack] = fight.RoutePacks[pack].Cleared;
-        fight.Corridor.Note(cleared);
-    }
     fight.LastMs = env.EpisodeElapsedMs;
     fight.Level = uint32(data.EpisodeLevel);
 
     // The clock ran out (Instance.WingTrace): what the party was doing -- what is in combat around it, where, on whom.
-    if (_scenario.Tuning().Instance.WingTrace && !fight.Drill && !fight.EndLogged && TimeIsUp(env))
+    if (_scenario.Tuning().Instance.WingTrace && !fight.EndLogged && TimeIsUp(env))
     {
         fight.EndLogged = true;
         Player* anchor = nullptr;
@@ -784,9 +535,8 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
                         unit->GetVictim() ? unit->GetVictim()->GetName() : "nobody",
                         unit->HasUnitState(UNIT_STATE_EVADE) ? " evading" : "");
         }
-        LOG_INFO("module.animus", "Wing time: env {} at point {}/{}, fighting {}, {} on the party, last kill {:.0f}s "
-            "ago, in combat around:{}", env.Index, fight.RouteNext, fight.Route.size(), fight.Fighting ? 1 : 0,
-            fight.OnParty,
+        LOG_INFO("module.animus", "Wing time: env {}, fighting {}, {} on the party, last kill {:.0f}s "
+            "ago, in combat around:{}", env.Index, fight.Fighting ? 1 : 0, fight.OnParty,
             float(env.EpisodeElapsedMs - std::min(env.EpisodeElapsedMs, fight.LastKillMs)) / 1000.0f,
             around.empty() ? " nothing" : around);
     }
@@ -838,35 +588,12 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
         }
     }
 
-    // Each seat's place on the route: on to the furthest of the next few points it is near, up to the route's next
-    // point for the tank and up to the tank's place for the others.
-    constexpr float WALK_REACH = 12.0f;
-    constexpr std::size_t WALK_LOOK = 6;
-    uint32 tankWalk = fight.RouteNext;
-    for (uint32 index = 0; index < data.ActiveSeats; ++index)
-        if (Player* bot = _scenario.SeatBot(env, index); bot && bot->GetGUID() == fight.Tank)
-            tankWalk = fight.Seats[index].Walk;
-    for (uint32 index = 0; index < data.ActiveSeats; ++index)
-    {
-        Player* bot = _scenario.SeatBot(env, index);
-        if (!bot || !bot->IsAlive() || fight.Route.empty())
-            continue;
-        SeatInstance& seatState = fight.Seats[index];
-        uint32 const cap = std::min<uint32>(bot->GetGUID() == fight.Tank ? fight.RouteNext : tankWalk,
-            uint32(fight.Route.size()) - 1);
-        std::size_t reached = seatState.Walk;
-        for (std::size_t i = seatState.Walk; i <= cap && i < seatState.Walk + WALK_LOOK; ++i)
-            if (bot->GetExactDist(&fight.Route[i]) <= WALK_REACH)
-                reached = i + 1;
-        seatState.Walk = uint32(std::min<std::size_t>(reached, cap));
-    }
-
-    // A run stuck for two minutes, and every ten after (Instance.WingTrace): each seat's state against the tank's, and
-    // the tank's way on, so a script or a party that stands still says why.
+    // A run stuck for two minutes, and every ten after (Instance.WingTrace): each seat's state against the tank's, so a
+    // party that stands still says why.
     constexpr uint32 STUCK_FIRST_MS = 120000;
     constexpr uint32 STUCK_EVERY_MS = 600000;
     uint32 const still = env.EpisodeElapsedMs - std::min(env.EpisodeElapsedMs, fight.ProgressMs);
-    if (_scenario.Tuning().Instance.WingTrace && !fight.Drill && still >= STUCK_FIRST_MS && env.EpisodeElapsedMs >= fight.StuckLoggedMs)
+    if (_scenario.Tuning().Instance.WingTrace && still >= STUCK_FIRST_MS && env.EpisodeElapsedMs >= fight.StuckLoggedMs)
     {
         fight.StuckLoggedMs = env.EpisodeElapsedMs + STUCK_EVERY_MS;
         Unit* tank = nullptr;
@@ -897,8 +624,6 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
                     bot->GetPositionY(), bot->GetPositionZ(), bot->IsAlive() ? "" : " dead",
                     bot->IsInCombat() ? " combat" : "", presses);
             }
-        float const toNext = tank && fight.RouteNext < fight.Route.size()
-            ? tank->GetExactDist(&fight.Route[fight.RouteNext]) : -1.0f;
         std::string objects;
         if (tank)
             for (ObjectGuid const& guid : fight.Objects)
@@ -907,28 +632,8 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
                         object->GetEntry(), uint32(object->GetGoType()), uint32(object->GetGoState()),
                         tank->GetExactDist(object));
         seats += " | objects: " + (objects.empty() ? std::string("none") : objects);
-        for (uint32 index = 0; index < data.ActiveSeats && tank; ++index)
-            if (Player* bot = _scenario.SeatBot(env, index); bot && bot != tank && bot->IsAlive() && tank->IsInMap(bot)
-                && bot->GetExactDist(tank) > 20.0f)
-            {
-                PathGenerator path(bot);
-                path.CalculatePath(tank->GetPositionX(), tank->GetPositionY(), tank->GetPositionZ(), false);
-                G3D::Vector3 const end = path.GetPath().empty() ? G3D::Vector3(0, 0, 0) : path.GetPath().back();
-                seats += Acore::StringFormat(" | seat {} to the tank: path type {}, ends {:.0f} yd from it, walk {}, "
-                    "motion {}, moving {}", index, uint32(path.GetPathType()), tank->GetExactDist(end.x, end.y, end.z),
-                    fight.Seats[index].Walk, uint32(bot->GetMotionMaster()->GetCurrentMovementGeneratorType()),
-                    bot->isMoving() ? 1 : 0);
-            }
-        if (Player* tankPlayer = tank ? tank->ToPlayer() : nullptr; tankPlayer && fight.RouteNext < fight.Route.size())
+        if (Player* tankPlayer = tank ? tank->ToPlayer() : nullptr)
         {
-            Position const& next = fight.Route[fight.RouteNext];
-            PathGenerator path(tankPlayer);
-            path.CalculatePath(next.GetPositionX(), next.GetPositionY(), next.GetPositionZ(), false);
-            G3D::Vector3 const end = path.GetPath().empty() ? G3D::Vector3(0, 0, 0) : path.GetPath().back();
-            seats += Acore::StringFormat(" | path to the point: type {} {} points, ends {:.0f} yd from it; tank z "
-                "{:.1f}, point z {:.1f}, motion {}", uint32(path.GetPathType()), path.GetPath().size(),
-                next.GetExactDist(end.x, end.y, end.z), tankPlayer->GetPositionZ(), next.GetPositionZ(),
-                uint32(tankPlayer->GetMotionMaster()->GetCurrentMovementGeneratorType()));
             std::string fighters;
             for (uint32 slot = 0; slot < env.Targets.size(); ++slot)
                 if (Unit const* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive() && enemy->IsInCombat())
@@ -937,24 +642,11 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
             seats += Acore::StringFormat(" | fighting {}{}, moving {}", fight.Fighting ? 1 : 0, fighters,
                 tankPlayer->isMoving() ? 1 : 0);
         }
-        LOG_INFO("module.animus", "Wing stuck: env {} {:.0f}s still at point {}/{} (tank {:.0f} yd from it), {} on the "
-            "party, pack ahead {} | {}", env.Index, float(still) / 1000.0f, fight.RouteNext, fight.Route.size(), toNext,
-            fight.OnParty, fight.HasAhead && tank
+        LOG_INFO("module.animus", "Wing stuck: env {} {:.0f}s still, {} on the party, pack ahead {} | {}", env.Index,
+            float(still) / 1000.0f, fight.OnParty, fight.HasAhead && tank
                 ? Acore::StringFormat("{:.0f} yd ({})", tank->GetExactDist(&fight.Ahead), fight.AheadSize)
                 : std::string("none"), seats);
     }
-
-    // A wing: the next point of the route reached by any seat out of a fight -- ground is taken by clearing it, not
-    // by running past what is still fighting (the Deadmines' parties ran into the next pack mid-fight and had eight on
-    // them at once, 2026-10-01).
-    if (fight.RouteNext < fight.Route.size() && !fight.Fighting && (!fight.Drill || fight.RouteNext < fight.DrillPoint))
-        for (uint32 index = 0; index < data.ActiveSeats; ++index)
-            if (Player* bot = _scenario.SeatBot(env, index); bot && bot->IsAlive()
-                && bot->GetExactDist(&fight.Route[fight.RouteNext]) <= 15.0f)
-            {
-                ++fight.RouteNext;
-                break;
-            }
 }
 
 void Animus::Curriculum::InstanceEncounter::RiseDead(Env& env, EnvInstance& fight)
@@ -1005,10 +697,6 @@ void Animus::Curriculum::InstanceEncounter::RiseDead(Env& env, EnvInstance& figh
             RiseAtEntrance(bot, data.Seats[index], fight.Entrance, env.EpisodeElapsedMs);
             seatState.Clock.Risen(env.EpisodeElapsedMs);
             seatState.DeathPaid = false;
-            // Its place on the route is the entrance's: it walks the route back, point by point.
-            seatState.Walk = 0;
-            seatState.DenseAt = 0;
-            seatState.Detour.clear();
             ++fight.Rises;
         }
         else if (step == RespawnClock::Step::Rejoined)
@@ -1060,7 +748,6 @@ void Animus::Curriculum::InstanceEncounter::TraceWing(Env& env, EnvInstance& fig
         trace.InFight = true;
         trace.StartMs = env.EpisodeElapsedMs;
         trace.KillsAtStart = fight.TrashKills;
-        trace.PointAtStart = fight.RouteNext;
         for (uint32 index = 0; index < data.ActiveSeats; ++index)
             if (Player* bot = _scenario.SeatBot(env, index))
                 trace.Dead[index] = !bot->IsAlive();
@@ -1150,13 +837,12 @@ void Animus::Curriculum::InstanceEncounter::LogWipe(Env const& env, EnvInstance 
 {
     EnvInstance::FightTrace const& trace = fight.Trace;
     // The healers' mana when the party went down is in its deaths (each seat's mana as it died).
-    LOG_INFO("module.animus", "Wing wipe: env {} {} rung {}{} level {} wipe {}/{} at {:.0f}s, point {}/{} "
-        "(fight began at point {}, lasted {:.0f}s, {} kills in it, {} before) | peak {} on the party ({} elite, {} on "
-        "the tank): {} | deaths: {}",
-        env.Index, fight.Evaluating ? "eval" : fight.Drill ? "drill" : "train", fight.Rung, fight.Probe ? " probe" : "",
+    LOG_INFO("module.animus", "Wing wipe: env {} {} rung {}{} level {} wipe {}/{} at {:.0f}s (the fight lasted "
+        "{:.0f}s, {} kills in it, {} before) | peak {} on the party ({} elite, {} on the tank): {} | deaths: {}",
+        env.Index, fight.Evaluating ? "eval" : "train", fight.Rung, fight.Probe ? " probe" : "",
         uint32(_scenario.Data(env).EpisodeLevel),
-        fight.Wipes, fight.WipesAllowed, float(env.EpisodeElapsedMs) / 1000.0f, fight.RouteNext, fight.Route.size(),
-        trace.PointAtStart, float(env.EpisodeElapsedMs - trace.StartMs) / 1000.0f,
+        fight.Wipes, fight.WipesAllowed, float(env.EpisodeElapsedMs) / 1000.0f,
+        float(env.EpisodeElapsedMs - trace.StartMs) / 1000.0f,
         fight.TrashKills - trace.KillsAtStart, trace.KillsAtStart, trace.PeakEngaged, trace.PeakElites,
         trace.PeakOnTank, trace.PeakEntries.empty() ? "none seen" : trace.PeakEntries,
         trace.Deaths.empty() ? "none seen" : trace.Deaths);
@@ -1237,217 +923,6 @@ std::pair<uint32, uint32> Animus::Curriculum::InstanceEncounter::DungeonLevels(B
     return { row.Level, row.Level };
 }
 
-Animus::Curriculum::InstanceEncounter::WingPlan Animus::Curriculum::InstanceEncounter::WingRoute(Env const& env,
-    Map* map, Player* seat, Creature* boss) const
-{
-    static std::map<EngageKey, WingPlan> routes;
-    static std::mutex routesLock;
-    BossRow const& row = *_envs[env.Index].Row;
-    EngageKey const key{ row.MapId, row.Entry };
-    {
-        std::lock_guard<std::mutex> guard(routesLock);
-        if (auto const known = routes.find(key); known != routes.end())
-            return known->second;
-    }
-
-    // The whole dungeon, end to end. First the bosses, nearest next from the door, then the last boss: the order the
-    // dungeon opens up in (a boss's death opens the door behind it). Straight to the last boss, the path gave out a
-    // third of the way in the Deadmines (a door's tunnel the navmesh does not join).
-    std::vector<Position> stops;
-    Position const last(boss->GetPositionX(), boss->GetPositionY(), boss->GetPositionZ());
-    {
-        std::vector<Creature const*> bosses;
-        for (auto const& [spawnId, creature] : map->GetCreatureBySpawnIdStore())
-            if (creature && creature != boss && creature->IsAlive()
-                && (creature->IsDungeonBoss() || creature->isWorldBoss()))
-                bosses.push_back(creature);
-        Position at(seat->GetPositionX(), seat->GetPositionY(), seat->GetPositionZ());
-        while (!bosses.empty())
-        {
-            auto const nearest = std::min_element(bosses.begin(), bosses.end(),
-                [&at](Creature const* a, Creature const* b)
-            {
-                return a->GetExactDist(&at) < b->GetExactDist(&at);
-            });
-            at.Relocate((*nearest)->GetPositionX(), (*nearest)->GetPositionY(), (*nearest)->GetPositionZ());
-            stops.push_back(at);
-            bosses.erase(nearest);
-        }
-        stops.push_back(last);
-    }
-
-    // The server's path stop to stop, leg by leg as EngagePoint walks it; where the navmesh does not join two
-    // stops, the straight line between them (a door's tunnel is walked, the navmesh just does not cross it).
-    auto const pathThrough = [&](std::vector<Position> const& stops, bool log)
-    {
-        std::vector<G3D::Vector3> points;
-        Position cursor(seat->GetPositionX(), seat->GetPositionY(), seat->GetPositionZ());
-        points.emplace_back(cursor.GetPositionX(), cursor.GetPositionY(), cursor.GetPositionZ());
-        for (Position const& stop : stops)
-        {
-            for (uint32 leg = 0; leg < PATH_LEGS; ++leg)
-            {
-                map->LoadGrid(cursor.GetPositionX(), cursor.GetPositionY());
-                PathGenerator path(seat);
-                path.CalculatePath(cursor.GetPositionX(), cursor.GetPositionY(), cursor.GetPositionZ(),
-                    stop.GetPositionX(), stop.GetPositionY(), stop.GetPositionZ(), false);
-                if (path.GetPathType() & PATHFIND_NOPATH || path.GetPath().size() < 2)
-                    break;
-                for (std::size_t i = 1; i < path.GetPath().size(); ++i)
-                    points.push_back(path.GetPath()[i]);
-                G3D::Vector3 const& end = path.GetPath().back();
-                if (Distance2d(cursor, Position(end.x, end.y, end.z)) < 1.0f)
-                    break;
-                cursor.Relocate(end.x, end.y, end.z);
-                if (!(path.GetPathType() & (PATHFIND_INCOMPLETE | PATHFIND_SHORT)))
-                    break;
-            }
-            // Short of the stop: a closed door's gap in the navmesh, most likely. Path back from the stop as well;
-            // where the two halves come within a door's width of each other, only that gap is walked straight.
-            // Otherwise the straight line from the path's end, which went through the rock (the Deadmines' foundry
-            // and ship legs).
-            float const missed = cursor.GetExactDist(&stop);
-            float bridged = missed;
-            if (missed > 5.0f)
-            {
-                std::vector<G3D::Vector3> back;
-                Position from(stop);
-                for (uint32 leg = 0; leg < PATH_LEGS; ++leg)
-                {
-                    map->LoadGrid(from.GetPositionX(), from.GetPositionY());
-                    PathGenerator path(seat);
-                    path.CalculatePath(from.GetPositionX(), from.GetPositionY(), from.GetPositionZ(),
-                        cursor.GetPositionX(), cursor.GetPositionY(), cursor.GetPositionZ(), false);
-                    if (path.GetPathType() & PATHFIND_NOPATH || path.GetPath().size() < 2)
-                        break;
-                    for (std::size_t i = 1; i < path.GetPath().size(); ++i)
-                        back.push_back(path.GetPath()[i]);
-                    G3D::Vector3 const& end = path.GetPath().back();
-                    if (Distance2d(from, Position(end.x, end.y, end.z)) < 1.0f)
-                        break;
-                    from.Relocate(end.x, end.y, end.z);
-                    if (!(path.GetPathType() & (PATHFIND_INCOMPLETE | PATHFIND_SHORT)))
-                        break;
-                }
-                // Across the gap, from creature to creature: the dungeon's trash stands in its corridors and rooms, so
-                // stepping to the nearest one that is closer to where the path back begins walks the way the dungeon
-                // goes where the navmesh does not join it (the Deadmines' foundry and ship legs, 2026-09-30).
-                Position const target = back.empty() ? stop : Position(back.back().x, back.back().y, back.back().z);
-                std::vector<Position> spawns;
-                for (auto const& [spawnId, creature] : map->GetCreatureBySpawnIdStore())
-                    if (creature)
-                        spawns.emplace_back(creature->GetHomePosition());
-                Position at(cursor);
-                for (uint32 step = 0; step < 64 && at.GetExactDist(&target) > BREADCRUMB_REACH; ++step)
-                {
-                    float const left = at.GetExactDist(&target);
-                    Position const* next = nullptr;
-                    for (Position const& spawn : spawns)
-                        if (spawn.GetExactDist(&target) < left - BREADCRUMB_MIN_GAIN
-                            && at.GetExactDist(&spawn) <= BREADCRUMB_REACH
-                            && (!next || at.GetExactDist(&spawn) < at.GetExactDist(next)))
-                            next = &spawn;
-                    if (!next)
-                        break;
-                    points.emplace_back(next->GetPositionX(), next->GetPositionY(), next->GetPositionZ());
-                    at = *next;
-                }
-                bridged = at.GetExactDist(&target);
-                for (auto point = back.rbegin(); point != back.rend(); ++point)
-                    points.push_back(*point);
-                points.emplace_back(stop.GetPositionX(), stop.GetPositionY(), stop.GetPositionZ());
-            }
-            if (log)
-            LOG_INFO("module.animus", "{}: {} route leg to ({:.0f} {:.0f} {:.0f}): the path ends {:.0f} yd short{}",
-                _scenario.Name(), row.Name, stop.GetPositionX(), stop.GetPositionY(), stop.GetPositionZ(), missed,
-                missed > 5.0f
-                    ? Acore::StringFormat("; stepped across by the creatures, {:.0f} yd left straight", bridged)
-                    : "");
-            cursor = stop;
-        }
-        return points;
-    };
-
-    // Then every pack in the instance -- trash, side bosses and all (Instance.WingFullClear) -- each where the boss
-    // route passes nearest it, so the clear goes the way the dungeon opens up. Only the bosses, the route passed the
-    // packs by and the parties never cleared a room (2026-10-01: "clear every pull and every boss, even side ones");
-    // the packs nearest next from the door led through doors that open later, and the parties stood at them.
-    if (_scenario.Tuning().Instance.WingFullClear)
-    {
-        std::vector<G3D::Vector3> const spine = pathThrough(stops, false);
-        constexpr float PACK_REACH = 15.0f;
-        std::vector<std::pair<std::pair<std::size_t, float>, Position>> packs;
-        std::vector<Creature const*> left;
-        for (auto const& [spawnId, creature] : map->GetCreatureBySpawnIdStore())
-            if (creature && creature != boss && Hostile(seat, creature))
-                left.push_back(creature);
-        // A pack: a creature and every other within PACK_REACH of it, stood at their middle.
-        while (!left.empty())
-        {
-            Creature const* first = left.front();
-            float x = 0.0f, y = 0.0f, z = 0.0f;
-            uint32 count = 0;
-            for (auto it = left.begin(); it != left.end();)
-                if ((*it)->GetHomePosition().GetExactDist(&first->GetHomePosition()) <= PACK_REACH)
-                {
-                    x += (*it)->GetHomePosition().GetPositionX();
-                    y += (*it)->GetHomePosition().GetPositionY();
-                    z += (*it)->GetHomePosition().GetPositionZ();
-                    ++count;
-                    it = left.erase(it);
-                }
-                else
-                    ++it;
-            Position const middle(x / float(count), y / float(count), z / float(count));
-            std::size_t along = 0;
-            float nearest = std::numeric_limits<float>::max();
-            for (std::size_t i = 0; i < spine.size(); ++i)
-                if (float const d = middle.GetExactDist(spine[i].x, spine[i].y, spine[i].z); d < nearest)
-                {
-                    nearest = d;
-                    along = i;
-                }
-            packs.push_back({ { along, nearest }, middle });
-        }
-        std::sort(packs.begin(), packs.end(), [](auto const& a, auto const& b) { return a.first < b.first; });
-        stops.clear();
-        for (auto const& [key, pack] : packs)
-            stops.push_back(pack);
-        stops.push_back(last);
-    }
-    LOG_INFO("module.animus", "{}: {} route stops ({})", _scenario.Name(), stops.size(),
-        _scenario.Tuning().Instance.WingFullClear ? "every pack, in the bosses' order" : "the bosses");
-    std::vector<G3D::Vector3> const points = pathThrough(stops, true);
-
-    // A point every WingWaypointYards along it, between corners too; the last boss's own position last.
-    float const spacing = float(std::max<uint32>(5, _scenario.Tuning().Instance.WingWaypointYards));
-    std::vector<Position> route;
-    float carried = 0.0f;
-    for (std::size_t i = 1; i < points.size(); ++i)
-    {
-        G3D::Vector3 const& from = points[i - 1];
-        G3D::Vector3 const segment = points[i] - from;
-        float const length = segment.length();
-        float along = spacing - carried;
-        while (along <= length)
-        {
-            G3D::Vector3 const at = from + segment * (along / std::max(0.001f, length));
-            route.emplace_back(at.x, at.y, at.z);
-            along += spacing;
-        }
-        carried = length - (along - spacing);
-    }
-    route.emplace_back(boss->GetPositionX(), boss->GetPositionY(), boss->GetPositionZ());
-    LOG_INFO("module.animus", "{}: the route to {} ({}) is {} points from the door", _scenario.Name(), row.Name,
-        row.Entry, route.size());
-
-    WingPlan plan;
-    plan.Route = route;
-    std::lock_guard<std::mutex> guard(routesLock);
-    routes[key] = plan;
-    return plan;
-}
-
 void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInstance& fight)
 {
     Player* seat = _scenario.SeatBot(env, 0);
@@ -1502,43 +977,6 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
         }
     }
 
-    // The route's packs no member of which is alive (View's "next pack" places): only the next few not yet cleared
-    // are looked at, by spawn id, so a decision costs at most a handful of lookups. A creature is in the spawn store
-    // only while its grid is loaded -- every run opens a fresh instance, loaded around the party -- so a pack none of
-    // whose members is found is unknown, not cleared: it stays a place until a member has been found and none is alive.
-    // A killed creature stays in the store, dead, until the instance unloads (no respawn in a dungeon run), so a pack
-    // found dead latches cleared; the drill marks the packs it despawns itself (StartDrill).
-    if (Map* map = seat->GetMap())
-    {
-        auto const& spawned = map->GetCreatureBySpawnIdStore();
-        uint32 looked = 0;
-        for (EnvInstance::RoutePack& pack : fight.RoutePacks)
-        {
-            if (pack.Cleared)
-                continue;
-            if (++looked > WorldView::JOURNAL_PLACES)
-                break;
-            bool found = false;
-            bool standing = false;
-            for (ObjectGuid::LowType member : pack.Members)
-            {
-                auto const [first, last] = spawned.equal_range(member);
-                for (auto it = first; it != last && !standing; ++it)
-                {
-                    found = true;
-                    standing = it->second->IsAlive();
-                }
-                if (standing)
-                    break;
-            }
-            pack.Resolved = pack.Resolved || found;
-            pack.Cleared = found && !standing;
-        }
-        // A cell reached (Go-Explore): the set of cleared packs changed. Not for a drill, which is one pull.
-        if (!fight.Drill)
-            MarkCell(env, fight);
-    }
-
     // The creatures watched last decision that have died since: the party's kills (the boss's is its own term).
     for (auto watched = fight.Watched.begin(); watched != fight.Watched.end();)
     {
@@ -1575,7 +1013,7 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
     Acore::UnitListSearcher<Acore::AnyUnfriendlyUnitInObjectRangeCheck> searcher(seat, units, check);
     Cell::VisitObjects(seat, searcher, WING_SIGHT);
     // A creature that cannot reach the party (below a ledge, across lava) or is running home is no fight: in and out
-    // of combat with the party above Ragefire's drop at route point 30, it held the script's "fight" -- and the
+    // of combat with the party above Ragefire's drop, it held the script's "fight" -- and the
     // party, imitating it -- for the rest of the run (2026-10-03).
     units.remove_if([](Unit* unit)
     {
@@ -1669,464 +1107,32 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
         }
 }
 
-void Animus::Curriculum::InstanceEncounter::PlaceParty(Env& env, Position const& start, std::size_t yard)
-{
-    EnvInstance& fight = _envs[env.Index];
-    EnvState& data = _scenario.Data(env);
-    data.EpisodeSpawn = start;
-    data.HasEpisodeSpawn = true;
-    uint32 const waypoints = std::min<uint32>(fight.RouteNext, uint32(fight.Route.size()));
-    for (uint32 index = 0; index < data.ActiveSeats; ++index)
-    {
-        fight.Seats[index].Walk = fight.RouteNext;
-        fight.Seats[index].DenseAt = uint32(yard);
-        fight.Seats[index].WaypointsPaid = waypoints;
-        if (Player* bot = _scenario.SeatBot(env, index))
-        {
-            // Close together: the route may be a tunnel no wider than a few yards.
-            Position at = start;
-            at.m_positionX += float(int32(index % 3) - 1) * 1.0f;
-            at.m_positionY += float(int32(index / 3) - 1) * 1.0f;
-            BotFactory::TeleportWithinMap(bot, at);
-        }
-    }
-    fight.ProgressMs = env.EpisodeElapsedMs;
-}
-
-bool Animus::Curriculum::InstanceEncounter::StartAt(Env& env, Map* map, WingPlan const& plan,
-    std::vector<ObjectGuid::LowType> const& counted)
-{
-    EnvInstance& fight = _envs[env.Index];
-    if (plan.Packs.empty() || fight.Dense.empty() || fight.RouteDense.size() != fight.Route.size())
-        return false;
-    std::vector<std::size_t> packs;
-    for (uint32 bit = 0; bit < EXPLORE_PACKS; ++bit)
-        if (fight.StartPacks[bit / EXPLORE_PACK_BITS] & (1u << (bit % EXPLORE_PACK_BITS)))
-        {
-            if (bit >= plan.Packs.size() || bit >= fight.RoutePacks.size())
-                return false;
-            packs.push_back(bit);
-        }
-    if (packs.empty())
-        return false;
-
-    // The cell's packs gone, as the party that reached it left them; their grids loaded on purpose (StartDrill).
-    std::vector<ObjectGuid::LowType> cleared;
-    for (std::size_t index : packs)
-    {
-        map->LoadGrid(plan.Packs[index].At.GetPositionX(), plan.Packs[index].At.GetPositionY());
-        cleared.insert(cleared.end(), plan.Packs[index].Members.begin(), plan.Packs[index].Members.end());
-        fight.RoutePacks[index].Cleared = fight.RoutePacks[index].Resolved = true;
-    }
-    std::sort(cleared.begin(), cleared.end());
-    Player* seat = _scenario.SeatBot(env, 0);
-    std::vector<Creature*> clearing;
-    std::vector<Position> standing;
-    for (auto const& [spawnId, creature] : map->GetCreatureBySpawnIdStore())
-    {
-        if (!creature || !creature->IsAlive())
-            continue;
-        if (std::binary_search(cleared.begin(), cleared.end(), spawnId))
-            clearing.push_back(creature);
-        else if (Hostile(seat, creature))
-            standing.push_back(creature->GetPosition());
-    }
-    uint32 bosses = 0;
-    for (Creature* creature : clearing)
-    {
-        if (fight.HostileTotal && std::binary_search(counted.begin(), counted.end(), creature->GetSpawnId()))
-            --fight.HostileTotal;
-        // A boss dies rather than vanishes: its script (BossAI's JustDied) marks the encounter done, which is what
-        // opens the doors behind it. A despawned one would leave the way on shut.
-        if (creature->IsDungeonBoss() || creature->isWorldBoss())
-        {
-            creature->KillSelf(false);
-            ++bosses;
-        }
-        else
-            creature->DespawnOrUnsummon(0ms, TRASH_RESPAWN);
-    }
-
-    // The party at the cell's yard, back along the route to ground nothing left standing is near (as the drill).
-    std::size_t yard = std::min<std::size_t>(std::size_t(fight.StartYard) * EXPLORE_YARD_BUCKET,
-        fight.Dense.size() - 1);
-    std::size_t const cellYard = yard;
-    float walked = 0.0f;
-    auto const clear = [&standing](Position const& at)
-    {
-        return std::none_of(standing.begin(), standing.end(),
-            [&at](Position const& creature) { return at.GetExactDist(&creature) < PULL_START_CLEARANCE; });
-    };
-    while (yard > 0 && walked < PULL_START_MAX_YARDS && !clear(fight.Dense[yard]))
-    {
-        walked += fight.Dense[yard].GetExactDist(&fight.Dense[yard - 1]);
-        --yard;
-    }
-    Position start = fight.Dense[yard];
-    start.SetOrientation(start.GetAngle(&fight.Dense[std::min(yard + 10, fight.Dense.size() - 1)]));
-    fight.RouteNext = uint32(fight.Route.size()) - 1;
-    for (std::size_t i = 0; i < fight.RouteDense.size(); ++i)
-        if (fight.RouteDense[i] > yard)
-        {
-            fight.RouteNext = uint32(i);
-            break;
-        }
-    PlaceParty(env, start, yard);
-    // The start is a cell reached: the archive counts the visit.
-    fight.Marks.push_back({ fight.StartPacks, fight.StartYard, env.EpisodeElapsedMs });
-    if (_scenario.Tuning().Instance.WingTrace)
-        LOG_INFO("module.animus", "Wing start: env {} {} from a cell, {} of {} packs cleared ({} bosses), yard {} "
-            "({:.0f} yd back to clear ground), route point {}/{}", env.Index, fight.Row->Name, packs.size(),
-            plan.Packs.size(), bosses, cellYard, walked, fight.RouteNext, fight.Route.size());
-    return true;
-}
-
-std::array<uint32, Animus::Curriculum::InstanceEncounter::EXPLORE_PACK_WORDS>
-    Animus::Curriculum::InstanceEncounter::ClearedWords(EnvInstance const& fight)
-{
-    std::array<uint32, EXPLORE_PACK_WORDS> words{};
-    for (std::size_t i = 0; i < std::min<std::size_t>(fight.RoutePacks.size(), EXPLORE_PACKS); ++i)
-        if (fight.RoutePacks[i].Cleared)
-            words[i / EXPLORE_PACK_BITS] |= 1u << (i % EXPLORE_PACK_BITS);
-    return words;
-}
-
-void Animus::Curriculum::InstanceEncounter::MarkCell(Env const& env, EnvInstance& fight)
-{
-    std::array<uint32, EXPLORE_PACK_WORDS> const words = ClearedWords(fight);
-    if (words == std::array<uint32, EXPLORE_PACK_WORDS>{}
-        || (!fight.Marks.empty() && fight.Marks.back().Packs == words))
-        return;
-    // Where the party is: the furthest yard a seat stands at (a seat left behind at the door is not the party's
-    // place).
-    uint32 yard = 0;
-    for (uint32 index = 0; index < _scenario.Data(env).ActiveSeats; ++index)
-        yard = std::max(yard, fight.Seats[index].DenseAt);
-    if (fight.Marks.size() == EXPLORE_MARKS)
-        fight.Marks.erase(fight.Marks.begin());
-    fight.Marks.push_back({ words, yard / EXPLORE_YARD_BUCKET, env.EpisodeElapsedMs });
-}
-
-bool Animus::Curriculum::InstanceEncounter::StartCorridor(Env& env, Map* map, WingPlan const& plan,
-    std::vector<ObjectGuid::LowType> const& counted)
-{
-    EnvInstance& fight = _envs[env.Index];
-    uint32 const length = _scenario.Arena(env).CorridorPacks;
-    uint32 const packs = uint32(std::min<std::size_t>({ plan.Packs.size(), fight.RoutePacks.size(),
-        std::size_t(EXPLORE_PACKS) }));
-    if (!length || !packs || fight.Dense.empty() || fight.RouteDense.size() != fight.Route.size())
-        return false;
-
-    // Its first pack: a training run's drawn, an evaluation's from its seed (the same corridor every evaluation).
-    uint32 const first = WingRun::CorridorFirst(packs, length, env.Evaluating, env.EpisodeSeedIndex, rand32());
-    if (first > 0)
-    {
-        // The packs before it gone, as a party that came from the door left them -- a dungeon boss among them killed,
-        // so its script opens what its death opens -- and the party at the first pack's yard, back along the route to
-        // ground nothing left standing is near (StartAt, as a cell's start). No cell the learner sent: nothing for
-        // its archive.
-        fight.StartPacks = {};
-        for (uint32 pack = 0; pack < first; ++pack)
-            fight.StartPacks[pack / EXPLORE_PACK_BITS] |= 1u << (pack % EXPLORE_PACK_BITS);
-        fight.StartYard = plan.Packs[first].Yard / EXPLORE_YARD_BUCKET;
-        bool const placed = StartAt(env, map, plan, counted);
-        fight.Marks.clear();
-        fight.StartPacks = {};
-        fight.StartYard = 0;
-        if (!placed)
-            return false;
-    }
-    fight.Corridor.Begin(first, std::min(packs, first + length));
-    if (_scenario.Tuning().Instance.WingTrace)
-        LOG_INFO("module.animus", "Corridor start: env {} {} packs {}-{} of {}{}", env.Index, fight.Row->Name,
-            first + 1, fight.Corridor.End, packs, env.Evaluating ? " (evaluation)" : "");
-    return true;
-}
-
-void Animus::Curriculum::InstanceEncounter::UpdateDrawnPacks(Env& env, EnvInstance& fight)
-{
-    // Out of a fight, the packs drawn into the last one are forgotten: the next pull starts a fight of its own.
-    if (!fight.Fighting || fight.PackOf.empty())
-    {
-        fight.Drawn.End();
-        return;
-    }
-    Player* anchor = _scenario.SeatBot(env, 0);
-    if (!anchor || !anchor->IsInWorld())
-        return;
-    // What fights the party -- the slots and the crowd past them -- by the route pack it stands with. A creature of no
-    // route pack (a summon, one the route never reaches) draws no pack in.
-    std::vector<uint32> fighting;
-    auto const note = [&fight, &fighting](Creature const* creature)
-    {
-        if (!creature || !creature->IsAlive() || !creature->IsInCombat())
-            return;
-        Unit const* victim = creature->GetVictim();
-        if (!victim || !victim->GetCharmerOrOwnerPlayerOrPlayerItself())
-            return;
-        if (auto const pack = fight.PackOf.find(creature->GetSpawnId()); pack != fight.PackOf.end())
-            fighting.push_back(pack->second);
-    };
-    for (uint32 slot = 0; slot < env.Targets.size(); ++slot)
-        if (Unit const* enemy = env.FindTargetUnit(slot))
-            note(enemy->ToCreature());
-    for (ObjectGuid const& guid : fight.Overflow)
-        note(ObjectAccessor::GetCreature(*anchor, guid));
-    fight.ChainPulls += fight.Drawn.Note(fighting);
-}
-
 bool Animus::Curriculum::InstanceEncounter::FullClear(EnvInstance const& fight)
 {
     if (!fight.BossDead)
         return false;
-    // Every pull of the field route's (side bosses among them); a navmesh route has no packs, so its kills instead.
-    if (!fight.RoutePacks.empty())
-        return std::all_of(fight.RoutePacks.begin(), fight.RoutePacks.end(),
-            [](EnvInstance::RoutePack const& pack) { return pack.Cleared; });
+    // Every creature the clear counts (side bosses among them) and the last boss.
     return fight.HostileTotal && fight.TrashKills + 1 >= fight.HostileTotal;
 }
 
 bool Animus::Curriculum::InstanceEncounter::Succeeded(EnvInstance const& fight)
 {
-    if (fight.Drill)
-        return fight.DrillCleared && !fight.DrillExtra;
-    if (fight.CorridorRun)
-        return fight.Corridor.Done();
     return fight.BossDead;
 }
 
-bool Animus::Curriculum::InstanceEncounter::StartDrill(Env& env, Map* map, WingPlan const& plan,
-    std::vector<ObjectGuid::LowType> const& counted)
+float Animus::Curriculum::InstanceEncounter::ClearedShare(EnvInstance const& fight)
 {
-    EnvInstance& fight = _envs[env.Index];
-    CurriculumTuning::InstanceTuning const& tuning = _scenario.Tuning().Instance;
-    if (plan.Packs.empty() || fight.Dense.empty() || fight.RouteDense.size() != fight.Route.size())
-        return false;
-
-    // A pack of the rung: its nearest other creature at least the rung's gap away; any pack the route reaches when
-    // none is.
-    // An evaluation's drill (dungeon1_pulls) is a fixed sweep at the evaluation's conditions, whatever the training
-    // rung: every pack of the route, seed after seed (WingRun::SweepPick), the last rung's gap (any pack).
-    uint32 rung = uint32(PULL_GAPS.size()) - 1;
-    if (!env.Evaluating)
-    {
-        std::lock_guard<std::mutex> guard(_drillLock);
-        rung = _drillRung;
-    }
-    std::vector<std::size_t> open;
-    for (std::size_t i = 0; i < plan.Packs.size(); ++i)
-        if (plan.Packs[i].Yard && plan.Packs[i].Yard < fight.Dense.size() && plan.Packs[i].Gap >= PULL_GAPS[rung])
-            open.push_back(i);
-    if (open.empty())
-        for (std::size_t i = 0; i < plan.Packs.size(); ++i)
-            if (plan.Packs[i].Yard && plan.Packs[i].Yard < fight.Dense.size())
-                open.push_back(i);
-    if (open.empty())
-        return false;
-    std::size_t const chosen = open[env.Evaluating ? WingRun::SweepPick(uint32(open.size()), env.EpisodeSeedIndex)
-        : urand(0, uint32(open.size()) - 1)];
-    fight.DrillPackIndex = uint32(chosen);
-    WingPack const& pack = plan.Packs[chosen];
-    fight.DrillRung = rung;
-    fight.DrillGap = std::min(pack.Gap, 999.0f);
-
-    // The way there cleared, as a party that came from the door would have left it: every pack the route reaches
-    // first. Their grids are loaded on purpose -- a creature on a grid nothing has walked yet is not in the store,
-    // and would stand up alive behind the party.
-    std::vector<ObjectGuid::LowType> cleared;
-    for (std::size_t j = 0; j < chosen; ++j)
-    {
-        map->LoadGrid(plan.Packs[j].At.GetPositionX(), plan.Packs[j].At.GetPositionY());
-        cleared.insert(cleared.end(), plan.Packs[j].Members.begin(), plan.Packs[j].Members.end());
-        // Despawned below, and so out of the spawn store: cleared by the drill, not unknown (UpdateWingEnemies).
-        if (j < fight.RoutePacks.size())
-            fight.RoutePacks[j].Cleared = fight.RoutePacks[j].Resolved = true;
-    }
-    map->LoadGrid(pack.At.GetPositionX(), pack.At.GetPositionY());
-    std::sort(cleared.begin(), cleared.end());
-    std::vector<ObjectGuid::LowType> own = pack.Members;
-    std::sort(own.begin(), own.end());
-    std::vector<Creature*> clearing;
-    std::vector<Position> standing;
-    Player* seat = _scenario.SeatBot(env, 0);
-    uint32 alone = uint32(plan.Packs.size());
-    for (auto const& [spawnId, creature] : map->GetCreatureBySpawnIdStore())
-    {
-        if (!creature || !creature->IsAlive())
-            continue;
-        if (std::binary_search(cleared.begin(), cleared.end(), spawnId))
-            clearing.push_back(creature);
-        else
-        {
-            if (std::binary_search(own.begin(), own.end(), spawnId))
-                fight.DrillPack.push_back(creature->GetGUID());
-            if (Hostile(seat, creature))
-                standing.push_back(creature->GetPosition());
-            uint32 group = alone;
-            for (std::size_t j = chosen; j < plan.Packs.size() && group == alone; ++j)
-                if (std::find(plan.Packs[j].Members.begin(), plan.Packs[j].Members.end(), spawnId)
-                    != plan.Packs[j].Members.end())
-                    group = uint32(j);
-            if (group == alone)
-                ++alone;
-            fight.DrillGroups.emplace_back(creature->GetGUID(), group);
-        }
-    }
-    for (Creature* creature : clearing)
-    {
-        // Gone before the run starts: not a creature this run can kill (wing_cleared_share).
-        if (fight.HostileTotal && std::binary_search(counted.begin(), counted.end(), creature->GetSpawnId()))
-            --fight.HostileTotal;
-        creature->DespawnOrUnsummon(0ms, TRASH_RESPAWN);
-    }
-    if (fight.DrillPack.empty())
-        return false;
-
-    // Where the party stands: PullStartYards back along the route from the pack, and further back (to
-    // PULL_START_MAX_YARDS) until nothing left standing is within PULL_START_CLEARANCE of it.
-    auto const clear = [&standing](Position const& at)
-    {
-        return std::none_of(standing.begin(), standing.end(),
-            [&at](Position const& creature) { return at.GetExactDist(&creature) < PULL_START_CLEARANCE; });
-    };
-    std::size_t yard = pack.Yard;
-    float walked = 0.0f;
-    while (yard > 0 && (walked < tuning.PullStartYards
-        || (walked < PULL_START_MAX_YARDS && !clear(fight.Dense[yard]))))
-    {
-        walked += fight.Dense[yard].GetExactDist(&fight.Dense[yard - 1]);
-        --yard;
-    }
-    Position start = fight.Dense[yard];
-    start.SetOrientation(start.GetAngle(&pack.At));
-
-    // The route from there: its next point the first past the start, and none past the pack's.
-    fight.DrillPoint = uint32(fight.Route.size()) - 1;
-    for (std::size_t i = 0; i < fight.RouteDense.size(); ++i)
-        if (fight.RouteDense[i] >= pack.Yard)
-        {
-            fight.DrillPoint = uint32(i);
-            break;
-        }
-    fight.RouteNext = fight.DrillPoint;
-    for (std::size_t i = 0; i < fight.RouteDense.size(); ++i)
-        if (fight.RouteDense[i] > yard)
-        {
-            fight.RouteNext = std::min(uint32(i), fight.DrillPoint);
-            break;
-        }
-
-    PlaceParty(env, start, yard);
-    if (tuning.WingTrace)
-        LOG_INFO("module.animus", "Pull drill start: env {} rung {} pack {} of {} ({} creatures, gap {:.0f} yd), {:.0f} yd "
-            "back along the route, {} packs cleared before it", env.Index, rung, chosen + 1, plan.Packs.size(),
-            fight.DrillPack.size(), fight.DrillGap, walked, chosen);
-    return true;
-}
-
-void Animus::Curriculum::InstanceEncounter::UpdateDrill(Env& env, EnvInstance& fight)
-{
-    EnvState const& data = _scenario.Data(env);
-    Player* anchor = nullptr;
-    for (uint32 index = 0; index < data.ActiveSeats; ++index)
-        if (Player* bot = _scenario.SeatBot(env, index); bot && bot->IsAlive() && bot->IsInWorld()
-            && (!anchor || bot->GetGUID() == fight.Tank))
-            anchor = bot;
-    if (!anchor)
-        return;
-
-    bool packAlive = false;
-    for (ObjectGuid const& guid : fight.DrillPack)
-        if (Creature const* creature = ObjectAccessor::GetCreature(*anchor, guid); creature && creature->IsAlive())
-        {
-            packAlive = true;
-            fight.DrillEngaged = fight.DrillEngaged || creature->IsInCombat();
-        }
-
-    // What fights the party, from every living seat's side: a creature of the instance's own (not a summon) that is
-    // not of the drill's pack is a second pack.
-    constexpr float DRILL_SIGHT = 50.0f;
-    std::vector<ObjectGuid> onParty;
-    for (uint32 index = 0; index < data.ActiveSeats; ++index)
-    {
-        Player* bot = _scenario.SeatBot(env, index);
-        if (!bot || !bot->IsAlive() || !bot->IsInWorld())
-            continue;
-        std::list<Unit*> units;
-        Acore::AnyUnfriendlyUnitInObjectRangeCheck check(bot, bot, DRILL_SIGHT);
-        Acore::UnitListSearcher<Acore::AnyUnfriendlyUnitInObjectRangeCheck> searcher(bot, units, check);
-        Cell::VisitObjects(bot, searcher, DRILL_SIGHT);
-        for (Unit* unit : units)
-        {
-            Creature const* creature = unit->ToCreature();
-            if (!creature || !creature->IsAlive() || creature->IsSummon() || creature->IsTotem() || creature->IsPet())
-                continue;
-            Unit const* victim = creature->GetVictim();
-            if (!victim || !victim->GetCharmerOrOwnerPlayerOrPlayerItself())
-                continue;
-            if (std::find(onParty.begin(), onParty.end(), creature->GetGUID()) != onParty.end())
-                continue;
-            onParty.push_back(creature->GetGUID());
-            // The first creature on the party names the pack: the route's next or not, its whole pack is the pull.
-            if (!fight.DrillLocked)
-            {
-                fight.DrillLocked = true;
-                auto const of = std::find_if(fight.DrillGroups.begin(), fight.DrillGroups.end(),
-                    [&creature](auto const& entry) { return entry.first == creature->GetGUID(); });
-                if (std::find(fight.DrillPack.begin(), fight.DrillPack.end(), creature->GetGUID())
-                    == fight.DrillPack.end())
-                {
-                    // Another pack; one the drill never saw (a grid loaded since) is a pack of its own.
-                    fight.DrillOther = true;
-                    fight.DrillPack.assign(1, creature->GetGUID());
-                    if (of != fight.DrillGroups.end())
-                        for (auto const& [guid, group] : fight.DrillGroups)
-                            if (group == of->second && guid != creature->GetGUID())
-                                fight.DrillPack.push_back(guid);
-                }
-            }
-            if (!fight.DrillExtra
-                && std::find(fight.DrillPack.begin(), fight.DrillPack.end(), creature->GetGUID()) == fight.DrillPack.end())
-            {
-                fight.DrillExtra = true;
-                fight.DrillExtraEntry = creature->GetEntry();
-            }
-        }
-    }
-    fight.DrillPeak = std::max<uint32>(fight.DrillPeak, uint32(onParty.size()));
-    if (!packAlive && !fight.Fighting && onParty.empty())
-        fight.DrillCleared = true;
-}
-
-void Animus::Curriculum::InstanceEncounter::NoteDrill(uint32 rung, bool clean)
-{
-    CurriculumTuning::InstanceTuning const& tuning = _scenario.Tuning().Instance;
-    std::lock_guard<std::mutex> guard(_drillLock);
-    if (rung != _drillRung)
-        return;
-    std::size_t const window = std::max<uint32>(1, tuning.PullRungRuns);
-    _drillRuns.push_back(clean);
-    while (_drillRuns.size() > window)
-        _drillRuns.pop_front();
-    if (_drillRuns.size() < window || _drillRung + 1 >= PULL_GAPS.size())
-        return;
-    float const share = float(std::count(_drillRuns.begin(), _drillRuns.end(), true)) / float(_drillRuns.size());
-    if (share < tuning.PullRungTarget)
-        return;
-    ++_drillRung;
-    _drillRuns.clear();
-    LOG_INFO("module.animus", "{}: the pull drill steps to rung {} ({:.0f}% clean on the last {}): packs with another "
-        "{:.0f} yd or more away", _scenario.Name(), _drillRung, share * 100.0f, window, PULL_GAPS[_drillRung]);
+    return fight.HostileTotal ? std::min(1.0f, float(fight.TrashKills + (fight.BossDead ? 1 : 0))
+        / float(fight.HostileTotal + 1)) : 0.0f;
 }
 
 void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 seat, SeatView& view) const
 {
     // A wing's seats perceive what a player does (the coordinator's ruling, 2026-10-07: every dungeon stage carries the
-    // sight block): the goal head's places and assignment are what the seat saw, its map's frontier, the dungeon
-    // map's layout and its leader (SeenWorld) -- never the route, the tank's place on it or the packs in order,
-    // which are the encounter's own bookkeeping.
+    // sight block): the goal head's places and assignment are what the seat saw, its map's frontier and its leader
+    // within the minimap's range (SeenWorld) -- never a route or the packs in order.
     EnvInstance const& fight = _envs[env.Index];
-    if (fight.Route.empty())
+    if (fight.Boss.IsEmpty())
         return;
     if (seat < fight.Seats.size())
     {
@@ -2179,18 +1185,8 @@ void Animus::Curriculum::InstanceEncounter::SeenWorld(Env const& env, uint32 sea
         own.FrontierReady = true;
     }
     in.Frontier = own.Frontier;
-    // The dungeon map's layout, and which of its nodes the seat's map already holds (SeenAndLayout only).
-    if (_scenario.GoalPlaces() == SeenPlaces::Source::SeenAndLayout && !fight.MapLayout.empty())
-    {
-        in.Layout = &fight.MapLayout;
-        in.LayoutExplored.reserve(fight.MapLayout.size());
-        for (SeenPlaces::Point const& node : fight.MapLayout)
-        {
-            Vision::MapCell const* cell = state.Map.Find(node.X, node.Y);
-            in.LayoutExplored.push_back(cell && Vision::Known(*cell));
-        }
-    }
-    // The party's leader -- the stand-in when it leads, else the tank -- as its frame and its map dot show it.
+    // The party's leader -- the stand-in when it leads, else the tank -- as its frame and its map dot show it: the
+    // place only within the minimap's range (PartyFollow.MinimapYards, the dot's own, 2D), as a player's map shows it.
     int32 tankSeat = -1;
     for (uint32 index = 0; index < _scenario.Data(env).ActiveSeats && tankSeat < 0; ++index)
         if (Player* member = _scenario.SeatBot(env, index); member && !fight.Tank.IsEmpty()
@@ -2198,7 +1194,8 @@ void Animus::Curriculum::InstanceEncounter::SeenWorld(Env const& env, uint32 sea
             tankSeat = int32(index);
     int32 const leaderSeat = WingRun::LeaderSeat(_scenario.StandInSeat(env), _scenario.StandInLeads(env), tankSeat);
     if (Player* leader = leaderSeat >= 0 && uint32(leaderSeat) != seat ? _scenario.SeatBot(env, uint32(leaderSeat))
-        : nullptr; leader && leader->IsAlive() && leader->IsInMap(bot))
+        : nullptr; leader && leader->IsAlive() && leader->IsInMap(bot)
+        && bot->GetExactDist2d(leader) <= _scenario.Tuning().PartyFollow.MinimapYards)
     {
         in.HasLeader = true;
         in.Leader = { leader->GetPositionX(), leader->GetPositionY(), leader->GetPositionZ() };
@@ -2222,14 +1219,13 @@ void Animus::Curriculum::InstanceEncounter::Reward(Env& env, uint32 seatIndex, P
     SeatInstance& paid = fight.Seats[seatIndex];
     CurriculumTuning::InstanceTuning const& tuning = _scenario.Tuning().Instance;
     float const tierScale = TierScale(env);
-    uint32 const waypoints = std::min<uint32>(fight.RouteNext, uint32(fight.Route.size()));
 
-    // Standing still in a dungeon costs (Instance.WingStall): once WingStallGraceMs pass with nothing killed, no
-    // step along the route and nothing fighting the party, every seat pays by the second. Without it a party at the
-    // door paid only the timeout, and early in training that beat fighting through half the dungeon.
+    // Standing still in a dungeon costs (Instance.WingStall): once WingStallGraceMs pass with nothing killed and
+    // nothing fighting the party, every seat pays by the second. Without it a party at the door paid only the
+    // timeout, and early in training that beat fighting through half the dungeon.
     if (seatIndex == 0)
     {
-        uint32 const seen = fight.TrashKills + waypoints;
+        uint32 const seen = fight.TrashKills;
         if (seen != fight.ProgressSeen || _scenario.Data(env).StepEngaged)
         {
             fight.ProgressSeen = seen;
@@ -2241,31 +1237,17 @@ void Animus::Curriculum::InstanceEncounter::Reward(Env& env, uint32 seatIndex, P
     // Idle, a Cost at its full price from the first step (2026-10-07; it was Stall's Shaping, which the fade took).
     bool const tankSeat = _scenario.Data(env).Seats[seatIndex].DungeonRole == DUNGEON_TANK;
     float const seconds = float(_scenario.DecisionMs()) / 1000.0f;
-    if (env.EpisodeElapsedMs > fight.ProgressMs + (fight.Drill ? tuning.PullGraceMs : tuning.WingStallGraceMs))
+    if (env.EpisodeElapsedMs > fight.ProgressMs + tuning.WingStallGraceMs)
         ledger.Add(RewardTerm::Idle, -tuning.WingStall * (tankSeat ? 1.0f : tuning.WingStallOthers) * seconds);
     // The clock (Instance.WingClock): a run that clears sooner is better, at its full price from the first step.
     ledger.Add(RewardTerm::StepCost, -tuning.WingClock * seconds);
     // The party's rest discipline -- pull, fight, rest, ready, next: every seat paid for a fight started with every
-    // living member ready, at most once a route pack (ReadyPull, an Outcome; it was the tank's Threat, Shaping).
-    uint32 const ready = std::min(fight.ReadyEngages, fight.ReadyPaidCap);
+    // living member ready, at most once a run (ReadyPull, an Outcome; it was the tank's Threat, Shaping).
+    uint32 const ready = std::min(fight.ReadyEngages, READY_PULLS_PAID);
     if (ready > paid.EngagesPaid)
     {
         ledger.Add(RewardTerm::ReadyPull, tuning.WingEngage * float(ready - paid.EngagesPaid), tierScale);
         paid.EngagesPaid = ready;
-    }
-    // A pack drawn into a fight another pack started: the chain pull, a Cost over the tier scale.
-    if (fight.ChainPulls > paid.ChainPaid)
-    {
-        ledger.Add(RewardTerm::PullExtra, -tuning.WingChainPull * float(fight.ChainPulls - paid.ChainPaid),
-            1.0f / tierScale);
-        paid.ChainPaid = fight.ChainPulls;
-    }
-    // A corridor's packs cleared in route order (G2's Outcome), times the tier scale.
-    if (fight.CorridorRun && fight.Corridor.InOrder > paid.ClearsPaid)
-    {
-        ledger.Add(RewardTerm::Clear, tuning.CorridorPack * float(fight.Corridor.InOrder - paid.ClearsPaid),
-            tierScale);
-        paid.ClearsPaid = fight.Corridor.InOrder;
     }
     // More on the party than a pack (Instance.WingCrowd, past WingCrowdFree): a pull that ran into the next.
     if (fight.OnParty > tuning.WingCrowdFree)
@@ -2295,30 +1277,10 @@ void Animus::Curriculum::InstanceEncounter::Reward(Env& env, uint32 seatIndex, P
     if (bot && bot->IsAlive())
     {
         ledger.Add(RewardTerm::Kill, tuning.WingTrashKill * float(fight.TrashKills - paid.KillsPaid), tierScale);
-        ledger.Add(RewardTerm::Approach, tuning.WingWaypoint * tierScale * float(waypoints - paid.WaypointsPaid));
         ledger.Add(RewardTerm::Kill, tuning.WingMidBoss * float(fight.BossKills - paid.BossKillsPaid), tierScale);
-
-        // Forward through the dungeon, paid as it is walked (Instance.WingProgress over the whole route): the
-        // potential is the route still ahead -- to the next point, then along the route from it. The route points
-        // alone were a coarse signal, and the parties stood at the door. Paid once, for ground the seat had not
-        // reached before, and only out of a fight: walking past a pack still fighting paid it to pull the next one.
-        if (!fight.Route.empty() && fight.RouteNext < fight.Route.size() && !fight.RouteRemain.empty()
-            && !fight.Fighting)
-        {
-            std::size_t const next = fight.RouteNext;
-            float const total = std::max(1.0f, fight.RouteRemain.front());
-            float const ahead = bot->GetExactDist(&fight.Route[next]) + fight.RouteRemain[next];
-            float const potential = -ahead / total;
-            if (paid.PotentialReady && potential > paid.Potential)
-                ledger.Add(RewardTerm::Approach, tuning.WingProgress * tierScale * (potential - paid.Potential));
-            if (!paid.PotentialReady || potential > paid.Potential)
-                paid.Potential = potential;
-            paid.PotentialReady = true;
-        }
     }
     paid.KillsPaid = fight.TrashKills;
     paid.BossKillsPaid = fight.BossKills;
-    paid.WaypointsPaid = waypoints;
     if (bot && !bot->IsAlive() && !paid.DeathPaid)
     {
         paid.DeathPaid = true;
@@ -2331,65 +1293,32 @@ void Animus::Curriculum::InstanceEncounter::Reward(Env& env, uint32 seatIndex, P
         paid.WipesPaid = fight.Wipes;
     }
 
-    bool const over = fight.BossDead || fight.Wiped || TimeIsUp(env)
-        || (fight.Drill && (fight.DrillCleared || fight.DrillExtra)) || (fight.CorridorRun && fight.Corridor.Done());
+    bool const over = fight.BossDead || fight.Wiped || TimeIsUp(env);
     if (!over || paid.OutcomePaid)
         return;
     paid.OutcomePaid = true;
-    // A pull drill's outcome, the tank's in full and the others' at PullOthers: the pack alone and dead, a second
-    // pack in the fight, or the clock out with the pack still standing. A wipe is paid above.
-    if (fight.Drill)
-    {
-        float const share = tankSeat ? 1.0f : tuning.PullOthers;
-        if (fight.DrillExtra)
-            ledger.Add(RewardTerm::PullExtra, -tuning.PullExtra * share / tierScale);
-        else if (fight.DrillCleared)
-            ledger.Add(RewardTerm::PullClean, tuning.PullClean * share * tierScale);
-        else if (TimeIsUp(env))
-            ledger.Add(RewardTerm::Timeout, -tuning.PullTimeout * share, 1.0f / tierScale);
-        return;
-    }
-    if (seatIndex == 0 && !fight.Recorded)
-    {
-        fight.Recorded = true;
-        // Packs whose members were never found all run: the party never came near them, or the route's pack list
-        // names spawns this instance does not have (a mis-built route).
-        if (std::size_t const unseen = std::count_if(fight.RoutePacks.begin(), fight.RoutePacks.end(),
-            [](EnvInstance::RoutePack const& pack) { return !pack.Resolved; }))
-            LOG_DEBUG("module.animus", "{}: env {}: {} of {} route packs never found this run ({})", _scenario.Name(),
-                env.Index, unseen, fight.RoutePacks.size(), fight.Row ? fight.Row->Name : "?");
-    }
-    // A corridor: its packs were paid as they were cleared; the clock out costs the share of them left.
-    if (fight.CorridorRun)
-    {
-        if (TimeIsUp(env) && !fight.Corridor.Done())
-            ledger.Add(RewardTerm::Timeout, -tuning.WingTimeout * (1.0f - fight.Corridor.Share()), 1.0f / tierScale);
-        if (!fight.BossDead)
-            return;
-    }
     if (fight.BossDead)
     {
         ledger.Add(RewardTerm::Kill, tuning.WingBoss, tierScale);
         // The full clear (D2, D3: every pull and side boss on the way), times the tier scale.
-        if (!fight.CorridorRun && FullClear(fight) && !paid.FullClearPaid)
+        if (FullClear(fight) && !paid.FullClearPaid)
         {
             paid.FullClearPaid = true;
             ledger.Add(RewardTerm::Clear, tuning.WingClear, tierScale);
         }
     }
-    else if (TimeIsUp(env) && !fight.Route.empty())
-        ledger.Add(RewardTerm::Timeout, -tuning.WingTimeout * (1.0f - float(waypoints) / float(fight.Route.size())),
-            1.0f / tierScale);
+    // The clock out costs the share of the dungeon left: the creatures not yet killed (no route, no navmesh).
+    else if (TimeIsUp(env) && !fight.Boss.IsEmpty())
+        ledger.Add(RewardTerm::Timeout, -tuning.WingTimeout * (1.0f - ClearedShare(fight)), 1.0f / tierScale);
 }
 
 float Animus::Curriculum::InstanceEncounter::TierScale(Env const& env) const
 {
     // A wing's difficulty is its support ladder's rung, not its pinned row (a stage's row is the same every run): the
-    // tier rises as the rung steps down to the dungeon's own levels with no help (WingRun::TierOfRung), and a drill's
-    // with the drill's own ladder (PULL_GAPS).
+    // tier rises as the rung steps down to the dungeon's own levels with no help (WingRun::TierOfRung).
     CurriculumTuning const& tuning = _scenario.Tuning();
     EnvInstance const& fight = _envs[env.Index];
-    uint32 const tier = fight.Drill ? fight.DrillRung : WingRun::TierOfRung(fight.Rung);
+    uint32 const tier = WingRun::TierOfRung(fight.Rung);
     return CombatReward::TierScale(tuning.Difficulty.TierScale, std::min<uint32>(tier, tuning.Instance.MaxTierScale));
 }
 
@@ -2408,7 +1337,5 @@ bool Animus::Curriculum::InstanceEncounter::IsTerminal(Env const& env) const
 {
     EnvInstance const& fight = _envs[env.Index];
     // A wing goes on past an evade (the party can pull the boss again) and ends on the kill, the last wipe or time.
-    return fight.BossDead || fight.Wiped || TimeIsUp(env)
-        || (fight.Drill && (fight.DrillCleared || fight.DrillExtra))
-        || (fight.CorridorRun && fight.Corridor.Done());
+    return fight.BossDead || fight.Wiped || TimeIsUp(env);
 }

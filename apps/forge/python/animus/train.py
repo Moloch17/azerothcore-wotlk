@@ -41,7 +41,6 @@ from .partners import PARTNERS_DIR, Partners, partner_snapshot, with_partners_ch
 from .config import TrainConfig
 from .distill import Distiller, auto_teachers, build_teacher
 from .env import ClusterEnv, ForgeEnv
-from .explore import ExploreArchive, cells_of, mark_columns
 from .evaluation import (ConvergenceTracker, EvalResult, action_mask_table, casting_weights, format_summary,
                          run_evaluation)
 from .mappo.buffer import RolloutBuffer
@@ -754,20 +753,6 @@ class TrainingRun:
         self.score_kind = wanted if wanted in spec.episode_info_names else ""
         self.update = 0
         self.env_steps = 0
-        # Go-Explore starts for the wings (explore.enabled): the archive of cells the ended runs reached, kept by the
-        # leader from every rank's runs, and the version of it the sim was last sent.
-        self.explore: ExploreArchive | None = None
-        self.explore_columns = mark_columns(spec.episode_info_names) if config.explore.enabled else None
-        self.explore_sent = -1
-        self.explore_version = 0
-        if config.explore.enabled and self.explore_columns is None:
-            print("explore.enabled, but this stage reports no wing cells (no wing arena): every run starts at the "
-                  "door", flush=True)
-        elif config.explore.enabled:
-            self.explore = ExploreArchive(config.explore.max_cells, config.explore.depth_weight)
-            explore = config.explore
-            print(f"Go-Explore: {explore.share:.0%} of wing training resets start from the {explore.table_size} most "
-                  f"promising of at most {explore.max_cells} cells; evaluation from the door", flush=True)
         # A follower first takes whatever the leader read that this machine lacks -- parents, teachers, the cast's
         # checkpoints -- so it sets up from the same files (async_sync.fetch_shared).
         if self.async_ranks and not leader:
@@ -852,9 +837,6 @@ class TrainingRun:
             columns += ["style_reward", "style_scale", "style_disc_human", "style_disc_bot", "style_gp",
                         "style_disc_loss",
                         *(f"style_reward_{motion.context_name(c)}" for c in self.style.human.context_set)]
-        if self.explore is not None:
-            # Go-Explore (explore.enabled): the cells archived and the furthest of them.
-            columns += ["explore_cells", "explore_deepest"]
         if self.trainer.goal_count:
             # What the goal head is doing: the entropy it is kept at, how often a chosen goal is the one held, and
             # the share of decisions spent under each goal.
@@ -989,8 +971,6 @@ class TrainingRun:
             if self.style is not None and not self.style.load_state_dict(checkpoint.get("style")):
                 print(f"Resuming {config.run_name}: the checkpoint has no style discriminator of this shape; it "
                       f"starts fresh", flush=True)
-            if self.explore is not None and checkpoint.get("explore"):
-                self.explore.load_state_dict(checkpoint["explore"])
             saved_partner_scores = checkpoint.get("partner_scores")
             self.update = int(checkpoint.get("update", 0))
             self.env_steps = int(checkpoint.get("env_steps", 0))
@@ -1155,7 +1135,6 @@ class TrainingRun:
         # The stage (its block positions) travels with the checkpoint, for seeding the stages that extend it.
         return {"convergence": self.tracker.state_dict(), "controller": self.controller.state_dict(),
                 "stage": self.stage, "score_kind": self.score_kind,
-                **({"explore": self.explore.state_dict()} if self.explore is not None else {}),
                 # The partner pool's scores (and which members are retired), so a resume does not draw evenly again.
                 **({"partner_scores": self.partners.pool.scores_state()}
                    if getattr(self, "partners", None) is not None else {}),
@@ -2031,7 +2010,6 @@ class TrainingRun:
                 self.finished_layouts.clear()
         self.last_layout_stats = self.named_layout_stats()
         self.controller.observe_update(self.last_layout_stats, self.lr_scale_now)
-        self.explore_update()
         if self.difficulty_column is not None and self.finished_episodes:
             names = [layout.name for layout in spec.layouts]
             episodes = np.asarray(self.finished_episodes)
@@ -2076,7 +2054,6 @@ class TrainingRun:
             **(self.cast.stats() if self.cast is not None else {"cast_rows": 0.0, "cast_fallback_rows": 0.0}),
             **(self.partners.stats() if self.partners is not None else {}),
             **({"distill_coef": self.distiller.coef} if self.distiller is not None else {}),
-            **(self.explore.summary() if self.explore is not None else {}),
             **getattr(self, "style_stats", {}),
         }
         undefined: set[str] = set()
@@ -2112,26 +2089,6 @@ class TrainingRun:
               flush=True)
         self.finished_episodes.clear()
         self.finished_layouts.clear()
-
-    def explore_update(self) -> None:
-        """The leader archives the cells every rank's ended wing runs reached, and sends the sim the start table when
-        the archive changed (protocol EXPLORE_STARTS). A cluster's sims all get it; an async follower's own sim keeps
-        starting at the door."""
-        if self.explore is None or not self.ranks.leader:
-            return
-        if self.finished_episodes:
-            rows = np.asarray(self.finished_episodes)
-            for cell, seconds in cells_of(rows, self.explore_columns):
-                self.explore.add(cell, seconds, self.env_steps)
-                self.explore_version += 1
-        if self.explore_version == self.explore_sent:
-            return
-        explore = self.config.explore
-        table = self.explore.table(explore.table_size)
-        if table:
-            self.env.set_explore_starts(explore.share, [(cell.arena, cell.tier, cell.packs, cell.yard, weight)
-                                                        for cell, weight in table])
-            self.explore_sent = self.explore_version
 
     def audit_progress(self, row: dict[str, float]) -> None:
         """Say so when the updates have stopped moving the policy.

@@ -15,7 +15,8 @@ PROTOCOL_VERSION = 26
 # 26: entity sensing (vision block revision 6): a camera pixel is four bytes again -- distance, height, normal, the
 # class and objective byte, no entity slot -- of the static world alone, so Spec.image_bytes is height x width x 4;
 # the entity list's columns 16-18 are los, ang_width and ang_height (entities block revision 2, sight block revision
-# 3). The messages' layout is protocol 25's.
+# 3). The messages' layout is protocol 25's, less EXPLORE_STARTS: message type 12 (Go-Explore's, since 18) is retired
+# with the route packs (vision-only movement, 2026-10-08), so it is unused.
 # 25: a STEP's present is 2 for the "human" stand-in's row (Step.stand_in), which the learner plays with a frozen
 # partner and never trains on (it was 0, the sim's script's); MODE_FLAG_STAND_IN in a training MODE says the learner
 # can field one. The messages' layout is protocol 24's.
@@ -54,7 +55,7 @@ class MsgType(IntEnum):
     DEVICE = 9
     DEVICE_ACK = 10
     PROGRESS = 11       # f32 progress through the stage's budget, f32 shaping scale (18), f32 cost scale (19)
-    EXPLORE_STARTS = 12  # the cells a wing's training runs start from (Go-Explore, animus.explore; 18)
+    # 12 was EXPLORE_STARTS (protocol 18), retired 2026-10-08
 
 
 HEADER = struct.Struct("<II")  # type, payload length
@@ -76,9 +77,6 @@ PRESENT_STAND_IN = 2  # a STEP's present for the stand-in's row (protocol 25)
 WEIGHTS_COUNT = struct.Struct("<I")  # then that many float32 weights, one per layout in SPEC order
 REPLAY = struct.Struct("<IfI")  # seed base, share of training resets, count; then that many uint32 seed indexes
 MAX_REPLAY_SEEDS = 65536
-EXPLORE_STARTS = struct.Struct("<fI")  # share of a wing's training resets, count; then that many EXPLORE_CELL
-EXPLORE_CELL = struct.Struct("<II4IIf")  # arena, tier, cleared packs (4 words of 24 bits), yard / 16, weight
-MAX_EXPLORE_STARTS = 64
 # DEVICE (protocol 15): the sim's device buffers for this learner's obs, state and mask -- GPU, envs, then the three
 # hipIpcMemHandle_t -- offered after SPEC; DEVICE_ACK answers 1 when they were opened (animus.device).
 DEVICE = struct.Struct("<II64s64s64s")
@@ -533,16 +531,6 @@ def encode_weights(weights) -> bytes:
 def decode_weights(payload: bytes | bytearray | memoryview) -> np.ndarray:
     (count,) = WEIGHTS_COUNT.unpack_from(payload)
     return np.frombuffer(payload, dtype="<f4", count=count, offset=WEIGHTS_COUNT.size).copy()
-
-
-def encode_explore_starts(share: float, cells) -> bytes:
-    """EXPLORE_STARTS payload: `cells` -- (arena, tier, packs (4 words), yard, weight) -- that `share` of a wing's
-    training resets start from instead of the door."""
-    cells = list(cells)
-    if len(cells) > MAX_EXPLORE_STARTS:
-        raise ValueError(f"at most {MAX_EXPLORE_STARTS} explore starts, got {len(cells)}")
-    return EXPLORE_STARTS.pack(float(share), len(cells)) + b"".join(
-        EXPLORE_CELL.pack(arena, tier, *packs, yard, float(weight)) for arena, tier, packs, yard, weight in cells)
 
 
 def encode_replay(seed_base: int, fraction: float, seeds) -> bytes:

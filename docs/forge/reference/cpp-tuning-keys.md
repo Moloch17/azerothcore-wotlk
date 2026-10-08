@@ -3,9 +3,9 @@
 Reference for every value that shapes what the curriculum trains on and what it is paid for. Written for a manual
 review and refactor; everything is checked against the tree at `bd32b9dc8` (branch `forge`, 2026-10-07).
 
-**Scope.** `CurriculumTuning.h` / `CurriculumTuning.cpp`: the 22 tuning groups, their 313 config keys (309 fields of the
+**Scope.** `CurriculumTuning.h` / `CurriculumTuning.cpp`: the 22 tuning groups, their 297 config keys (293 fields of the
 struct plus the four `StandIn.*` keys of `StandIn::Tuning`), how they are loaded, recorded and fingerprinted, the
-conf.dist agreement test, and the four per-stage / per-arena override families that are read by name outside the
+conf.dist agreement test, and the three per-arena override families that are read by name outside the
 Visit list. It does not describe what the encounters do with the numbers (see [cpp-encounters.md](cpp-encounters.md),
 [cpp-stagescenario.md](cpp-stagescenario.md), [cpp-rewards-routing.md](cpp-rewards-routing.md)) nor the forge's own
 non-curriculum keys (`AnimusForge.Stage.<name>.Envs` and so on; see [config-keys.md](config-keys.md)).
@@ -67,7 +67,7 @@ rebuilds scenarios on reload; check `AnimusForge.cpp` / `ForgeMain.cpp`).
 ### 1.2 `Visit`
 
 `Visit(tuning, f)` (`CurriculumTuning.h:851-1175`) is a static template over a `const` or non-const tuning: one
-`f("Group.Key", tuning.Group.Field)` per key, 313 lines. It is the **only** list of keys: `Load`, `Json`, the conf.dist
+`f("Group.Key", tuning.Group.Field)` per key, 297 lines. It is the **only** list of keys: `Load`, `Json`, the conf.dist
 test and (through `Json`) the fingerprint and `stage.json` all derive from it. A field added to a group struct and not
 added to `Visit` is never read from the config, never recorded and never fingerprinted; nothing in the C++ checks this.
 (One-off check done for this document: all 309 struct fields appear in `Visit`, no key appears twice.)
@@ -95,10 +95,10 @@ The learner reads it back: `animus/train.py:326` puts it in the baseline-cache k
 hashes it with FNV-1a 64 and puts it in the string `curriculum=<016x>`. The host refuses a worker whose fingerprint
 differs ([cluster.md](../cluster.md)). Consequences:
 
-- The hash covers **effective values of the 313 Visit keys**, so two confs that list different keys but agree on every
+- The hash covers **effective values of the 297 Visit keys**, so two confs that list different keys but agree on every
   value agree (the comment in `AnimusForge.cpp:88-91`). A value left at its default and a key written with the same
   value hash the same.
-- It does **not** cover the override families of section 2 (`Arena.*`, `Stage.*.GoalPlaces`): two machines can differ
+- It does **not** cover the override families of section 2 (`Arena.*`): two machines can differ
   there and be accepted. `forgectl conf-sync` does copy them (`confsync.py:16-17`: every uncommented
   `AnimusForge.Curriculum.*` line), so only a machine that was not synced is exposed.
 - A reordering or renaming in `Visit` changes the hash of otherwise identical values (harmless across a build because
@@ -115,13 +115,12 @@ differs ([cluster.md](../cluster.md)). Consequences:
 - `conf_keys()` = every *uncommented* line `X.Curriculum.<key> =` in `worldserver.conf.dist` (lines 32-36).
 - `test_every_tuning_key_is_in_the_conf_template` (39-43): Visit keys minus conf keys must be empty.
 - `test_the_conf_template_invents_no_keys` (46-49): conf keys minus Visit keys must be empty.
-- It compares **key sets only**, not default values or types. A script written for this document compared all 313
+- It compares **key sets only**, not default values or types. A script written for this document compared all 297
   uncommented conf lines against the in-class defaults: they agree today (no test enforces it).
 - Arena/stage override keys are commented in conf.dist, so the test does not see them.
 
-`conf_prune.py` treats `AnimusForge.Curriculum.Arena.<stage>.<arena>.<key>` and
-`AnimusForge.Curriculum.Stage.<name>.GoalPlaces`
-as families "read by name" (`conf_prune.py:16-19`, test `test_conf_prune.py:125-136` also lists `MaxRung` as valid, see
+`conf_prune.py` treats `AnimusForge.Curriculum.Arena.<stage>.<arena>.<key>`
+as a family "read by name" (`conf_prune.py:16-19`, test `test_conf_prune.py:125-136` also lists `MaxRung` as valid, see
 Observed issues), and relies on this test: "the conf.dist diff IS the Visit diff" (`conf_prune.py:21-25`).
 
 ## 2. Override keys read outside `Visit`
@@ -133,13 +132,12 @@ All read in the `StageScenario` constructor with `GetOption(..., false)` (silent
 | `Arena.<stage>.<arena>.Weight` | the arena's `ArenaDefinition::Weight` | `StageScenario.cpp:489-491` | share of training episodes (also the start weight of the ramp). |
 | `Arena.<stage>.<arena>.WeightFinal` | `ArenaDefinition::WeightFinal` if >= 0, else the arena's Weight | `StageScenario.cpp:492-494` | weight at the end of the stage's budget; evaluations draw by the final weights (`StageScenario.cpp:675-677`). Clamped >= 0. |
 | `Arena.<stage>.<arena>.StandInShare` | `ArenaDefinition::StandInShare` | `StageScenario.cpp:497-499` | percent of the arena's training episodes with a stand-in; clamped -1..100 (-1 = defer to `Roles.StandInShare` for a Roles arena, else `StandIn.Share`; `StandInSeat.cpp:82-91`). |
-| `Stage.<name>.GoalPlaces` | `StageDefinition::GoalPlaces` | `StageScenario.cpp:509-511` | 1 = seen only, anything else = seen and layout nodes (the comparison is `== SeenOnly`). |
 
 If every `Weight` is 0 the arenas are drawn evenly with an error log (`StageScenario.cpp:520-524`); if every
 `WeightFinal`
 is 0 they take the start weights (`StageScenario.cpp:516-517`).
 
-conf.dist documents `Weight` and `WeightFinal`, `StandInShare` (in prose) and `GoalPlaces`. (The undocumented-`WeightFinal`
+conf.dist documents `Weight` and `WeightFinal`, and `StandInShare` (in prose). (The undocumented-`WeightFinal`
 and unread-`MaxRung` findings of Observed issues 3 and 4 were fixed 2026-10-08: `MaxRung` was removed from conf.dist
 and `WeightFinal` documented.)
 
@@ -157,7 +155,7 @@ Struct line ranges are in `CurriculumTuning.h`. "Per decision" terms are tuned f
 | `Raid` | 107-143 | 12 | `PartyEncounter.cpp:410-535` | Per-role reward weights of a party (tank hold, damage on the tank's target, healer keep-up and overheal, stance, early pull, idle), despite the name no raid stage exists. |
 | `Duel` | 145-151 | 2 | `StageScenario.cpp:2773, 3790`, `Rewards/CombatReward.cpp:90` | The melee and ranged range the position goal aims for. The group name is a leftover of the deleted duel stages. |
 | `Difficulty` | 153-178 | 7 | `Encounters/DifficultyLadder.cpp`, `CombatEncounter.cpp:252, 576`, `RolesEncounter.cpp:560`, `InstanceEncounter.cpp:2731` | The per-class/build tier ladder (raise/lower rates, window, review and stretch draws) and the tier scale of outcome terms. |
-| `Instance` | 180-279 | 42 | `InstanceEncounter.cpp`, `StageScenario.cpp:302-303, 1712` | Whole-dungeon wing: prices (`Wing*`), the wing ladder (`WingProbe`, `WingRungRuns`, `WingRungTarget`, `WingRungStart`), the pull drill (`Pull*`) and its rungs. |
+| `Instance` | 180-279 | 26 | `InstanceEncounter.cpp`, `StageScenario.cpp:302-303, 1712` | Whole-dungeon wing: prices (`Wing*`) and the wing ladder (`WingProbe`, `WingRungRuns`, `WingRungTarget`, `WingRungStart`). |
 | `Goals` | 281-324 | 13 | `StageScenario.cpp:3638-3898, 5026-5036` | The learner-chosen goals (SeatGoal): reached payments, switch cost, potential progress, per-kind values, the secondary goal. |
 | `Support` | 326-348 | 2 | `StageScenario.cpp:5048-5053` | Self healing pay and the mana price of healing. |
 | `Actions` | 350-442 | 34 | `Layout/SeatMemory.cpp` (pacing), `StageScenario.cpp:3734-4584` | Press pacing (`RepeatMs`...), repeat/jitter/effort/fidget prices, and the "aimless" press price and its 19 per-cause prices. |
@@ -189,7 +187,7 @@ Notes per group worth knowing before changing it:
   the size draw, and no drilled seat is paid by `PartyEncounter`); the makeup draw
   (`ClassicChance`, `RoleTankChance`, `RoleHealerChance`) is reached only by `move4_follow`
   (`classic = DrillRole || instance || proper || roll`, `StageScenario.cpp:2023`). PartyEncounter is used by arenas with
-  `PartyGroup` (`StageScenario.cpp:470-475`): group1, group2, dungeon1-3. The `Roles.*` per-role prices mirror the
+  `PartyGroup` (`StageScenario.cpp:470-475`): group1, dungeon2-3. The `Roles.*` per-role prices mirror the
   `Raid.*` ones
   at three times the value (`Roles.Hold = 3 x Raid.TankHold`, `Roles.Focus = 3 x Raid.TankTarget`, `Roles.Keep = 3 x
   Raid.KeepUp`: header comments, values 0.045 / 0.9 / 0.0006 check out).
@@ -208,7 +206,7 @@ Notes per group worth knowing before changing it:
 
 ## 4. Keys table
 
-313 rows, in `Visit` order (which is also the order of `stage.json` -> `tuning`). Columns:
+297 rows, in `Visit` order (which is also the order of `stage.json` -> `tuning`). Columns:
 
 - **Default**: the in-class initialiser (`CurriculumTuning.h`, `StandIn.h` for `StandIn.*`). Equal to the uncommented
   value in `worldserver.conf.dist` for every row (checked once by script).
@@ -220,13 +218,13 @@ Notes per group worth knowing before changing it:
   groups share a reference name in one file a match can be a false positive, and a read through another kind of alias
   would be missed; I read the lines of the shared-name families (Markers/Seek/Interact/Controls, Combat, PartyFollow,
   Instance, Party/Raid) by eye. Every key has at least one real reader; none is read only in a comment.
-- **Live stages**: where the reader runs in the twelve live stages, derived from the arenas' `Against`/`Seats`/blocks
-  in `Stages/Stages.cpp` (`all` = every stage; short names `move1` ... `dungeon3`; `combat1-3`, `dungeon1-3` are
+- **Live stages**: where the reader runs in the ten live stages, derived from the arenas' `Against`/`Seats`/blocks
+  in `Stages/Stages.cpp` (`all` = every stage; short names `move1` ... `dungeon3`; `combat1-3`, `dungeon2-3` are
   ranges).
 
 Notes: (3) the tuned level draw is reached only where no fixed level, episode level, kept level or focus band applies:
 `move4_follow` in training (see section 3); (4) the party-size draw (`RandomPartySize`, `Party.SizeWeight*`) was deleted 2026-10-08: every live party arena has an
-instance, a `ProperParty` or a `PartySize`; (5) arenas of group2-dungeon3 carry their own `StandInShare =
+instance, a `ProperParty` or a `PartySize`; (5) arenas of dungeon2-dungeon3 carry their own `StandInShare =
 20`
 (`Stages.cpp:621`), group1's roles arenas use `Roles.StandInShare`, `heldout` arenas are `EvalOnly`; no live arena falls
 through to `StandIn.Share`, so its default 0 is never consulted today (the "defer" path still exists).
@@ -246,25 +244,25 @@ through to `StandIn.Share`, so its default 0 is never consulted today (the "defe
 | Party | `Party.ClassicChance` | 50 | int32 | Load: 0..100 | `StageScenario.cpp:2023` | move4 only |
 | Party | `Party.RoleTankChance` | 25 | int32 | Load: 0..100; pair scaled to sum <= 100 | `StageScenario.cpp:2028` | move4 only |
 | Party | `Party.RoleHealerChance` | 25 | int32 | Load: 0..100; pair scaled to sum <= 100 | `StageScenario.cpp:2028` | move4 only |
-| Party | `Party.TeammateDamageTakenDps` | 0.5f | float | - | `Encounters/PartyEncounter.cpp:345` | group1, group2, dungeon1-3 |
-| Party | `Party.TeammateDamageTakenProtector` | 1.0f | float | - | `Encounters/PartyEncounter.cpp:345` | group1, group2, dungeon1-3 |
-| Party | `Party.TeammateHealing` | 2.0f | float | - | `Encounters/PartyEncounter.cpp:349`, `Encounters/PartyEncounter.cpp:519`, `Encounters/RolesEncounter.cpp:645` | group1, group2, dungeon1-3 |
-| Party | `Party.HealOffGoal` | 1.0f | float | - | `Encounters/PartyEncounter.cpp:387` | group1, group2, dungeon1-3 |
-| Party | `Party.TankDamageShare` | 0.25f | float | - | `StageScenario.cpp:4921` | group1, group2, dungeon1-3 |
-| Party | `Party.TankLoseTeammate` | 0.02f | float | - | `Encounters/PartyEncounter.cpp:363` | group1, group2, dungeon1-3 |
-| Party | `Party.PulledThreat` | 0.004f | float | - | `Encounters/PartyEncounter.cpp:308` | group1, group2, dungeon1-3 |
-| Party | `Party.TeammateDeath` | 3.0f | float | - | `Encounters/PartyEncounter.cpp:372` | group1, group2, dungeon1-3 |
-| Raid | `Raid.TankHold` | 0.015f | float | - | `Encounters/PartyEncounter.cpp:467` | group1, group2, dungeon1-3 |
-| Raid | `Raid.TankLoose` | 0.006f | float | - | `Encounters/PartyEncounter.cpp:468` | group1, group2, dungeon1-3 |
-| Raid | `Raid.TankTarget` | 0.3f | float | - | `Encounters/PartyEncounter.cpp:483` | group1, group2, dungeon1-3 |
-| Raid | `Raid.PulledOff` | 0.004f | float | - | `Encounters/PartyEncounter.cpp:487` | group1, group2, dungeon1-3 |
-| Raid | `Raid.EarlyPull` | 0.01f | float | - | `Encounters/PartyEncounter.cpp:496` | group1, group2, dungeon1-3 |
-| Raid | `Raid.KeepUp` | 0.0002f | float | - | `Encounters/PartyEncounter.cpp:510` | group1, group2, dungeon1-3 |
-| Raid | `Raid.Overheal` | 0.5f | float | - | `Encounters/PartyEncounter.cpp:519` | group1, group2, dungeon1-3 |
-| Raid | `Raid.TankStance` | 0.001f | float | - | `Encounters/PartyEncounter.cpp:456` | group1, group2, dungeon1-3 |
-| Raid | `Raid.Idle` | 0.001f | float | - | `Encounters/Encounters.h:104`, `Encounters/PartyEncounter.cpp:534` | group1, group2, dungeon1-3 |
-| Raid | `Raid.IdleMs` | 4000 | uint32 | - | `Encounters/PartyEncounter.cpp:531` | group1, group2, dungeon1-3 |
-| Raid | `Raid.IdleReach` | 40.0f | float | - | `Encounters/PartyEncounter.cpp:429` | group1, group2, dungeon1-3 |
+| Party | `Party.TeammateDamageTakenDps` | 0.5f | float | - | `Encounters/PartyEncounter.cpp:345` | group1, dungeon2-3 |
+| Party | `Party.TeammateDamageTakenProtector` | 1.0f | float | - | `Encounters/PartyEncounter.cpp:345` | group1, dungeon2-3 |
+| Party | `Party.TeammateHealing` | 2.0f | float | - | `Encounters/PartyEncounter.cpp:349`, `Encounters/PartyEncounter.cpp:519`, `Encounters/RolesEncounter.cpp:645` | group1, dungeon2-3 |
+| Party | `Party.HealOffGoal` | 1.0f | float | - | `Encounters/PartyEncounter.cpp:387` | group1, dungeon2-3 |
+| Party | `Party.TankDamageShare` | 0.25f | float | - | `StageScenario.cpp:4921` | group1, dungeon2-3 |
+| Party | `Party.TankLoseTeammate` | 0.02f | float | - | `Encounters/PartyEncounter.cpp:363` | group1, dungeon2-3 |
+| Party | `Party.PulledThreat` | 0.004f | float | - | `Encounters/PartyEncounter.cpp:308` | group1, dungeon2-3 |
+| Party | `Party.TeammateDeath` | 3.0f | float | - | `Encounters/PartyEncounter.cpp:372` | group1, dungeon2-3 |
+| Raid | `Raid.TankHold` | 0.015f | float | - | `Encounters/PartyEncounter.cpp:467` | group1, dungeon2-3 |
+| Raid | `Raid.TankLoose` | 0.006f | float | - | `Encounters/PartyEncounter.cpp:468` | group1, dungeon2-3 |
+| Raid | `Raid.TankTarget` | 0.3f | float | - | `Encounters/PartyEncounter.cpp:483` | group1, dungeon2-3 |
+| Raid | `Raid.PulledOff` | 0.004f | float | - | `Encounters/PartyEncounter.cpp:487` | group1, dungeon2-3 |
+| Raid | `Raid.EarlyPull` | 0.01f | float | - | `Encounters/PartyEncounter.cpp:496` | group1, dungeon2-3 |
+| Raid | `Raid.KeepUp` | 0.0002f | float | - | `Encounters/PartyEncounter.cpp:510` | group1, dungeon2-3 |
+| Raid | `Raid.Overheal` | 0.5f | float | - | `Encounters/PartyEncounter.cpp:519` | group1, dungeon2-3 |
+| Raid | `Raid.TankStance` | 0.001f | float | - | `Encounters/PartyEncounter.cpp:456` | group1, dungeon2-3 |
+| Raid | `Raid.Idle` | 0.001f | float | - | `Encounters/Encounters.h:104`, `Encounters/PartyEncounter.cpp:534` | group1, dungeon2-3 |
+| Raid | `Raid.IdleMs` | 4000 | uint32 | - | `Encounters/PartyEncounter.cpp:531` | group1, dungeon2-3 |
+| Raid | `Raid.IdleReach` | 40.0f | float | - | `Encounters/PartyEncounter.cpp:429` | group1, dungeon2-3 |
 | Duel | `Duel.MeleeRange` | 3.5f | float | - | `StageScenario.cpp:2773`, `StageScenario.cpp:2774`, `StageScenario.cpp:3790` (+4) | all |
 | Duel | `Duel.RangedRange` | 25.0f | float | - | `Rewards/CombatReward.cpp:90` | all |
 | Difficulty | `Difficulty.RaiseAbove` | 0.9f | float | - | `Encounters/DifficultyLadder.cpp:87` | combat1-3, group1_roles |
@@ -273,49 +271,33 @@ through to `StandIn.Share`, so its default 0 is never consulted today (the "defe
 | Difficulty | `Difficulty.ReviewChance` | 25 | int32 | Load: 0..100 | `Encounters/DifficultyLadder.cpp:51` | combat1-3, group1_roles |
 | Difficulty | `Difficulty.StretchChance` | 10 | int32 | - | `Encounters/DifficultyLadder.cpp:56` | combat1-3, group1_roles |
 | Difficulty | `Difficulty.CasterChance` | 40 | uint32 | - | `Encounters/CombatEncounter.cpp:252` | combat1-3 |
-| Difficulty | `Difficulty.TierScale` | 0.25f | float | - | `Encounters/CombatEncounter.cpp:576`, `Encounters/InstanceEncounter.cpp:2731`, `Encounters/RolesEncounter.cpp:560` | combat1-3, group1, group2, dungeon1-3 |
-| Instance | `Instance.MaxTierScale` | 6 | uint32 | - | `Encounters/InstanceEncounter.cpp:2731` | group2, dungeon1-3 |
-| Instance | `Instance.WingTrashKill` | 1.0f | float | - | `Encounters/InstanceEncounter.cpp:2607` | group2, dungeon1-3 |
-| Instance | `Instance.WingWaypoint` | 0.5f | float | - | `Encounters/InstanceEncounter.cpp:2608` | group2, dungeon1-3 |
-| Instance | `Instance.WingBoss` | 25.0f | float | - | `Encounters/InstanceEncounter.cpp:2682` | group2, dungeon2, dungeon3 |
-| Instance | `Instance.WingMidBoss` | 8.0f | float | - | `Encounters/InstanceEncounter.cpp:2609` | group2, dungeon1-3 |
-| Instance | `Instance.WingProgress` | 60.0f | float | - | `Encounters/InstanceEncounter.cpp:2623` | group2, dungeon1-3 |
-| Instance | `Instance.WingDeath` | 3.0f | float | - | `Encounters/InstanceEncounter.cpp:2636` | group2, dungeon1-3 |
-| Instance | `Instance.WingWipe` | 5.0f | float | - | `Encounters/InstanceEncounter.cpp:2640` | group2, dungeon1-3 |
-| Instance | `Instance.WingWipes` | 2 | uint32 | - | `Encounters/InstanceEncounter.cpp:497` | group2, dungeon1-3 |
-| Instance | `Instance.WingStall` | 0.1f | float | - | `Encounters/InstanceEncounter.cpp:2555` | group2, dungeon1-3 |
-| Instance | `Instance.WingStallOthers` | 0.2f | float | - | `Encounters/InstanceEncounter.cpp:2555` | group2, dungeon1-3 |
-| Instance | `Instance.WingEngage` | 1.0f | float | - | `Encounters/InstanceEncounter.cpp:2563` | group2, dungeon1-3 |
-| Instance | `Instance.WingReadyShare` | 0.8f | float | - | `Encounters/InstanceEncounter.cpp:739` | group2, dungeon1-3 |
-| Instance | `Instance.WingStallGraceMs` | 60000 | uint32 | - | `Encounters/InstanceEncounter.cpp:2554` | group2, dungeon1-3 |
-| Instance | `Instance.WingTimeout` | 30.0f | float | - | `Encounters/InstanceEncounter.cpp:2676`, `Encounters/InstanceEncounter.cpp:2691` | group2, dungeon1-3 |
+| Difficulty | `Difficulty.TierScale` | 0.25f | float | - | `Encounters/CombatEncounter.cpp:576`, `Encounters/InstanceEncounter.cpp:2731`, `Encounters/RolesEncounter.cpp:560` | combat1-3, group1, dungeon2-3 |
+| Instance | `Instance.MaxTierScale` | 6 | uint32 | - | `Encounters/InstanceEncounter.cpp:2731` | dungeon2-3 |
+| Instance | `Instance.WingTrashKill` | 1.0f | float | - | `Encounters/InstanceEncounter.cpp:2607` | dungeon2-3 |
+| Instance | `Instance.WingBoss` | 25.0f | float | - | `Encounters/InstanceEncounter.cpp:2682` | dungeon2, dungeon3 |
+| Instance | `Instance.WingMidBoss` | 8.0f | float | - | `Encounters/InstanceEncounter.cpp:2609` | dungeon2-3 |
+| Instance | `Instance.WingDeath` | 3.0f | float | - | `Encounters/InstanceEncounter.cpp:2636` | dungeon2-3 |
+| Instance | `Instance.WingWipe` | 5.0f | float | - | `Encounters/InstanceEncounter.cpp:2640` | dungeon2-3 |
+| Instance | `Instance.WingWipes` | 2 | uint32 | - | `Encounters/InstanceEncounter.cpp:497` | dungeon2-3 |
+| Instance | `Instance.WingStall` | 0.1f | float | - | `Encounters/InstanceEncounter.cpp:2555` | dungeon2-3 |
+| Instance | `Instance.WingStallOthers` | 0.2f | float | - | `Encounters/InstanceEncounter.cpp:2555` | dungeon2-3 |
+| Instance | `Instance.WingEngage` | 1.0f | float | - | `Encounters/InstanceEncounter.cpp:2563` | dungeon2-3 |
+| Instance | `Instance.WingReadyShare` | 0.8f | float | - | `Encounters/InstanceEncounter.cpp:739` | dungeon2-3 |
+| Instance | `Instance.WingStallGraceMs` | 60000 | uint32 | - | `Encounters/InstanceEncounter.cpp:2554` | dungeon2-3 |
+| Instance | `Instance.WingTimeout` | 30.0f | float | - | `Encounters/InstanceEncounter.cpp:2676`, `Encounters/InstanceEncounter.cpp:2691` | dungeon2-3 |
 | Instance | `Instance.WingClear` | 25.0f | float | - | `Encounters/InstanceEncounter.cpp:2687` | dungeon2, dungeon3 (full clear) |
-| Instance | `Instance.CorridorPack` | 4.0f | float | - | `Encounters/InstanceEncounter.cpp:2576` | group2_corridor |
-| Instance | `Instance.WingChainPull` | 3.0f | float | - | `Encounters/InstanceEncounter.cpp:2569` | group2, dungeon1-3 |
-| Instance | `Instance.WingClock` | 0.002f | float | - | `Encounters/InstanceEncounter.cpp:2557` | group2, dungeon1-3 |
-| Instance | `Instance.WingWaypointYards` | 30 | uint32 | reader: max(5, ..) | `Encounters/InstanceEncounter.cpp:1439`, `Encounters/InstanceEncounter.cpp:1667` | group2, dungeon1-3 |
-| Instance | `Instance.WingProbe` | 0.2f | float | - | `Encounters/InstanceEncounter.cpp:496` | group2, dungeon1-3 |
-| Instance | `Instance.WingRungRuns` | 40 | uint32 | reader: max(1, ..) (StageScenario.cpp:1712, WingLadder.cpp:31) | `StageScenario.cpp:302`, `StageScenario.cpp:1712` | group2, dungeon1-3 |
-| Instance | `Instance.WingRungTarget` | 0.6f | float | - | `StageScenario.cpp:302`, `StageScenario.cpp:1713` | group2, dungeon1-3 |
-| Instance | `Instance.WingRungStart` | 0 | uint32 | reader: min(.., rungs-1) (WingLadder.cpp:32) | `StageScenario.cpp:303` | group2, dungeon1-3 |
-| Instance | `Instance.WingSupplies` | 60 | uint32 | - | `Encounters/InstanceEncounter.cpp:687` | group2, dungeon1-3 |
-| Instance | `Instance.WingTrace` | 1 | uint32 | - | `Encounters/InstanceEncounter.cpp:407`, `Encounters/InstanceEncounter.cpp:423`, `Encounters/InstanceEncounter.cpp:768` (+5) | group2, dungeon1-3 |
-| Instance | `Instance.WingCrowd` | 0.15f | float | - | `Encounters/InstanceEncounter.cpp:2582` | group2, dungeon1-3 |
-| Instance | `Instance.WingCrowdFree` | 4 | uint32 | - | `Encounters/InstanceEncounter.cpp:1107`, `Encounters/InstanceEncounter.cpp:2581`, `Encounters/InstanceEncounter.cpp:2582` | group2, dungeon1-3 |
-| Instance | `Instance.WingFullClear` | 1 | uint32 | - | `Encounters/InstanceEncounter.cpp:1391`, `Encounters/InstanceEncounter.cpp:1435`, `Encounters/InstanceEncounter.cpp:1513` | group2, dungeon1-3 |
-| Instance | `Instance.WingStray` | 0.02f | float | - | `Encounters/InstanceEncounter.cpp:2600` | group2, dungeon1-3 |
-| Instance | `Instance.WingAway` | 0.02f | float | - | `Encounters/InstanceEncounter.cpp:2603` | group2, dungeon1-3 |
-| Instance | `Instance.WingStrayYards` | 25.0f | float | - | `Encounters/InstanceEncounter.cpp:2599` | group2, dungeon1-3 |
-| Instance | `Instance.PullClean` | 5.0f | float | - | `Encounters/InstanceEncounter.cpp:2657` | dungeon1_pulls |
-| Instance | `Instance.PullExtra` | 5.0f | float | - | `Encounters/InstanceEncounter.cpp:2655` | dungeon1_pulls |
-| Instance | `Instance.PullTimeout` | 2.0f | float | - | `Encounters/InstanceEncounter.cpp:2659` | dungeon1_pulls |
-| Instance | `Instance.PullOthers` | 0.5f | float | - | `Encounters/InstanceEncounter.cpp:2653` | dungeon1_pulls |
-| Instance | `Instance.PullGraceMs` | 20000 | uint32 | - | `Encounters/InstanceEncounter.cpp:2554` | dungeon1_pulls |
-| Instance | `Instance.PullLift` | 2 | uint32 | reader: min(rung lift, ..) | `Encounters/InstanceEncounter.cpp:501` | dungeon1_pulls |
-| Instance | `Instance.PullStartYards` | 35.0f | float | - | `Encounters/InstanceEncounter.cpp:2304` | dungeon1_pulls |
-| Instance | `Instance.PullRungStart` | 0 | uint32 | reader: min(.., 3) | `Encounters/InstanceEncounter.cpp:143` | dungeon1_pulls |
-| Instance | `Instance.PullRungRuns` | 100 | uint32 | reader: max(1, ..) | `Encounters/InstanceEncounter.cpp:2417` | dungeon1_pulls |
-| Instance | `Instance.PullRungTarget` | 0.7f | float | - | `Encounters/InstanceEncounter.cpp:2424` | dungeon1_pulls |
+| Instance | `Instance.WingClock` | 0.002f | float | - | `Encounters/InstanceEncounter.cpp:2557` | dungeon2-3 |
+| Instance | `Instance.WingProbe` | 0.2f | float | - | `Encounters/InstanceEncounter.cpp:496` | dungeon2-3 |
+| Instance | `Instance.WingRungRuns` | 40 | uint32 | reader: max(1, ..) (StageScenario.cpp:1712, WingLadder.cpp:31) | `StageScenario.cpp:302`, `StageScenario.cpp:1712` | dungeon2-3 |
+| Instance | `Instance.WingRungTarget` | 0.6f | float | - | `StageScenario.cpp:302`, `StageScenario.cpp:1713` | dungeon2-3 |
+| Instance | `Instance.WingRungStart` | 0 | uint32 | reader: min(.., rungs-1) (WingLadder.cpp:32) | `StageScenario.cpp:303` | dungeon2-3 |
+| Instance | `Instance.WingSupplies` | 60 | uint32 | - | `Encounters/InstanceEncounter.cpp:687` | dungeon2-3 |
+| Instance | `Instance.WingTrace` | 1 | uint32 | - | `Encounters/InstanceEncounter.cpp:407`, `Encounters/InstanceEncounter.cpp:423`, `Encounters/InstanceEncounter.cpp:768` (+5) | dungeon2-3 |
+| Instance | `Instance.WingCrowd` | 0.15f | float | - | `Encounters/InstanceEncounter.cpp:2582` | dungeon2-3 |
+| Instance | `Instance.WingCrowdFree` | 4 | uint32 | - | `Encounters/InstanceEncounter.cpp:1107`, `Encounters/InstanceEncounter.cpp:2581`, `Encounters/InstanceEncounter.cpp:2582` | dungeon2-3 |
+| Instance | `Instance.WingStray` | 0.02f | float | - | `Encounters/InstanceEncounter.cpp:2600` | dungeon2-3 |
+| Instance | `Instance.WingAway` | 0.02f | float | - | `Encounters/InstanceEncounter.cpp:2603` | dungeon2-3 |
+| Instance | `Instance.WingStrayYards` | 25.0f | float | - | `Encounters/InstanceEncounter.cpp:2599` | dungeon2-3 |
 | Actions | `Actions.RepeatMs` | 1000 | uint32 | - | `Layout/SeatMemory.cpp:147` | all |
 | Actions | `Actions.MoveRepeatMs` | 300 | uint32 | - | `Layout/SeatMemory.cpp:147` | all |
 | Actions | `Actions.StopCastMinMs` | 500 | uint32 | - | `Layout/SeatMemory.cpp:130` | all |
@@ -365,8 +347,8 @@ through to `StandIn.Share`, so its default 0 is never consulted today (the "defe
 | Goals | `Goals.Secondary` | 0.002f | float | - | `StageScenario.cpp:5033` | all |
 | Support | `Support.SelfHealing` | 0.5f | float | - | `StageScenario.cpp:5048` | all |
 | Support | `Support.HealingMana` | 0.1f | float | - | `StageScenario.cpp:5053` | all |
-| Options | `Options.RestMaxMs` | 30000 | uint32 | - | `Blocks/GauntletBlock.cpp:113` | combat3, group1, group2, dungeon1-3 (Gauntlet block) |
-| Options | `Options.HoldInterruptMs` | 10000 | uint32 | - | `Blocks/PackBlock.cpp:120` | group2, dungeon1-3 (Pack block) |
+| Options | `Options.RestMaxMs` | 30000 | uint32 | - | `Blocks/GauntletBlock.cpp:113` | combat3, group1, dungeon2-3 (Gauntlet block) |
+| Options | `Options.HoldInterruptMs` | 10000 | uint32 | - | `Blocks/PackBlock.cpp:120` | dungeon2-3 (Pack block) |
 | Hazards | `Hazards.Damage` | 0.5f | float | - | `StageScenario.cpp:4951` | all |
 | Hazards | `Hazards.Standing` | 0.15f | float | - | `StageScenario.cpp:4943` | all |
 | Hazards | `Hazards.Max` | 3.0f | float | - | `StageScenario.cpp:4942`, `StageScenario.cpp:4950` | all |
@@ -378,8 +360,8 @@ through to `StandIn.Share`, so its default 0 is never consulted today (the "defe
 | Markers | `Markers.StopMoved` | 0.05f | float | - | `Encounters/InteractEncounter.cpp:649`, `Encounters/SeekEncounter.cpp:543`, `Encounters/SightEncounter.cpp:404` | move1, move2, move3 |
 | Markers | `Markers.StopNear` | 10.0f | float | - | `Encounters/SightEncounter.cpp:405` | move1_controls |
 | Markers | `Markers.ArriveRise` | 2.0f | float | - | `Encounters/SightEncounter.cpp:396` | move1_controls |
-| Respawn | `Respawn.DelayMs` | 10000 | uint32 | - | `Encounters/CombatEncounter.cpp:412`, `Encounters/InstanceEncounter.cpp:1004`, `Encounters/PartyFollowEncounter.cpp:446` (+1) | move4, combat1-3, group1, group2, dungeon1-3 |
-| Respawn | `Respawn.RejoinYards` | 15.0f | float | - | `Encounters/CombatEncounter.cpp:412`, `Encounters/InstanceEncounter.cpp:1004`, `Encounters/PartyFollowEncounter.cpp:446` (+1) | move4, combat1-3, group1, group2, dungeon1-3 |
+| Respawn | `Respawn.DelayMs` | 10000 | uint32 | - | `Encounters/CombatEncounter.cpp:412`, `Encounters/InstanceEncounter.cpp:1004`, `Encounters/PartyFollowEncounter.cpp:446` (+1) | move4, combat1-3, group1, dungeon2-3 |
+| Respawn | `Respawn.RejoinYards` | 15.0f | float | - | `Encounters/CombatEncounter.cpp:412`, `Encounters/InstanceEncounter.cpp:1004`, `Encounters/PartyFollowEncounter.cpp:446` (+1) | move4, combat1-3, group1, dungeon2-3 |
 | PartyFollow | `PartyFollow.BandMin` | 3.0f | float | - | `Encounters/PartyFollowEncounter.cpp:664` | move4_follow |
 | PartyFollow | `PartyFollow.BandMax` | 10.0f | float | - | `Encounters/PartyFollowEncounter.cpp:664` | move4_follow |
 | PartyFollow | `PartyFollow.LostYards` | 40.0f | float | - | `Encounters/PartyFollowEncounter.cpp:664` | move4_follow |
@@ -392,7 +374,7 @@ through to `StandIn.Share`, so its default 0 is never consulted today (the "defe
 | PartyFollow | `PartyFollow.BlockYards` | 2.5f | float | - | `Encounters/PartyFollowEncounter.cpp:695` | move4_follow |
 | PartyFollow | `PartyFollow.BlockHalfAngle` | 45.0f | float | - | `Encounters/PartyFollowEncounter.cpp:695` | move4_follow |
 | PartyFollow | `PartyFollow.Death` | 3.0f | float | - | `Encounters/PartyFollowEncounter.cpp:623` | move4_follow |
-| PartyFollow | `PartyFollow.MinimapYards` | 60.0f | float | - | `StageScenario.cpp:3211`, `Encounters/PartyFollowEncounter.cpp:573` | move4, group1, group2, dungeon1-3 (every PartyFrames stage) |
+| PartyFollow | `PartyFollow.MinimapYards` | 60.0f | float | - | `StageScenario.cpp:3211`, `Encounters/PartyFollowEncounter.cpp:573` | move4, group1, dungeon2-3 (every PartyFrames stage) |
 | PartyFollow | `PartyFollow.WalkRungs` | 1 | uint32 | - | `Encounters/PartyFollowEncounter.cpp:429` | move4_follow |
 | PartyFollow | `PartyFollow.SuddenFromRung` | 2 | uint32 | - | `Encounters/PartyFollowEncounter.cpp:312` | move4_follow |
 | PartyFollow | `PartyFollow.BackStepFromRung` | 3 | uint32 | - | `Encounters/PartyFollowEncounter.cpp:318`, `Encounters/PartyFollowEncounter.cpp:360` | move4_follow |
@@ -538,13 +520,13 @@ through to `StandIn.Share`, so its default 0 is never consulted today (the "defe
 | Resurrection | `Resurrection.ReviveAlly` | 1.5f | float | - | `Encounters/PartyEncounter.cpp:270` | party stages |
 | Output | `Output.Clock` | 0.03f | float | - | `StageScenario.cpp:4986`, `StageScenario.cpp:4989` | all |
 | StandIn | `StandIn.Share` | 0 | int32 | Load: 0..100 | `Encounters/StandInSeat.cpp:90` | arenas with no own share: none live (note 5) |
-| StandIn | `StandIn.LeadChance` | 50 | int32 | Load: 0..100 | `Encounters/StandIn.h:142` | group1, group2, dungeon1-3 |
-| StandIn | `StandIn.TankChance` | 34 | int32 | Load: 0..100; pair scaled to sum <= 100 | `Encounters/StandIn.h:145`, `Encounters/StandIn.h:146` | group1, group2, dungeon1-3 |
-| StandIn | `StandIn.HealerChance` | 33 | int32 | Load: 0..100; pair scaled to sum <= 100 | `Encounters/StandIn.h:146` | group1, group2, dungeon1-3 |
+| StandIn | `StandIn.LeadChance` | 50 | int32 | Load: 0..100 | `Encounters/StandIn.h:142` | group1, dungeon2-3 |
+| StandIn | `StandIn.TankChance` | 34 | int32 | Load: 0..100; pair scaled to sum <= 100 | `Encounters/StandIn.h:145`, `Encounters/StandIn.h:146` | group1, dungeon2-3 |
+| StandIn | `StandIn.HealerChance` | 33 | int32 | Load: 0..100; pair scaled to sum <= 100 | `Encounters/StandIn.h:146` | group1, dungeon2-3 |
 
 ## 5. Reviewer notes
 
-- The whole tuning is one flat struct with 313 keys and a hand-kept `Visit` list. Adding a key is four edits: the field,
+- The whole tuning is one flat struct with 297 keys and a hand-kept `Visit` list. Adding a key is four edits: the field,
   the `Visit` line, a conf.dist block, and the reader. The agreement test catches a missing `Visit` line only in the
   direction "conf.dist has it, `Visit` has not" and the reverse; it does not catch a field that is not in `Visit`
   (never loaded, never fingerprinted). Consider generating `Visit` from the struct, or a test that counts fields.
@@ -571,7 +553,7 @@ through to `StandIn.Share`, so its default 0 is never consulted today (the "defe
 3. (fixed 2026-10-08) conf.dist documented `Arena.<stage>.<arena>.MaxRung`, which nothing reads; the block is gone.
    `test_conf_prune.py:127,134` and `04-curriculum.md:858` still list it (Python/doc side, not touched here).
 4. (fixed 2026-10-08) conf.dist now documents `Arena.<stage>.<arena>.WeightFinal`.
-5. The `Arena.*` and `Stage.*.GoalPlaces` overrides are not part of the fingerprint (section 1.4).
+5. The `Arena.*` overrides are not part of the fingerprint (section 1.4).
 6. `StageScenario.cpp:142-153` vs `:171`: the doc comment of `RandomLevel` sits above `TankModeSpell` (misplaced).
 7. The `Actions` preamble comment says decisions are 100 ms apart; the sim's tuning unit is 50 ms
    (`StageScenario.cpp:103`, header line 34).

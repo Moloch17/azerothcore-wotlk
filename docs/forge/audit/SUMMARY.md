@@ -183,3 +183,5 @@ upstreaming the seven groups of general fixes the audit found.
 Update 2026-10-08: the Gpu/ camera path (owner question 13) was removed; tag archive/gpu-camera.
 
 Update 2026-10-08: the ground probe and layered fields were removed (owner order); the dungeon routes use the navmesh RoutePlanner.
+
+Update 2026-10-08: vision-only movement (decision 0019): the dungeon route, `RoutePlanner`, `RouteShortcut`, `ThreadQueryScope`, `forge route`, the route-built goal layout, the waypoint/progress rewards, `group2_corridor`, `dungeon1_pulls` and Go-Explore were removed; 10 live stages; M4's leader walks stock `PathGenerator` legs.

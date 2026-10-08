@@ -127,10 +127,6 @@ namespace Animus
         void SetCostScale(float scale) { _scenario.SetCostScale(scale); }
         bool PinEvaluationArena(uint32 pin) { return _scenario.PinEvaluationArena(pin); }
         void SetStandIn(bool standIn) { _scenario.SetStandIn(standIn); }
-        void SetExploreStarts(float share, std::vector<ExploreStart> starts)
-        {
-            _scenario.SetExploreStarts(share, std::move(starts));
-        }
 
         /// Replaying lost evaluation episodes (the forge's REPLAY message): `fraction` of training resets rebuild one
         /// of `seeds` -- evaluation seed indexes of `seedBase` -- from the very random numbers the evaluation built it

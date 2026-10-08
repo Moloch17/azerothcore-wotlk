@@ -192,7 +192,7 @@ void Animus::EnvPool::ResetAll()
         auto mark = std::chrono::steady_clock::now();
         CurrentReset = {};
         ResetEnv(env);
-        RecentResets.Add({ CurrentReset.EncounterNs, CurrentReset.RouteNs, CurrentReset.Routes, ResetSinceNs(mark) });
+        RecentResets.Add({ CurrentReset.EncounterNs, ResetSinceNs(mark) });
 
         uint32 const e = env.Index;
         _scenario.Observe(env, &Obs[e * _spec.AgentsPerEnv * _spec.ObsDim], &State[e * _spec.StateDim],
@@ -312,7 +312,7 @@ void Animus::EnvPool::FinishEnv(Env& env, CollectTiming& timing)
     timing.ResetSeatsNs += CurrentReset.SeatsNs;
     timing.ResetDespawnNs += CurrentReset.DespawnNs;
     timing.ResetScenarioNs += CurrentReset.ScenarioNs;
-    RecentResets.Add({ CurrentReset.EncounterNs, CurrentReset.RouteNs, CurrentReset.Routes, resetNs });
+    RecentResets.Add({ CurrentReset.EncounterNs, resetNs });
 
     _scenario.Observe(env, &Obs[e * agentsPerEnv * _spec.ObsDim], &State[e * _spec.StateDim],
         &Mask[e * agentsPerEnv * _spec.NumActions], ImageRows(Image, e), MapRows(MapCrop, e));

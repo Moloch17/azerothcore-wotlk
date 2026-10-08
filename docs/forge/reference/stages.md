@@ -1,4 +1,4 @@
-# Reference: the twelve live stages
+# Reference: the ten live stages
 
 Purpose and scope: one section per live curriculum stage (`move1_controls` to `dungeon3_deadmines`), written from the
 stage's definition in `src/server/game/Animus/Runtime/Scenario/Curriculum/Stages/Stages.cpp`, its learner config
@@ -17,8 +17,8 @@ stage is [../04-curriculum.md](../04-curriculum.md). Related references: [00-arc
 
 | Path | Lines | Role |
 |---|---|---|
-| `src/server/game/Animus/Runtime/Scenario/Curriculum/Stages/Stages.cpp` | 1393 | The twelve `StageDefinition`s, the map data tables they use (hallways, rooms, objects, sight pairs, Deadmines sites) and the stage and arena validation |
-| `src/server/game/Animus/Runtime/Scenario/Curriculum/Stages/StageDefinition.h` | 331 | `StageDefinition`, `ArenaDefinition`, `Opposition`, the drills and `MAX_ARENAS` |
+| `src/server/game/Animus/Runtime/Scenario/Curriculum/Stages/Stages.cpp` | 1334 | The ten `StageDefinition`s, the map data tables they use (hallways, rooms, objects, sight pairs, Deadmines sites) and the stage and arena validation |
+| `src/server/game/Animus/Runtime/Scenario/Curriculum/Stages/StageDefinition.h` | 324 | `StageDefinition`, `ArenaDefinition`, `Opposition` and `MAX_ARENAS` |
 | `src/server/game/Animus/Scenario/Curriculum/CurriculumTuning.h` | 1185 | Every reward weight and draw parameter (`AnimusForge.Curriculum.*`) with its default |
 | `src/server/game/Animus/Scenario/Curriculum/Rewards/RewardLedger.h` | 387 | `RewardTerm`, `RewardCategory` (Outcome, Cost, Shaping), the score and the scales |
 | `src/server/game/Animus/Scenario/Curriculum/Encounters/SightEncounter.cpp` | see cpp-encounters.md | M1 |
@@ -27,17 +27,17 @@ stage is [../04-curriculum.md](../04-curriculum.md). Related references: [00-arc
 | `.../Encounters/PartyFollowEncounter.cpp` | | M4 |
 | `.../Encounters/CombatEncounter.cpp` | | C1 to C3 |
 | `.../Encounters/RolesEncounter.cpp` | | G1 |
-| `.../Encounters/InstanceEncounter.cpp` | 2752 | G2, D1, D2, D3 |
+| `.../Encounters/InstanceEncounter.cpp` | 1341 | D2, D3 |
 | `.../Encounters/WingLadder.h`, `StageScenario.h` (`WING_RUNGS`) | | The whole-dungeon difficulty ladder |
 | `.../Encounters/DifficultyLadder.cpp` | 104 | The per-class ladder of C1 to C3 and G1 |
-| `apps/forge/python/configs/*.yaml` | 13 files, 1351 | One learner config per stage, plus the `fast.yaml` overlay |
+| `apps/forge/python/configs/*.yaml` | 11 files, 1159 | One learner config per stage, plus the `fast.yaml` overlay |
 | `apps/forge/python/animus/stage.py` | 829 | `ShapingFade`, `CostLadder`, `ConvergenceController` |
-| `apps/forge/python/animus/config.py` | 853 | Config dataclasses and their defaults |
+| `apps/forge/python/animus/config.py` | 831 | Config dataclasses and their defaults |
 | `src/test/server/game/Animus/LiveLayoutPinTest.cpp` and `LiveLayoutPin.golden.inc` | 219, 149 | Pins every live stage's layout |
 
 (The other encounters' and tuning files' line counts are in the cpp-* documents.)
 
-## Overview of all twelve
+## Overview of all ten
 
 | # | Stage | Place | Level | Seats | Opposition | Ladder (gate) | Budget | Trained? |
 |---|---|---|---|---|---|---|---|---|
@@ -49,10 +49,8 @@ stage is [../04-curriculum.md](../04-curriculum.md). Related references: [00-arc
 | 6 | `combat2_packs` | Ragefire, cleared | 13 to 18 | 1 | Combat (Packs) | same (`won` 0.7) | 300M | never |
 | 7 | `combat3_survive` | Ragefire, cleared | 13 to 18 | 1 | Combat (Survive) | same (`survived` 0.7) | 300M | never |
 | 8 | `group1_roles` | Ragefire, cleared | 13 to 18 | 5 | Roles | per-class tier + fade (`won` 0.6) | 400M | never |
-| 9 | `group2_corridor` | Ragefire and Deadmines, real packs | band | 5 | Instance (corridor) | wing ladder + fade (`cleared` 0.6) | 500M | never |
-| 10 | `dungeon1_pulls` | Ragefire, real packs | band + up to 2 | 5 | Instance (pull drill) | drill ladder + wing + fade (`cleared` 0.7) | 300M | never |
-| 11 | `dungeon2_ragefire` | Ragefire, door to Bazzalan | band | 5 | Instance (whole wing) | wing ladder + fade (`full_clear` 0.5) | 1500M | never |
-| 12 | `dungeon3_deadmines` | Deadmines, door to VanCleef | 17 to 20 | 5 | Instance (whole wing) | wing ladder + fade (`bar_clear` 0.5) | 2000M | never |
+| 9 | `dungeon2_ragefire` | Ragefire, door to Bazzalan | band | 5 | Instance (whole wing) | wing ladder + fade (`full_clear` 0.5) | 1500M | never |
+| 10 | `dungeon3_deadmines` | Deadmines, door to VanCleef | 17 to 20 | 5 | Instance (whole wing) | wing ladder + fade (`bar_clear` 0.5) | 2000M | never |
 
 The queue order is the table's order (every stage is in the default queue). Budgets are ceilings, not
 targets (see [../04-curriculum.md](../04-curriculum.md)).
@@ -73,15 +71,14 @@ move1_controls
      │           └─ combat3_survive ──(merges move4_follow's party frames)─┐
      │                                                                      v
      └─ move4_follow ─────────────────────────────────────────────────> group1_roles
-                                                                            └─ group2_corridor
-                                                                                └─ dungeon1_pulls
-                                                                                    └─ dungeon2_ragefire
-                                                                                        └─ dungeon3_deadmines
+                                                                            └─ dungeon2_ragefire
+                                                                                └─ dungeon3_deadmines
 ```
 
 `extends:` at the top of a yaml is the separate **config chain**. They differ: `combat1_fight.yaml` has no `extends`
 (it repeats the whole MAPPO block; `Observed issues` below), `move4_follow.yaml` and `move3_interact.yaml` extend
-`move2_seek.yaml`, `combat2_packs` extends `combat1_fight`, and so on in the order of the table.
+`move2_seek.yaml`, `combat2_packs` extends `combat1_fight`, `combat3_survive` extends `combat2_packs`, `group1_roles` extends
+`combat3_survive`, `dungeon2_ragefire` extends `group1_roles` and `dungeon3_deadmines` extends `dungeon2_ragefire`.
 
 What carries over: networks are seeded block by block, by name (`animus/bootstrap.py`): kept blocks' input columns and
 action rows move to where the block sits now, new blocks start at zero, trunk copied, critic state encoder and value
@@ -99,19 +96,19 @@ end of the file), so the lists below include it. Widths are the pinned class-ind
 
 | Stage | Blocks in layout order | Total obs, actions |
 |---|---|---|
-| `move1_controls` | core, move, compass, vision, entities, goal | 842, 25 |
+| `move1_controls` | core, move, compass, vision, entities, goal | 841, 25 |
 | `move2_seek` | core, move, vision, entities, map, goal | 840, 25 |
 | `move3_interact` | core, move, vision, entities, map, sight, goal | 2911, 346 |
 | `move4_follow` | core, move, vision, entities, map, party_frames, goal | 924, 37 |
 | `combat1_fight`, `combat2_packs` | core, move, duel, pet, vision, entities, map, sight, combat, goal | 3779, 350 |
 | `combat3_survive` | the above plus gauntlet (after pet) | 3790, 353 |
 | `group1_roles` | the above plus party_frames (after sight) | 3874, 365 |
-| `group2_corridor` to `dungeon3_deadmines` | core, move, duel, pet, pack, gauntlet, vision, entities, map, sight, party_frames, combat, goal | 4908, 390 |
+| `dungeon2_ragefire`, `dungeon3_deadmines` | core, move, duel, pet, pack, gauntlet, vision, entities, map, sight, party_frames, combat, goal | 4908, 390 |
 
 Block ids: core 0, move 1, compass 2, duel 3, pack 4, gauntlet 5, pet 11, vision 20, entities 21, map 22, sight 23,
 party_frames 24, combat 25, goal 26 (`Layout/Block.h`; never renumbered). What each block is:
 [cpp-blocks.md](cpp-blocks.md).
-The layout pin test covers all twelve (`LiveLayoutPinTest.LiveStageLayoutsAreUnchanged`).
+The layout pin test covers all ten (`LiveLayoutPinTest.LiveStageLayoutsAreUnchanged`).
 
 ### Common to every stage
 
@@ -120,7 +117,7 @@ The layout pin test covers all twelve (`LiveLayoutPinTest.LiveStageLayoutsAreUnc
 * **Ladder machinery.** `fade` is the shaping ladder (`ShapingFade`, `animus/stage.py`); in this curriculum it is also
   the
   sim's difficulty ladder, because the sim reads the fade's scale as the rung for M1 to M4. `costs` is the cost ladder
-  and is **off in all twelve** (`costs.enabled: false`, set in M1 and inherited, or set explicitly). Every gate-stepped
+  and is **off in all ten** (`costs.enabled: false`, set in M1 and inherited, or set explicitly). Every gate-stepped
   fade has `require_plateau: false` except M1's (see M1). A gate-stepped ladder never steps back on the score and raises
   a collapse alarm (3 evaluations under max(0.1, a quarter of the rung below)) and a stall warning (no better than the
   best by more than the standard error for `fade.stall_evals` = 4 evaluations and `stall_env_steps` = 20M steps,
@@ -157,9 +154,7 @@ The layout pin test covers all twelve (`LiveLayoutPinTest.LiveStageLayoutsAreUnc
 | `combat2_packs` | 0.999 | 2 | 1.5e-4 | 0.004 | 128 | |
 | `combat3_survive` | 0.999 | 2 | 1.5e-4 | 0.004 | 128 | |
 | `group1_roles` | 0.999 | 2 | 1.5e-4 | 0.004 | 128 | |
-| `group2_corridor` | 0.999 | 2 | 1.5e-4 | 0.004 | 128 | `goal_entropy_final_fraction: 0.5`, `explore.enabled: false` |
-| `dungeon1_pulls` | 0.998 | 2 | 1.5e-4 | 0.004 | 128 | |
-| `dungeon2_ragefire` | 0.999 | 2 | 1.5e-4 | 0.004 | 128 | `explore.enabled: true, share 0.5` |
+| `dungeon2_ragefire` | 0.999 | 2 | 1.5e-4 | 0.004 | 128 | extends `group1_roles`; restates `goal_entropy_final_fraction: 0.5` |
 | `dungeon3_deadmines` | 0.999 (inherited) | 2 | 1.5e-4 | 0.004 | 128 | |
 
 M1's rate 1.5e-4 was halved at 93M steps (comment in the yaml); M2's is the same value for a different reason
@@ -528,107 +523,39 @@ kept_share >= 0.8, focus_share >= 0.6, clean_share >= 0.9. `convergence.measure:
 **Unproven.** Never trained. **Tests.** `RolesStageTest.cpp`, `test_group1_roles.py`, `test_partners.py`,
 `StandInTest.cpp`.
 
-## 9. `group2_corridor`
-
-**Purpose.** Real dungeon ground: four of a wing's packs in route order a run (pull, fight, rest, ready, next), in
-Ragefire and the
-Deadmines, a fresh instance a run with the world database's packs and patrols.
-
-**Seed.** `group1_roles` (every block carries but the pack block, which starts fresh).
-
-**Place.** Arenas `ragefire` (`InstanceRow 0`, 900 s) and `deadmines` (`InstanceRow 1`, 1200 s, `LevelFirst/Last` 17 to
-20), both
-`CorridorPacks = 4`, `StandInShare` 20 (`DUNGEON_STAND_IN_SHARE`). The packs before the first are cleared as a party
-that came from
-the door would have left them; the first pack is drawn each run and, in an evaluation, taken from the seed.
-
-**Rewards** (`InstanceEncounter::Reward`, `InstanceEncounter.cpp:2530` to `2700`; tier scale = the wing ladder rung
-capped at
-`Instance.MaxTierScale` 6, Outcome multiplied, Cost divided). Outcome: `Clear` `CorridorPack` 4.0 per pack in route
-order,
-`ReadyPull` `WingEngage` 1.0 per pull started with everyone at 80% health and mana (once per route pack), `Kill`
-`WingTrashKill`
-1.0. Cost: `PullExtra` `WingChainPull` 3.0, `Idle` `WingStall` 0.1 per second after 60 s with no progress (others 0.2 of
-it),
-`Lost` `WingStray` 0.02 per second beyond 25 yd of the leader, `Away` `WingAway` 0.02, `Death` `WingDeath` 3.0 and
-`WingWipe` 5.0,
-`StepCost` `WingClock` 0.002 per second, `Timeout` `WingTimeout` 30 x share left. Shaping: `Approach` (waypoints 0.5,
-route progress
-`WingProgress` 60), `Threat` (`WingCrowd` 0.15 per second per hostile past 4 on the party; note this is a cost paid as
-Shaping and so fades),
-`DamageDealt`.
-
-**Ladder.** Wing ladder in the sim (`WING_RUNGS`, 9 rungs, level lift 8 to 0 and spare wipes 4 to 0,
-`StageScenario.h:218`): a fifth of
-training runs are probes (`WingProbe 0.2`); once 40 probes at a rung average 0.6 of the dungeon the ladder steps down
-one rung. It never
-steps back and raises a collapse alarm (3 reads under 0.1 or a quarter of the rung below) but has no stall alarm.
-Learner fade
-`[1, 0.5, 0.25, 0]` gate `cleared` 0.6, `require_plateau: false`. An evaluation plays the last rung (band levels, no
-spare wipe).
-
-**Evaluation.** Every 10M, 128 episodes; arms `with_human 64`, `with_partners 64`, `arms_every 2`; partners
-`[group1_roles]`.
-`status.excluded.death_knight`. Headline: cleared, corridor_share, corridor_in_order, chain_pulls, ready_pulls,
-wing_wipes,
-wing_rejoin_seconds, clear_allbot, clear_standin, standin_gap, deaths_tank, deaths_healer, wing_rung; targets cleared >=
-0.7,
-corridor_in_order >= 3, chain_pulls <= 0.25, wing_wipes <= 0.3, standin_gap <= 0.1.
-
-**Unproven.** Never trained. **Tests.** `DungeonStagesTest.cpp`, `WingLadderTest.cpp`, `test_dungeon_stages.py`.
-
-## 10. `dungeon1_pulls`
-
-**Purpose.** Clean pulls on real geometry: Ragefire, one pack a run, the party 35 yd back along the route with the packs
-before it cleared.
-
-**Seed.** `group2_corridor` (same layout). **Place.** Arena `ragefire`, `PullDrill`, 180 s, `InstanceRow 0`. Seats at
-most `PullLift` 2 levels above
-the dungeon's range.
-
-**Rewards.** Outcome: `PullClean` 5.0 (the tank in full, others `PullOthers` 0.5), `ReadyPull`. Cost: `PullExtra` 5.0
-(ends the run),
-`Timeout` `PullTimeout` 2.0, `Idle` after `PullGraceMs` 20 s, `Lost`, `Death`, clock.
-
-**Ladder.** The drill's own ladder opens packs by how far the nearest other pack stands, 30, 22, 14 yd, then any
-(`PULL_GAPS`), once 100 drills
-at the newest rung pull clean 70% (`PullRungRuns 100`, `PullRungTarget 0.7`); each machine climbs its own. Fade gate
-`cleared` 0.7.
-Evaluations drill too (`EvaluatesDrills`); seed i drills pack i mod packs at the dungeon's own levels.
-
-**Evaluation.** Every 10M, 192 episodes. Headline: cleared, drill_clean, drill_extra, drill_pulled, ready_pulls,
-wing_wipes, clear_allbot,
-clear_standin, standin_gap, deaths_tank, pull_rung; targets cleared >= 0.8, drill_extra <= 0.1, wing_wipes <= 0.1,
-standin_gap <= 0.1.
-gamma 0.998. **Unproven.** Never trained. **Tests.** `DungeonStagesTest.cpp`, `test_dungeon_stages.py`.
-
-## 11. `dungeon2_ragefire`
+## 9. `dungeon2_ragefire`
 
 **Purpose.** A full clear of Ragefire from the door to Bazzalan: every pull and side boss (Oggleflint, Taragaman,
-Jergosh), deaths and rejoins in play.
+Jergosh), deaths and rejoins in play. Nothing tells the party the way (vision-only movement,
+[../decisions/0019-vision-only-movement.md](../decisions/0019-vision-only-movement.md)).
 
-**Seed.** `dungeon1_pulls`. **Place.** Arena `dungeon` (`InstanceRow 0`, 7200 s) and `heldout` (Wailing Caverns,
-`InstanceRow 2`, `EvalOnly`, weight 0, 10800 s, door to Lord Serpentis).
+**Seed.** `group1_roles` (`Extends`; every block carries but the pack block, which starts fresh). The yaml
+`dungeon2_ragefire.yaml` extends `group1_roles.yaml`, restates `goal_entropy_final_fraction` 0.5, `eval.seed` 1000 and
+`eval.deterministic`, and nulls G1's status targets. **Place.** Arena `dungeon` (`InstanceRow 0`, 7200 s) and `heldout`
+(Wailing Caverns, `InstanceRow 2`, `EvalOnly`, weight 0, 10800 s, door to Lord Serpentis).
 `Instance.WingWipes` 2: the first wipe is scored and the party rises at the entrance, the second ends the run.
 
-**Rewards.** Outcome: `Kill` (`WingMidBoss` 8.0 per boss on the way, `WingBoss` 25.0 the last, `WingTrashKill` 1.0),
-`Clear` `WingClear` 25.0 for the full clear, `ReadyPull`.
-Cost as group2 (`PullExtra` chain pulls 3.0, `Idle`, `Lost`, `Away`, `Death`, `StepCost`, `Timeout`). Shaping
-`Approach`, `Threat`, `DamageDealt`.
+**Rewards** (`InstanceEncounter::RewardTerms()`: StepCost, Kill, Death, Timeout, Threat, Clear, ReadyPull, Idle, Lost,
+Away). Outcome: `Kill` (`WingMidBoss` 8.0 per boss on the way, `WingBoss` 25.0 the last, `WingTrashKill` 1.0), `Clear`
+`WingClear` 25.0 for the full clear, `ReadyPull` `WingEngage` per pull started with everyone ready (paid at most once a
+run: `READY_PULLS_PAID` = 1). Cost: `Idle` `WingStall` per second after `WingStallGraceMs` with no kill and no fight
+(the stall clock resets on kills and fights only; others pay `WingStallOthers` of it), `Lost` `WingStray`, `Away`
+`WingAway`, `Death` `WingDeath` and `WingWipe`, `StepCost` `WingClock`, `Timeout` at the clock-out
+`-WingTimeout x (1 - ClearedShare)`, with `ClearedShare` = min(1, (trash kills + boss dead) / (hostile total + 1)), over
+the tier scale. Shaping: `Threat` (`WingCrowd`), `DamageDealt`. There is no waypoint, route-progress or pull term.
 
-**Ladder.** Wing ladder (see 9) and fade gate `full_clear` 0.5. Go-Explore: `explore.enabled`, `share 0.5` of training
-runs start from a cell an earlier run reached; an evaluation starts at the door.
+**Ladder.** The wing ladder in the sim (`WING_RUNGS`, level lift and spare wipes; probe runs step it) and the fade gate
+`full_clear` 0.5.
 
 **Evaluation.** Every 20M, 64 episodes, `sampled_every 4`; heldout `heldout: 16` (Wailing Caverns) every 4th evaluation,
-the last and each new best; arms 32 and 32. Budget 1500M.
+the last and each new best; arms 32 and 32; partners `[group1_roles]`. Budget 1500M.
 Headline: full_clear, cleared, wing_cleared_share, wing_wipes, boss_oggleflint, boss_taragaman, boss_jergosh,
-boss_bazzalan, chain_pulls, wing_rejoin_seconds, clear_allbot, clear_standin, standin_gap,
+boss_bazzalan, wing_rejoin_seconds, clear_allbot, clear_standin, standin_gap,
 wing_rung; target full_clear >= 0.7. gamma 0.999.
 
-**Unproven.** Never trained. **Tests.** `DungeonStagesTest.cpp`, `WingLadderTest.cpp`, `test_explore.py`,
-`test_heldout.py`.
+**Unproven.** Never trained. **Tests.** none kept (all forge tests were removed 2026-10-07).
 
-## 12. `dungeon3_deadmines`
+## 10. `dungeon3_deadmines`
 
 **Purpose.** The Deadmines from the door to VanCleef at 17 to 20, every pull and side boss, doors and levers by real
 interacts and the Iron Clad Door by the cannon and the gunpowder
@@ -641,7 +568,6 @@ vancleef.
 
 **Rewards, ladders.** As D2; fade gate `bar_clear` 0.5; `convergence.measure: bar_clear`. Budget 2000M, every 20M, 64
 episodes. Headline starts bar_clear, cleared, full_clear, wing_wipes, the boss reads, deaths_tank/healer/damage,
-chain_pulls,
 clear_allbot, clear_standin, standin_gap, wing_rung; targets bar_clear, cleared, full_clear, boss_vancleef >= 0.7,
 wing_wipes <= 1.
 
@@ -670,6 +596,6 @@ evaluation).
   repository.
 * `DifficultyLadder` has no GTest and steps classes down on a score
   ([../decisions/0010-ladders-step-on-their-gate.md](../decisions/0010-ladders-step-on-their-gate.md)).
-* The wing ladder's rung, the drill rung and the per-class tiers live in worldserver memory and are not in `latest.pt`;
-  a restart returns them to `Instance.WingRungStart`/`PullRungStart`/0 unless the conf names them
+* The wing ladder's rung and the per-class tiers live in worldserver memory and are not in `latest.pt`;
+  a restart returns them to `Instance.WingRungStart`/0 unless the conf names them
   (`StageScenario.cpp:302`, `AnimusForge.cpp:1084`). `UNVERIFIED`: whether forgectl resume sets them.

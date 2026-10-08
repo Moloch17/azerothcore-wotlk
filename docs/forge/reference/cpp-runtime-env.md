@@ -117,10 +117,10 @@ world thread has no scope.
 ## Reset timing (`A/Env/ResetTiming.h`, header only)
 
 `ResetTiming` per-thread accumulators (`CurrentReset`, `thread_local`): Create/Place/Configure/Destroy/Encounter/Stock/
-Prepare/Despawn/Seats/Scenario/Route ns. `ResetSamples` keeps the last 1024 resets (`WINDOW`) with nearest-rank p50/p95/max/
-mean for placement, route and whole reset; `Add` and `Summarise` lock a mutex. `Stall(resets, resetMsPerDecision,
+Prepare/Despawn/Seats/Scenario ns. `ResetSamples` keeps the last 1024 resets (`WINDOW`) with nearest-rank p50/p95/max/
+mean for placement and whole reset; `Add` and `Summarise` lock a mutex. `Stall(resets, resetMsPerDecision,
 decisionMs)`: needs `STALL_MIN_RESETS` = 20 samples; stall if reset time per decision >= 25 % of the decision's wall time or
-the p95 reset > max(20 ms, a decision); the cause is route (route mean x2 >= total), placement, else reset.
+the p95 reset > max(20 ms, a decision); the cause is placement (placement mean x2 >= total), else reset.
 `RecentResets` is the global instance. Tests: `ResetSamplesTest.cpp`.
 
 ## `Kinematics` (`A/Env/Kinematics.h`)

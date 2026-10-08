@@ -15,8 +15,8 @@ not what comments say, and each ends with its observed issues.
 |---|---|
 | [audit/SUMMARY.md](audit/SUMMARY.md) | the consolidated audit: ranked findings, a work order, and the questions the owner has to decide |
 | [reference/README.md](reference/README.md) | the index of the reference documents, with a reading order for a review |
-| [04-curriculum.md](04-curriculum.md) | the stages manual: what each of the 12 stages teaches |
-| [01-overview.md](01-overview.md) | what the forge is, the pieces, the twelve stages, a glossary of the core ideas |
+| [04-curriculum.md](04-curriculum.md) | the stages manual: what each of the 10 stages teaches |
+| [01-overview.md](01-overview.md) | what the forge is, the pieces, the ten stages, a glossary of the core ideas |
 | [principles.md](principles.md) | the rules the project is built to, and the review checklist |
 | [reference/00-architecture.md](reference/00-architecture.md) | the whole system: processes, tick, decision loop, observation/action path, lifecycle, cluster, threading |
 | [reference/01-forge-core-delta.md](reference/01-forge-core-delta.md) | exactly how the fork differs from upstream AzerothCore, file by file, with merge risks |
@@ -42,7 +42,7 @@ not what comments say, and each ends with its observed issues.
 | [reference/cpp-vision.md](reference/cpp-vision.md) | the camera, mental map, entity memory, GPU renderer, evaluation videos |
 | [reference/cpp-blocks.md](reference/cpp-blocks.md) | observation/action blocks |
 | [reference/cpp-layout-character.md](reference/cpp-layout-character.md) | layouts, the seat encoder, character building (class, talents, gear) |
-| [reference/cpp-rewards-routing.md](reference/cpp-rewards-routing.md) | the reward ledger, route planning and fields |
+| [reference/cpp-rewards-routing.md](reference/cpp-rewards-routing.md) | the reward ledger |
 | [reference/cpp-encounters.md](reference/cpp-encounters.md) | encounters: seek, interact, combat, party, roles, dungeons, ladders |
 | [reference/cpp-stagescenario.md](reference/cpp-stagescenario.md) | `StageScenario` and the stage definitions |
 | [reference/cpp-tuning-keys.md](reference/cpp-tuning-keys.md) | the `AnimusForge.Curriculum.*` tuning values |
@@ -61,7 +61,7 @@ not what comments say, and each ends with its observed issues.
 | [reference/config-yaml.md](reference/config-yaml.md) | the learner's per-stage yaml |
 | [reference/tests.md](reference/tests.md) | there are no tests (removed 2026-10-07), and the safety nets that went with them |
 | [reference/tools-and-ops.md](reference/tools-and-ops.md) | `apps/forge/tools`, forgectl internals, scripts |
-| [reference/stages.md](reference/stages.md) | the twelve stages, one section each |
+| [reference/stages.md](reference/stages.md) | the ten stages, one section each |
 | [reference/known-issues.md](reference/known-issues.md) | the collected list of bugs, debts and dead ends |
 | [reference/glossary.md](reference/glossary.md) | terms |
 

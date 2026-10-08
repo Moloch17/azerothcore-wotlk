@@ -206,7 +206,7 @@ MoverState for both kinds.
 | `<out>/human_motion_windows.npz` | `animus.human` (offline) | learner style discriminator | `windows` f32 [N, W, F] (motion.windows), `context` i16 [N] (motion.context_id), `weight` f32 [N], `meta` json |
 | `<out>/human_reference.json` | `animus.human` | forge eval realism score, `forge human` report | per context: per motion feature histogram (fixed bins from motion.HIST_BINS), plus episode metric percentiles per class/spec/level band |
 | `<out>/human_trips.json` | `animus.human` | forge arenas (TravelEncounter trip pools) | per map: trips `{start:[x,y,z], end:[x,y,z], seconds, mode, path:[[x,y,z],...]}` |
-| `<out>/human_hard_spots.json` | `animus.human` | forge Go-Explore / start pools | per map: `{pos:[x,y,z], kind: death/stuck/fall/drown, count}` |
+| `<out>/human_hard_spots.json` | `animus.human` | forge start pools | per map: `{pos:[x,y,z], kind: death/stuck/fall/drown, count}` |
 | `<run>/eval_motion.npz` | learner (each movement-stage eval) | `animus.human` realism report | bot windows and contexts in the same layout as human_motion_windows |
 
 ### human_trips.json and human_hard_spots.json

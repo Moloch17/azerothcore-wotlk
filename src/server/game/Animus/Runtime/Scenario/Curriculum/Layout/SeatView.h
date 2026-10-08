@@ -19,7 +19,6 @@
 #ifndef ANIMUS_LIB_CURRICULUM_SEAT_VIEW_H
 #define ANIMUS_LIB_CURRICULUM_SEAT_VIEW_H
 
-#include "RouteShortcut.h"
 #include "MoveControls.h"
 #include "Aptitude.h"
 #include "Block.h"
@@ -391,11 +390,6 @@ namespace Animus::Curriculum
         /// it the goal block gives a trip's objective no place, so no observed goal bit says how near it is
         /// (GoalBlock::PlaceOf). Arrival is the encounter's to decide and pay.
         bool ObjectivePlaceKnown = true;
-        /// How much longer the walking way round to the objective is than the straight line to it, as a ratio;
-        /// 0 without an objective and 1 when the straight line is the route. Measured on foot at the episode's
-        /// build, water and magma excluded, so it is what the ground costs rather than what the pathfinder would
-        /// permit -- a player's filter admits both and would call a lake a straight shot.
-        float Detour = 0.0f;
         /// Whether the legs are getting anywhere, over about the last second: how far the seat moved against how
         /// far running would have carried it, and the share of the distance to the objective that closed.
         float MoveRate = 0.0f;

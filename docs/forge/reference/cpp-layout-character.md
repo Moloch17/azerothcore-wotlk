@@ -90,7 +90,7 @@ model must rebuild the same manifest.
 ### stage.json layout entries (`StageScenario.cpp:1254-1495`)
 
 Top level (format 3, `STAGE_FILE_FORMAT`): `format`, `stage`, `suffix`, `extends`, `summary`, `seats`, `blocks` (names),
-`arenas` (name, weight, seats, episode_seconds, plan, eval_only, pull_drill, corridor_packs, stand_in_share,
+`arenas` (name, weight, seats, episode_seconds, plan, eval_only, stand_in_share,
 drill_seat),
 `cast`, `seed_chain`, `merges`, `state` (arena columns of the critic state), `models` (class name -> model name),
 `layouts`, `episode_info`, `episode_categories`, `reward_terms` (term name -> outcome/cost/shaping), `goals` (kinds,
@@ -131,7 +131,7 @@ focus, client port); breath; talent build; last-step damage/power; `Memory`; `No
 duel data (supplies, stable); enemies (24) and target slot; rank tier; gauntlet data; `Teammates`/`Tank` (7 slots; read
 only by `Encoding::FriendUnit`, Core goal-closing and the goal block); party `Frames` (4) and `MinimapYards`; named
 task;
-objective data, compass withheld, `ObjectivePlaceKnown`, detour, move/close rates; `WorldView` places.
+objective data, compass withheld, `ObjectivePlaceKnown`, move/close rates; `WorldView` places.
 `SeatActionResult`
 is what a press did (cast counts, refusals, heal/downrank counters, pet orders, steering reversal counts,
 `ActRefused`, `ActedOn`, stealth flags, `CastAt` ...) for rewards and `JudgePress`.

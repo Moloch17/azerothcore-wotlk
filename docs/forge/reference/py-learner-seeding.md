@@ -112,7 +112,7 @@ zeroes the missing goal-scale parameters (`_GOAL_SCALE_KEYS`) and raises on any 
 the critic is loaded non-strictly with the same exception list and raises likewise; `value_norm` and optimisers are
 loaded
 only if present; top-level keys use `.get` defaults (`update`, `env_steps`, `convergence`, `controller`, `score_kind`,
-`style`, `explore`, `partner_scores`). The config saved in a checkpoint is not compared with the current one by the learner.
+`style`, `partner_scores`). The config saved in a checkpoint is not compared with the current one by the learner.
 
 ## Cast (`cast.py`)
 

@@ -5,7 +5,7 @@ and not the learner's core (`train.py`, `stage.py`, `config.py`, ... in [py-lear
 
 1. `animus/human/`: reading the files `mod-animus` records of players on the live realm, building training and judging
    data from them, and comparing bots with players. Mostly an **offline** tool set.
-2. The top-level helper modules: `async_sync.py`, `parallel.py`, `env.py`, `device.py`, `blas.py`, `explore.py`,
+2. The top-level helper modules: `async_sync.py`, `parallel.py`, `env.py`, `device.py`, `blas.py`,
    `style.py`, `rewards.py`, `stages.py`, `__init__.py`.
 
 Everything is from the tree at `bd32b9dc8`. Nothing was run. `UNVERIFIED` marks what could not be checked.
@@ -23,7 +23,6 @@ Related: [protocol.md](protocol.md), [file-formats.md](file-formats.md), [metric
 | `env.py` | 515 | `ForgeEnv` (one sim socket), `ClusterEnv` (several sims as one pool) |
 | `device.py` | 111 | the sim's GPU buffers opened by IPC (`DeviceBuffers`), `host()` |
 | `blas.py` | 78 | ROCm gfx12 matmul library selection and TunableOp |
-| `explore.py` | 126 | Go-Explore archive of wing cells |
 | `style.py` | 341 | movement-style reward (adversarial motion prior) |
 | `rewards.py` | 88 | audit that no shaping term out-earns the outcome |
 | `stages.py` | 115 | helpers over `stage.json` (spans, revisions, signatures, seed chain) |
@@ -49,7 +48,7 @@ Related: [protocol.md](protocol.md), [file-formats.md](file-formats.md), [metric
 
 Tests: `test_human_cli.py`, `test_human_fit.py`, `test_human_mapper.py`, `test_human_motion.py`, `test_human_parity.py`,
 `test_human_reader.py`, `test_human_tracks.py` (+ writer `human_capture_writer.py`), `test_realism.py`, `test_style.py`,
-`test_explore.py`, `test_async_sync.py`, `test_parallel.py`, `test_rewards.py`, `test_vision_bytes.py` (device images),
+`test_async_sync.py`, `test_parallel.py`, `test_rewards.py`, `test_vision_bytes.py` (device images),
 `test_protocol.py`, `test_train_run.py`, `test_evaluation.py`.
 
 ---
@@ -187,7 +186,7 @@ air) and drownings on an 8-yard grid per map and kind, writing `human_hard_spots
 sidecar of death causes. `build.build(...)` (`build.py:46`) is the single pass over shards producing
 `human_motion_windows.npz`, `human_reference.json`, `human_trips.json` (+meta) and `human_hard_spots.json` (+meta).
 **Who reads trips and hard spots is unclear**: FORMAT.md §5 says "forge arenas (TravelEncounter trip pools)" and
-"Go-Explore / start pools"; a grep for `human_trips` / `human_hard_spots` across the repository finds only the files in
+"start pools"; a grep for `human_trips` / `human_hard_spots` across the repository finds only the files in
 `animus/human`, `config.py`, `style.py` (a path mention) and tests. The C++ readers are not in this tree and travel
 encounters were trimmed with the first curriculum. So these two outputs have no known consumer: UNVERIFIED, likely dead
 output (see issues).
@@ -333,7 +332,7 @@ Methods: `reset()`, `step(actions, goals, look)`, `send_act(env_begin, ...)` (a 
 look,
 `LOOK_HOLD` by default), `receive_step()`, `set_mode(evaluate, seed_base, episodes, baseline, first_seed, arena,
 stand_in)`, `set_layout_weights`, `set_stage_progress(progress, shaping_scale, cost_scale)`, `set_replay`,
-`set_explore_starts`, `close`. The sim is lock-step: it blocks until each group's ACT arrives. The wire encodings are in
+`close`. The sim is lock-step: it blocks until each group's ACT arrives. The wire encodings are in
 `protocol.py` ([protocol.md](protocol.md)). Tests: `test_protocol.py`, `test_vision_bytes.py`, `test_free_look.py`
 (a sim over a socket), `test_train_run.py`, `test_evaluation.py`.
 
@@ -342,7 +341,7 @@ first, then each cluster worker's) with their envs laid end to end and every sim
 worker
 that fails (socket error or no answer within `timeout`) is dropped (`_drop :302`): its envs sit out (rows come back with
 no character present via `_absent :315`, so they are no samples) and `rejoin()` (`:352`, called between rollouts, every
-10 s per worker) reconnects it, resends the last weights/replay/explore starts and hands the fresh STEP to the caller.
+10 s per worker) reconnects it, resends the last weights/replay and hands the fresh STEP to the caller.
 The
 host's own sim (index 0) is not optional. All sims must have the same SPEC apart from `num_envs`/`env_groups` (`:289`).
 `set_mode` shares an evaluation's seeds among live sims in proportion to envs (`_shares :507`). `sat_out` is a per-env
@@ -447,31 +446,6 @@ Observed: a lost leader stops a follower (`_trade`, `:395`); a follower's `Link.
 set
 whenever a reply lands (it is set when the push is queued, `:424`).
 
-## `explore.py` (126 lines): Go-Explore starts for the wings (live: `dungeon2_ragefire`, `dungeon3_deadmines`)
-
-A wing (dungeon) run is long and successes are rare, so cells reached are archived and a share of later resets start
-from
-one. A **cell** (`Cell`, frozen) is `(arena index, tier, cleared-pack bitset as 4 words of 24 bits, party yard / 16)`.
-`mark_columns(episode_info_names)` (`:50`) returns the column indexes of `wing_started, wing_arena, wing_tier,
-wing_marks`
-and, for 8 marks, `wing_mark<k>_packs<0..3>`, `_yard`, `_seconds`, or None if the stage reports none (then
-`train.py:714` prints that no wing arena exists and disables the feature). `cells_of(rows, columns)` (`:61`) extracts
-(cell, seconds into the run) from ended-episode rows, taking each run once even though its rows come once per seat.
-`ExploreArchive(max_cells=4096, depth_weight=1.0)` (`:83`): `add(cell, seconds, env_steps)` counts visits and keeps the
-soonest time; past `max_cells` the shallowest, most-visited cell is evicted; `table(size=64)` returns the cells with
-depth
-> 0 by weight `(1 + depth_weight * depth/deepest) / sqrt(visits + 1)`; `state_dict`/`load_state_dict` (saved in the
-checkpoint as `explore`, `train.py:1126`). The sim receives the table with `EXPLORE_STARTS`
-(`ForgeEnv.set_explore_starts`)
-and starts `share` of training resets there; evaluation always starts at the door (`train.py:2086-2093`).
-Config: `explore.enabled/share/table_size (1-64)/max_cells/depth_weight` (`config.ExploreConfig`).
-Tests: `test_explore.py` (2 tests).
-Quirks: the 24-bit words exist because an episode-info float holds 24 bits exactly (comment `:23`); `TABLE_SIZE = 64`
-and
-`MARKS = 8` mirror C++ constants (`InstanceEncounter::EXPLORE_MARKS`, `MAX_EXPLORE_STARTS`) with no cross-check;
-`cells_of` dedups by the whole row's values (`:73`), so two different seats' identical runs in one batch collapse
-(intended).
-
 ## `style.py` (341 lines): the movement-style reward (switch: `style.enabled`, off everywhere live)
 
 An adversarial motion prior. `Discriminator(window, hidden)` (`:104`): MLP over a flattened window of 17-feature steps
@@ -536,8 +510,7 @@ by
 1. `env.ForgeEnv.set_mode(..., baseline="")` keeps a baseline-name parameter although `random` is the only baseline.
 2. `ClusterEnv._owner` is O(groups) per call.
 3. `async_sync.Hub` pickles over an unauthenticated socket bound to all interfaces.
-4. `explore.py` mirrors C++ constants without a check.
-5. `blas.py` has no test; `device.py`'s IPC path has no CPU test.
-6. `style.py` and `human/*` are switched off live; their value depends on a capture that may not exist.
+4. `blas.py` has no test; `device.py`'s IPC path has no CPU test.
+5. `style.py` and `human/*` are switched off live; their value depends on a capture that may not exist.
 7. `parallel.Ranks.any` and `average_gradients` do host reads (a sync) per call.
 8. See the human issues list above.

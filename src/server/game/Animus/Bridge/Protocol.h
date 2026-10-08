@@ -157,7 +157,8 @@ namespace AnimusForge
     // 18: PROGRESS carries the shaping scale after the progress (ProgressMsg): a sim that took the old four bytes
     // would never fade its shaping, and nothing would say so. STEP's episode_info carries only the envs whose done is
     // set, as final_obs and final_state do: the others' were most of a STEP's bytes in a wide stage. MODE names a
-    // held-out arena for the evaluation to play. EXPLORE_STARTS gives the wings the cells to start from (Go-Explore).
+    // held-out arena for the evaluation to play. EXPLORE_STARTS gave the wings the cells to start from (Go-Explore;
+    // retired, see below).
     // 19: PROGRESS carries the cost scale after the shaping scale (the learner's cost ladder on the noise prices).
     // 20: SPEC ends with the kinematics width and every STEP ends with one kinematic sample per agent (Kinematics.h):
     // the bodies the learner's style reward and realism score read. A learner of 19 would read the width as the
@@ -180,7 +181,9 @@ namespace AnimusForge
     // 26: entity sensing (vision block revision 6): a camera pixel is four bytes again (distance, height, normal, the
     // class and objective byte -- no entity slot), of the static world alone, so ImageBytes is height x width x 4; the
     // entity list's columns 16-18 are los, ang_width and ang_height (entities block revision 2, sight block revision
-    // 3). The messages' layout is protocol 25's.
+    // 3). The messages' layout is protocol 25's, less EXPLORE_STARTS: message type 12 (Go-Explore's, since 18) is
+    // retired with the route packs (vision-only movement, 2026-10-08), so it is unused and a learner that sends it
+    // is dropped like any unknown message.
     constexpr uint32 PROTOCOL_VERSION = 26;
     constexpr uint32 SCENARIO_NAME_SIZE = 32;
     constexpr uint32 POLICY_NAME_SIZE = 32;
@@ -207,10 +210,7 @@ namespace AnimusForge
         /// (RewardLedger::SetShaping), and every noise price times the third (RewardLedger::SetCosts, the cost
         /// ladder). Protocol 17; the shaping scale from 18, the cost scale from 19.
         Progress = 11,
-        /// client -> server: ExploreStartsHeader, then Count ExploreCell -- the cells a training run of a dungeon wing
-        /// starts from instead of the door (Go-Explore), Share of them, drawn by weight; replaces the last table,
-        /// applied without an answer as envs reset. Evaluation never takes one. Protocol 18.
-        ExploreStarts = 12,
+        // 12 was EXPLORE_STARTS (protocol 18; retired 2026-10-08): unused.
     };
 
 #pragma pack(push, 1)
@@ -294,28 +294,6 @@ namespace AnimusForge
     {
         uint32 Count;
     };
-
-    /// EXPLORE_STARTS payload: this header, then Count cells (at most MAX_EXPLORE_STARTS).
-    constexpr uint32 MAX_EXPLORE_STARTS = 64;
-
-    struct ExploreStartsHeader
-    {
-        float Share;
-        uint32 Count;
-    };
-
-    /// A cell of a wing run (InstanceEncounter's marks): the arena and its row (tier), the route's packs cleared as
-    /// EXPLORE_PACK_WORDS words of 24 bits (route order, word-major), the party's yard on the route / 16, the weight.
-    struct ExploreCell
-    {
-        uint32 Arena;
-        uint32 Tier;
-        uint32 Packs[4];
-        uint32 Yard;
-        float Weight;
-    };
-    // The learner's EXPLORE_STARTS and EXPLORE_CELL (protocol.py): "<fI" and "<II4IIf".
-    static_assert(sizeof(ExploreStartsHeader) == 8 && sizeof(ExploreCell) == 32);
 
     /// REPLAY payload: this header, then Count uint32 evaluation seed indexes (at most MAX_REPLAY_SEEDS).
     constexpr uint32 MAX_REPLAY_SEEDS = 65536;

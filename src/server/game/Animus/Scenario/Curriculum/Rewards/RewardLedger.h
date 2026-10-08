@@ -62,8 +62,8 @@ namespace Animus::Curriculum
         HealingMana,
         /// Every second an engaged enemy lives (Output.Clock): what makes killing faster pay.
         CombatClock,
-        /// A pull drill's pack killed alone (Instance.PullClean): paid as Kill until 2026-10-03, which put a drill's
-        /// lesson in the same column as the dungeon's kills.
+        /// A pull drill's pack killed alone (Roles.PullClean, the roles stage's pull drill): paid as Kill until
+        /// 2026-10-03, which put a drill's lesson in the same column as the dungeon's kills.
         PullClean,
         /// A party's damage dealer or healer with enemies on it while the tank has not engaged (Raid.EarlyPull): the
         /// pull opened before the tank was there to take it. A cost, not shaping: it never fades (2026-10-03).
@@ -78,7 +78,7 @@ namespace Animus::Curriculum
         DrillHold,
         DrillFocus,
         DrillKeep,
-        /// A pull drill's second pack dragged into the fight (Instance.PullExtra): a cost. Paid as Threat (Shaping)
+        /// A pull drill's second pack dragged into the fight (Roles.PullExtra): a cost. Paid as Threat (Shaping)
         /// until 2026-10-05, so a faded stage8 drill charged nothing for a double pull.
         PullExtra,
         /// Turning toward the marker (SightEncounter, M1): potential shaping on the cosine of the marker's bearing from
@@ -127,12 +127,11 @@ namespace Animus::Curriculum
         Away,
         Hurt,
         FireHurt,
-        /// The party stages (InstanceEncounter, dungeon-curriculum G2-D3): a pull started with every living member
-        /// ready -- at Instance.WingReadyShare of its health and mana -- paid to every seat (Instance.ReadyPull,
-        /// Outcome:
-        /// the rest discipline G2 is for; at most once a route pack); and every second of a dungeon run with nothing
-        /// killed, no step along the route and nothing fighting the party, past the grace (Instance.WingStall, Cost:
-        /// standing about, which was Stall's Shaping and faded).
+        /// The party stages (InstanceEncounter, dungeon-curriculum D2, D3): a pull started with every living member
+        /// ready -- at Instance.WingReadyShare of its health and mana -- paid to every seat (Instance.WingEngage,
+        /// Outcome: the rest discipline; at most once a run); and every second of a dungeon run with nothing killed and
+        /// nothing fighting the party, past the grace (Instance.WingStall, Cost: standing about, which was Stall's
+        /// Shaping and faded).
         ReadyPull,
         Idle,
         Count
@@ -148,9 +147,8 @@ namespace Animus::Curriculum
     /// do without once it has learned what the nudge pointed at.
     ///
     /// No term is potential-based shaping (F = gamma Phi' - Phi at the learner's gamma), which would leave the optimal
-    /// policy alone. Instance.WingProgress pays a high-water mark and never charges a step back, and Goals.Progress
-    /// discounts at a constant ProgressGamma rather than the learner's gamma and re-bases its potential when a goal is
-    /// switched, so walking away and choosing again is free: both are Shaping.
+    /// policy alone. Goals.Progress discounts at a constant ProgressGamma rather than the learner's gamma and re-bases
+    /// its potential when a goal is switched, so walking away and choosing again is free: it is Shaping.
     enum class RewardCategory : uint8
     {
         Outcome,
@@ -173,7 +171,8 @@ namespace Animus::Curriculum
             case RewardTerm::DrillHold:
             case RewardTerm::DrillFocus:
             case RewardTerm::DrillKeep:
-            // A pull drill's pack killed on its own: what the drill is for (2026-10-05; Shaping since 2026-10-03).
+            // The roles stage's pull drill: a pack killed on its own, what the drill is for (2026-10-05; Shaping since
+            // 2026-10-03).
             case RewardTerm::PullClean:
             // The follow stage's band kept (2026-10-05).
             case RewardTerm::FollowKept:

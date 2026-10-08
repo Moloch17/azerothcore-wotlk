@@ -30,7 +30,7 @@ UNVERIFIED items; [known-issues.md](known-issues.md) aggregates them.
 | `Curriculum/Encounters/EpisodeInfoTable.h` | 71 | Name-plus-getter table of per-seat episode statistics. |
 | `Curriculum/Encounters/InstanceBosses.cpp` | 116 | Boss table rows for the wing ladder and the follow bosses; row validation at startup. |
 | `Curriculum/Encounters/InstanceBosses.h` | 62 | BossRow and the ladder-row accessors. |
-| `Curriculum/Encounters/InstanceEncounter.cpp` | 2752 | InstanceEncounter: real dungeon runs on the wing ladder (corridor, drill, full clear). |
+| `Curriculum/Encounters/InstanceEncounter.cpp` | 2752 | InstanceEncounter: real dungeon runs on the wing ladder (full clear). |
 | `Curriculum/Encounters/InteractDraw.h` | 251 | Pure draws for M3: sites, spots, decoys, rungs. |
 | `Curriculum/Encounters/InteractEncounter.cpp` | 720 | InteractEncounter implementation (M3). |
 | `Curriculum/Encounters/InteractEncounter.h` | 162 | InteractEncounter class and state. |
@@ -47,7 +47,7 @@ UNVERIFIED items; [known-issues.md](known-issues.md) aggregates them.
 | `Curriculum/Encounters/SeekDraw.h` | 323 | Pure draws for M2: rungs, rooms, spots, evaluation picks. |
 | `Curriculum/Encounters/SeekEncounter.cpp` | 579 | SeekEncounter implementation (M2). |
 | `Curriculum/Encounters/SeekEncounter.h` | 130 | SeekEncounter class and state. |
-| `Curriculum/Encounters/SeenPlaces.h` | 248 | What a seat discovered: goal places, seen-only or with layout nodes. |
+| `Curriculum/Encounters/SeenPlaces.h` | 248 | What a seat discovered: goal places, seen only. |
 | `Curriculum/Encounters/SightDraw.h` | 218 | Pure draws for M1: spots, pairs, rungs. |
 | `Curriculum/Encounters/SightEncounter.cpp` | 453 | SightEncounter implementation (M1). |
 | `Curriculum/Encounters/SightEncounter.h` | 130 | SightEncounter class and state. |
@@ -56,7 +56,7 @@ UNVERIFIED items; [known-issues.md](known-issues.md) aggregates them.
 | `Curriculum/Encounters/Standing.h` | 69 | Pure movement readings: WallCharge, Stopped, Band. |
 | `Curriculum/Encounters/WingLadder.cpp` | 111 | Whole-dungeon difficulty ladder: steps, collapse alarm (implementation). |
 | `Curriculum/Encounters/WingLadder.h` | 98 | Whole-dungeon difficulty ladder declarations. |
-| `Curriculum/Encounters/WingRun.h` | 175 | Pure bookkeeping of a dungeon run (corridor start, cleared packs, tier of a rung). |
+| `Curriculum/Encounters/WingRun.h` | 175 | Pure bookkeeping of a dungeon run (tier of a rung, leader, strays, away). |
 
 ## 1. The encounter interface (`Encounters/Encounter.h`, `EpisodeInfoTable.h`)
 
@@ -117,7 +117,7 @@ InstanceEncounter and RolesEncounter.
 
 Note that `Encounters.h` (470 lines) declares only `EnemyRank`, `RankEnemy`, `PartyEncounter` and `InstanceEncounter`;
 the other six encounters have their own headers. `Encounters.h` includes `<mutex>` twice (`:39`, `:45`) and a long
-list of headers (Battleground, `RouteShortcut.h`, `BotSlot.h`, ...) that suggests accretion: see Observed issues.
+list of headers (Battleground, `BotSlot.h`, ...) that suggests accretion: see Observed issues.
 
 ### 1.3 `EpisodeInfoTable` (`EpisodeInfoTable.h`, 71 lines)
 
@@ -777,8 +777,10 @@ dungeon's boss route. Nothing is fought. The leader lives in the **owner's slot*
   `InBandMs`,
   `LostMs`, `BlockingMs`, `DistanceSum`, `Samples`, `RegroupPending`, `RegroupStops`, `Regroups`, `RegroupMsTotal`,
   last-reward/stuck/wall stamps, last position); `EnvParty` (`Built`, `Cast`, `Rung`, `Entrance`, `Stops`, `NextStop`,
-  `Way`, `Mode`, stop timers, counters, fall tracking, `Seats[GROUP_SEATS]`). `_routes` is a `std::map<mapId, stops>`
-  guarded by `_routesLock` (the only cross-thread structure: envs on different map threads call `RouteStops`).
+  `Legs` (a vector of vectors of `Position`: one leg of path corners per stop), `Corner`, `Mode`, stop timers, counters,
+  fall tracking, `Seats[GROUP_SEATS]`). `_routes` (stops) and `_legs` (the legs) are `std::map<mapId, ...>` caches
+  guarded by `_routesLock` (the only cross-thread structures: envs on different map threads call `RouteStops` and
+  `LegsFor`).
 
 ### Lifecycle
 
@@ -796,7 +798,7 @@ dungeon's boss route. Nothing is fought. The leader lives in the **owner's slot*
    SpawnPointFor(env)`. `Stops = RouteStops(mapId)`: the spawn position of each boss row of `FollowBosses()` with
    `row.MapId == mapId`, via `InstanceEncounter::FindSpawn`, in table order, cached per map. No stops -> `LOG_ERROR`,
    build fails. Builds the leader with `BuildOwnerSeat(env, map, level, Entrance, AptitudeDemand::Anything())` (any
-   class), gives it seat 0's faction, `env.Allies = {leader}`, `Mode = Stopped`, `StopUntilMs = now + 3000`
+   class), gives it seat 0's faction, `env.Allies = {leader}`, takes its legs (`LegsFor`, below), `Mode = Stopped`, `StopUntilMs = now + 3000`
    (`START_PAUSE_MS`), records the leader's controller-stuck baseline, and schedules the first sudden stop.
 4. **Update** (per decision, `:458-517`): `RespawnFollowers` first; then if there is a leader in the world:
    - a dead leader (a fall in Ragefire's cavern) is stood up where it fell after `LEADER_RISE_MS = 2000` through
@@ -807,7 +809,12 @@ dungeon's boss route. Nothing is fought. The leader lives in the **owner's slot*
    - a **cast** leader (a frozen checkpoint plays the row) only advances `NextStop`/`StopsReached` when within 3 yd
      (`LEADER_ARRIVE`) of the next stop; it keeps no stop pauses and never counts regroup stops;
    - a **scripted** leader runs `Steer`.
-5. **Steer** (`:344-433`): the leader's keys are the script (the only scripted actor left in the M4 stage; see
+   `LegsFor(map, leader, Entrance, Stops)` chains the stock `PathGenerator` from the door through the stops
+   (`PATH_LEGS` 16 calls at most per leg), once per map, cached in `_legs`; it runs when the episode is built, on the
+   world thread outside `MapMgr::Update`, so the first episode of a map pays for it. It logs the legs, corners and
+   how many ended more than `LEG_SHORT_YARDS` (5 yd) short of their stop (the leader gives those up through
+   `PartyFollow.GiveUpMs`).
+5. **Steer** (`.cpp:403`): the leader's keys are the script (the only scripted actor left in the M4 stage; see
    principle 14 and the note below).
    - Stopped and `now >= StopUntilMs`: `Mode = Walking` (or `Done` if no stops left).
    - Walking with a sudden stop due (`NextSuddenMs`): `SuddenStops++`; duration `urand(SuddenStopMinMs,
@@ -815,13 +822,14 @@ dungeon's boss route. Nothing is fought. The leader lives in the **owner's slot*
      if `Rung >= BackStepFromRung` and `roll_chance_i(BackStepChance)` it first backs `BackStepYards` along its reversed
      facing (`Mode = BackStep`, then `Stop` on arrival within 1 yd or after `GiveUpMs` stuck), else `Stop(ms, counts)`
      at once; the next sudden stop is rescheduled.
-   - Walking: reaching the stop (2-D within 3 yd) or being stuck `GiveUpMs` on the leg advances `NextStop`; arrival
+   - Walking: reaching the stop (2-D within `LEADER_ARRIVE` 3 yd) or being stuck `GiveUpMs` on the leg advances `NextStop`; arrival
      counts `StopsReached++` and stops for `StopSeconds(Rung, StopSecondsFirst, StopSecondsLast)` seconds; giving up
      counts `Skips++`. After the last stop `Mode = Done` (the leader stands there for good).
-   - Keys: none unless Walking/BackStep and the controller `Started()`. Walking plans with
-     `RoutePlanner::Instance().Plan`
-     (navmesh corners; a replan when `Way` is invalid or its end is over 1 yd from the target, or the leader strays over
-     15 yd, `LEADER_STRAY`, from the next corner), then `Movement::Seek(body, x, y)` gives the `ControlState`;
+   - Keys: none unless Walking/BackStep and the controller `Started()`. Walking does arithmetic only on the cached leg
+     of `NextStop`: `Corner` advances past every corner within `LEADER_ARRIVE` (3 yd); if the leader is over
+     `LEADER_STRAY` (15 yd) from its corner it turns for the nearest corner of the leg; then
+     `Movement::Seek(body, x, y)` toward that corner (the stop itself when the leg is exhausted or absent) gives the
+     `ControlState`;
      `held.Walk = Rung < WalkRungs || Mode == BackStep`. `seat.Controls.Held = held` keeping `FaceTurnApplied`.
    - `Stop(counts=true)` with `ms >= RegroupMinStopMs` increments `RegroupStops` and marks every living, not-out
      follower `RegroupPending` (counting `RegroupStops` per follower). Sudden stops count as regroup stops too.
@@ -881,7 +889,8 @@ encounter in the same stage creates a duplicate column; in M4 only this encounte
 ### Quirks and notes
 
 - The leader is scripted: it is the M4 exception to "no scripted players" (principle 14); its keys are `Movement::Seek`
-  toward navmesh corners, and `CastShare` (default 0 percent, `PartyFollow.CastShare`) hands it to a frozen checkpoint.
+  toward the corners of its cached stock-`PathGenerator` legs, and `CastShare` (default 0 percent,
+  `PartyFollow.CastShare`) hands it to a frozen checkpoint.
 - `Cast` leaders skip `Stop` entirely, so `regroup_stops` is 0 and no `Regroup` is ever paid in cast episodes.
 - Sudden stops are scheduled with at least 1 s (`std::max<uint32>(1000, ...)`) and the gap is halved from
   `BackStepFromRung` (`ScheduleSudden`, `:309-321`).
@@ -1385,7 +1394,7 @@ EarlyPull is Cost, Revive Shaping (`RewardLedger.h:162-243`; note: TeammateDeath
 seat
 with most EnemiesOnParty), `tank_form_share`, `tank_target_share`, `pulled_off_seconds`. Python readers:
 `apps/forge/python/animus/config.py` (role metrics) and `episode_means.py`; group1_roles and the four dungeon yamls list
-these. 
+these.
 
 **Enemy ranking.** `EnemyRank {TankTarget, OnPlayer, Fighting, Standing, Gone}` and `RankEnemy(enemy, tank)` are
 declared at
@@ -1518,7 +1527,7 @@ movement encounter's section (E1, E2).
    frames
    `FillFromGroup`) then see no group.
 9. `Encounters.h:48,55`: `<mutex>` included twice; `Encounters.h` includes headers for encounters it does not declare
-   (`Battleground`, `WingRun.h`, `RouteShortcut.h`).
+   (`Battleground`, `WingRun.h`).
 10. `PartyEncounter.cpp:381-385` and `:392-398`: the `drilled`/`rolesDrilled` logic for `DrillHold/Focus/Keep` is the
     pre-G1 drill path; no live non-roles arena sets `DrillRole`, so the non-roles branch of `drill`, `drilled`,
     `holdTerm` and
@@ -1534,47 +1543,39 @@ movement encounter's section (E1, E2).
     in seats).
 
 
-## E3. InstanceEncounter (first half) and InstanceBosses
+## E3. InstanceEncounter and InstanceBosses
 
-Scope of this fragment: `src/server/game/Animus/Scenario/Curriculum/Encounters/InstanceEncounter.cpp` lines 1-1400
-(the other half, 1400-2752, is documented in the neighbouring fragment), the class declaration in `Encounters.h:147-467`
-and `InstanceBosses.h` / `InstanceBosses.cpp`. Paths below are relative to
-`src/server/game/Animus/Scenario/Curriculum/Encounters/` unless they start with another directory. The reward, terminal
-and critic-state code lives after line 1400 (`Reward` 2529-2693, `SelectTarget` 2695, `TierScale` 2723, `IsTerminal`
-2745); it was read for this fragment so that the lifecycle and the reward table are complete, but the neighbouring
-fragment is the authority for everything after line 1400.
+Scope: `src/server/game/Animus/Scenario/Curriculum/Encounters/InstanceEncounter.cpp` (1341 lines), the class declaration
+in `Encounters.h` and `InstanceBosses.h` / `InstanceBosses.cpp`. Paths below are relative to
+`src/server/game/Animus/Scenario/Curriculum/Encounters/` unless they start with another directory. The encounter is a
+party's run of a whole dungeon; since 2026-10-08 nothing in it knows a route (vision-only movement, decision
+[0019](../decisions/0019-vision-only-movement.md)): the party finds its own way, and the rewards measure kills and
+clears, never ground covered.
 
 ### E3.0 Map of the files
 
 | Path | Lines | Role |
 |---|---|---|
-| `InstanceEncounter.cpp` | 2752 | The whole-dungeon encounter (`Opposition::Instance`, `InstanceLadder::Wing`): full runs, corridors and pull drills. |
+| `InstanceEncounter.cpp` | 1341 | The whole-dungeon encounter (`Opposition::Instance`, `InstanceLadder::Wing`): full runs of a dungeon. |
 | `InstanceBosses.h` | 62 | `BossRow`, `WingBoss` and the three accessors (`InstanceLadderRows`, `FollowBosses`, `WingBosses`). |
 | `InstanceBosses.cpp` | 116 | The data: the follow stage's eight bosses, the three wing rows, the per-boss measure table. |
-| `Encounters.h` (`InstanceEncounter` at 147-467) | 470 | Declaration of `InstanceEncounter` with its per-env structs (`EnvInstance`, `SeatInstance`, `WingPlan`, `WingPack`). |
+| `Encounters.h` (`InstanceEncounter` at the end of the file) | 315 | Declaration of `InstanceEncounter` with its per-env structs (`EnvInstance`, `SeatInstance`). |
 
-Logical parts of `InstanceEncounter.cpp` 1-1400:
+Logical parts of `InstanceEncounter.cpp`:
 
-| Lines | Part |
+| Part | Content |
 |---|---|
-| 19-56 | includes |
-| 57-67 | `RankEnemy` (a free function that belongs to `Encounters.h:60-72`'s `EnemyRank`; unrelated to the instance) |
-| 69-138 | anonymous namespace: constants, `KeyOf`, `CanUse`, `GameObjectsNearPoint`, `EngageKey`, `Distance2d` |
-| 140-179 | constructor: which boss rows the world database can field |
-| 181-188 | `FindSpawn` |
-| 190-195 | `RewardTerms()` |
-| 197-399 | `AddEpisodeInfo()` (every column) |
-| 401-449 | `ResetEpisode()` (end-of-run logging and ladder bookkeeping, then the state wipe) |
-| 451-514 | `BeforeLevel()` (pinned row, level, difficulty, spawn at the door); 516-522 `Rows()` |
-| 524-576 | `FindBoss()` |
-| 578-695 | `Build()` |
-| 697-700 | `UpdateEnemies()` (forwards to `UpdateWingEnemies`, second half) |
-| 702-960 | `Update()` (per-decision bookkeeping) |
-| 962-1024 | `RiseDead()` (I4, the respawn clock) |
-| 1026-1165 | `TraceWing()` and `LogWipe()` (tank choice, crowd measure, wipe log) |
-| 1167-1226 | `Hostile()`, `Usable()`, `KeyItems()` |
-| 1228-1240 | `DungeonLevels()` |
-| 1242-1465 | `WingRoute()` (boss order, navmesh route, full-clear packs; continues past 1400) |
+| top | includes, `RankEnemy`, anonymous namespace: `OBJECT_SIGHT`, `KeyOf`, `CanUse`, `GameObjectsNearPoint`, `READY_PULLS_PAID` |
+| constructor, `FindSpawn` | which boss rows the world database can field |
+| `RewardTerms()`, `AddEpisodeInfo()` | the terms declared and every episode column |
+| `ResetEpisode()`, `BeforeLevel()`, `Rows()`, `FindBoss()`, `Build()` | the episode set-up |
+| `UpdateEnemies()`, `Update()` | per-decision bookkeeping |
+| `RiseDead()`, `TraceWing()`, `LogWipe()` | the respawn clock, tank choice, crowd measure, wipe log |
+| `Hostile()`, `Usable()`, `KeyItems()`, `DungeonLevels()` | helpers |
+| `UpdateWingEnemies()` | usable objects, kills, enemy slots, crowd past the slots |
+| `FullClear()`, `Succeeded()`, `ClearedShare()` | the run's measures |
+| `View()`, `SeenWorld()` | what the seats are shown |
+| `Reward()`, `TierScale()`, `TimeIsUp()`, `WriteState()`, `IsTerminal()` | rewards and the end |
 
 ### E3.1 InstanceBosses: the boss tables
 
@@ -1643,690 +1644,330 @@ UNVERIFIED: what exactly the first test asserts against the table (read `Dungeon
 
 ### E3.2 InstanceEncounter: what it is
 
-`class InstanceEncounter final : public Encounter` (`Encounters.h:147`). One instance per scenario, built when an arena
-of
-the stage has `Against = Opposition::Instance`; per-env state is `std::vector<EnvInstance> _envs`
-(`InstanceEncounter.cpp:141`).
+`class InstanceEncounter final : public Encounter` (`Encounters.h`). One instance per scenario, built when an arena of
+the stage has `Against = Opposition::Instance`; per-env state is `std::vector<EnvInstance> _envs`.
 
 An episode is a **run of a whole dungeon**: a fresh instance (every creature alive, every boss script at its start:
-`StageScenario.cpp:2175-2177`, `freshInstance = Arena(env).Instance == InstanceLadder::Wing`, which forces a map change
-and disables character reuse), the party of five at the instance's door, the route from the door to the last boss as the
-objective. Three modes share the class, chosen per episode in `BeforeLevel`:
+`freshInstance = Arena(env).Instance == InstanceLadder::Wing` in `StageScenario.cpp` forces a map change and disables
+character reuse), the party of five at the instance's door, the last boss as the end. There is one mode: door to last
+boss, full clear. The run ends on the last boss's death, the last allowed wipe, or the clock.
 
-1. **Full run** (`dungeon2_ragefire`, `dungeon3_deadmines`): door to last boss, full clear. Ends on the last boss's
-   death, the last allowed wipe, or the clock.
-2. **Corridor** (`group2_corridor`, `ArenaDefinition::CorridorPacks = 4`): four packs of the route in order; the packs
-   before them are cleared and the party stood short of them (`StartCorridor`, second half).
-3. **Pull drill** (`dungeon1_pulls`, `ArenaDefinition::PullDrill`): one pack of the route, the packs before it cleared
-   (`StartDrill`, second half). One wipe allowed.
-
-Plus **Go-Explore starts**: a training full run may start from a "cell" sent by the learner (`StartAt`, second half).
-
-**Stage definitions that use it** (`Stages/Stages.cpp`): `group2_corridor` arenas `ragefire` (row 0, 900 s, 4 packs) and
-`deadmines` (row 1, 1200 s, 4 packs, levels 17-20) at `:942-951`; `dungeon1_pulls` arena `ragefire` (row 0, drill, 180
-s)
-at `:966-971`; `dungeon2_ragefire` arenas `dungeon` (row 0, 7200 s) and `heldout` (row 2, 10800 s, `EvalOnly`, weight 0)
-at `:990-998`; `dungeon3_deadmines` arenas `dungeon` (row 1, 14400 s, levels 17-20) and `heldout` (row 2) at
-`:1013-1021`. All have `PartyGroup = true` and `Seats = SeatPlan::Party`; every arena except the two `heldout` ones
-carries `StandInShare = DUNGEON_STAND_IN_SHARE`. Validation of these fields: `Stages.cpp:1033-1067`
-(`CurriculumProblems`).
+**Stage definitions that use it** (`Runtime/Scenario/Curriculum/Stages/Stages.cpp`): `dungeon2_ragefire` (extends
+`group1_roles`) arenas `dungeon` (row 0, 7200 s) and `heldout` (row 2, 10800 s, `EvalOnly`, weight 0);
+`dungeon3_deadmines` (extends `dungeon2_ragefire`) arenas `dungeon` (row 1, 14400 s, levels 17-20) and `heldout`
+(row 2). All have `PartyGroup = true` and `Seats = SeatPlan::Party`; every arena except the two `heldout` ones carries
+`StandInShare = DUNGEON_STAND_IN_SHARE`. Validation of these fields is in `CurriculumProblems` (`Stages.cpp`).
 
 ### E3.3 Public API and per-env state
 
-Public (`Encounters.h:150-182`):
+Public (`Encounters.h`):
 
 | Member | Meaning |
 |---|---|
-| `EXPLORE_PACK_WORDS = 4`, `EXPLORE_PACK_BITS = 24`, `EXPLORE_PACKS = 96`, `EXPLORE_YARD_BUCKET = 16`, `EXPLORE_MARKS = 8` | Go-Explore cell encoding: a cell's cleared packs are 4 words of 24 bits (a `float` episode-info value holds 24 bits exactly), so only the route's first 96 packs; the party's yard in buckets of 16. |
 | `static std::pair<uint32,uint32> DungeonLevels(BossRow const&)` | The level range the dungeon is run at. |
 | `static CreatureData const* FindSpawn(BossRow const&)` | The boss's world-database spawn, or null. |
-| the `Encounter` overrides | `RewardTerms`, `AddEpisodeInfo`, `ResetEpisode`, `BeforeLevel`, `Build`, `UpdateEnemies`, `Update`, `View`, `Reward`, `WriteState`, `IsTerminal` (its `SelectTarget` was deleted 2026-10-08: every instance stage has the sight block, which `CurriculumStages` now requires of an instance). No `BeforeRebuild`, `Deactivate` or `Teardown` override: the encounter spawns nothing of its own (the instance's creatures belong to the map). |
+| the `Encounter` overrides | `RewardTerms`, `AddEpisodeInfo`, `ResetEpisode`, `BeforeLevel`, `Build`, `UpdateEnemies`, `Update`, `View`, `Reward`, `WriteState`, `IsTerminal` (its `SelectTarget` was deleted 2026-10-08: every instance stage has the sight block, which `CurriculumStages` requires of an instance). No `BeforeRebuild`, `Deactivate` or `Teardown` override: the encounter spawns nothing of its own (the instance's creatures belong to the map). |
 
-Per-env state (`Encounters.h`, `EnvInstance` and `SeatInstance`, read by the first half):
+Per-env state (`EnvInstance` and `SeatInstance`):
 
 `EnvInstance`: `Row` (the chosen `BossRow const*`), `MapId`, `Entry`, `Tier` (the **pinned row index**, not the ladder
-rung), `Boss` guid, `BossHealth`, `HealthLeft`, `Engaged`/`EngageMs`, `BossDead`, `Wiped`, `Evaded`, `Recorded`,
-`Route`/`RouteRemain`/`Dense`/`RouteDense`/`CornerAhead`/`CornerBack`/`RouteNext`, `TrashKills`, `BossKills`,
-`ProgressMs`/`ProgressSeen`, `Wipes`, `Rung` (the ladder rung the run was drawn on), `Probe`, `WipesAllowed`,
-`Evaluating`, `Trace` (a `FightTrace`), `Fighting`, `ReadyEngages`, `OnParty`, `CrowdSeconds`, `HostileTotal`, `LastMs`,
-`Level`, `StuckLoggedMs`, `Rises`/`Rejoins`/`RejoinMsTotal`, `Entrance`, `Wipe` (a `WipeLatch`), `Tank`, `Overflow`,
-`Objects`, `Used`, `Approached`/`ApproachedMs`, `EndLogged`, `LastKillMs`,
-`HasAhead`/`Ahead`/`AheadSize`,
-`HasSecond`/`Second`, the drill block (`Drill`, `DrillRung`, `DrillPackIndex`, `DrillGap`, `DrillPoint`, `DrillPack`,
-`DrillGroups`, `DrillLocked`, `DrillOther`, `DrillEngaged`, `DrillCleared`, `DrillExtra`, `DrillExtraEntry`,
-`DrillPeak`),
-`Watched`/`Counted`, `RoutePacks`, `PackOf`, `MapLayout`, `CorridorRun`/`Corridor`, `Drawn`/`ChainPulls`,
-`ReadyPaidCap`, `BossesKilled`, `Seats[MAX_SEATS]`, and the Go-Explore block (`Started`, `StartPacks`, `StartYard`,
-`Marks`).
+rung), `Boss` guid, `BossHealth`, `HealthLeft`, `Engaged`/`EngageMs`, `BossDead`, `Wiped`, `Evaded`, `TrashKills`,
+`BossKills`, `ProgressMs`/`ProgressSeen` (the stall clock), `Wipes`, `Rung` (the ladder rung the run was drawn on),
+`Probe`, `WipesAllowed`, `Evaluating`, `Trace` (a `FightTrace`), `Fighting`, `ReadyEngages`, `OnParty`, `CrowdSeconds`,
+`HostileTotal`, `LastMs`, `Level`, `StuckLoggedMs`, `Rises`/`Rejoins`/`RejoinMsTotal`, `Entrance`, `Wipe` (a
+`WipeLatch`), `Tank`, `Overflow`, `Objects`, `Used`, `Approached`/`ApproachedMs`, `EndLogged`, `LastKillMs`,
+`HasAhead`/`Ahead`/`AheadSize`, `HasSecond`/`Second`, `Watched`/`Counted`, `BossesKilled`, `Seats[MAX_SEATS]`.
 
-`SeatInstance`: the pay latches (`OutcomePaid`, `KillsPaid`, `BossKillsPaid`, `WaypointsPaid`, `WipesPaid`, `DeathPaid`,
-`EngagesPaid`, `ClearsPaid`, `ChainPaid`, `FullClearPaid`), `Potential`/`PotentialReady`, `Clock` (`RespawnClock`),
-`Walk`, `Deaths`, the view caches (`DenseAt`, `Detour`, `Frontier`, `FrontierMs`, `FrontierReady`, all `mutable`) and
-the
-supplies (`FoodItem`, `DrinkItem`).
+`SeatInstance`: the pay latches (`OutcomePaid`, `KillsPaid`, `BossKillsPaid`, `WipesPaid`, `DeathPaid`, `EngagesPaid`,
+`FullClearPaid`), `Clock` (`RespawnClock`), `Deaths`, the frontier cache (`Frontier`, `FrontierMs`, `FrontierReady`,
+all `mutable`) and the supplies (`FoodItem`, `DrinkItem`).
 
-Encounter-level state: `_rows` (per ladder, the usable `BossRow const*` list), `_drillLock`, `_drillRung`, `_drillRuns`
-(the pull drill's ladder, shared by every env of the scenario).
-
-Function-local statics that outlive episodes: `WingRoute`'s `routes` cache keyed by `EngageKey{map, entry}`
-(`InstanceEncounter.cpp:1245-1253`, process-wide, never cleared) and `KeyItems`' `keys` map (`:1207-1208`), each with
-its
-own mutex. They are shared by every scenario in the process.
+The only function-local static that outlives episodes is `KeyItems`' `keys` map, with its own mutex, shared by every
+scenario in the process. There is no route cache and no per-process drill state any more.
 
 ### E3.4 Episode lifecycle, step by step
 
-The scenario (`StageScenario.cpp`) calls the hooks in this order (call sites: `ResetEpisode` `:1949`, `BeforeRebuild`
-`:1957`, `BeforeLevel` `:2120`, `Build` `:2334` inside a retry loop, `UpdateEnemies` `:2803`, `Update` `:2805`,
-`IsTerminal` `:1837-1844`).
+The scenario (`StageScenario.cpp`) calls the hooks in this order: `ResetEpisode`, `BeforeRebuild`, `BeforeLevel`,
+`Build` inside a retry loop, then per decision `UpdateEnemies`, `Update`, and `IsTerminal`.
 
-**1. Reset (`ResetEpisode`, `:401-449`).** Runs when a new episode starts; it reports the run that just ended and then
-clears the env's state.
+**1. Reset (`ResetEpisode`).** Runs when a new episode starts; it reports the run that just ended and then clears the
+env's state.
 
-- If the ended run was a drill (`fight.Drill`): writes the `Pull drill:` log line when `Instance.WingTrace` is on
-  (`:407-414`); if `fight.Row` is set and the run was not an evaluation, calls `NoteDrill(DrillRung, DrillCleared &&
-  !DrillExtra)` (`:416-417`, feeds the drill ladder, second half); then `fight = EnvInstance()` and returns
-  (`:418-419`). A drill never calls `NoteWingRun`.
-- Otherwise, if the run has a route and `WingTrace` is on, writes one `Wing run:` line (`:423-436`): evaluation or
-  training or "train from a cell", probe flag, rung, level, route point, kills, bosses, wipes, rises, rejoins, seconds
-  with no progress, and the corridor or chain-pull summary.
-- If the run has a route, was not an evaluation and not started from a cell, computes `progress` (`CorridorRun` ->
-  `Corridor.Share()`; else `BossDead` -> 1; else `min(1, (TrashKills + BossDead) / (HostileTotal + 1))`, or 0 with no
-  hostiles) and calls `StageScenario::NoteWingRun(Rung, Probe, progress)` (`:440-447`). That feeds the wing difficulty
-  ladder; only probes step it (see the WingLadder section of `cpp-encounters.md`).
-- `fight = EnvInstance()` clears everything (`:448`). The encounter-level drill ladder (`_drillRung`, `_drillRuns`) is
-  not touched.
+- If a boss was built (`!Boss.IsEmpty()`) and `Instance.WingTrace` is on, writes one `Wing run:` line: evaluation or
+  training, probe flag, rung, level, creatures killed of `HostileTotal`, bosses, wipes, rises, rejoins, seconds with no
+  progress at the end, and how it ended (cleared, wiped, out of time).
+- If a boss was built and the run was not an evaluation, calls `StageScenario::NoteWingRun(Rung, Probe, progress)` with
+  `progress = BossDead ? 1 : ClearedShare(fight)`. That feeds the wing difficulty ladder; only probes step it (E4.2).
+- `fight = EnvInstance()` clears everything.
 
-**2. BeforeLevel (`:451-514`).** After the arena and the seats' classes are drawn, before the level. Skipped
-(`:457-459`) when `Rows(env)` is empty: nothing is set and `Build` then fails on the null `Row`.
+**2. BeforeLevel.** After the arena and the seats' classes are drawn, before the level. Skipped when `Rows(env)` is
+empty: nothing is set and `Build` then fails on the null `Row`.
 
-1. `pinned = uint32(arena.InstanceRow)`. `InstanceRow` is an `int8` defaulting to -1 (`StageDefinition.h:178`);
-   `CurriculumProblems` rejects an instance arena with `InstanceRow < 0` (`Stages.cpp:1033`).
-2. A Go-Explore start is drawn only when `!env.Evaluating && !arena.PullDrill && !arena.CorridorPacks`:
-   `_scenario.DrawExploreStart(data.Arena, pinned + 1)`; `fight.Started` is true when it returned a start whose `Tier ==
-   pinned` (`:466-473`); `StartPacks`/`StartYard` are copied.
-3. `fight.Tier = min(pinned, rows.size()-1)`; `Row`, `MapId`, `Entry` from the row (`:474-477`).
-4. `EpisodeMapId` and `HasEpisodeMap` are set so the seats are built on the dungeon's map (`:479-480`).
-5. Ladder rung: `fight.Evaluating = env.Evaluating`; `fight.Rung = Evaluating ? WING_RUNGS.size()-1 : WingRungNow()`
-   (`:487-488`). `StageScenario::WING_RUNGS` (`StageScenario.h:218-228`) has 9 entries `{Lift, ExtraWipes}`: {8,4} {7,3}
-   {6,3} {5,2} {4,2} {3,1} {2,1} {1,0} {0,0}. An evaluation always runs at the last rung (no lift, no spare wipes).
-6. `fight.Drill = arena.PullDrill && (!env.Evaluating || EvaluatesDrills(stage.Arenas))`; `fight.CorridorRun =
-   arena.CorridorPacks > 0 && !fight.Drill`; `fight.Probe = !Evaluating && !Drill && !Started && frand(0,1) <
-   Instance.WingProbe`; `fight.WipesAllowed = Drill ? 1 : Instance.WingWipes + rung.ExtraWipes` (`:494-497`).
-7. Level: `[low, high]` = the arena's `[LevelFirst, LevelLast]` when `LevelFirst != 0`, else `DungeonLevels(*Row)`;
-   `lift = Drill ? min(rung.Lift, Instance.PullLift) : rung.Lift`; `EpisodeLevel = min(urand(low, high) + lift,
-   DEFAULT_MAX_LEVEL)` (`:499-502`). One level for the whole party, drawn once per episode.
-8. Difficulty: for a raid map (`MapEntry::IsRaid`) `RaidDifficulty = row.Difficulty` and `DungeonDifficulty = 0`;
-   otherwise the reverse (`:504-507`).
-9. Spawn: `GetMapEntranceTrigger(MapId)`'s target position becomes `EpisodeSpawn` (`HasEpisodeSpawn = true`) and is
-   copied to `fight.Entrance`, where the dead rise (`:509-513`). The trigger pointer is dereferenced unchecked; the
-   constructor guarantees one exists for every kept row (`:166-171`).
+1. `pinned = uint32(arena.InstanceRow)`. `InstanceRow` is an `int8` defaulting to -1; `CurriculumProblems` rejects an
+   instance arena with `InstanceRow < 0`.
+2. `fight.Tier = min(pinned, rows.size()-1)`; `Row`, `MapId`, `Entry` from the row.
+3. `EpisodeMapId` and `HasEpisodeMap` are set so the seats are built on the dungeon's map.
+4. Ladder rung: `fight.Evaluating = env.Evaluating`; `fight.Rung = Evaluating ? WING_RUNGS.size()-1 : WingRungNow()`.
+   `StageScenario::WING_RUNGS` has 9 entries `{Lift, ExtraWipes}`: {8,4} {7,3} {6,3} {5,2} {4,2} {3,1} {2,1} {1,0}
+   {0,0}. An evaluation always runs at the last rung (no lift, no spare wipes).
+5. `fight.Probe = !env.Evaluating && frand(0,1) < Instance.WingProbe`; `fight.WipesAllowed = Instance.WingWipes +
+   rung.ExtraWipes`.
+6. Level: `[low, high]` = the arena's `[LevelFirst, LevelLast]` when `LevelFirst != 0`, else `DungeonLevels(*Row)`;
+   `EpisodeLevel = min(urand(low, high) + rung.Lift, DEFAULT_MAX_LEVEL)`. One level for the whole party, drawn once
+   per episode.
+7. Difficulty: for a raid map (`MapEntry::IsRaid`) `RaidDifficulty = row.Difficulty` and `DungeonDifficulty = 0`;
+   otherwise the reverse.
+8. Spawn: `GetMapEntranceTrigger(MapId)`'s target position becomes `EpisodeSpawn` (`HasEpisodeSpawn = true`) and is
+   copied to `fight.Entrance`, where the dead rise. The trigger pointer is dereferenced unchecked; the constructor
+   guarantees one exists for every kept row.
 
-**3. Build (`:578-695`).** After the seats' bots are placed on the fresh instance. Returns false (the scenario retries
-up
-to 4 spawn attempts, `StageScenario.cpp:2328-2345`) when `Row` or `map` is missing or the boss is not found.
+**3. Build.** After the seats' bots are placed on the fresh instance. Returns false (the scenario retries up to 4
+spawn attempts) when `Row` or `map` is missing or the boss is not found.
 
-1. `seat = SeatBot(env, 0)`; `boss = FindBoss(map, *Row, seat)` (`:584-591`; logs `... is not in instance ...` on
-   failure).
+1. `seat = SeatBot(env, 0)`; `boss = FindBoss(map, *Row, seat)` (logs `... is not in instance ...` on failure).
 2. The boss as the party should find it: `Respawn(true)` if dead, `AI()->EnterEvadeMode()` if in combat,
-   `SetFullHealth`;
-   `fight.Boss`, `fight.BossHealth` = max health, at least 1 (`:593-600`).
-3. `plan = WingRoute(env, map, seat, boss)` (E3.10); copy `Route`, `Dense`, `RouteDense`, `CornerAhead`, `CornerBack`;
-   reset each seat's `DenseAt` and `Detour` (`:604-614`).
-4. `HostileTotal` and the sorted `counted` spawn-id list: every creature of `map->GetCreatureBySpawnIdStore()` for which
-   `Hostile(seat, creature)` holds and (the plan is not a field route, or the creature is a dungeon boss or world boss,
-   or
-   its spawn id is in `plan.Reachable`) (`:617-626`). This is the full clear's denominator.
-5. `RouteRemain[i]` = yards along the route from point i to the end (`:627-629`).
-6. `RoutePacks` and `PackOf` rebuilt from `plan.Packs`: each pack stands at `Dense[pack.Yard]` (when `Yard` is nonzero
-   and
-   inside `Dense`) else `pack.At`; `Cleared = false`, `Resolved` left false (`:630-638`).
-7. `MapLayout = SeenPlaces::Layout(ground, 25 yd)` over the dense route (the route when there is no dense one)
-   (`:639-646`): ground nodes every 25 yards, unordered, no creature on them.
-8. `ReadyPaidCap = max(1, RoutePacks.size())` (`:648`); `env.Targets.clear()` (`:651`).
-9. Mode set-up: `if (Drill && !StartDrill(...))` falls back to the whole dungeon with a `LOG_WARN` (`:652-657`); `if
-   (Started && !StartAt(...))` falls back to the door (`:658-663`); `if (CorridorRun && !StartCorridor(...))` falls back
-   to
-   the whole dungeon (`:664-669`). Then `ReadyPaidCap` is 1 for a drill and `max(1, Corridor.Length())` for a corridor
-   (`:671-674`).
-10. Supplies, for every active seat (`:678-693`): `_scenario.PrepareFighter(bot, seatState)`; `FoodItem =
-    ConsumablePool::Food(level)`; `DrinkItem = Drink(level)` only for a seat with mana; `StockConsumables(bot, food,
-    drink, Instance.WingSupplies)`; and every key item the map's locks take (`KeyItems(MapId)`) is added once
-    (`AddItem(key, 1)`). The Defias Gunpowder for the Deadmines cannon is the real case (comment `:1186-1188`).
+   `SetFullHealth`; `fight.Boss`, `fight.BossHealth` = max health, at least 1.
+3. `HostileTotal`: every creature of `map->GetCreatureBySpawnIdStore()` for which `Hostile(seat, creature)` holds (an
+   instance loads all its grids when it is created, so this is every hostile creature of the dungeon, bosses among
+   them). This is the full clear's denominator and `ClearedShare`'s. `env.Targets.clear()`.
+4. Supplies, for every active seat: `_scenario.PrepareFighter(bot, seatState)`; `FoodItem = ConsumablePool::Food(level)`;
+   `DrinkItem = Drink(level)` only for a seat with mana; `StockConsumables(bot, food, drink, Instance.WingSupplies)`;
+   and every key item the map's locks take (`KeyItems(MapId)`) is added once (`AddItem(key, 1)`). The Defias Gunpowder
+   for the Deadmines cannon is the real case.
+
+The party stands at the door, the packs where they are. Nothing is despawned or moved: there are no corridor, drill or
+cell starts any more.
 
 **4. Per-decision update (`UpdateEnemies` then `Update`).** Both run once per decision, before the actions are applied.
-`UpdateEnemies` is `UpdateWingEnemies(env, _envs[env.Index])` (`:697-700`; body in the second half: fills `env.Targets`
-and `Objects`, counts kills, resolves pack states). `Update` (`:702-960`) does, in order:
+`UpdateEnemies` is `UpdateWingEnemies(env, _envs[env.Index])` (E3.10). `Update` does, in order:
 
 1. Resolve the boss: `seat = SeatBot(env, 0)`; `boss = Encoding::CreatureThrough(*seat, fight.Boss)`. **If either is
-   null the whole function returns** (`:704-708`): no wipe detection, no rises, no route advance on that decision (O1).
+   null the whole function returns**: no wipe detection, no rises on that decision (O1).
 2. Boss readings: `HealthLeft = health / BossHealth` (0 when dead); `BossDead` latches when the boss is seen dead;
-   `Engaged`/`EngageMs` latch on the first decision the boss is in combat; `Evaded` latches when engaged, boss not dead,
-   not in combat, health >= 99% (`EVADED_HEALTH_PCT`) and the clock is past `EngageMs + DecisionMs` (`:710-721`).
-   `Evaded` is only reported; nothing ends the run on it (the comment at `:2748` says a wing goes on past an evade).
-3. `anyoneAlive` over the active seats (`:724-728`).
-4. Fight state: `Fighting` = some `env.Targets` slot holds a living in-combat unit (`:730-734`). A fight that starts
-   this
-   decision with every living seat at `>= WingReadyShare` of health and mana (mana only for seats with mana) increments
-   `ReadyEngages` (`:737-750`).
+   `Engaged`/`EngageMs` latch on the first decision the boss is in combat; `Evaded` latches when engaged, boss not
+   dead, not in combat, health >= 99% (`EVADED_HEALTH_PCT`) and the clock is past `EngageMs + DecisionMs`. `Evaded` is
+   only reported; nothing ends the run on it (a wing goes on past an evade).
+3. `anyoneAlive` over the active seats.
+4. Fight state: `Fighting` = some `env.Targets` slot holds a living in-combat unit. A fight that starts this decision
+   with every living seat at `>= WingReadyShare` of health and mana (mana only for seats with mana) increments
+   `ReadyEngages`.
 5. `TraceWing(env, fight, Fighting || !anyoneAlive)` (E3.6): chooses the tank, counts the crowd, records the trace.
-6. `UpdateDrill` for a drill, else `UpdateDrawnPacks` (chain-pull detection) (`:752-755`); a corridor run feeds
-   `Corridor.Note(cleared flags of RoutePacks)` (`:757-763`).
-7. `LastMs = EpisodeElapsedMs`; `Level = EpisodeLevel` (`:764-765`).
-8. With `WingTrace` on, not a drill, not yet logged, and `TimeIsUp(env)`: one `Wing time:` line listing what is in
-   combat
-   within 80 yd of a living seat (`:768-794`).
-9. **Wipe**: `fight.Wipe.Note(anyoneAlive, fight.BossDead)` (`WipeLatch`, `EntranceRespawn.h`) returns true once when
-   nobody
-   is alive and the dungeon is not cleared, and not again until somebody is alive (`:798`). On a wipe: `++Wipes`;
-   `LogWipe` when tracing; `Trace` cleared; **if `Wipes >= WipesAllowed`, `Wiped = true` and `Update` returns at once**
-   (`:800-808`); otherwise it falls through. With the defaults (`WingWipes = 2`; rung 8's `ExtraWipes = 0`) the second
-   wipe
-   ends the run; a drill ends at the first (`WipesAllowed = 1`); a training run on rung 0 allows `2 + 4 = 6`.
-10. `RiseDead(env, fight)` (E3.7) (`:810`).
-11. Object give-up (`:812-841`): the tank (the seat whose guid equals `fight.Tank`, alive), when not fighting, picks the
-    nearest `Usable` and `CanUse` object of `fight.Objects` within 25 yd (`NEAR_OBJECT_YARDS`) that is not in
-    `fight.Used`;
-    if the same object stays nearest for more than 45 s (`GIVE_UP_MS`) it is added to `Used` ("passed by for the rest of
-    the run, as used") and `Approached` is cleared.
-12. Each living seat's `Walk` (its place on the route): looks up to `WALK_LOOK = 6` points ahead; a point counts as
-    reached within `WALK_REACH = 12` yd; the cap is `RouteNext` for the tank and the tank's `Walk` for everyone else,
-    never past the last point (`:845-864`). `RiseDead` resets `Walk` to 0.
-13. Stuck log: after `STUCK_FIRST_MS = 120000` ms with no progress (`ProgressMs`) and again every `STUCK_EVERY_MS =
-    600000`, a long `Wing stuck:` line (seats, objects, PathGenerator probes) when `WingTrace` is on and the run is not
-    a
-    drill (`:866-947`). It builds `PathGenerator` objects on the map thread only for this log.
-14. **Route advance** (`:949-959`): when `RouteNext < Route.size()`, the party is not `Fighting`, and (not a drill or
-    `RouteNext < DrillPoint`), the first living seat within 15 yd of `Route[RouteNext]` advances `RouteNext` by one (one
-    point per decision, then `break`).
+6. `LastMs = EpisodeElapsedMs`; `Level = EpisodeLevel`.
+7. With `WingTrace` on, not yet logged, and `TimeIsUp(env)`: one `Wing time:` line listing what is in combat within
+   80 yd of a living seat.
+8. **Wipe**: `fight.Wipe.Note(anyoneAlive, fight.BossDead)` (`WipeLatch`, `EntranceRespawn.h`) returns true once when
+   nobody is alive and the dungeon is not cleared, and not again until somebody is alive. On a wipe: `++Wipes`;
+   `LogWipe` when tracing; `Trace` cleared; **if `Wipes >= WipesAllowed`, `Wiped = true` and `Update` returns at once**;
+   otherwise it falls through. With the defaults (`WingWipes = 2`; rung 8's `ExtraWipes = 0`) the second wipe ends the
+   run; a training run on rung 0 allows `2 + 4 = 6`.
+9. `RiseDead(env, fight)` (E3.7).
+10. Object give-up: the tank (the seat whose guid equals `fight.Tank`, alive), when not fighting, picks the nearest
+    `Usable` and `CanUse` object of `fight.Objects` within 25 yd (`NEAR_OBJECT_YARDS`) that is not in `fight.Used`;
+    if the same object stays nearest for more than 45 s (`GIVE_UP_MS`) it is added to `Used` ("passed by for the rest
+    of the run, as used") and `Approached` is cleared.
+11. Stuck log: after `STUCK_FIRST_MS = 120000` ms with no progress (`ProgressMs`) and again every `STUCK_EVERY_MS =
+    600000`, a long `Wing stuck:` line (each seat's health, mana, distance to the tank, position, state and last
+    press; the usable objects; what is fighting the tank; the pack ahead) when `WingTrace` is on. It runs no path
+    query.
 
-**5. Observe.** `View` (`:2432`, second half) fills the seat's goal places through `SeenWorld` (what the seat saw, its
-map's frontier, the layout, the leader). (`SelectTarget` was deleted 2026-10-08: it was never reached, since the seat's
-own client selection is the target in a sight stage.)
+**5. Observe.** `View` fills the seat's food and drink and, through `SeenWorld`, its goal places (what the seat saw,
+its map's frontier, the leader within the minimap's range; E3.12).
 
-**6. Reward (`Reward`, `:2529-2693`; terms in E3.5).** Per seat per decision.
+**6. Reward (`Reward`; terms in E3.5).** Per seat per decision.
 
-**7. Terminal (`IsTerminal`, `:2745-2752`).** True when `BossDead || Wiped || TimeIsUp(env) || (Drill && (DrillCleared
-||
-DrillExtra)) || (CorridorRun && Corridor.Done())`. `TimeIsUp` is `env.EpisodeLengthMs != 0 && EpisodeElapsedMs >=
-EpisodeLengthMs` (`:2734-2737`), the length coming from the arena's `EpisodeSeconds`. With default tuning the second
-wipe
-is the only wipe-based end (E3.4 step 9); a first wipe is scored and the party rises at the entrance. `Wiped` is set
-only
-at `:806`.
+**7. Terminal (`IsTerminal`).** True when `BossDead || Wiped || TimeIsUp(env)`. `TimeIsUp` is `env.EpisodeLengthMs != 0
+&& EpisodeElapsedMs >= EpisodeLengthMs`, the length coming from the arena's `EpisodeSeconds`. With default tuning the
+second wipe is the only wipe-based end (step 8 above); a first wipe is scored and the party rises at the entrance.
 
-**8. Episode info.** Every column is a lambda over `_envs[env.Index]` read when the scenario writes the row
-(`:197-399`); see E3.8.
+**8. Episode info.** Every column is a lambda over `_envs[env.Index]` read when the scenario writes the row; see E3.8.
 
-**9. Critic state.** `WriteState` (`:2739-2743`) writes only `state[STATE_TIER] = Tier / (max(2, Rows.size()) - 1)`
-(`STATE_TIER = 13`, `StageScenario.h:76`): the pinned row index over the top index; with a single usable row the divisor
-is 1.
+**9. Critic state.** `WriteState` writes only `state[STATE_TIER] = Tier / (max(2, Rows.size()) - 1)` (`STATE_TIER =
+13`): the pinned row index over the top index; with a single usable row the divisor is 1.
 
 ### E3.5 Reward terms paid
 
-`RewardTerms()` (`:190-195`) declares `StepCost, Approach, Kill, Death, Timeout, Threat, PullClean, PullExtra, Clear,
-ReadyPull, Idle, Lost, Away`; each gets a `reward_<name>` episode-info column (per the base-class contract,
-`Encounter.h:57`). Values are in `Instance` tuning (`CurriculumTuning.h:180-278`; keys `Instance.<Field>`, read through
-the `Visit` list `:901-942`; see `cpp-tuning-keys.md`). `s` = `DecisionMs / 1000` seconds. `T` = `TierScale(env)`
-(`:2723-2732`) = `1 + Difficulty.TierScale (0.25) x min(tier, Instance.MaxTierScale (6))`, with `tier = DrillRung` for a
-drill and `WingRun::TierOfRung(Rung) = Rung / 2` otherwise (0..4 over the 9 rungs; an evaluation's rung 8 is tier 4, T =
-2.0). The third argument of `ledger.Add` is a factor that multiplies the paid reward but is left out of the score
-(`Rewards/RewardLedger.h:288-298`): `T` for wins and `1/T` for losses.
+`RewardTerms()` declares `StepCost, Kill, Death, Timeout, Threat, Clear, ReadyPull, Idle, Lost, Away`; each gets a
+`reward_<name>` episode-info column (per the base-class contract in `Encounter.h`). `Approach`, `PullClean` and
+`PullExtra` were dropped from the list 2026-10-08 (decision 0019) with the waypoint, progress, drill and chain-pull
+payments; no Instance reward is paid for ground covered. Values are in `Instance` tuning (keys `Instance.<Field>`; see
+`cpp-tuning-keys.md`). `s` = `DecisionMs / 1000` seconds. `T` = `TierScale(env)` = `1 + Difficulty.TierScale (0.25) x
+min(tier, Instance.MaxTierScale (6))`, with `tier = WingRun::TierOfRung(Rung) = Rung / 2` (0..4 over the 9 rungs; an
+evaluation's rung 8 is tier 4, T = 2.0). The third argument of `ledger.Add` is a factor that multiplies the paid reward
+but is left out of the score: `T` for wins and `1/T` for losses.
 
-Categories (`Rewards/RewardLedger.h:152-228`): Kill, Clear, ReadyPull, PullClean are Outcome; Death, Timeout, StepCost,
-PullExtra, Lost, Away, Idle are Cost; Approach and Threat are Shaping (scaled by the shaping fade). The code is in the
-second half; this table was checked against `:2529-2693`.
+Categories (`Rewards/RewardLedger.h`): Kill, Clear, ReadyPull are Outcome; Death, Timeout, StepCost, Lost, Away, Idle
+are Cost; Threat is Shaping (scaled by the shaping fade).
 
 | Term | Kind | Condition and formula | Key (default) |
 |---|---|---|---|
-| Idle | Cost | Every seat: when `EpisodeElapsedMs > ProgressMs + grace`, `-WingStall x (tank ? 1 : WingStallOthers) x s`; `grace` = `PullGraceMs` for a drill, else `WingStallGraceMs`. `ProgressMs` is moved by seat 0's call when kills + waypoints changed or `StepEngaged` (`:2540-2555`). | `WingStall` (0.1), `WingStallOthers` (0.2), `WingStallGraceMs` (60000), `PullGraceMs` (20000) |
-| StepCost | Cost | Every seat every decision: `-WingClock x s` (`:2557`). | `WingClock` (0.002) |
-| ReadyPull | Outcome | `+WingEngage x (ready - EngagesPaid)`, tier `T`, `ready = min(ReadyEngages, ReadyPaidCap)` (`:2560-2565`). | `WingEngage` (1.0); readiness `WingReadyShare` (0.8) |
-| PullExtra | Cost | Chain pull: `-WingChainPull x (ChainPulls - ChainPaid)`, tier `1/T` (`:2567-2572`). Drill, a second pack joined: `-PullExtra x share`, tier `1/T` (`:2654-2655`). | `WingChainPull` (3.0), `PullExtra` (5.0) |
-| Clear | Outcome | Corridor: `+CorridorPack x (Corridor.InOrder - ClearsPaid)`, tier `T` (`:2574-2579`). Full clear: `+WingClear` once per seat when the last boss is dead, `FullClear` holds and it is not a corridor, tier `T` (`:2684-2688`). | `CorridorPack` (4.0), `WingClear` (25.0) |
-| Threat | Shaping | `OnParty > WingCrowdFree`: `-WingCrowd x (OnParty - WingCrowdFree) x s` (`:2581-2583`). | `WingCrowd` (0.15), `WingCrowdFree` (4) |
-| Lost | Cost | `WingRun::Strays(alive, isLeader, walkingBack, leaderHere, yards, WingStrayYards)`: `-WingStray x s`. Leader = the stand-in seat when it leads, else the tank (`WingRun::LeaderSeat`) (`:2587-2600`). | `WingStray` (0.02), `WingStrayYards` (25) |
-| Away | Cost | `WingRun::Away(alive, walkingBack)` (dead, or risen and not yet rejoined): `-WingAway x s` (`:2602-2603`). | `WingAway` (0.02) |
-| Kill | Outcome | Living seat: `+WingTrashKill x (TrashKills - KillsPaid)` and `+WingMidBoss x (BossKills - BossKillsPaid)`, tier `T` (`:2607,2609`); last boss dead, once per seat: `+WingBoss`, tier `T` (`:2682`). | `WingTrashKill` (1.0), `WingMidBoss` (8.0), `WingBoss` (25.0) |
-| Approach | Shaping | Living seat: `+WingWaypoint x T x (waypoints - WaypointsPaid)` (`:2608`); route potential: `+WingProgress x T x (potential - Potential)` when the party is not fighting and the potential rose (`:2615-2627`), `potential = -(dist to next point + RouteRemain[next]) / RouteRemain[0]`. | `WingWaypoint` (0.5), `WingProgress` (60.0) |
-| Death | Cost | Own death, once per death (`DeathPaid` resets on a rise): `-WingDeath`, tier `1/T` (`:2632-2637`). Each new wipe: `-WingWipe x newWipes`, tier `1/T` (`:2638-2642`). | `WingDeath` (3.0), `WingWipe` (5.0) |
-| Timeout | Cost | At the run's end, once per seat: a drill with the clock out and the pack alive `-PullTimeout x share`; a corridor `-WingTimeout x (1 - Corridor.Share())` when time is up and it is not done; a full run `-WingTimeout x (1 - waypoints / Route.size())` when time is up and the boss is not dead; all tier `1/T` (`:2658-2659,2675-2676,2690-2692`). | `PullTimeout` (2.0), `WingTimeout` (30.0) |
-| PullClean | Outcome | Drill, the pack dead alone: `+PullClean x share`, tier `T`; `share = tank ? 1 : PullOthers` (`:2653,2656-2657`). | `PullClean` (5.0), `PullOthers` (0.5) |
+| Idle | Cost | Every seat: when `EpisodeElapsedMs > ProgressMs + WingStallGraceMs`, `-WingStall x (tank ? 1 : WingStallOthers) x s`. `ProgressMs` is moved by seat 0's call when `TrashKills` changed or `StepEngaged` (the stall clock resets on kills and fights only). | `WingStall` (0.1), `WingStallOthers` (0.2), `WingStallGraceMs` (60000) |
+| StepCost | Cost | Every seat every decision: `-WingClock x s`. | `WingClock` (0.002) |
+| ReadyPull | Outcome | `+WingEngage x (ready - EngagesPaid)`, tier `T`, `ready = min(ReadyEngages, READY_PULLS_PAID)`; `READY_PULLS_PAID` is the constant 1: at most one a run. | `WingEngage` (1.0); readiness `WingReadyShare` (0.8) |
+| Threat | Shaping | `OnParty > WingCrowdFree`: `-WingCrowd x (OnParty - WingCrowdFree) x s`. | `WingCrowd` (0.15), `WingCrowdFree` (4) |
+| Lost | Cost | `WingRun::Strays(alive, isLeader, walkingBack, leaderHere, yards, WingStrayYards)`: `-WingStray x s`. Leader = the stand-in seat when it leads, else the tank (`WingRun::LeaderSeat`). | `WingStray` (0.02), `WingStrayYards` (25) |
+| Away | Cost | `WingRun::Away(alive, walkingBack)` (dead, or risen and not yet rejoined): `-WingAway x s`. | `WingAway` (0.02) |
+| Kill | Outcome | Living seat: `+WingTrashKill x (TrashKills - KillsPaid)` and `+WingMidBoss x (BossKills - BossKillsPaid)`, tier `T`; last boss dead, once per seat: `+WingBoss`, tier `T`. | `WingTrashKill` (1.0), `WingMidBoss` (8.0), `WingBoss` (25.0) |
+| Death | Cost | Own death, once per death (`DeathPaid` resets on a rise): `-WingDeath`, tier `1/T`. Each new wipe: `-WingWipe x newWipes`, tier `1/T`. | `WingDeath` (3.0), `WingWipe` (5.0) |
+| Clear | Outcome | Last boss dead, once per seat, when `FullClear` holds: `+WingClear`, tier `T`. | `WingClear` (25.0) |
+| Timeout | Cost | At the clock-out with the boss alive, once per seat: `-WingTimeout x (1 - ClearedShare)`, tier `1/T`. | `WingTimeout` (30.0) |
 
-The end-of-run latch is `OutcomePaid` per seat (`:2644-2648`). The first seat also sets `Recorded` and writes a
-debug-level count of route packs never found (`:2662-2671`).
+`ClearedShare(fight) = min(1, (TrashKills + BossDead) / (HostileTotal + 1))`, 0 before the instance is counted
+(`HostileTotal == 0`): a kill/clear share of the dungeon with no navmesh or route in it. The end-of-run latch is
+`OutcomePaid` per seat. A wipe ends nothing in `Reward`; the run ends when `fight.Wiped` is set by exceeding the allowed
+wipes (`Instance.WingWipes` 2 plus the rung's `ExtraWipes`, E3.4).
 
-### E3.6 TraceWing: tank choice, crowd measure, wipe log (`:1026-1165`)
+### E3.6 TraceWing: tank choice, crowd measure, wipe log
 
 `TraceWing(env, fight, fighting)` runs every decision (`Update` step 5) and does three unrelated jobs:
 
-1. **Chooses `fight.Tank`** every decision (`:1034-1053`): among living seats with a built `L`, a seat "can" tank when
+1. **Chooses `fight.Tank`** every decision : among living seats with a built `L`, a seat "can" tank when
    its
    `DungeonRole == DUNGEON_TANK`, or it is `DUNGEON_ANY` and `AptitudeDemand::HoldsThePull().MetBy(Apt)`; the winner is
    the
    "can" seat with the highest `Apt[Aptitude::MITIGATION]`, else the highest mitigation among all. The comment says this
    is the party block's rule (`PartyEncounter::Tank`, declared `Encounters.h:84`): UNVERIFIED (compare the two bodies).
-2. **Crowd measure** (`:1071-1127`), only while `fighting` (`:1054-1058` returns first otherwise, `OnParty` having been
+2. **Crowd measure** , only while `fighting` (`:1054-1058` returns first otherwise, `OnParty` having been
    zeroed at `:1030`): counts non-player units within 60 yd of the first living seat whose victim is a player
    (`OnParty`); `CrowdSeconds += DecisionMs / 1000` when `OnParty > WingCrowdFree`; the peaks (`PeakEngaged`,
    `PeakElites`, `PeakOnTank`, `PeakEntries`) go to the wipe log. The `tank` used for `PeakOnTank` is a different rule:
    the first living seat in seat order that meets `HoldsThePull()` (`:1078`), see O4.
-3. **Death record** for the wipe log (`:1129-1148`): each seat's mana share when last seen alive; each newly dead seat
+3. **Death record** for the wipe log : each seat's mana share when last seen alive; each newly dead seat
    is
    appended as "role class seconds [mana %]". Roles there are `tank`/`healer`/`dps` from the aptitude demands
    (`HoldsThePull`, `KeepsThemUp`), not from `DungeonRole`.
 
-`LogWipe` (`:1151-1165`) writes the `Wing wipe:` line. Because `Update` calls `TraceWing` before `RiseDead` and before
+`LogWipe`  writes the `Wing wipe:` line. Because `Update` calls `TraceWing` before `RiseDead` and before
 `Reward`, the rest of the decision uses this decision's tank and `OnParty`.
 
-### E3.7 The respawn clock: `RiseDead` (`:962-1024`) (I4)
+### E3.7 The respawn clock: `RiseDead` (I4)
 
 Rule (principle 7): a dead seat comes back alive at the entrance after a short delay and walks back to the party; no
 graveyard, ghost or corpse run.
 
 Per decision, for every active seat that is in the world:
 
-1. Reference tank: the living seat whose guid equals `fight.Tank` and which is in the world (`:971-974`).
+1. Reference tank: the living seat whose guid equals `fight.Tank` and which is in the world.
 2. `partyYards` for a living seat: distance to that tank when it exists, is another seat and is in the seat's map; else
    the 2D distance to the centroid of the other living seats in its map; `-1` when there is nobody. A dead seat gets
    `-1`
-   (`:981-1002`).
+  .
 3. `step = seat.Clock.Note(EpisodeElapsedMs, alive, partyYards, Respawn.DelayMs, Respawn.RejoinYards)`
    (`EntranceRespawn.h`): `Died` on the first dead decision (records `DeadSinceMs`, `++Deaths`); `Rise` once `nowMs >=
    DeadSinceMs + delayMs`; `Rejoined` when a seat in the `Rejoining` state is within `rejoinYards`. A seat stood up by
    anything else (a friend's resurrection) is treated as risen where it lies (`Risen` inside `Note`).
-4. On `Rise` (`:1005-1015`): `RiseAtEntrance(bot, data.Seats[index], fight.Entrance, EpisodeElapsedMs)` (documented with
+4. On `Rise`: `RiseAtEntrance(bot, data.Seats[index], fight.Entrance, EpisodeElapsedMs)` (documented with
    `EntranceRespawn.cpp`: stands the bot up at the entrance, full health and power, forgets its frame, restarts the
-   controller), then `Clock.Risen(...)`, `DeathPaid = false`, `Walk = 0`, `DenseAt = 0`, `Detour.clear()`, `++Rises`.
-5. On `Rejoined` (`:1016-1022`): `++Rejoins`; `RejoinMsTotal` is reassigned as the sum over all seats' clocks.
+   controller), then `Clock.Risen(...)`, `DeathPaid = false`, `++Rises`.
+5. On `Rejoined`: `++Rejoins`; `RejoinMsTotal` is reassigned as the sum over all seats' clocks.
 
-Keys: `Respawn.DelayMs = 10000`, `Respawn.RejoinYards = 15.0` (`CurriculumTuning.h:511-515`). The wipe latch (E3.4 step
-9)
+Keys: `Respawn.DelayMs = 10000`, `Respawn.RejoinYards = 15.0`. The wipe latch (E3.4, `Update` step 8)
 runs before `RiseDead`; when all five die together, the first wipe is counted at once and every seat rises at the same
 decision `DelayMs` later. `Away` is paid while dead or walking back; `Lost` never on those seconds (`WingRun::Strays`).
-The risen seat's `Walk` restarts at 0 (the entrance's place on the route).
 
-### E3.8 Episode-info columns written (`AddEpisodeInfo`, `:197-399`)
+### E3.8 Episode-info columns written (`AddEpisodeInfo`)
 
 Per-seat rows; unless noted a column is the same for every seat of the env. "Yaml" = used in the learner configs
-`apps/forge/python/configs/{dungeon1_pulls,dungeon2_ragefire,dungeon3_deadmines,group2_corridor}.yaml` (`report` or
+`apps/forge/python/configs/{dungeon2_ragefire,dungeon3_deadmines}.yaml` (`report` or
 `status.headline`), checked by grep.
 
 | Column | Value | Notes / readers |
 |---|---|---|
-| `difficulty` | `Tier` (pinned row index: 0, 1 or 2) | Read by the learner's evaluation and training loop (`animus/evaluation.py:296`, `animus/train.py:900`), see O10. |
-| `pull_rung` | `DrillRung` | Added only when `EvaluatesDrills(stage.Arenas)` (`:205-206`): `dungeon1_pulls`; in its yaml. |
-| `wing_rung` | `Rung` (0-8) | The comment (`:202-204`) says the evaluation videos read the first `_rung` column (`Vision::EvalVideoRungColumn`); UNVERIFIED. Headline in group2/dungeon2/dungeon3. |
-| `at_top_rung` | 1 when `Drill ? DrillRung+1 >= PULL_GAPS.size() (4) : Rung+1 >= WING_RUNGS.size() (9)` | Read by `animus/evaluation.py:320`, `animus/train.py:902`, `animus/stage.py:24,111,513` (the convergence top-rung rule). |
+| `difficulty` | `Tier` (pinned row index: 0, 1 or 2) | Read by the learner's evaluation and training loop (`animus/evaluation.py`, `animus/train.py`), see O10. |
+| `wing_rung` | `Rung` (0-8) | The comment says the evaluation videos read the first `_rung` column (`Vision::EvalVideoRungColumn`); UNVERIFIED. Headline in dungeon2/dungeon3. |
+| `at_top_rung` | 1 when `Rung + 1 >= WING_RUNGS.size()` (9) | Read by `animus/evaluation.py`, `animus/train.py`, `animus/stage.py` (the convergence top-rung rule). |
 | `boss_rung` | `Tier` | Same value as `difficulty`. Not in the dungeon yamls. |
 | `instance_map`, `boss_entry` | `MapId`, `Entry` | Not in the dungeon yamls. |
 | `boss_killed` | `BossDead` | Not in the dungeon yamls. |
 | `boss_health_left` | `HealthLeft` | Boss health fraction; 0 once dead. |
 | `engaged`, `evaded` | `Engaged`, `Evaded` | Not in the dungeon yamls. |
 | `wiped` | `Wiped` (the run ended on its last allowed wipe) | Not the wipe count. |
-| `wing_trash_kills`, `wing_boss_kills` | `TrashKills`, `BossKills` (mid-bosses on the way) | Report in dungeon2/dungeon3/group2. |
-| `wing_route_share` | `min(RouteNext, Route.size()) / Route.size()`, 0 with no route | |
+| `wing_trash_kills`, `wing_boss_kills` | `TrashKills`, `BossKills` (mid-bosses on the way) | Report in dungeon2/dungeon3. |
 | `wing_wipes` | `Wipes` | Headline everywhere; target `<= 1` in dungeon2/dungeon3 yaml. |
-| `wing_cleared_share` | `min(1, (TrashKills + BossDead) / (HostileTotal + 1))`, 0 with no hostiles | Same formula as the ladder progress at `:442-443`. |
+| `wing_cleared_share` | `min(1, (TrashKills + BossDead) / (HostileTotal + 1))`, 0 with no hostiles | The ladder's progress for a run that did not clear (`ClearedShare`). |
 | `wing_crowd_seconds` | `CrowdSeconds` | Not in the yamls. |
 | `wing_probe` | `Probe` | |
 | `wing_rises`, `wing_rejoins` | `Rises`, `Rejoins` | |
-| `wing_rejoin_seconds` | `RejoinMsTotal / Rejoins / 1000`, 0 with none | `animus/episode_means.py:56` weights it by `wing_rejoins`; target `<= 90` in dungeon2. |
+| `wing_rejoin_seconds` | `RejoinMsTotal / Rejoins / 1000`, 0 with none | `animus/episode_means.py` weights it by `wing_rejoins`; target `<= 90` in dungeon2. |
 | `wing_level` | `Data(env).EpisodeLevel` | |
-| `cleared` | `Succeeded(fight)` (`:2199-2206`): drill `DrillCleared && !DrillExtra`; corridor `Corridor.Done()`; else `BossDead` | Gate and measure of `group2_corridor` and `dungeon1_pulls` (`gate_metric: cleared`); partner `score: cleared`. |
-| `full_clear` | `FullClear(fight)` (`:2188-2197`): boss dead and every `RoutePacks` pack cleared, else (no packs) `HostileTotal && TrashKills + 1 >= HostileTotal` | Gate and measure of `dungeon2_ragefire`. |
+| `cleared` | `Succeeded(fight)` = `BossDead` | Partner `score: cleared` in the dungeon yamls. |
+| `full_clear` | `FullClear(fight)`: boss dead and `HostileTotal && TrashKills + 1 >= HostileTotal` | Gate and measure of `dungeon2_ragefire`. |
 | `bar_clear` | `Succeeded && Wipes <= 1` | Gate and measure of `dungeon3_deadmines`. |
-| `chain_pulls` | `ChainPulls` | |
-| `ready_pulls` | `min(ReadyEngages, ReadyPaidCap)` | |
-| `corridor_packs`, `corridor_first`, `corridor_cleared`, `corridor_in_order`, `corridor_share` | `Corridor.Length()`, `.First`, `.Cleared()`, `.InOrder`, `.Share()` | Added only when some arena has `CorridorPacks > 0` (`:269`): `group2_corridor`. |
-| `drill_clean`, `drill_extra`, `drill_pulled`, `drill_gap`, `drill_pack` | `Drill && DrillCleared && !DrillExtra`; `Drill && DrillExtra`; `Drill && DrillEngaged`; `DrillGap` yards; `DrillPackIndex` | Added only when some arena has `PullDrill` (`:289`): `dungeon1_pulls`. `drill_pack` feeds the evaluation's per-pack tables via `stage.json` `episode_categories` (comment `:305-306`; UNVERIFIED). |
+| `ready_pulls` | `min(ReadyEngages, READY_PULLS_PAID)` (so 0 or 1) | |
 | `without_stand_in`, `clear_standin`, `clear_allbot` | 1 when `StandInPlay.Seat < 0`; `Seat >= 0 && Succeeded`; `Seat < 0 && Succeeded` | Per-event columns over the episodes with or without the stand-in. `with_stand_in` is added in `StandInSeat.cpp:159`. `standin_gap` (a yaml target) is not a sim column; UNVERIFIED where it is computed (expected in Python). |
 | `role_tank`, `role_healer`, `role_damage` | 1 when `Seats[seat].DungeonRole` equals `DUNGEON_TANK`, `DUNGEON_HEALER`, `DUNGEON_DAMAGE` | Seat-specific. |
 | `deaths_tank`, `deaths_healer`, `deaths_damage` | the seat's `Deaths` when its role matches, else 0 | Seat-specific. |
 | `seat_deaths` | the seat's `Deaths` | Seat-specific. |
-| `boss_<name>` | 1 when `(BossDead && Entry == entry)` or `entry` is in `BossesKilled` | One per `WingBosses()` row whose map is the map of the pinned WING row of some arena (`:347-369`); the `heldout` arena pins row 2, so the Wailing Caverns columns also exist in dungeon2/dungeon3. |
-| `wing_started`, `wing_arena`, `wing_tier`, `wing_marks` | `Started`; `Data(env).Arena`; `Tier`; `Marks.size()` | Go-Explore, read by `animus/explore.py:53`. |
-| `wing_mark<m>_packs<w>`, `wing_mark<m>_yard`, `wing_mark<m>_seconds` for m = 0..7, w = 0..3 | the m-th cell mark: cleared-pack words, yard, `Ms / 1000`; 0 when absent | 8 x 6 = 48 columns (`:375-398`). `animus/explore.py:24-26` mirrors `PACK_WORDS = 4` and `MARKS = 8` as separate constants that must be kept equal by hand. |
+| `boss_<name>` | 1 when `(BossDead && Entry == entry)` or `entry` is in `BossesKilled` | One per `WingBosses()` row whose map is the map of the pinned WING row of some arena; the `heldout` arena pins row 2, so the Wailing Caverns columns also exist in dungeon2/dungeon3. |
 
-Column order is the order of the `table.Add` calls above; the learner finds columns by name.
+The episode columns of the removed route, corridor, drill, chain-pull and cell code are gone from the table (removed
+2026-10-08, decision 0019; it duplicated `wing_cleared_share`); the learner finds columns by name.
 
-Tests: `DungeonStagesTest.ThePurposesAreOutcomesAndThePricesCosts` (`:338`), `AWingsTierIsItsLaddersRung` (`:301`),
-`TheStandInPlaysAShareOfEveryPartyStage` (`:353`), `EveryBossOfTheDungeonsIsMeasured` (`:374`).
+Tests: `DungeonStagesTest.ThePurposesAreOutcomesAndThePricesCosts`, `AWingsTierIsItsLaddersRung`,
+`TheStandInPlaysAShareOfEveryPartyStage`, `EveryBossOfTheDungeonsIsMeasured`.
 
-### E3.9 Level range: `DungeonLevels` (`:1228-1240`)
+### E3.9 Level range: `DungeonLevels`
 
 Scans `sLFGDungeonStore` for an entry with the row's `MapID` and `Difficulty`; returns `[TargetLevelMin or MinLevel,
 min(TargetLevelMax or MaxLevel, DEFAULT_MAX_LEVEL)]` for the first entry with `low != 0` and `high >= low`; else
-`{row.Level, row.Level}`. Used only when the arena has no `LevelFirst` (`:499-500`): Ragefire's range comes from the LFG
+`{row.Level, row.Level}`. Used only when the arena has no `LevelFirst`: Ragefire's range comes from the LFG
 DBC, not from `Stages.cpp`. UNVERIFIED: the concrete range for map 389 (the DBC was not read). Death knights are
 excluded
 from level-band dungeon stages (see `status.excluded.death_knight` in `dungeon2_ragefire.yaml`); that exclusion is in
 the
 draw code of `StageScenario`, not here.
 
-### E3.10 `WingRoute` (`:1242-1465`, first part)
+### E3.10 `UpdateWingEnemies`, run from `UpdateEnemies`
 
-Computes the door-to-boss plan once per boss and caches it in the process-wide `routes` map (`:1245-1253`).
+Per decision, for the whole party. Uses seat 0's player as the visitor anchor; returns early when seat 0 is not in the
+world. Steps:
 
-1. Cache lookup by `{MapId, Entry}`; the cached `WingPlan` is returned by value (the vectors are copied each `Build`).
-2. **Stops** (`:1258-1279`): every living dungeon boss or world boss in the map's spawn store other than `boss`, ordered
-   greedily nearest-next from the seat's start position, then the last boss. The order depends on server-side spawn
-   positions (the route is the server's, used for rewards and the layout; what the bot is shown is `SeenWorld`).
-3. (Removed 2026-10-08: the layered-field branch, `FieldRoute::Covers` / `FieldWingRoute`. Every dungeon is now planned
-   by step 4; the plan has no packs, no dense route and no corner tables, so the pack drill, Go-Explore starts and
-   corridor runs, which need `Packs`, find none and the run is the whole dungeon. Line numbers in this file are from
-   before the removal.)
-4. **Navmesh route** (was "fallback") (`pathThrough`, `:1297-1385`): per stop, up to `PATH_LEGS = 16` PathGenerator legs from the
-   cursor
-   (one leg is limited to about 296 yd); on an incomplete path a second path back from the stop; the gap between the
-   halves
-   is crossed creature to creature ("breadcrumbs": the nearest creature home position within `BREADCRUMB_REACH = 45` yd
-   that
-   is at least `BREADCRUMB_MIN_GAIN = 3` yd closer to the far side, at most 64 steps), then the straight remainder.
-5. With `Instance.WingFullClear` (default 1), packs are built from every `Hostile` creature: grouped by home position
-   within `PACK_REACH = 15` yd, stood at their middle and placed along the spine (`:1387-1465`; continues in the second
-   half).
+1. **Fighting flag**: any enemy slot unit alive and in combat.
+2. **Usable objects and doors**: clears `fight.Objects`. One `GameObjectListSearcher` from the middle of the living
+   seats, radius `OBJECT_SIGHT (40) + spread`. An object that is `Usable` (E3.11), not yet in `fight.Used`, and within
+   40 yd of some living seat goes to `fight.Objects`. Nothing opens by itself (principle 4).
+3. **Kills**: each watched guid now dead moves to `Counted`, bumps `TrashKills`, `LastKillMs`, and for a dungeon boss
+   or world boss `BossKills` and `BossesKilled`. (`TrashKills` therefore also counts side bosses; the last boss is
+   `BossDead`, handled in `Update`.)
+4. **Enemy slots**: viewed from the tank while it lives (else seat 0), unfriendly non-player, non-totem, non-evading
+   units within `WING_SIGHT = 45` yd, ranked by `RankEnemy(unit, tank)` (`Encounters.h`): tank's target, on a player,
+   fighting, standing, gone. A fighting rank keeps the slot index it had in `env.Targets`; a standing unit sorts by
+   distance. The first `PACK_SLOTS` fill `env.Targets`; the boss replaces the last slot if it is in combat and not in
+   the list. Every slotted guid not yet `Counted` is added to `Watched`.
+5. **Crowd past the slots**: `fight.Overflow` (up to `CROWD_SLOTS` more, fight first), `HasAhead`/`Ahead` (the nearest
+   idle unit), `AheadSize` (idle units within `PACK_REACH = 12` yd of it), `HasSecond`/`Second` (the first idle one
+   further). These feed `SeatView::Crowd`, which is the encounter's own bookkeeping and never reaches the goal places
+   (E3.12). UNVERIFIED: whether `Crowd` is blanked in the stage layouts, since the dungeon stages have no crowd block
+   (comment in `Stages.cpp`); check `CrowdBlock` use in `cpp-layout-character.md`.
 
-A failed field plan is not cached (the `LOG_WARN` repeats each episode); the navmesh plan is cached only when the code
-at
-the end of the function (second half) stores it: UNVERIFIED.
+There is no pack bookkeeping any more (no route packs, no cleared/resolved flags, no cell marks, no chain-pull
+tracking).
+
+Perception note (principles 1 and 2): the enemy slots are filled from the server's unit list within 45 yd, **through
+walls**, and viewed from the tank. They feed the pack block and the critic state; whether the policy's pack block still
+carries them in the dungeon stages is a layout question (`DungeonBlocks()` includes `Pack`; `Stages.cpp` says the pack
+block's slots "in a sight stage, are what the seat saw: StageScenario::ViewSeat"). UNVERIFIED: that `ViewSeat` replaces
+these server-side slots with seen ones for every dungeon stage. This is the single most important principle-1 question
+for a reviewer of this function.
 
 ### E3.11 Helpers: `Hostile`, `Usable`, `KeyItems`, `FindBoss`
 
-- `Hostile(seat, creature)` (`:1167-1173`): alive, not a critter, civilian, totem, pet or summon, no `NOT_SELECTABLE` or
+- `Hostile(seat, creature)`: alive, not a critter, civilian, totem, pet or summon, no `NOT_SELECTABLE` or
   `NON_ATTACKABLE` flag, hostile to the seat. Full clear's denominator and the pack builder's membership test.
-- `Usable(object)` (`:1175-1201`): a spawned object in `GO_STATE_READY` with loot state `GO_READY` and none of
+- `Usable(object)`: a spawned object in `GO_STATE_READY` with loot state `GO_READY` and none of
   `NOT_SELECTABLE | LOCKED | INTERACT_COND | IN_USE`; a button or goober is usable unless its lock needs a skill
   (`LOCK_KEY_SKILL`); a door is usable only when it has no lock; every other type (so chests) is not usable: no looting.
-- `KeyItems(mapId)` (`:1203-1226`): per map, once (static map under a mutex), the `LOCK_KEY_ITEM` item ids of the locks
+- `KeyItems(mapId)`: per map, once (static map under a mutex), the `LOCK_KEY_ITEM` item ids of the locks
   of
   every spawned game object of the map whose item template exists.
-- `KeyOf(object)` / `CanUse(bot, object)` (`:74-90`): the key item a lock names, and whether the bot carries one.
-- `FindBoss(map, row, anchor)` (`:524-576`): loads the boss's grid; looks it up in the spawn-id store; else searches
+- `KeyOf(object)` / `CanUse(bot, object)`: the key item a lock names, and whether the bot carries one.
+- `FindBoss(map, row, anchor)`: loads the boss's grid; looks it up in the spawn-id store; else searches
   within
   100 yd (`BOSS_SEARCH_YARDS`) of its spawn by entry; else, when the core's dynamic respawn removed the dead creature,
   clears the respawn time and `LoadCreatureFromDB`s a fresh one (logs `reloaded into instance`; `:553-573`).
 
-### E3.12 Config keys read by this half
+### E3.12 `View` and `SeenWorld`, and `SeenPlaces.h`
 
-| Key | Default | Where read (first half) |
-|---|---|---|
-| `Instance.PullRungStart` | 0 | `:143` |
-| `Instance.WingTrace` | 1 | `:407,423,768,801,871` |
-| `Instance.WingProbe` | 0.2 | `:496` |
-| `Instance.WingWipes` | 2 | `:497` |
-| `Instance.PullLift` | 2 | `:501` |
-| `Instance.WingSupplies` | 60 | `:687` |
-| `Instance.WingReadyShare` | 0.8 | `:739` |
-| `Instance.WingCrowdFree` | 4 | `:1107` |
-| `Instance.WingFullClear` | 1 | `:1391` |
-| `Respawn.DelayMs` | 10000 | `:1003-1004` |
-| `Respawn.RejoinYards` | 15.0 | `:1003-1004` |
-
-Keys read in the second half are in E3.5's table and in `cpp-tuning-keys.md`. Key spelling in the conf file is
-`AnimusForge.Curriculum.<name>` (see `cpp-tuning-keys.md` for the exact prefix and the conf.dist agreement test);
-UNVERIFIED here: the prefix and the conf.dist rows for these keys.
-
-### E3.13 Tests covering this half
-
-- `src/test/server/game/Animus/DungeonStagesTest.cpp`: stages, layouts and encounters validate (`:93`), Wailing Caverns
-  never drawn in training (`:180`), corridor order (`:239`), chain pull (`:287`), tier is the ladder's rung (`:301`),
-  purposes are Outcomes and prices Costs (`:338`), stand-in share (`:353`), every boss measured (`:374`), Deadmines
-  doors,
-  levers and cannon used through the handlers (`:403`), movement stages unchanged (`:449`), `Lost` priced from the
-  actual
-  leader (`:469`), a risen seat walking back is Away not Lost (`:489`), an unseen pack or boss never reaches the goal
-  places
-  (`:525`), the layout holds no creature and no order (`:586`), the frontier (`:609`).
-- `src/test/server/game/Animus/WingLadderTest.cpp`: the ladder class.
-- `RolesStageTest.cpp`, `CombatPerceptionTest.cpp` and `PartyFollowTest.cpp` mention `EntranceRespawn` / `WingRun`
-  (UNVERIFIED which assertions).
-- Python: `apps/forge/python/tests/test_dungeon_stages.py`, `test_explore.py`, `test_gates.py`, `test_stage_purpose.py`
-  mention the columns (UNVERIFIED which assertions).
-- No unit test constructs `InstanceEncounter` itself (it needs a live `Map`). `FindBoss`, `Build`, `Update`, `RiseDead`,
-  `TraceWing` and `WingRoute` are covered only by live runs.
-
-### E3.14 Observed issues
-
-- **O1.** `InstanceEncounter.cpp:704-708`: `Update` returns at once when seat 0 is missing or the boss guid cannot be
-  resolved through seat 0. Wipe detection (`:798`), the rises (`:810`), the object give-up, the route advance, the
-  clock-out log, `Corridor.Note` and `TraceWing` (which chooses the tank) are all skipped on those decisions. If seat 0
-  is
-  absent or the boss has despawned, a wipe is never counted by this path.
-- **O2.** `InstanceEncounter.cpp:723`: the comment "Nobody stands up in an instance; the dead wait for the episode to
-  end" is stale; `RiseDead` (`:810`, `:962`) stands the dead up after `Respawn.DelayMs`.
-- **O3.** `InstanceEncounter.cpp:154-173` and `:474-475`: `_rows` drops rows the world database cannot field, then
-  `BeforeLevel` indexes the filtered vector with `ArenaDefinition::InstanceRow` (`min(pinned, rows.size()-1)`). If row 0
-  were
-  dropped, an arena pinning row 0 would silently run row 1 (VanCleef), and `fight.Tier` would then mean a filtered
-  index.
-  `CurriculumProblems` checks the unfiltered table size (`Stages.cpp:1033-1034`), so it would not notice.
-- **O4.** Two tank rules in one function: `fight.Tank` (`:1034-1053`, role-aware, highest mitigation) and the crowd
-  measure's local `tank` (`:1078`, first living seat in seat order that meets `HoldsThePull`). `PeakOnTank` in the wipe
-  log
-  can name a different seat from the one the party follows.
-- **O5.** `Evaded` (`:719-721`), `Engaged`/`EngageMs` and `HealthLeft` are written and reported but nothing ends or
-  scores a
-  run on them; `boss_rung` duplicates `difficulty` (`:201,218`); `engaged`, `evaded`, `boss_killed`, `boss_health_left`,
-  `boss_entry`, `instance_map` and `wing_crowd_seconds` appear in none of the dungeon/group2 yamls.
-- **O6.** `Update` comment `:812-813` says "within reach of the script (25 yd)" and the code uses `NEAR_OBJECT_YARDS =
-  25`: consistent. The constants `NEAR_OBJECT_YARDS`, `GIVE_UP_MS`, `WALK_REACH`, `WALK_LOOK`, `STUCK_*`,
-  `LAYOUT_SPACING`
-  and `PATH_LEGS` are local literals, not tuning keys (cluster fingerprint covers them only through the source hash).
-- **O7.** `Rows()` (`:516-522`) and `BeforeLevel` (`:457-459`): an empty row list makes `BeforeLevel` return without
-  setting a map or spawn; `Build` then returns false (`:581`) and the scenario retries four times and gives up. A
-  mis-configured arena therefore fails at the first episode, not at startup (the constructor logs the empty list at
-  `:175-177` as an error only).
-- **O8.** `WingRoute` (`:1245-1253`): process-wide cache keyed by `{MapId, Entry}` that is never invalidated and is
-  returned
-  by value, copying `Route`, `Dense`, `RouteDense`, `Reachable`, `Packs` and the corner tables on each `Build`.
-- **O9.** `FindSpawn` is called by the constructor, by `FindBoss` (`:526`) and by `Build`'s callers; each call, and
-  `FindBoss`'s loops (`:532`, `:556`), iterates the whole creature-data map: O(spawns) on the map thread per episode.
-- **O10.** `AddEpisodeInfo` comment `:199-200` calls the ladder's rung `difficulty`, but `difficulty` is the pinned row
-  (`:201`: `Tier`), constant per arena; the rung is `wing_rung`. The learner (`animus/evaluation.py:295-312`) still
-  treats
-  `difficulty` as a tier spread: for `dungeon2_ragefire`/`dungeon3_deadmines` an evaluation containing the `heldout`
-  arena
-  (row 2) beside the main arena (row 0 or 1) therefore reports "difficulties" and "up_to" groups split by row, not by
-  rung.
-  `at_top_rung` is present, so the top-rung selection uses it (`evaluation.py:320-323`).
-- **O11.** The `Wing run:` log's "seconds with no progress at the end" (`:430`) is `LastMs - ProgressMs`, but
-  `ProgressMs`
-  is advanced only inside `Reward` for seat 0 (`:2540-2548`), and `LastMs` only inside `Update` (O1).
-
-### E3.15 Reviewer notes (questions and risks for a refactor)
-
-- `ResetEpisode` wipes the state with `fight = EnvInstance()` (`:418,448`): about sixty fields including several
-  `std::unordered_set` and `std::vector` members rebuilt per episode per env. Nothing else holds references into
-  `EnvInstance` (UNVERIFIED), `env.Targets` is cleared in `Build` (`:651`).
-- Three notions of "difficulty" feed different consumers: the pinned row `Tier` (`difficulty`, `boss_rung`, `wing_tier`,
-  `WriteState`), the ladder rung `Rung` (`wing_rung`, `at_top_rung`, `TierScale`, `WipesAllowed`, level lift) and
-  `DrillRung` (`pull_rung`, drill `TierScale`). A refactor that merges them must keep each consumer on the right one
-  (O10).
-- The `Update` order matters: `TraceWing` (tank, `OnParty`) -> drill/drawn packs -> corridor note -> wipe -> `RiseDead`
-  ->
-  object give-up -> walk -> route advance. `Reward` reads `Fighting`, `OnParty`, `Tank`, `ReadyEngages`, `Wipes` and
-  `RouteNext` as that order leaves them; `UpdateEnemies` runs before all of it.
-- `Build` is retried up to 4 times by the scenario with a different spawn point and mutates the instance (respawns the
-  boss, adds key items, stocks consumables, `StartDrill` despawns packs). Whether a second attempt after a partial first
-  attempt double-stocks or double-despawns is UNVERIFIED: read `StartDrill`, `StartAt` and `StartCorridor`.
-- Principle 2 concerns what the bot is shown. The encounter's rewards (`Approach` waypoints and the `WingProgress`
-  potential, `RouteRemain`) are paid along a route built from server-side boss positions that the bot is never shown:
-  confirm with the owner that this is the intended reading.
-- Anonymous-namespace constants are not tuning keys (O6); `PULL_GAPS` (`:119`) fixes the drill ladder at four rungs
-  while
-  `Instance.PullRung*` keys only tune its start, window and target.
-
-
-## E4. InstanceEncounter (second half), the wing ladder, EntranceRespawn, SeenPlaces
-
-Scope: `src/server/game/Animus/Scenario/Curriculum/Encounters/InstanceEncounter.cpp` lines 1395-2752 (the first half,
-1-1400, and `InstanceBosses` are in the E3 fragment: `Build`, `Update`, `RiseDead`, `TraceWing`, `WingRoute` up to the
-navmesh fallback, the episode-info columns and the first reward table), `WingLadder.h/.cpp`, `WingRun.h`,
-`EntranceRespawn.h/.cpp`, `SeenPlaces.h`, and the call sites in `StageScenario.cpp`, `AnimusForge.cpp` and
-`Bridge/ClusterLink.*` that make the wing ladder the cluster's. Paths are relative to
-`src/server/game/Animus/Scenario/Curriculum/Encounters/` unless they start with another directory. Section numbers
-E3.x refer to the E3 fragment. Defaults quoted for tuning keys are those in `CurriculumTuning.h`; a live conf file can
-override them (see [cpp-tuning-keys.md](cpp-tuning-keys.md) and [config-keys.md](config-keys.md)); I did not read the
-live conf, so every "default" below is UNVERIFIED as the live value.
-
-### E4.0 Map of the files
-
-| Path | Lines | Role |
-|---|---|---|
-| `InstanceEncounter.cpp` (1395-2752 here) | 2752 | per-decision enemy upkeep, Go-Explore/corridor/drill starts, drill ladder, seen-places view, rewards, terminal |
-| `WingLadder.h` | 98 | the whole-dungeon difficulty ladder state machine (one way, probes only, collapse alarm) |
-| `WingLadder.cpp` | 111 | its implementation (`Note`, `Follow`) |
-| `WingRun.h` | 175 | pure helpers: tier of rung, leader seat, stray/away predicates, seeded picks, corridor bookkeeping, chain-pull tracker |
-| `EntranceRespawn.h` | 147 | `RespawnClock`, `WipeLatch`, `RiseAtEntrance`, `ForgetFrame` declarations |
-| `EntranceRespawn.cpp` | 58 | `RiseAtEntrance`, `ForgetFrame` |
-| `SeenPlaces.h` | 248 | pure goal-place choice from what a seat has seen (no live creature data) |
-
-Logical parts of `InstanceEncounter.cpp` 1395-2752:
-
-| Lines | Part |
-|---|---|
-| 1395-1465 | tail of `WingRoute`'s navmesh fallback (packs by `PACK_REACH`, route points every `WingWaypointYards`, cache store) |
-| 1754-1980 | `UpdateWingEnemies` (usable objects, closed doors, pack clearing, kills, enemy slots, crowd past the slots) |
-| 1982-2004 | `PlaceParty` |
-| 2006-2092 | `StartAt` (Go-Explore cell start) |
-| 2094-2118 | `ClearedWords`, `MarkCell` (the cell archive) |
-| 2120-2154 | `StartCorridor` |
-| 2156-2186 | `UpdateDrawnPacks` (chain-pull tracking) |
-| 2188-2206 | `FullClear`, `Succeeded` |
-| 2208-2335 | `StartDrill` |
-| 2337-2409 | `UpdateDrill` |
-| 2411-2430 | `NoteDrill` (the drill's own ladder) |
-| 2432-2527 | `View`, `SeenWorld` |
-| 2529-2693 | `Reward` |
-| 2723-2732 | `TierScale` |
-| 2734-2737 | `TimeIsUp` |
-| 2739-2743 | `WriteState` |
-| 2745-2752 | `IsTerminal` |
-
-### E4.1 `FieldWingRoute` (removed 2026-10-08)
-
-The layered-field route (spine, packs and their gaps, dense route, drill bands, corner tables) was removed with the
-ground probe and layered fields (owner order). `WingPlan::Packs`, `Dense`, `RouteDense`, `Reachable`, `Field`,
-`CornerAhead` and `CornerBack` stay declared but are always empty / false, as they already were for a navmesh route.
-
-### E4.2 `UpdateWingEnemies` (`:1754-1980`), run from `UpdateEnemies`
-
-Per decision, for the whole party. Uses seat 0's player as the visitor anchor; returns early when seat 0 is not in
-the world. Steps:
-
-1. **Fighting flag** (`:1766-1769`): any enemy slot unit alive and in combat.
-2. **Usable objects and doors** (`:1770-1823`): clears `fight.Objects`. One
-   `GameObjectListSearcher` from the middle of the living seats, radius `OBJECT_SIGHT (40) + spread`. An object that is `Usable` (E3.11), not yet in `fight.Used`, and within 40 yd of
-   some living seat goes to `fight.Objects`. Nothing opens by itself (principle 4).
-3. **Route packs** (`:1825-1862`): for the first `WorldView::JOURNAL_PLACES` (8) uncleared `RoutePacks`, look their
-   members up by spawn id in `GetCreatureBySpawnIdStore()`; `Resolved = Resolved || found`, `Cleared = found &&
-   !standing`. So a pack none of whose members is in the store (grid not loaded) stays unknown, not cleared. Outside a
-   drill it then calls `MarkCell` (the Go-Explore archive).
-4. **Kills** (`:1864-1888`): each watched guid now dead moves to `Counted`, bumps `TrashKills`, `LastKillMs`, and for a
-   dungeon boss or world boss `BossKills` and `BossesKilled`. (`TrashKills` therefore also counts side bosses; the last
-   boss is `BossDead`, handled in `Update`.)
-5. **Enemy slots** (`:1890-1950`): viewed from the tank while it lives (else seat 0), unfriendly non-player, non-totem,
-   non-evading units within `WING_SIGHT = 45` yd, ranked by `RankEnemy(unit, tank)` (`Encounters.h:60`): tank's target,
-   on a player, fighting, standing, gone. A fighting rank keeps the slot index it had in `env.Targets`; a standing unit
-   sorts by distance. The first `PACK_SLOTS` fill `env.Targets`; the boss replaces the last slot if it is in combat
-   and not in the list. Every slotted guid not yet `Counted` is added to `Watched`.
-6. **Crowd past the slots** (`:1952-1980`): `fight.Overflow` (up to `CROWD_SLOTS` more, fight first), `HasAhead`/`Ahead`
-   (the nearest idle unit), `AheadSize` (idle units within `PACK_REACH = 12` yd of it), `HasSecond`/`Second` (the first
-   idle one further). These feed `SeatView::Crowd`, which is the encounter's own bookkeeping and is documented as
-   never reaching the goal places (see E4.9). UNVERIFIED: whether `Crowd` is blanked in the stage layouts, since the
-   dungeon stages have no crowd block (`Stages.cpp:604-616` comment); check `CrowdBlock` use in
-   `cpp-layout-character.md`.
-
-Perception note (principles 1 and 2): the enemy slots are filled from the server's unit list within 45 yd, **through
-walls**, and viewed from the tank. They feed the pack block and the critic state; whether the policy's pack block still
-carries them in the dungeon stages is a layout question (`DungeonBlocks()` includes `Pack`; `Stages.cpp:604-616` says
-the pack block's slots "in a sight stage, are what the seat saw: StageScenario::ViewSeat"). UNVERIFIED: that
-`ViewSeat` replaces these server-side slots with seen ones for every dungeon stage. This is the single most important
-principle-1 question for a reviewer of this function.
-
-### E4.3 Starts: `PlaceParty`, `StartAt`, `StartCorridor`, `StartDrill`
-
-All four are called from `Build` after the route is known (E3.4; `StartDrill` at `:652`, `StartAt` at `:658`,
-`StartCorridor` at `:664`). They return false when their preconditions fail (no packs, `Dense` empty, `RouteDense`
-size different from `Route`), which fails the build and so triggers the scenario's retry (`SPAWN_ATTEMPTS`, cpp-
-stagescenario.md).
-
-**`PlaceParty(env, start, yard)`** (`:1982-2004`): records `EpisodeSpawn`, then for every active seat sets `Walk` and
-`WaypointsPaid` to the next route point (so the route already walked is not paid), `DenseAt = yard`, and teleports it
-(`BotFactory::TeleportWithinMap`; the one place seats are moved by teleport, which principle 3 allows for placement,
-not movement) to `start` offset by `(index % 3 - 1, index / 3 - 1)` yards. Sets `ProgressMs = now` (the idle clock).
-
-**`StartAt`** (`:2006-2092`), the Go-Explore start: the learner sends cells (`ExploreStart`: arena, tier, 4 words of
-cleared-pack bits, yard/16, weight); `Build` copies the drawn cell into `StartPacks`, `StartYard` (`:471`, E3.4).
-`StartAt` decodes the bits into pack indexes (fail if a bit is past the plan's or the route's packs), loads each such
-pack's grid, marks them `Cleared`/`Resolved`, and over the spawn store: living creatures of those packs are
-**despawned** (`DespawnOrUnsummon(0ms, TRASH_RESPAWN 3600 s)`) except dungeon/world bosses, which `KillSelf(false)` so
-the boss script opens what its death opens (`:2058-2064`); `HostileTotal` is decremented for despawned creatures that
-were counted. The party goes to `StartYard * 16` on the dense route, walked **back** along it until no living hostile
-is within `PULL_START_CLEARANCE = 25` yd, at most `PULL_START_MAX_YARDS = 120` yd. `RouteNext` becomes the first
-route point past that yard; a mark for the start is pushed (the archive counts the visit).
-
-**`ClearedWords` / `MarkCell`** (`:2094-2118`): the cleared flags of the first `EXPLORE_PACKS` (96) route packs as 4
-words of 24 bits (24 so each word survives a float32 round trip: `Encounters.h:150`). `MarkCell` is called every
-decision
-in a non-drill run; it records `(words, yard / 16, elapsed)` whenever the set of cleared packs changes and is not
-empty, keeping the last `EXPLORE_MARKS` = 8 per run. The yard is the **furthest** yard any seat stands at. The marks
-leave the env through the episode info / protocol (E3.8 and [protocol.md](protocol.md)); the learner's archive is
-`apps/forge/python/animus/explore.py` (py-learner.md). UNVERIFIED: the exact wire path of `Marks`.
-
-**`StartCorridor`** (`:2120-2154`): `length = CorridorPacks`; `packs = min(plan.Packs, RoutePacks, 96)`. First pack =
-`WingRun::CorridorFirst(packs, length, evaluating, EpisodeSeedIndex, rand32())`: starts = `packs - length + 1`
-(1 if the route is shorter), an evaluation picks `SeededPick(starts, seed)` (a multiplicative hash,
-`(seed + 1) * 2654435761`, so the same seed gives the same corridor every evaluation), training `roll % starts`. If the
-first pack is not 0, the packs before it are cleared by `StartAt` using `StartPacks` made of bits `0..first-1` and the
-party stands at pack `first`'s yard; then `Marks`, `StartPacks`, `StartYard` are reset (a corridor start is no
-Go-Explore cell). `fight.Corridor.Begin(first, min(packs, first + length))`. Logged with `WingTrace`.
-
-**`StartDrill`** (`:2208-2335`): the pull drill (D1). Picks the ladder rung: an evaluation uses the last rung
-(`PULL_GAPS.size()-1`, any pack); training uses `_drillRung` under `_drillLock`. The candidate packs are those with a
-non-zero `Yard` inside `Dense` and `Gap >= PULL_GAPS[rung]` (`{30, 22, 14, 0}` yd, `:119`); if none, any drillable
-pack. An evaluation takes `SweepPick(open.size(), seed)` (seed mod count, so every pack in turn), training `urand`.
-The packs before the chosen one are despawned (their grids loaded first so absent creatures do not stand up behind the
-party) and marked cleared; the chosen pack's members are `DrillPack`; every other standing creature gets a
-`DrillGroups` entry (which later pack of the plan it belongs to, else a unique group), so a second pack can be named
-whole. The party starts `Instance.PullStartYards` (35) back along the route from the pack and further, up to 120 yd,
-until nothing standing is within 25 yd. `DrillPoint` is the first route point at or past the pack's yard. Fails if
-`DrillPack` is empty.
-
-### E4.4 `UpdateDrill` and the drill's ladder (`:2337-2430`)
-
-`UpdateDrill` (called from `Update` when `fight.Drill`, `:753`): the anchor is the tank if alive, else the last
-living seat. `DrillEngaged` latches when a drill-pack creature is in combat. For every living seat, units within
-`DRILL_SIGHT = 50` yd that are alive creatures, not summons, totems or pets, whose victim belongs to a player, are "on
-the party". The **first** creature on the party locks the pack (`DrillLocked`): if it is not in `DrillPack` then the
-pull is "another pack" (`DrillOther`), `DrillPack` is replaced by that creature plus its `DrillGroups` mates, and the
-drill is judged on that pack instead. After the lock, any on-party creature outside `DrillPack` sets `DrillExtra`
-(and `DrillExtraEntry`). `DrillPeak` = most creatures on the party at once. `DrillCleared` latches when no drill-pack
-creature is alive, the party is not fighting and nothing is on it.
-
-`NoteDrill(rung, clean)` (`:2411`), called from `ResetEpisode` for a training drill (E3.4 at `:417`): a deque of the
-last
-`Instance.PullRungRuns` (100) outcomes (clean = cleared and not extra), ignored unless `rung == _drillRung`; when the
-window is full and the clean share >= `Instance.PullRungTarget` (0.7) the rung steps up (`++_drillRung`, window cleared,
-logged "the pull drill steps to rung N"). It never steps back and stops at the last rung (`PULL_GAPS.size() - 1` = 3).
-**This ladder is per process** ("each machine climbs its own", `CurriculumTuning.h:267`): it is **not** shared with the
-cluster the way the wing ladder is, and there is no alarm of any kind for it. `_drillRung` starts at
-`Instance.PullRungStart`. A resumed run restarts it at that key.
-
-### E4.5 `UpdateDrawnPacks`, `FullClear`, `Succeeded` (`:2156-2206`)
-
-`UpdateDrawnPacks` (called each decision for a non-drill run, `:755`): when not fighting, `fight.Drawn.End()`. Otherwise
-the route packs of every creature in the slots and in `Overflow` that is alive, in combat and whose **victim is a
-player or a player's pet/charm** (`GetCharmerOrOwnerPlayerOrPlayerItself`), via `PackOf[spawnId]`, are passed to
-`WingRun::FightPacks::Note`, which counts a pack joining a fight that already had a pack as one **chain pull**
-(`fight.ChainPulls += ...`). `FullClear`: the last boss dead and either every route pack `Cleared` (field route) or, on
-a navmesh route with no packs, `TrashKills + 1 >= HostileTotal`. `Succeeded`: drill = cleared and not extra; corridor =
-`Corridor.Done()`; else `BossDead`. (`Succeeded` is the source of the `cleared`, `clear_allbot` and
-`clear_standin`-style columns (`:256-318`, E3.8).)
-
-### E4.6 `View` and `SeenWorld` (`:2432-2527`) and `SeenPlaces.h`
-
-`View` (only when the route is known) copies the seat's food and drink item ids into the view and calls `SeenWorld`.
+`View` (only when a boss is built) copies the seat's food and drink item ids into the view and calls `SeenWorld`.
 `SeenWorld` fills `view.World.Places` (8 slots) and the assignment from `SeenPlaces::Choose`, and sets
 `world.RoutePlaces = true`. Inputs:
 
@@ -2336,118 +1977,174 @@ a navmesh route with no packs, `TrashKills + 1 >= HostileTotal`. `Succeeded`: dr
   `MentalMap`, cached per seat and refreshed every 2000 ms of episode time (`FRONTIER_MS`). A cell is `Unknown` if
   absent or not `Vision::Known`, `Shut` with a wall-low/high or hazard flag, `Open` if it has a floor or is
   free/visited.
-- **Layout** (only `GoalPlaces == SeenAndLayout` and `fight.MapLayout` non-empty): the dungeon map's nodes, with a per-
-  node "explored" flag from the seat's map. Today `MapLayout` is built in `Build` (`:645`) by
-  `SeenPlaces::Layout(ground,
-  LAYOUT_SPACING)` from the route's ground, so, as `Stages.cpp` and the docs say, it follows the boss route and is off
-  by default (`SeenOnly`).
-- **Leader**: `WingRun::LeaderSeat(standInSeat, standInLeads, tankSeat)`; present if it is another seat, alive, in the
-  same map. Position is the leader's exact server position (its frame and map dot show it to a player).
+- **Leader**: `WingRun::LeaderSeat(standInSeat, standInLeads, tankSeat)`; present only if it is another seat, alive, in
+  the same map **and within `PartyFollow.MinimapYards` (60 yd, 2D) of the seat**: what a minimap dot shows. Its
+  position is the leader's exact server position (its frame and map dot show it to a player).
 
-`SeenPlaces::Choose` (pure, `SeenPlaces.h:115-175`): place slots 0..2 (`MEMORY_PLACES`) are remembered **living
-hostile non-gameobject** entries sorted nearest first and de-duplicated within `SAME_PLACE = 10` yd; slots up to 5
-(`ROAM_PLACES`) are then the frontier points and unexplored layout nodes nearest first, de-duplicated; slot 6
-(`WAY_ON`) is the single nearest frontier/layout point (even if already used as a roam place); slot 7 (`LEADER`) is the
-leader. The assignment is the first present of slot 0, `WAY_ON`, `LEADER`. The `static_assert(sizeof(Point) ==
-3 * sizeof(float))` is the code's guard that a place carries no creature data (`:42`). A remembered hostile that has
-died but whose death the seat has not seen is still a place; a dead-as-last-seen entry is skipped. `Layout()` sorts the
-ground by position and keeps nodes at least `spacing` apart, so nothing of the walk order survives. Tested by
-`DungeonStagesTest.AnUnseenPackOrBossNeverReachesTheGoalPlaces`, `TheLayoutHoldsNoCreatureDataAndNoOrder`,
+There is no layout input (the route-built layout and its mode were removed 2026-10-08, decisions 0005 and 0019): the
+goal places are what the seat saw and nothing else.
+
+`SeenPlaces::Choose` (pure, `SeenPlaces.h`): place slots 0..2 (`MEMORY_PLACES`) are remembered **living hostile
+non-gameobject** entries sorted nearest first and de-duplicated within `SAME_PLACE = 10` yd; slot 6 (`WAY_ON`) is the
+nearest frontier point; slot 7 (`LEADER`) is the leader. The assignment is the first present of slot 0, `WAY_ON`,
+`LEADER`. The `static_assert(sizeof(Point) == 3 * sizeof(float))` is the code's guard that a place carries no creature
+data. A remembered hostile that has died but whose death the seat has not seen is still a place; a dead-as-last-seen
+entry is skipped. Tested by the `DungeonStagesTest` test that an unseen pack or boss never reaches the goal places of the goal head, and
 `TheFrontierIsOpenGroundBesideTheUnseen`.
 
 Quirk: `SeenWorld` writes `own.Frontier`, `FrontierMs`, `FrontierReady` through a `const` env reference (the members
-are evidently `mutable`); observation of seat `s` therefore mutates state, from the map thread that observes it. The
-leader's position is also read from other seats' player objects from within one seat's observation, on the same map.
+are `mutable`); observation of seat `s` therefore mutates state, from the map thread that observes it. The leader's
+position is also read from other seats' player objects from within one seat's observation, on the same map.
 UNVERIFIED: that every seat of one env is observed on one thread (it should be: one env, one map).
 
-### E4.7 `Reward` (`:2529-2693`): the exact terms
+### E3.13 `FullClear`, `Succeeded`, `ClearedShare`, `TierScale`, `TimeIsUp`, `WriteState`, `IsTerminal`
 
-Called per seat per decision (after `BeforeRewards`). `tierScale = TierScale(env)` (E4.8). `seconds = DecisionMs /
-1000`.
-Kinds are from `RewardTermCategory` (`Rewards/RewardLedger.h:162-250`). `ledger.Add(term, value, tier)` multiplies by
-the
-tier argument and, for Shaping, by the fade scale; the **score** takes `value` without the tier. A cost "over the tier
-scale" is passed `1 / tierScale` so it shrinks as the rung climbs.
-
-Paid every decision to every seat (`:2537-2566`):
-
-| Term (kind) | Condition and amount | Key (default) |
-|---|---|---|
-| `Idle` (Cost) | `EpisodeElapsedMs > ProgressMs + grace`, where the grace is `PullGraceMs` for a drill, else `WingStallGraceMs`: `-WingStall * (tank ? 1 : WingStallOthers) * seconds`. `ProgressMs` is bumped by seat 0 when `TrashKills + waypoints` changed or the env's `StepEngaged` is true | `Instance.WingStall` 0.1, `WingStallGraceMs` 60000, `WingStallOthers` 0.2, `PullGraceMs` 20000 |
-| `StepCost` (Cost) | `-WingClock * seconds` | `Instance.WingClock` 0.002 |
-| `ReadyPull` (Outcome) | for each new fight started with every living member ready (`fight.ReadyEngages`, capped by `ReadyPaidCap`, counted in the first half): `+WingEngage * newEngages`, tier `tierScale` | `Instance.WingEngage` 1.0 (the ready share `WingReadyShare` 0.8 is read in `Update`, `:739-749`; the cap `ReadyPaidCap` is set in `Build`, `:648,672-674`) |
-| `PullExtra` (Cost) | each new chain pull: `-WingChainPull * new`, tier `1/tierScale` | `Instance.WingChainPull` 3.0 |
-| `Clear` (Outcome) | corridor run, each pack cleared **in route order** since last paid: `+CorridorPack * new`, tier `tierScale` | `Instance.CorridorPack` 4.0 |
-| `Threat` (Shaping) | `OnParty > WingCrowdFree`: `-WingCrowd * (OnParty - WingCrowdFree) * seconds` | `Instance.WingCrowd` 0.15, `WingCrowdFree` 4 |
-| `Lost` (Cost) | `WingRun::Strays(alive, isLeader, walkingBack, leaderAlive, yards, WingStrayYards)`: `-WingStray * seconds` | `Instance.WingStray` 0.02, `WingStrayYards` 25 |
-| `Away` (Cost) | `WingRun::Away(alive, walkingBack)` = dead or `Clock.Rejoining`: `-WingAway * seconds` | `Instance.WingAway` 0.02 |
-
-Paid only to a living bot (`:2568-2625`): `Kill` (Outcome) `+WingTrashKill * newTrashKills`, tier `tierScale`;
-`Approach`
-(Shaping) `+WingWaypoint * tierScale * newWaypoints`; `Kill` `+WingMidBoss * newBossKills`, tier `tierScale`; and the
-forward potential: when not fighting and the route ahead is known, `potential = -(distance to next route point +
-RouteRemain[next]) / RouteRemain[0]`, paid `+WingProgress * tierScale * (potential - previous)` when it rises (the max
-is kept; the first reading only seeds it). Keys: `WingTrashKill` 1.0, `WingWaypoint` 0.5, `WingMidBoss` 8.0,
-`WingProgress` 60.0. Note the tier is multiplied into a Shaping term here as an argument, not as an outcome scale.
-
-Deaths (`:2632-2641`): the first decision a bot is found dead, `Death` (Cost) `-WingDeath` (3.0) tier `1/tierScale`; for
-each new wipe `Death` `-WingWipe` (5.0) times the number, tier `1/tierScale`. Both `paid.DeathPaid` and `Deaths` reset
-how E3.7 describes.
-
-**Terminal outcome**, paid once per seat when `over` (`BossDead || Wiped || TimeIsUp || drill done || corridor done`,
-`:2644-2646`), guarded by `OutcomePaid`:
-
-- Drill: share = 1 for the tank (`DungeonRole == DUNGEON_TANK`), else `PullOthers` (0.5). Extra pack: `PullExtra`
-  `-PullExtra * share`, tier `1/tierScale`; else cleared: `PullClean` (Outcome) `+PullClean * share`, tier `tierScale`;
-  else time up: `Timeout` (Cost) `-PullTimeout * share`, tier `1/tierScale`. Then returns. Keys `PullExtra` 5.0,
-  `PullClean` 5.0, `PullTimeout` 2.0, `PullOthers` 0.5.
-- Seat 0 only, once: a `LOG_DEBUG` of route packs never found (`:2655-2670`).
-- Corridor: time up and not done: `Timeout` `-WingTimeout * (1 - Corridor.Share())`, tier `1/tierScale`; returns unless
-  `BossDead` (a corridor can end on the last boss too).
-- `BossDead`: `Kill` `+WingBoss`, tier `tierScale`; and for a whole run (not corridor) with `FullClear` once:
-  `Clear` `+WingClear`, tier `tierScale`. Keys `WingBoss` 25.0, `WingClear` 25.0.
-- Else time up with a route: `Timeout` `-WingTimeout * (1 - waypoints / Route.size())`, tier `1/tierScale`;
-  `WingTimeout` 30.0.
-
-A **wipe ends nothing here** (the wipe latch and its counting are in the first half, `Update`); the run ends when
-`fight.Wiped` is set by exceeding the allowed wipes (`Instance.WingWipes` 2 plus the rung's `ExtraWipes`, E3.4).
-
-### E4.8 `SelectTarget`, `TierScale`, `TimeIsUp`, `WriteState`, `IsTerminal` (`:2695-2752`)
-
-- `SelectTarget`: returns the slot the seat has selected if alive; else the nearest living enemy of the slots, with
-  slot 0 (the boss while it fights) winning. **Never reached in the dungeon stages**, whose layout carries the sight
-  block (the scenario uses the seat's own client selection; cpp-stagescenario.md, `StageScenario.cpp:3062`). It is
-  vestigial for the live stages. Always returns true.
-- `TierScale`: `tier = Drill ? DrillRung : WingRun::TierOfRung(Rung)` (rung / 2, so rungs 0-1 tier 0 ... rung 8 tier
-  4); then `CombatReward::TierScale(Difficulty.TierScale, min(tier, Instance.MaxTierScale))` (`MaxTierScale` default 6,
-  never binding for tiers 0-4). The formula is in cpp-rewards-routing.md; the header says `1 + Difficulty.TierScale *
-  tier` (`WingRun.h:32`). A training run's tier is the **rung it was drawn on** (`fight.Rung`), not the ladder's current
-  one.
+- `FullClear`: `BossDead && HostileTotal && TrashKills + 1 >= HostileTotal` (every creature the clear counts, side
+  bosses among them, and the last boss).
+- `Succeeded`: `BossDead`. It is the source of the `cleared`, `clear_allbot` and `clear_standin` columns.
+- `ClearedShare`: see E3.5; the source of `Timeout`, of the ladder's progress and of the `wing_cleared_share` column.
+- `TierScale`: `tier = WingRun::TierOfRung(Rung)` (rung / 2, so rungs 0-1 tier 0 ... rung 8 tier 4); then
+  `CombatReward::TierScale(Difficulty.TierScale, min(tier, Instance.MaxTierScale))` (`MaxTierScale` default 6, never
+  binding for tiers 0-4). The formula is in cpp-rewards-routing.md. A training run's tier is the **rung it was drawn
+  on** (`fight.Rung`), not the ladder's current one.
 - `TimeIsUp`: `EpisodeLengthMs && Elapsed >= Length`.
 - `WriteState`: `state[STATE_TIER] = fight.Tier / (max(2, Rows.size()) - 1)`. `Tier` here is the boss-row index, not the
   ladder rung (E3.4).
-- `IsTerminal`: `BossDead || Wiped || TimeIsUp || drill cleared/extra || corridor done`. The same expression as `over`
-  in `Reward`; the two copies must agree.
+- `IsTerminal`: `BossDead || Wiped || TimeIsUp`. The same expression as `over` in `Reward`; the two copies must agree.
 
-### E4.9 `WingRun.h` (pure helpers; tests: `DungeonStagesTest.cpp`)
+### E3.14 Config keys read by `InstanceEncounter`
+
+| Key | Default | Used for |
+|---|---|---|
+| `Instance.WingTrace` | 1 | gates the `Wing run`, `Wing time`, `Wing stuck` and wipe lines |
+| `Instance.WingProbe` | 0.2 | probe share (`BeforeLevel`) |
+| `Instance.WingWipes` | 2 | wipes before the run ends (`BeforeLevel`) |
+| `Instance.WingSupplies` | 60 | food and drink stocked (`Build`) |
+| `Instance.WingReadyShare` | 0.8 | the ready fight (`Update`) |
+| `Instance.WingCrowd`, `WingCrowdFree` | 0.15, 4 | `TraceWing`, `Reward` |
+| `Instance.WingRungRuns`, `WingRungTarget`, `WingRungStart` | 40, 0.6, 0 | ladder construction (`StageScenario.cpp`) |
+| `Instance.WingStall`, `WingStallGraceMs`, `WingStallOthers`, `WingClock` | 0.1, 60000, 0.2, 0.002 | `Reward` |
+| `Instance.WingEngage` | 1.0 | `Reward` |
+| `Instance.WingStray`, `WingStrayYards`, `WingAway` | 0.02, 25, 0.02 | `Reward` |
+| `Instance.WingTrashKill`, `WingMidBoss`, `WingBoss`, `WingClear`, `WingTimeout` | 1.0, 8.0, 25.0, 25.0, 30.0 | `Reward` |
+| `Instance.WingDeath`, `WingWipe` | 3.0, 5.0 | `Reward` |
+| `Instance.MaxTierScale` | 6 | `TierScale` |
+| `Difficulty.TierScale` | see tuning | `TierScale` |
+| `PartyFollow.MinimapYards` | 60 | the leader's goal place in `SeenWorld` |
+| `Respawn.DelayMs`, `Respawn.RejoinYards` | 10000, 15 | `RiseDead` (E3.7) |
+
+The complete table with clamps is in [cpp-tuning-keys.md](cpp-tuning-keys.md). The conf prefix is
+`AnimusForge.Curriculum.`; I did not read the live conf, so every "default" here is UNVERIFIED as the live value.
+
+### E3.15 Tests covering the encounter
+
+- `src/test/server/game/Animus/DungeonStagesTest.cpp`: stages, layouts and encounters validate, Wailing Caverns never
+  drawn in training, tier is the ladder's rung, purposes are Outcomes and prices Costs, stand-in share, every boss
+  measured, Deadmines doors, levers and cannon used through the handlers, movement stages unchanged, `Lost` priced from
+  the actual leader, a risen seat walking back is Away not Lost, an unseen pack or boss never reaches the goal places,
+  the frontier.
+- `src/test/server/game/Animus/WingLadderTest.cpp`: the ladder class.
+- `RolesStageTest.cpp`, `CombatPerceptionTest.cpp` and `PartyFollowTest.cpp` mention `EntranceRespawn` / `WingRun`
+  (UNVERIFIED which assertions).
+- No unit test constructs `InstanceEncounter` itself (it needs a live `Map`). `FindBoss`, `Build`, `Update`, `RiseDead`,
+  `TraceWing` and `UpdateWingEnemies` are covered only by live runs. (Tests of the removed corridor, chain-pull and
+  layout code left with it; check the test tree before quoting any name here.)
+
+### E3.16 Observed issues
+
+- **O1.** `Update` returns at once when seat 0 is missing or the boss guid cannot be resolved through seat 0. Wipe
+  detection, the rises, the object give-up, the clock-out log and `TraceWing` (which chooses the tank) are all skipped
+  on those decisions. If seat 0 is absent or the boss has despawned, a wipe is never counted by this path.
+- **O2.** The comment "Nobody stands up in an instance; the dead wait for the episode to end" in `Update` is stale;
+  `RiseDead` stands the dead up after `Respawn.DelayMs`.
+- **O3.** The constructor drops rows the world database cannot field, then `BeforeLevel` indexes the filtered vector
+  with `ArenaDefinition::InstanceRow` (`min(pinned, rows.size()-1)`). If row 0 were dropped, an arena pinning row 0
+  would silently run row 1 (VanCleef), and `fight.Tier` would then mean a filtered index. `CurriculumProblems` checks
+  the unfiltered table size, so it would not notice.
+- **O4.** Two tank rules in one function: `fight.Tank` (`TraceWing`, role-aware, highest mitigation) and the crowd
+  measure's local `tank` (first living seat in seat order that meets `HoldsThePull`). `PeakOnTank` in the wipe log can
+  name a different seat from the one the party follows.
+- **O5.** `Evaded`, `Engaged`/`EngageMs` and `HealthLeft` are written and reported but nothing ends or scores a run on
+  them; `boss_rung` duplicates `difficulty`; `engaged`, `evaded`, `boss_killed`, `boss_health_left`, `boss_entry`,
+  `instance_map` and `wing_crowd_seconds` appear in none of the dungeon yamls.
+- **O6.** The constants `NEAR_OBJECT_YARDS`, `GIVE_UP_MS`, `STUCK_*`, `READY_PULLS_PAID`, `PACK_REACH`, `WING_SIGHT` and
+  the frontier constants are local literals, not tuning keys (the cluster fingerprint covers them only through the
+  source hash).
+- **O7.** An empty row list makes `BeforeLevel` return without setting a map or spawn; `Build` then returns false and
+  the scenario retries four times and gives up. A mis-configured arena therefore fails at the first episode, not at
+  startup (the constructor logs the empty list as an error only).
+- **O8.** `FindSpawn` is called by the constructor, by `FindBoss` and by `Build`'s callers; each call, and `FindBoss`'s
+  loops, iterates the whole creature-data map: O(spawns) on the map thread per episode.
+- **O9.** The comment in `AddEpisodeInfo` calls the ladder's rung `difficulty`, but `difficulty` is the pinned row
+  (`Tier`), constant per arena; the rung is `wing_rung`. The learner (`animus/evaluation.py`) still treats `difficulty`
+  as a tier spread: for `dungeon2_ragefire`/`dungeon3_deadmines` an evaluation containing the `heldout` arena (row 2)
+  beside the main arena (row 0 or 1) therefore reports "difficulties" and "up_to" groups split by row, not by rung.
+  `at_top_rung` is present, so the top-rung selection uses it.
+- **O10.** The `Wing run:` log's "seconds with no progress at the end" is `LastMs - ProgressMs`, but `ProgressMs` is
+  advanced only inside `Reward` for seat 0, and `LastMs` only inside `Update` (O1).
+- **O11.** In `Reward`, the outer `bool const tankSeat` is shadowed by `int32 tankSeat` inside `if (bot)`; the leader
+  lookup (`tankSeat`, `LeaderSeat`) is written out twice, here and in `SeenWorld`, and `TraceWing` (E3.6) chooses the
+  tank again. Three copies of "who is the leader".
+- **O12.** `Reward` and `IsTerminal` both spell the "run is over" condition; they must stay in step.
+- **O13.** `WriteState` writes `Tier / (rows - 1)` (the boss row), but the reward tier is the ladder rung / 2: two
+  different meanings of "tier" in one encounter.
+- **O14.** `UpdateWingEnemies` fills `env.Targets` from the server's unit list through walls (E3.10); principle 1
+  depends on a later stage of the pipeline hiding them. Needs an owner's confirmation (listed as UNVERIFIED).
+- **O15.** The comment in `ResetEpisode` "count toward the support's running share" refers to the removed support
+  ladder.
+
+### E3.17 Reviewer notes (questions and risks for a refactor)
+
+- `ResetEpisode` wipes the state with `fight = EnvInstance()`: about fifty fields including several
+  `std::unordered_set` and `std::vector` members rebuilt per episode per env. Nothing else holds references into
+  `EnvInstance` (UNVERIFIED); `env.Targets` is cleared in `Build`.
+- Three notions of "difficulty" feed different consumers: the pinned row `Tier` (`difficulty`, `boss_rung`,
+  `WriteState`) and the ladder rung `Rung` (`wing_rung`, `at_top_rung`, `TierScale`, `WipesAllowed`, level lift) (O9).
+  A refactor that merges them must keep each consumer on the right one.
+- The `Update` order matters: `TraceWing` (tank, `OnParty`) -> wipe -> `RiseDead` -> object give-up. `Reward` reads
+  `Fighting`, `OnParty`, `Tank`, `ReadyEngages` and `Wipes` as that order leaves them; `UpdateEnemies` runs before all
+  of it.
+- `Build` is retried up to 4 times by the scenario with a different spawn point and mutates the instance (respawns the
+  boss, adds key items, stocks consumables). Whether a second attempt after a partial first attempt double-stocks is
+  UNVERIFIED.
+- `UpdateWingEnemies` is about 190 lines doing five jobs (objects, kills, slot ranking, crowd). Its per-decision cost: a
+  grid visit for objects and another for units; fine now, check before adding seats.
+
+## E4. The wing ladder, EntranceRespawn, WingRun, SeenPlaces
+
+Scope: `WingLadder.h/.cpp`, `WingRun.h`, `EntranceRespawn.h/.cpp`, `SeenPlaces.h`, and the call sites in
+`StageScenario.cpp`, `AnimusForge.cpp` and `Bridge/ClusterLink.*` that make the wing ladder the cluster's. Paths are
+relative to `src/server/game/Animus/Scenario/Curriculum/Encounters/` unless they start with another directory (`SeenPlaces.h`,
+`InstanceBosses.*` and `Stages.cpp` sit under `Runtime/Scenario/Curriculum/`). Section numbers E3.x refer to the
+InstanceEncounter section above. Defaults quoted for tuning keys are those in `CurriculumTuning.h`; a live conf file can
+override them (see [cpp-tuning-keys.md](cpp-tuning-keys.md) and [config-keys.md](config-keys.md)); I did not read the
+live conf, so every "default" below is UNVERIFIED as the live value.
+
+### E4.0 Map of the files
+
+| Path | Lines | Role |
+|---|---|---|
+| `WingLadder.h` | 98 | the whole-dungeon difficulty ladder state machine (one way, probes only, collapse alarm) |
+| `WingLadder.cpp` | 111 | its implementation (`Note`, `Follow`) |
+| `WingRun.h` | 64 | pure helpers: tier of rung, leader seat, stray/away predicates |
+| `EntranceRespawn.h` | 147 | `RespawnClock`, `WipeLatch`, `RiseAtEntrance`, `ForgetFrame` declarations |
+| `EntranceRespawn.cpp` | 58 | `RiseAtEntrance`, `ForgetFrame` |
+| `SeenPlaces.h` | 210 | pure goal-place choice from what a seat has seen (no live creature data) |
+
+### E4.1 `WingRun.h` (pure helpers; tests: `DungeonStagesTest.cpp`)
 
 - `RUNGS_PER_TIER = 2`; `TierOfRung(rung) = rung / 2`.
 - `LeaderSeat(standInSeat, standInLeads, tankSeat)`: the stand-in's seat when it leads and exists, else the tank's.
 - `Strays(alive, isLeader, walkingBack, leaderAlive, yards, strayYards)`: alive, not leader, not walking back, leader
   alive, `yards > strayYards`. `Away(alive, walkingBack)`: `!alive || walkingBack`. Their disjointness (the same seconds
   never charged twice) is tested by `ARisenSeatWalkingBackIsAwayNotLost` and `LostIsPricedFromTheActualLeader`.
-- `SeededPick(count, seed)`, `SweepPick(count, seed)`, `CorridorFirst(...)` as in E4.3.
-- `Corridor` (`First`, `End`, `Next`, `InOrder`, `OutOfOrder`, `Noted`): `Note(cleared)` notes each newly cleared pack
-  of `[First, End)`, in order if it equals `Next`; `Done()` when `Next >= End`; `Share()` = cleared / length. A pack
-  cleared out of order is counted in `OutOfOrder` and never pays `Clear` (only `InOrder` is paid). Note `Done()` needs
-  every pack noted, but `Next` skips ahead over out-of-order ones, so a corridor can be `Done` with `InOrder <
-  Length`.
-- `FightPacks::Note(fighting)`: counts packs joining a fight already holding one. Tested by
-  `AChainPullIsAPackJoiningAnotherPacksFight`.
 
-### E4.10 The wing ladder (`WingLadder.h/.cpp`, `StageScenario::WING_RUNGS`)
+The corridor bookkeeping, the chain-pull tracker and the seeded picks that used to live here were deleted 2026-10-08
+(decision 0019).
 
-**What it is.** A nine-rung difficulty ladder for whole-dungeon runs (`StageScenario.h:218-228`). A rung is `{Lift,
+### E4.2 The wing ladder (`WingLadder.h/.cpp`, `StageScenario::WING_RUNGS`)
+
+**What it is.** A nine-rung difficulty ladder for whole-dungeon runs. A rung is `{Lift,
 ExtraWipes}`: the levels the party is lifted above the dungeon's range (`BeforeLevel`, E3.4) and the wipes spared on top
 of `Instance.WingWipes`:
 
@@ -2457,28 +2154,26 @@ of `Instance.WingWipes`:
 | ExtraWipes | 4 | 3 | 3 | 2 | 2 | 1 | 1 | 0 | 0 |
 
 Rung 8 is "the evaluation's own conditions"; **every evaluation run is on rung 8** (`fight.Rung = Evaluating ? size-1 :
-WingRungNow()`, `InstanceEncounter.cpp:488`). The tier a rung pays at is `rung / 2` (E4.9). The ladder is built in the
-`StageScenario` constructor (`StageScenario.cpp:302-303`) from `Instance.WingRungRuns` (window, 40), `WingRungTarget`
-(0.6) and `WingRungStart` (0), and exists in every stage, whether or not it has a wing arena (see E4.12).
+WingRungNow()`, `InstanceEncounter.cpp:488`). The tier a rung pays at is `rung / 2` (E4.1). The ladder is built in the
+`StageScenario` constructor from `Instance.WingRungRuns` (window, 40), `WingRungTarget`
+(0.6) and `WingRungStart` (0), and exists in every stage, whether or not it has a wing arena (see E4.3).
 
-**State** (`WingLadder.h:48-97`): `_rung` and `_collapsed` (atomics, readable anywhere), `_probes` and `_others` (the
+**State**: `_rung` and `_collapsed` (atomics, readable anywhere), `_probes` and `_others` (the
 last
 `window` progress values), `_sinceRead`, `_reads` (probe means at each read on this rung), `_lower` (the probe mean that
 earned this rung). Not thread-safe by itself; `StageScenario::_wingLadderLock` guards every mutating call.
 
 **Probes.** A training run of a whole dungeon from the door is a *probe* with probability `Instance.WingProbe` (0.2)
-(`fight.Probe`, `InstanceEncounter.cpp:496`): never an evaluation, a drill, or a run started from a Go-Explore cell.
+(`fight.Probe`): never an evaluation.
 Probes are what the policy does without help; the rung's other training runs get `Probe = false`. Why only probes:
 "the rung's other runs, as the reference, crept up from 0.71 to 0.82 on rung 0 and took the target with them"
-(`StageScenario.cpp:1688-1690`). UNVERIFIED: what makes a probe differ in play from other runs (the 0.2 are named
+. UNVERIFIED: what makes a probe differ in play from other runs (the 0.2 are named
 "probes" and measured; `Probe` is the only difference found in this half; check `Build`/`Update` in E3 for any
 assistance given to non-probe runs).
 
-**Progress.** Reported at `ResetEpisode` for a run with a route, not an evaluation, not started from a cell
-(`InstanceEncounter.cpp:441-447`): corridor = `Corridor.Share()`; else 1 if the last boss died; else `min(1, (TrashKills
-+ BossDead) / (HostileTotal + 1))` (0 if `HostileTotal` is 0). A drill does not report to this ladder.
+**Progress.** Reported at `ResetEpisode` for a run that built a boss and was not an evaluation (E3.4): 1 if the last boss died, else `ClearedShare` (`min(1, (TrashKills + BossDead) / (HostileTotal + 1))`, 0 if `HostileTotal` is 0).
 
-**`Note(rung, probe, progress)`** (`WingLadder.cpp:45-107`), per finished run, returns `{Moved, Alarm, Cleared}`:
+**`Note(rung, probe, progress)`**, per finished run, returns `{Moved, Alarm, Cleared}`:
 
 1. A run on a rung other than the ladder's current one is ignored (`:48-50`).
 2. The progress is appended to `_probes` or `_others`, each trimmed to the last `window` entries; probes also
@@ -2519,10 +2214,10 @@ assistance given to non-probe runs).
 last {window} probes made {x:.2f} of the dungeon (target {t:.2f}; the rung's other runs {o:.2f})"`. An alarm is logged
 `LOG_WARN "{stage}: {text}"` **and** appended to events.log; a clear is logged `LOG_INFO` and appended.
 
-**events.log.** `StageScenario::AppendRunEvent` (`StageScenario.cpp:1729-1746`): if `StageSettings::EventsLog` is
+**events.log.** `StageScenario::AppendRunEvent`: if `StageSettings::EventsLog` is
 non-empty,
 create the directory, and append `<UTC time %Y-%m-%dT%H:%M:%SZ> <stage name>: <line>\n`. The path is
-`<RunsDir>/<scenario>/events.log` (`ForgeConfig.cpp:671-672`); mod-animus sets none. It is appended per call with a
+`<RunsDir>/<scenario>/events.log`; mod-animus sets none. It is appended per call with a
 fresh
 `ofstream` (no lock besides `_wingLadderLock` held by the caller path of `NoteWingRun`; `AppendRunEvent` itself is
 `const` and unlocked). The only lines written by C++ are the wing ladder's alarm and clear. A **step is not written to
@@ -2544,7 +2239,7 @@ reads
 and clears, reads are fresh probes not a sliding window, first rung warns after five reads, first rung over the floor
 never warns, a resumed ladder uses the absolute floor, a follower takes the host's rung).
 
-### E4.11 The cluster's ladder: workers report, the host decides
+### E4.3 The cluster's ladder: workers report, the host decides
 
 One ladder for the whole cluster, the host's. Flow:
 
@@ -2572,7 +2267,7 @@ One ladder for the whole cluster, the host's. Flow:
    rung differs from `_clusterRungSent` or the 30-second timer is up, it broadcasts `RUNG <n>`
    (`Bridge/ClusterLink.h:52-53`) and records it.
 6. A worker's `RUNG` order calls `FollowClusterRung`, and its next runs are drawn on that rung
-   (`InstanceEncounter.cpp:488`, `WingRungNow()`).
+   (`WingRungNow()`).
 
 A worker's runs on a stale rung (it has not yet received a step) are dropped on the host by the `rung != now` test, so
 batches straddling a step are partly lost; nothing counts how many.
@@ -2592,11 +2287,10 @@ batches straddling a step are partly lost; nothing counts how many.
   to
   the rung reached (`CurriculumTuning.h:243`). That key is in the cluster fingerprint (the curriculum tuning values), so
   all machines must agree.
-- The drill ladder (E4.4) is *not* shared; `forge cluster` shows nothing for it.
 - Workers' `AddClusterTally` is never called on a worker (guarded by the scenario's role only implicitly: only the host
   reads `TakeTallies`).
 
-### E4.12 `EntranceRespawn.h/.cpp` and the respawn clock (I4)
+### E4.4 `EntranceRespawn.h/.cpp` and the respawn clock (I4)
 
 The behaviour: a dead seat is out for `Respawn.DelayMs` (default 10000), then stands up alive at full health and power
 at
@@ -2649,118 +2343,37 @@ Rise at 11000, Rejoined at 60000), `PartyFollowTest.cpp:54-69` (the follow stage
 `EntranceRespawnTest`** though the header comment (`EntranceRespawn.h:30-31`) names one; `RiseAtEntrance`, `ForgetFrame`
 and `WipeLatch` have no test of their own (`WipeLatch` is referenced in no test found: grep over `src/test`).
 
-### E4.13 Config keys read by this half
+### E4.5 Observed issues
 
-All `AnimusForge.Curriculum.` + key (`StageSettings::TuningPrefix`); read through `CurriculumTuning::Instance`
-(`Encounters` reads `_scenario.Tuning().Instance.X`). Defaults from `CurriculumTuning.h:185-277`.
+1. `ClusterRung()` is unconditional (`StageScenario.h`): `RUNG` is broadcast in every stage; stale-rung re-imposition
+   across stages (E4.3).
+2. The host's ladder rung is not persisted; resuming needs `Instance.WingRungStart` set by hand.
+3. `WingLadder` alarm clears silently: `_collapsed` is set to -1 on any non-collapsed read, but the `Cleared` line is
+   only produced when `probes >= floor`; a read still under the floor but not yet `needed` in a row clears the flag (and
+   the status warning) with no events.log line.
+4. `Progress.cpp` hard-codes "5 reads" and "3 reads"; `WingLadder::COLLAPSE_READS(_FIRST)` can drift from it.
+5. A step is logged only to the server log, not to events.log; the file therefore has alarms without the steps that give
+   them context.
+6. `AppendRunEvent` opens, appends and closes per call with no lock and no flush guard; concurrent map threads can
+   interleave only if two alarms fire at once (the ladder lock serialises `NoteWingRun`, which is the only caller).
+7. `EntranceRespawn.h` names `EntranceRespawnTest`, which does not exist; `WipeLatch` is untested.
 
-| Key | Default | Used at |
-|---|---|---|
-| `Instance.WingFullClear` | 1 | route packs: `InstanceEncounter.cpp:1391,1513` |
-| `Instance.WingWaypointYards` | 30 (min 5 applied) | route spacing `:1666` |
-| `Instance.WingTrace` | 1 | gates the `LOG_INFO` lines of starts and run ends |
-| `Instance.WingProbe` | 0.2 | probe share `:496` |
-| `Instance.WingRungRuns`, `WingRungTarget`, `WingRungStart` | 40, 0.6, 0 | ladder construction `StageScenario.cpp:302-303` |
-| `Instance.WingStall`, `WingStallGraceMs`, `WingStallOthers`, `WingClock` | 0.1, 60000, 0.2, 0.002 | `Reward` |
-| `Instance.WingEngage`, `WingReadyShare` | 1.0, 0.8 | `Reward`, `Update` `:739` |
-| `Instance.WingChainPull`, `CorridorPack`, `WingCrowd`, `WingCrowdFree` | 3.0, 4.0, 0.15, 4 | `Reward` |
-| `Instance.WingStray`, `WingStrayYards`, `WingAway` | 0.02, 25, 0.02 | `Reward` |
-| `Instance.WingTrashKill`, `WingWaypoint`, `WingMidBoss`, `WingBoss`, `WingProgress`, `WingClear`, `WingTimeout` | 1.0, 0.5, 8.0, 25.0, 60.0, 25.0, 30.0 | `Reward` |
-| `Instance.WingDeath`, `WingWipe`, `WingWipes` | 3.0, 5.0, 2 | `Reward` / `Update` |
-| `Instance.PullClean`, `PullExtra`, `PullTimeout`, `PullOthers`, `PullGraceMs` | 5.0, 5.0, 2.0, 0.5, 20000 | drill `Reward` |
-| `Instance.PullStartYards`, `PullLift` | 35, 2 | `StartDrill` `:2304`; `PullLift` caps a drill's lift at `BeforeLevel` `:501` |
-| `Instance.PullRungStart`, `PullRungRuns`, `PullRungTarget` | 0, 100, 0.7 | drill ladder `:143`, `NoteDrill` |
-| `Instance.MaxTierScale` | 6 | `TierScale` |
-| `Difficulty.TierScale` | see tuning | `TierScale` |
-| `Respawn.DelayMs`, `Respawn.RejoinYards` | 10000, 15 | `RiseDead` (E3.7) |
-| `Stage.<name>.GoalPlaces` | `SeenOnly` (1) | `SeenWorld` `:2493` |
-
-The complete table with clamps is in [cpp-tuning-keys.md](cpp-tuning-keys.md).
-
-### E4.14 Tests covering this half
-
-`WingLadderTest.cpp`; `DungeonStagesTest.cpp` (stage shape, `ACorridorsPacksAreClearedInRouteOrder`,
-`AChainPullIsAPackJoiningAnotherPacksFight`, `AWingsTierIsItsLaddersRung`, `ThePurposesAreOutcomesAndThePricesCosts`,
-`LostIsPricedFromTheActualLeader`, `ARisenSeatWalkingBackIsAwayNotLost`, `AnUnseenPackOrBossNeverReachesTheGoalPlaces`,
-`TheLayoutHoldsNoCreatureDataAndNoOrder`, `TheFrontierIsOpenGroundBesideTheUnseen`,
-`WailingCavernsIsNeverDrawnInTraining`,
-`TheDeadminesDoorsLeversAndCannonAreUsedThroughTheHandlers`); `PartyFollowTest.cpp` (clock use). Not covered by any C++
-test found: `UpdateWingEnemies`, `StartAt`, `StartCorridor`, `StartDrill`, `UpdateDrill`, `NoteDrill`,
-`Reward` as a whole, `RiseAtEntrance`, `AppendRunEvent`, the cluster tally parse. Those need a live map; the pure parts
-were pulled into `WingRun.h`, `SeenPlaces.h`, `WingLadder.h` so they could be tested, and are.
-
-### E4.15 Observed issues (this half)
-
-1. `InstanceEncounter.cpp:2569-2625` (`Reward`): the outer `bool const tankSeat` (`:2551`) is shadowed by `int32
-   tankSeat`
-   inside `if (bot)` (`:2589`); the leader lookup (`tankSeat`, `LeaderSeat`) is written out twice, here and in
-   `SeenWorld`
-   (`:2501-2516`), and `TraceWing` (E3.6) chooses the tank again. Three copies of "who is the leader".
-2. `Reward` and `IsTerminal` both spell the "run is over" condition (`:2644-2646`, `:2745-2752`); they must stay in
-   step.
-3. `SelectTarget` (`:2695`) is unreachable in every live stage (the sight block makes the client's selection the target)
-   and always returns true: dead code under principle 17 unless a non-sight wing stage is planned.
-4. `WriteState` writes `Tier / (rows - 1)` (the boss row), but the reward tier is the ladder rung / 2: two different
-   meanings of "tier" in one encounter (`:2739` vs `:2723`).
-5. `ClusterRung()` is unconditional (`StageScenario.h:240`): `RUNG` is broadcast in every stage; stale-rung
-   re-imposition
-   across stages (E4.11).
-6. The host's ladder rung is not persisted; resuming needs `Instance.WingRungStart` set by hand
-   (`CurriculumTuning.h:243`).
-7. `WingLadder` alarm clears silently: `_collapsed` is set to -1 on any non-collapsed read (`WingLadder.cpp:106`), but
-   the
-   `Cleared` line is only produced when `probes >= floor`; a read still under the floor but not yet `needed` in a row
-   clears the flag (and the status warning) with no events.log line.
-8. `Progress.cpp:645-651` hard-codes "5 reads" and "3 reads"; `WingLadder::COLLAPSE_READS(_FIRST)` can drift from it.
-9. A step is logged only to the server log, not to events.log; the file therefore has alarms without the steps that give
-   them context (`StageScenario.cpp:1710-1716` vs `:1717-1726`).
-10. `AppendRunEvent` opens, appends and closes per call with no lock and no flush guard; concurrent map threads can
-    interleave only if two alarms fire at once (the ladder lock serialises `NoteWingRun`, which is the only caller).
-11. `EntranceRespawn.h:30-31` names `EntranceRespawnTest`, which does not exist; `WipeLatch` is untested.
-12. `UpdateWingEnemies` fills `env.Targets` from the server's unit list through walls (E4.2); principle 1 depends on a
-    later stage of the pipeline hiding them. Needs an owner's confirmation (listed as UNVERIFIED).
-13. `StartDrill` may select a pack whose `Gap` is `float max` (no other creature), reported as `999` in `DrillGap`
-    (`std::min(pack.Gap, 999.0f)`); the log says "gap 999 yd".
-14. Comment/code drift: `Scenario`-level comment in `StageScenario.h:490-491` ("The running route share of training runs
-    ... runs on several map threads may lose a step") describes a former running-average design; `WingLadder` is now
-    mutex-guarded. `InstanceEncounter.cpp:441` comment "count toward the support's running share" refers to the removed
-    support ladder.
-15. Long lines over 120 columns in this range: `InstanceEncounter.cpp:2273-2276,1767` (several `LOG_INFO` format
-    strings); not
-    counted exactly.
-16. `Instance.PullRungStart`'s ladder has four fixed rungs (`PULL_GAPS`, `:119`); `PullRungRuns`/`Target` tune only the
-    step, so adding a rung needs a code edit.
-
-### E4.16 Reviewer notes
+### E4.6 Reviewer notes
 
 - Is the probe/others split worth its cost? Others are tallied, shipped to the host and averaged only for a log line
   (`Result.Moved->Others`); only the probe mean decides. Dropping `_others` removes half the tally traffic.
 - The ladder never steps back and the alarm is advisory. Decide whether a stall alarm (reads with no new best, or flat
   below target) belongs in `WingLadder` (host-side, where the reads are) or in the learner; the deploy gate wants one.
 - Persisting the rung: write it to `progress.json`/`stage.json` and read it at resume instead of a conf key that is part
-  of
-  the cluster fingerprint.
+  of the cluster fingerprint.
 - Replace `ClusterRung()`'s unconditional answer with `-1` for stages without a wing arena, and reset
   `_clusterRungSent` on every `START`.
-- `UpdateWingEnemies` is 230 lines doing five jobs (objects, doors, pack bookkeeping, kills, slot ranking, crowd). Split
-  before touching it. Its per-decision cost: a grid visit for objects and another for units; fine now, check before
-  adding seats.
-- `Reward` pays a Shaping term (`Approach`, `Threat`) with `tierScale` passed as the `tier` argument; check
-  `RewardLedger::Add`'s score rule (outcome/cost only) before changing categories.
-- `fight` state is `EnvInstance` reset by value-assignment `fight = EnvInstance()` at every `ResetEpisode`: large
-  vectors reallocate every episode; `routes`/`plan` copies per `Build` (`WingPlan` returned by value with its dense
-  route and corner tables) are the likely reset-time cost behind `place_p95_ms`.
-- `WingRoute` is cached by `{MapId, Entry}` per process, not per seed: a change to the spawn
-  data needs a restart, and Deadmines' `Hostile` filter is evaluated on whichever instance builds first.
+- `Reward` pays a Shaping term (`Threat`) with `tierScale` passed as the `tier` argument only for Outcome and Cost
+  terms; check `RewardLedger::Add`'s score rule (outcome/cost only) before changing categories.
 
-### E4.17 UNVERIFIED (check these)
+### E4.7 UNVERIFIED (check these)
 
 - Live conf values of every `Instance.*` key (defaults above are from `CurriculumTuning.h`).
-- Whether the dungeon stages' pack block receives the server-side enemy slots or only seen ones (E4.2).
-- Whether `CrowdBlock`/`SeatView::Crowd` are blanked in the dungeon layouts.
-- The wire path of `Marks` (Go-Explore archive) from `EnvInstance` to `explore.py`.
 - What distinguishes a probe run in play, beyond the flag.
-- Whether `RiseDead` resets auras, cooldowns, pets (E3.7).
+- Whether `RiseAtEntrance` resets auras, cooldowns, pets (E3.7).
 - That all seats of one env are observed on one thread (`SeenWorld` mutates cached frontier state).
-- Line ranges in E4.1 and E4.7 are within a few lines; re-grep before quoting.
-

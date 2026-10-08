@@ -1,4 +1,4 @@
-"""human_hard_spots.json (FORMAT.md §5): where humans die, get stuck, fall and drown, for Go-Explore and start pools.
+"""human_hard_spots.json (FORMAT.md §5): where humans die, get stuck, fall and drown, for start pools.
 
 ```
 {"format": 1, "maps": {"<map>": [{"pos": [x, y, z], "kind": "death|stuck|fall|drown", "count": n}]}}

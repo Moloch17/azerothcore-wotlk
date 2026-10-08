@@ -65,7 +65,7 @@ returned
   Keys: `trainer` (`MappoTrainer.state_dict()`: actor, critic, value_norm, actor_opt, critic_opt, optional vision_opt and slow_opt),
   `config` (`TrainConfig.to_dict()`), `spec` (`asdict(Spec)`), `update`, `env_steps`, then `_checkpoint_extra()`
   (`:1122`): `convergence` (tracker), `controller`, `stage` (the whole stage.json), `score_kind`, and when present
-  `explore`, `style` and `partner_scores` (the pool's scores, restored on resume). The partner pool's membership, the cast, the layout weights and the replay seeds are not saved.
+  `style` and `partner_scores` (the pool's scores, restored on resume). The partner pool's membership, the cast, the layout weights and the replay seeds are not saved.
 - Other files in the run dir: `config.yaml` and `spec.json` and `stage.json` (leader, at start), `progress.json`
   (every update and around evaluations), `finished.json`, `best.pt`, `latest.pt`, `checkpoint_<update:06d>.pt`,
   `best_rung<k>.pt`, `eval_baseline*.json`, `eval_motion.npz`, `partners/`, `partners.json`, `tb/`.
@@ -89,14 +89,13 @@ returned
    and `gae_lambda` (per `reference_decision_ms`) to the sim's `decision_ms`; foresight discounts likewise.
 6. `recurrent_size <= 0` raises (the flat update was removed). `ConvergenceController(config, layout names)`.
    `score_kind` = `eval.score_column()` if the sim reports that column, else "" (the return).
-7. Go-Explore archive (`explore.enabled` and a stage that reports wing cells). A follower fetches shared files.
-8. `_make_style()`, then `_load_or_seed()` (below), `trainer.set_goal_space`, then either
+7. `_make_style()`, then `_load_or_seed()` (below), `trainer.set_goal_space`, then either
    `camera_columns_clear()` (resume, else `SystemExit`) or `clear_blind_columns()` (fresh).
-9. Broadcast `(update, env_steps)` from the leader and `broadcast_module` each network, value_norm, style disc.
+8. Broadcast `(update, env_steps)` from the leader and `broadcast_module` each network, value_norm, style disc.
    Async: leader creates `Hub`, a follower `Link`, takes the leader's counters and sets `evaluating = False`.
-10. `trainer.sync_rollout()`; `RolloutBuffer` (and a spare when `overlap_updates`); `acting_state`; the SIL note;
+9. `trainer.sync_rollout()`; `RolloutBuffer` (and a spare when `overlap_updates`); `acting_state`; the SIL note;
     the `ThreadPoolExecutor(max_workers=1)` for overlapped updates.
-11. Build the metrics `columns` (fixed list at `:806-816` plus conditional groups: style, explore, goals, look,
+10. Build the metrics `columns` (fixed list at `:806-816` plus conditional groups: style, goals, look,
     slow goals, foresight), `RunLogger` (leader), `EvalLog`, `ProgressWriter`, cached baseline score,
     `progress.restore_evaluation`, and column indexes for `present`, `difficulty`, `at_top_rung`. `apply_holds()`.
 
@@ -104,7 +103,7 @@ returned
 
 Resume: load `latest.pt`; `resume_mismatch(checkpoint spec, spec)` over `runs.RESUME_SPEC_KEYS` (scenario,
 agents_per_env, obs_dim, state_dim, num_actions, layouts) else `SystemExit` "start it fresh"; `layout_changes(checkpoint
-stage, stage)` else `SystemExit`; `trainer.load_state_dict`; style and explore states; `update`, `env_steps`;
+stage, stage)` else `SystemExit`; `trainer.load_state_dict`; style state; `update`, `env_steps`;
 `restore_evaluation_state`. Then the parents (also computed on resume, but seeding runs only when not resuming; the
 teachers are built either way): see [py-learner-seeding.md](py-learner-seeding.md) for seeding, cast, partners and
 distillation. Not checked on resume: `episode_info_names`, `image_bytes`, `map_bytes`, `look_heads`, `kinematics_dim`,
@@ -157,10 +156,10 @@ far side (cast, partners); write progress; run an evaluation if `eval.at_start` 
    rollout acts on weights one update stale.
 
 `log_update` (`:1995`): gather ended episodes from all ranks; `controller.observe_update(layout stats, lr_scale)`;
-`explore_update`; `observe_training_episodes` (difficulty, at_top_rung per class); return unless `update % log_every ==
+`observe_training_episodes` (difficulty, at_top_rung per class); return unless `update % log_every ==
 0`;
 build the row (counters, scales, ladder alarms as rung or -1, `frozen_layouts`, cast/partner stats, distill coef,
-explore, style), add `episode_<name>` means via `episode_means.means` (per-event columns weighted by their event count,
+style), add `episode_<name>` means via `episode_means.means` (per-event columns weighted by their event count,
 NaN when none) and the update `stats`; `observe_entropy`; `audit_reward`; `audit_progress`; `logger.log`;
 `progress.training`/`write`; one console line `update N | steps S | R sps | rollout .. compute .. [sync ..] wall W sps [update-bound] | ...` (W = steps over the whole cycle, `wall_steps_per_sec`; "update-bound" when the sim waited over 20% of the cycle).
 `audit_progress` prints "learning has stalled" when the KL divided by lr scale stays under `STALL_KL = 0.0015` for
@@ -206,7 +205,7 @@ A run that raises in the loop still saves `latest.pt` here, whatever state the n
 
 The sim is the server and the learner the client. One STEP per decision carries every env's observations; the sim
 blocks until the ACT. Frame: `HEADER <II` (type, length). Messages (`protocol.MsgType`): HELLO 1, SPEC 2, STEP 3, ACT 4,
-CLOSE 5, MODE 6, WEIGHTS 7, REPLAY 8, DEVICE 9, DEVICE_ACK 10, PROGRESS 11, EXPLORE_STARTS 12. `PROTOCOL_VERSION = 25`
+CLOSE 5, MODE 6, WEIGHTS 7, REPLAY 8, DEVICE 9, DEVICE_ACK 10, PROGRESS 11 (12 is unused). `PROTOCOL_VERSION = 25`
 (`protocol.py:14`; the sim's `Bridge/Protocol.h:180` agrees). `MODE_FLAG_STAND_IN = 2`; bit 1 is unused (`:67-70`).
 
 - Connect: `ForgeEnv._connect` retries every second until `connect_timeout` (600 s), Unix socket or `tcp://host:port`
@@ -231,14 +230,14 @@ CLOSE 5, MODE 6, WEIGHTS 7, REPLAY 8, DEVICE 9, DEVICE_ACK 10, PROGRESS 11, EXPL
   Replies with a fresh STEP of every env. WEIGHTS: float32 per layout slot, `MAX_SPECS = 4` per layout. REPLAY: seed
 base,
   fraction, then seed list (max 65536). PROGRESS: three float32 (progress, shaping scale, cost scale), clamped to [0,1].
-  EXPLORE_STARTS: share and up to 64 cells. None of WEIGHTS, REPLAY, PROGRESS, EXPLORE_STARTS gets a reply.
+  None of WEIGHTS, REPLAY, PROGRESS gets a reply.
 - `ForgeEnv.step` sends every group's ACT before reading (half-batch works as a whole-pool step); `send_act` and
   `receive_step` are the pipelined calls. `close()` sends CLOSE.
 - `ClusterEnv` (`env.py:245`): several sims as one pool, laid end to end; the first sim is the host's and is not
   optional. A worker that errors (`OSError`, including a socket timeout of `cluster_timeout`, default 60 s) is dropped:
   its rows come back as `_absent` (no character present, mask action 0 only, zero reward), `sat_out` marks them, and the
   rollout marks those decision rows invalid. `rejoin()` (every 10 s) reconnects only a worker whose SPEC is identical,
-  re-sends the last WEIGHTS, REPLAY and EXPLORE_STARTS, and returns its fresh STEP for the rollout to splice in. A
+  re-sends the last WEIGHTS and REPLAY, and returns its fresh STEP for the rollout to splice in. A
   cluster's evaluation seeds are shared out in proportion to live envs (`_shares`). The workers' sims are opened
   without a device (`ForgeEnv(endpoint, ...)`, no `device=`), so only the host's sim can use device buffers.
 
@@ -258,7 +257,7 @@ Top level: `run_name`, `runs_dir`, `layouts_dir`, `socket`, `cluster_sims`, `clu
 `train_device`, `rollout_device`, `torch_threads`, `init_from`, `seed_from`, `merge_from`, `finetune_from`, and the
 sections `mappo` (rank_sync, recurrent_size, gamma, gae_lambda, reference_decision_ms,
 foresight_*, goal_*, slow_goal_*, weight_sync_every, entropy_coef, ...), `eval`, `convergence`, `fade`, `costs`,
-`entropy_floor`, `layout_sampling`, `distill`, `cast`, `style`, `status`, `explore`. Defaults:
+`entropy_floor`, `layout_sampling`, `distill`, `cast`, `style`, `status`. Defaults:
 [py-learner-config.md](py-learner-config.md).
 
 ## Tests

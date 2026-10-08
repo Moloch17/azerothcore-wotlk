@@ -24,7 +24,6 @@
 #include "EntranceRespawn.h"
 #include "Env.h"
 #include "Position.h"
-#include "RoutePlanner.h"
 #include <array>
 #include <map>
 #include <mutex>
@@ -39,9 +38,11 @@ namespace Animus::Curriculum
     ///
     /// **The leader** is in the owner's slot (StageScenario::OwnerAgent, BuildOwnerSeat), moved by the player
     /// controller and reported to the server as a client, never a spline. Scripted, its keys are the seek helper's
-    /// (Movement::Seek) toward the next corner of the route planner's way to the next stop: the navmesh drives the
-    /// script, never a bot's input. PartyFollow.CastShare percent of training episodes hand it to a frozen checkpoint
-    /// instead (stage.json cast "leader"; its objective is the next stop); evaluations always keep the script. **Not
+    /// (Movement::Seek) toward the next corner of the stock PathGenerator's way to the next stop, worked out when the
+    /// episode is built (never per decision): the navmesh drives the one scripted mover, the thing followed, never a
+    /// policy's input (decisions 0002 and 0019). PartyFollow.CastShare percent of training episodes hand it to a frozen
+    /// checkpoint instead (stage.json cast "leader"; its objective is the next stop); evaluations always keep the
+    /// script. **Not
     /// dead code:** this leader is the one user of the owner's slot (OwnerAgent, BuildOwnerSeat, CastOwnerActive, the
     /// follow case of StageScenario's cast row), left standing when the first curriculum's owner was deleted around it.
     ///
@@ -136,7 +137,11 @@ namespace Animus::Curriculum
             // The leader's route and where it is on it.
             std::vector<Position> Stops;
             uint32 NextStop = 0;
-            Route Way;
+            /// The leader's way to each stop: the corners of the stock PathGenerator's path from the stop before it
+            /// (the door for the first), cached per map and worked out when the episode is built; and the corner of
+            /// the leg to the next stop that it walks to.
+            std::vector<std::vector<Position>> Legs;
+            uint32 Corner = 0;
             uint32 LegStuckMs = 0;          // the leader's controller-stuck time when the leg began
             Phase Mode = Phase::Stopped;
             uint32 StopUntilMs = 0;
@@ -162,6 +167,12 @@ namespace Animus::Curriculum
         /// The dungeon's route on `mapId`: each boss's place (InstanceBosses' Dungeon rows, the world database's
         /// spawns), in the dungeon's order, found once per map.
         [[nodiscard]] std::vector<Position> RouteStops(uint32 mapId);
+        /// The leader's legs on `map`: the door to the first stop, each stop to the next, as the stock PathGenerator
+        /// walks them, found once per map. Called from Build, on the thread that resets: PathGenerator uses the map's
+        /// one navmesh query, which is safe only on the world thread outside MapMgr::Update or inside the map's own
+        /// task (a PartyFollow stage resets on the world thread: StageScenario::ResetsStayOnMap).
+        [[nodiscard]] std::vector<std::vector<Position>> LegsFor(Map* map, Player* walker, Position const& door,
+            std::vector<Position> const& stops);
         /// Yards from seat `seat` to the party: to the leader while it is alive, else to the living others' centroid;
         /// negative with nobody to be with.
         [[nodiscard]] float PartyYards(Env const& env, uint32 seat, Player const* bot) const;
@@ -176,6 +187,7 @@ namespace Animus::Curriculum
         std::vector<EnvParty> _envs;
         std::mutex _routesLock;
         std::map<uint32, std::vector<Position>> _routes;
+        std::map<uint32, std::vector<std::vector<Position>>> _legs;
     };
 }
 

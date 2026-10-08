@@ -68,7 +68,7 @@ working day, 6 to 9 hours, and do not start in the evening**: the cluster is can
 | 0 pre-flight | 10 min | |
 | 1 tag, style | 5 min | |
 | 4 dev build (`./forge.sh --build`) | 30 to 60 min (`-march=native` worldserver compile) | no output while the container compiles |
-| 4 twelve `forge run <stage> random 1` | 1 to 3 min a stage; a dungeon stage up to 10 min (it plays a whole episode) | `forge status` shows the episode count |
+| 4 ten `forge run <stage> random 1` | 1 to 3 min a stage; a dungeon stage up to 10 min (it plays a whole episode) | `forge status` shows the episode count |
 | 4 `stage_json_diff`, `sim_metrics --check`, `resume_check --fresh --all` | under 5 min together (the trainers build on CPU: a minute for the largest) | |
 | 5 resume dry run | 2 to 5 min | |
 | 6 cancel, backup, snapshot, prune, key check | cancel under 2 min; backup 5 min; prune and checks 10 min | `Plan ended: cancelled` waits for the learner's last save |
@@ -231,9 +231,9 @@ after the deploy; the next gate's step 4 is then `forge stagefiles all` once, wi
 as the fallback.
 
 The live stages: `move1_controls move2_seek move3_interact move4_follow combat1_fight combat2_packs combat3_survive
-group1_roles group2_corridor dungeon1_pulls dungeon2_ragefire dungeon3_deadmines`.
+group1_roles dungeon2_ragefire dungeon3_deadmines`.
 
-Success: 12 files, `ls var/animus-forge/gate/layouts/*/stage.json | wc -l` prints 12.
+Success: 10 files, `ls var/animus-forge/gate/layouts/*/stage.json | wc -l` prints 10.
 
 **What is mandatory and what is recommended.** The comparison with the old build's file (below) is **mandatory for M1
 and M2** (they have real old files and checkpoints: a mismatch there is a resume that would be refused or would read
@@ -269,7 +269,7 @@ python3 apps/forge/tools/sim_metrics.py --check var/animus-forge/gate/layouts/*/
 Success: exit 0 (it lists any column a build reports that the C++ reader missed; "extraction has N exact the file lacks"
 is the conditional columns of a stage and is not a failure).
 
-And the learner side of **all twelve stages**, from their yamls and the files just written. M3 to D3 have never run on
+And the learner side of **all ten stages**, from their yamls and the files just written. M3 to D3 have never run on
 the learner (the M4 held-out bug was found only because a test read the yamls); this is the only check that they start:
 
 ```
@@ -278,7 +278,7 @@ DEV apps/forge/python/.venv/bin/python apps/forge/tools/resume_check.py --fresh 
 ```
 
 (one stage: `--fresh --stage move3_interact --stage-json var/animus-forge/gate/layouts/move3_interact/stage.json`.)
-Success: twelve lines `PASS` and `12 of 12 stages start on the learner`, exit 0. A `FAIL` line names the stage, the
+Success: ten lines `PASS` and `10 of 10 stages start on the learner`, exit 0. A `FAIL` line names the stage, the
 check (held-out arenas, `eval.mask_actions`, the ladders' gate column, the trainer) and the first error.
 `--fresh` builds the spec from `stage.json`; the sim's state width (1958) and goal count (348) are constants in the tool
 that a test pins against the real M2 checkpoint (`--state-dim`, `--goal-count` override them if the sim's change).
@@ -406,7 +406,7 @@ stages and the gate's tools depend on; each must be present with the same value 
 |---|---|---|
 | `AnimusForge.Vision.EvalVideos` | 8 | the evaluation videos each machine films (`forgectl videos`, `collect-videos.sh`); a machine without it films the code default, also 8, but a conf that says 0 films none |
 | `AnimusForge.Vision.EvalVideoScale` | 4 | how large those frames are scaled; a different scale makes videos that do not compare |
-| `AnimusForge.Stage.<stage>.TicksPerDecision` for the 12 stages (`move1_controls move2_seek move3_interact move4_follow combat1_fight combat2_packs combat3_survive group1_roles group2_corridor dungeon1_pulls dungeon2_ragefire dungeon3_deadmines`) | 5 each (a 50 ms world tick under 250 ms decisions) | the player controller's facing and heartbeat run once a world tick (`test_stage_ticks.py`); **a machine without the key runs the stage at the global `TicksPerDecision`, 1: a 250 ms world tick, different dynamics, silently, in the pooled data** |
+| `AnimusForge.Stage.<stage>.TicksPerDecision` for the 10 stages (`move1_controls move2_seek move3_interact move4_follow combat1_fight combat2_packs combat3_survive group1_roles dungeon2_ragefire dungeon3_deadmines`) | 5 each (a 50 ms world tick under 250 ms decisions) | the player controller's facing and heartbeat run once a world tick (`test_stage_ticks.py`); **a machine without the key runs the stage at the global `TicksPerDecision`, 1: a 250 ms world tick, different dynamics, silently, in the pooled data** |
 | `AnimusForge.Vision.Width`, `Height`, `RenderSizes`, `FovH`, `FovV`, `Range`, `Zoom`, `Pitch` | 128, 64, "32x16, 48x24, 64x32, 128x64:0.4", 120, 60, 100, 6, -15 | the camera of every stage with a vision block; only the image's width and height are checked against the learner (the image byte count), the rest are not |
 | `AnimusForge.Map.MaxTiles`, `CoarseTiles`, `KeepShare`, `AgeOffsetSeconds`, `AnimusForge.Memory.MaxEntities` | 4096, 0, 0.5, 600, 64 | the mental map and the entity memory the observation carries (M2 on) |
 | `AnimusForge.Classes`, `EpisodeSeconds`, `SpawnPoint.MapId/X/Y/Z/O`, `ContinentReplicas`, `HalfBatch` | per the host's conf | what every episode is built from |
@@ -426,7 +426,7 @@ done
 sha256sum var/gate/other-keys.*.txt; diff var/gate/other-keys.sarah@192.168.0.68.txt var/gate/other-keys.<worker>.txt
 ```
 
-Success: the same hash on all four, and `grep -c TicksPerDecision` of the file prints 13 (12 stages and the global key)
+Success: the same hash on all four, and `grep -c TicksPerDecision` of the file prints 11 (10 stages and the global key)
 and `grep -c EvalVideo` prints 2 on each machine. A key a conf lacks is set by appending it, **after a backup**, on that
 machine only:
 
