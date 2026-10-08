@@ -645,3 +645,91 @@ What a fork CI would take, in order:
   `cluster.toml` fails them (R-28).
 - Coverage gaps are in `known-issues.md` C1 to C5 and not repeated.
 
+## 5. Leftovers inventory
+
+Method: `grep -rIE` over the forge-owned trees (`src/server/game/Animus`, `src/test/server/game/Animus`,
+`apps/forge`, `docs/forge`, the forge's own core files) and over the lines the forge added to upstream files
+(`git diff 37de65eb0 forge`). Counts are lines, not files.
+
+### 5.1 The good news, stated as findings
+
+| Pattern | Forge code | Upstream-edited files (forge's added lines) |
+|---|---|---|
+| `TODO`, `FIXME`, `HACK`, `XXX` | **0** in `Animus/`, `apps/forge`, `docs/forge`, `forge.sh`, compose files | 0 (the one in the tree is upstream's `apps/docker/docker-cmd.sh:3`) |
+| `#if 0` | **0** in `src/server/game`, `src/common`, `src/server/apps`, `src/server/scripts/Commands`, `src/test` | 0 |
+| `deprecated` | 0 | 0 |
+| commented-out code (heuristic: a `//` line that is a complete statement) | none found in `Animus/`, `ForgeMain.cpp`, `Forge/`, `cs_forge.cpp` | none |
+| `obsolete` | 1 in Python (`rename_runs.py` header), 5 in docs | 0 |
+
+The comment style is prose, long and dated. That is a different cost (section 5.4).
+
+### 5.2 By directory
+
+| Directory | Pattern and count | Harmless or hiding a problem |
+|---|---|---|
+| `src/server/game/Animus` | `stage\d+_` 32 lines; `animus-lib` 2; `curriculum-v1` 2; `.agents/plans` 3; `Playtest` 3 | harmless history in 29 of the 32 stage lines (they cite what a run measured, e.g. `CurriculumTuning.h:46,61,68`, `PetBlock.cpp:243,338,381`). Misleading in two: `ForgeConfig.h:60` (`forge start stage11_raids`) and `ForgeCommands.cpp:506` (`forge fast 30M stage8_duel`), the help text an operator reads |
+| `apps/forge/python/animus` | `stage\d+_` 27 (`config.py` 11, `train.py` and `mappo/*` 10); `.agents/plans` 3 | historic measurement comments, except the **usage docstrings** `train.py:3`, `export.py:3,101`, `bench_learner.py:3` (a deleted config and run name as the example command) |
+| `apps/forge/python/tests` | `stage\d+_` 15 (mostly `test_stage_names.py`'s archived-name set) | deliberate: that test is the guard against strays (`test_stage_names.py:1-30`) and reads `modules/mod-animus` (`:36`), a gitignored sibling |
+| `apps/forge/tools` | `stage\d+_` 35, all in `rename_runs.py` (`:13-28`) | a **one-shot migration script** for runs renamed on an earlier renumbering; its mapping is finished history. Candidate for deletion (R-26) |
+| `src/server/apps/worldserver/worldserver.conf.dist` | 7 stage-name lines (`:5068`, `:5616-5629`, `:5764`, `:5798`, `:6286`) | measurement history inside option descriptions; `:5798` ("`stage4_duel` was the default until it was archived") describes a default that no longer exists |
+| `src/server/game/Maps`, `Map.cpp:854` | `stage20_quest` | harmless; F-15 |
+| `docs/forge/0*.md` | `stage\d+_` 13; `animus-lib` 12; `mod-animus-forge` 9 | **hiding a problem**: chapters 03 and 05 describe the removed module layout (R-22) |
+| `docs/forge/reference` | `stage\d+_` 12 | quotes of the code's own comments |
+| everywhere | `mod_animus_forge` 64 lines in the scanned trees (25 files repo-wide) | the real per-machine config name (R-20); not a leftover but a legacy name in current use |
+| everywhere | `Playtest` 48 lines in 9 files | live gate (R-30) |
+
+### 5.3 Dead and unreachable code in the core
+
+The forge's principle 17 is "dead code is deleted, not gated", and the delta document says the stock bodies were
+deleted. Five places still keep the upstream body under an early `return`, which is the opposite of that rule but
+keeps the diff small for a merge. After the merge in section 1, upstream's changes to those bodies are silently dead:
+
+| Place | What stays dead |
+|---|---|
+| `Pet.cpp:547-560` (F-8) | the whole of `SavePetToDB` after `return;`; upstream's 145/122-line pet refactor lands inside it |
+| `PlayerUpdates.cpp` `UpdateAdditionalSaves` (merge conflict hunk, `:2473-2482`) | everything after `return;`, including the line upstream just renamed |
+| `AchievementMgr.cpp:521` onward | 13 entry points that return first thing; the bodies stay |
+| `PlayerStorage.cpp:7199-7221` | not dead (it returns only `if (!create)`); the `create` path is live |
+| `MapUpdater::ParallelFor`, `PCQueue::Reset` (forge copy), `SetSimOwned`, `IsSimGroup`, `Set/GetIncludeFlags`, `SetMapUpdateInterval` | section 1.5 |
+
+### 5.4 Stale references to deleted things, and comments that cite files a clone does not have
+
+- **Deleted stages and tools.** `stage\d+_` (142 lines overall), `curriculum-v1` (19), `animus-lib` (19),
+  `mod-animus-forge` (13). The git tags exist: `curriculum-v1`, `curriculum-movement-v1`, `pre-cleanup-2026-10-07`,
+  `archive/*` (`git tag`). Harmless where dated; problematic only in operator-facing text (above).
+- **`camera-vision.GPU.md` is cited on 65 lines in 44 files and exists nowhere in the tree** (`git ls-files | grep -c
+  camera-vision` = 0), for example `DeviceApi.h:64`, `VisionDevice.h:27`, `VisionGpu.h:33`, `VisionScene.h:43`,
+  `VisionDiff.h:30`, `Vision.hip:23,33`, `DeviceRuntime.h:23`, `game/CMakeLists.txt:111,132`,
+  `VisionGpuDataTest.cpp:39`, `VisionGpuTest.cpp:31`, `worldserver.conf.dist`. The "amendment 5" that justifies
+  `-ffp-contract=off` (`game/CMakeLists.txt:132`) is in that missing file.
+- **Gitignored plan folders cited from code** (`.gitignore` excludes `.agents/plans/**`): `PlayerController.h:29` and
+  `ReportCadence.h:27` (`.agents/plans/player-controller/client-constants.md`, the constants' source), `Stages.cpp:23,
+  83,436` (`.agents/plans/movement-curriculum/`, `perception-goals/tools/rooms.py`,
+  `dungeon-curriculum/tools/sites.py`),
+  `StockadeRoomsDataTest.cpp:43` (`perception-goals/tools/table.py`), `DeadminesSitesDataTest.cpp:45` (`sites.py`),
+  `parity.py:2`, `human/README.md:4`, `human/FORMAT.md:4`. **This one hides a problem:** the scripts that generate the
+  Stockade room table and the Deadmines site table live in those folders, so the tables in `Stages.cpp` cannot be
+  regenerated from the repository (`known-issues.md` C4, there for `dungeon-curriculum/tools` being empty "here").
+- **Gitignored scripts cited from tracked code:** `var/staging_test.sh` (`testcmd.py:3`, `forgectl-test.sh:3`),
+  `var/forge_console.py` (`console.py:3`), `var/camera/composite.py` (`FrameImage.h:66`,
+  `VisionFrameImageTest.cpp:138`). The first two are "ported" but not compared.
+- **Comments that retell history.** `CurriculumTuning.h` (F2), `config.py` and the conf template carry dated
+  measurement narratives (2026-09-18 to 2026-10-07). Valuable as a lab notebook, expensive as a header: the same file is
+  included from 18 sites (section 3.6), and every edit to a comment rebuilds them.
+- **Lazy-import and "left from the module days" comments** are covered in R-20 and 4.2.
+
+### 5.5 Cleanup list, ordered by value
+
+1. Delete the forge's `PCQueue::Reset` at the merge (R-01): avoids a compile break; one block.
+2. Add `libzstd-dev` to the installer and CI package lists, or make zstd `REQUIRED` only when `Animus` is on
+   (`game/CMakeLists.txt:77-78`).
+3. Fix the three operator-facing examples: `train.py:3`, `export.py:3`, `bench_learner.py:3`, and the console help
+   `ForgeConfig.h:60`, `ForgeCommands.cpp:506`.
+4. Delete `mod-animus-movement.patch`; decide on the amdl8 patch (R-26).
+5. Drop `rename_runs.py` and the stale `.gitignore` un-ignores (R-27).
+6. Commit the missing source of truth: `camera-vision.GPU.md` and the table-generator scripts under `docs/forge/` or
+   `apps/forge/tools/`, or delete the 65 citation lines and the claim that the tables are generated.
+7. Rewrite or delete chapters 03 and 05; move the forge pointer into `AGENTS.md` (R-22, R-23).
+8. Remove the dead core additions in section 1.5 (a build is needed; batch with the next C++ change, principle 18).
+9. Shorten `CurriculumTuning.h`'s history comments when it is split (F2).
+
