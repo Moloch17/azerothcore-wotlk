@@ -311,7 +311,7 @@ bool Animus::Curriculum::PartyFollowEncounter::Build(Env& env, Map* map, uint8 l
     leader->SetFaction(first->GetFaction());
     env.Allies = { leader->GetGUID() };
     // The leader's legs, as the stock PathGenerator walks them (cached per map: the first episode of a map pays).
-    party.Legs = LegsFor(map, leader, party.Entrance, party.Stops);
+    party.Legs = LegsFor(map, first, party.Entrance, party.Stops);
     party.Corner = 0;
 
     party.Mode = Phase::Stopped;
