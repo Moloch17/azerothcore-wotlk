@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import audit, cluster, config as config_module, confsync, deploy, logs, stage, videos
+from . import audit, cluster, config as config_module, confsync, deploy, logs, snapshot, stage, videos
 from .config import ConfigError
 from .ui import Failure, say
 
@@ -35,6 +35,9 @@ def parser() -> argparse.ArgumentParser:
     cl = add("cluster", "one table of the machines: role, revision, worldserver, learner, load, disk, GPU",
              "forgectl cluster            |   forgectl cluster move-host thomas move2_seek")
     cl.add_argument("--all", action="store_true", help="include machines that are out of the cluster")
+    cl.add_argument("--json", action="store_true",
+                    help="print one JSON object (schema in docs/forge/forgectl.md) instead of the table; exit 0 when "
+                         "the host could be read")
     cl_sub = cl.add_subparsers(dest="cluster_command", metavar="[move-host]")
     mv = cl_sub.add_parser("move-host", formatter_class=raw,
                            help="move the host role (and a run) to another machine",
@@ -46,8 +49,14 @@ def parser() -> argparse.ArgumentParser:
     mv.add_argument("--yes", action="store_true", help="do not ask")
     mv.add_argument("--timeout", type=float, default=60, help="minutes to wait for each machine's build (default 60)")
 
-    st = add("status", "the host's `forge status` table plus the learner's latest metrics",
-             "forgectl status")
+    st = add("status", "the host's `forge status` table plus the learner's latest metrics (--json: one JSON object)",
+             "forgectl status   |   forgectl status --json")
+    st.add_argument("--json", action="store_true",
+                    help="print one JSON object read from the run's files (schema in docs/forge/forgectl.md); exit 0 "
+                         "when the host could be read")
+    st.add_argument("--stage", help="with --json: the run directory to read (default: the newest progress.json)")
+    st.add_argument("--no-console", action="store_true",
+                    help="with --json: do not type `forge status` into the host's console (files and ssh only)")
 
     sg = add("stage", "start, resume, pause or cancel a stage on the host (pause and cancel reach the workers too)",
              "forgectl stage resume move2_seek    |    forgectl stage cancel")
@@ -96,8 +105,14 @@ def dispatch(args, config) -> int:
     if args.command == "cluster":
         if getattr(args, "cluster_command", None) == "move-host":
             return deploy.move_host(config, args.machine, args.stage, args.yes, args.timeout)
+        if args.json:
+            return snapshot.cluster_json(config, include_out=args.all)
         return cluster.run(config, include_out=args.all)
     if args.command == "status":
+        if args.json:
+            return snapshot.status_json(config, args.stage, not args.no_console)
+        if args.stage or args.no_console:
+            raise Failure("--stage and --no-console only go with --json")
         return stage.status(config)
     if args.command == "stage":
         return stage.run(config, args.action, args.stages, getattr(args, "yes", False),

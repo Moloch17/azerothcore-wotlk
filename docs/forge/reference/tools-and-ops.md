@@ -14,7 +14,7 @@ build. Related: [config-keys.md](config-keys.md), [tests.md](tests.md) (there ar
 | `forge.sh` | 109 | start/stop/attach the training container; `--build` recompiles inside it |
 | `forgectl` | 8 | shim that puts `apps/forge` on the path and runs the `forgectl` package |
 | `apps/forge/cluster.toml` | 75 | the machines, host, remote, branch, ports, container and paths forgectl reads |
-| `apps/forge/forgectl/__main__.py` | 185 | argument parser, dispatch, audit wiring |
+| `apps/forge/forgectl/__main__.py` | 203 | argument parser, dispatch, audit wiring |
 | `apps/forge/forgectl/__init__.py` | 1 | package marker |
 | `apps/forge/forgectl/config.py` | 135 | loads and validates `cluster.toml` into `Config` / `Machine` |
 | `apps/forge/forgectl/remote.py` | 84 | ssh (BatchMode) and local command execution, `parallel_map` |
@@ -23,6 +23,7 @@ build. Related: [config-keys.md](config-keys.md), [tests.md](tests.md) (there ar
 | `apps/forge/forgectl/home.py` | 10 | `forgectl_home()`: `$FORGECTL_HOME` or `~/.forgectl` |
 | `apps/forge/forgectl/console.py` | 275 | types one line into a worldserver console through `docker attach` under a pty; per-machine flock; signal guard |
 | `apps/forge/forgectl/cluster.py` | 153 | `forgectl cluster`: one read-only probe per machine, table |
+| `apps/forge/forgectl/snapshot.py` | 368 | `status --json` / `cluster --json`: the schema-1 document built from `progress.json`, `finished.json`, `spec.json`, `metrics.csv`, `eval.csv` and the machine probes |
 | `apps/forge/forgectl/stage.py` | 233 | `forgectl stage ...` and `forgectl status` |
 | `apps/forge/forgectl/deploy.py` | 348 | `forgectl build [--cluster]` and `cluster move-host` |
 | `apps/forge/forgectl/confsync.py` | 249 | `forgectl conf-sync`; the conf writers (also used by move-host) |

@@ -30,8 +30,8 @@ may itself be listed (`local = true` there: no ssh).
 
 | Command | What it is for | Changes things? |
 |---|---|---|
-| `forgectl cluster` | the health table of the machines | no |
-| `forgectl status` | the host's `forge status` and the learner's latest numbers | no |
+| `forgectl cluster [--json]` | the health table of the machines | no |
+| `forgectl status [--json]` | the host's `forge status` and the learner's latest numbers; `--json` is the stable machine-readable document | no |
 | `forgectl logs [machine]` | worldserver and learner logs, problems first | no |
 | `forgectl conf-sync [--check]` | keep the workers' `AnimusForge.Curriculum.*` keys equal to the host's | writes workers' confs |
 | `forgectl stage status\|start\|resume\|pause\|cancel` | drive a stage | console commands |
@@ -80,6 +80,107 @@ learner (sarah): update 3,802 | steps 172,177,408 | 2,560 steps/s | rollout 3.20
 The table is the one the console prints (stage, progress, the sim's timing, the warnings, the connected workers). The
 learner line is the newest decision: its step count and rate, how long the rollout and the update took, and the loss,
 entropy and score. If the console does not answer, it prints that and still shows the learner line; exit 1.
+
+## `forgectl status --json` and `forgectl cluster --json`
+
+One JSON object on stdout, nothing else (no colour codes, no progress lines), for scripts, `forgectl watch` and a
+dashboard. **Exit 0 when the host could be read** (`read_ok: true`), 1 when it could not; a worker that is
+unreachable is data in `machines`, not an error. `--no-console` leaves out the one console read (below);
+`status --json --stage NAME` reads that run directory instead of the newest one. `cluster --json` prints the
+`schema`, `kind`, `time`, `source`, `host`, `read_ok`, `cluster` and `machines` keys only (`kind: "cluster"`).
+
+**Where the data comes from.** Files, not the console: on the host, the newest run directory's `progress.json`
+(`runs/*/progress.json` by modification time, archived `*.worker-*` directories skipped; keys in
+[file-formats.md](reference/file-formats.md)), `finished.json`, `spec.json`, the last row of `metrics.csv` and the
+newest `learner` row of `eval.csv`, all read over ssh with BatchMode; on every machine the same one-ssh probe `forgectl
+cluster` uses. The host's `forge status` text is typed into its console once, only for `plan.last_plan` and
+`workers_seen_by_host` (skipped, and those become null, with `--no-console` or when the console does not answer).
+`source` is `"files"`.
+
+**The rules of the schema.** `schema` is an integer (now `1`); changes only add keys, never rename or remove one inside
+a schema number. Every key is always present and is `null` when unknown or absent. Times are UTC ISO-8601 (`...Z`),
+durations in seconds (`*_s` or `*_seconds`), counts and steps are integers. `wall_steps_per_sec`, `update_bound`,
+`rollout_seconds`, `update_compute_seconds` and `wait_seconds` are passed through as the learner logged them (a build
+that does not write them gives `null`).
+
+| Key | Meaning |
+|---|---|
+| `schema`, `kind`, `time`, `source`, `host` | the schema number, `"status"` or `"cluster"`, when it was taken (UTC), `"files"`, the host's name |
+| `read_ok`, `read_problem` | the host and its run directory could be read; if not, why |
+| `cluster.dev_revision`, `host_revision` | short revisions of this checkout and of the host |
+| `cluster.revisions_equal` | every reachable cluster machine is on the host's revision (null if none could be read) |
+| `cluster.refused`, `refused_window` | `refused the worker` lines the host logged in the last 6 h (the fingerprint differs; see [cluster.md](cluster.md)) |
+| `plan.state` | `running` (phase `training`/`evaluating` and `progress.json` fresh: 5 min while training, 2 h while evaluating), `stale` (an active phase whose file stopped being written), `idle` (anything else, including no run) |
+| `plan.stage`, `run_dir`, `phase`, `updated_at`, `progress_age_s` | the run read, `progress.json`'s `phase` (`training`, `evaluating`, `finished`, `stopped`), when it was written, its age by the host's clock |
+| `plan.last_plan`, `console_available` | the console's `last plan` line (e.g. `move2_seek cancelled`); whether the console answered |
+| `progress.update`, `env_steps`, `total_env_steps`, `fraction` | the learner's update count, steps so far, the stage's ceiling, the quotient |
+| `progress.env_steps_per_sec` | the steps/s the learner logged for its last update |
+| `progress.wall_steps_per_sec`, `update_bound`, `rollout_seconds`, `update_compute_seconds`, `wait_seconds` | the wall-clock rate and the split of an update, when the learner logs them; else `null` |
+| `progress.update_seconds`, `elapsed_seconds`, `resumed_env_steps` | seconds of the last update, seconds of the run, steps the run resumed from |
+| `ladder.rung` | the rung of the stage's ladder at the last evaluation (`eval_seek_rung` today; null for a stage with none); `episode_rung` is the mean over the last update's episodes |
+| `ladder.shaping_scale`, `cost_scale`, `lr_scale` | the fade's scales and the learning-rate scale |
+| `ladder.collapsed`, `ladder.stalled`, `alarm_rung` | `ladder_collapsed` / `ladder_stalled` from the learner (`true` when the rung is raised; `stalled` is `null` while the learner does not write it); the rung that raised it |
+| `eval.count`, `last_env_steps`, `last_score`, `best_score`, `best_env_steps`, `evals_since_best`, `patience`, `eval_every` | the evaluation bookkeeping of `progress.json` |
+| `eval.file_updated_at`, `eval.latest` | when `eval.csv` was last written; its newest `learner` row (`update, env_steps, policy, episodes, score, stderr, margin, best, evals_since_best, seconds`) |
+| `eval.headline[]` | each headline measure of the stage: `metric`, `value` (its newest evaluation value), `target` (`{op, value}` from `status_targets`, or null) and `met` (null if there is no target or value) |
+| `finished` | `finished.json` (`reason`, `advanced`, `env_steps`, `best_score`) or null while the stage is undecided |
+| `spec.decision_ticks`, `tick_ms`, `env_groups`, `num_envs` | the run's `spec.json`: the cadence the sim actually ran |
+| `learner` | the host's learner: `state` (`stepping`, `stalled`, `no_log`), `env_steps`, `steps_per_sec`, `log_age_s` (seconds since the learner log was written; a long idle gap reads `stalled` too: read it with `plan.state`) |
+| `workers_seen_by_host[]` | what the host's console lists: `address`, `machine`, `state`, `scenario`, `envs`, `env_steps_per_sec`, `last_seen_s` |
+| `machines[]` | per machine: `name, role, in_cluster, reachable, problem, revision, revision_matches_host, worldserver {up, status}, learner {state, env_steps, steps_per_sec, log_age_s}, load {one_minute, cpus}, disk_free_gb, gpu {used_mib, total_mib}` |
+
+A real output (read-only, from the idle cluster on 2026-10-08, trimmed to three of seventeen headline values, one
+worker of three and the host plus one unreachable machine of four):
+
+```json
+{
+  "schema": 1, "kind": "status", "time": "2026-10-08T11:07:05Z", "source": "files", "host": "sarah",
+  "read_ok": true, "read_problem": null,
+  "cluster": {"host": "sarah", "dev_revision": "a06f5ad36", "host_revision": "64b7c7dc5", "revisions_equal": true,
+              "refused": [], "refused_window": "6h"},
+  "plan": {"state": "idle", "stage": "move2_seek", "run_dir": "move2_seek", "phase": "stopped",
+           "updated_at": "2026-10-07T15:01:22Z", "progress_age_s": 72329, "last_plan": "move2_seek cancelled",
+           "console_available": true},
+  "progress": {"update": 4203, "env_steps": 179769344, "total_env_steps": 250000000, "fraction": 0.7191,
+               "resumed_env_steps": 138510336, "env_steps_per_sec": 2508.9453979659193,
+               "update_seconds": 1.6734974089995376, "elapsed_seconds": 10735.036196289002,
+               "wall_steps_per_sec": null, "update_bound": null, "rollout_seconds": null,
+               "update_compute_seconds": 4.874696118000429, "wait_seconds": null},
+  "ladder": {"rung": 1.0, "episode_rung": 1.96875, "alarm_rung": null, "shaping_scale": 0.25, "cost_scale": 1.0,
+             "lr_scale": 0.38774980967020956, "collapsed": false, "stalled": null},
+  "eval": {"count": 18, "last_env_steps": 171218944, "last_score": 1.512293768234742,
+           "best_score": 2.753656503481743, "best_env_steps": 40351744, "evals_since_best": 13, "patience": 3,
+           "eval_every": 10000000, "file_updated_at": "2026-10-07T14:24:09Z",
+           "latest": {"update": 3756, "env_steps": 171218944, "policy": "learner", "episodes": 78,
+                      "score": 1.512293768234742, "stderr": 0.20714293188462887, "margin": 0.49322934515362243,
+                      "best": 2.753656503481743, "evals_since_best": 13, "seconds": 22.4},
+           "headline": [
+             {"metric": "found", "value": 0.807692289352417, "target": {"op": ">=", "value": 0.95}, "met": false},
+             {"metric": "found_hallway", "value": null, "target": null, "met": null},
+             {"metric": "wall_seconds", "value": 6.580128192901611, "target": {"op": "<=", "value": 2.0},
+              "met": false}]},
+  "finished": null,
+  "spec": {"decision_ticks": 1, "tick_ms": 250, "env_groups": 2, "num_envs": 64},
+  "learner": {"state": "stalled", "env_steps": 179759104, "steps_per_sec": 2509.0, "log_age_s": 72333},
+  "workers_seen_by_host": [
+    {"address": "192.168.0.117", "machine": "moloch", "state": "idle", "scenario": "move2_seek", "envs": 0,
+     "env_steps_per_sec": 0, "last_seen_s": 3}],
+  "machines": [
+    {"name": "sarah", "role": "host", "in_cluster": true, "reachable": true, "problem": null,
+     "revision": "64b7c7dc5", "revision_matches_host": true, "worldserver": {"up": true, "status": "Up 23 hours"},
+     "learner": {"state": "stalled", "env_steps": 179759104, "steps_per_sec": 2509.0, "log_age_s": 72333},
+     "load": {"one_minute": 0.75, "cpus": 24}, "disk_free_gb": 219.5, "gpu": null},
+    {"name": "spencer", "role": "worker", "in_cluster": true, "reachable": false,
+     "problem": "unreachable: ssh: connect to host 192.168.0.66 port 22: No route to host", "revision": null,
+     "revision_matches_host": null, "worldserver": {"up": null, "status": null},
+     "learner": {"state": null, "env_steps": null, "steps_per_sec": null, "log_age_s": null},
+     "load": {"one_minute": null, "cpus": null}, "disk_free_gb": null, "gpu": null}]
+}
+```
+
+(The real output is the same data indented one key per line.) The idle cluster shows `learner.state: "stalled"`
+because the learner's log has not been written for 20 hours: a stalled learner is a fault only while `plan.state` is
+`running`. The phase 2 structured `status` of the audit will replace the file reads and keep this schema.
 
 ## `forgectl stage status|start|resume|pause|cancel [<stage> ...]`
 
