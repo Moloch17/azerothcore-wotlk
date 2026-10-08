@@ -45,7 +45,7 @@ person reviewing and refactoring the forge without an assistant.
 | `cpp-runtime-config.md` | every key `ForgeConfig::Load` and the main program read |
 | `cpp-runtime-process-gpu.md` | `ForgeMain`, `ForgeCore`, the learner launcher, the CMake source hash, the `Gpu/` layer |
 | `cpp-movement.md` | the player controller: held keys, stepping, floors, water, the client link, capture |
-| `cpp-vision.md` | the camera and its pixel format, ray casting, render sizes, free look, classes, GPU parity |
+| `cpp-vision.md` | the camera and its pixel format, ray casting, render sizes, free look, classes |
 | `cpp-vision-memory.md` | the mental map and the entity memory |
 | `cpp-vision-video.md` | frame images and the evaluation videos |
 | `cpp-blocks.md` | the 14 live blocks: columns, actions, masks, revisions; the stage-by-block table |

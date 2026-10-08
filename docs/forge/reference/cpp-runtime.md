@@ -61,29 +61,20 @@ Lines are `wc -l` at `bd32b9dc8`.
 | `A/Learner/ChildProcess.cpp` | 171 | `posix_spawn`, reap, stop escalation |
 | `A/Learner/LearnerProcess.h` | 82 | the learner as one or more rank processes |
 | `A/Learner/LearnerProcess.cpp` | 328 | command line, devices, CPU pinning |
-| `A/Gpu/DeviceApi.h` | 74 | the C table between worldserver and `libforge-gpu.so` |
+| `A/Gpu/DeviceApi.h` | 68 | the C table between worldserver and `libforge-gpu.so` |
 | `A/Gpu/GpuRuntime.h` | 51 | loader API |
 | `A/Gpu/GpuRuntime.cpp` | 131 | `dlopen` of torch's HIP runtime and of the device library |
-| `A/Gpu/Device/DeviceRuntime.h` | 64 | HIP/CUDA name mapping inside the library |
-| `A/Gpu/Device/Runtime.hip` | 135 | allocation, IPC export, copies, the API table |
-| `A/Gpu/Device/Vision.hip` | 177 | the camera kernels |
-| `A/Gpu/VisionDevice.h` | 1680 | the camera's ray caster, written once for host and device |
-| `A/Gpu/VisionScene.h` | 174 | scene packing declarations |
-| `A/Gpu/VisionScene.cpp` | 486 | packs BIHs, models, terrain, doors into 32-bit words |
-| `A/Gpu/VisionGpu.h` | 256 | `GpuVision::Renderer` (scenes on the device, frame casts) |
-| `A/Gpu/VisionGpu.cpp` | 786 | its implementation, the shared renderer |
-| `A/Gpu/VisionDiff.h` | 147 | CPU-versus-GPU frame comparison |
-| `A/Gpu/VisionDiff.cpp` | 483 | its implementation |
+| `A/Gpu/Device/DeviceRuntime.h` | 60 | HIP/CUDA name mapping inside the library |
+| `A/Gpu/Device/Runtime.hip` | 127 | allocation, IPC export, copies, the API table |
 | `src/server/apps/worldserver/ForgeMain.cpp` | 520 | `main()` of the fork: startup, DB seal, update loops, shutdown |
-| `src/server/scripts/Commands/cs_forge.cpp` | 1256 | the `forge` command table and the handlers that are not `Forge::Command*` |
-| `src/server/game/CMakeLists.txt` | 149 | Animus source hash, `FORGE_PYTHON_DIR`, zstd, `libforge-gpu.so` |
+| `src/server/scripts/Commands/cs_forge.cpp` | 986 | the `forge` command table and the handlers that are not `Forge::Command*` |
+| `src/server/game/CMakeLists.txt` | 146 | Animus source hash, `FORGE_PYTHON_DIR`, zstd, `libforge-gpu.so` |
 | `src/server/game/Forge/Forge.h`, `Forge.cpp` | 51 + 60 | `ForgeCore`: `HasClients()` (false), `SetTickMs/TickMs` (owner: 01-forge-core-delta.md, used here) |
 | `src/common/Threading/CpuPlacement.h`, `.cpp` | 62 + 278 | CPU ordering and pinning used by `LearnerProcess` and `ForgeConfig` (owner: 01-forge-core-delta.md) |
 | `src/common/Utilities/RandomSeed.h` | 28 | `rand_seed`, used by `EnvPool::ResetEnv` (owner: 01-forge-core-delta.md) |
 | `src/server/database/Database/DatabaseWorkerPool.h` | 260 | `Seal(strict)` / `WarnAboutSyncQueries`, used by `ForgeMain` (owner: 01-forge-core-delta.md) |
 
-Other Animus code under `src/common` is only read-only views for the camera (comments naming `Animus/Gpu/VisionScene`
-in `src/common/Collision/*`) and `Config::LoadAdditionalFile` (`src/common/Configuration/Config.h:74`).
+Other Animus code under `src/common` is only `Config::LoadAdditionalFile` (`src/common/Configuration/Config.h:74`).
 `A/` also holds `Movement/`, `Vision/`, `Scenario/` (other documents). Hooks into the core that call this runtime:
 `src/server/game/World/World.cpp:1233` (`OnWorldPrologue`), `:1258` (`ProcessCliCommands`), `:1261` (`OnUpdate`);
 `src/server/game/Maps/MapUpdater.cpp:219,222` (`OnMapPrologue/Epilogue`); `src/server/game/Maps/MapMgr.cpp:385`
@@ -124,7 +115,7 @@ One world tick (`World::Update`, `src/server/game/World/World.cpp`):
 | `ClusterLink` | world thread | non-blocking sockets, polled; but `ConnectToHost` does a blocking `connect` (see Observed issues) |
 | `LearnerProcess`/`ChildProcess` | world thread; `Stop` blocks it up to 3 x grace | polling `waitpid` |
 | CLI thread, SOAP thread | only enqueue `CliCommandHolder`s (`CliRunnable.cpp:231`, `ACSoap.cpp:121`) | the world thread runs them; `Pump()` re-enters `ProcessCliCommands` while a decision waits for the learner, guarded by `_pumping` (`A/AnimusForge.cpp:1045-1056`) |
-| `GpuVision::Renderer`, `Gpu::Api()` | world thread (`VisionGpu.h:43`) | `Gpu::Load` once (`std::call_once`) |
+| `Gpu::Api()` | world thread | `Gpu::Load` once (`std::call_once`) |
 | thread-local RNG | each thread | `Random.cpp:25` is `thread_local`; `rand_seed` reseeds the calling thread only |
 | `ForgeCore::TickMs` | world thread writes, `ForgeMain` loop reads | `std::atomic` relaxed |
 | `Map::DetailedObjectTiming` | bench sets, map threads read | atomic |
@@ -246,7 +237,7 @@ itself joins its host only afterwards (`_joinAfterBench`).
 
 Tests: no unit test covers `Forge`, `ForgeConfig`, `EnvPool`, `LockstepServer` or `ClusterLink` directly. Related:
 `src/test/server/game/Animus/ResetSamplesTest.cpp`, `BotAccountsTest.cpp`, `KinematicsTest.cpp`, `VisionProtocolTest.cpp`
-(ACT cutting), `StandInTest.cpp` (includes `Protocol.h`), `VisionGpuTest.cpp`, `VisionGpuDataTest.cpp`;
+(ACT cutting), `StandInTest.cpp` (includes `Protocol.h`);
 `src/test/server/database/SealedWriteTest.cpp`; Python `apps/forge/python/tests/test_protocol.py` drives a fake sim
 (`sim_threads.py`) against `protocol.py`. See [tests.md](tests.md).
 

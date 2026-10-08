@@ -1,10 +1,10 @@
 # Vision: the camera (src/server/game/Animus/Vision/)
 
 Reference for a manual review, read from `forge` bd32b9dc8. Paths are relative to `src/server/game/Animus/` unless they start
-with `src/`. Line numbers are of that commit. Parts: this file (camera, caster, free look, classes, entity list, GPU interface),
+with `src/`. Line numbers are of that commit. Parts: this file (camera, caster, free look, classes, entity list),
 [cpp-vision-memory.md](cpp-vision-memory.md) (mental map, entity memory), [cpp-vision-video.md](cpp-vision-video.md) (frame
 images, evaluation videos). Related: [cpp-movement.md](cpp-movement.md), [cpp-blocks.md](cpp-blocks.md) (VisionBlock,
-EntitiesBlock, MapBlock, SightBlock that consume these types), [cpp-runtime.md](cpp-runtime.md) (Gpu/),
+EntitiesBlock, MapBlock, SightBlock that consume these types), [cpp-runtime.md](cpp-runtime.md),
 [01-forge-core-delta.md](01-forge-core-delta.md), [protocol.md](protocol.md), [py-mappo.md](py-mappo.md), [tests.md](tests.md),
 [known-issues.md](known-issues.md).
 
@@ -14,8 +14,7 @@ A seat sees through a ray-cast third-person camera (principle 1: only what a pla
 (`Scenario/Curriculum/Blocks/VisionBlock.cpp:109`) advances the seat's free-look head, gathers the entities round the seat, casts a
 frame with `Vision::Render`, and leaves: 11 float scalars (the block's columns), a byte image (5 bytes a pixel, 128x64 canonical) in the
 seat's byte row, the frame's entity list (`SeenList`) for the entities and sight blocks, and the cast rays (`FrameHits`) for the map block.
-The caster is pure over a `VisionWorld`; `MapVisionWorld` is the live-map implementation. The GPU caster (Gpu/) is a port used only by
-two console commands; see "GPU interface and parity".
+The caster is pure over a `VisionWorld`; `MapVisionWorld` is the live-map implementation. The CPU caster is the only camera (see "The GPU camera (removed)").
 
 ## Map table (Vision/)
 
@@ -34,10 +33,6 @@ two console commands; see "GPU interface and parity".
 | Vision/EntityMemory.h, EntityMemory.cpp | 130, 182 | Entity memory: see cpp-vision-memory.md. |
 | Vision/FrameImage.h, FrameImage.cpp | 118, 426 | PNG/APNG writers, panels, composite: see cpp-vision-video.md. |
 | Vision/EvalVideo.h, EvalVideo.cpp | 205, 494 | Evaluation video recorder: see cpp-vision-video.md. |
-
-Gpu/ as seen from Vision (documented in cpp-runtime.md): `Gpu/VisionDevice.h` (1680, device-side layout and kernels, shared host/device),
-`Gpu/VisionGpu.h` (256, `Renderer`, `MakeRequest`), `Gpu/VisionDiff.h` (147, CPU-vs-GPU comparison). Not documented here beyond the
-interface and the parity contract.
 
 ## The pixel: byte-exact (Camera.h, VisionCaster.cpp:645-666)
 
@@ -191,24 +186,14 @@ Byte format: the entity list is NOT a byte format. `SeenList` (Identity.h:124) i
 pixels, sum of rows, sum of cols). `EntityInfo` fields in order: `Id{What,Quest,Lootable,Usable}`, `Entry u32`, `GameObject`, `Level`, `Health`, `Reaction i8`, `Centre Vec3`, `Guid u64`, `Orientation`, `Dead`, `Open`,
 `Used`, `Radius`. It reaches the learner as FLOAT COLUMNS of the entities block: 32 slots x 20 features = 640 columns (`LiveLayoutPin`: `entities id=21 rev=1 obs=640`), feature order
 (`EntitiesBlock.h`): present, class (raw index), type (raw entry), object, level/80, level_delta/10 clamped, health, reaction, quest, lootable, usable, distance (log-scaled as the pixel), yaw_sin, yaw_cos, pitch_sin, pitch_cos
-(direction from the camera relative to the view), centroid_x, centroid_y, share (`SlotCentroid`, Camera.h:229, integer sums so the CPU and GPU agree to the bit), memory id. GUIDs never reach the observation (principle 1). Sight block
+(direction from the camera relative to the view), centroid_x, centroid_y, share (`SlotCentroid`, Camera.h:229, integer sums), memory id. GUIDs never reach the observation (principle 1). Sight block
 widths: 64 slots x 32 features + 23 named = 2071 (move3_interact); with the combat block 64 x 45 + 23 = 2903 (golden). These blocks are documented in cpp-blocks.md.
 
-## GPU interface and parity
+## The GPU camera (removed)
 
-Fact (verified by grep at bd32b9dc8): the GPU caster is NOT in the training observation path. `VisionBlock::Observe` calls `Vision::Render` on the CPU unconditionally (VisionBlock.cpp:197).
-`AnimusForge.Gpu.Observe` (ForgeConfig.cpp:483) only loads the device library (`AnimusForge.cpp:203`). `GpuVision::Renderer` is created only by `Shared()` from the console commands
-`forge gpu scene` and `forge camera diff` (`src/server/scripts/Commands/cs_forge.cpp:623,684`). `MakeRequest` and `Renderer::Cast` have no caller outside Gpu/, that file and the tests. `Renderer::Forget` has
-no production caller (only `VisionGpuTest.cpp:603-609`); `VisionGpu.h:28-29` ("for now only...") is accurate.
-
-Interface to Vision: `SourceOf(Map*, VisionWorld const&)`, `Renderer::Sync(SceneSource)` packs the grids from the world's own `Tile/Cell`, the static tree's BIH and models, doors; `MakeRequest(settings, pose, camera, rig, sight, objective, scene, phase,
-doorOwners, lists, objectiveRadius)` builds a `FrameRequest` from the CPU-placed `Rig` (the boom stays a CPU ray; the scalars stay `Render`'s); `Cast` runs the kernel and returns canonical images, cast frames and each
-frame's `FrameSlots` (read back first: the entities block's sync point); `Emulate` runs the same kernel code on the host copy. `VisionDevice.h` is written once and compiled twice (hipcc, and the host).
-
-Parity contract (`Gpu/VisionDiff.h:19-25`, `Gpu/VisionDevice.h:46-50`): a GPU frame must be the CPU's frame. A pixel is identical when class and objective bit are equal, the slot names the same entity, distance and height bytes are within 1 and
-the normal within 2. Gate: at least 99.9% of non-edge pixels identical; edge mismatches (pixels on a class boundary) below 1% of all; the upscale bit-exact; the 11 scalars exact; no class or identity mismatch off an edge; every entity list equal entity for entity. Residual differences
-come from the device's own `cos/sin/log` rounding and from host FMA contraction (kernels are built with `-ffp-contract=off`). Tests: `VisionGpuTest.EmulatedFramesMatchRender` (runs on CPU with a fake terrain and asserts the gate on the emulated column),
-`VisionGpuDataTest.*` (real map data, skipped without `FORGE_VISION_DATA`; the device column runs only with a device), `VisionGpuTest.NothingRunsUnlessAsked`, `ALibraryFromAnotherBuildIsRefused`. Device-side tests are skipped on CPU machines.
+The GPU camera was removed 2026-10-08 (tag `archive/gpu-camera` holds the old state): `Gpu/Vision*`, `Device/Vision.hip`, `forge camera diff`,
+`forge gpu scene`, `CastVision` in the device API. The CPU `Vision::Render` is the only camera. Revisit when shipping camera models to the realm.
+What stays of `Gpu/` is the device-library loader and the device-buffer exchange with the learner (cpp-runtime-process-gpu.md).
 
 ## Accessors the forge added to upstream code (see 01-forge-core-delta.md)
 
@@ -221,18 +206,18 @@ Used by the camera (read-only, opt-in): `StaticVMapCollisionData::GetLiquidHit(x
 
 ## Tests
 
-VisionTest (1547 lines), VisionBlockTest, VisionEntitiesTest, VisionFreeLookTest, VisionProtocolTest, VisionGpuTest, VisionGpuDataTest, LiveLayoutPinTest, SightBlockTest (all under `src/test/server/game/Animus/`).
+VisionTest (1547 lines), VisionBlockTest, VisionEntitiesTest, VisionFreeLookTest, VisionProtocolTest, LiveLayoutPinTest, SightBlockTest (all under `src/test/server/game/Animus/`).
 
 ## Observed issues
 
 1. `Bridge/Protocol.h:71-72` says the image has "4 bytes a pixel"; the code and the golden are 5 (revision 5). Comment/code disagreement.
-2. Camera.h, VisionCaster.h and FreeLook.h cite plan documents (`camera-vision.RAYCAST.md`, `.BYTES.md`, `.FREELOOK.md`, `.GPU.md`, `.INTERFACE.md`) that are under `.agents/plans/` (gitignored) and not in the repository; they cannot be consulted.
+2. Camera.h, VisionCaster.h and FreeLook.h cite plan documents (`camera-vision.RAYCAST.md`, `.BYTES.md`, `.FREELOOK.md`, `.GPU.md` (GPU camera, removed), `.INTERFACE.md`) that are under `.agents/plans/` (gitignored) and not in the repository; they cannot be consulted.
 3. `FreeLook.h` mentions "a scripted baseline" leaving rows neutral; scripted baselines no longer exist.
 4. `Camera.h` `Resolution`/settings: a bad canonical size is only logged (ForgeConfig.cpp:299), the run continues until the learner refuses the manifest.
 5. `Settings::Range` is described in two ways ("the units a frame can see"; gather radius is `Range + zoom` plus the pivot offset); a unit just outside `Range` of the pivot but visible to the ray cast is simply not drawn (invisible), unlike a player's client.
 6. `GatherSight` checks `within` by object position while numbering uses another centre; two near-equal distances may order by grid visit order.
 7. `VisionBlock::Observe` mutates the seat's `FreeLook::State` from a const block (comment :124-128 says it is safe only because Observe runs once per seat per decision).
-8. `Renderer::Forget` has no production caller; the GPU scene is never freed in a long run (moot while the renderer is console-only).
+8. (removed with the GPU camera, tag `archive/gpu-camera`.)
 9. Python `decode_map` derives "known" from the height byte (networks.py:1146) while the C++ `MapBlock::Scalars` counts known as age != 255; a seen-free cell with no floor is known to the sim scalar and unknown to the learner (py-mappo.md).
 10. Hazard discs and open doors are drawn as units/boxes by design; their `EntityInfo::Radius` is only for hazards.
 

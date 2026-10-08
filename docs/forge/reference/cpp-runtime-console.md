@@ -60,8 +60,6 @@ unless a file is named; body = `ForgeCommands.cpp` line.
 | `forge controller record` | `<player> <file>` or `stop` | no | record a Playtest player's movement packets; `stop` writes the file | :763 |
 | `forge controller replay` | `<file> [player]` | yes | replay a recording through the controller; drift report | :822 |
 | `forge camera snapshot` | `<map> <x> <y> <z> <yaw> [pitch] [zoom] [file]` | yes | one camera frame to `<file>-depth.pgm/-kind.ppm/-height.pgm` | :467 |
-| `forge camera diff` | `<map> <x> <y> <z> <N> [radius]` | yes | CPU caster vs GPU caster on N random frames | :661 |
-| `forge gpu scene` | `<map> <gx> <gy>` | yes | packs the map's GPU scene and prints its sizes | :605 |
 
 Parser notes: `Tail scenarios` is split on space, comma and tab (`SplitNames`, `:71`). A `forge fast` first word that parses as a
 budget is eaten as one (`ParseBudget`, `ForgeCommands.cpp:64`); numbers below 1000 are not budgets. `forge export best` is
@@ -127,9 +125,6 @@ separated by two spaces, header underlined with dashes, trailing spaces trimmed;
 - `cs_forge.cpp:238-239` help for `forge fast` says "default: AnimusForge.Queue"; the code uses `AnimusForge.Fast.Queue`
   (`ForgeCommands.cpp:522`). `:284` help for `forge clean archive` says "runs/_archive/"; the code deletes
   `<OutputDir>/archive` and the legacy directory (`ForgeCommands.cpp:1164`).
-- `cs_forge.cpp:591-598` `EnsureDevice` builds a fresh `ForgeConfig` and calls `Load()` (re-logging config errors, running the
-  GPU probe if not cached) from a console command; the loaded device library then changes `OfferDevice`'s behaviour for the
-  rest of the process (see [cpp-runtime-bridge.md](cpp-runtime-bridge.md)).
 - `ForgeCommands.cpp:1220-1266`: `forge clean scenario` and `forge clean all` delete run directories (checkpoints included)
   with no confirmation.
 - `ForgeCommands.cpp:798-889`: `forge talents` uses `ClassAssets::For`, which `WarmCaches` already builds for every class at startup (`Scenario/Curriculum/WarmCaches.cpp:40`), so it does not query the sealed databases.

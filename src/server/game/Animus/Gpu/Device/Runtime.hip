@@ -96,8 +96,6 @@ namespace
         return t_error.c_str();
     }
 
-    int CastVision(ForgeVisionLaunch const* launch);
-
     ForgeGpuApi const API = {
         FORGE_GPU_API_VERSION,
         Init,
@@ -110,13 +108,7 @@ namespace
         AllocHost,
         FreeHost,
         LastError,
-        CastVision,
     };
-
-    int CastVision(ForgeVisionLaunch const* launch)
-    {
-        return ForgeGpuDevice::CastVision(launch);
-    }
 }
 
 hipStream_t ForgeGpuDevice::Stream()

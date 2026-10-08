@@ -137,10 +137,6 @@ public:
     }
     [[nodiscard]] uint32 primCount() const { return objects.size(); }
     G3D::AABox const& bound() const { return bounds; }
-    /// The flattened tree and its leaves' object indices, as intersectRay reads them (the bots' camera copies them to
-    /// the GPU, Animus/Gpu/VisionScene, and walks them there exactly as here).
-    [[nodiscard]] std::vector<uint32> const& GetNodes() const { return tree; }
-    [[nodiscard]] std::vector<uint32> const& GetObjects() const { return objects; }
 
     template<typename RayCallback>
     void intersectRay(G3D::Ray const& r, RayCallback& intersectCallback, float& maxDist, bool stopAtFirstHit) const

@@ -22,7 +22,6 @@ numbers are of branch `forge` at commit bd32b9dc8. `UNVERIFIED` marks what was n
 | `src/server/game/Animus/Scenario/Curriculum/Encounters/DifficultyLadder.cpp` | 104 | Per-class tier ladder |
 | `src/server/game/Animus/Scenario/Curriculum/Encounters/WingLadder.h` | 98 | Whole-dungeon ladder |
 | `src/server/game/Animus/Scenario/Curriculum/Rewards/CombatReward.cpp` | 91 | Holds `RewardTermName` |
-| `src/server/game/Animus/Gpu/VisionGpu.cpp` | 786 | GPU renderer (`Forget` at 404) |
 | `src/server/game/Animus/Bridge/Protocol.h` | 401 | Wire protocol, `MODE_FLAG_*` |
 | `src/server/game/Animus/Bridge/ClusterLink.cpp` | 463 | Cluster registration and fingerprint |
 | `apps/forge/python/animus/train.py`, `mappo/trainer.py`, `mappo/networks.py` | 2309, 2053, 2382 | The learner's largest modules |
@@ -110,10 +109,7 @@ casting draw).
 
 ## B. Dead or kept-suspicious code
 
-**B1.** `GpuVision::Renderer::Forget` (`Gpu/VisionGpu.h:154`, `VisionGpu.cpp:404`) has no production caller; only
-`VisionGpuTest.cpp:603-609` calls it. Either per-instance
-cache entries leak over a long run (check memory over days) or it should be called at instance teardown. Verify: run a
-long evaluation and watch device memory.
+**B1.** Removed with the GPU camera (tag `archive/gpu-camera`): `GpuVision::Renderer::Forget` no longer exists.
 
 **B2.** `MODE_FLAG` bit 1 is unused (`Bridge/Protocol.h:274` defines only `MODE_FLAG_STAND_IN = 2`); the old
 `MODE_FLAG_SCRIPTED_OPPONENTS` is gone but the value is reserved until the next protocol change (commit aa303bc33).
