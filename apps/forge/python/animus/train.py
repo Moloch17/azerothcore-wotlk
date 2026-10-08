@@ -839,7 +839,7 @@ class TrainingRun:
             *(f"episode_{name}" for name in spec.episode_info_names),
             "policy_loss", "value_loss", "entropy", "entropy_coef", "clip_frac", "approx_kl",
             "explained_variance", "actor_grad_norm", "critic_grad_norm", "epochs_run", "allowed_actions",
-            "approx_kl_move", "epochs_done", "minibatches_done",
+            "approx_kl_move", "minibatches_done",
             "lr_scale", "shaping_scale", "cost_scale", "ladder_collapsed", "ladder_stalled", "frozen_layouts", "cast_rows", "cast_fallback_rows",
             "partner_rows", "partner_fallback_rows", "partner_members", "partner_episodes", "stand_in_episodes",
             "stand_in_unfielded",
