@@ -25,7 +25,7 @@ spec.json, which the learner writes to a run directory on any start), and one ro
 the sim). Both are said in the output, as UNVERIFIED, rather than faked.
 
     resume_check.py --fresh --stage STAGE --stage-json PATH [--config YAML] [--set ...] [--overlay ...]
-    resume_check.py --fresh --all --stage-json-dir DIR      (DIR/<stage>/stage.json, the 12 live stages)
+    resume_check.py --fresh --all --stage-json-dir DIR      (DIR/<stage>/stage.json, the 10 live stages)
 
 --fresh is the check for a stage that has never run on the learner (no checkpoint): from the stage's learner yaml and
 the stage.json the sim wrote for it, it builds what TrainingRun.__init__ builds before it trains -- the spec (from

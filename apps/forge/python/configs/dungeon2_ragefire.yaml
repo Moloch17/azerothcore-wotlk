@@ -2,26 +2,25 @@
 # from the door to Bazzalan, a full clear -- every pull of the route and every side boss (Oggleflint, Taragaman,
 # Jergosh) -- by a party of five at the dungeon finder's band, lifted by the ladder's rung. Deaths and rejoins are in
 # play: a seat that dies is alive at the entrance 10 s later and walks back (I4); the first wipe is scored and the party
-# rises at the entrance, the second ends the run (Instance.WingWipes 2, and the ladder's spare ones). Half the training
-# runs start from a cell an earlier run reached (Go-Explore: explore below); an evaluation always starts at the door.
+# rises at the entrance, the second ends the run (Instance.WingWipes 2, and the ladder's spare ones). Every run starts
+# at the door: nothing tells the party the way (no route, waypoint or path hint; vision-only movement, decision 0019).
 #
 # The runs climb the whole dungeon's difficulty ladder (WING_RUNGS: the levels above the band and the spare wipes,
 # stepping on the probes alone: 0.6 of the dungeon cleared over 40 probes), nothing scripted beside them. The
 # evaluation plays the ladder's last rung: the band's own levels, one wipe to spare.
 #
 # Outcome (x the rung's tier scale): the bosses (Kill: Instance.WingMidBoss each on the way, WingBoss the last), the
-# full
-# clear (Clear: Instance.WingClear), the kills, the pulls started ready (ReadyPull). Cost at full price: wipes and
-# deaths
-# (Death), chain pulls (PullExtra), standing about (Idle), straying from the leader (Lost), the clock (StepCost:
-# Instance.WingClock, and Timeout for the route left).
+# full clear (Clear: Instance.WingClear), the kills, a pull started ready (ReadyPull). Cost at full price: wipes and
+# deaths (Death), standing about (Idle), straying from the leader (Lost), the clock (StepCost: Instance.WingClock,
+# and Timeout for the share of the dungeon left uncleared).
 #
 # **Held out: Wailing Caverns** (the arena `heldout`, the WING ladder's row 2, door to Lord Serpentis): never in a
 # training draw (ArenaDefinition::EvalOnly; DungeonStagesTest), played by eval.heldout below on its own seeds every
 # fourth evaluation, the last, and each new best -- a reading, never a target.
 #
-# Seeded from dungeon1_pulls: the same layout, every block carries.
-extends: dungeon1_pulls.yaml
+# Seeded from group1_roles (the seed chain: C3 -> G1 -> D2 -> D3; group2_corridor and dungeon1_pulls were retired
+# 2026-10-08): every block carries but the pack block, which starts fresh.
+extends: group1_roles.yaml
 run_name: dungeon2_ragefire
 
 total_env_steps: 1500000000
@@ -29,43 +28,54 @@ total_env_steps: 1500000000
 mappo:
   # A run is 20-60 minutes.
   gamma: 0.999
-
-# Go-Explore (animus.explore): half the training runs start from a cell an earlier run reached -- its packs gone, the
-# party at its place on the route -- rather than the door; an evaluation always starts at the door.
-explore:
-  enabled: true
-  share: 0.5
+  # The goal head keeps exploring through the party stages (the archived stage6's lesson: its choices locked in early).
+  goal_entropy_final_fraction: 0.5
 
 eval:
   every_env_steps: 20000000
   episodes: 64
+  # Fixed seeds: seed i plays its party (seat 0's class and build pair i mod pairs), at the evaluation's conditions
+  # (the ladder's last rung: the band's own levels).
+  seed: 1000
+  deterministic: true
   sampled_every: 4
   heldout:
     heldout: 16
-  report: [cleared, full_clear, bar_clear, wing_cleared_share, wing_route_share, wing_wipes, chain_pulls, ready_pulls,
+  report: [cleared, full_clear, bar_clear, wing_cleared_share, wing_wipes, ready_pulls,
            boss_oggleflint, boss_taragaman, boss_jergosh, boss_bazzalan, wing_boss_kills, wing_trash_kills, wing_rises,
            wing_rejoins, wing_rejoin_seconds, wing_rung, at_top_rung, wing_level, wing_probe,
            with_stand_in, without_stand_in, clear_standin, clear_allbot, role_tank, role_healer, role_damage,
            deaths_tank, deaths_healer, deaths_damage, seat_deaths, died, reward_kill, reward_clear, reward_ready_pull,
-           reward_pull_extra, reward_idle, reward_lost, reward_death, reward_step_cost, reward_timeout, reward_approach,
-           reward_threat, reward_damage_dealt, reward_repeat, reward_aimless, reward_effort, reward_jitter]
+           reward_idle, reward_lost, reward_death, reward_step_cost, reward_timeout, reward_threat, reward_damage_dealt,
+           reward_repeat, reward_aimless, reward_effort, reward_jitter]
   arms:
     with_human: 32
     with_partners: 32
   arms_every: 2
 
-# forge status: the full clears (the plan's D2 gate: 70% or more), the last boss and each side boss, wipes, chain pulls,
-# rejoins, the stand-in split, and the ladder's rung.
+# forge status: the full clears (the plan's D2 gate: 70% or more), the last boss and each side boss, wipes, rejoins,
+# the stand-in split, and the ladder's rung.
 status:
   headline: [full_clear, cleared, wing_cleared_share, wing_wipes, boss_oggleflint, boss_taragaman, boss_jergosh,
-             boss_bazzalan, chain_pulls, wing_rejoin_seconds, clear_allbot, clear_standin, standin_gap, wing_rung]
+             boss_bazzalan, wing_rejoin_seconds, clear_allbot, clear_standin, standin_gap, wing_rung]
   targets:
-    # D1's drill measures are not D2's.
-    drill_extra: null
+    # G1's measures are not D2's (null drops an inherited key).
+    won: null
+    won_hold: null
+    won_keep: null
+    won_focus: null
+    won_pull: null
+    hold_share: null
+    kept_share: null
+    focus_share: null
+    clean_share: null
+    extra_pulls: null
+    wipes: null
+    rejoined: null
+    rejoin_seconds: null
     full_clear: ">= 0.7"
     cleared: ">= 0.7"
     wing_wipes: "<= 1"
-    chain_pulls: "<= 1"
     wing_rejoin_seconds: "<= 90"
     standin_gap: "<= 0.1"
   excluded:
@@ -90,8 +100,10 @@ costs:
 layout_sampling:
   metric: full_clear
 
+# Co-op partners (I7): G1's policy and this run's own snapshots in up to two of the seats of a third of the parties;
+# the with_partners arm plays G1's.
 cast:
   partners:
-    stages: [dungeon1_pulls]
+    stages: [group1_roles]
     score: cleared
-    eval_partners: [dungeon1_pulls]
+    eval_partners: [group1_roles]

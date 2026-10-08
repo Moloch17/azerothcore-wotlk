@@ -318,27 +318,6 @@ class StyleConfig:
 
 
 @dataclass
-class ExploreConfig:
-    """Go-Explore starts for the dungeon wings (animus.explore, peak-play plan W5): the cells ended training runs
-    reached are archived, and `share` of a wing's training resets start from one of the `table_size` most promising
-    instead of the door. Evaluation always starts at the door. Off, nothing is sent and every run starts at the door."""
-
-    enabled: bool = False
-    share: float = 0.5
-    table_size: int = 64
-    max_cells: int = 4096
-    depth_weight: float = 1.0
-
-    def __post_init__(self) -> None:
-        if not 0.0 <= self.share <= 1.0:
-            raise ValueError(f"explore.share: expected a share within [0, 1], got {self.share!r}")
-        if not 1 <= self.table_size <= 64:
-            raise ValueError(f"explore.table_size: expected 1 to 64 cells (the sim's table), got {self.table_size!r}")
-        if self.max_cells < self.table_size:
-            raise ValueError(f"explore.max_cells: expected at least table_size, got {self.max_cells!r}")
-
-
-@dataclass
 class EntropyFloorConfig:
     """Keep exploration from collapsing, measured against how many actions were actually legal.
 
@@ -665,7 +644,6 @@ class TrainConfig:
     costs: CostLadderConfig = field(default_factory=CostLadderConfig)
     style: StyleConfig = field(default_factory=StyleConfig)
     status: StatusConfig = field(default_factory=StatusConfig)
-    explore: ExploreConfig = field(default_factory=ExploreConfig)
 
     def __post_init__(self) -> None:
         # Anything else would read as "best" (animus.train.init_from_checkpoint), which a typo must not do quietly.
