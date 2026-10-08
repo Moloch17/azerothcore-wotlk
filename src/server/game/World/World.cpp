@@ -204,8 +204,6 @@ void World::LoadConfigSettings(bool reload)
 
     if (reload)
     {
-        sMapMgr->SetMapUpdateInterval(getIntConfig(CONFIG_INTERVAL_MAPUPDATE));
-
         _timers[WUPDATE_UPTIME].SetInterval(getIntConfig(CONFIG_UPTIME_UPDATE) * MINUTE* IN_MILLISECONDS);
         _timers[WUPDATE_UPTIME].Reset();
 

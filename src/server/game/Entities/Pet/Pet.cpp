@@ -541,86 +541,10 @@ void Pet::SavePetToDB(PetSaveMode mode)
     // when it wants one -- while a pet is destroyed with its owner for a large share of the characters rebuilt
     // every episode, and at sim speed that is a stream of transactions per wall-second: two here (auras, spells
     // and cooldowns, then the pet row) and five more through DeleteFromDB on the PET_SAVE_AS_DELETED path that
-    // dismissing a bot's pet takes. Everything below this line is database work. The one effect that is not is
-    // the aura wipe a stable save does, which is kept; the sim never reaches it, but its absence would be a
-    // behaviour change rather than a saving.
+    // dismissing a bot's pet takes. The one effect of the stock save that is not database work is the aura wipe a
+    // stable save does, which is kept.
     if (mode > PET_SAVE_AS_CURRENT)
         RemoveAllAuras();
-
-    return;
-
-    uint32 curhealth = GetHealth();
-    uint32 curmana = GetPower(POWER_MANA);
-
-    CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
-    // save auras before possibly removing them
-    _SaveAuras(trans);
-
-    // stable and not in slot saves
-    if (mode > PET_SAVE_AS_CURRENT)
-        RemoveAllAuras();
-
-    _SaveSpells(trans);
-    _SaveSpellCooldowns(trans);
-    CharacterDatabase.CommitTransaction(trans);
-
-    // current/stable/not_in_slot
-    if (mode >= PET_SAVE_AS_CURRENT)
-    {
-        ObjectGuid::LowType ownerLowGUID = GetOwnerGUID().GetCounter();
-        trans = CharacterDatabase.BeginTransaction();
-        // remove current data
-
-        CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_CHAR_PET_BY_ID);
-        stmt->SetData(0, m_charmInfo->GetPetNumber());
-        trans->Append(stmt);
-
-        // prevent existence another hunter pet in PET_SAVE_AS_CURRENT and PET_SAVE_NOT_IN_SLOT
-        if (getPetType() == HUNTER_PET && (mode == PET_SAVE_AS_CURRENT || mode > PET_SAVE_LAST_STABLE_SLOT))
-        {
-            stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_CHAR_PET_BY_SLOT);
-            stmt->SetData(0, ownerLowGUID);
-            stmt->SetData(1, uint8(PET_SAVE_AS_CURRENT));
-            stmt->SetData(2, uint8(PET_SAVE_LAST_STABLE_SLOT));
-            trans->Append(stmt);
-        }
-
-        // save pet
-        std::string actionBar = GenerateActionBarData();
-
-        if (owner->GetPetStable()->CurrentPet && owner->GetPetStable()->CurrentPet->PetNumber == m_charmInfo->GetPetNumber())
-        {
-            FillPetInfo(&owner->GetPetStable()->CurrentPet.value());
-        }
-
-        stmt = CharacterDatabase.GetPreparedStatement(CHAR_REP_CHAR_PET);
-        stmt->SetData(0, m_charmInfo->GetPetNumber());
-        stmt->SetData(1, GetEntry());
-        stmt->SetData(2, ownerLowGUID);
-        stmt->SetData(3, GetNativeDisplayId());
-        stmt->SetData(4, GetUInt32Value(UNIT_CREATED_BY_SPELL));
-        stmt->SetData(5, uint8(getPetType()));
-        stmt->SetData(6, GetLevel());
-        stmt->SetData(7, GetUInt32Value(UNIT_FIELD_PETEXPERIENCE));
-        stmt->SetData(8, uint8(GetReactState()));
-        stmt->SetData(9, GetName());
-        stmt->SetData(10, uint8(HasByteFlag(UNIT_FIELD_BYTES_2, 2, UNIT_CAN_BE_RENAMED) ? 0 : 1));
-        stmt->SetData(11, uint8(mode));
-        stmt->SetData(12, curhealth);
-        stmt->SetData(13, curmana);
-        stmt->SetData(14, GetPower(POWER_HAPPINESS));
-        stmt->SetData(15, GameTime::GetGameTime().count());
-        stmt->SetData(16, actionBar);
-
-        trans->Append(stmt);
-        CharacterDatabase.CommitTransaction(trans);
-    }
-    // delete
-    else
-    {
-        RemoveAllAuras();
-        DeleteFromDB(m_charmInfo->GetPetNumber());
-    }
 }
 
 void Pet::DeleteFromDB(ObjectGuid::LowType guidlow)

@@ -227,7 +227,6 @@ public:
     /// shared kills -- but it lives only in memory: no group or member rows, no character cache entries, and
     /// joining, leaving or disbanding never touches instance binds or homebind timers. Set before Create.
     void SetSimGroup(bool sim) { m_simGroup = sim; }
-    [[nodiscard]] bool IsSimGroup() const { return m_simGroup; }
     /// Written to the character database and character cache: not a battleground, battlefield or sim group.
     [[nodiscard]] bool IsPersisted() const;
     bool IsCreated()   const;

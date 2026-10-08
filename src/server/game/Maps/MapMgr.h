@@ -96,10 +96,6 @@ public:
     void Initialize(void);
     void Update(uint32);
 
-    /// Stock spread map work over MapUpdateInterval with a round robin; the sim ticks every map every
-    /// tick, so the interval has nothing left to drive. Kept for the config reload that sets it.
-    void SetMapUpdateInterval(uint32 /*t*/) { }
-
     //void LoadGrid(int mapid, int instId, float x, float y, WorldObject const* obj, bool no_unload = false);
     void UnloadAll();
 

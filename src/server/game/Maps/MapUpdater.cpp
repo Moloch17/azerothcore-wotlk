@@ -150,60 +150,6 @@ void MapUpdater::schedule_work(void (*work)(void*), void* arg)
     Push(task);
 }
 
-namespace
-{
-    /// One ParallelFor: shared by its caller and the helper tasks, each of which holds it alive, so a helper that
-    /// starts after the caller returned still has something to look at (and finds nothing left to claim).
-    struct Share
-    {
-        std::function<void(uint32)> const* Fn = nullptr;   // valid until Done reaches Count
-        uint32 Count = 0;
-        std::atomic<uint32> Next{ 0 };
-        std::atomic<uint32> Done{ 0 };
-
-        void Work()
-        {
-            for (uint32 index = Next.fetch_add(1, std::memory_order_acq_rel); index < Count;
-                index = Next.fetch_add(1, std::memory_order_acq_rel))
-            {
-                (*Fn)(index);
-                Done.fetch_add(1, std::memory_order_acq_rel);
-            }
-        }
-
-        static void Help(void* arg)
-        {
-            std::unique_ptr<std::shared_ptr<Share>> const held(static_cast<std::shared_ptr<Share>*>(arg));
-            (*held)->Work();
-        }
-    };
-}
-
-void MapUpdater::ParallelFor(uint32 count, uint32 helpers, std::function<void(uint32)> const& fn)
-{
-    if (!count)
-        return;
-    if (count == 1 || !activated() || !MapMgr::MapTasksRunning.load(std::memory_order_acquire))
-    {
-        for (uint32 index = 0; index < count; ++index)
-            fn(index);
-        return;
-    }
-
-    auto share = std::make_shared<Share>();
-    share->Fn = &fn;
-    share->Count = count;
-    helpers = std::min<uint32>({ helpers, count - 1, uint32(_workers.size()) });
-    for (uint32 helper = 0; helper < helpers; ++helper)
-        schedule_work(&Share::Help, new std::shared_ptr<Share>(share));
-
-    share->Work();
-    // Every index is claimed; wait for the ones a helper is still running. Past this no one calls fn again: every
-    // later claim is past Count.
-    while (share->Done.load(std::memory_order_acquire) < count)
-        CpuRelax();
-}
-
 void MapUpdater::RunMapTick(Map& map, uint32 diff, uint32 s_diff)
 {
     // The sim's envs on this map, on this thread: they take the last decision's actions before the tick and are
