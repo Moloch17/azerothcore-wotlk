@@ -715,6 +715,14 @@ class MappoTrainer:
         self.layout_stats: dict[int, dict[str, float]] = {}
         self.frozen_layouts: set[int] = set()
 
+    def clear_optimizer_state(self) -> None:
+        """Every optimizer's moments forgotten, its learning rate and parameter groups kept: after the weights were
+        replaced whole (an async follower repaired from the centre, animus.async_sync), when the old moments describe
+        weights that no longer exist and may be non-finite."""
+        for optimizer in (self.actor_opt, self.critic_opt, self.vision_opt, self.slow_opt):
+            if optimizer is not None:
+                optimizer.state.clear()
+
     def freeze_layouts(self, indices: set[int]) -> None:
         """Stop training the adapters and heads of these layouts (a class that has converged, animus.stage): their
         own parameters take no gradient, so only the shared trunk can still move them. Layouts not in `indices`
