@@ -40,6 +40,7 @@
 #include "Log.h"
 #include "MapMgr.h"
 #include "MapUpdater.h"
+#include "SceneRegistry.h"
 #include "StageDefinition.h"
 #include "StringFormat.h"
 #include "World.h"
@@ -82,9 +83,15 @@ namespace
         for (unsigned char c : settings)
             hash = (hash ^ c) * 1099511628211ull;
 
-        return Acore::StringFormat("src={} protocol={} curriculum={:016x} decision={}/{}",
+        // The baked scenes the camera casts against, by map id: each machine bakes its own, so what is compared is
+        // what each produced.
+        std::string scenes;
+        for (auto const& [mapId, checksum] : Animus::Vision::SceneRegistry::Instance().Checksums())
+            scenes += Acore::StringFormat("{}{}:{:016x}", scenes.empty() ? "" : ",", mapId, checksum);
+
+        return Acore::StringFormat("src={} protocol={} curriculum={:016x} decision={}/{} scenes={}",
             FORGE_SOURCE_HASH, AnimusForge::PROTOCOL_VERSION, hash, config.DecisionMs,
-            config.TicksPerDecision);
+            config.TicksPerDecision, scenes.empty() ? "none" : scenes);
     }
 
     /// How long an idle or paused world thread sleeps per tick: an idle sim would otherwise spin a core.
@@ -129,6 +136,41 @@ namespace
         }
 
         return total ? uint32(100 - std::min<uint64>(100, available * 100 / total)) : 0;
+    }
+}
+
+void AnimusForge::Forge::PrepareScenes()
+{
+    _sceneProblems.clear();
+    std::string const dataDir = sWorld->GetDataPath();
+    std::string const sceneDir = (std::filesystem::path(_config.DataDir) / "scenes").string();
+    std::map<uint32, std::vector<std::string>> const maps = Animus::Curriculum::StageMaps(_config.SpawnMapId);
+    LOG_INFO("module.animus", "Scenes: {} maps for the camera, in {} (baked from {} when missing or out of date)",
+        maps.size(), sceneDir, dataDir);
+
+    for (auto const& [mapId, stages] : maps)
+    {
+        std::string names;
+        for (std::string const& stage : stages)
+            names += (names.empty() ? "" : ", ") + stage;
+
+        Animus::Vision::SceneEnsure result;
+        std::string error;
+        if (!Animus::Vision::SceneRegistry::Instance().Ensure(dataDir, sceneDir, mapId, result, error))
+        {
+            LOG_ERROR("module.animus", "Scene for map {} FAILED: {}", mapId, error);
+            _sceneProblems.push_back(Acore::StringFormat("map {} (stages {}): {}", mapId, names, error));
+            continue;
+        }
+        if (result.Baked)
+            LOG_INFO("module.animus", "Scene map {} baked ({}): {} triangles, {} BVH nodes, {} terrain tiles, {} bytes, "
+                "{:.2f} s{} -> {}", mapId, result.Reason, result.Triangles, result.Nodes, result.TerrainTiles,
+                result.Bytes, result.Seconds, result.Seconds > 30.0 ? " (SLOW: a first start bakes every map once)"
+                : "", result.Path);
+        else
+            LOG_INFO("module.animus", "Scene map {} loaded: {} triangles, {} BVH nodes, {} terrain tiles, {} bytes, "
+                "checksum {:016x} ({:.2f} s to check) for {}", mapId, result.Triangles, result.Nodes,
+                result.TerrainTiles, result.Bytes, result.Checksum, result.Seconds, names);
     }
 }
 
@@ -194,6 +236,9 @@ void AnimusForge::Forge::OnStartup()
     }
 
     LOG_INFO("module.animus", "GPU mode: {}", _config.GpuSummary);
+
+    // The static world the camera casts against, baked or loaded now: the fingerprint below carries its checksums.
+    PrepareScenes();
 
     if (_config.Cluster != ForgeConfig::ClusterRole::Standalone)
     {

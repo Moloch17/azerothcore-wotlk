@@ -41,6 +41,17 @@ function(CopyApplicationConfig projectName appName)
   elseif(WIN32)
     install(FILES "${SOURCE_APP_PATH}/${appName}.conf.dist" DESTINATION "${CMAKE_INSTALL_PREFIX}/configs")
   endif()
+
+  # Animus's data folder (AnimusForge.DataDir, default <config dir>/modules/animus): the worldserver bakes the camera's
+  # scene files into its scenes/ subfolder at first start, so the folder is created beside the config, empty. The
+  # *.scene files themselves are never installed or committed -- every machine bakes its own.
+  if(appName STREQUAL "worldserver")
+    if(UNIX)
+      install(CODE "file(MAKE_DIRECTORY \"\$ENV{DESTDIR}${CONF_DIR}/modules/animus/scenes\")")
+    elseif(WIN32)
+      install(CODE "file(MAKE_DIRECTORY \"\$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/configs/modules/animus/scenes\")")
+    endif()
+  endif()
 endfunction()
 
 function(CopyToolConfig projectName appName)

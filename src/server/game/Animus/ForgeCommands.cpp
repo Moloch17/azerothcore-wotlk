@@ -271,7 +271,13 @@ bool AnimusForge::Forge::CurriculumSound(LineSink const& out) const
     if (!problems.empty())
         out("Refusing to train until every stage is valid: a queue with a stage missing seeds the stages after it "
             "from the wrong checkpoint.");
-    return problems.empty();
+    for (std::string const& problem : _sceneProblems)
+        out("Camera scene unavailable -- " + problem);
+    if (!_sceneProblems.empty())
+        out("Refusing to train without a baked scene for every map a stage runs on: the camera has no fallback to "
+            "the live collision trees. Fix the cause above (the data under DataDir, a writable AnimusForge.DataDir) "
+            "and restart the worldserver, which bakes what is missing at startup.");
+    return problems.empty() && _sceneProblems.empty();
 }
 
 bool AnimusForge::Forge::ValidScenario(std::string const& scenario, LineSink const& out) const

@@ -351,6 +351,13 @@ void AnimusForge::ForgeConfig::Load()
     fs::path const modelDir = sConfigMgr->GetOption<std::string>("AnimusForge.ModelDir", "");
     ModelDir = (modelDir.empty() ? DefaultLearnerWorkDir().parent_path() / "models" : Resolve(modelDir, configDir)).lexically_normal().string();
 
+    // Animus's data folder: inside the configuration directory, because the config directory is the one place that
+    // is installed with the server, persisted and writable on every machine (the data directory is a read-only
+    // volume under Docker). It is the folder a realm's module installs its models into.
+    fs::path const dataDir = sConfigMgr->GetOption<std::string>("AnimusForge.DataDir", "");
+    DataDir = (dataDir.empty() ? configDir / "modules" / "animus" : Resolve(dataDir, configDir))
+        .lexically_normal().string();
+
     ProgressInterval = sConfigMgr->GetOption<uint32>("AnimusForge.Progress.Interval", 0);
 
     FastEnvs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AnimusForge.Fast.Envs", 16));

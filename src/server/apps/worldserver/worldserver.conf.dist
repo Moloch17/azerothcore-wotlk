@@ -5940,6 +5940,21 @@ AnimusForge.Fast.Learner.Args = ""
 AnimusForge.ModelDir = ""
 
 #
+#    AnimusForge.DataDir
+#        Description: Folder for the data Animus generates or ships, relative to the directory of
+#                     worldserver.conf or absolute. The baked camera scenes live in its scenes/ subfolder, one
+#                     <map id>.scene file per map a stage runs on. The worldserver bakes a scene itself at
+#                     startup when its file is missing or was baked from other map data, so the folder must be
+#                     writable and should be persisted (a fresh one only costs the bake again; with the stock
+#                     maps a few seconds a map). Every machine of a cluster bakes into its own copy; the
+#                     cluster fingerprint refuses a worker whose scenes differ from the host's. The folder may
+#                     differ per machine.
+#        Default:     "" - modules/animus in the directory of worldserver.conf (the folder a realm's module
+#                     installs its models into)
+
+AnimusForge.DataDir = ""
+
+#
 #    AnimusForge.Progress.Interval
 #        Description: While a scenario runs, also log the progress report every this many wall-clock
 #                     seconds: env steps, step rate, ETAs (step limit, earliest convergence, the whole

@@ -215,6 +215,10 @@ namespace AnimusForge
 
         /// AnimusForge.ModelDir, resolved: where `forge export` writes models. Never empty after Load.
         std::string ModelDir;
+        /// AnimusForge.DataDir, resolved: the folder for what Animus generates or ships as data -- the baked camera
+        /// scenes in its scenes/ subfolder. Never empty after Load; the default is the config directory's
+        /// modules/animus.
+        std::string DataDir;
         /// AnimusForge.Progress.Interval, seconds; 0 = no periodic report (`forge status` and each stage's end only).
         uint32 ProgressInterval = 0;
 
