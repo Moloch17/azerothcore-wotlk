@@ -54,31 +54,31 @@ Called from `WingRoute` (E3.10) when `FieldRoute::Covers(MapId, x, y)` is true. 
 unwalkable leg of the boss spine it returns the empty plan (`plan.Field` stays false, `:1507-1508`), and the caller
 logs and falls back to the navmesh route.
 
-1. **Walk helper** (`:1478-1502`): `walk(from, stops, dense, log)` appends `FieldRoute::Plan(mapId, from, stop, leg)` legs
+1. **Walk helper** (`:1477-1497`): `walk(from, stops, dense, log)` appends `FieldRoute::Plan(mapId, from, stop, leg)` legs
    to `dense`; false (with a `LOG_WARN "field route: no way from ... to ..."`) at the first leg with no path.
-2. **Spine** (`:1505-1507`): the door (the seat's position) then every boss in the order the dungeon opens up (`bosses`),
+2. **Spine** (`:1499-1507`): the door (the seat's position) then every boss in the order the dungeon opens up (`bosses`),
    walked on the field graph.
-3. **Packs** (only with `Instance.WingFullClear` = 1, `:1519-1594`): every `Hostile` creature in the map's spawn store
+3. **Packs** (only with `Instance.WingFullClear` = 1, `:1513-1575`): every `Hostile` creature in the map's spawn store
    other than the last boss is grouped by home position within `PACK_REACH = 15` yd of the first remaining one
    (greedy clustering, `:1530-1552`). The pack's stand point is the member nearest the spine; the pack is kept only if
-   `FieldRoute::Plan(...)` succeeds from the spine point to it **and back** with a 400000 node budget (`:1566-1570`), else
+   `FieldRoute::Plan(...)` succeeds from the spine point to it **and back** with a 400000 node budget (`:1553-1555`), else
    its members are counted in `left` and dropped ("a pit a seat can drop into but not climb out of"). Kept packs get
    `WingPack{At, Members}`, their spawn ids go to `plan.Reachable`, and packs are stable-sorted by the spine index
-   (`along`) they hang off (`:1586-1593`).
-4. **Stops** (`:1595-1621`): kept packs and all bosses but the last are merged and stable-sorted by where the spine
+   (`along`) they hang off (`:1569-1575`).
+4. **Stops** (`:1576-1609`): kept packs and all bosses but the last are merged and stable-sorted by where the spine
    passes them; the last boss is appended. `stopPack[i]` says which stop is which pack (-1 for a boss).
-5. **Each pack's gap** (`:1624-1647`): the distance from the pack's members to the nearest creature home that is neither
+5. **Each pack's gap** (`:1610-1632`): the distance from the pack's members to the nearest creature home that is neither
    in the pack nor in a pack the route reaches before it (`WingPack::Gap`, `float max` if none). This is what the pull
    drill's ladder orders packs by.
-6. **Dense route** (`:1649-1684`): starting at the door, `FieldRoute::Plan` from the cursor to each stop; a stop the field
+6. **Dense route** (`:1634-1664`): starting at the door, `FieldRoute::Plan` from the cursor to each stop; a stop the field
    cannot reach from the last one is skipped with a count (`skipped`, `:1668-1669`); if the last boss itself is
    unreachable after the packs, the dense route falls back to the bare spine and every pack's `Yard` is zeroed
-   (`:1655-1664`), so no pack is drillable. `WingPack::Yard` is the index in `dense` where a pack stop was reached.
-7. **Route points** (`:1686-1704`): one point every `max(5, Instance.WingWaypointYards)` yards (default 30) along `dense`,
+   (`:1636-1651`), so no pack is drillable. `WingPack::Yard` is the index in `dense` where a pack stop was reached.
+7. **Route points** (`:1666-1684`): one point every `max(5, Instance.WingWaypointYards)` yards (default 30) along `dense`,
    `RouteDense[i]` = the dense index of route point `i`, the last boss's own position last.
-8. **Drill bands log** (`:1707-1722`): per `PULL_GAPS` rung, how many drillable packs fall in it (a pack counts in the
+8. **Drill bands log** (`:1685-1703`): per `PULL_GAPS` rung, how many drillable packs fall in it (a pack counts in the
    first rung whose gap it meets), logged `"pull drill packs by gap: ..."`.
-9. **Corner tables** (`:1737-1750`): `RouteShortcut::Corners` ahead and back over `dense`, with a visibility predicate
+9. **Corner tables** (`:1705-1750`): `RouteShortcut::Corners` ahead and back over `dense`, with a visibility predicate
    `clear(from, to)` that needs `|dz| <= index distance`, a VMAP line of sight at chest height 1.5 yd, ground within
    1.5 yd at every 1-yd sample (`GetHeight(..., z + 2, true, 4)`), and no liquid. Logged with the number of straight legs
    and milliseconds. See `RouteShortcut.h` (cpp-movement.md).
@@ -201,8 +201,7 @@ player or a player's pet/charm** (`GetCharmerOrOwnerPlayerOrPlayerItself`), via 
 `WingRun::FightPacks::Note`, which counts a pack joining a fight that already had a pack as one **chain pull**
 (`fight.ChainPulls += ...`). `FullClear`: the last boss dead and either every route pack `Cleared` (field route) or, on
 a navmesh route with no packs, `TrashKills + 1 >= HostileTotal`. `Succeeded`: drill = cleared and not extra; corridor =
-`Corridor.Done()`; else `BossDead`. (`Succeeded` has no caller inside this file's range; UNVERIFIED whether the first
-half or `StageScenario` calls it: grep before relying on it.)
+`Corridor.Done()`; else `BossDead`. (`Succeeded` is the source of the `cleared`, `clear_allbot` and `clear_standin`-style columns (`:256-318`, E3.8).)
 
 ### E4.6 `View` and `SeenWorld` (`:2432-2527`) and `SeenPlaces.h`
 
@@ -246,38 +245,38 @@ Kinds are from `RewardTermCategory` (`Rewards/RewardLedger.h:162-250`). `ledger.
 tier argument and, for Shaping, by the fade scale; the **score** takes `value` without the tier. A cost "over the tier
 scale" is passed `1 / tierScale` so it shrinks as the rung climbs.
 
-Paid every decision to every seat (`:2538-2566`):
+Paid every decision to every seat (`:2537-2566`):
 
 | Term (kind) | Condition and amount | Key (default) |
 |---|---|---|
 | `Idle` (Cost) | `EpisodeElapsedMs > ProgressMs + grace`, where the grace is `PullGraceMs` for a drill, else `WingStallGraceMs`: `-WingStall * (tank ? 1 : WingStallOthers) * seconds`. `ProgressMs` is bumped by seat 0 when `TrashKills + waypoints` changed or the env's `StepEngaged` is true | `Instance.WingStall` 0.1, `WingStallGraceMs` 60000, `WingStallOthers` 0.2, `PullGraceMs` 20000 |
 | `StepCost` (Cost) | `-WingClock * seconds` | `Instance.WingClock` 0.002 |
-| `ReadyPull` (Outcome) | for each new fight started with every living member ready (`fight.ReadyEngages`, capped by `ReadyPaidCap`, counted in the first half): `+WingEngage * newEngages`, tier `tierScale` | `Instance.WingEngage` 1.0 (the ready share is `WingReadyShare` 0.8, read in `Update`) |
+| `ReadyPull` (Outcome) | for each new fight started with every living member ready (`fight.ReadyEngages`, capped by `ReadyPaidCap`, counted in the first half): `+WingEngage * newEngages`, tier `tierScale` | `Instance.WingEngage` 1.0 (the ready share `WingReadyShare` 0.8 is read in `Update`, `:739-749`; the cap `ReadyPaidCap` is set in `Build`, `:648,672-674`) |
 | `PullExtra` (Cost) | each new chain pull: `-WingChainPull * new`, tier `1/tierScale` | `Instance.WingChainPull` 3.0 |
 | `Clear` (Outcome) | corridor run, each pack cleared **in route order** since last paid: `+CorridorPack * new`, tier `tierScale` | `Instance.CorridorPack` 4.0 |
 | `Threat` (Shaping) | `OnParty > WingCrowdFree`: `-WingCrowd * (OnParty - WingCrowdFree) * seconds` | `Instance.WingCrowd` 0.15, `WingCrowdFree` 4 |
 | `Lost` (Cost) | `WingRun::Strays(alive, isLeader, walkingBack, leaderAlive, yards, WingStrayYards)`: `-WingStray * seconds` | `Instance.WingStray` 0.02, `WingStrayYards` 25 |
 | `Away` (Cost) | `WingRun::Away(alive, walkingBack)` = dead or `Clock.Rejoining`: `-WingAway * seconds` | `Instance.WingAway` 0.02 |
 
-Paid only to a living bot (`:2568-2592`): `Kill` (Outcome) `+WingTrashKill * newTrashKills`, tier `tierScale`; `Approach`
+Paid only to a living bot (`:2568-2625`): `Kill` (Outcome) `+WingTrashKill * newTrashKills`, tier `tierScale`; `Approach`
 (Shaping) `+WingWaypoint * tierScale * newWaypoints`; `Kill` `+WingMidBoss * newBossKills`, tier `tierScale`; and the
 forward potential: when not fighting and the route ahead is known, `potential = -(distance to next route point +
 RouteRemain[next]) / RouteRemain[0]`, paid `+WingProgress * tierScale * (potential - previous)` when it rises (the max
 is kept; the first reading only seeds it). Keys: `WingTrashKill` 1.0, `WingWaypoint` 0.5, `WingMidBoss` 8.0,
 `WingProgress` 60.0. Note the tier is multiplied into a Shaping term here as an argument, not as an outcome scale.
 
-Deaths (`:2599-2610`): the first decision a bot is found dead, `Death` (Cost) `-WingDeath` (3.0) tier `1/tierScale`; for
+Deaths (`:2632-2641`): the first decision a bot is found dead, `Death` (Cost) `-WingDeath` (3.0) tier `1/tierScale`; for
 each new wipe `Death` `-WingWipe` (5.0) times the number, tier `1/tierScale`. Both `paid.DeathPaid` and `Deaths` reset
 how E3.7 describes.
 
 **Terminal outcome**, paid once per seat when `over` (`BossDead || Wiped || TimeIsUp || drill done || corridor done`,
-`:2612-2614`), guarded by `OutcomePaid`:
+`:2644-2646`), guarded by `OutcomePaid`:
 
 - Drill: share = 1 for the tank (`DungeonRole == DUNGEON_TANK`), else `PullOthers` (0.5). Extra pack: `PullExtra`
   `-PullExtra * share`, tier `1/tierScale`; else cleared: `PullClean` (Outcome) `+PullClean * share`, tier `tierScale`;
   else time up: `Timeout` (Cost) `-PullTimeout * share`, tier `1/tierScale`. Then returns. Keys `PullExtra` 5.0,
   `PullClean` 5.0, `PullTimeout` 2.0, `PullOthers` 0.5.
-- Seat 0 only, once: a `LOG_DEBUG` of route packs never found (`:2632-2643`).
+- Seat 0 only, once: a `LOG_DEBUG` of route packs never found (`:2655-2670`).
 - Corridor: time up and not done: `Timeout` `-WingTimeout * (1 - Corridor.Share())`, tier `1/tierScale`; returns unless
   `BossDead` (a corridor can end on the last boss too).
 - `BossDead`: `Kill` `+WingBoss`, tier `tierScale`; and for a whole run (not corridor) with `FullClear` once:
