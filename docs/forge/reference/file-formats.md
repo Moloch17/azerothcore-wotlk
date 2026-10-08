@@ -247,6 +247,19 @@ whole `tuning`, so any tuning change replays it). Only exists when `eval.baselin
 `PartnerPool.write` (leader): `{members: [{path, kind ("stage"/"path"/"snapshot"), episodes, party_score, retired, draw_share}], active, missing, unusable}`. `partners/<tag>.pt` are copies of checkpoints
 (`partner_snapshot`): tags `step_<env_steps>` (latest.pt snapshots) and `best_<env_steps>` (improved best.pt).
 
+## Baked camera scene: `<AnimusForge.DataDir>/scenes/<map id padded to 3>.scene`
+
+Written by `SceneBaker::BakeMap` (the worldserver at startup, or `scene_baker bake`), read by `BakedWorld::Load`;
+never in git (each machine bakes its own, and the cluster fingerprint compares their checksums). Format version 2,
+little-endian, pointer-free: a 512-byte `SceneHeader` (magic `ABSC`, version, map id, flags, solid and liquid boxes,
+counts, baker version, `SourceHash` = FNV-1a 64 over the contents of every source file the bake read, `Checksum` =
+FNV-1a 64 of the whole file with that field read as zero, the section table), then 16-byte-aligned sections: solid
+triangles (vertex 0 and two edges, world space), face normals, kinds (WMO or M2), the BVH nodes, WMO liquid triangles,
+kinds and BVH, the terrain index (`TerrainRec` per `.map` tile, sorted), V9 and V8 height floats, hole words and per-cell
+liquid level and kind. Authoritative layout: `Animus/Runtime/Vision/BakedScene.h`. A file is valid when its magic,
+version and checksum are right, its baker version is `SceneBaker::BAKER_VERSION` and its `SourceHash` equals the hash of
+the data on disk; otherwise it is baked again.
+
 ## RUNLOG.md
 
 Hand-written Markdown log of decisions per run (see the backup: dated bullets, diagnoses, config changes). **No code writes or reads it.** It travels with the run directory (the backup
