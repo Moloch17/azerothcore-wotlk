@@ -6,10 +6,12 @@ Purpose and scope. This document describes the 14 live observation/action blocks
 and `stage.json` are in [cpp-layout-character.md](cpp-layout-character.md). Rewards and routing are in
 [cpp-rewards-routing.md](cpp-rewards-routing.md). Related: [cpp-vision.md](cpp-vision.md) (camera, entity memory, mental
 map internals), [cpp-encounters.md](cpp-encounters.md), [cpp-stagescenario.md](cpp-stagescenario.md),
-[protocol.md](protocol.md), [file-formats.md](file-formats.md), [tests.md](tests.md), [known-issues.md](known-issues.md),
+[protocol.md](protocol.md), [file-formats.md](file-formats.md), [tests.md](tests.md),
+[known-issues.md](known-issues.md),
 [glossary.md](glossary.md).
 
-All paths below are relative to `src/server/game/Animus/Scenario/Curriculum/` unless they start with `src/`. Line numbers
+All paths below are relative to `src/server/game/Animus/Scenario/Curriculum/` unless they start with `src/`. Line
+numbers
 are those of commit `bd32b9dc8`.
 
 ## Map table
@@ -155,7 +157,8 @@ sight 2, party_frames 2, combat 1, goal 0.
 
 What the C++ side promises; the implementation is `apps/forge/python/animus/bootstrap.py` (see py-learner.md).
 
-1. A stage is seeded from its `Extends` (seed chain in stage.json, `StageScenario.cpp:1308`), plus `Merges` for blocks only
+1. A stage is seeded from its `Extends` (seed chain in stage.json, `StageScenario.cpp:1308`), plus `Merges` for blocks
+   only
    they have. Seeding is block by block, matched by block NAME in stage.json `layouts.<class>.blocks[].name`.
 2. A block is carried whole, by position, when both stages have it, with equal revision (missing = 0), equal obs width
    and equal action count (`bootstrap._common_blocks`).
@@ -235,7 +238,8 @@ Global columns (index, all in the block's slice; normalisation as coded):
 | 89, 90 | OBS_OPTION_FIRST | time left of the two durative options (rest, held interrupt) / 30 s |
 
 Then per catalog action `a` (8 columns each at `91 + a*8`): `[0]` known (1 when a rank is known), `[1]` cooldown
-fraction, `[2]` own aura on target (fraction, stacks in `[4]`), `[3]` own aura on self, `[4]` stacks, `[5]` time since the
+fraction, `[2]` own aura on target (fraction, stacks in `[4]`), `[3]` own aura on self, `[4]` stacks, `[5]` time since
+the
 seat pressed it / 10 s (1 = never; written even when the spell is unknown), `[6]` ready, `[7]` affordable. Then `T`
 talent ranks (rank / max rank), then 3 tree shares (points in tree / points spent). Written by `ObserveCharacter`
 (`CoreBlock.cpp:275`) even for a dead seat: level, race, aptitude, talents, trees.
@@ -245,10 +249,13 @@ ActionCatalog) then `rank_high`, `rank_mid`, `rank_low` (`ActionName`, `CoreBloc
 are `<lowercase_spell_name>_<first rank spell id>` (`ActionCatalog.cpp:192`).
 
 Mask (`CoreBlock.cpp:302-436`): action 0 always set elsewhere; for each action `allowed && !GoalCloses`:
-- noop allowed; soulstone kind never; cancel_queued needs a queued melee spell; trinket needs an on-use spell, no cast in
-  progress, no cooldown, `CheckCast`; spell goes through `Encoding::IsSpellActionAllowed` (known and active, no cooldown,
+- noop allowed; soulstone kind never; cancel_queued needs a queued melee spell; trinket needs an on-use spell, no cast
+  in
+  progress, no cooldown, `CheckCast`; spell goes through `Encoding::IsSpellActionAllowed` (known and active, no
+  cooldown,
   no cast in progress, next-swing rule, GCD, heal on full-health friend is masked, aura-keeping spell with more than 25%
-  left is masked, shapeshift-from-shapeshift rule; facing/range/LOS/moving/power failures are NOT masked, they are priced).
+  left is masked, shapeshift-from-shapeshift rule; facing/range/LOS/moving/power failures are NOT masked, they are
+  priced).
 - `GoalCloses`: under goals Recover/Prepare/Rest/TravelTo/Loot/Gather/Interact harmful spells are masked unless health
   < 35%, attackers on the seat or a teammate, or stealthed; under Fight/Control/Position long buffs are masked in combat
   (`CoreBlock.cpp:85-128`). With a secondary goal only what both close is closed.
@@ -321,7 +328,8 @@ Apply: `MoveControls::Press` changes one held control and returns a `PressOutcom
 `Weaves`, `EffortWeight` on the result (priced by StageScenario, see rewards doc). JUMP is one-shot (controller clears
 it). Pricing math is `MovePrice.h` (`COUNT_MS 1500`, `WEAVE_MS 4000`, `QUARTER_TURN`, `Recency`, `EffortOf`).
 
-Reads: `view.Body` (controller body), `view.Controls`, `view.Look`-independent; map liquid; `view.NearestHazard`; trail in
+Reads: `view.Body` (controller body), `view.Controls`, `view.Look`-independent; map liquid; `view.NearestHazard`; trail
+in
 `view.Trail` (mutated inside the const Observe: first observation of an episode takes sample 1). Revision history
 (`MoveControls.h:33`): 0,1 bearing/turn-lattice design (gone); 2 controls; 3 never shipped; 4 no ground rays, no
 clearance; 5 objective columns moved to the compass block. Seeding from revision 4 maps columns by name through a
@@ -342,22 +350,26 @@ non-sight stages (see duel notes).
 
 Does: whether there is an objective, its bearing, distance and the walking detour; no actions. Size 6 obs, 0 actions
 (`CompassBlock.cpp:27`). Columns (named): 0 objective, 1 objective_bearing_sin, 2 objective_bearing_cos, 3
-objective_distance (yards / 500, clamped), 4 objective_near (yards / 40), 5 detour (`view.Detour / 4`, clamped). Declared
+objective_distance (yards / 500, clamped), 4 objective_near (yards / 40), 5 detour (`view.Detour / 4`, clamped).
+Declared
 by move1_controls only. `view.CompassWithheld` zeroes all six (M1's withholding ladder: an input removed, never a mask;
 the detour is also zeroed in that case). Detour is written even when there is no objective. Manifest: `objective_scale
 500`, `near_scale 40`. Reads `view.Body`, `view.Objective`, `view.Facing`. Revision 1: the columns that were the move
 block's up to its revision 4 (same names). Tests: `CompassBlockTest` (names equal revision 4 move names, nothing without
 an objective, M1 carries it and seek does not), `GoalObjectiveLeakTest` (compass-withheld vs goal place).
-Reviewer notes: `view.Detour` is the encounter's to measure (the travel encounter no longer exists; UNVERIFIED who sets it
+Reviewer notes: `view.Detour` is the encounter's to measure (the travel encounter no longer exists; UNVERIFIED who sets
+it
 now, check `SightEncounter`).
 
 ## duel (id 3, revision 0)
 
 Does: fighting the selected target and the seat's own combat state, consumables, hunters' stable. Size: obs `111 + 5*S`,
-actions `10 + S`, with `S = 4` for hunters (`STABLE_SLOTS`) and 0 for other classes (`DuelBlock.cpp:138`; golden constants
+actions `10 + S`, with `S = 4` for hunters (`STABLE_SLOTS`) and 0 for other classes (`DuelBlock.cpp:138`; golden
+constants
 `duel.OBS_COUNT_WITHOUT_STABLE=111`, `ACTION_COUNT_WITHOUT_STABLE=10`, `STABLE_FEATURES=5`). No `DescribeColumns`.
 
-Columns 0-110 (header enum `DuelBlock.h:44`): 0 distance (/60), 1-2 bearing sin/cos, 3 behind_target, 4 target_facing_bot,
+Columns 0-110 (header enum `DuelBlock.h:44`): 0 distance (/60), 1-2 bearing sin/cos, 3 behind_target, 4
+target_facing_bot,
 5 target_in_combat, 6 target_attacks_bot, 7 target_casting, 8 bot_moving, 9 bot_in_combat, 10 bot_stealthed, 11
 bot_auto_attacking, 12 damage_taken (`view.LastStepDamageTaken`), 13 pet_out, 14 pet_health, 15 pet_attacking, 16
 combat_time, 17 cast_progress, 18 cast_remaining (/3 s), 19 shapeshifted (a cancellable form), 20-23 health potions,
@@ -385,7 +397,8 @@ CMSG_PET_ACTION, call_beast as Call Pet through the handler (`DuelBlock.cpp:423-
 `ObserveDead` writes only dead / self_resurrect and the mask for action 9 when the seat is dead.
 
 Sight stages: a target the camera does not show is "hidden": position columns show only the entity memory's last-seen
-place; `view.TargetInView` false. Hazard columns use `view.HazardsSeen` (camera-seen ground fire) in sight stages and the
+place; `view.TargetInView` false. Hazard columns use `view.HazardsSeen` (camera-seen ground fire) in sight stages and
+the
 unit's auras otherwise.
 Tests: `LiveLayoutPinTest` (names of the 10 fixed actions are pinned).
 Reviewer notes: `OBS_BOT_MOVING` reads `bot->movespline->Finalized()`, which is always finalised for controller-moved
@@ -398,15 +411,18 @@ packets (principle 4).
 ## pack (id 4, revision 0)
 
 Does: 24 enemy slots (`PACK_SLOTS`) and select-slot actions. Size 1034 obs (`2 + 24 x 43`), 25 actions. Declared by the
-dungeon stages only. Globals: 0 living enemies / 4, 1 enemies in combat / 4. Per slot (43): 0 present, 1 alive, 2 health,
+dungeon stages only. Globals: 0 living enemies / 4, 1 enemies in combat / 4. Per slot (43): 0 present, 1 alive, 2
+health,
 3 distance/60, 4-5 bearing sin/cos, 6 behind, 7 attacks_bot, 8 attacks_pet, 9 casting, 10 in_combat, 11 crowd
 controlled, 12 current_target, 13 elite, 14 level difference/5, 15 in LOS, 16 threat share, 17-42 the 26 incoming-cast
 features. Actions: 0-23 `target_slot_<k>`, 24 `hold_interrupt`. Mask: slot allowed when it exists, is alive, is not the
 current target slot, and the seat is alive; hold_interrupt when the seat (or its pet) can interrupt, the target is alive
-and the option is not running. Apply: select (`Encoding::SelectEnemy`) or start `HoldInterrupt` for `Options.HoldInterruptMs`.
+and the option is not running. Apply: select (`Encoding::SelectEnemy`) or start `HoldInterrupt` for
+`Options.HoldInterruptMs`.
 `view.Enemies` in sight stages is the camera's visible living hostiles (`CombatBlock::VisibleEnemies`), so the pack is
 perception-true there. `DescribeSeatSets` exposes the pack as set "enemies" (slots 24, present column 0, segment
-`first = block.ObsFirst + 2`, stride 43, pointer action range 24 from the block's first action). Hash `a102ef2571ed2826`.
+`first = block.ObsFirst + 2`, stride 43, pointer action range 24 from the block's first action). Hash
+`a102ef2571ed2826`.
 Tests: pin only. Reviewer notes: `SLOT_ATTACKS_PET` tests `victim->GetOwnerGUID() == bot` only; select goes through
 `SelectEnemy` (server-side `SetSelection`, not the CMSG), unlike the sight block's select; `boss_faction_champions.cpp`
 (a script) also calls `SelectEnemy`.
@@ -414,13 +430,15 @@ Tests: pin only. Reviewer notes: `SLOT_ATTACKS_PET` tests `victim->GetOwnerGUID(
 ## gauntlet (id 5, revision 0)
 
 Pull timing, food and drink. Size 11 obs, 3 actions. Columns: 0 pulls cleared/10, 1 pull_active, 2 quiet time (/20 s),
-3 pull time (/60 s), 4 elite pull, 5 eating, 6 drinking, 7 food left, 8 drink left (item count / stocked), 9 pull arrival
+3 pull time (/60 s), 4 elite pull, 5 eating, 6 drinking, 7 food left, 8 drink left (item count / stocked), 9 pull
+arrival
 (/30 s), 10 next pull (/20 s). Actions 0 eat, 1 drink, 2 rest_until_ready. Mask: item present, alive, out of combat,
 `movespline->Finalized()`, no regen aura already, `CanUseItemOn`; rest also needs not already running and health/mana
 < 90%. Apply eat/drink: in sight stages CMSG_USE_ITEM through the handler, else `UseItemOn`; counts `FoodUsed/Failed`,
 `DrinkUsed/Failed`. rest starts `RestUntilReady` for `Options.RestMaxMs` and `BeforeApply` repeats eat/drink until 90%
 or combat. Hash `7edc6ead75d0551b`. Declared from combat3 on. Tests: pin only. Reviewer notes: `IsAllowed` dereferences
-`view.Option` without a null check on the rest path (`GauntletBlock.cpp:57`); `movespline->Finalized()` is always true for
+`view.Option` without a null check on the rest path (`GauntletBlock.cpp:57`); `movespline->Finalized()` is always true
+for
 controller seats, so it never blocks eating while running.
 
 ## pet (id 11, revision 0)
@@ -432,7 +450,8 @@ one-hot (ferocity, tenacity, cunning, imp, voidwalker, succubus, felhunter, felg
 temporary, 24 time left/60 s, 25 commandable, then 6 ability slots x 8 (present, on cooldown, interrupt, control,
 dispel, threat, positive, damage). Abilities are the pet's castable non-passive spells, classified by effects, ordered
 interrupt, control, dispel, threat, positive, damage and cut to 6, cached per tick per thread. Actions: 0-5
-`pet_ability_<k>`, then `pet_passive`, `pet_defensive`, `pet_aggressive`, `pet_follow`, `pet_stay` (follow and stay masked
+`pet_ability_<k>`, then `pet_passive`, `pet_defensive`, `pet_aggressive`, `pet_follow`, `pet_stay` (follow and stay
+masked
 while fighting). Orders are applied server-side by the same state changes `HandlePetActionHelper` makes (NOT as packets,
 even in sight stages). Abilities cast through a fresh `Spell` after `CheckPetCast`. `BeforeApply` casts the pet's
 interrupt when a held interrupt finds nothing in the core block. Tests: pin (name/id/revision only). Reviewer notes:
@@ -456,7 +475,8 @@ camera state through const; correct only if each seat is observed once per decis
 
 The visible-entity set: 32 slots x 20 columns = 640, no actions. Inserted automatically after vision. Per slot
 (`EntitiesBlock.h:49`): 0 present, 1 class (raw `Vision::Class`), 2 type (raw template entry), 3 object, 4 level/80, 5
-level delta/10, 6 health, 7 reaction (-1,0,1), 8 quest, 9 lootable, 10 usable, 11 distance (log scaled NEAR..1000), 12-15
+level delta/10, 6 health, 7 reaction (-1,0,1), 8 quest, 9 lootable, 10 usable, 11 distance (log scaled NEAR..1000),
+12-15
 yaw sin/cos, pitch sin/cos, 16-17 centroid x,y, 18 pixel share, 19 entity memory id (0 without memory). Raw columns, not
 normalised (kept out of the learner's adapters). `Observe` first advances and writes `view.Recall` (entity memory), then
 writes. Manifest object "entities". Tests: `VisionEntitiesTest`, `SightBlockTest`, `CombatPerceptionTest`.
@@ -473,22 +493,26 @@ body exists; no actions.
 ## sight (id 23, revision 2)
 
 Seen and remembered list and pointer presses. Size `64 x W + 23` obs where `W = 32` (move3) or `32 + 13 = 45` with the
-combat block in the layout (`SightBlock::Width`), actions 321. Pinned: 2071 / 321 (no combat), 2903 / 321. Per slot: the 20
+combat block in the layout (`SightBlock::Width`), actions 321. Pinned: 2071 / 321 (no combat), 2903 / 321. Per slot: the
+20
 entity columns, then 12 memory columns: visible, age (log2 scaled over 3600 s), dead, open, used, heading sin/cos, speed
 (/7, max 2), course sin/cos, selected, focused; then (with combat) 13 combat columns (visible units only). Slots 0-31
 are the frame's visible entities in slot order, 32-63 the most relevant remembered ones. After the slots, the named row
 (23 columns): 20 entity columns (present, class, type, object only) + 3 task one-hot (reach, interact, use_item), from
 `view.NamedTask`. Actions: five groups of 64 (select, interact, use_item, assist, focus) then `clear_focus`: names
-`select_<k>` ... `focus_<k>`, `clear_focus`. Mask: only slots with an entity; game objects cannot be selected, assisted or
+`select_<k>` ... `focus_<k>`, `clear_focus`. Mask: only slots with an entity; game objects cannot be selected, assisted
+or
 focused; clear_focus always. All presses are client packets through `EntityActions` (see layout doc). Spells in sight
 stages are cast through the client too. No looting. Manifest object "sight" includes pointers, named row, memory ids
 (`Vi::MEMORY_TRAINING_CAP`). Tests: `SightBlockTest`, `SightEncounterTest`, `InteractStageTest`, `CombatPerceptionTest`,
 `DungeonStagesTest`. Reviewer notes: no `DescribeColumns` (names exist only in the manifest "features"); the width
-depends on layout membership of combat, which changes the block's shape between move3 and combat1 (see seeding question).
+depends on layout membership of combat, which changes the block's shape between move3 and combat1 (see seeding
+question).
 
 ## party_frames (id 24, revision 2)
 
-4 member slots x 21 features = 84 obs, 12 actions. Columns named `member<i>_<feature>`: present, alive, leader, in_combat,
+4 member slots x 21 features = 84 obs, 12 actions. Columns named `member<i>_<feature>`: present, alive, leader,
+in_combat,
 health, power, dot, dot_right, dot_forward, dot_distance, mana_user, in_range, debuffs, dispellable, aggro, selected,
 focused, target, target_hostile, target_mine, target_in_view. Dots are minimap positions heading-up within
 `PartyFollow.MinimapYards` (60); normalised by that radius. Actions `select_member<i>`, `focus_member<i>`,
@@ -500,11 +524,14 @@ absent.
 
 ## combat (id 25, revision 1)
 
-36 obs, 4 actions, plus 13 columns per sight slot. Columns (named by `DescribeColumns`): `frame_self_*` and `frame_pet_*`
+36 obs, 4 actions, plus 13 columns per sight slot. Columns (named by `DescribeColumns`): `frame_self_*` and
+`frame_pet_*`
 (present, alive, health, power, mana_user, in_range, in_combat, debuffs, dispellable, aggro, selected, focused), then
-`target_*` (present, hostile, friendly, in_view, dead, threat, threat_pct, tot_self, tot_pet, tot_party, tot_other, debuffs).
+`target_*` (present, hostile, friendly, in_view, dead, threat, threat_pct, tot_self, tot_pet, tot_party, tot_other,
+debuffs).
 Actions: `select_frame_self`, `select_frame_pet`, `focus_frame_self`, `focus_frame_pet`. Per-slot columns: casting,
-cast_left, interruptible, cast_heal, cast_area, cast_at_me, controlled, elite, in_combat, attacks_me, attacks_party, threat,
+cast_left, interruptible, cast_heal, cast_area, cast_at_me, controlled, elite, in_combat, attacks_me, attacks_party,
+threat,
 debuffs (written by `CombatBlock::WriteSlot` from `SightBlock::Observe`). Threat status is the client's
 `UnitThreatSituation` (0..3, /3) read from the server threat manager; debuffs shown only for the selection, the focus or
 visible units. Also provides `VisibleEnemies` (the encounter enemy list), `ReadHazards` (ground fire from the frame) and
@@ -514,13 +541,16 @@ threat colouring does.
 
 ## goal (id 26, revision 0)
 
-128 obs, 0 actions, always last. Layout of the 128: 0-11 kind available, 12-40 target available, 41 ended, 42 reached, 43
+128 obs, 0 actions, always last. Layout of the 128: 0-11 kind available, 12-40 target available, 41 ended, 42 reached,
+43
 secondary_ended, 44 event, 45 from_order, 46-57 order kind, 58-86 order target, 87-98 achieved kind, 99-127 achieved
-target. Columns 45-86 (from_order, order kind, order target) are never written by `Observe` (always zero); the stage.json
+target. Columns 45-86 (from_order, order kind, order target) are never written by `Observe` (always zero); the
+stage.json
 `goals.columns` still reports them. `Available` offers Fight always, Control with >= 2 enemies, Recover/Rest when hurt,
 Protect with a friend, Position with an enemy, Prepare out of combat, TravelTo with a place or objective; Loot, Gather,
 Interact are never offered. `Status` evaluates reached/possible per kind; `Earned` is the "reached, not true at choice"
-rule used by the scenario for `Goals.Reached` payment. `PlaceOf` yields the TravelTo target (the assignment slot is the trip
+rule used by the scenario for `Goals.Reached` payment. `PlaceOf` yields the TravelTo target (the assignment slot is the
+trip
 objective when the stage has no route places, only while `ObjectivePlaceKnown`). Constants `PROTECT_REACHED_PCT 70`,
 `PLACE_REACH 20`. Tests: `GoalObjectiveLeakTest`. Reviewer notes: the goal-target constants include objective, giver and
 ender targets that nothing populates.

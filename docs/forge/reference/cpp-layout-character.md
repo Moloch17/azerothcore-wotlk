@@ -60,12 +60,15 @@ from commit `bd32b9dc8`.
 
 ## Layout
 
-`struct Layout` (`Layout/Layout.h:344`): `Index`, `Stage`, `Profile` (class), `Assets`, `ObsDim`, `NumActions`, `Blocks`,
+`struct Layout` (`Layout/Layout.h:344`): `Index`, `Stage`, `Profile` (class), `Assets`, `ObsDim`, `NumActions`,
+`Blocks`,
 `Slices[BLOCK_COUNT]` (`ObsFirst, ObsCount, ActionFirst, ActionCount` per block id), `ModeGroups` (per action) and a
-private `_blockMask`. A layout is one class at one stage ("one trained model per class", `ClassProfile` comment): there is
+private `_blockMask`. A layout is one class at one stage ("one trained model per class", `ClassProfile` comment): there
+is
 no role.
 
-`Layout::Build(profile, stage)` (`Layout.cpp:127`): copy `stage.Blocks`; for each block in order ask `Size(layout)`, place
+`Layout::Build(profile, stage)` (`Layout.cpp:127`): copy `stage.Blocks`; for each block in order ask `Size(layout)`,
+place
 the slice after the previous one, set the mask bit (so a block sized later sees `Has` of earlier blocks but not later
 ones, the reason `SightBlock::Width` reads `layout.Blocks`); then resolve `ModeGroups[action]` once. Obs offsets and
 action indices are therefore global across the layout and depend on the stage's list order.
@@ -78,7 +81,8 @@ always the no-op (`SeatEncoder`); `ModelName() = Profile->Name + Stage->Suffix` 
 JSON written to `<LayoutsDir>/<stage>/<ModelName>.json` by `StageScenario::WriteStageFiles` (`StageScenario.cpp:1244`).
 `MANIFEST_FORMAT = 9` (`Layout.cpp:51`; format history in its comment: 3 generic block list, 5 3D steering, 6
 pathfinder choices left, 7 jump drop, 8 controller move block, 9 engine moves gone). Keys: `format`, `model`, `stage`,
-`class_name`, `class` (id), `obs_dim`, `num_actions`, `action_names`, `specs` (per spec `name`, `tree`, `aptitude` object
+`class_name`, `class` (id), `obs_dim`, `num_actions`, `action_names`, `specs` (per spec `name`, `tree`, `aptitude`
+object
 of the 26 features from the standard build at level cap), `blocks` (per block `name`, `obs` `[first,count]`, `actions`
 `[first,count]`, `revision` if non-zero, plus the block's `DescribeManifest` entries). A runtime that plays an exported
 model must rebuild the same manifest.
@@ -86,10 +90,12 @@ model must rebuild the same manifest.
 ### stage.json layout entries (`StageScenario.cpp:1254-1495`)
 
 Top level (format 3, `STAGE_FILE_FORMAT`): `format`, `stage`, `suffix`, `extends`, `summary`, `seats`, `blocks` (names),
-`arenas` (name, weight, seats, episode_seconds, plan, eval_only, pull_drill, corridor_packs, stand_in_share, drill_seat),
+`arenas` (name, weight, seats, episode_seconds, plan, eval_only, pull_drill, corridor_packs, stand_in_share,
+drill_seat),
 `cast`, `seed_chain`, `merges`, `state` (arena columns of the critic state), `models` (class name -> model name),
 `layouts`, `episode_info`, `episode_categories`, `reward_terms` (term name -> outcome/cost/shaping), `goals` (kinds,
-accepts matrix, targets, block "goal", column offsets, width, `slots_on_wire`), `tuning` (every `CurriculumTuning` value).
+accepts matrix, targets, block "goal", column offsets, width, `slots_on_wire`), `tuning` (every `CurriculumTuning`
+value).
 Per class under `layouts.<class>`: `obs_dim`, `num_actions`, `action_names`, `spec_names`, `spec_roles` ("tank" for
 `StatProfile::Tank`, "healer" for Healer, else "damage"), `sets` (`DescribeSeatSets`: only the pack's "enemies"), and
 `blocks[]` with `name`, `obs`, `actions`, optional `revision`, and: for core `action_features` (8); vision `image`,
@@ -100,14 +106,16 @@ dungeon stages); `slots_on_wire` and goal order columns are written although not
 
 ## SeatEncoder (`Layout/SeatEncoder.cpp`)
 
-`Observe(view, obs, mask)` (`:35`): caller zeroes `obs`/`mask` with `mask[0] = 1` (`StageScenario::ObserveSeat` is the one
+`Observe(view, obs, mask)` (`:35`): caller zeroes `obs`/`mask` with `mask[0] = 1` (`StageScenario::ObserveSeat` is the
+one
 caller). Writes the character (`CoreBlock::ObserveCharacter`) always. Dead seat: only duel `ObserveDead` and the goal
 block, `mask[0] = 1`; none of move, vision, entities, map, sight, party frames, combat observe. No bot, or no target and
 no hidden target and the layout cannot act without one: return after the character. `ActsWithoutTarget` = has gauntlet,
 or sight, or no duel block (`SeatEncoder.h:39`). Otherwise every block's `Observe` in layout order, timing each per
 thread into `ObserveTally` (slot `BLOCK_COUNT` is the pre-block view work; `ObserveTotal` is read by `forge status`).
 
-`Apply(view, action, result)` (`:84`): dead -> only `duel.self_resurrect`; no target and layout cannot act without one ->
+`Apply(view, action, result)` (`:84`): dead -> only `duel.self_resurrect`; no target and layout cannot act without one
+->
 nothing. Locate the block of the action; clear expired options; any action > 0 cancels every non-standby option
 (`HoldInterrupt` is the only standby, `IsStandby`); if the block `PressesFirst` apply it first; run every block's
 `BeforeApply`; if not already applied, apply the action. Order consequence: a spell meets the world as observed, a move
@@ -121,8 +129,10 @@ interrupt); target, hidden target, last-seen place; level, race, spec, `Aptitude
 (trail, controls, body, image, free-look, seen list, ray hits, mental map and its crop row, entity memory, sight GUIDs,
 focus, client port); breath; talent build; last-step damage/power; `Memory`; `NowMs`, `DecisionMs` (default 250);
 duel data (supplies, stable); enemies (24) and target slot; rank tier; gauntlet data; `Teammates`/`Tank` (7 slots; read
-only by `Encoding::FriendUnit`, Core goal-closing and the goal block); party `Frames` (4) and `MinimapYards`; named task;
-objective data, compass withheld, `ObjectivePlaceKnown`, detour, move/close rates; `WorldView` places. `SeatActionResult`
+only by `Encoding::FriendUnit`, Core goal-closing and the goal block); party `Frames` (4) and `MinimapYards`; named
+task;
+objective data, compass withheld, `ObjectivePlaceKnown`, detour, move/close rates; `WorldView` places.
+`SeatActionResult`
 is what a press did (cast counts, refusals, heal/downrank counters, pet orders, steering reversal counts,
 `ActRefused`, `ActedOn`, stealth flags, `CastAt` ...) for rewards and `JudgePress`.
 
@@ -131,7 +141,8 @@ is what a press did (cast counts, refusals, heal/downrank counters, pet orders, 
 Per-seat state across decisions: `_readyMs[action]`, `_pressedMs[action]`, the current cast, last move, per-`ModeGroup`
 change times, health averages (3 s time constant, `HEALTH_TREND_MS`).
 - `Paced(layout, action, now, ActionTuning)`: true if the action is within `RepeatMs` (1000) of its last press, or
-  `MoveRepeatMs` (300) for a movement action; if `duel.stop_casting` within `StopCastMinMs` (500) of a cast start; if the
+  `MoveRepeatMs` (300) for a movement action; if `duel.stop_casting` within `StopCastMinMs` (500) of a cast start; if
+  the
   action's `ModeGroup` changed within `ModeLockMs` (5000). `StageScenario::ObserveSeat` sets `mask[a] = 0` for every
   paced action (`StageScenario.cpp:3711-3721`). So pacing is a mask, not a price.
 - `Press(...)`: sets ready/pressed times; stopping a cast delays recasting the stopped spell by `RecastAfterStopMs`
@@ -146,9 +157,11 @@ intended (tuning comment calls it "masked until it may be pressed again", `Curri
 ## Encoding helpers (`Layout/EncoderSupport.*`)
 
 Namespace `Animus::Curriculum::Encoding`. Groups:
-- Lookup: `UnitThrough`, `CreatureThrough` (map-null-safe `ObjectAccessor`), `FriendUnit(view, slot)` (slot 0 self; 1 "owner"
+- Lookup: `UnitThrough`, `CreatureThrough` (map-null-safe `ObjectAccessor`), `FriendUnit(view, slot)` (slot 0 self; 1
+  "owner"
   names nobody; 2..8 teammates), `FirstPet`, `RelativePosition`.
-- Casting: `TargetsFor`, `BeneficialTarget(bot, focus, selection)` (focus if living friend, else selection if friend, else
+- Casting: `TargetsFor`, `BeneficialTarget(bot, focus, selection)` (focus if living friend, else selection if friend,
+  else
   self), `SupportTarget` (that, only in a layout with the sight block; otherwise the bot), `CanCast`,
   `KnownRank(view, def)` (view's per-episode table else rank walk; rank tier picks about 2/3 or 1/3 up the known ranks,
   skipping ranks the spellbook deactivated), `IsSpellActionAllowed` (see core mask), `SituationalFailure` (maps cast
@@ -171,7 +184,8 @@ paths guard it; `new Spell` on a failed `prepare` is not deleted (relies on the 
 `PLAYABLE_CLASSES` (10) fix the one-hot orders. `ClassProfiles()` is the class table in this stable order: warrior,
 paladin, hunter, rogue, priest, deathknight, shaman, mage, warlock, druid. Specs (name, talent tab page, `StatProfile`,
 `RangeBand`, weapon layouts, wand flag): 31 specs, druid has four (balance, feral_cat, feral_bear both on tab 1,
-restoration). Pinned by `LiveLayoutPinTest`. Classes only append (principle 15). `DamageScale(level) = 15 exp(0.068 level)`.
+restoration). Pinned by `LiveLayoutPinTest`. Classes only append (principle 15). `DamageScale(level) = 15 exp(0.068
+level)`.
 `SpecProfile` carries no role; role is read off the build (`Aptitude`). Reviewer: `Random.h` included unused.
 
 ## ClassAssets (`Character/ClassAssets.*`)
@@ -199,7 +213,8 @@ The fixed action space of one class. Construction (`ActionCatalog.cpp:293`):
 4. `Action::Index` is the position in its own list. Name: `<lowercase alnum spell name, _ separated>_<first rank id>` or
    `spell_<id>`.
 Per-action flags: `Healing, Rankable, DirectHeal, KeepsAura, Defensive, LongBuff, Dispel, DispelFriendly, DispelMask,
-FeatherFall, WaterBreathing, WaterWalk, NextSwing, From`. Static predicates are the classification rules (exclusion lists
+FeatherFall, WaterBreathing, WaterWalk, NextSwing, From`. Static predicates are the classification rules (exclusion
+lists
 `IsExcludedEffect/Aura`, damage-relevant and survival aura lists).
 Seeding consequence: catalog size and order depend on the spell DBC and the class kit, so core width varies by class
 and data; action NAMES carry the identity. A spell added to or removed from a chain list shifts positions of later
@@ -223,7 +238,8 @@ columns 11-36. Tests: none. Note the manifest `specs[].aptitude` uses the same f
 
 ## ClassKit (`Character/ClassKit.*`)
 
-Reads the world database at construction: class trainers' spells (`trainer`, `trainer_spell`, type 0), class-quest reward
+Reads the world database at construction: class trainers' spells (`trainer`, `trainer_spell`, type 0), class-quest
+reward
 spells (`quest_template` joined to `quest_template_addon.AllowableClasses`), plus a hard-coded Raise Dead for death
 knights; sorted by level. `Learn(bot)` teaches those at or below the bot's level whose required abilities are known (two
 passes). `StoreReagents` (11 hard-coded reagent rows: totems, ankh, fish scales/oil, soul shards, corpse dust, light
@@ -233,10 +249,12 @@ longer than the two passes is not learned; reagent list is data in code.
 ## TalentBuilder, SpecBuilds, PetTalents
 
 `TalentBuilder(class)` (`TalentBuilder.cpp:62`): all talents of the class from the DBC, sorted by tab page, row, column;
-prerequisites by index; resolves glyph items by name from `SpecBuilds`. `Standard(spec, tab, points)` spends points in the
+prerequisites by index; resolves glyph items by name from `SpecBuilds`. `Standard(spec, tab, points)` spends points in
+the
 spec list's order (first talent that wants ranks and `CanTake`: 5 points per row, prerequisite), then leftover points at
 random (own tree, then others); `Noisy` = standard for `points - move` then random; `Random` = random with row-weighted
-draw (`SPEC_TREE_POINTS 51` in the spec tree first). `Apply` calls `Player::LearnTalent`. `ApplyGlyphs` fills unlocked slots
+draw (`SPEC_TREE_POINTS 51` in the spec tree first). `Apply` calls `Player::LearnTalent`. `ApplyGlyphs` fills unlocked
+slots
 (levels 15, 15, 50, 30, 70, 80). `SpecBuilds()` is 460 lines of data for 31 specs; its header says it is generated by
 `tools/spec_builds/generate.py` and checked by `validate.py`, which do NOT exist in the repository (only
 `tools/socket_stress_heavy.py`). `PetTalents::Spend` spends hunter pet points from three fixed builds (ferocity,
@@ -249,8 +267,10 @@ episodes seed it; `RandomLevel` comment says "one roll from the world thread's r
 `GearBuilder(profile, kit)` builds per-`StatProfile` pools of "obtainable" items (loot tables, vendors, quest rewards,
 crafting: world-DB queries, cached statics) with weights dungeon 4, quest 3, other 1. `Equip(bot, spec)`: destroys
 everything, then fills armour slots from pools by item-level band (`ITEM_LEVEL_ANCHORS`, 16 anchors from level 1 to 80,
-linear in between), widening below the band by 0/10/25/1000, never above; epics only at levels 70 and 80; PvP (resilience)
-items never; weapon layouts tried in order; wand, relic, quiver, ammo, reagents; then `Enhance` (enchants and gems always
+linear in between), widening below the band by 0/10/25/1000, never above; epics only at levels 70 and 80; PvP
+(resilience)
+items never; weapon layouts tried in order; wand, relic, quiver, ammo, reagents; then `Enhance` (enchants and gems
+always
 at 70 and 80, 50% each item while levelling; death knight runes, rogue poisons, shaman imbues). Candidate choice
 weighted by source and closeness to the band centre; up to 6 attempts per slot. `Window` is memoised under a
 shared mutex. `WarmGearCaches()` warms statics. `GearStats` functions (preferences by stat profile, enchant verdicts,
@@ -279,25 +299,33 @@ focus band (`FocusLevelFirst/Last/Chance`; evaluation of a wholly-focused stage 
 max(stage, arena, class minimum 55 for death knights, tank-mode spell level). Race: random among the class's races (one
 faction when `EpisodeTeam`). Spec is drawn with the class (a "casting"). Talent plan drawn with
 `Characters.NoisyTalentChance 30`, `RandomTalentChance 10`, `TalentNoisePoints 5`. Characters are reused for
-`Characters.ReuseEpisodes` (4) episodes when the same class and build is drawn again (never in evaluation, never when the
-map changes or for a wing's fresh instance); `Characters.KeepCasting 1` makes training keep class and build for such runs.
-Pets: `Characters.PetOutChance 50`. After `Configure`, `KnownRanks` and `Aptitude` are computed. Death knights are excluded
+`Characters.ReuseEpisodes` (4) episodes when the same class and build is drawn again (never in evaluation, never when
+the
+map changes or for a wing's fresh instance); `Characters.KeepCasting 1` makes training keep class and build for such
+runs.
+Pets: `Characters.PetOutChance 50`. After `Configure`, `KnownRanks` and `Aptitude` are computed. Death knights are
+excluded
 from the level-band dungeon stages by minimum level (principle 8).
 
 ## EntityActions and IncomingSpell
 
 `EntityActions` (`Character/EntityActions.*`): the client-packet layer. `Press` {Select, Interact, UseItem, Assist,
 Focus}. `Apply(press, bot, guid, focus, result, port, resolve)`: resolves the entity as the client has it (`AtClient`:
-same map, in world, within sight range, detectable), judges (`Refusal`: Gone, Kind, Reach, Sight, Loot, NoItem, NoTarget,
+same map, in world, within sight range, detectable), judges (`Refusal`: Gone, Kind, Reach, Sight, Loot, NoItem,
+NoTarget,
 Cast, Locked), then sends `CMSG_SET_SELECTION`, `CMSG_ATTACKSWING`, `CMSG_GAMEOBJ_USE`, `CMSG_GOSSIP_HELLO`,
-`CMSG_USE_ITEM`, `CMSG_CAST_SPELL`, `CMSG_PET_ACTION` through `SessionPort()` (a `ClientPort`; tests replace it) into the
+`CMSG_USE_ITEM`, `CMSG_CAST_SPELL`, `CMSG_PET_ACTION` through `SessionPort()` (a `ClientPort`; tests replace it) into
+the
 session's own handlers. Refusals are priced (`ActRefused`), never masked. Loot is refused in every form (chests, nodes,
-fishing, corpses). A cast watch (`Movement::ScopedCastWatch`) reads back the server's refusal. Key items: the first bag or
+fishing, corpses). A cast watch (`Movement::ScopedCastWatch`) reads back the server's refusal. Key items: the first bag
+or
 keyring item whose use spell takes a game object (for objects) or unit. Tests: `SightBlockTest`, `InteractStageTest`,
 `DungeonStagesTest`. Notes: cast count is a per-thread counter; pet bar orders from `PetBlock` and consumables from
 `DuelBlock` do not use this layer.
-`IncomingSpell` (26 features of an enemy's current cast, read from `SpellInfo`, no ids): casting, progress, remaining/3 s,
-aimed at me, area, cone, channeled, interruptible, dispellable, shared, heals, summons, radius/40, travel, school one-hot
+`IncomingSpell` (26 features of an enemy's current cast, read from `SpellInfo`, no ids): casting, progress, remaining/3
+s,
+aimed at me, area, cone, channeled, interruptible, dispellable, shared, heals, summons, radius/40, travel, school
+one-hot
 (6), mechanic one-hot (6). `Classify`/`Prevented` is used only by `EnvPool.cpp:900`. No tests.
 
 ## Observed issues
