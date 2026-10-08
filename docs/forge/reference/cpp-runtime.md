@@ -77,11 +77,10 @@ Lines are `wc -l` at `bd32b9dc8`.
 | `src/server/apps/worldserver/ForgeMain.cpp` | 520 | `main()` of the fork: startup, DB seal, update loops, shutdown |
 | `src/server/scripts/Commands/cs_forge.cpp` | 1256 | the `forge` command table and the handlers that are not `Forge::Command*` |
 | `src/server/game/CMakeLists.txt` | 149 | Animus source hash, `FORGE_PYTHON_DIR`, zstd, `libforge-gpu.so` |
-| `src/server/game/Forge/Forge.h`, `Forge.cpp` | 51 + 60 | `ForgeCore`: `Playtest()`, `HasClients()`, `SetTickMs/TickMs` (owner: 01-forge-core-delta.md, used here) |
+| `src/server/game/Forge/Forge.h`, `Forge.cpp` | 51 + 60 | `ForgeCore`: `HasClients()` (false), `SetTickMs/TickMs` (owner: 01-forge-core-delta.md, used here) |
 | `src/common/Threading/CpuPlacement.h`, `.cpp` | 62 + 278 | CPU ordering and pinning used by `LearnerProcess` and `ForgeConfig` (owner: 01-forge-core-delta.md) |
 | `src/common/Utilities/RandomSeed.h` | 28 | `rand_seed`, used by `EnvPool::ResetEnv` (owner: 01-forge-core-delta.md) |
 | `src/server/database/Database/DatabaseWorkerPool.h` | 260 | `Seal(strict)` / `WarnAboutSyncQueries`, used by `ForgeMain` (owner: 01-forge-core-delta.md) |
-| `src/server/apps/worldserver/RemoteAccess/RASession.*` | 224 + 54 | stock Remote Access; compiled (the app directory is globbed) but nothing starts it |
 
 Other Animus code under `src/common` is only read-only views for the camera (comments naming `Animus/Gpu/VisionScene`
 in `src/common/Collision/*`) and `Config::LoadAdditionalFile` (`src/common/Configuration/Config.h:74`).
@@ -206,8 +205,7 @@ Start does not resume: `forge start` queues entries with `Resume = false`; the l
 ### Per-tick bookkeeping
 
 `OnWorldPrologue` (`:251`) computes `_turn` (half-batch alternates groups), advances clocks with `AdvanceClock(_turn,
-diff or 2*diff)`, and sets `_decisionTick`: under `Forge.Playtest` it accumulates `_msSinceDecision` and compares with
-`DecisionMs`; otherwise `++_ticksSinceDecision >= _runTicks` (`:292-301`). `_applyTick` is set from `_actionsPending[_turn]`
+diff or 2*diff)`, and sets `_decisionTick = ++_ticksSinceDecision >= _runTicks`. `_applyTick` is set from `_actionsPending[_turn]`
 so the maps of exactly one tick apply a decision's actions (`:306`). `OnUpdate` (`:382`) accounts wall time into
 `_worldNs` (between the end of the previous update and the start of this), `_simNs` (the module's own time minus waiting
 on the learner) and `_learnerNs`; polls export and cluster; auto-tunes if configured; applies requests; closes the
@@ -278,9 +276,8 @@ Tests: no unit test covers `Forge`, `ForgeConfig`, `EnvPool`, `LockstepServer` o
   answer, never in `TeardownScenario`/`OnShutdown`.
 - `A/Env/EnvPool.h:346`: `EnvPool::_envByInstance` (`EnvPool.cpp:770`) is added to at every `IndexEnv` and cleared only in
   `Teardown`; whether instance ids recycle so that it stays bounded is UNVERIFIED.
-- `A/Json/BoostJson.cpp:27`: the `#error` text says "mod-animus-lib" (a name from before the fold-in).
+- (fixed 2026-10-08) `A/Json/BoostJson.cpp:27`: the `#error` text named "mod-animus-lib".
 - Retained surface after principle 14 (no baselines): `MODE.Baseline`, `EvalBaseline()`, `ChooseLocalActions`, the
   `baseline_score` rows in `Progress.cpp:576-585` and `Bench.Policy` exist for the `random` policy only.
-- `src/server/apps/worldserver/RemoteAccess/` is compiled (the app directory is globbed by `CollectSourceFiles`,
-  `src/server/apps/CMakeLists.txt:95-101`) but `ForgeMain.cpp` never starts it.
+- (fixed 2026-10-08) `RemoteAccess/` was deleted, with the `Ra.*` keys of `worldserver.conf.dist`.
 - Memory notes say the SOAP listener never starts; the code starts it when `SOAP.Enabled` is set (`ForgeMain.cpp:475`).

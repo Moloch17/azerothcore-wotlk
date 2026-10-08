@@ -9,7 +9,7 @@ What is still true of the old chapter that stood here (all re-verified against t
 the citations):
 
 - The binary is always a simulator: `ForgeMain.cpp` is the only `main()`; there is no switch back to the stock startup.
-  The one exception is `Forge.Playtest = 1` (wall clock, listener, database open) so a human can log in.
+  There is no exception: the playtest mode was deleted on 2026-10-08.
 - The world steps by a fixed diff, never the wall clock (`ForgeUpdateLoop`), and the game clock follows it
   (`GameTime::AdvanceGameTimers`).
 - Nothing is sent to clients; packet builders return early unless `ForgeCore::HasClients()`.

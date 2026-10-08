@@ -115,7 +115,7 @@ stage (`Stages.cpp`): Sight m1, Seek m2, Interact m3, PartyFollow m4, Combat c1-
 | HealingMana `healing_mana` | S | Scenario (`Support.HealingMana`, negative) | 0.1 | every stage with mana healers |
 | CombatClock `combat_clock` | S | Scenario (`Output.Clock` per second an engaged enemy lives, all seats) | 0.03 | stages with fights |
 | PullClean `pull_clean` | O | Roles (`Roles.PullClean`); Instance drill (`Instance.PullClean`) times tier | Roles 2; Instance 5 | g1 (pull arena), d1 (drills) |
-| EarlyPull `early_pull` | C | Party (`Raid.EarlyPull`, drilled seats weighted `Raid.DrillWeight`) | 0.01 | g1, g2, d1-d3 |
+| EarlyPull `early_pull` | C | Party (`Raid.EarlyPull`) | 0.01 | g1, g2, d1-d3 |
 | DrillHold `drill_hold` | O | Roles / Party (`Roles.Hold`, `Roles.Loose`, `Raid.TankHold/TankLoose`), drilled seat 0 | Roles.Hold 0.045; Loose 0.018 | g1 (tank_hold) |
 | DrillFocus `drill_focus` | O | Roles (`Roles.Focus`, `Roles.PulledOff`) | 0.9; 0.012 | g1 (damage_discipline) |
 | DrillKeep `drill_keep` | O | Roles (`Roles.Keep`, `Roles.KeepLow`, `Roles.Overheal`) | 0.0006; 0.0006; 0.5 | g1 (heal_keep) |
@@ -217,13 +217,12 @@ is stale. Bot movement does not use this; it is the scripted follow leader and d
 cos 50),
 NoNav, Unwalkable; glyphs, severities, `GridSpan`. Tests: `FloorScanTest`. `RouteShortcut` (pure): `Corners(count, step,
 clear)` gives each yard the farthest straight-walkable yard within `REACH 20`, used by `InstanceEncounter.cpp:1742` to
-build `CornerAhead/CornerBack`; `Door`, `EntersDoor`, `CutAtDoors`, `Chain` (with `ADVANCE_YARDS 18`, `MAX_POINTS 6`)
-have
-no production caller, only `RouteShortcutTest` (the spline "advance" they served is gone: dead code by principle 17).
+build `CornerAhead/CornerBack`. (`Door`, `EntersDoor`, `CutAtDoors`, `Chain`, `ADVANCE_YARDS` and `MAX_POINTS` were deleted
+2026-10-08, with `ClosedDoors` of the instance encounter, which only they read.)
 
 ## Observed issues (routing)
 
-- `RouteShortcut::Chain/CutAtDoors/EntersDoor` and constants are test-only dead code.
+- (fixed 2026-10-08) `RouteShortcut::Chain/CutAtDoors/EntersDoor` and constants were deleted.
 - `LayeredField` lives in `Blocks/` and depends on `MoveBlock.h`.
 - `Route::Advance` and `RoutePlanner` comments refer to removed designs; `FieldRoute.h` says world thread, code is per
   thread.

@@ -233,12 +233,11 @@ call and restores them (nested Tick -> Start works).
 
 `ReportCadence.h` (namespace `Animus::Movement::Cadence`): opcode constants (START_FORWARD 0x0B5 ... START_DESCEND 0x3A7), `HEARTBEAT_MS 500`,
 `HEARTBEAT_FLAGS 0x00c0100f`, `MOUSE_FACING_THRESHOLD 0.1`, `Changes` (:80; ordering of the client's checks), `NextFacingCrossing` (:120;
-the raw unwrapped difference means crossing 0/2pi always sends), `NextPitchCrossing` (:146), `HeartbeatDue` (:169). Tests:
+the raw unwrapped difference means crossing 0/2pi always sends), `NextPitchCrossing` (:146). (`HeartbeatDue` and `Changes`'s unused `jumped`/`landed` parameters were deleted 2026-10-08.) Tests:
 `ClientTest.cpp` (29 tests: cadence independent of tick, refusal handling, knockback, orders queue across threads, flag stripping
 parity, turn to camera), `ReportCadenceTest.cpp` (2 tests).
 
-Reviewer notes: (a) `HeartbeatDue` has no production caller (the heartbeat is computed inline in Tick :344); only `ReportCadenceTest` uses
-it. (b) `Changes`'s `jumped`/`landed` parameters are always passed `false, false` in production (Client.cpp:232). (c) The nested
+Reviewer notes: (a, b) fixed 2026-10-08: `HeartbeatDue` (the heartbeat is computed inline in Tick) and `Changes`'s `jumped`/`landed` parameters were deleted. (c) The nested
 `Start` inside `Tick` passes `nowMs - diffMs`. (d) `Client` namespace names collide conceptually: `Animus::Movement::Client` (this
 class) vs `Animus::Client` (orders namespace) vs `ClientMovement::Client` (core's session interface) vs `Replay::Report`/`Client::Report`.
 
@@ -310,7 +309,7 @@ py-human-and-misc.md and file-formats.md). Frame: `u16 type, u16 length`, little
 JumpSin, JumpCos, JumpXYSpeed, u32 Map, u8 Source` (8+8+4+2+4+2+20+4+16+4+1). Speeds (type 11, `SPEEDS_BYTES = 52`): `u64 Ms, u64 Player`, nine
 f32 (Walk, Run, RunBack, Swim, SwimBack, Flight, FlightBack, TurnRate, PitchRate). `Decode` skips unknown types, accepts longer records, stops
 at a truncated tail (earlier records stand), errors on bad magic (`length < 12` or not "ANCAP") or no header. `ReadFile` reads all gzip
-members. `FromReport` fills `Ms = ClientMs = report.TimeMs` (both the same in the forge's recordings).
+members. (`FromReport`, which filled `Ms = ClientMs = report.TimeMs`, had no caller and was deleted 2026-10-08.)
 
 `Replay` feeds recorded packets' flags (as `ControlsOf`) and facing through the controller from the first packet's position and compares
 positions: `Follow` (drift list), `Run` (segments every 5 s on ground packets, drift at 1/2/5/10 s all and flat, jump launch/apex/landing,
@@ -333,7 +332,7 @@ seek stage's costs, not `SeekTuning` (that struct, `Seek.h:31`, takes defaults).
 2. `PlayerController.cpp:125-127`: the doc comment of `SweptMove` sits above `FootprintFloor` (misplaced).
 3. `ClientOrders.h` is in Movement/ but its namespace is `Animus::Client`; its header cites a nonexistent `tests/ClientOrdersTest.cpp` and a
    `CompanionClient` that is not in the tree.
-4. `ReportCadence::HeartbeatDue` and the `jumped/landed` arguments of `Changes` are dead in production (tests only).
+4. (fixed 2026-10-08) `ReportCadence::HeartbeatDue` and the `jumped/landed` arguments of `Changes` were deleted.
 5. Constants the code itself marks as interpreted and not yet confirmed by a recording (C6): `STEP_UP`'s role (`PlayerController.h:61-64`),
    `KEYBOARD_TURN_WHILE_MOVING`'s condition (:53-55), `FLOAT_DEPTH` (:75), the vertical-alone share (`PlayerController.cpp:85-86`). No
    recording-based test exists.

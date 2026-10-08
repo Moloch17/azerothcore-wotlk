@@ -86,6 +86,11 @@ still open.
 
 ### D. Dead code and leftovers (detail in the reference docs and `repo-hygiene.md`)
 
+> **Resolved 2026-10-08 (dead-code pass, commits on `worktree-agent-a3445328c9b384d68`)** for the C++ items of this list that were
+> not part of a pinned layout or the GPU camera: see the "Update 2026-10-08" note of
+> [01-forge-core-delta.md](reference/01-forge-core-delta.md) and the "fixed 2026-10-08" marks in the reference docs. The
+> audit itself is kept as the dated snapshot it is.
+
 - About 3,600 lines of GPU camera code are used only by `forge gpu scene` and `forge camera diff`; `OfferDevice` ignores
   `Gpu.Observe`; a HIP stream is leaked each time the device alternates; `Renderer::Forget` has no production caller.
 - Dead core additions: `Battleground::SetSimOwned`/`IsSimOwned`, `Group::IsSimGroup`, `PathGenerator::SetIncludeFlags`,

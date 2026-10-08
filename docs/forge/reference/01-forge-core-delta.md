@@ -3,6 +3,14 @@
 > **Update 2026-10-08:** upstream `bce7ed5a6` was merged into `forge` (decision 0018). The delta below was measured against
 > the old merge-base 37de65eb0 and its list of edited upstream files is still right; the "no caller" claims for
 > `PCQueue::Reset` are stale (upstream now calls it), and `git diff master..forge` is now the delta (`master` mirrors upstream).
+>
+> **Update 2026-10-08, dead-code pass:** deleted from the forge: `Battleground::SetSimOwned/IsSimOwned` and `_simOwned`, the
+> `logMissing` argument of `GetBGObject`, `Group::IsSimGroup`, `PathGenerator::SetIncludeFlags/GetIncludeFlags`,
+> `MapUpdater::ParallelFor`, `MapMgr::SetMapUpdateInterval` (and its call in `World::SetInitialWorldSettings`), the dead body of
+> `Pet::SavePetToDB`, the battleground diagnostic in `MapInstanced::DestroyInstance`, and the whole playtest mode
+> (`Forge.Playtest`, `ForgeCore::LoadSettings/Playtest`, `ForgePlaytestLoop`, the realmlist read, the listener). Rows and
+> findings below that describe them (F-7, F-8, F-10, F-13 and the playtest text) are history. `ForgeCore::HasClients()` is
+> kept and returns false: the forge opens no listener and registers no sim session, so there is never a real client.
 
 
 Purpose and scope: every change the `forge` branch makes to upstream AzerothCore **outside** the forge's own code
@@ -91,7 +99,7 @@ them forward:
 | `src/common/Configuration/Config.h` | +3 -1 | A | `LoadAdditionalFile` made public so `main()` can read the legacy `modules/mod_animus_forge.conf` |
 | `src/common/Threading/CpuPlacement.cpp` | +278 -0 | F | new: CPU topology order (largest-L3 die first, physical cores before SMT siblings), pinning |
 | `src/common/Threading/CpuPlacement.h` | +62 -0 | F | new: `Order`, `AwayFrom`, `Split`, `Parse`, `PinThisThread`, `PinProcess`, `Describe` |
-| `src/common/Threading/PCQueue.h` | +9 -0 | F | `Reset()` added; no caller anywhere in the tree (Observed issue F-9) |
+| `src/common/Threading/PCQueue.h` | +9 -0 | F | `Reset()` added; upstream now calls it (`DatabaseWorkerPool::Open`) |
 | `src/common/Utilities/Random.cpp` | +6 -0 | A | `rand_seed(seed)`: restart the calling thread's generator (seeded evaluation episodes) |
 | `src/common/Utilities/RandomSeed.h` | +28 -0 | A | new header declaring `rand_seed` |
 | `src/common/Utilities/SFMTRand.cpp` | +11 -0 | A | `SFMTRand::Seed(seed)`; the constructor calls `Seed(0)` |
@@ -105,8 +113,8 @@ them forward:
 | `src/server/game/Accounts/AccountMgr.cpp` | +100 -0 | C | `LoadSnapshot()`: accounts and access rows in memory so the console still logs in after the seal |
 | `src/server/game/Accounts/AccountMgr.h` | +7 -0 | C | declaration |
 | `src/server/game/Achievements/AchievementMgr.cpp` | +30 -0 | E | 13 entry points return at once ("sim bots do not use achievements") |
-| `src/server/game/Battlegrounds/Battleground.cpp` | +15 -5 | F | `BroadcastWorker` skips players with no session; `_simOwned` branches; `GetBGObject(type, logMissing)` |
-| `src/server/game/Battlegrounds/Battleground.h` | +9 -1 | F | `SetSimOwned/IsSimOwned` (no caller), `_simOwned`, `logMissing` |
+| `src/server/game/Battlegrounds/Battleground.cpp` | +15 -5 | F | `BroadcastWorker` skips players with no session |
+| `src/server/game/Battlegrounds/Battleground.h` | +9 -1 | F | (nothing left: `SetSimOwned`, `_simOwned` and `logMissing` deleted) |
 | `src/server/game/Battlegrounds/Zones/BattlegroundSA.cpp` | +2 -2 | B | demolisher respawn timers 64-bit |
 | `src/server/game/Battlegrounds/Zones/BattlegroundSA.h` | +1 -1 | B | `DemoliserRespawnList` value type `uint64` |
 | `src/server/game/CMakeLists.txt` | +79 -0 | I | `FORGE_PYTHON_DIR`, `ForgeSourceHash.h`, zstd, the `forge-gpu` shared library built with hipcc |
@@ -131,7 +139,7 @@ them forward:
 | `src/server/game/Entities/Unit/CharmInfo.cpp` | +5 -4 | B | `GetGlobalCooldown` on game time through wrap-safe `getMSTimeDiff` |
 | `src/server/game/Entities/Unit/Unit.cpp` | +37 -2 | D | ten combat-log senders gated on `HasClients`; `Animus::Hooks::Damage/Heal/HealCast`; proc cooldown on `GameTime::Now()` |
 | `src/server/game/Entities/Unit/Unit.h` | +2 -2 | B | `DealHeal(..., bool periodic)`; `m_lastSanctuaryTime` is `uint64` |
-| `src/server/game/Forge/Forge.cpp` | +60 -0 | A | new: `ForgeCore` (Playtest, HasClients, tick override) |
+| `src/server/game/Forge/Forge.cpp` | +60 -0 | A | new: `ForgeCore` (HasClients, tick override) |
 | `src/server/game/Forge/Forge.h` | +51 -0 | A | new: `ForgeCore` declarations |
 | `src/server/game/Globals/ObjectAccessor.cpp` | +11 -2 | F | `PlayerNameMapLock`; `GetPlayer(Map const*, guid)` answers from the map's own index |
 | `src/server/game/Globals/ObjectMgr.cpp` | +8 -0 | F | `SetHighestGuids` creates every global GUID generator up front |
@@ -139,7 +147,7 @@ them forward:
 | `src/server/game/Grids/GridTerrainData.h` | +19 -0 | G | declarations; `gridMaxHeight` |
 | `src/server/game/Grids/GridTerrainLoader.cpp` | +9 -2 | F | instance-0 vmap/mmap tile loads are deferred while map tasks run |
 | `src/server/game/Groups/Group.cpp` | +37 -20 | E | `m_simGroup`, `IsPersisted()` replace the `!isBGGroup() && !isBFGroup()` tests |
-| `src/server/game/Groups/Group.h` | +8 -0 | E | `SetSimGroup`, `IsSimGroup` (no caller), `IsPersisted` |
+| `src/server/game/Groups/Group.h` | +8 -0 | E | `SetSimGroup`, `IsPersisted` |
 | `src/server/game/Handlers/MovementHandler.cpp` | +23 -236 | H | the three movement handlers' bodies moved to `ClientMovement`; this file keeps thin wrappers |
 | `src/server/game/Instances/InstanceSaveMgr.cpp` | +33 -10 | E | no bind rows for sim sessions; the weekly/daily global reset skips instances that hold a sim seat |
 | `src/server/game/Instances/InstanceScript.cpp` | +4 -0 | C | `LoadInstanceSavedGameobjectStateData` returns on a sealed pool |
@@ -147,14 +155,14 @@ them forward:
 | `src/server/game/Maps/Map.h` | +123 -0 | F | `UpdateTiming`, `TaskSample`, accrued diff, `GetPlayerByGuid`, `GetCreatedGridTerrainData` |
 | `src/server/game/Maps/MapCollisionData.cpp` | +114 -0 | G | `GetLiquidHit`, `GetSurfaceHit` (static and dynamic), `ThreadQueryScope` |
 | `src/server/game/Maps/MapCollisionData.h` | +30 -0 | G | declarations |
-| `src/server/game/Maps/MapInstanced.cpp` | +49 -12 | F | empty children are not ticked; half-batch freeze; heap-trim notice; battleground diagnostic |
+| `src/server/game/Maps/MapInstanced.cpp` | +49 -12 | F | empty children are not ticked; half-batch freeze; heap-trim notice |
 | `src/server/game/Maps/MapMgr.cpp` | +275 -31 | F | uniform per-tick map update, continent replicas, deferred tile loads, heap trim, task timing |
 | `src/server/game/Maps/MapMgr.h` | +100 -10 | F | declarations for the above |
-| `src/server/game/Maps/MapUpdater.cpp` | +262 -103 | F | rewritten: fixed task array, pinned spinning workers, `RunMapTick`, `schedule_work`, `ParallelFor` |
+| `src/server/game/Maps/MapUpdater.cpp` | +262 -103 | F | rewritten: fixed task array, pinned spinning workers, `RunMapTick`, `schedule_work` |
 | `src/server/game/Maps/MapUpdater.h` | +90 -18 | F | rewritten interface |
 | `src/server/game/Movement/ClientMovement.cpp` | +295 -0 | H | new: `Verify`, `Apply`, `Relocate` (moved from `WorldSession`) |
 | `src/server/game/Movement/ClientMovement.h` | +76 -0 | H | new: `Refusal`, `Client`, the three functions |
-| `src/server/game/Movement/MovementGenerators/PathGenerator.h` | +8 -0 | H | `SetIncludeFlags/GetIncludeFlags`; no caller (F-10) |
+| `src/server/game/Movement/MovementGenerators/PathGenerator.h` | +8 -0 | H | (nothing left: `SetIncludeFlags/GetIncludeFlags` deleted) |
 | `src/server/game/Movement/Spline/MoveSpline.h` | +1 -0 | H | `isParabolic()` |
 | `src/server/game/Movement/Spline/MoveSplineInit.cpp` | +9 -0 | D | `Launch` and `Stop` skip the monster-move packet without a client |
 | `src/server/game/OutdoorPvP/OutdoorPvPMgr.cpp` | +12 -0 | F | `InitOutdoorPvP` loads nothing while `AnimusForge.Enable` is on |
@@ -201,19 +209,17 @@ scripts.
 
 Two loops. `ForgeUpdateLoop` (`:266`) calls `sWorld->Update(tick)` with a **fixed** diff: `ForgeCore::TickMs()` if a
 stage set one, else `DecisionMs / TicksPerDecision / (HalfBatch ? 2 : 1)` (both read straight from the config,
-`:272-281`, minimum 1 ms). `ForgePlaytestLoop` (`:244`) is the stock real-time loop for a human to log in
-(`Forge.Playtest = 1`).
+`:272-281`, minimum 1 ms).
 
-`World::Update`, in the order the code runs it (`World.cpp:1150-1275`): advance the clock (`AdvanceGameTimers`, or
-`UpdateGameTimers` in playtest) and run the shutdown timer (the body of the deleted `_UpdateGameTime`); step all
+`World::Update`, in the order the code runs it (`World.cpp:1150-1275`): advance the clock (`AdvanceGameTimers`) and run the shutdown timer (the body of the deleted `_UpdateGameTime`); step all
 interval timers; the daily/weekly/monthly quest, random-BG, calendar and guild-cap resets; `sAuctionMgr->Update`;
-sessions only in playtest; `sLFGMgr->Update(diff, 0)`; **`sAnimusForge->OnWorldPrologue(diff)`** (`:1233`);
+`sLFGMgr->Update(diff, 0)`; **`sAnimusForge->OnWorldPrologue(diff)`** (`:1233`);
 `sMapMgr->Update`; battlegrounds; outdoor PvP, world state, battlefields; `sLFGMgr->Update(diff, 2)`;
 `ProcessQueryCallbacks`; `sInstanceSaveMgr->Update`; `ProcessCliCommands`; **`sAnimusForge->OnUpdate(diff)`** (`:1261`);
 `sScriptMgr->OnWorldUpdate`; the MySQL keep-alive ping (`WUPDATE_PINGDB`).
 
-`Forge/Forge.{h,cpp}` is the whole `ForgeCore` namespace: `LoadSettings()` (reads `Forge.Playtest` once),
-`Playtest()`, `HasClients()` (`sWorldSessionMgr->GetActiveSessionCount() > 0`), `SetTickMs/TickMs` (an atomic the
+`Forge/Forge.{h,cpp}` is the whole `ForgeCore` namespace: `HasClients()` (false: the forge has no listener),
+`SetTickMs/TickMs` (an atomic the
 module sets when a stage starts and clears when the plan ends).
 
 `scripts/Commands/cs_forge.cpp` (1256 lines) registers the `forge` console command table (`cs_forge.cpp:196-225`), all
@@ -312,8 +318,7 @@ test. Symptom: wasted CPU, not wrong results. Sites are marked either `Forge:` c
   `m_additionalSaveMask` (`PlayerStorage.cpp:7199,7221`); `UpdateAdditionalSaves` drops queued partial saves
   (`PlayerUpdates.cpp:2416`). Character creation still saves (`create == true`).
 - `AchievementMgr`: thirteen entry points return first thing (`AchievementMgr.cpp:521` onward).
-- `Pet::SavePetToDB` removes auras for non-current save modes and returns before any database work (`Pet.cpp:547`);
-  the original body stays below the `return` as unreachable code.
+- `Pet::SavePetToDB` removes auras for non-current save modes and returns before any database work (`Pet.cpp:547`).
 - `WorldSession::SetSimSession(true)` (`WorldSession.h`, set by `BotFactory::Create`): the destructor skips the
   `account.totaltime` write (`WorldSession.cpp:171`), logout skips `CHAR_UPD_ACCOUNT_ONLINE` (`:872`),
   `InstanceSaveMgr::PlayerBindToInstance` builds and executes its statements only for non-sim sessions
@@ -342,8 +347,7 @@ as their own tasks; `MapInstanced::DelayedUpdate` no longer walks children (each
 atomic increment; worker threads pinned in `CpuPlacement` order (world thread first, `MapUpdater.cpp:63-95`) that spin
 4000 rounds then park; `wait()` makes the world thread a worker (`:284`); `RunMapTick` (`:207`) is the whole of a map's
 tick: `OnMapPrologue`, `Map::Update`, `Map::DelayedUpdate`, `OnMapEpilogue`; `schedule_work(fn, arg)` for work a map task
-hands on (the sim's resets); `ParallelFor` (`:182`) for a map task's own parallel pieces (only while map tasks run).
-`MapUpdate.Cpus` ("auto") overrides the CPU order. `PCQueue.h` gained an unused `Reset()`.
+hands on (the sim's resets); `MapUpdate.Cpus` ("auto") overrides the CPU order. `PCQueue.h` gained `Reset()`, which upstream now calls from `DatabaseWorkerPool::Open`.
 
 **Continent replicas.** `MapMgr::CreateContinentReplica(mapId, index)` (`MapMgr.cpp:127`) makes further `Map` objects
 for one continent, each a child of the base map with its own instance id, grids, spawns and navigation query, sharing
@@ -378,9 +382,8 @@ when two registered creatures at once. This reads the module's key from core cod
 principle 17 (Observed issues).
 
 **Battlegrounds.** `BroadcastWorker` skips a player with no session (`Battleground.cpp:121`);
-`Battleground::SetSimOwned` would keep an empty or ended match alive for the sim (`:276,330`) but **nothing calls it**
-(Observed issues); `GetBGObject(type, logMissing)`; `MapInstanced.cpp:285` logs a one-off diagnostic of players that
-block a battleground map from unloading.
+the `SetSimOwned` and `logMissing` additions and the `MapInstanced` diagnostic were deleted in the 2026-10-08 dead-code
+pass.
 
 **Merge risk.** **Highest of all sections.** `MapMgr.cpp`, `MapUpdater.{h,cpp}`, `MapInstanced.cpp`, `Map.cpp` and
 `Map.h` are rewritten or heavily edited; take upstream changes to them by hand, never by textual merge. Upstream
@@ -425,8 +428,7 @@ server's own movement rules:
   controller to answer.
 - `Spell::SendCastResult` calls `Animus::Movement::NoteCastFailed` (`Spell.cpp:4685`).
 - `Creature::SelectLevel` honours `Animus::PendingSummonLevel` (`Creature.cpp:1509`, thread-local, set around a summon).
-- `PathGenerator::SetIncludeFlags/GetIncludeFlags` and `MoveSpline::isParabolic` (`isParabolic` is used,
-  `StageScenario.cpp:3511`; `SetIncludeFlags` is not).
+- `MoveSpline::isParabolic` (`PathGenerator::SetIncludeFlags` was deleted, 2026-10-08).
 
 **Merge risk.** High for `MovementHandler.cpp`/`WorldSession.cpp`: upstream fixes to the movement handlers now land in a
 file that no longer holds the logic; they must be ported into `ClientMovement.cpp` by hand. Same for upstream changes to
@@ -486,30 +488,26 @@ Plain-terms list, each with a location.
   removed with curriculum v1.
 - **F-2** `World.cpp:~1381`: the doc comment of `RescheduleShutdownForWintergrasp` lost its first line when
   `_UpdateGameTime` was deleted (the `/// Defer a pending shutdown...` line is gone; a dangling "Returns true when..." remains).
-- **F-3** `ForgeMain.cpp` header says the sim is "single process, never clustered" (TC9 note) beside the cluster feature
+- **F-3** (fixed 2026-10-08) `ForgeMain.cpp` header said the sim is "single process, never clustered" (TC9 note) beside the cluster feature
   (`AnimusForge.Cluster.*`); it means ToCloud9 but reads wrongly.
-- **F-4** `ForgeMain.cpp:213-226`: the doc comment of `ForgeUpdateLoop` ("Fixed-tick world loop. One tick is one agent
+- **F-4** (fixed 2026-10-08: the comment now sits above `ForgeUpdateLoop` and says a tick is DecisionMs / TicksPerDecision) `ForgeMain.cpp:213-226`: the doc comment of `ForgeUpdateLoop` ("Fixed-tick world loop. One tick is one agent
   decision ... getMSTime caveat") sits above `ForgeSealStrict`, and `ForgeUpdateLoop` has a different comment of its own.
   "One tick is one agent decision" is only true when `TicksPerDecision` is 1.
 - **F-5** `ForgeMain.cpp:361`: still reads a legacy `modules/mod_animus_forge.conf` ("left from the module days") in
   addition to `worldserver.conf`; two places can hold a key and the later one wins.
 - **F-6** `OutdoorPvPMgr.cpp:49` reads `AnimusForge.Enable` directly from core code: a config gate in core, contrary to
   principle 17, and a core file that knows a module key.
-- **F-7** `MapInstanced.cpp:285`: "Diagnostic" code with a static set kept in a hot-adjacent function; investigation
-  residue.
-- **F-8** `Pet.cpp:547-560`: unreachable original body left under an early `return`; a second
-  `if (mode > PET_SAVE_AS_CURRENT)` below it is dead.
-- **F-9** `PCQueue.h:100` `Reset()` has no caller in `src` (`grep -rn "Reset()"` over `src/common/Threading` and
-  `src/server/database` finds none that is a queue's). Dead addition; the old chapter 2 claimed `MapUpdater` used it.
-- **F-10** Dead core additions (declared, no caller in `src`): `Battleground::SetSimOwned/IsSimOwned` and the
-  `_simOwned` branches (`Battleground.h:570`, `.cpp:276,330`), `Group::IsSimGroup` (`Group.h:230`),
-  `PathGenerator::SetIncludeFlags/GetIncludeFlags` (`PathGenerator.h:90`), and the `logMissing = false` form of
-  `GetBGObject`.
-- **F-11** `EnvPool.h:112` comment names `CoreHooks::SeedRandom`, which no longer exists (`rand_seed` is called directly).
+- **F-7** (fixed 2026-10-08) the `MapInstanced::DestroyInstance` battleground diagnostic was deleted.
+- **F-8** (fixed 2026-10-08) the unreachable body of `Pet::SavePetToDB` was deleted.
+- **F-9** (stale) `PCQueue::Reset` is called by upstream's `DatabaseWorkerPool::Open`; it is not dead.
+- **F-10** (fixed 2026-10-08) deleted: `Battleground::SetSimOwned/IsSimOwned` and the `_simOwned` branches,
+  `Group::IsSimGroup`, `PathGenerator::SetIncludeFlags/GetIncludeFlags`, the `logMissing` argument of `GetBGObject`, and
+  `MapUpdater::ParallelFor`.
+- **F-11** (fixed 2026-10-08) the `EnvPool.h` comment now names `rand_seed`.
 - **F-12** `GameTime.cpp:113`: the one-time seed uses a function-local non-atomic `static bool`; fine on the world thread
   only (it is called only there).
-- **F-13** `MapMgr.h:~100`: `SetMapUpdateInterval` is a no-op kept "for the config reload that sets it".
+- **F-13** (fixed 2026-10-08) `MapMgr::SetMapUpdateInterval` and its call were deleted.
 - **F-14** `MapUpdater.h:MaxTasks = 16384`: `Push` asserts if a tick schedules more; the stated margin ("more than the
   largest env count") is not enforced by any config check. UNVERIFIED: the largest env count a stage can configure.
-- **F-15** Core comments still name deleted curriculum-v1 stages: `OutdoorPvPMgr.cpp:48` ("stage7_flight"),
-  `Map.cpp` near `:850` ("stage20_quest"), `ForgeConfig.h:60` ("stage11_raids").
+- **F-15** (fixed 2026-10-08) the comments naming deleted curriculum-v1 stages in `OutdoorPvPMgr.cpp`, `Map.cpp` and
+  `ForgeConfig.h` were reworded.

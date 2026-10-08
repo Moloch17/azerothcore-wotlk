@@ -34,7 +34,7 @@ runs plans, and talks to other machines. The map table lists it; every file of t
 | Path | Lines | Role |
 |---|---|---|
 | `src/server/apps/worldserver/ForgeMain.cpp` | 520 | `main()`: startup order, the two world loops, the database seal, shutdown |
-| `src/server/game/Forge/Forge.h` | 51 | `ForgeCore` namespace: Playtest, HasClients, per-stage tick override |
+| `src/server/game/Forge/Forge.h` | 51 | `ForgeCore` namespace: HasClients, per-stage tick override |
 | `src/server/game/Forge/Forge.cpp` | 60 | `ForgeCore` definitions (a bool and an atomic tick) |
 | `src/server/game/World/World.cpp` | 1804 | `World::Update`, the fixed-tick world step that calls the module (only its tick part is in scope) |
 | `src/server/game/Maps/MapMgr.cpp` | 668 | `MapMgr::Update`: schedules one task per map, join, timing, replicas |
@@ -135,15 +135,14 @@ what persists is files the learner and the sim write under `AnimusForge.OutputDi
 ## 2. Startup (trace from `ForgeMain.cpp`)
 
 1. `main` (`ForgeMain.cpp:337`): fatal-signal backtrace handler, `ConfigMgr::Configure`, `LoadAppConfigs`,
-   `ForgeCore::LoadSettings()` (reads `Forge.Playtest` once), then the legacy `modules/mod_animus_forge.conf` is merged
-   if it exists (`:361`). `sLog` is synchronous and has no database appender.
+   the legacy `modules/mod_animus_forge.conf` is merged if it exists (`:361`). `sLog` is synchronous and has no database appender.
 2. One IoContext thread for SIGINT/SIGTERM; process priority; module configs; scripts (`AddScripts`,
    `AddModulesScripts`).
 3. `ForgeStartDB` (`:166`): `DatabaseLoader` over the three databases (DB updates run here), `realm.Id.Realm` from
-   `RealmID`. In playtest also the realmlist row.
+   `RealmID`.
 4. `sWorld->SetInitialWorldSettings()` (`:417`): loads every DBC and world table. The forge's `ForgeConfig` is not
    read yet.
-5. Playtest only: `StartWorldNetwork` (`:438`).
+5. (No world listener is started.)
 6. `sScriptMgr->OnStartup()`, then **`sAnimusForge->OnStartup()`** (`AnimusForge.cpp:154`): `ForgeConfig::Load`;
    configures the camera, mental map, entity memory (`Animus::Vision::Configure*`); configures the layered-field store
    (`LayeredField::Store::Configure(ProbeDir, ProbeCacheGrids)`); `Gpu::PrepareEnvironment`; builds the fast profile;
@@ -151,7 +150,7 @@ what persists is files the learner and the sim write under `AnimusForge.OutputDi
    (`ClusterFingerprint`, `AnimusForge.cpp:70`) and starts `Listen` (host) or `Join` (worker, unless it first runs an
    automatic benchmark); **`Curriculum::WarmCaches()`** (reads every world table the curriculum will need); opens the
    learner socket (`_server.Listen`) for a non-worker with a remote policy. It ends idle.
-7. `ForgeSealDatabases()` (`:233`) unless playtest: `AccountMgr::LoadSnapshot()`, then `Seal(strict)` on login,
+7. `ForgeSealDatabases()` (`:233`): `AccountMgr::LoadSnapshot()`, then `Seal(strict)` on login,
    character and world pools. After this no SQL runs (see [01-forge-core-delta.md](01-forge-core-delta.md) C).
 8. SOAP thread if `SOAP.Enabled`; CLI thread if stdin is a tty.
 9. `ForgeUpdateLoop` (`:266`) until `World::IsStopped()`.
@@ -170,7 +169,7 @@ ForgeUpdateLoop                                     ForgeMain.cpp:266
   [timed resets, auctions, LFG 0]
   sAnimusForge->OnWorldPrologue(D)                   AnimusForge.cpp:251
       _turn, _pool->AdvanceClock(group, D)           episode clocks move every tick
-      _decisionTick = ++_ticksSinceDecision >= _runTicks    (playtest: accrued ms >= DecisionMs)
+      _decisionTick = ++_ticksSinceDecision >= _runTicks
       if decision tick: _pool->BeginDecision(group)
       _applyTick = _actionsPending[group]            the last decision's actions land on THIS tick
   sMapMgr->Update(D)                                 MapMgr.cpp:335
@@ -218,8 +217,6 @@ Key points a reviewer must hold on to:
   decision, each group's maps ticking every other world tick with both ticks' time (`ForgeTickDiff`), while the learner
   decides the other group. `RemoteDecision` waits only for the group whose maps tick next (`target`). Falls back to one
   group when a map holds envs of both (`AnimusForge.cpp:786-792`). A learner with a cast or partners never pipelines.
-- **Playtest**: the world ticks on the wall clock; a decision is `DecisionMs` of accrued game time, remainder carried
-  (`OnWorldPrologue`, `:292-304`).
 - **Idle and paused**: `OnUpdate` abandons a decision opened by the prologue (`abandonDecision`) and sleeps 50 ms per
   tick when idle; `HoldWhilePaused` loops serving the console.
 
@@ -284,7 +281,7 @@ through `Animus::Hooks` into `EnvPool::Record*`, which write the per-seat step s
 ## 5. Episode and stage lifecycle
 
 **Plan.** A console command builds a `Plan` (a list of `PlanEntry{Scenario, Resume}` and a policy name). `forge start`
-without names uses `DefaultQueue()` = `AnimusForge.Queue` or every stage with `InDefaultQueue` (all twelve), skipping
+without names uses `DefaultQueue()` = `AnimusForge.Queue` or every stage (all twelve), skipping
 stages whose `finished.json` says advanced when `Queue.SkipFinished` (default on). `forge resume <stage>` resumes the
 first entry from `latest.pt` and starts later entries from scratch. `forge resume` with no names unpauses, restarts a
 dead learner, or continues `_lastPlan` from the first entry that did not end Done or Skipped.
@@ -381,7 +378,7 @@ Operational detail: [../cluster.md](../cluster.md), [../forgectl.md](../forgectl
 | world thread | `main` loop, `World::Update`, `OnWorldPrologue/OnUpdate`, all socket I/O with the learner, plan start/teardown, serial parts of resets, `ResetDefer::Flush`, deferred tile loads, console command execution | owns the plan state; writes `_decisionTick`, `_applyTick`, `_actionsPending` before tasks are pushed |
 | map workers (N = `MapUpdate.Threads`) + the world thread inside `wait()` | `RunMapTick`: per-map prologue (apply/subtick), `Map::Update`, epilogue (reward, observe, reset-on-map) | each task touches only the envs on its map (`_mapEnvs`); the combat hooks write per-env stats of the env whose map the thread is updating; global managers go through `ResetDefer` or locks added in the core (LFG, name map) |
 | CLI thread | readline, queues commands | commands run on the world thread (`ProcessCliCommands`) |
-| IoContext thread | signals; world sockets in playtest | none |
+| IoContext thread | signals | none |
 | SOAP thread | optional HTTP console | same queue |
 | learner process(es) | rollout inference, PPO updates; an update may overlap the next rollout on a one-thread executor; async hub/link threads; torch threads pinned away from the map pool's cores (`LearnerProcess::Start`) | none shared with the sim except the socket and HIP buffers |
 | GPU | optional: observation buffers written by the world thread via `libforge-gpu.so`, camera kernels; the learner's torch on the same HIP runtime | device buffers shared by IPC handle |

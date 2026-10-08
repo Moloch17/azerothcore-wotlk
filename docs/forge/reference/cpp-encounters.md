@@ -185,8 +185,7 @@ What all three do the same way (each section below lists only what differs):
   `IsTerminal`; the env pool ends the episode when `terminal || EpisodeElapsedMs >= EpisodeLengthMs`
   (`Env/EnvPool.cpp:259`). `StageScenario::IsTerminal` also ends it when a Build failed (`StageScenario.cpp:1837-1845`).
 - **One seat.** All three use `_scenario.SeatBot(env, 0)` only; there is no party and no stand-in.
-- **No target.** `SelectTarget` returns true with a null target (Sight `:298-303`, Seek `:418-423`, Interact
-  `:473-478`), so the seat acts without a target from the encoder's side.
+- **No target.** `SelectTarget` returns true with a null target (Sight `:298-303`, Seek `:418-423`; reached only in stages without the sight block: Interact's override was deleted 2026-10-08), so the seat acts without a target from the encoder's side.
 - **Death.** In the first `Reward` call after the bot is dead, a `Death` Cost of `-Death` is added through
   `ledger.Add` (so it sits on the cost ladder if one is on) and the tally is marked (Sight `:343-351`, Seek
   `:461-469`, Interact `:577-585`). None of the three stages sets `RespawnAtEntrance`, so `StageScenario::DeadForGood`
@@ -1315,7 +1314,7 @@ core columns.
 `CasterTier 1`, `LinkedTier 2`, `EliteTier 4`, `KeepHealthPct 200`, `CampPacksFirst 2`, `CampPacksMax 4`,
 `CampSpacingFirst 45`, `CampSpacingLast 25`, `PartyNearest 2`, `PartyFurthest 6`, `WinHold 0.75`, `WinFocus 0.6`,
 `WinPulledSeconds 5`, `StandInShare 20`. Also read: `Combat.FightNearest/FightFurthest/NextNearest`, `Respawn.DelayMs`,
-`Respawn.RejoinYards`, `Difficulty.*`, `Party.TeammateHealing`, `Raid.DrillWeight` (PartyEncounter).
+`Respawn.RejoinYards`, `Difficulty.*`, `Party.TeammateHealing` (PartyEncounter).
 
 **Tests**: `RolesStageTest.cpp` (stage defined; packs by rung; the pull camp; the drill terms are outcomes and costs;
 Hold,
@@ -1369,15 +1368,15 @@ EarlyPull is Cost, Revive Shaping (`RewardLedger.h:162-243`; note: TeammateDeath
 | `TeammateHealing` | seat's build `Heals` | `healDrill * HealShare * Party.TeammateHealing * (AgentHealingBy + AgentProtectionBy of that teammate) / health` | `Party.TeammateHealing` (2.0), `Party.HealOffGoal` (1.0) |
 | `TeammateThreat` | the seat is the tank: per enemy on a non-tank living teammate | `-Party.TankLoseTeammate * onTeammate * scale` | 0.02 |
 | `TeammateDeath` | first time the seat sees a teammate dead (resets when it lives) | `-Party.TeammateDeath` | 3.0 |
-| `Threat` (stance) | tank in combat in Defensive Stance, Bear or Dire Bear Form, or with Righteous Fury (25780) or Frost Presence (48263) | `+drill * Raid.TankStance * scale` | `Raid.TankStance` (0.001) |
+| `Threat` (stance) | tank in combat in Defensive Stance, Bear or Dire Bear Form, or with Righteous Fury (25780) or Frost Presence (48263) | `+Raid.TankStance * scale` | `Raid.TankStance` (0.001) |
 | `Threat`/`DrillHold` (hold) | tank | `+Raid.TankHold * onBot * scale` and `-Raid.TankLoose * onOthers * scale` | 0.015, 0.006 |
 | `DamageDealt`/`DrillFocus` (focus) | non-tank non-healer with a living other tank | `+Raid.TankTarget * LastStepDamage` if its victim is the tank's victim; `-Raid.PulledOff * onBot * scale` (term `Threat`/`DrillFocus`) | 0.3, 0.004 |
-| `EarlyPull` | non-tank with enemies on it while the party tank is alive and not in combat | `-drill * Raid.EarlyPull * onBot * scale` | 0.01 |
+| `EarlyPull` | non-tank with enemies on it while the party tank is alive and not in combat | `-Raid.EarlyPull * onBot * scale` | 0.01 |
 | `TeammateHealing`/`DrillKeep` (keep) | healer: members of its group alive >50% (+1) or <35% (-1) | `+Raid.KeepUp * keptPay * scale` (above-half share at `HealShare`) and `-Party.TeammateHealing * Raid.Overheal * wasted` | `Raid.KeepUp` (0.0002), `Raid.Overheal` (0.5) |
 | `Stall` | in combat, an enemy within `Raid.IdleReach` (40 yd), nothing done for `Raid.IdleMs` (4000) | `-Raid.Idle * scale` per decision | 0.001 |
 
-`drill` = `Raid.DrillWeight` (3.0) for seat 0 when `DrillRole` matches and the arena is not Roles, else 1 (`:~420-430`).
-In a roles arena the drilled seat's role terms are not paid here (`rolePay = 0`, `:~432`); the readings are still taken.
+(The drill weight `Raid.DrillWeight` and the DrillHold/Focus/Keep term switch were deleted 2026-10-08: only roles arenas set
+`DrillRole`, and they pay the drilled seat in `RolesEncounter`.) In a roles arena the drilled seat's role terms are not paid here (`rolePay = 0`, `:~432`); the readings are still taken.
 `HealShare` is 1 under a Protect goal or no goal, else `Party.HealOffGoal` (`:~369-379`).
 
 **Episode info (PartyEncounter's columns, `AddEpisodeInfo`, `:41-114`)**: `seat`, `teammates_died`, `revives`,
@@ -1681,7 +1680,7 @@ Public (`Encounters.h:150-182`):
 | `EXPLORE_PACK_WORDS = 4`, `EXPLORE_PACK_BITS = 24`, `EXPLORE_PACKS = 96`, `EXPLORE_YARD_BUCKET = 16`, `EXPLORE_MARKS = 8` | Go-Explore cell encoding: a cell's cleared packs are 4 words of 24 bits (a `float` episode-info value holds 24 bits exactly), so only the route's first 96 packs; the party's yard in buckets of 16. |
 | `static std::pair<uint32,uint32> DungeonLevels(BossRow const&)` | The level range the dungeon is run at. |
 | `static CreatureData const* FindSpawn(BossRow const&)` | The boss's world-database spawn, or null. |
-| the `Encounter` overrides | `RewardTerms`, `AddEpisodeInfo`, `ResetEpisode`, `BeforeLevel`, `Build`, `UpdateEnemies`, `Update`, `SelectTarget`, `View`, `Reward`, `WriteState`, `IsTerminal`. No `BeforeRebuild`, `Deactivate` or `Teardown` override: the encounter spawns nothing of its own (the instance's creatures belong to the map). |
+| the `Encounter` overrides | `RewardTerms`, `AddEpisodeInfo`, `ResetEpisode`, `BeforeLevel`, `Build`, `UpdateEnemies`, `Update`, `View`, `Reward`, `WriteState`, `IsTerminal` (its `SelectTarget` was deleted 2026-10-08: every instance stage has the sight block, which `CurriculumStages` now requires of an instance). No `BeforeRebuild`, `Deactivate` or `Teardown` override: the encounter spawns nothing of its own (the instance's creatures belong to the map). |
 
 Per-env state (`Encounters.h`, `EnvInstance` and `SeatInstance`, read by the first half):
 
@@ -1691,7 +1690,7 @@ rung), `Boss` guid, `BossHealth`, `HealthLeft`, `Engaged`/`EngageMs`, `BossDead`
 `ProgressMs`/`ProgressSeen`, `Wipes`, `Rung` (the ladder rung the run was drawn on), `Probe`, `WipesAllowed`,
 `Evaluating`, `Trace` (a `FightTrace`), `Fighting`, `ReadyEngages`, `OnParty`, `CrowdSeconds`, `HostileTotal`, `LastMs`,
 `Level`, `StuckLoggedMs`, `Rises`/`Rejoins`/`RejoinMsTotal`, `Entrance`, `Wipe` (a `WipeLatch`), `Tank`, `Overflow`,
-`Objects`, `ClosedDoors`, `Used`, `Approached`/`ApproachedMs`, `EndLogged`, `LastKillMs`,
+`Objects`, `Used`, `Approached`/`ApproachedMs`, `EndLogged`, `LastKillMs`,
 `HasAhead`/`Ahead`/`AheadSize`,
 `HasSecond`/`Second`, the drill block (`Drill`, `DrillRung`, `DrillPackIndex`, `DrillGap`, `DrillPoint`, `DrillPack`,
 `DrillGroups`, `DrillLocked`, `DrillOther`, `DrillEngaged`, `DrillCleared`, `DrillExtra`, `DrillExtraEntry`,
@@ -1841,8 +1840,8 @@ and `Objects`, counts kills, resolves pack states). `Update` (`:702-960`) does, 
     point per decision, then `break`).
 
 **5. Observe.** `View` (`:2432`, second half) fills the seat's goal places through `SeenWorld` (what the seat saw, its
-map's frontier, the layout, the leader). `SelectTarget` (`:2695-2721`): keeps the seat's selected target slot while it
-is alive; else picks slot 0 (the boss) while it lives, else the nearest living enemy slot; always returns true.
+map's frontier, the layout, the leader). (`SelectTarget` was deleted 2026-10-08: it was never reached, since the seat's
+own client selection is the target in a sight stage.)
 
 **6. Reward (`Reward`, `:2529-2693`; terms in E3.5).** Per seat per decision.
 
@@ -2198,7 +2197,6 @@ Logical parts of `InstanceEncounter.cpp` 1395-2752:
 | 2411-2430 | `NoteDrill` (the drill's own ladder) |
 | 2432-2527 | `View`, `SeenWorld` |
 | 2529-2693 | `Reward` |
-| 2695-2721 | `SelectTarget` |
 | 2723-2732 | `TierScale` |
 | 2734-2737 | `TimeIsUp` |
 | 2739-2743 | `WriteState` |
@@ -2259,10 +2257,8 @@ Per decision, for the whole party. Uses seat 0's player as the visitor anchor; r
 the world. Steps:
 
 1. **Fighting flag** (`:1766-1769`): any enemy slot unit alive and in combat.
-2. **Usable objects and doors** (`:1770-1823`): clears `fight.Objects` and `fight.ClosedDoors`. One
-   `GameObjectListSearcher` from the middle of the living seats, radius `OBJECT_SIGHT (40) + spread`. Every spawned
-   closed `GAMEOBJECT_TYPE_DOOR` (`GO_STATE_READY`) is recorded with radius `max(4, GetObjectSize())` (the A8 movement
-   stop, "a spline walks through one"); an object that is `Usable` (E3.11), not yet in `fight.Used`, and within 40 yd of
+2. **Usable objects and doors** (`:1770-1823`): clears `fight.Objects`. One
+   `GameObjectListSearcher` from the middle of the living seats, radius `OBJECT_SIGHT (40) + spread`. An object that is `Usable` (E3.11), not yet in `fight.Used`, and within 40 yd of
    some living seat goes to `fight.Objects`. Nothing opens by itself (principle 4).
 3. **Route packs** (`:1825-1862`): for the first `WorldView::JOURNAL_PLACES` (8) uncleared `RoutePacks`, look their
    members up by spawn id in `GetCreatureBySpawnIdStore()`; `Resolved = Resolved || found`, `Cleared = found &&
