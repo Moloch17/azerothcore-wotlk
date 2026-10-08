@@ -568,3 +568,80 @@ What a fork CI would take, in order:
    over an hour (UNVERIFIED), so the cache is a requirement.
 5. The untouched upstream workflows should be left as they are: they are inert and a merge will keep updating them.
 
+## 4. Python packaging and tooling
+
+### 4.1 Package, pins, extras
+
+`apps/forge/python/pyproject.toml` (29 lines):
+
+- Distribution `animus-forge` 0.1.0, `requires-python >=3.11` (`:5`), runtime dependencies `numpy>=1.26`, `pyyaml>=6`,
+  `torch>=2.4` (`:6-12`), extras `tensorboard>=2.16` and `dev` = `pytest>=8` (`:15-16`), setuptools build, packages
+  `animus*` only (`:21-22`). pytest runs `tests/` with `-m 'not slow'` by default (`:24-27`).
+- **No lock file and no upper pin anywhere.** The owner's dev venv resolved to numpy 2.5.3, pytest 9.1.1, tensorboard
+  2.21.0 and torch 2.9.1+rocm6.4 (`.venv/lib/python3.12/site-packages/*.dist-info`, the owner's checkout). Another
+  machine's first start resolves whatever is newest that day. `animus-venv.sh:29-37` installs `torch` first with
+  `ANIMUS_TORCH_VERSION` empty by default (`docker-compose.yml:140`: "empty = the index's newest"), then
+  `pip install -e` (`:41`) that skips torch because it is already satisfied. `animus-venv.sh:10-12` and the compose
+  comment say "every machine of a cluster runs the same one" torch, because the learners average their networks over
+  gloo; nothing enforces it, and `animus/blas.py:6-8` records measurements on three different torch builds
+  (2.9.1+rocm6.4, 2.10+rocm7.0, 2.13+rocm7.1) "on the cluster's RX 9060 XTs". Either the cluster does not run one
+  version, or that sentence is a history of upgrades; the venvs cannot be inspected from here (R-15). Because the C++
+  device library is built against torch's HIP runtime (section 3.3), this is a correctness risk, not only a tidiness
+  one.
+- **The Python version** is the container's: Ubuntu 24.04's `python3` = 3.12.3 (`.venv/pyvenv.cfg`), because the venv
+  is created inside the dev image (`Dockerfile.dev-server:72`). `forgectl` itself runs on the host with `python3` and
+  uses `tomllib` (3.11+), `fcntl` and `pty` (Linux only); the host's version is not pinned or checked
+  (UNVERIFIED which). The cluster machines run the worldserver in the same image, so they share 3.12.
+- **`forgectl` is not part of the package.** `packages.find include = ["animus*"]` excludes `apps/forge/forgectl`; it
+  runs through the `forgectl` shim (`forgectl:1-8`), which prepends `apps/forge` to `sys.path`. It is standard-library
+  only (no third-party import found in 2,182 lines), which is a virtue, so it needs neither the venv nor torch.
+- **No console scripts.** Entry points are `python -m animus.train` (started by the worldserver,
+  `LearnerProcess.cpp:92`), `animus.export` (`ForgeCommands.cpp:1127`), `animus.evaluate`, `animus.bench_learner`,
+  `animus.human`. `evaluate.py` and `bench_learner.py` have no importer (R-32): they exist for hand use, and
+  `evaluate.py:3-4` advertises `--baseline random` (a scripted baseline, principle 14).
+- The in-tree venv is described in R-16; its interpreter paths are the container's (`pyvenv.cfg`
+  `command = ... /azerothcore/apps/forge/python/.venv`), so the host's Python cannot use it and the editable install's
+  `animus_forge.egg-info` (ignored) points into the container too.
+
+### 4.2 Structure, imports, dead code
+
+- 48 modules, 20,835 lines (`animus` 25 modules, `mappo` 6, `human` 17) against 17,972 lines in 88 test modules and
+  7 helpers. `train.py` is the hub: it imports `blas`, `explore`, `style`, `distill`, `partners`, `async_sync`,
+  `parallel`, `progress`, `runs`, `cast` and `episode_means` (`grep` of import lines); apart from `cast`, `distill`
+  and `episode_means` (each also used by `partners.py`, `cast.py` or `evaluation.py`) these have `train.py` as their
+  only production importer. A refactor of `train.py` (known-issues G4) is therefore the single choke point.
+- **No import cycle**: an AST scan of all 48 modules (top-level and function-level imports alike) found none.
+- **Lazy imports.** `known-issues.md` A4 lists the function-level imports and warns that a file changed under a
+  running learner can mix versions. Checking each target: every lazily imported module is already imported at the top
+  of the same process (`env.py:203` imports `.device`, which `train.py:68` already loaded; `.networks` is loaded by
+  `trainer.py:18` and `train.py:49`; `bootstrap.py:464` and `export.py:365,396` import names from the same
+  `mappo.networks`). So a running learner cannot pick up new code through them; only `bench_learner.py:155-156`, a
+  hand tool, imports something that may be new. **The real window is process starts:** each of the data-parallel ranks
+  is a separate interpreter spawned by the worldserver (`LearnerProcess.cpp:92`), the host "restarts them all from the
+  latest checkpoint, up to three times" after a failure (`worldserver.conf.dist:5740-5742`), and `forge export` starts a
+  fresh one. A `git pull` that lands between two of those starts runs ranks of two versions in
+  one gloo group. A4's remedy (stop the learner before changing the tree, which the deploy gate does) is right; the
+  hoisting it suggests would change nothing.
+- **Dead or hand-only modules:** `bench_learner.py` (its docstring uses the deleted `configs/stage4_duel.yaml`, `:3`),
+  `evaluate.py`, and the offline half of `human/` (reader, tracks, dataset, build, fit, mapper, parity;
+  `human/__main__.py` is its own entry). The `human` package is 17 of the 48 modules; the learner imports only
+  `human.motion` and `human.realism` (`config.py:18`, `style.py:38`, `train.py:56`), for a style reward that is off in
+  every live stage. The owner's notes say the realm and its data capture are parked. Not dead, but parked: a decision
+  (Q-5).
+- `config.py` carries options no live stage uses (`eval.mask_actions`, `style.*`, `distill.*`, `cast.agents`; B8 of
+  `known-issues.md`).
+
+### 4.3 Tests
+
+- 88 `test_*.py`, 7 helper modules (`conftest.py`, `sim_threads.py`, `human_capture_writer.py`,
+  `slow_gae_reference.py`, ...), `fixtures/` (148 KB x 2 identical, 132 KB), `golden/` (4 `.amdl`, 3 `.json`).
+  Markers: only `slow` (`test_parallel.py`, `test_train_run.py`), excluded by default. 19 files skip conditionally
+  (CUDA/ROCm card, missing data). Two read the environment: `test_human_reader.py:199` (`ANIMUS_CAPTURE_SAMPLE`) and
+  `test_stage_validation.py:23` (`ANIMUS_COMPILE_DB`, a configured build's `compile_commands.json`). Without those
+  variables, both skip and nothing in the default run says so beyond pytest's skip count; `forgectl test`'s summary
+  would need to show the skip counts to catch it (not checked).
+- Tests that bake in operational facts: `test_forgectl.py` (the real cluster's addresses, logins and the container name
+  `claude-syntax`, `:85-92,156,216,880`), `test_dungeon_stages.py:228-236`, `test_conf_prune.py`. Editing
+  `cluster.toml` fails them (R-28).
+- Coverage gaps are in `known-issues.md` C1 to C5 and not repeated.
+
