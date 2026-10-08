@@ -7,10 +7,18 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .home import forgectl_home
+
 ROLES = ("host", "worker", "dev")
 # [doctor] in cluster.toml: thresholds for `forgectl doctor`; a key left out takes this default.
 DOCTOR_DEFAULTS = {"disk_min_gb": 30, "learner_error_hours": 6, "partial_stale_minutes": 30, "refused_hours": 3,
                    "dev_gpu_busy_max_percent": 30}
+# [notify] in cluster.toml (and ~/.forgectl/notify.toml, which overrides it): `forgectl watch` and its sinks. A sink
+# whose value is empty/false is off; with none on, watch prints to stdout only.
+NOTIFY_DEFAULTS = {"min_severity": "info", "poll_seconds": 60, "learner_silent_minutes": 10, "confirm_polls": 2,
+                   "debounce_minutes": 30, "desktop": False, "command": "", "webhook_url": "", "webhook_header": "",
+                   "file": ""}
+SEVERITIES = ("info", "warn", "critical")
 
 
 class ConfigError(Exception):
@@ -47,6 +55,7 @@ class Config:
     dev: dict
     machines: tuple = field(default_factory=tuple)
     doctor: dict = field(default_factory=dict)    # [doctor], defaults filled in (DOCTOR_DEFAULTS)
+    notify: dict = field(default_factory=dict)    # [notify], defaults filled in (NOTIFY_DEFAULTS)
 
     def machine(self, name: str) -> Machine:
         for machine in self.machines:
@@ -73,6 +82,30 @@ class Config:
     def path_of(self, machine: Machine, key: str) -> str:
         """A path from [paths] inside the machine's checkout, as a string with the checkout's own prefix."""
         return machine.path.rstrip("/") + "/" + self.paths[key]
+
+
+def _section(given, name: str, defaults: dict, file) -> dict:
+    """A [section] of the cluster file over its defaults: unknown keys and wrong types are errors naming the key."""
+    if not isinstance(given, dict):
+        raise ConfigError(f"{file}: [{name}] must be a table")
+    out = dict(defaults)
+    for key, value in given.items():
+        if key not in defaults:
+            raise ConfigError(f"{file}: [{name}]: unknown key {key!r} (known: {', '.join(defaults)})")
+        kind = type(defaults[key])
+        if kind is bool:
+            ok = isinstance(value, bool)
+        elif kind is str:
+            ok = isinstance(value, str)
+        else:
+            ok = isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0
+        if not ok:
+            wanted = "a number >= 0" if kind in (int, float) else "a " + kind.__name__
+            raise ConfigError(f"{file}: [{name}]: {key!r} must be {wanted}, got {value!r}")
+        out[key] = value
+    if name == "notify" and out["min_severity"] not in SEVERITIES:
+        raise ConfigError(f"{file}: [notify]: min_severity must be one of {SEVERITIES}, got {out['min_severity']!r}")
+    return out
 
 
 def default_config_path() -> Path:
@@ -112,16 +145,15 @@ def parse(data: dict, file: Path, repo_root: Path) -> Config:
     dev = data.get("dev", {})
     for key in ("container", "python", "build_dir_name"):
         _need(dev, key, f"{file}: [dev]", str)
-    doctor = dict(DOCTOR_DEFAULTS)
-    given = data.get("doctor", {})
-    if not isinstance(given, dict):
-        raise ConfigError(f"{file}: [doctor] must be a table")
-    for key, value in given.items():
-        if key not in DOCTOR_DEFAULTS:
-            raise ConfigError(f"{file}: [doctor]: unknown key {key!r} (known: {', '.join(DOCTOR_DEFAULTS)})")
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
-            raise ConfigError(f"{file}: [doctor]: {key!r} must be a number >= 0, got {value!r}")
-        doctor[key] = value
+    doctor = _section(data.get("doctor", {}), "doctor", DOCTOR_DEFAULTS, file)
+    notify = _section(data.get("notify", {}), "notify", NOTIFY_DEFAULTS, file)
+    extra = forgectl_home() / "notify.toml"
+    if extra.is_file():   # webhook URLs and tokens belong here, not in the tracked cluster.toml
+        try:
+            with open(extra, "rb") as handle:
+                notify.update(_section(tomllib.load(handle).get("notify", {}), "notify", NOTIFY_DEFAULTS, extra))
+        except (OSError, tomllib.TOMLDecodeError) as error:
+            raise ConfigError(f"{extra} cannot be read: {error}") from None
     config = Config(
         file=file, repo_root=repo_root, host_name=_need(cluster, "host", f"{file}: [cluster]", str),
         lan_remote=_need(cluster, "lan_remote", f"{file}: [cluster]", str),
@@ -130,7 +162,8 @@ def parse(data: dict, file: Path, repo_root: Path) -> Config:
         data_port=_need(cluster, "data_port", f"{file}: [cluster]", int),
         weights_port=_need(cluster, "weights_port", f"{file}: [cluster]", int),
         worldserver=_need(containers, "worldserver", f"{file}: [containers]", str), paths=dict(paths),
-        dev=dict(dev), machines=tuple(machines), doctor=doctor)
+        dev=dict(dev), machines=tuple(machines), doctor=doctor,
+        notify=notify)
     host = config.host
     if not host.in_cluster:
         raise ConfigError(f"{file}: the host {host.name!r} must have in_cluster = true")

@@ -13,16 +13,18 @@ build. Related: [config-keys.md](config-keys.md), [tests.md](tests.md) (there ar
 |---|---|---|
 | `forge.sh` | 109 | start/stop/attach the training container; `--build` recompiles inside it |
 | `forgectl` | 8 | shim that puts `apps/forge` on the path and runs the `forgectl` package |
-| `apps/forge/cluster.toml` | 82 | the machines, host, remote, branch, ports, container and paths forgectl reads |
-| `apps/forge/forgectl/__main__.py` | 196 | argument parser, dispatch, audit wiring |
+| `apps/forge/cluster.toml` | 96 | the machines, host, remote, branch, ports, container and paths forgectl reads, plus the `[doctor]` thresholds and the `[notify]` sinks of `watch` |
+| `apps/forge/forgectl/__main__.py` | 203 | argument parser, dispatch, audit wiring |
 | `apps/forge/forgectl/__init__.py` | 1 | package marker |
-| `apps/forge/forgectl/config.py` | 149 | loads and validates `cluster.toml` into `Config` / `Machine` |
+| `apps/forge/forgectl/config.py` | 182 | loads and validates `cluster.toml` into `Config` / `Machine` |
 | `apps/forge/forgectl/remote.py` | 84 | ssh (BatchMode) and local command execution, `parallel_map` |
 | `apps/forge/forgectl/ui.py` | 58 | printing, the `Proceed? [y/N]` confirmation, tables |
 | `apps/forge/forgectl/audit.py` | 142 | `~/.forgectl/audit.log` intent/result lines |
 | `apps/forge/forgectl/home.py` | 10 | `forgectl_home()`: `$FORGECTL_HOME` or `~/.forgectl` |
 | `apps/forge/forgectl/console.py` | 275 | types one line into a worldserver console through `docker attach` under a pty; per-machine flock; signal guard |
 | `apps/forge/forgectl/cluster.py` | 200 | `forgectl cluster`: one read-only probe per machine, table |
+| `apps/forge/forgectl/watch.py` | 303 | `forgectl watch`: `diff` of two status documents into events, the state file, the poll loop |
+| `apps/forge/forgectl/notify.py` | 121 | the `[notify]` sinks: desktop, command, webhook, file |
 | `apps/forge/forgectl/doctor.py` | 272 | `forgectl doctor`: the read-only pre-flight checks |
 | `apps/forge/forgectl/confkeys.py` | 79 | the conf keys that decide the sim's cost and sight (must match / may differ), shared by cluster, conf-sync and doctor |
 | `apps/forge/forgectl/snapshot.py` | 371 | `status --json` / `cluster --json`: the schema-1 document built from `progress.json`, `finished.json`, `spec.json`, `metrics.csv`, `eval.csv` and the machine probes |
@@ -206,7 +208,7 @@ Safety column: "reads" = never writes outside stdout (or a named output); "write
 
 Usage and behaviour are in [../forgectl.md](../forgectl.md); this is where each piece lives.
 
-- `__main__.py`: `parser()` defines `cluster [--all] [--json] [move-host]`, `status [--json]`, `doctor`, `stage {status,start,resume,pause,cancel}`,
+- `__main__.py`: `parser()` defines `cluster [--all] [--json] [move-host]`, `status [--json]`, `doctor`, `watch [--once]`, `stage {status,start,resume,pause,cancel}`,
   `logs`, `build`, `conf-sync`, `videos` (`forgectl test` and `testcmd.py` were removed with the test suites, see
   [tests.md](tests.md)). `changes_state` (`__main__.py:125-138`) decides which invocations are
   audited
@@ -229,6 +231,10 @@ Usage and behaviour are in [../forgectl.md](../forgectl.md); this is where each 
   (`wall_steps_per_sec` ...) are read with `num()` and are `null` when absent.
 - `confkeys.py`: `scan` the must-match and may-differ conf keys of a conf text, `cadence`, `mismatches`; the probe's
   shell `GREP` sends only those lines.
+- `watch.py`: `conditions` (what is wrong now, keyed by kind and subject), `transitions` (what changed between two
+  polls), `diff` (both, with the persisted `active`/`streak` state so a condition is told once, after
+  `confirm_polls` for worker drops), `tell` (print, min_severity, debounce, sinks), `run` (lock, poll loop, state file).
+  `notify.py`: the four sinks and `Event`.
 - `doctor.py`: `checks()` turns the gathered facts into PASS/WARN/FAIL lines (thresholds in `config.DOCTOR_DEFAULTS`,
   `cluster.toml` `[doctor]`); `run` gathers in parallel and exits 1 on a FAIL. Read-only.
 - `stage.py`: `console_line` builds `forge start|resume|pause|cancel`; `start` shows what it archives

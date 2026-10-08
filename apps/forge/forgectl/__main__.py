@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import audit, cluster, config as config_module, confsync, deploy, doctor, logs, snapshot, stage, videos
+from . import audit, cluster, config as config_module, confsync, deploy, doctor, logs, snapshot, stage, videos, watch
 from .config import ConfigError
 from .ui import Failure, say
 
@@ -60,6 +60,11 @@ def parser() -> argparse.ArgumentParser:
 
     add("doctor", "read-only pre-flight: PASS, WARN or FAIL per check, exit 1 on any FAIL, a 'to do' under each",
         "forgectl doctor")
+
+    wt = add("watch", "poll the cluster and send a notification when something changes (read-only; Ctrl-C to stop)",
+             "forgectl watch   |   forgectl watch --once")
+    wt.add_argument("--once", action="store_true", help="one pass, then exit (exit 1 if the host cannot be read)")
+    wt.add_argument("--interval", type=float, help="seconds between polls (default [notify] poll_seconds, 60)")
 
     sg = add("stage", "start, resume, pause or cancel a stage on the host (pause and cancel reach the workers too)",
              "forgectl stage resume move2_seek    |    forgectl stage cancel")
@@ -119,6 +124,8 @@ def dispatch(args, config) -> int:
         return stage.status(config)
     if args.command == "doctor":
         return doctor.run(config)
+    if args.command == "watch":
+        return watch.run(config, args.once, args.interval)
     if args.command == "stage":
         return stage.run(config, args.action, args.stages, getattr(args, "yes", False),
                           getattr(args, "archive_ok", False))

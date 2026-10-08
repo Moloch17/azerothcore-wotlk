@@ -33,6 +33,7 @@ may itself be listed (`local = true` there: no ssh).
 | `forgectl cluster [--json]` | the health table of the machines (with each one's ticks, half-batch, envs, cpus) | no |
 | `forgectl status [--json]` | the host's `forge status` and the learner's latest numbers; `--json` is the stable machine-readable document | no |
 | `forgectl doctor` | the read-only pre-flight: PASS / WARN / FAIL per check, exit 1 on a FAIL | no |
+| `forgectl watch [--once]` | poll the cluster and notify on a change (desktop, command, webhook, file) | no (writes its sinks and `~/.forgectl/watch-state.json`) |
 | `forgectl logs [machine]` | worldserver and learner logs, problems first | no |
 | `forgectl conf-sync [--check]` | keep the workers' `AnimusForge.Curriculum.*` keys equal to the host's | writes workers' confs |
 | `forgectl stage status\|start\|resume\|pause\|cancel` | drive a stage | console commands |
@@ -256,6 +257,103 @@ TicksPerDecision 1, HalfBatch 0, Cpus `auto`). In `status --json` and `cluster -
 `restart_policy`, `docker_ok`, `conf_lines` and `cadence {ticks_per_decision, half_batch, envs, learner_cpus,
 map_update_threads, stage_ticks {stage: ticks}}`.
 
+## `forgectl watch`
+
+A long-running watcher: it polls the cluster the way `status --json` reads it (files over ssh, the machine probes, the
+refusal lines; **not** the console) and sends a message when something changes, so nobody has to run `forgectl
+cluster` and read. It runs in the foreground (Ctrl-C stops it, exit 0); `--once` does one pass and exits (1 if the
+host could not be read); `--interval SECONDS` overrides `poll_seconds`.
+
+**It is read-only toward the cluster**: it never changes a machine and is not audited. It writes only to its sinks and
+to `~/.forgectl/watch-state.json` (mode 0600; `$FORGECTL_HOME` moves it), which holds the last poll, which alarms are
+active and when each event was last sent. One watcher per machine: a second one stops with "another forgectl watch is
+running" (an exclusive lock on `~/.forgectl/watch.lock`). The first poll is the baseline: it reports what is wrong
+right now (a worker down, a low disk), but not transitions, because there is no earlier poll.
+
+**What it tells you.**
+
+| Event (`kind`) | Severity | When |
+|---|---|---|
+| `stage_finished` | info | a stage's `finished.json` appeared (converged and advanced, converged without advancing, or reached its step ceiling); also read from the old stage's run when the plan moved on between two polls |
+| `stage_advanced` | info | the plan moved from one stage to the next |
+| `rung_stepped` | info | the stage's ladder rung (`ladder.rung`) or the fade's `shaping_scale` changed |
+| `eval_finished` | info | `eval.count` grew: the new evaluation's score and the headline measures that have targets, met or not |
+| `plan_ended` | info / warn | the plan went from running to idle: info if a stage decision ended it (nothing is running now), warn if it stopped without one (the sim went idle unexpectedly: cancelled, crashed or finished its queue) |
+| `ladder_collapsed`, `ladder_stalled` | warn | the learner raised the flag while the plan is running |
+| `learner_silent` | critical | the plan is training and the host learner's log is older than `learner_silent_minutes` (10) |
+| `plan_stale` | critical | `progress.json` says training or evaluating but has not been written for 5 min (2 h while evaluating) |
+| `worker_down` | warn | a cluster worker is unreachable, its worldserver container is not running, or (while training) its learner stopped stepping; must hold for `confirm_polls` (2) polls in a row |
+| `fingerprint_refused` | warn | a new `refused the worker` line in the host's log |
+| `disk_low` | warn | a machine has less free disk than `[doctor] disk_min_gb` (30) |
+| `host_unreadable` | critical | the host (or its run directory) cannot be read, so the watcher is blind; also after `confirm_polls` polls |
+| `<kind>_cleared` | info | a condition above went away (`worker_down_cleared` is a worker rejoining) |
+
+A condition (everything from `ladder_collapsed` down) is told once when it appears and once when it clears, not on
+every poll. The same event (kind and subject) is not sent twice inside `debounce_minutes` (30). Everything is printed
+to stdout with a time and a severity; only events at or above `min_severity` go to the sinks. A sink that fails is
+printed as `sink X failed: why` and skipped; the watcher goes on. A poll that raises is reported and tried again.
+
+**The `[notify]` section** of [`apps/forge/cluster.toml`](../../apps/forge/cluster.toml). With no sink set, `watch`
+only prints. Anything in a `[notify]` table in `~/.forgectl/notify.toml` overrides it, so a webhook URL or token stays
+out of the tracked file.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `min_severity` | `"info"` | `info`, `warn` or `critical`: lower events are printed, not sent |
+| `poll_seconds` | `60` | seconds between polls (each poll takes about 8 s, mostly the 5-second learner sample) |
+| `learner_silent_minutes` | `10` | the `learner_silent` limit |
+| `confirm_polls` | `2` | polls a `worker_down` or `host_unreadable` must hold before it is told (`--once` waives it) |
+| `debounce_minutes` | `30` | the same event is not sent twice inside this window |
+| `desktop` | `false` | `notify-send` (needs a desktop session; reports `notify-send is not installed` or its error otherwise) |
+| `command` | `""` | a shell command run with `sh -c`; the message is in `$FORGECTL_MESSAGE` and is `$1`; `$FORGECTL_KIND`, `$FORGECTL_SEVERITY` and `$FORGECTL_SUBJECT` are set too |
+| `webhook_url` | `""` | an `http://` or `https://` URL; the body is JSON `{"text", "content", "kind", "severity", "subject", "time"}` (`text` for Slack-style and `content` for Discord-style hooks) |
+| `webhook_header` | `""` | one header, `"Name: value"` (for a token) |
+| `file` | `""` | append `time severity kind subject: text` per message to this file (`~` is expanded) |
+
+An unknown key or a wrong type is a configuration error naming the key. Example `command`:
+`command = "printf '%s\n' \"$FORGECTL_MESSAGE\" | mail -s forgectl me@example.com"` (needs a working `mail` on the
+machine that runs the watcher; not tested here).
+
+**Running it for days.** Under tmux: `tmux new -d -s forgewatch './forgectl watch'`; look at it with `tmux attach -t
+forgewatch`. Under systemd, as a user service (it needs the ssh keys of your login, so use `--user`):
+
+```
+# ~/.config/systemd/user/forgectl-watch.service
+[Unit]
+Description=forgectl watch (forge cluster alerts)
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/mlac/azerothcore
+ExecStart=%h/mlac/azerothcore/forgectl watch
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target
+```
+
+then `systemctl --user daemon-reload && systemctl --user enable --now forgectl-watch` and `journalctl --user -u
+forgectl-watch -f`; `loginctl enable-linger $USER` keeps it running when you are logged out. (`desktop = true` needs
+the graphical session's bus, which a service started at boot does not have: use `file`, `command` or `webhook` there.)
+From cron, `forgectl watch --once` every few minutes works too, because the state file carries the active alarms
+between runs.
+
+Real output (read-only, 2026-10-08, idle cluster, spencer and thomas off the network, sinks `command` and `file`
+pointed at files in /tmp):
+
+```
+$ forgectl watch --once
+forgectl watch: one pass; sinks: command, file; state /tmp/fh/watch-state.json
+2026-10-08 05:16:59 [warn] worker_down: worker spencer dropped: unreachable: ssh: connect to host 192.168.0.66 port 22: No route to host
+2026-10-08 05:16:59 [warn] worker_down: worker thomas dropped: unreachable: ssh: connect to host 192.168.0.67 port 22: No route to host
+2026-10-08 05:16:59 plan idle (move2_seek, phase stopped); host read
+$ cat /tmp/fh/watch.log
+2026-10-08T05:16:59-0600 warn worker_down spencer: worker spencer dropped: unreachable: ssh: connect to host 192.168.0.66 port 22: No route to host
+```
+
+A second `--once` printed only the plan line: the alarms were already active.
+
 ## `forgectl stage status|start|resume|pause|cancel [<stage> ...]`
 
 ```
@@ -414,7 +512,7 @@ then needs ssh keys to the workers).
 Every command that changes something appends two lines to `~/.forgectl/audit.log` (an intent line when it starts, a result line when it ends) on the machine it was run from
 (the directory is created, mode 0700; `$FORGECTL_HOME` moves it). Logged: `stage start|resume|pause|cancel`,
 `build`, `conf-sync` (without `--check`), `cluster move-host`, `videos` (without `--check`/`--dry-run`). Not logged:
-`cluster`, `status`, `stage status`, `logs`, `test`, and the `--check`/`--dry-run` forms.
+`cluster`, `status`, `doctor`, `watch`, `stage status`, `logs`, `test`, and the `--check`/`--dry-run` forms.
 
 ```
 2026-10-07T12:31:07+0100 kind=intent user=moloch machines=sarah,spencer,thomas,moloch confirm=prompt-pending cmd="forgectl stage cancel"
