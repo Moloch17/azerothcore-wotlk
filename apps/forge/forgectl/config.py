@@ -8,6 +8,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 ROLES = ("host", "worker", "dev")
+# [doctor] in cluster.toml: thresholds for `forgectl doctor`; a key left out takes this default.
+DOCTOR_DEFAULTS = {"disk_min_gb": 30, "learner_error_hours": 6, "partial_stale_minutes": 30, "refused_hours": 3,
+                   "dev_gpu_busy_max_percent": 30}
 
 
 class ConfigError(Exception):
@@ -43,6 +46,7 @@ class Config:
     paths: dict
     dev: dict
     machines: tuple = field(default_factory=tuple)
+    doctor: dict = field(default_factory=dict)    # [doctor], defaults filled in (DOCTOR_DEFAULTS)
 
     def machine(self, name: str) -> Machine:
         for machine in self.machines:
@@ -108,6 +112,16 @@ def parse(data: dict, file: Path, repo_root: Path) -> Config:
     dev = data.get("dev", {})
     for key in ("container", "python", "build_dir_name"):
         _need(dev, key, f"{file}: [dev]", str)
+    doctor = dict(DOCTOR_DEFAULTS)
+    given = data.get("doctor", {})
+    if not isinstance(given, dict):
+        raise ConfigError(f"{file}: [doctor] must be a table")
+    for key, value in given.items():
+        if key not in DOCTOR_DEFAULTS:
+            raise ConfigError(f"{file}: [doctor]: unknown key {key!r} (known: {', '.join(DOCTOR_DEFAULTS)})")
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+            raise ConfigError(f"{file}: [doctor]: {key!r} must be a number >= 0, got {value!r}")
+        doctor[key] = value
     config = Config(
         file=file, repo_root=repo_root, host_name=_need(cluster, "host", f"{file}: [cluster]", str),
         lan_remote=_need(cluster, "lan_remote", f"{file}: [cluster]", str),
@@ -116,7 +130,7 @@ def parse(data: dict, file: Path, repo_root: Path) -> Config:
         data_port=_need(cluster, "data_port", f"{file}: [cluster]", int),
         weights_port=_need(cluster, "weights_port", f"{file}: [cluster]", int),
         worldserver=_need(containers, "worldserver", f"{file}: [containers]", str), paths=dict(paths),
-        dev=dict(dev), machines=tuple(machines))
+        dev=dict(dev), machines=tuple(machines), doctor=doctor)
     host = config.host
     if not host.in_cluster:
         raise ConfigError(f"{file}: the host {host.name!r} must have in_cluster = true")

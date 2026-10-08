@@ -30,8 +30,9 @@ may itself be listed (`local = true` there: no ssh).
 
 | Command | What it is for | Changes things? |
 |---|---|---|
-| `forgectl cluster [--json]` | the health table of the machines | no |
+| `forgectl cluster [--json]` | the health table of the machines (with each one's ticks, half-batch, envs, cpus) | no |
 | `forgectl status [--json]` | the host's `forge status` and the learner's latest numbers; `--json` is the stable machine-readable document | no |
+| `forgectl doctor` | the read-only pre-flight: PASS / WARN / FAIL per check, exit 1 on a FAIL | no |
 | `forgectl logs [machine]` | worldserver and learner logs, problems first | no |
 | `forgectl conf-sync [--check]` | keep the workers' `AnimusForge.Curriculum.*` keys equal to the host's | writes workers' confs |
 | `forgectl stage status\|start\|resume\|pause\|cancel` | drive a stage | console commands |
@@ -181,6 +182,79 @@ worker of three and the host plus one unreachable machine of four):
 (The real output is the same data indented one key per line.) The idle cluster shows `learner.state: "stalled"`
 because the learner's log has not been written for 20 hours: a stalled learner is a fault only while `plan.state` is
 `running`. The phase 2 structured `status` of the audit will replace the file reads and keep this schema.
+
+## `forgectl doctor`
+
+The read-only pre-flight: "can I start or resume a stage?". It prints one `PASS`, `WARN`, `FAIL` (or `INFO`) line per
+check, and under every WARN and FAIL a `to do:` line. **Exit 1 if any check FAILs**, 0 otherwise (warnings do not
+change the exit code). It changes nothing: it asks each cluster machine one probe over ssh (BatchMode) plus one more
+for the learner log, reads the confs with `cat`, reads `docker inspect` and the local GPU's sysfs counters, and
+takes about 10 seconds. Thresholds are in the `[doctor]` section of
+[`apps/forge/cluster.toml`](../../apps/forge/cluster.toml):
+
+| `[doctor]` key | Default | Used by |
+|---|---|---|
+| `disk_min_gb` | `30` | free space under a checkout, per machine (the deploy gate's number) |
+| `learner_error_hours` | `6` | a traceback or error in the tail of a learner log counts only if the log was written within this many hours |
+| `partial_stale_minutes` | `30` | a `*.pt.partial` older than this is a checkpoint write that never finished |
+| `refused_hours` | `3` | how far back in the host's docker log and `Server.log` to look for `refused the worker` |
+| `dev_gpu_busy_max_percent` | `30` | the dev card counts as idle at or below this busy percentage |
+
+An unknown key or a negative number in `[doctor]` is a configuration error naming the key.
+
+| Check | Level when it goes wrong | What it looks at | What it tells you to do |
+|---|---|---|---|
+| `machines reachable` | FAIL | every cluster machine answers its ssh probe and has the checkout | power it on or fix the network, test `ssh -o BatchMode=yes user@address true`, or set `in_cluster = false` |
+| `revision` | FAIL | every machine's `git rev-parse --short HEAD` equals this checkout's (the machines that differ are named) | `forgectl build --cluster` (refuses under a running stage unless `--stop-running`) |
+| `docker` | FAIL | `docker ps` works on every machine | start docker; the user must be in the docker group |
+| `worldserver up` | WARN | the worldserver container runs | fine if no stage is meant to run; otherwise start it or build |
+| `restart policy` | WARN | the container's docker restart policy is not `no` | `docker update --restart unless-stopped ac-animus-forge-worldserver` on that machine |
+| `disk free` | FAIL | free space under each checkout is at least `disk_min_gb` | archive old runs, delete old `checkpoint_*.pt` |
+| `dev disk free` | WARN | the same for this machine's checkout | free space before a local build |
+| `dev card idle` | WARN | the dev machine's GPU (the card with the most VRAM, `/sys/class/drm`) busy percentage over 2 s is at most `dev_gpu_busy_max_percent`; also reports VRAM used | find what is using it; the desktop counts |
+| `curriculum keys` | FAIL | the `AnimusForge.Curriculum.*` keys of every worker equal the host's (what `conf-sync --check` compares); an unreadable conf fails too | `forgectl conf-sync --check`, then `forgectl conf-sync` |
+| `sim keys` | FAIL | `AnimusForge.Vision.*`, `Map.*`, `Memory.*`, `TicksPerDecision` (global and every `Stage.<name>.TicksPerDecision`) and `HalfBatch` equal the host's on every machine (an unset key counts as a value) | edit the conf by hand to equal the host's and restart that worldserver (`conf-sync` does not copy these) |
+| `cadence <machine>` (INFO) | none | each machine's `decision_ticks` (`TicksPerDecision`), `HalfBatch`, `Envs`, `Learner.Cpus` and per-stage tick overrides, so a deploy cannot change the sim's cost silently (audit finding O1). `Envs` and `Cpus` may differ between machines; they are shown, not compared | read them; compare with `spec.decision_ticks` of `status --json` |
+| `conf not empty` | FAIL | no machine's conf has zero lines or is unreadable | restore it from its `mod_animus_forge.conf.bak-*` before any restart |
+| `fingerprint refusals` | WARN | `refused the worker` lines in the host's last `refused_hours` | if the two checks above pass they are from before the fix; else build or conf-sync |
+| `learner log errors` | WARN | a `Traceback`, `Error`, `CRITICAL`, `FATAL` or `Exception` line in the last 400 lines of a learner log written in the last `learner_error_hours` | `forgectl logs <machine> --errors` |
+| `stale checkpoint writes` | WARN | `*.pt.partial` files under `runs/` older than `partial_stale_minutes` | make sure no learner runs there, then delete the partial (the `.pt` beside it is the good one) |
+
+The last line is the count (`10 pass, 0 warn, 3 fail.`). A machine that is unreachable is one FAIL (`machines
+reachable`); the other checks skip it. Real output (2026-10-08; spencer and thomas were off the network, and this
+checkout is ahead of the cluster):
+
+```
+$ forgectl doctor
+Checking 4 machines (sarah, spencer, thomas, moloch); read-only, about 10 seconds ...
+FAIL  machines reachable       2/4; no answer from spencer (unreachable: ssh: connect to host 192.168.0.66 port 22: No route to host), thomas (unreachable: ssh: connect to host 192.168.0.67 port 22: No route to host)
+      to do: power it on or fix the network and try `ssh -o BatchMode=yes user@address true`; if it is meant to be out, set in_cluster = false in apps/forge/cluster.toml
+FAIL  revision                 dev checkout is 3e3216eb1; different: sarah 64b7c7dc5, moloch 64b7c7dc5
+      to do: a stage must not be running; run `forgectl build --cluster` (it refuses under a running stage unless --stop-running)
+PASS  docker                   answers on 2 machines
+PASS  worldserver up           running on 2 machines
+PASS  restart policy           restarts at boot on 2 machines
+PASS  disk free                sarah 219 GB, moloch 1119 GB (need >= 30)
+PASS  dev card idle            busy 1% (limit 30%), VRAM 1225/20464 MiB used
+FAIL  curriculum keys          conf not readable: spencer, thomas
+      to do: reach the machine first
+PASS  sim keys                 Vision.*, Map.*, Memory.*, TicksPerDecision (global and per stage) and HalfBatch equal on 2 machines
+INFO  cadence sarah            decision_ticks 1, HalfBatch 1, Envs 64, Cpus auto, stage ticks: none
+INFO  cadence moloch           decision_ticks 1, HalfBatch 1, Envs 16, Cpus auto, stage ticks: none
+PASS  conf not empty           every conf has lines
+PASS  fingerprint refusals     none in the host's last 3 h
+PASS  learner log errors       none in the tail of a log written in the last 6 h
+PASS  stale checkpoint writes  no *.pt.partial left behind
+10 pass, 0 warn, 3 fail. Fix the FAIL lines before starting or resuming a stage.
+```
+
+The cadence is also in `forgectl cluster` (columns `ticks`, `half`, `envs`, `cpus`, a `per-stage ticks per decision`
+line and a `CADENCE DIFFERS` block when a machine's must-match keys differ from the host's) and in `conf-sync --check`
+(the same four columns, a host row, and the same block; `conf-sync` still copies only the Curriculum keys, and its exit
+code is still decided by them). `-` means the key is not in that conf and the build's default applies (Envs 64,
+TicksPerDecision 1, HalfBatch 0, Cpus `auto`). In `status --json` and `cluster --json` each machine has
+`restart_policy`, `docker_ok`, `conf_lines` and `cadence {ticks_per_decision, half_batch, envs, learner_cpus,
+map_update_threads, stage_ticks {stage: ticks}}`.
 
 ## `forgectl stage status|start|resume|pause|cancel [<stage> ...]`
 

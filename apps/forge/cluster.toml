@@ -73,3 +73,10 @@ address = "192.168.0.65"
 role = "worker"
 path = "~/animus-forge"
 in_cluster = false
+
+[doctor]                # thresholds for `forgectl doctor` (a key left out takes the default shown)
+disk_min_gb = 30                 # free space under a checkout below this is a FAIL (the deploy gate's number)
+learner_error_hours = 6          # a traceback or error in the tail of a learner log counts if the log was written this recently
+partial_stale_minutes = 30       # a *.pt.partial older than this is a checkpoint write that did not finish
+refused_hours = 3                # how far back in the host's logs to look for 'refused the worker'
+dev_gpu_busy_max_percent = 30    # the dev card counts as idle at or below this busy percentage

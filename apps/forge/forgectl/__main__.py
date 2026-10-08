@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import audit, cluster, config as config_module, confsync, deploy, logs, snapshot, stage, videos
+from . import audit, cluster, config as config_module, confsync, deploy, doctor, logs, snapshot, stage, videos
 from .config import ConfigError
 from .ui import Failure, say
 
@@ -57,6 +57,9 @@ def parser() -> argparse.ArgumentParser:
     st.add_argument("--stage", help="with --json: the run directory to read (default: the newest progress.json)")
     st.add_argument("--no-console", action="store_true",
                     help="with --json: do not type `forge status` into the host's console (files and ssh only)")
+
+    add("doctor", "read-only pre-flight: PASS, WARN or FAIL per check, exit 1 on any FAIL, a 'to do' under each",
+        "forgectl doctor")
 
     sg = add("stage", "start, resume, pause or cancel a stage on the host (pause and cancel reach the workers too)",
              "forgectl stage resume move2_seek    |    forgectl stage cancel")
@@ -114,6 +117,8 @@ def dispatch(args, config) -> int:
         if args.stage or args.no_console:
             raise Failure("--stage and --no-console only go with --json")
         return stage.status(config)
+    if args.command == "doctor":
+        return doctor.run(config)
     if args.command == "stage":
         return stage.run(config, args.action, args.stages, getattr(args, "yes", False),
                           getattr(args, "archive_ok", False))

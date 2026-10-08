@@ -16,7 +16,7 @@ import re
 import time
 from datetime import datetime, timezone
 
-from . import cluster, console as console_module, remote
+from . import cluster, confkeys, console as console_module, remote
 from .config import Config
 from .ui import Failure, say
 
@@ -279,9 +279,12 @@ def machine_doc(status: cluster.MachineStatus, host_rev: str) -> dict:
            "reachable": status.reachable, "problem": status.problem or None, "revision": status.rev or None,
            "revision_matches_host": None, "worldserver": {"up": None, "status": None},
            "learner": {"state": None, "env_steps": None, "steps_per_sec": None, "log_age_s": None},
-           "load": {"one_minute": None, "cpus": None}, "disk_free_gb": None, "gpu": None}
+           "load": {"one_minute": None, "cpus": None}, "disk_free_gb": None, "gpu": None,
+           "restart_policy": None, "docker_ok": None, "conf_lines": None, "cadence": confkeys.cadence({})}
     if not status.reachable or status.problem:
         return doc
+    doc.update(restart_policy=status.restart, docker_ok=status.docker_ok, conf_lines=status.conf_lines,
+               cadence=confkeys.cadence(status.conf_keys))
     doc["revision_matches_host"] = None if not (host_rev and status.rev) else (
         status.rev.startswith(host_rev) or host_rev.startswith(status.rev))
     doc["worldserver"] = {"up": status.worldserver.startswith("Up"), "status": status.worldserver or None}
