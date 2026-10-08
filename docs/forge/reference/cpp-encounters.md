@@ -1781,8 +1781,9 @@ second wipe is the only wipe-based end (step 8 above); a first wipe is scored an
 
 **8. Episode info.** Every column is a lambda over `_envs[env.Index]` read when the scenario writes the row; see E3.8.
 
-**9. Critic state.** `WriteState` writes only `state[STATE_TIER] = Tier / (max(2, Rows.size()) - 1)` (`STATE_TIER =
-13`): the pinned row index over the top index; with a single usable row the divisor is 1.
+**9. Critic state.** `WriteState` (`:2739-2743`) writes only `state[STATE_TIER] = Tier / (max(2, Rows.size()) - 1)`
+(`STATE_TIER = 6` since 2026-10-08, was 13): the pinned row index over the top index; with a single usable row the divisor
+is 1.
 
 ### E3.5 Reward terms paid
 

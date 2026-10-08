@@ -1272,8 +1272,9 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
     for (std::string const& merge : _stage.Merges)
         merges.push_back(boost::json::string(merge));
 
-    // Where the critic state holds the episode's arena, so the learner knows each decision's arena.
+    // The critic state's width, and where it holds the episode's arena, so the learner knows each decision's arena.
     boost::json::object& state = stageFile["state"].emplace_object();
+    state["dim"] = _spec.StateDim;
     state["arena_first"] = uint32(STATE_ARENA_FIRST);
     state["arena_count"] = MAX_ARENAS;
 
@@ -2742,13 +2743,9 @@ bool Animus::Curriculum::StageScenario::GoalHeld(Env const& env, uint32 seatInde
             return step.SelfHealing > 0 || bot->HasAuraType(SPELL_AURA_MOD_REGEN)
                 || bot->HasAuraType(SPELL_AURA_MOD_POWER_REGEN);
         case SeatGoal::TravelTo:
-        case SeatGoal::Gather:
-        case SeatGoal::Interact:
-            // On the way, or there and doing it (a cast, a loot window).
+            // On the way, or there and doing it (a cast).
             return (seat.Holds[0].HasPlace && bot->GetExactDist2d(&seat.Holds[0].Place) <= GoalBlock::PLACE_REACH)
-                || !bot->movespline->Finalized() || bot->IsNonMeleeSpellCast(false) || !bot->GetLootGUID().IsEmpty();
-        case SeatGoal::Loot:
-            return !bot->GetLootGUID().IsEmpty() || !bot->movespline->Finalized();
+                || !bot->movespline->Finalized() || bot->IsNonMeleeSpellCast(false);
         case SeatGoal::Resurrect:
             return seat.StepRevivedAlly || bot->IsNonMeleeSpellCast(false);
         case SeatGoal::Count:
@@ -3629,7 +3626,7 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
         hold.HasPlace = hold.Goal != NO_GOAL && GoalBlock::PlaceOf(view, GoalTargetOf(hold.Goal), hold.Place);
         hold.Friend.Clear();
         if (uint32 const goalTarget = GoalTargetOf(hold.Goal); hold.Goal != NO_GOAL
-            && goalTarget >= GOAL_TARGET_FRIEND_FIRST && goalTarget < GOAL_TARGET_OBJECTIVE_FIRST)
+            && goalTarget >= GOAL_TARGET_FRIEND_FIRST && goalTarget < GOAL_TARGET_PLACE_FIRST)
             if (Unit* friendUnit = Encoding::FriendUnit(view, goalTarget - GOAL_TARGET_FRIEND_FIRST))
                 hold.Friend = friendUnit->GetGUID();
         // A new goal's progress starts here, with its place and friend known.
@@ -3742,7 +3739,7 @@ float Animus::Curriculum::StageScenario::GoalGap(SeatState const& seat, GoalHold
 
     SeatGoal const goal = SeatGoal(GoalKindOf(hold.Goal));
     // A goal about a place: the yards still to go to it.
-    if ((goal == SeatGoal::TravelTo || goal == SeatGoal::Gather || goal == SeatGoal::Interact) && hold.HasPlace)
+    if (goal == SeatGoal::TravelTo && hold.HasPlace)
         return std::max(0.0f, bot->GetExactDist2d(&hold.Place) - GoalBlock::PLACE_REACH);
     if ((goal != SeatGoal::Fight && goal != SeatGoal::Position) || !target || !target->IsAlive())
         return -1.0f;
@@ -3843,9 +3840,6 @@ float Animus::Curriculum::StageScenario::GoalValue(GoalHold const& hold, Player*
         case SeatGoal::Control:  return tuning.ControlValue;
         case SeatGoal::Protect:  return tuning.ProtectValue;
         case SeatGoal::TravelTo: return tuning.TravelValue;
-        case SeatGoal::Loot:
-        case SeatGoal::Gather:
-        case SeatGoal::Interact: return tuning.WorldValue;
         case SeatGoal::Recover:
         case SeatGoal::Rest:
         {
@@ -4195,11 +4189,8 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
                     case SeatGoal::Recover:
                     case SeatGoal::Rest:
                     case SeatGoal::TravelTo:
-                    case SeatGoal::Loot:
-                    case SeatGoal::Gather:
-                    case SeatGoal::Interact:
                     case SeatGoal::Resurrect:
-                        // Starting a fight while resting, travelling or looting: unless something started it first
+                        // Starting a fight while resting or travelling: unless something started it first
                         // (the mask's escape already let it through), it served nothing the seat said it wanted.
                         verdict = bot->getAttackers().empty() ? Verdict::Aimless : Verdict::Neutral;
                         break;
@@ -4238,9 +4229,6 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
                         break;
                     case SeatGoal::Position:
                     case SeatGoal::TravelTo:
-                    case SeatGoal::Loot:
-                    case SeatGoal::Gather:
-                    case SeatGoal::Interact:
                     case SeatGoal::Count:
                         break;
                 }

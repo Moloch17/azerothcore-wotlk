@@ -270,7 +270,7 @@ namespace Animus::Curriculum
             float ProgressGamma = 0.999f;
             /// What reaching a goal is worth, by what it achieved (paid once, in place of Reached, which stays for
             /// the kinds that have no value of their own): a named enemy dead, one held in crowd control, a friend
-            /// brought back up, a place reached, a corpse, node or objective done. Recover and Rest pay by the share
+            /// brought back up, a place reached. Recover and Rest pay by the share
             /// of health and mana they restored since the goal was chosen. A flat 0.05 against episode returns of
             /// 10-50 made choosing well nearly worthless: in groups 3-8% of chosen goals were reached.
             float FightValue = 0.3f;
@@ -281,7 +281,6 @@ namespace Animus::Curriculum
             /// as by healing it back above 70%.
             uint32 ProtectHoldMs = 5000;
             float TravelValue = 0.1f;
-            float WorldValue = 0.2f;
             /// The secondary goal (a second slot beside the primary: Fight A and hold B): paid this share of what the
             /// primary would be for reaching it and for closing on it, and charged Secondary every decision it is held,
             /// so covering everything is not free.
@@ -827,7 +826,6 @@ namespace Animus::Curriculum
             f("Goals.ProtectValue", tuning.Goals.ProtectValue);
             f("Goals.ProtectHoldMs", tuning.Goals.ProtectHoldMs);
             f("Goals.TravelValue", tuning.Goals.TravelValue);
-            f("Goals.WorldValue", tuning.Goals.WorldValue);
             f("Goals.SecondaryShare", tuning.Goals.SecondaryShare);
             f("Goals.Secondary", tuning.Goals.Secondary);
 

@@ -31,10 +31,16 @@ namespace Animus::Curriculum
     constexpr float PROTECT_REACHED_PCT = 70.0f;
 
     /// **What a goal can be about, right now** (Component C). No actions: the learner reads these columns to mask
-    /// its goal head -- a kind is offered only when there is something for it (an enemy for Fight, a corpse for
-    /// Loot, a journal place for TravelTo), a target only when it is there -- and to choose again at once when the
-    /// goal it held has just been reached or has become impossible (OBS_ENDED). Always the last block of a layout,
-    /// so the learner finds it at the end of the observation.
+    /// its goal head -- a kind is offered only when there is something for it (an enemy for Fight, a place for
+    /// TravelTo), a target only when it is there -- and to choose again at once when the goal it held has just been
+    /// reached or has become impossible (OBS_ENDED). Always the last block of a layout, so the learner finds it at
+    /// the end of the observation.
+    ///
+    /// Revision 1 (2026-10-08): the Loot, Gather and Interact kinds and the journal objective, giver and turn-in
+    /// targets left the goal space (nothing ever offered them; no looting, decision 0003), so every column from
+    /// OBS_TARGET_FIRST on moved, and the columns are named (DescribeColumns) so the next revision carries them.
+    /// The order columns (OBS_FROM_ORDER .. OBS_ORDER_TARGET_FIRST + GOAL_TARGETS) are still written as zero: the
+    /// learner's GoalHead reads the block at fixed offsets (mappo/networks.py), so they leave with its next edit.
     class GoalBlock final : public Block
     {
     public:
@@ -56,7 +62,10 @@ namespace Animus::Curriculum
             OBS_COUNT                   = OBS_ACHIEVED_TARGET_FIRST + GOAL_TARGETS
         };
 
+        /// 1: Loot, Gather, Interact and the journal targets left the goal space (see the class comment).
+        [[nodiscard]] uint32 Revision() const override { return 1; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
+        void DescribeColumns(Layout const& layout, boost::json::array& names) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
 
         /// Which targets are there, and which kinds have something to be about (at least Fight, always).
@@ -64,8 +73,8 @@ namespace Animus::Curriculum
             std::array<bool, GOAL_TARGETS>& targets);
 
         /// Whether `goal` is reached, read off the world as it is now (the enemy it named is dead or held, the seat
-        /// or the friend is healthy again, the place is reached, nothing is left to loot or gather, the objective or
-        /// the giver's quest is done), and whether it is still possible (its kind and target are on offer). The
+        /// or the friend is healthy again, the place is reached), and whether it is still possible (its kind and target
+        /// are on offer). The
         /// forge and the module both end a goal on these, so the learner re-chooses at the same moments in both.
         static void Status(SeatView const& view, int32 goal, bool& reached, bool& possible);
 
@@ -76,8 +85,8 @@ namespace Animus::Curriculum
         /// The forge pays Goals.Reached and ends goals on this, and the module ends them on it, so both agree.
         static bool Earned(bool reached, bool& fresh, bool& satisfiedAtChoice);
 
-        /// Where a place target is (a journal objective's, the giver, the turn-in, a found place, the assigned
-        /// area); false for a target that is not a place, or not there.
+        /// Where a place target is (a route place, or the assigned area -- the trip's objective in a stage without a
+        /// route); false for a target that is not a place, or not there.
         static bool PlaceOf(SeatView const& view, uint32 target, Position& where);
 
         /// Whether a seat is told where a trip's objective is (SeatView::ObjectivePlaceKnown): its stage carries the

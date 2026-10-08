@@ -157,11 +157,7 @@ namespace Animus::Curriculum
         Protect,        // keep the owner or a teammate alive
         Position,       // get to where its spec fights from
         Prepare,        // buffs, summons and stealth before the fight
-        // Life outside the fight (long-horizon plan, Component C): each with a target the journal names.
-        TravelTo,       // get to a place: an objective's, the giver, the turn-in, a place found, the assigned area
-        Loot,           // loot what lies dead nearby
-        Gather,         // gather the nodes around, or at a place found
-        Interact,       // talk to the giver or the turn-in, use an objective's object, item or vendor
+        TravelTo,       // get to a place: a route place, the assigned area or a trip's objective
         Rest,           // eat and drink out of a fight until ready
         /// Stand up again after dying: at the own corpse (target none) or a dead member raised (a friend slot).
         /// In the goal space from the next-run format on; offered only once death runs exist (Wave 6).
@@ -176,18 +172,16 @@ namespace Animus::Curriculum
 
     /// **What a goal is about** (Component C): a goal is a kind and a target, sent as one number, kind *
     /// GOAL_TARGETS + target. The targets are one space for every kind -- nothing, an enemy slot, a friend slot, a
-    /// journal objective, the giver, the turn-in, a found place, the assigned area -- and GoalAccepts says which a
-    /// kind can take. The sim tells the learner which kinds and targets are there each decision (GoalBlock), so a
+    /// route place, the assigned area -- and GoalAccepts says which a kind can take. (Goal block revision 1: the
+    /// Loot, Gather and Interact kinds and the journal objective, giver and turn-in targets were never offered, and
+    /// are gone.) The sim tells the learner which kinds and targets are there each decision (GoalBlock), so a
     /// goal can only be chosen about something that exists.
     enum GoalTarget : uint32
     {
         GOAL_TARGET_NONE        = 0,
         GOAL_TARGET_ENEMY_FIRST = 1,
         GOAL_TARGET_FRIEND_FIRST = GOAL_TARGET_ENEMY_FIRST + NAMED_ENEMY_SLOTS,
-        GOAL_TARGET_OBJECTIVE_FIRST = GOAL_TARGET_FRIEND_FIRST + FRIEND_SLOTS,
-        GOAL_TARGET_GIVER       = GOAL_TARGET_OBJECTIVE_FIRST + 4,
-        GOAL_TARGET_ENDER,
-        GOAL_TARGET_PLACE_FIRST,
+        GOAL_TARGET_PLACE_FIRST = GOAL_TARGET_FRIEND_FIRST + FRIEND_SLOTS,
         GOAL_TARGET_ASSIGNMENT  = GOAL_TARGET_PLACE_FIRST + 8,
         GOAL_TARGETS
     };
@@ -202,9 +196,8 @@ namespace Animus::Curriculum
     [[nodiscard]] constexpr int32 GoalKindOf(int32 goal) { return goal < 0 ? NO_GOAL : goal / int32(GOAL_TARGETS); }
     [[nodiscard]] constexpr uint32 GoalTargetOf(int32 goal) { return goal < 0 ? 0 : uint32(goal) % GOAL_TARGETS; }
     /// Whether a kind can be about a target: Fight, Control and Position about an enemy (Fight and Position about
-    /// no one in particular too), Protect about a friend, TravelTo about any journal place, Gather about the nodes
-    /// around or a found place, Interact about the giver, the turn-in or an objective; Recover, Prepare, Loot and
-    /// Rest about nothing.
+    /// no one in particular too), Protect about a friend, TravelTo about any route place or the assignment,
+    /// Resurrect about no one or a friend; Recover, Prepare and Rest about nothing.
     [[nodiscard]] bool GoalAccepts(SeatGoal kind, uint32 target);
     /// The episode clock's scale: the longest arena's episode, so it rises through every episode instead of
     /// saturating. Elapsed time, not the fraction of an episode's own limit: a companion has no limit, and the

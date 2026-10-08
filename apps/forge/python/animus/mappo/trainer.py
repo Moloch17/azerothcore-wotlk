@@ -1885,10 +1885,9 @@ class MappoTrainer:
         for name in stats:
             stats[name] = float(totals[name]) / max(1, updates)
         stats["explained_variance"] = float(explained)
-        stats["epochs_run"] = float(epochs_run)
         # What the update actually completed, against mappo.epochs x mappo.minibatches: whether target_kl (on the
         # joint KL, the look's heads in it) cut it short.
-        stats["epochs_done"] = float(epochs_run)
+        stats["epochs_run"] = float(epochs_run)
         stats["minibatches_done"] = float(updates)
         stats.update(self._goal_stats(data))
         stats.update(self._look_stats(data))

@@ -138,10 +138,10 @@ Written by `AddCoreEpisodeInfo` (StageScenario.cpp:710-1240) unless noted. `seat
 |---|---|
 | goals_reached, goals_lost, goal_changes | Goals reached / lost / changed. All zero without a goal head. |
 | goal_targeted_share | Share of goal decisions with a target. |
-| goal_<kind>_share | Share of decisions spent on each of the 12 goal kinds: fight, control, recover, protect, position, prepare, travel_to, loot, gather, interact, rest, resurrect. |
+| goal_<kind>_share | Share of decisions spent on each of the 9 goal kinds: fight, control, recover, protect, position, prepare, travel_to, rest, resurrect (loot, gather and interact left the goal space with goal block revision 1, 2026-10-08, and their always-zero `goal_<kind>_share` and `goal_success_<kind>` columns with them). |
 | goal_success_<kind> | Of goals chosen of that kind, the share reached. |
 | goal_match_share | Share of decisions whose action matched the goal. |
-(Extractor artefacts `goal_success_unknown` and `goal_unknown_share` are not columns.) Looting is excluded by design (principles #6) yet `loot` stays a goal kind.
+(Extractor artefacts `goal_success_unknown` and `goal_unknown_share` are not columns.)
 
 ## 3. Encounter columns
 
@@ -351,10 +351,11 @@ The `eval.report` lists (what the console and eval.jsonl summaries carry beyond 
 
 ## Observed issues
 
-* `respawns` and `rises` in CombatEncounter.cpp:89-90 are the same expression (`Clock.Rises`): a duplicate column.
+* `respawns` and `rises` in CombatEncounter.cpp:89-90 are the same expression (`Clock.Rises`): a duplicate column (left for the Encounters owner, 2026-10-08).
+* (Fixed 2026-10-08: the duplicate `epochs_done` metrics.csv column was removed; `epochs_run` stays.)
 * `CombatReward.cpp` hosts `RewardTermName` for terms that are no longer combat-only (known; the file name no longer fits).
 * `reward_goal_progress` never exists: `GoalProgress` has a name and category but nothing claims it.
-* The columns `loot` (goal kind) stays in the goal space while looting is forbidden (principle 6).
+* (Fixed 2026-10-08: `loot` and the other never-offered goal kinds left the goal space.)
 * D3's yaml `eval.report` contains `boss_sneed_shredder`; D3's headline uses `boss_sneed`: both exist, but the headline omits the shredder phase.
 * `episode_info` ordering depends on `Add` order across encounters; a stage built with a different encounter order changes column positions (`stage_json_diff.py` guards).
 * `sim_metrics.py` yields a superset (guarded columns, loop artefacts `*_unknown`, `act_refused_none`); only stage.json lists the exact set.

@@ -185,3 +185,4 @@ Update 2026-10-08: the Gpu/ camera path (owner question 13) was removed; tag arc
 Update 2026-10-08: the ground probe and layered fields were removed (owner order); the dungeon routes use the navmesh RoutePlanner.
 
 Update 2026-10-08: vision-only movement (decision 0019): the dungeon route, `RoutePlanner`, `RouteShortcut`, `ThreadQueryScope`, `forge route`, the route-built goal layout, the waypoint/progress rewards, `group2_corridor`, `dungeon1_pulls` and Go-Explore were removed; 10 live stages; M4's leader walks stock `PathGenerator` legs.
+Update 2026-10-08: layout and protocol cleanup (stream C): loot, gather and interact goals and the unused goal targets (goal block revision 1, 348 -> 207 joint goals), seven unwritten critic-state columns (1958 -> 1927) and the duplicate epochs_done column were removed; the goal order columns, the duplicate episode columns and the MODE_FLAG bit wait for their file owners (known-issues H).

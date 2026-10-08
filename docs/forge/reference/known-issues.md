@@ -110,14 +110,16 @@ casting draw).
 
 **B1.** Removed with the GPU camera (tag `archive/gpu-camera`): `GpuVision::Renderer::Forget` no longer exists.
 
-**B2.** `MODE_FLAG` bit 1 is unused (`Bridge/Protocol.h:274` defines only `MODE_FLAG_STAND_IN = 2`); the old
+**B2.** (Left for the protocol owner, 2026-10-08.) `MODE_FLAG` bit 1 is unused (`Bridge/Protocol.h:274` defines only `MODE_FLAG_STAND_IN = 2`); the old
 `MODE_FLAG_SCRIPTED_OPPONENTS` is gone but the value is reserved until the next protocol change (commit aa303bc33).
 Decide whether to renumber at the next bump (protocol 26 now).
 
 **B3.** `GoalBlock`'s order columns (`OBS_FROM_ORDER`, `OBS_ORDER_KIND_FIRST`, `OBS_ORDER_TARGET_FIRST`,
-`Blocks/GoalBlock.h:50-52`) are always zero since the director was deleted, but stay in the layout (128 observations in
-every stage, pinned by `LiveLayoutPinTest`). Removing them changes every checkpoint; only do it with a revision bump and
-a deliberate re-pin.
+`Blocks/GoalBlock.h`) are always zero since the director was deleted, but stay in the layout (101 observations since goal
+revision 1, 2026-10-08; 128 before). OPEN, blocked on `mappo/networks.py`: `GoalHead.columns`/`block_width`/`signals` read
+the block at fixed offsets (and `draw`/`trainer.py:1322`/`export.py:771` carry the `given` path), so the C++ columns and
+those readers must change in one commit; see section H. The rest of this item (Loot, Gather, Interact and the
+objective/giver/turn-in targets) is fixed.
 
 **B4.** (Resolved.) The learner's seat-set network (`EntitySets`, `mappo.seat_sets`, `entity_attention`, `SEAT_SET_NAMES`, the
 seat-set seeding) was deleted. `StageScenario.cpp:1346` still writes `sets` into `stage.json` (the learner ignores it for
@@ -176,7 +178,7 @@ run; `heldout_every: 4` (default) is the guard.
 `move4_follow` extends `move2_seek` in both). **E2.** Values re-set by a standalone yaml silently reset an upstream
 decision: M2's lr 1.5e-4 and look entropy 0.004 do not reach C1 to D3 (3e-4 and 0.001). Decide per stage and say so in
 the yaml. **E3.** M4's scripted follow leader is the last script; the learned-leader path is unbuilt. **E4.** The goal
-head's order, secondary-goal and slot machinery serve stages that no longer have directors. **E5.** The stand-in is a
+head's order, secondary-goal and slot machinery serve stages that no longer have directors (the order columns: B3). **E5.** The stand-in is a
 frozen partner from the pool and is absent while the pool is empty; G1 starts with only `combat3_survive` as a partner.
 **E6.** The first curriculum's stage-numbered terms still appear in comments and docs (`stage6`, `stage8`) in code such
 as `RewardLedger.h`.
@@ -214,3 +216,27 @@ before moving code.
 **How to verify any refactor here:** `forgectl test` (GTests and CPU pytest), `forgectl test --gpu` on a free card,
 `LiveLayoutPinTest` unchanged, `stage_json_diff.py` old versus new build shows no change for a stage you did not mean to
 change, and `resume_check.py` against the live run's checkpoint.
+
+## H. Layout and protocol cleanup, 2026-10-08 (lands with the next layout bump)
+
+Fixed (commits `Layout cleanup: ...` and `Drop the duplicate epochs_done metric`):
+
+- Goal space: `SeatGoal::Loot`, `Gather`, `Interact` and the targets journal objective (4), giver and turn-in removed
+  (never offered by `GoalBlock::Available`, no looting: decision 0003). 12 kinds x 29 targets (348) became 9 x 23 (207);
+  goal block revision 0 -> 1, 128 -> 101 columns, columns now named; `mappo.goal_count`/`goal_targets` 9/23 in
+  `move1_controls.yaml` and `combat1_fight.yaml`; `Goals.WorldValue` deleted. The episode columns
+  `goal_{loot,gather,interact}_share` and `goal_success_{loot,gather,interact}` are gone.
+- Critic state 1958 -> 1927 wide: global columns pull active, pulls cleared, next pull, elite pull, linked pull, owner
+  mana, owner in combat and enemy "victim is the owner" were written by no encounter. `STATE_TIER` is now 6 and the
+  arena one-hot starts at 7 (stage.json `state.arena_first` follows); stage.json gains `state.dim`.
+- `epochs_done` (duplicate of `epochs_run`) removed from metrics.csv.
+
+Seeding: the actor's goal head and goal embedding change shape with the kind/target counts, so `_seed_shared` (shape
+check) leaves them fresh in the first stage of the chain; the goal block's adapter columns start fresh (revision 0 -> 1,
+and revision 0 named no columns); everything else carries as before. The critic state encoder is always seeded fresh, so
+the state width costs nothing but a resume of a run trained at width 1958 (refused by `resume_mismatch`).
+
+Not done (needs a file owned by another stream, or not provable): the goal order columns and the `given` path (B3, A);
+`respawns`/`rises` and `difficulty`/`combat_rung` duplicate episode columns (`Encounters/CombatEncounter.cpp`, B);
+`MODE_FLAG` bit 1 (B2, `Bridge/Protocol.h`, A); the sight/entities `lootable` column (A); Duel `OBS_BOT_MOVING` and the
+`movespline->Finalized()` reads (not constant: fear, knockback, Charge and taxis still start splines).

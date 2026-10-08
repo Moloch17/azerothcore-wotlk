@@ -54,10 +54,10 @@ mappo:
   foresight_time_scale_seconds: 60.0
   recurrent_size: 128
   chunk_length: 32
-  goal_count: 12
+  goal_count: 9
   goal_slots: 4
   hindsight_coef: 0.1
-  goal_targets: 29
+  goal_targets: 23
   goal_every_decisions: 64
   slow_goal_size: 128
   slow_goal_gamma: 0.993

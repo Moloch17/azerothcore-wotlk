@@ -57,25 +57,25 @@ namespace Animus::Curriculum
     class StageScenario final : public Scenario
     {
     public:
-        /// Class-agnostic critic state, per seat and per enemy slot.
+        /// Class-agnostic critic state, per seat and per enemy slot. The critic's input width (ScenarioSpec::StateDim,
+        /// stage.json state.dim) is STATE_GLOBAL_COUNT + MAX_SEATS * STATE_SEAT_FEATURES + PACK_SLOTS *
+        /// STATE_ENEMY_FEATURES = 23 + 1040 + 864 = 1927. The critic state encoder is seeded fresh (bootstrap), so a
+        /// change of width restarts no actor weights, only a resume of a run of the old width.
+        ///
+        /// 2026-10-08: the pull-timing columns (pull active, pulls cleared, next pull, elite pull, linked pull), the
+        /// owner's mana and in-combat columns and the enemy "its victim is the owner" column were never written by
+        /// any encounter and were removed (1958 -> 1927 wide).
         enum StateGlobal : uint32
         {
             STATE_EPISODE_TIME          = 0,
-            STATE_PULL_ACTIVE           = 1,
-            STATE_PULLS_CLEARED         = 2,    // / 10
-            STATE_NEXT_PULL             = 3,    // time until the next pull / 20 s
-            STATE_ELITE_PULL            = 4,
-            STATE_LINKED_PULL           = 5,
-            STATE_OWNER_PRESENT         = 6,
-            STATE_OWNER_ALIVE           = 7,
-            STATE_OWNER_HEALTH          = 8,
-            STATE_OWNER_MANA            = 9,
-            STATE_OWNER_X               = 10,   // relative to the spawn point, / 40
-            STATE_OWNER_Y               = 11,
-            STATE_OWNER_IN_COMBAT       = 12,
-            STATE_TIER                  = 13,   // the fight's difficulty tier or the pull's rung, over the top one
-            STATE_ARENA_FIRST           = 14,   // one-hot: the episode's arena (MAX_ARENAS columns)
-            STATE_GLOBAL_COUNT          = 14 + MAX_ARENAS
+            STATE_OWNER_PRESENT         = 1,    // the party follow's leader (PartyFollowEncounter::WriteState)
+            STATE_OWNER_ALIVE           = 2,
+            STATE_OWNER_HEALTH          = 3,
+            STATE_OWNER_X               = 4,    // relative to the spawn point, / 40
+            STATE_OWNER_Y               = 5,
+            STATE_TIER                  = 6,    // the fight's difficulty tier or the pull's rung, over the top one
+            STATE_ARENA_FIRST           = 7,    // one-hot: the episode's arena (MAX_ARENAS columns)
+            STATE_GLOBAL_COUNT          = 7 + MAX_ARENAS
         };
 
         enum StateSeat : uint32
@@ -106,20 +106,19 @@ namespace Animus::Curriculum
             STATE_ENEMY_ELITE           = 6,
             STATE_ENEMY_LEVEL_DIFF      = 7,    // (its level - seat 0's) / 5
             STATE_ENEMY_IN_COMBAT       = 8,
-            STATE_ENEMY_ON_OWNER        = 9,    // its victim is the owner
             // Who it is fighting, told in a raid's terms rather than a seat-wide one-hot: at forty seats that was
             // 160 columns over four enemies, nearly all of them zero, and what a critic needs is which kind of seat
             // and which group, not which index.
-            STATE_ENEMY_ON_SEAT         = 10,   // its victim is a learned seat at all
-            STATE_ENEMY_SEAT_INDEX      = 11,   // ... that seat / MAX_SEATS
-            STATE_ENEMY_SEAT_GROUP_FIRST = 12,  // ... one-hot over RAID_GROUPS
-            STATE_ENEMY_SEAT_APTITUDE_FIRST = 12 + RAID_GROUPS, // ... the brief of what its build can do
-            STATE_ENEMY_MAX_HEALTH      = 18 + RAID_GROUPS, // its max health / seat 0's / 4, clamped
-            STATE_ENEMY_DAMAGE_MODIFIER = 19 + RAID_GROUPS, // / 2
-            STATE_ENEMY_ARMOR           = 20 + RAID_GROUPS, // share of seat 0's physical hits its armor takes off
-            STATE_ENEMY_RUN_SPEED       = 21 + RAID_GROUPS, // / 2
-            STATE_ENEMY_TYPE_FIRST      = 22 + RAID_GROUPS, // one-hot over Encoding::OPPONENT_TYPES (7)
-            STATE_ENEMY_FEATURES        = 29 + RAID_GROUPS
+            STATE_ENEMY_ON_SEAT         = 9,    // its victim is a learned seat at all
+            STATE_ENEMY_SEAT_INDEX      = 10,   // ... that seat / MAX_SEATS
+            STATE_ENEMY_SEAT_GROUP_FIRST = 11,  // ... one-hot over RAID_GROUPS
+            STATE_ENEMY_SEAT_APTITUDE_FIRST = 11 + RAID_GROUPS, // ... the brief of what its build can do
+            STATE_ENEMY_MAX_HEALTH      = 17 + RAID_GROUPS, // its max health / seat 0's / 4, clamped
+            STATE_ENEMY_DAMAGE_MODIFIER = 18 + RAID_GROUPS, // / 2
+            STATE_ENEMY_ARMOR           = 19 + RAID_GROUPS, // share of seat 0's physical hits its armor takes off
+            STATE_ENEMY_RUN_SPEED       = 20 + RAID_GROUPS, // / 2
+            STATE_ENEMY_TYPE_FIRST      = 21 + RAID_GROUPS, // one-hot over Encoding::OPPONENT_TYPES (7)
+            STATE_ENEMY_FEATURES        = 28 + RAID_GROUPS
         };
 
         StageScenario(StageSettings const& settings, StageDefinition const& stage);

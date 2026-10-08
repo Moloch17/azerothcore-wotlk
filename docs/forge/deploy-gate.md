@@ -280,8 +280,8 @@ DEV apps/forge/python/.venv/bin/python apps/forge/tools/resume_check.py --fresh 
 (one stage: `--fresh --stage move3_interact --stage-json var/animus-forge/gate/layouts/move3_interact/stage.json`.)
 Success: ten lines `PASS` and `10 of 10 stages start on the learner`, exit 0. A `FAIL` line names the stage, the
 check (held-out arenas, `eval.mask_actions`, the ladders' gate column, the trainer) and the first error.
-`--fresh` builds the spec from `stage.json`; the sim's state width (1958) and goal count (348) are constants in the tool
-that a test pins against the real M2 checkpoint (`--state-dim`, `--goal-count` override them if the sim's change).
+`--fresh` builds the spec from `stage.json`; the sim's state width (`state.dim`, 1927 since 2026-10-08) and goal count
+(goals.kinds x targets, 207) are read from it (`--state-dim`, `--goal-count` override them).
 
 ## 5. Resume dry run for the current stage
 

@@ -21,10 +21,49 @@
 #include "Layout.h"
 #include "Player.h"
 #include "SeatView.h"
+#include <boost/json/array.hpp>
+#include <string>
 
 Animus::Curriculum::BlockSize Animus::Curriculum::GoalBlock::Size(Layout const& /*layout*/) const
 {
     return { OBS_COUNT, 0 };
+}
+
+namespace
+{
+    /// A goal target's name for the column names: none, enemy_0.., friend_0.., place_0.., assignment.
+    std::string TargetName(uint32 target)
+    {
+        using namespace Animus::Curriculum;
+        if (target == GOAL_TARGET_NONE)
+            return "none";
+        if (target < GOAL_TARGET_FRIEND_FIRST)
+            return "enemy_" + std::to_string(target - GOAL_TARGET_ENEMY_FIRST);
+        if (target < GOAL_TARGET_PLACE_FIRST)
+            return "friend_" + std::to_string(target - GOAL_TARGET_FRIEND_FIRST);
+        if (target < GOAL_TARGET_ASSIGNMENT)
+            return "place_" + std::to_string(target - GOAL_TARGET_PLACE_FIRST);
+        return "assignment";
+    }
+}
+
+void Animus::Curriculum::GoalBlock::DescribeColumns(Layout const& /*layout*/, boost::json::array& names) const
+{
+    // In the order of Obs, so a name stays with its meaning across a revision (bootstrap seeds by name).
+    for (uint32 kind = 0; kind < GOAL_COUNT; ++kind)
+        names.emplace_back("goal_kind_" + std::string(GoalName(SeatGoal(kind))));
+    for (uint32 target = 0; target < GOAL_TARGETS; ++target)
+        names.emplace_back("goal_target_" + TargetName(target));
+    for (char const* name : { "goal_ended", "goal_reached", "goal_secondary_ended", "goal_event", "goal_from_order" })
+        names.emplace_back(name);
+    for (uint32 kind = 0; kind < GOAL_COUNT; ++kind)
+        names.emplace_back("goal_order_kind_" + std::string(GoalName(SeatGoal(kind))));
+    for (uint32 target = 0; target < GOAL_TARGETS; ++target)
+        names.emplace_back("goal_order_target_" + TargetName(target));
+    for (uint32 kind = 0; kind < GOAL_COUNT; ++kind)
+        names.emplace_back("goal_achieved_kind_" + std::string(GoalName(SeatGoal(kind))));
+    for (uint32 target = 0; target < GOAL_TARGETS; ++target)
+        names.emplace_back("goal_achieved_target_" + TargetName(target));
 }
 
 void Animus::Curriculum::GoalBlock::Available(SeatView const& view, std::array<bool, GOAL_COUNT>& kinds,
@@ -88,8 +127,6 @@ void Animus::Curriculum::GoalBlock::Available(SeatView const& view, std::array<b
     kinds[uint32(SeatGoal::Position)] = enemies > 0;
     kinds[uint32(SeatGoal::Prepare)] = !combat;
     kinds[uint32(SeatGoal::TravelTo)] = places;
-    // Loot, Gather and Interact are in the goal space (it is the layout's) but nothing offers them: no looting, no
-    // gathering, no quests (the first curriculum's life encounters were deleted).
     kinds[uint32(SeatGoal::Rest)] = !combat && hurt;
 
     // A kind with no target it accepts is not on offer after all.
@@ -200,10 +237,6 @@ void Animus::Curriculum::GoalBlock::Status(SeatView const& view, int32 goal, boo
             reached = placeOf(target, where) && bot->GetExactDist2d(&where) <= PLACE_REACH;
             break;
         }
-        case SeatGoal::Loot:
-        case SeatGoal::Gather:
-        case SeatGoal::Interact:
-            break;      // nothing offers them (Available)
         case SeatGoal::Resurrect:
             if (target == GOAL_TARGET_NONE)
                 reached = possible = true;      // alive: it stood up (held from before, or true on choice)

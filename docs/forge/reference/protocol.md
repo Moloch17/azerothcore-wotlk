@@ -266,10 +266,10 @@ into the core (`359b303c4`); their content is UNVERIFIED (no comment survives; c
 | 23 | Pixel = 5 bytes (class + entity slot); layout otherwise protocol 22's. | c20dc0c1a |
 | 24 | SPEC MapBytes; map/final_map after the images. | 8452ff458 |
 | 25 | `present` 2 = stand-in row played by a frozen partner; `MODE_FLAG_STAND_IN` in training MODE. | Protocol.h:178; ac9873986, 641cf015c, aa303bc33 (scripted stand-in removed) |
-| 26 | Entity sensing (vision block 6): pixel = 4 bytes again (no entity slot), the static world only, so ImageBytes is height x width x 4; entities block 2 (columns 16-18 los, ang_width, ang_height), sight block 3. Message layout otherwise protocol 25's. | entity-sensing (this change) |
+| 26 | Entity sensing (vision block 6): pixel = 4 bytes again (no entity slot), the static world only, so ImageBytes is height x width x 4; entities block 2 (columns 16-18 los, ang_width, ang_height), sight block 3. Message layout otherwise protocol 25's, less message type 12. The layout cleanup of 2026-10-08 folds in with no change of structure: SPEC `GoalCount` 348 -> 207 (goal block revision 1), `StateDim` 1958 -> 1927, and stage.json gains `state.dim`. | entity-sensing (this change) |
 
-Message type 12 (added at 18) is unused since 2026-10-08 (decision 0019, vision-only movement). `PROTOCOL_VERSION` stays
-25 in this tree; the next bump folds the removal in (the history comments in Protocol.h and protocol.py say so).
+Message type 12 (added at 18) is unused since 2026-10-08 (decision 0019, vision-only movement). It was folded into the 26 bump
+(`PROTOCOL_VERSION` is 26 in Protocol.h and protocol.py).
 
 Commit-date mapping for 15-25 was taken from `git log` subjects and is approximate: the commit that sets the constant
 (`git log -S"PROTOCOL_VERSION = N;"`) was checked only for 24 and 25 (both 641cf015c on 2026-10-07; 24 first at 8452ff458,

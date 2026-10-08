@@ -139,7 +139,7 @@ merges move4) -> dungeon2 -> dungeon3 (`Stages.cpp`).
 `src/test/server/game/Animus/LiveLayoutPin.golden.inc` (149 lines). It builds, for the live stages, the block list
 and, for every block except core, duel and pet (class-dependent, pinned only by name, id and revision), the obs and
 action counts, the `DescribeColumns` count and an FNV-1a hash over columns, action names and manifest entries. It also
-pins every sizing constant (`PACK_SLOTS=24`, `SIGHT_SLOTS=64`, `GOAL_JOINT_COUNT=348`, `BLOCK_COUNT=27`, state widths,
+pins every sizing constant (`PACK_SLOTS=24`, `SIGHT_SLOTS=64`, `GOAL_JOINT_COUNT=207`, `BLOCK_COUNT=27`, state widths,
 `core.OBS_GLOBAL_COUNT=91`, ...) and the class list `warrior:1 paladin:2 hunter:3 rogue:4 priest:5 deathknight:6
 shaman:7 mage:8 warlock:9 druid:11` with their spec names. Regenerate only deliberately with `ANIMUS_PIN_PRINT=1
 --gtest_filter=LiveLayoutPinTest.*`. Caveat: the test builds a bare `Layout` and sets `Stage` and `Blocks` but never
@@ -182,9 +182,9 @@ block would restart. UNVERIFIED: check `bootstrap.py` / stage.json `vision`/`sig
 `RAID_GROUPS 8`, `GROUP_SEATS 5`, `MAX_SEATS 40`, `TEAM_SEATS 10`, `TEAM_COUNT 2`, `GROUP_MEMBERS 4`,
 `SPOTLIGHT_SLOTS 3`, `PARTY_MEMBERS 7`, `PACK_SLOTS 24`, `NAMED_ENEMY_SLOTS 4`, `ENEMY_COUNT_SCALE 4`, `CROWD_SLOTS 4`,
 `SIGHT_VISIBLE_SLOTS 32`, `SIGHT_RECALLED_SLOTS 32`, `SIGHT_SLOTS 64`, `TRAIL_SAMPLES 8`, `STABLE_SLOTS 4`,
-`FRIEND_SLOTS 2 + PARTY_MEMBERS = 9`, `RANK_TIERS 3`. Goal space: `GOAL_COUNT 12`, `GOAL_TARGETS 29`
-(none 0, enemy 1-4, friend 5-13, objective 14-17, giver 18, ender 19, place 20-27, assignment 28), `GOAL_JOINT_COUNT
-348`. Several comments in `Block.h` name deleted blocks (PartyBlock, CompanionBlock, CrowdBlock, HostilesBlock,
+`FRIEND_SLOTS 2 + PARTY_MEMBERS = 9`, `RANK_TIERS 3`. Goal space (since goal revision 1): `GOAL_COUNT 9`
+(fight, control, recover, protect, position, prepare, travel_to, rest, resurrect), `GOAL_TARGETS 23`
+(none 0, enemy 1-4, friend 5-13, place 14-21, assignment 22), `GOAL_JOINT_COUNT 207` (was 12 x 29 = 348). Several comments in `Block.h` name deleted blocks (PartyBlock, CompanionBlock, CrowdBlock, HostilesBlock,
 SupportBlock).
 
 ## core (id 0, revision 1)
@@ -252,7 +252,7 @@ Mask (`CoreBlock.cpp:302-436`): action 0 always set elsewhere; for each action `
   no cast in progress, next-swing rule, GCD, heal on full-health friend is masked, aura-keeping spell with more than 25%
   left is masked, shapeshift-from-shapeshift rule; facing/range/LOS/moving/power failures are NOT masked, they are
   priced).
-- `GoalCloses`: under goals Recover/Prepare/Rest/TravelTo/Loot/Gather/Interact harmful spells are masked unless health
+- `GoalCloses`: under goals Recover/Prepare/Rest/TravelTo harmful spells are masked unless health
   < 35%, attackers on the seat or a teammate, or stealthed; under Fight/Control/Position long buffs are masked in combat
   (`CoreBlock.cpp:85-128`). With a secondary goal only what both close is closed.
 - Rank tiers: all three offered except the tier already chosen.
@@ -540,27 +540,31 @@ visible units. Also provides `VisibleEnemies` (the encounter enemy list), `ReadH
 `FrameResolve` comment calls it a "party frame's click"; target-frame threat uses server threat lists as the client's
 threat colouring does.
 
-## goal (id 26, revision 0)
+## goal (id 26, revision 1)
 
-128 obs, 0 actions, always last. Layout of the 128: 0-11 kind available, 12-40 target available, 41 ended, 42 reached,
-43
-secondary_ended, 44 event, 45 from_order, 46-57 order kind, 58-86 order target, 87-98 achieved kind, 99-127 achieved
-target. Columns 45-86 (from_order, order kind, order target) are never written by `Observe` (always zero); the
-stage.json
-`goals.columns` still reports them. `Available` offers Fight always, Control with >= 2 enemies, Recover/Rest when hurt,
-Protect with a friend, Position with an enemy, Prepare out of combat, TravelTo with a place or objective; Loot, Gather,
-Interact are never offered. `Status` evaluates reached/possible per kind; `Earned` is the "reached, not true at choice"
-rule used by the scenario for `Goals.Reached` payment. `PlaceOf` yields the TravelTo target (the assignment slot is the
-trip
-objective when the stage has no route places, only while `ObjectivePlaceKnown`). Constants `PROTECT_REACHED_PCT 70`,
-`PLACE_REACH 20`. Tests: `GoalObjectiveLeakTest`. Reviewer notes: the goal-target constants include objective, giver and
-ender targets that nothing populates.
+101 obs, 0 actions, always last (revision 0 was 128 wide: 12 kinds x 29 targets). Layout of the 101: 0-8 kind
+available, 9-31 target available, 32 ended, 33 reached, 34 secondary_ended, 35 event, 36 from_order, 37-45 order kind,
+46-68 order target, 69-77 achieved kind, 78-100 achieved target. Columns 36-68 (from_order, order kind, order target)
+are never written by `Observe` (always zero); stage.json `goals.columns` still reports them, and they stay only because
+`mappo/networks.py` (`GoalHead.columns`, `block_width`, `signals`, `draw`'s `given` path) reads the block at fixed
+offsets: they leave together with that file's next edit (known-issues B3). Revision 1 (2026-10-08) removed the
+kinds Loot, Gather and Interact and the targets journal objective (4), giver and turn-in: `Available` never offered
+them, `Status` ended on nothing for them, and no looting is decision 0003. Every column from 9 on moved, so the block
+starts fresh when seeded from revision 0; it now names its columns (`DescribeColumns`, `goal_kind_<kind>`,
+`goal_target_<none|enemy_i|friend_i|place_i|assignment>`, `goal_ended`, `goal_reached`, `goal_secondary_ended`,
+`goal_event`, `goal_from_order`, `goal_order_kind_*`, `goal_order_target_*`, `goal_achieved_kind_*`,
+`goal_achieved_target_*`) so the next revision carries them by name. `Available` offers Fight always, Control with >= 2
+enemies, Recover/Rest when hurt, Protect with a friend, Position with an enemy, Prepare out of combat, TravelTo with a
+route place or the assignment. `Status` evaluates reached/possible per kind; `Earned` is the "reached, not true at
+choice" rule used by the scenario for `Goals.Reached` payment. `PlaceOf` yields the TravelTo target (the assignment
+slot is the trip objective when the stage has no route places, only while `ObjectivePlaceKnown`). Constants
+`PROTECT_REACHED_PCT 70`, `PLACE_REACH 20`. Tests: `GoalObjectiveLeakTest`.
 
 ## Observed issues
 
 - `Layout/Block.h` comments reference deleted blocks (PartyBlock, CompanionBlock, CrowdBlock, HostilesBlock,
   SupportBlock) and `SeatView.h` references WorldBlock.
-- Goal block order columns (45-86) are dead.
+- Goal block order columns (36-68 since revision 1) are dead, held only by `mappo/networks.py`'s fixed offsets.
 - `MovePrice::BearingSwing`/`Undone` only used by tests.
 - Duel `OBS_BOT_MOVING` and gauntlet `movespline->Finalized()` read spline state that controller-moved seats never set.
 - Core mask hides heal-on-full-health and refresh-with-plenty-left spells, and `SeatMemory` pacing masks repeats
