@@ -47,7 +47,8 @@ namespace
     class BenchWorld final : public Vi::VisionWorld
     {
     public:
-        explicit BenchWorld(Vi::BakedWorld const& baked) : _baked(baked) { }
+        /// `ranges` false hides the scene's culling ranges, so a terrain cast walks every cell (the reference).
+        explicit BenchWorld(Vi::BakedWorld const& baked, bool ranges = true) : _baked(baked), _ranges(ranges) { }
 
         [[nodiscard]] Vi::SurfaceHit StaticHit(Vi::Vec3 from, Vi::Vec3 to) const override
         {
@@ -65,7 +66,23 @@ namespace
         [[nodiscard]] bool DynamicAnyHit(Vi::Vec3, Vi::Vec3) const override { return false; }
         [[nodiscard]] Vi::TerrainTile Tile(int32_t tileX, int32_t tileY) const override
         {
-            return _baked.Tile(tileX, tileY);
+            Vi::TerrainTile tile = _baked.Tile(tileX, tileY);
+            if (!_ranges)
+            {
+                tile.Ranged = false;
+                tile.GroundBlocks = nullptr;
+                tile.LiquidBlocks = nullptr;
+            }
+            return tile;
+        }
+        [[nodiscard]] Vi::TerrainExtent const& Extent() const override
+        {
+            static Vi::TerrainExtent const unknown;
+            return _ranges ? _baked.Extent() : unknown;
+        }
+        [[nodiscard]] bool GridLoaded(int32_t tileX, int32_t tileY) const override
+        {
+            return _baked.GridLoaded(tileX, tileY);
         }
         [[nodiscard]] Vi::TerrainCell Cell(int32_t tileX, int32_t tileY, int32_t cellX, int32_t cellY,
             bool liquid) const override
@@ -81,6 +98,7 @@ namespace
 
     private:
         Vi::BakedWorld const& _baked;
+        bool _ranges;
     };
 
     /// A pose as `forge camera snapshot` sets it up: the settings' defaults, a default body, no units.
@@ -305,6 +323,136 @@ namespace
     }
 }
 
+namespace
+{
+    /// What the culled terrain cast and the same cast over every cell (the ranges hidden) did on the same rays.
+    struct TerrainAgreement
+    {
+        uint64_t Rays = 0;
+        uint64_t Hits = 0;              // rays whose reference cast hit terrain (or water)
+        uint64_t Water = 0;             // ... of them liquid
+        uint64_t Sky = 0;
+        uint64_t Mismatch = 0;          // any field of the hit differing, bit for bit
+        uint64_t FalseSky = 0;          // the culled cast missed what the reference hit
+        uint64_t FalseHit = 0;          // the culled cast hit what the reference did not
+        uint64_t FrameRays = 0;         // full CastRay compared (a pose's pixels)
+        uint64_t FrameMismatch = 0;
+    };
+
+    [[nodiscard]] bool SameHit(Vi::Hit const& a, Vi::Hit const& b)
+    {
+        return a.What == b.What && a.Distance == b.Distance && a.Z == b.Z && a.NormalZ == b.NormalZ;
+    }
+
+    void CompareTerrain(BenchWorld const& culled, BenchWorld const& plain, Vi::Vec3 origin, Vi::Vec3 dir, float limit,
+        bool liquids, TerrainAgreement& total)
+    {
+        ++total.Rays;
+        Vi::Hit const reference = Vi::CastTerrain(origin, dir, limit, plain, liquids);
+        Vi::Hit const fast = Vi::CastTerrain(origin, dir, limit, culled, liquids);
+        bool const hit = reference.What != Vi::Class::Sky;
+        total.Hits += hit ? 1 : 0;
+        total.Water += (reference.What == Vi::Class::Water || reference.What == Vi::Class::Deadly) ? 1 : 0;
+        total.Sky += hit ? 0 : 1;
+        if (SameHit(reference, fast))
+            return;
+        ++total.Mismatch;
+        if (hit && fast.What == Vi::Class::Sky)
+            ++total.FalseSky;
+        if (!hit && fast.What != Vi::Class::Sky)
+            ++total.FalseHit;
+        if (total.Mismatch <= 5)
+            std::printf("  terrain MISMATCH: origin (%.4f %.4f %.4f) dir (%.6f %.6f %.6f) limit %.3f liquids %d: "
+                "reference %d at %.6f z %.5f n %.5f, culled %d at %.6f z %.5f n %.5f\n", origin.X, origin.Y, origin.Z,
+                dir.X, dir.Y, dir.Z, limit, int(liquids), int(reference.What), reference.Distance, reference.Z,
+                reference.NormalZ, int(fast.What), fast.Distance, fast.Z, fast.NormalZ);
+    }
+
+    /// Random rays over the scene's terrain, half of them aimed at a random cell's ground from a random point above
+    /// or beside it (so most of those hit), half in random directions; every length from a yard to the reach.
+    void VerifyTerrain(Vi::BakedWorld const& baked, uint32_t count, uint64_t seed, TerrainAgreement& total)
+    {
+        Sc::SceneHeader const& header = baked.Header();
+        if (!header.TerrainTileCount)
+            return;
+        BenchWorld const culled(baked, true);
+        BenchWorld const plain(baked, false);
+        Sc::TerrainRec const* recs = baked.TerrainRecords();
+        uint64_t state = seed;
+        auto const next = [&]()
+        {
+            state = state * 6364136223846793005ull + 1442695040888963407ull;
+            return float((state >> 40) & 0xFFFFFF) / float(0x1000000);
+        };
+        float const zLow = std::min(header.TerrainHeightMin, header.TerrainLiquidMin) - 40.0f;
+        float const zHigh = std::max(header.TerrainHeightMax, header.TerrainLiquidMax) + 120.0f;
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            Sc::TerrainRec const& rec = recs[std::min<uint32_t>(uint32_t(next() * float(header.TerrainTileCount)),
+                header.TerrainTileCount - 1)];
+            // A point of the tile, anywhere on its 128 x 128 cells.
+            auto const pointOf = [&](float& x, float& y)
+            {
+                x = Vi::WorldOfU(float(rec.TileX * Vi::GRID_CELLS) + next() * float(Vi::GRID_CELLS));
+                y = Vi::WorldOfU(float(rec.TileY * Vi::GRID_CELLS) + next() * float(Vi::GRID_CELLS));
+            };
+            Vi::Vec3 from;
+            pointOf(from.X, from.Y);
+            from.Z = zLow + next() * (zHigh - zLow);
+            Vi::Vec3 dir;
+            if (next() < 0.5f)
+            {
+                // Aimed at the ground (or a liquid level) of another point of the tile.
+                Vi::Vec3 target;
+                pointOf(target.X, target.Y);
+                target.Z = header.TerrainHeightMin + next() * (header.TerrainHeightMax - header.TerrainHeightMin);
+                dir = target - from;
+                float const length = Vi::Length(dir);
+                dir = length > 1e-3f ? dir * (1.0f / length) : Vi::Vec3{ 0.0f, 0.0f, -1.0f };
+            }
+            else
+            {
+                float const z = 2.0f * next() - 1.0f;
+                float const angle = 6.2831853f * next();
+                float const r = std::sqrt(std::max(0.0f, 1.0f - z * z));
+                dir = { r * std::cos(angle), r * std::sin(angle), z };
+            }
+            float const limit = std::exp(std::log(1.0f) + next() * (std::log(4000.0f) - std::log(1.0f)));
+            CompareTerrain(culled, plain, from, dir, limit, next() < 0.7f, total);
+        }
+    }
+
+    /// A pose's pixel rays through the whole caster (the trees, the liquids, Reach, the terrain), both ways.
+    void VerifyFrames(Vi::BakedWorld const& baked, std::vector<SceneBaker::PoseSpec> const& poses,
+        TerrainAgreement& total)
+    {
+        BenchWorld const culled(baked, true);
+        BenchWorld const plain(baked, false);
+        for (SceneBaker::PoseSpec const& spec : poses)
+        {
+            Vi::Settings settings;
+            Vi::CameraState camera;
+            Vi::Pose pose;
+            camera.Pitch = std::clamp(spec.PitchDeg, -80.0f, 80.0f) * Vi::DEGREES;
+            camera.Zoom = std::clamp(spec.Zoom, 0.0f, 50.0f);
+            pose.X = spec.X;
+            pose.Y = spec.Y;
+            pose.Z = spec.Z;
+            pose.Yaw = spec.YawDeg * Vi::DEGREES;
+            pose.BodyHeight = Animus::Movement::Body().Height;
+            Vi::Rig const rig = Vi::PlaceCamera(pose, camera, plain);
+            for (uint32_t row = 0; row < settings.Height; ++row)
+                for (uint32_t col = 0; col < settings.Width; ++col)
+                {
+                    Vi::Vec3 const dir = Vi::PixelDirection(rig, settings, row, col);
+                    ++total.FrameRays;
+                    if (!SameHit(Vi::CastRay(rig.Camera, dir, plain, {}), Vi::CastRay(rig.Camera, dir, culled, {})))
+                        ++total.FrameMismatch;
+                }
+        }
+    }
+}
+
 bool SceneBaker::ReadPoses(std::string const& path, std::vector<PoseSpec>& poses, std::string& error)
 {
     std::ifstream in(path);
@@ -457,12 +605,15 @@ bool SceneBaker::RunBench(std::string const& scenePath, std::vector<PoseSpec> co
         WriteImages(setup.Settings, image, outDir + "/newcam-" + spec.Name);
 
         std::printf("%-16s rays %u  median %.0f us  min %.0f us  mean %.0f us  p90 %.0f us  (%.3f us/ray)  "
-            "breakdown: static %.0f (%u casts), liquid %.0f (%u), terrain %.0f (%u grids), other %.0f | "
+            "breakdown: static %.0f (%u casts), liquid %.0f (%u), terrain %.0f (%u grids, %u supers, %u blocks, "
+            "%u cells), other %.0f | "
             "alone: trace %.0f, "
             "liquid %.0f, reach %.0f, pixel dir+encode %.0f\n",
             spec.Name.c_str(), rays, stats.Median, stats.Min, stats.Mean, stats.P90, stats.Median / double(rays),
             staticUs, breakdown.StaticCasts / BREAKDOWN_RUNS, liquidUs, breakdown.LiquidCasts / BREAKDOWN_RUNS,
-            terrainUs, breakdown.TerrainTiles / BREAKDOWN_RUNS, otherUs, traceUs, liquidAloneUs, reachUs, pixelUs);
+            terrainUs, breakdown.TerrainTiles / BREAKDOWN_RUNS, breakdown.TerrainSupers / BREAKDOWN_RUNS,
+            breakdown.TerrainBlocks / BREAKDOWN_RUNS, breakdown.TerrainCells / BREAKDOWN_RUNS, otherUs,
+            traceUs, liquidAloneUs, reachUs, pixelUs);
 
         json << (first ? "" : ",\n") << "  \"" << spec.Name << "\": {\"pose\": [" << spec.X << ", " << spec.Y << ", "
              << spec.Z << ", " << spec.YawDeg << ", " << spec.PitchDeg << ", " << spec.Zoom << "], \"rays\": " << rays
@@ -544,5 +695,27 @@ bool SceneBaker::RunVerify(std::string const& scenePath, std::vector<PoseSpec> c
         + random.LiquidMismatch;
     std::printf("%llu of %llu rays differ (limit five in ten thousand), worst |dt| %.2e yd\n",
         (unsigned long long)mismatches, (unsigned long long)rays, std::max(pixels.WorstDistance, random.WorstDistance));
-    return double(mismatches) <= 5e-4 * double(rays);
+    bool terrainOk = true;
+    if (header.TerrainTileCount)
+    {
+        // The culled terrain cast against the cell-by-cell one: any difference at all is a failure.
+        TerrainAgreement terrain;
+        VerifyTerrain(baked, randomRays * 10, 0x1234567ull, terrain);
+        VerifyFrames(baked, poses, terrain);
+        uint32_t headerLow = 0;
+        Sc::TerrainRec const* recs = baked.TerrainRecords();
+        for (uint32_t i = 0; i < header.TerrainTileCount; ++i)
+            if ((recs[i].Flags & Sc::TERRAIN_HEIGHTS) && !(recs[i].Flags & Sc::TERRAIN_FLAT)
+                && baked.Tile(recs[i].TileX, recs[i].TileY).GroundMax > recs[i].MaxHeight + 1e-3f)
+                ++headerLow;
+        std::printf("terrain culling: %llu random rays (%llu hit ground or liquid, %llu of them liquid, %llu sky), "
+            "%llu MISMATCH (culled sky where the reference hit: %llu, culled hit where it did not: %llu); "
+            "%llu full-caster pixel rays, %llu MISMATCH; tiles whose header MaxHeight is below their data: %u\n",
+            (unsigned long long)terrain.Rays, (unsigned long long)terrain.Hits, (unsigned long long)terrain.Water,
+            (unsigned long long)terrain.Sky, (unsigned long long)terrain.Mismatch,
+            (unsigned long long)terrain.FalseSky, (unsigned long long)terrain.FalseHit,
+            (unsigned long long)terrain.FrameRays, (unsigned long long)terrain.FrameMismatch, headerLow);
+        terrainOk = terrain.Mismatch == 0 && terrain.FrameMismatch == 0;
+    }
+    return terrainOk && double(mismatches) <= 5e-4 * double(rays);
 }
