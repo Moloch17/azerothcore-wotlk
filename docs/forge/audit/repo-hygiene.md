@@ -113,7 +113,7 @@ expects it to be easy.
 `git merge-tree --write-tree --name-only --messages forge upstream/master` (no working tree touched; one tree object
 `54dd8dc6ad4d949d069e250fda55bb92c936361c` written). Result: not clean. In order of cost:
 
-**Tier 1: conflicts a person must resolve (6 content files plus `AGENTS.md`, 1 modify/delete that matters).**
+**Tier 1: conflicts a person must resolve (6 content files, one of them `AGENTS.md`; 1 modify/delete that matters).**
 
 | File | Hunks | Why it conflicts | Resolution |
 |---|---|---|---|
@@ -506,8 +506,9 @@ Drivers visible in the tree (all UNVERIFIED as to magnitude):
 - **`.dockerignore` (R-13).** It ignores `/var/*`, `/env/dist/*`, `/build*/` and `.idea`
   (`.dockerignore:1-11`); it does not ignore `apps/forge/python/.venv`, `apps/forge/probes` or `apps/forge/models`. The
   compose build context is `.` (`docker-compose.yml:39`) and `Dockerfile.dev-server:109` does `COPY ... apps`. On the
-  owner's checkout that is 15 GB of venv, 3.1 GB of probes and 580 MB of models sent to the daemon and, by the `COPY`,
-  written into an image layer that the bind mount then hides at run time. `:112` also copies all of `data/`
+  owner's checkout that is, by arithmetic from `du` (no image was built), 15 GB of venv, 3.1 GB of probes and 580 MB
+  of models sent to the daemon and, by the `COPY`, written into an image layer that the bind mount hides at run
+  time. `:112` also copies all of `data/`
   (847 MB of upstream SQL) for the sake of the upstream dashboard.
 - **The dev image is not the test image.** `cluster.toml:24` and `deploy-gate.md:22` run tests in a container named
   `claude-syntax`; no tracked file creates it (`grep claude-syntax` finds only those and tests). It is also not
