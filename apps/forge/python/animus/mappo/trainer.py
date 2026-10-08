@@ -37,6 +37,12 @@ def chunked(value, length: int):
 LOOK_COMMANDS = ("look_zoom_hold", "look_zoom_in", "look_zoom_out", "look_recentre", "look_face")
 
 
+#: mappo.vision_chunk_rows: the learner picks the chunk from free device memory (train.choose_vision_chunk_rows), and
+#: the chunk it falls back to where the device or the query is not there (the value the stage yamls used to hard-code).
+VISION_CHUNK_AUTO = "auto"
+VISION_CHUNK_FALLBACK = 2048
+
+
 @dataclass
 class MappoConfig:
     hidden: tuple[int, ...] = (128, 128)
@@ -53,8 +59,9 @@ class MappoConfig:
     look_entropy_coef: float | None = None
     # The camera's update a chunk of this many rows at a time (MappoTrainer._encode_vision), encoded twice -- once
     # without its graph, once more for its gradient -- so the decoded images and the patch activations live a chunk
-    # at a time; 0 = the whole minibatch at once.
-    vision_chunk_rows: int = 0
+    # at a time; 0 = the whole minibatch at once. "auto" (VISION_CHUNK_AUTO) lets the learner choose at start from the
+    # device's free memory (train.choose_vision_chunk_rows); it is replaced by a number before the trainer is built.
+    vision_chunk_rows: int | str = 0
     value_coef: float = 1.0
     actor_lr: float = 5e-4
     critic_lr: float = 5e-4
@@ -587,6 +594,10 @@ class MappoTrainer:
     ):
         """layouts: (obs dim, action count) per agent layout, in the sim's layout order."""
         skip_distribution_checks()
+        if config.vision_chunk_rows == VISION_CHUNK_AUTO:
+            # Anything that builds a trainer without train.make_trainer (which chooses): the stage yamls' old value.
+            config = copy.copy(config)
+            config.vision_chunk_rows = VISION_CHUNK_FALLBACK
         self.config = config
         self.layouts = list(layouts)
         # Per layout its camera image (networks.vision_of, stage.json's vision block), or None: no camera anywhere.

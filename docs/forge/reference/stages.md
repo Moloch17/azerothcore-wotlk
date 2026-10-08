@@ -148,7 +148,7 @@ The layout pin test covers all twelve (`LiveLayoutPinTest.LiveStageLayoutsAreUnc
 | Stage | gamma (per 100 ms) | epochs | actor and critic lr | look_entropy_coef | chunk_length | other |
 |---|---|---|---|---|---|---|
 | `move1_controls` | 0.997 | 4 | 1.5e-4 | 0.001 | 32 | vision_chunk_rows 0 |
-| `move2_seek` | 0.998 | 2 | 1.5e-4 | 0.004 | 128 | vision_chunk_rows 2048 |
+| `move2_seek` | 0.998 | 2 | 1.5e-4 | 0.004 | 128 | vision_chunk_rows auto (was 2048) |
 | `move3_interact` | 0.998 (inherited) | 2 | 1.5e-4 | 0.004 | 128 | |
 | `move4_follow` | 0.999 | 2 | 1.5e-4 | 0.004 | 128 | |
 | `combat1_fight` | 0.998 | 2 | 1.5e-4 | 0.004 | 128 | standalone yaml (M2's lr and look entropy repeated, A6) |

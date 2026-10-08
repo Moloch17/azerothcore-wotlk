@@ -252,7 +252,7 @@ Config keys are `MappoConfig` fields (`trainer.py:41`) unless stated. "Live yaml
 | Goal lookahead | `goal_lookahead` (false), `lookahead_coef` (0.5) | true in both bases | `GoalHead.success/duration` |
 | Slow goal loop | `slow_goal_size` (0) | 128 in both bases | `slow_memory`, `slow_value`, `slow_opt`, `_update_goals` |
 | Look head | none (present whenever the vision block has `look.heads`); `look_entropy_coef` (None) | 0.001 (M1, combat), 0.004 (M2) | `LookHead`, `look_terms` |
-| Chunked camera update | `vision_chunk_rows` (0) | 0 in M1; 2048 in M2 and combat1 | `_encode_vision`, `_backward_vision` |
+| Chunked camera update | `vision_chunk_rows` (0) | 0 in M1; `auto` in M2 and combat1 (and so M3 to D3) | `_encode_vision`, `_backward_vision` |
 
 The camera, entity list, map and sight list have **no switch**: they are on whenever the stage's `stage.json` has the
 block (`trainer.py:620`).

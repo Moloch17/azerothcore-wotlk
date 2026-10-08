@@ -46,7 +46,9 @@ mappo:
   critic_lr: 0.00015
   # The camera's update in chunks (overseer, P2 review): the cluster's 8 GB and 16 GB cards need it, and the bench
   # ran out of memory at 192 envs unchunked (live M1 fit at 16 of 21.5 GB without it; the difference is unexplained).
-  vision_chunk_rows: 2048
+  # "auto" (was 2048 for every card): the learner picks the chunk at start from the device's free memory, the whole
+  # minibatch (0) where it fits, and 2048 where there is no GPU to ask. A number here is taken as it is.
+  vision_chunk_rows: auto
 
 # Amendment 9: 78 episodes every 10M, at the training rung (each of its rooms in turn, the object types cycled: at the
 # deep rung every room twice), so `found` is the rung's own found rate, which the fade reads. The full sweep -- every

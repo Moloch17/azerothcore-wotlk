@@ -1325,6 +1325,25 @@ class VisionEncoder(nn.Module):
     EMBED = 256
     CLASS_EMBED = 6
 
+    @classmethod
+    def update_bytes_per_row(cls, image: dict) -> int:
+        """Roughly the device memory one row's camera (and map) keeps for the update's backward pass, in bytes, from the
+        stage's vision descriptor: float32 tensors the encoder saves per pixel (the decoded channels, the planes
+        without the class, the class embedding, the concatenated planes and the patch copy of them) and per map
+        cell (the code and class embeddings, the values, the planes and their patch copy, and the int64 decode).
+        For the 128 x 64 camera that is 1.15 MB a row against the 0.98 MB measured (5.6 GiB over 6,144 rows,
+        move1_controls.yaml); the map adds 0.45 MB."""
+        channels = int(image["channels"])
+        planes = channels - 1 + cls.CLASS_EMBED
+        pixels = int(image["height"]) * int(image["width"])
+        total = 4 * pixels * (channels + (channels - 1) + cls.CLASS_EMBED + 2 * planes)
+        crop = image.get("map")
+        if crop is not None:
+            cells = int(crop["height"]) * int(crop["width"])
+            per_cell = MapEncoder.CODE_EMBED + cls.CLASS_EMBED + 5
+            total += cells * (4 * 3 * per_cell + 16)
+        return total
+
     def __init__(self, descriptors: Sequence[dict | None]):
         super().__init__()
         image = next(entry for entry in descriptors if entry is not None)

@@ -45,8 +45,9 @@ from .explore import ExploreArchive, cells_of, mark_columns
 from .evaluation import (ConvergenceTracker, EvalResult, action_mask_table, casting_weights, format_summary,
                          run_evaluation)
 from .mappo.buffer import RolloutBuffer
-from .mappo.trainer import LOOK_COMMANDS, MappoTrainer, horizon_seconds, per_decision, schedule
-from .mappo.networks import check_image_bytes, check_look_heads, vision_of
+from .mappo.trainer import (LOOK_COMMANDS, VISION_CHUNK_AUTO, VISION_CHUNK_FALLBACK, MappoTrainer, horizon_seconds,
+                            per_decision, schedule)
+from .mappo.networks import VisionEncoder, check_image_bytes, check_look_heads, vision_of
 from .progress import ProgressWriter
 from . import blas, episode_means, protocol
 from .async_sync import Hub, Link, fetch_shared, shared_listing
@@ -515,8 +516,67 @@ def trainer_inputs(config: TrainConfig, spec, stage: dict | None) -> TrainerInpu
     return TrainerInputs(vision)
 
 
+#: choose_vision_chunk_rows: the share of free device memory the camera's update may plan on (the rest is the
+#: allocator's slack and everything else the update holds), and what is set aside before that for the nets and the
+#: update's other tensors.
+VISION_CHUNK_BUDGET = 0.8
+VISION_CHUNK_RESERVE = 2 << 30
+#: Multiplies the encoder's retained activations: the backward pass's temporaries (the audit's U3 note that an unchunked
+#: 6,144-row minibatch with the map did not fit 21.5 GB).
+VISION_CHUNK_PEAK = 2.0
+VISION_CHUNK_STEPS = (4096, 3072, 2048, 1536, 1024, 768, 512, 256)
+
+
+def choose_vision_chunk_rows(config: TrainConfig, spec, vision, device,
+                             free_bytes: int | None = None) -> tuple[int, str]:
+    """mappo.vision_chunk_rows for a device: (rows, the line to log). The camera's update is encoded twice, and so
+    costs about 1.7x, whenever the minibatch is chunked at all; so the aim is the whole minibatch (0) wherever it fits
+    and otherwise the largest chunk from VISION_CHUNK_STEPS that does, with headroom. The estimate is the encoder's
+    retained activations a row (VisionEncoder.update_bytes_per_row) times VISION_CHUNK_PEAK, against
+    VISION_CHUNK_BUDGET of the device's free memory less the rollout's tensors the update puts on the device and
+    VISION_CHUNK_RESERVE.
+
+    `free_bytes` is for a caller that knows it; None asks the device (torch.cuda.mem_get_info). Without a GPU, or when
+    the query fails, it is VISION_CHUNK_FALLBACK, today's number; a CPU learner never reads it."""
+    device = torch.device(device)
+    image = next((entry for entry in vision or () if entry is not None), None)
+    if image is None:
+        return 0, "no camera: nothing to chunk"
+    if free_bytes is None:
+        if device.type != "cuda":
+            return VISION_CHUNK_FALLBACK, (f"mappo.vision_chunk_rows auto on {device}: {VISION_CHUNK_FALLBACK} "
+                                           f"(not a GPU)")
+        try:
+            free_bytes = int(torch.cuda.mem_get_info(device)[0])
+        except Exception as error:  # noqa: BLE001 - any failure of the query is the same answer
+            return VISION_CHUNK_FALLBACK, (f"mappo.vision_chunk_rows auto: {VISION_CHUNK_FALLBACK} (free memory of "
+                                           f"{device} unavailable: {error})")
+    cfg = config.mappo
+    rollout_rows = config.rollout_length * spec.num_envs * spec.agents_per_env
+    batch_rows = max(1, rollout_rows // max(1, min(cfg.minibatches, spec.num_envs)))
+    held = rollout_rows * (4 * (spec.obs_dim + spec.state_dim) + spec.image_bytes + spec.map_bytes)
+    per_row = VisionEncoder.update_bytes_per_row(image) * VISION_CHUNK_PEAK
+    room = VISION_CHUNK_BUDGET * (free_bytes - held - VISION_CHUNK_RESERVE)
+    fits = int(room // per_row) if room > 0 else 0
+    if fits >= batch_rows:
+        chosen = 0
+    else:
+        chosen = next((rows for rows in VISION_CHUNK_STEPS if rows <= fits), VISION_CHUNK_STEPS[-1])
+        chosen = chosen if chosen < batch_rows else 0
+    gib = 1 << 30
+    return chosen, (f"mappo.vision_chunk_rows auto: {chosen or 'the whole minibatch'} ({free_bytes / gib:.1f} GiB "
+                    f"free on {device}; {batch_rows} rows a minibatch at ~{per_row / 2**20:.2f} MiB a row for the "
+                    f"update, "
+                    f"{held / gib:.1f} GiB of rollout on the device; room for {fits} rows)")
+
+
 def make_trainer(config: TrainConfig, spec, inputs: TrainerInputs, ranks=None, device=None) -> MappoTrainer:
     """The stage's MappoTrainer. `device` overrides both devices."""
+    if config.mappo.vision_chunk_rows == VISION_CHUNK_AUTO:
+        # Chosen once, here, so the config the checkpoint saves holds the number.
+        rows, line = choose_vision_chunk_rows(config, spec, inputs.vision, device or config.resolved_train_device())
+        config.mappo.vision_chunk_rows = rows
+        print(line, flush=True)
     return MappoTrainer(
         [(layout.obs_dim, layout.num_actions) for layout in spec.layouts],
         spec.state_dim,
