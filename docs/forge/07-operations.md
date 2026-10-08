@@ -1,599 +1,177 @@
 # 7. Operations
 
-Step-by-step procedures. Each one links back to the chapter that explains what happens underneath.
+Step-by-step procedures, rewritten 2026-10-07 from the code. For cluster work use [forgectl.md](forgectl.md),
+[cluster.md](cluster.md) and [deploy-gate.md](deploy-gate.md); this chapter does not repeat them. Every command named
+here exists in `cs_forge.cpp:196-220` (console) or `forge.sh`. Where something could not be verified from the repository
+it is marked `UNVERIFIED`.
 
-## 7.1 Setting up the training host (Docker)
+## 7.1 Setting up a training host (Docker)
 
-**Prerequisites.** Linux (or WSL2 on an ext filesystem), Docker with Compose, and roughly 50 GB of disk for client
-data, builds and runs. A GPU is optional: updates run on the CPU without one, just more slowly.
+Prerequisites (from the compose files): Linux, Docker with Compose, a checkout of branch `forge`, enough disk for the
+client-data volume, builds and runs. The learner needs a GPU for speed; the compose file passes `/dev/kfd` and `/dev/dri`
+(AMD ROCm, gfx1100 here) through the shared dev-image anchor; an NVIDIA card needs the commented `deploy` block instead
+(`docker-compose.yml`). Machine-specific settings (GPU lines, reuse of volumes) go in a gitignored
+`docker-compose.override.yml`. Set `ANIMUS_TORCH_INDEX_URL` (default ROCm 6.4 index) before the first start: the venv is
+created once (`apps/docker/animus-venv.sh`).
 
-1. **Get the core and the modules.**
+```bash
+git clone -b forge git@github.com:Moloch17/azerothcore-wotlk.git animus-forge     # path used by the cluster: ~/animus-forge
+cd animus-forge
+./forge.sh            # docker compose up -d, then attach to the worldserver console
+```
 
-   ```bash
-   git clone -b forge git@github.com:Moloch17/azerothcore-wotlk.git animus-forge-core
-   cd animus-forge-core
-   git clone git@github.com:Moloch17/animus-forge.git modules/mod-animus-forge
-   ```
+There is no module to clone: the sim is in the core tree (`src/server/game/Animus`). The old step "clone
+`animus-forge` into `modules/`" is obsolete, and `modules/CMakeLists.txt` ignores a stale `modules/mod-animus-forge`
+checkout.
 
-   If you also keep `modules/mod-animus` in this checkout, it must be disabled in the forge build (step 2).
+What the first start does (`apps/docker/forge-worldserver.sh`): builds the worldserver with `acore.sh compiler
+configure` and `compile` if `env/dist/bin/worldserver` is missing, a build was requested (`env/dist/.forge-build`), or the
+CPU differs from the one the binary was built for (`env/dist/.forge-build-cpu`; the build uses `-march=native`); restores
+missing `.conf` files from their `.dist`; runs `animus-venv.sh`; starts TensorBoard on
+`http://localhost:16006` (`FORGE_TENSORBOARD_PORT`, loopback in the bridge network) reading `<OutputDir>/runs`; then
+`exec ./worldserver`. The database is created by the worldserver's own `Updates.AutoSetup`; the `stock` profile services
+are not needed.
 
-2. **Machine-specific settings** go in `docker-compose.override.yml` (gitignored):
+`forge.sh`:
 
-   ```yaml
-   services:
-     ac-worldserver:
-       environment:
-         CCUSTOMOPTIONS: "-DMODULE_MOD-ANIMUS=disabled"      # only if modules/mod-animus exists
-         # AMD: ANIMUS_TORCH_INDEX_URL: https://download.pytorch.org/whl/rocm6.4
-       # NVIDIA (needs the NVIDIA Container Toolkit):
-       deploy:
-         resources:
-           reservations:
-             devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]
-     ac-dev-server:
-       environment:
-         CCUSTOMOPTIONS: "-DMODULE_MOD-ANIMUS=disabled"
-   ```
+| Command | Effect |
+|---|---|
+| `./forge.sh` | `docker compose up -d`, then attach |
+| `./forge.sh --build` | request a build, recreate `ac-worldserver`, wait until the new binary is installed or the build failed (exit 0/1), attach only from a terminal |
+| `./forge.sh attach` | attach to the console; detach with Ctrl+P Ctrl+Q, **never Ctrl+C** (it stops the server) |
+| `./forge.sh dev` | also start `ac-dev-server` |
+| `./forge.sh stop` | stop `ac-worldserver` (the learner saves) |
 
-   For AMD, pass `/dev/kfd` and the card's render node, add the host's `render` and `video` group ids, and set
-   `security_opt: [seccomp=unconfined]`. The commented block in `docker-compose.yml` has the full example.
-   **Set `ANIMUS_TORCH_INDEX_URL` before the first start**, because the venv is created only once.
+Settings come only from config: `worldserver.conf` (the `Forge.*` and `AnimusForge.*` keys are in
+`worldserver.conf.dist`) and, if present, `env/dist/etc/modules/mod_animus_forge.conf`, read after it. There are no
+worldserver flags. Key reference: [reference/config-keys.md](reference/config-keys.md). The cluster-machine overlay is
+`docker-compose.cluster.yml` (host networking; add it to `COMPOSE_FILE` in `.env`).
 
-3. **Start.**
+## 7.2 The console
 
-   ```bash
-   ./forge.sh
-   ```
+Attach (`./forge.sh attach` or `docker attach ac-animus-forge-worldserver`) and type `forge help`. Commands, from
+`cs_forge.cpp:233-290`:
 
-   The first start takes a long time. It builds the images, downloads client data into the volume, builds the
-   worldserver from source, creates the MySQL databases (`Updates.AutoSetup`), creates the Python venv with torch and
-   TensorBoard, starts TensorBoard, and starts the worldserver. `forge.sh` attaches you to the console. Detach with
-   **Ctrl+P Ctrl+Q**. **Ctrl+C stops the server.**
+| Command | What it does |
+|---|---|
+| `forge status` | state, progress, ETA, timing breakdown, warnings (or the idle settings) |
+| `forge scenarios` | every stage with its run: checkpoint, steps, best score |
+| `forge start [stage ...]` | train these from scratch in order; no names: `AnimusForge.Queue`, else all twelve stages minus those already finished (`AnimusForge.Queue.SkipFinished`) |
+| `forge fast [stage ...]` | fixed-budget low-cost rehearsal into `<OutputDir>/fast/` (7.5) |
+| `forge resume [stage ...]` | unpause; or restart a dead learner; or continue the first named stage from its `latest.pt` and train the rest from scratch; no names: continue the last plan |
+| `forge pause` | freeze the sim and the learner after the current decision. **Does not reach cluster workers** |
+| `forge cancel` | stop the plan; the learner saves `latest.pt` first (a cancelled run resumes where it left off) |
+| `forge skip` | end the current stage and start the next |
+| `forge run <stage> random [episodes]` | the `random` policy, no learner (the only local policy) |
+| `forge export [stage] [best\|latest]` | write `.amdl` models and manifests to `AnimusForge.ModelDir` |
+| `forge bench [stage]`, `bench apply`, `bench auto` | time thread and env counts with and without the learner; apply the winner to the conf |
+| `forge talents <class> [spec] [points] [plan]` | print a build the curriculum would give (no training) |
+| `forge clean archive\|scenario <stage>\|exports\|fast\|logs\|all` | delete run data (idle only for `all`) |
+| `forge progress [seconds\|off]` | the periodic report interval |
+| `forge tasks` | per-map update task times since the last call |
+| `forge route`, `floorscan`, `fieldroute`, `fieldstage`, `fieldworld` | route and layered-field tools |
+| `forge controller record\|replay\|probe`, `forge camera snapshot\|diff`, `forge gpu scene` | diagnostics (idle only; `record` needs a playtest player) |
 
-4. **Check.** The console should print "Animus Forge is idle" and the idle settings. From another terminal, check that
-   torch sees the GPU:
+Rules the code enforces: commands only record a request and are applied at the start of a tick, never inside a decision;
+`start` refuses while a plan is running; `start`/`resume` refuse a stage with no valid definition. The help line for
+`forge clean archive` says `runs/_archive/`; the code deletes `<OutputDir>/archive` (and the legacy `runs/_archive`). The
+help line for `forge fast` says the default is `AnimusForge.Queue`; the code uses `AnimusForge.Fast.Queue`, else every
+stage (`AnimusForge.cpp:965-975`).
 
-   ```bash
-   docker compose exec ac-worldserver \
-     /azerothcore/modules/mod-animus-forge/python/.venv/bin/python -c "import torch; print(torch.cuda.is_available())"
-   ```
-
-   (ROCm builds also report through `torch.cuda`.)
-
-5. **Configure.** Edit `env/dist/etc/modules/mod_animus_forge.conf`, which was created from the `.dist` on first start,
-   and `env/dist/etc/worldserver.conf`. Restart with `./forge.sh stop` then `./forge.sh`. At minimum, review:
-   - `MapUpdate.Threads` in `worldserver.conf`: set it to the number of physical cores.
-   - `AnimusForge.Envs`: 64 by default. Raise it until the learner, not the world thread, is the bottleneck (7.11).
-   - `AnimusForge.EpisodeSeconds`: 60 by default. Arenas with their own length ignore it. Stages 3-5 need episodes of
-     several minutes, and stage 8's arenas set their own.
-   - `AnimusForge.Classes`: empty trains all 10. A subset trains faster, but a later change to the list breaks
-     seeding and resuming from those runs.
-
-**Native (without Docker).** Build the forge core with the modules as usual (`acore.sh compiler build`). Create the venv
-yourself (`python3 -m venv modules/mod-animus-forge/python/.venv` and
-`pip install torch && pip install -e 'modules/mod-animus-forge/python[tensorboard,dev]'`), copy the conf `.dist` to
-`.conf`, and run `worldserver` in a terminal. Without `AnimusForge.OutputDir`, runs go into the module's `python/`
-directory.
-
-## 7.2 Smoke test with the random policy (no Python)
+## 7.3 Running a stage
 
 ```
-forge run <stage> random 256
+forge start move1_controls         fresh run; an earlier run of that stage is moved to <OutputDir>/archive/
 forge status
+forge cancel                       saves latest.pt
+forge resume move1_controls        continue from latest.pt
 ```
 
-`forge run` builds the scenario and plays uniformly random unmasked actions for 256 episodes. `forge status` shows the
-episode means. This checks that characters build, the arena spawns and the sim steps, without any learner involved. It
-says nothing about whether the stage can be learned: there are no scripted baselines (principle 14), so a smoke test of
-the behaviour is a short run with the learner (`forge fast <stage>`).
+On a cluster use `forgectl stage start|resume|pause|cancel` (it also types into the workers' consoles).
+After a rebuild always `resume`, never `start` (principle 16): a start archives the run. Every run of one stage seeds
+from its parent's checkpoint by name; `forge start` warns when a stage is listed before its parent or its parent has no
+checkpoint (`WarnSeedOrder`). The learner config for a stage is `apps/forge/python/configs/<stage>.yaml`
+(`AnimusForge.Learner.Config` overrides).
 
-To run every queued scenario at random, set `AnimusForge.Policy = "random"` and `AnimusForge.Queue.LocalEpisodes =
-1024`, then `forge start`.
+A stage ends by itself: the learner exits 0 when every class has converged or at `total_env_steps`, writes
+`finished.json`, and the plan starts the next entry. See [reference/00-architecture.md](reference/00-architecture.md)
+section 5.
 
-## 7.3 Fast test run
+## 7.4 Where things are
 
-Before a long run, or after changing a scenario, the learner or a config:
+`<OutputDir>` is `AnimusForge.OutputDir` (`/azerothcore/var/animus-forge` in the container, `var/animus-forge/shared` on the
+cluster machines per `cluster.toml`). Under it:
 
-```
-forge fast
-```
-
-It trains every curriculum stage in order (the raid stages included), each from scratch, with 32 envs,
-**all ten classes at the stage's own levels**, into `<OutputDir>/fast/`. Nothing is skipped, so typing it
-again runs the whole curriculum again. `forge fast stage5_pack` trains one stage, seeded from the fast
-`stage4_duel` run. Set `AnimusForge.Fast.Queue` to train a shorter list.
-
-**It is a fixed-budget sweep, not an early-stopping smoke test.** Each stage trains a set number of steps and
-moves on: 20,000,000 by default, and `forge fast 30M` (or `forge fast 30M stage5_pack`) overrides it for that
-invocation. The mechanism is `convergence.patience: 0` in `configs/fast.yaml`, which makes
-`ConvergenceTracker.converged` return false, so the stage cannot stop early and cannot trigger a restart; the
-cleared `target:` block means a gate cannot halt the sweep either. That makes the sweep a genuine rehearsal of
-the real build -- same classes, same levels, same stages, less budget -- rather than a different problem.
-
-The budget in force is printed at the start of the run and in `forge status`, so what is reported is the budget
-actually used and not the configured default.
-
-What to check, in `fast/runs/<stage>/`:
-
-- `eval.csv`: the `at_start` score against later scores. It should rise.
-- `eval_baseline.json`: the baseline to beat.
-- `metrics.csv`: entropy should fall slowly, and `approx_kl` and `clip_frac` should stay moderate.
-- `finished.json`: why the stage ended.
-- For merge stages, the `distill_kl` column should fall.
-
-To start fresh: `forge clean fast`.
-
-## 7.4 Training the curriculum
-
-```
-forge start
-```
-
-With an empty `AnimusForge.Queue`, this trains every default-queue stage in order (stages 1 to 23; the raid stages
-only when named), skipping any stage whose run already finished. Each stage:
-
-1. builds its env pool (world stalls for a few seconds per class on the first build),
-2. writes `layouts/<stage>/`,
-3. starts the learner, which seeds from the closest trained ancestor,
-4. trains until every class has converged or its budget is reached (the next stage starts), or it is cancelled.
-
-To train particular stages: `forge start stage12_duel_pvp stage13_escape`. List each stage after the stage it extends, or it
-won't seed from it (the command warns you). With no arguments the queue is every default-queue stage in number
-order, which is already a valid order, so the usual case needs no arguments at all.
-
-### Training one class at a time
-
-The curriculum trains in two parts (see chapter 4, *Training one class at a time*): the movement stages once for
-all ten classes, then each class's fighting stages on its own.
-
-**The shared movement root** -- stages 1-7, all ten classes, in the base server. (Those stages were archived with the
-first curriculum, 2026-10-05, git tag `curriculum-v1`; the queue below takes the movement stages that replace them.)
-
-```
-# env/dist/etc/modules/mod_animus_forge.conf
-AnimusForge.Classes = ""
-AnimusForge.Queue   = "<the movement stages, in order>"
-
-# .env (compose passes AC_ANIMUS_FORGE_OUTPUT_DIR, which beats AnimusForge.OutputDir in the conf)
-ANIMUS_FORGE_OUTPUT_DIR=/azerothcore/var/animus-forge/shared
-```
-
-The base server needs recreating for that (`./forge.sh --build`, or `docker compose up -d --force-recreate
-ac-worldserver` when nothing was compiled), because the conf and the environment are read at startup.
-
-**Then the classes, two at a time**, each in a training server of its own:
-
-```
-modules/mod-animus-forge/tools/forge_classes.py run druid mage warrior paladin hunter rogue priest deathknight shaman warlock
-```
-
-Nothing in the sim or the learner is shared between two runs but the cores, so a second class is a second
-`ac-worldserver` container: the same image, source tree, built worldserver, database and GPU, with its own output
-directory (`var/animus-forge/<class>`), its own `AnimusForge.Classes` and `Queue` (stages 8-19), and its own share
-of the map-update and torch threads. Compose cannot make services on the fly, so the tool writes one compose file
-per class, `env/instances/<class>.yml` (add the directory to your gitignore; it is machine-specific and holds the
-rendered environment, `.env` values included), holding the `ac-worldserver` service exactly as `docker compose
-config` renders it on this machine (your `docker-compose.override.yml` is part of that: the GPU devices come from
-it) under its own name, container, output directory and host ports. Any `AnimusForge.*` or `worldserver.conf` key
-is an `AC_` environment variable there (`AnimusForge.Queue` is `AC_ANIMUS_FORGE_QUEUE`; the environment beats the
-conf file). It starts
-`ANIMUS_FORGE_PARALLEL` (2) of them, watches for the last stage's `finished.json`, stops a finished class's server
-and starts the next; Ctrl+C leaves the running ones training and `run` again resumes the schedule. Each instance's
-TensorBoard is on http://localhost:16006 plus ten per instance (16016, 16026, ...: `FORGE_TENSORBOARD_PORT`,
-the same number inside the container and on the host's loopback). One instance is addressed by name:
-
-```
-ANIMUS_FORGE_INSTANCE=druid modules/mod-animus-forge/tools/forge_classes.py attach     # the console; Ctrl+P Ctrl+Q detaches
-ANIMUS_FORGE_INSTANCE=druid modules/mod-animus-forge/tools/forge_classes.py stop
-modules/mod-animus-forge/tools/forge_classes.py status
-```
-
-Two at a time and not three: a worldserver starts at ~3.5 GB and one long `forge bench` sweep climbed to 19.6 GB
-(7.11), which 30 GB holds twice, not three times. `ANIMUS_FORGE_PARALLEL=3` is allowed if memory proves to stay
-flat. The thread split (12 map threads and 4 torch threads each on 32 cores) is written into each instance file;
-`forge bench` in one instance at that setting says whether it is right, and the file can be edited by hand.
-
-A run of exactly one class also picks up that class's own learner configs: `configs/<class>/<stage>.yaml` where
-one exists, and the shared `configs/<stage>.yaml` otherwise. Every class has a `stage4_duel.yaml` there, and it
-says one thing: where the class's combat line seeds from -- `{shared_runs}/stage2_travel/best.pt`, the shared
-root's checkpoint, which `init_from: auto` cannot find because the seed chain looks under the run's own `runs`
-directory and the shared root is a sibling of it.
-
-### Monitoring
-
-| Where | What |
+| Path | Contents |
 |---|---|
-| `forge status` | The live report: rates, ETAs, evaluation scores against baseline, warnings |
-| `forge progress 600` | The same report every 10 minutes |
-| `<OutputDir>/runs/<stage>/layouts.csv` | Per (class, role), **every update**: what each pair is doing in the training episodes themselves (sampled actions, each at its own ladder difficulty). The `layout` column is the class and `role` its own, so a paladin appears twice. metrics.csv averages them all together and the evaluation tables come only every `eval.every_env_steps`; this is the live view. Read behaviour from it, not scores -- the gates stay on the evaluations |
-| TensorBoard at http://localhost:16006 | `episode_*`, losses, entropy, `eval/*`, `eval_<band>/*`, `eval_arena_<arena>/*`, for the runs in `<OutputDir>/runs` (archived runs are in `<OutputDir>/archive`, which it does not read). The same URL with or without host networking; the container log says it at start (`TensorBoard: http://localhost:16006 (logdir ...)`) |
-| `env/dist/logs/animus-learner.log` | Everything the learner prints, including evaluation tables per level band, class and arena |
-| `<OutputDir>/runs/<stage>/eval.csv`, `eval.jsonl` | Every evaluation, with full tables |
+| `runs/<stage>/` | the run: `config.yaml`, `spec.json`, `stage.json`, `metrics.csv`, `layouts.csv`, `eval.jsonl`, `eval.csv`, `eval_episodes.jsonl`, `eval_baseline.json`, `progress.json`, `finished.json`, `latest.pt`, `best.pt`, `best_rung<k>.pt`, `checkpoint_*.pt` (pruned to the newest), `tb/`, `events.log`, `camera/`, `videos/` |
+| `archive/<stage>-<timestamp>/` | earlier runs moved aside by a fresh start (nothing is deleted) |
+| `layouts/<stage>/` | the sim's layout manifests and `stage.json` |
+| `models/` (`AnimusForge.ModelDir`) | exports |
+| `fast/`, `bench/` | fast-run and benchmark output |
 
-#### Console commands without a terminal (SOAP)
+Logs: `env/dist/logs/Server.log`, `Errors.log`, `animus-learner.log` (rank k: `animus-learner.rank<k>.log`), the export log,
+`tensorboard.log`. File formats: [reference/file-formats.md](reference/file-formats.md).
 
-`SOAP.Enabled = 1` in `env/dist/etc/worldserver.conf` makes `ForgeMain.cpp` start upstream's SOAP listener on
-`SOAP.IP:SOAP.Port` (127.0.0.1:7878 by default), for a script that drives the forge without attaching to the
-console. It runs the same handler and the same `SEC_ADMINISTRATOR` check as a typed command, so it needs an account
-with that level (`account create <name> <password>`, then `account set gmlevel <name> 3 -1`) and grants nothing the
-console does not. Off by default, so the sim opens no network listener unless asked.
+## 7.5 Test runs without the long build
 
-**Which checkpoint the next stage starts from.** `latest.pt`, by default (`seed_from`).
+- `forge run <stage> random 256` then `forge status`: checks that characters build, the arena spawns and the sim
+  steps, with no learner. It says nothing about learnability; there are no scripted baselines (principle 14).
+- `forge fast [stage ...]`: trains each stage for a fixed budget (`AnimusForge.Fast.Budget`, default 20,000,000 steps;
+  `forge fast 30M` overrides) with `AnimusForge.Fast.Envs` envs (default 16) and the overlay `configs/fast.yaml`, into
+  `<OutputDir>/fast/` (`FastProfile`, `ForgeConfig.cpp:709`). `convergence.patience=0` is passed so a stage trains its whole
+  budget. Clean with `forge clean fast`.
+- `forgectl test [--gpu]`: GTests plus the CPU pytest in the dev container (forgectl.md).
 
-The alternative is `best.pt`, and it is a worse default than it sounds. `best.pt` is only rewritten by an
-evaluation that clears the convergence margin -- `max(min_improvement_abs, min_improvement x |best|, z x the two
-scores' standard errors)` -- and on a short run the last term dominates, because 64-episode evaluations have wide
-error bars. A stage can then improve a great deal without ever clearing the bar. Measured on a fast sweep:
-`stage5_pack` reached 8.2M steps with its evaluations up from 2.6 to 6.8 and `best.pt` still the checkpoint it had
-been seeded with, because a 4.16 improvement fell short of a 4.46 margin. A queue that advanced there would have
-handed stage 3 a network that had learned nothing of stage 2.
+## 7.6 Benchmarking
 
-What `best` buys is protection from a late regression: an entropy collapse or a bad restart near the end of a
-stage is carried by `latest.pt` and not by `best.pt`. On a real run the two are close, since convergence ends a
-stage when it stops improving and `latest` is then near-best by construction; it is short runs where they
-diverge. For a long build where that protection is worth more than the freshness, set `seed_from: best` in the
-learner config of the stage that seeds from it; it applies to merge parents as well as the base.
+`forge bench [stage]` times every `AnimusForge.Bench.Threads x Envs` pair with a local policy and then the best few with
+the learner; results go to `<OutputDir>/bench/bench.json`; `forge bench apply` writes the winner into the configs.
+`AnimusForge.Bench.AutoTune` runs `bench auto` on a machine with no benchmark of its CPU. Per-decision timing columns
+in `forge status`: world (map update), sim (module work), learner wait; the reset stall warning
+("Reset stall: ...") is logged by `WatchResets`.
 
-On a gate-stepped ladder `best.pt` means only "the best at the stage's current rung": the first evaluation at each new
-rung overwrites it (the best of the rung left is kept as `best_rung<k>.pt`). `seed_from` is validated (`best` or
-`latest`), and every live yaml seeds from `latest`.
+## 7.7 After changing C++
 
-**Which checkpoint a co-op partner is** (`cast.partners.stages`). A bare stage name is that stage's `latest.pt`, the
-policy it ended with, and its `best.pt` only when it has no `latest.pt`. A finished stage's `latest.pt` is its
-top-rung policy (a gate-stepped stage converges only at its last rung); its `best.pt` is the best of whichever rung the
-last evaluation overwrote, and one saved before the re-baseline fix can be the policy from step 0. A `paths` entry is
-taken as given, for a deliberate `best_rung<k>.pt` or `best.pt`. To ask for a stage's best on purpose, write
-`<stage>:best` (or `<stage>:latest`) in `stages` or `eval_partners`: that file exactly, even where the bare name would
-have picked the other; a missing file is skipped with a line saying so, and any other word after the colon is a config
-error.
+Cancel the stage, rebuild, resume: `forge cancel`; `./forge.sh --build` (or `forgectl build [--cluster]`); `forge resume
+<stage>`. A rebuild changes the cluster fingerprint (the `Animus/` source hash), so every machine must be rebuilt; see
+cluster.md. If a run's layouts changed, `resume` is refused (`runs.resume_mismatch`) or warns with the changed blocks
+(`stages.layout_changes`); a change in a block's meaning bumps the block's revision so seeding by name carries on.
 
-| `<OutputDir>/runs/<stage>/stage.jsonl` | Restart, advance and halt decisions with their gates |
-| `forge scenarios` | Every stage's run: finished and why, checkpoints, steps, best score |
+## 7.8 Exporting models
 
-Warnings to act on:
+`forge export <stage> [best|latest]` starts `animus.export`; progress in the export log; models land in
+`AnimusForge.ModelDir`. Copy by hand. What a realm needs is outside this repository: [06-animus.md](06-animus.md).
 
-- **"learner has not answered"**: it is stalled or doing a very long update. Check the learner log.
-- **"step rate dropped"**: another process may be competing for CPU, or an evaluation is running.
-- **"entropy under 25%"**: the policy may have collapsed early. Consider raising `mappo.entropy_coef`.
-- **"approx KL / clip fraction high"**: updates are too large. Lower the learning rates or the epochs.
-- **"best below baseline after 2 evaluations"**: check the reward for that stage, and compare against the fast run.
+## 7.9 Running the learner by hand
 
-### Warnings the learner prints without being asked
+Set `AnimusForge.Learner.AutoStart = 0`; the sim then logs the command to run (`LearnerProcess::ManualCommand`):
+`cd apps/forge/python && <python> -u -m animus.train --config configs/<stage>.yaml --socket <path> --run-name <stage>
+--runs-dir <OutputDir>/runs --layouts-dir <OutputDir>/layouts [--resume] [--set key=value ...]`. The client retries until
+the sim's socket appears (it is created when a plan starts). `--set` overrides yaml values; `--overlay` merges a yaml.
+Changing Python files under a running learner can mix versions (modules are imported lazily).
 
-Two things are checked every update and reported when they happen. Neither changes what the run does; both are
-there because the failure they describe is invisible in the ordinary metrics until a run has been wasted on it.
+## 7.10 Troubleshooting
 
-**`reward: <term> earns N an episode, X% of the largest outcome term`**
-
-A shaping term has grown into the objective. Outcome terms -- the kill, the clear, the capture, the arrival --
-are what a stage is *for* and may be any size; everything else is a nudge, and a nudge worth more than half a
-kill is not a nudge. Only earnings trip it, never charges: a penalty is not farmable, and the largest negative
-term in a fight is the death, which is the point of having one.
-
-What to do: read the mix on the same line and decide whether the term is mispriced or exploitable. Three times
-in this project it was both. A resurrection offer the core never clears was being accepted every decision and
-came to 88% of `druid_dps`'s return; a goal paid for every decision it was held made standing at range the
-second largest earner; an order nudge priced per decision reached 23.7% of gross, level with the kill. The
-first two were found by hand after runs had already trained on them.
-
-The rule lives in `python/animus/rewards.py`, including which terms count as outcomes. A resurrection is
-deliberately not one of them -- standing an ally up is a means, and listing it as an outcome is exactly what
-would let a farmable revive read itself as the yardstick.
-
-**`learning has stalled: approx_kl has stayed under ... for N updates`**
-
-The updates have stopped moving the policy. Roughly half the stages measured end their run this way --
-`approx_kl` falls eight to elevenfold between the first eighth of a run and the last, with `clip_frac` down to
-about 0.01 -- so the final third costs wall clock and buys very little.
-
-What to do: **nothing automatically.** The other half of the stages do not stall at all (`stage4_duel`'s KL
-*rises* over 683 updates; travel and flight stay flat), and `stage5_pack` trips this check and then went on
-to 916 productive updates. Read it together with the evaluation: if the score is not improving either, the rest
-of the run is wall clock and the budget is better spent on the next stage.
-
-**`rollout graph captured: E envs x A agents, ...` / `rollout graphs NOT used: <reason>`**
-
-Printed once per batch shape (the first capture) and once per reason graphs are off (not on a GPU,
-`mappo.rollout_graphs` off, no acting state, seat sets). These are not warnings but a check: in the first minutes of a
-resumed run, a `captured` line confirms the rollout runs as GPU graphs; a `NOT used` line means it fell back to the
-eager path and throughput will be lower. A call without an acting state (an evaluation) can print its own `NOT used`
-line next to the `captured` ones; that is expected.
-
-### Controlling a run
-
-| Goal | Command |
+| Symptom | Meaning (from the code) |
 |---|---|
-| Freeze everything, sim and learner | `forge pause`, later `forge resume` |
-| Stop and keep the progress | `forge cancel` (saves `latest.pt`), later `forge resume` |
-| Give up on the current stage and go to the next | `forge skip` |
-| Continue a particular stage from its checkpoint | `forge resume stage5_pack [stage9_deadmines ...]` |
-| Retrain a finished stage | `forge start stage5_pack`, which archives the old run |
-| Fine-tune a stage from its own best (after reward or mask changes) | copy its `best.pt` to `runs/_finetune/<stage>/best.pt`, then `forge start <stage>`: the learner seeds from it before the seed chain (`finetune_from`) |
+| "Waiting for a learner started by hand" | `Learner.AutoStart` is 0 or the auto-start failed (`Learner auto-start failed`); start it with the printed command |
+| "The world ticks N ms, but AnimusForge.DecisionMs ... wants M ms: rebuild the worldserver" | the binary and the conf disagree on the tick (`AnimusForge.cpp:464`); rebuild |
+| "Env N is on map M instance I, which no map task ticked" | the env has no player to keep its map awake (scheduler skipped it); logged once |
+| "Synchronous query on sealed DatabasePool" / "Write ... dropped on sealed DatabasePool" | something read or wrote SQL after startup; the first is a stack trace to fix, the second is informational (once per kind) |
+| a crash with "Fatal signal, stack:" in `docker logs` | `FatalSignalHandler` printed frames; the core is also dumped |
+| "Cluster: refused the worker at ..." | fingerprint differs (source, protocol, field count/bytes, curriculum keys, decision timing): `forgectl conf-sync --check`, `forgectl cluster` |
+| learner exits and the sim waits | `forge resume <stage>` restarts the learner from `latest.pt`; a cluster host restarts failed learners itself up to three times |
+| a stage "did not finish" yet the next stage warns it seeds from it | a cancelled stage still seeds the next from its checkpoint; the warning says so |
+| `forge pause` and workers keep running | by design today: pause each worker's console (`forgectl stage pause` does) |
+| "Reset stall: ..." | episode resets are slowing the sim (`Animus::Stall`); see the status line's reset columns |
 
-### After changing C++
+More: [forgectl.md](forgectl.md) "When something does not work", [deploy-gate.md](deploy-gate.md) "The failure table".
 
-```bash
-docker compose exec ac-dev-server ./acore.sh compiler build     # incremental build into the shared volumes
-docker compose restart ac-worldserver                          # the learner saves on stop
-```
+## 7.11 Changing the code
 
-Or run `./forge.sh --build`, which recreates the container and builds before starting. The restarted sim is idle:
-
-- `forge start` continues with the stages that haven't advanced yet, **from scratch**.
-- `forge resume <stage>` continues a run from its `latest.pt`, **if the stage's shapes didn't change**. If a block,
-  catalog or the class list changed, the learner refuses to resume. Start the stage fresh; it still seeds from its
-  ancestors.
-
-If layouts changed for a stage that earlier stages were trained on, those ancestors still seed block by block where
-block sizes match. A block whose size changed raises an error during seeding, and the ancestor must be retrained.
-
-## 7.5 When a stage ends at its budget
-
-A stage never halts the plan: it advances when every class has converged, or at `total_env_steps` with reason
-`budget`. The second case is the one to read.
-
-1. Read `runs/<stage>/finished.json`: per class, whether it converged and which of `score`, `kl`, `entropy` and
-   `ladder` it was still missing. `progress.json` carried the same while it ran (`weakest_layout`,
-   `weakest_missing`), as does `forge status`.
-2. Read `eval.jsonl` for per class, per-band and per-arena scores, and `layouts.csv`
-   for each class's `entropy` and `approx_kl` over the run.
-3. Decide:
-   - **It was still learning.** A class missing `score` or `kl` at the budget wanted more steps: raise
-     `total_env_steps` for that stage.
-   - **Its ladder was still climbing.** A class missing `ladder` was still moving up the difficulty rungs, which is
-     progress, not a fault; more budget, or a lower `Difficulty.MaxTier` if the top rungs are not wanted.
-   - **The reward or scenario is wrong.** Change `AnimusForge.Curriculum.*` tuning or the code, check it with
-     `forge fast <stage>`, then retrain.
-4. `forge start <stage>` (and the stages after it) to train again; the earlier run is archived, not deleted.
-
-## 7.6 Exporting and deploying models
-
-1. **Export**, even during training:
-
-   ```
-   forge export stage9_deadmines            # best.pt, else latest.pt
-   forge export stage9_deadmines latest
-   ```
-
-   Output goes to `AnimusForge.ModelDir` (default `modules/mod-animus-forge/models/`) as one `.amdl` and one `.json`
-   per class, for example `warrior_tank_party.amdl` and `warrior_tank_party.json`. The export log is
-   `animus-export.log`. "Export of stage9_deadmines finished" appears in the console.
-
-2. **Copy both files for every class** to the realm's `Animus.ModelDir` (default `<DataDir>/animus`).
-
-3. **Configure the realm** (`mod_animus.conf`): set `Animus.Curriculum.Stage` to the stage whose models companions
-   should play (`stage9_deadmines`, or `stage21_ship` for PvE and PvP), and `Animus.Curriculum.DecisionMs` to the
-   training decision interval.
-
-4. **Load.** Models load on first use. On a running realm, `.reload config` resets the model cache.
-
-5. **Verify** in game: `.animus summon human warrior tank`, then `.animus list`. A model that is refused shows the
-   reason, and the log says `Animus model <name> not loaded: <reason>`.
-
-The realm's animus-lib must build the same manifests. Use the animus-lib revision the forge trained with, and the same
-world database and DBC data, because trainer spells and the spell catalog come from them.
-
-## 7.7 Watching a stage in game
-
-On a stock realm with mod-animus and the models (`.animus stage open` turns GM mode on for you):
-
-```
-.animus stage open stage4_duel model         # teleports you; the first episode spawns frozen
-.animus stage spawn 6 warlock_dps 70         # a new episode, frozen: tier 6 (elite, +2 levels), a level 70 warlock
-.animus stage start                          # play, episode after episode
-.animus stage stop                           # freeze where it is
-.animus stage status
-.animus stage close
-```
-
-To see exactly the training conditions, copy the run's `stage.json` `"tuning"` values into `Animus.Curriculum.*`, and
-match `Animus.Stage.DecisionMs`, `EpisodeSeconds`, `Level` and `SpawnPoint.*` to the forge settings. To look at one
-situation of stage 8: `.animus stage open stage21_ship model ambush`. To watch the random policy:
-`.animus stage open stage9_deadmines random`.
-
-## 7.8 Running the learner by hand
-
-Useful for debugging the learner in an IDE:
-
-1. Set `AnimusForge.Learner.AutoStart = 0` and restart the server.
-2. `forge start stage4_duel`. The console prints the exact learner command to run.
-3. From `python/`:
-
-   ```bash
-   .venv/bin/python -m animus.train --config configs/stage4_duel.yaml --run-name stage4_duel \
-       --socket /tmp/animus-forge.sock --runs-dir <OutputDir>/runs --layouts-dir <OutputDir>/layouts
-   ```
-
-   A hand-started learner retries until the socket exists. Ctrl+C is safe: the learner saves, and the sim waits for the
-   next learner and resets every env when one connects. Point `--runs-dir` and `--layouts-dir` at the sim's output, or
-   the learner won't find `stage.json`.
-
-**Tests:**
-
-```bash
-docker compose exec -w /azerothcore/apps/forge/python ac-dev-server .venv/bin/python -m pytest
-```
-
-**Standalone evaluation of a checkpoint** (the sim must be running the same scenario with no other learner attached):
-
-```bash
-python -m animus.evaluate --checkpoint runs/<run>/best.pt --episodes 128 --seed 1000
-```
-
-## 7.9 Extending the curriculum
-
-Most changes alter layout manifests. **Any change to a block, a catalog rule, a stage's blocks or a character-building
-rule that affects actions invalidates exported models and blocks `forge resume` of affected runs.** Plan to retrain from
-the first affected stage.
-
-Remember that animus-lib must still build on a stock core. Use only public APIs, or add a `CoreHooks` seam. Header names
-must stay unique across the three modules.
-
-### Change a reward weight or a chance
-
-Set the key in `mod_animus_forge.conf` (`AnimusForge.Curriculum.Pulls.Interrupt = 0.5`). No rebuild is needed, only a
-restart before the stage starts. The value is recorded in the run's `stage.json`. Rewards don't affect the manifest.
-
-### Add a tuning value
-
-1. Add a field with its default and comment to the right group in `CurriculumTuning.h`.
-2. Add one `f("Group.Name", tuning.Group.Name);` line to `Visit`.
-3. Document it in `animus-forge/conf/mod_animus_forge.conf.dist`, and optionally in `animus/conf/mod_animus.conf.dist`
-   under `Animus.Curriculum.`.
-
-### Add a reward term
-
-1. Add it to `RewardTerm` (`Rewards/RewardLedger.h`) and to `RewardTermName` (`Rewards/CombatReward.cpp`).
-2. Return it from the paying encounter's `RewardTerms()` and add it in `Reward()` with
-   `ledger.Add(RewardTerm::X, value)`. Scale per-decision terms by `_scenario.DecisionScale()`.
-3. It appears automatically as `reward_<name>` in episode info, TensorBoard and the learner's summaries.
-
-### Add an observation feature or action to a block
-
-1. Change the block's `Size`, `Observe` (and `Apply` for actions), and `DescribeManifest` if the feature depends on
-   lists.
-2. If it needs something the world can't provide directly, add a field to `SeatView` and fill it in the encounter's
-   `View` (and in mod-animus's `CompanionParty::View` for companions).
-3. Retrain every stage that has the block. Seeding treats a block whose size changed as incompatible, so retrain from
-   the first stage that has it.
-
-### Add a block
-
-1. Add a `BlockId` (before `Count`) and its name in `BlockName` (`Layout/Layout.cpp`).
-2. Implement `Block` in `Blocks/<Name>Block.{h,cpp}`: `Id`, `Size`, `Observe`, and optionally `BeforeApply`, `Apply`,
-   `DescribeManifest`.
-3. Register it in `Blocks/Blocks.cpp` (`GetBlock`).
-4. Add it to the stages that need it. Seeding gives the new block zero input weights and small action weights in those
-   stages. Other blocks keep their trained weights.
-
-### Add an encounter
-
-1. Declare it in `Encounters/Encounters.h` and implement it in `Encounters/<Name>Encounter.cpp`, overriding only the
-   hooks it needs.
-2. Decide what arena field selects it (possibly a new `ArenaDefinition` field and `ArenaProblem` rule), create it in the
-   `StageScenario` constructor in the right build order, and add it to the reward order list and to `uses`.
-3. Keep per-env state sized at construction. Give it `Deactivate` if it leaves anything in the world, so an arena switch
-   removes it.
-4. Put its tuning in `CurriculumTuning`. If it spawns scripted players, give their accounts a range in
-   `BotAccounts.h`.
-
-### Add a stage
-
-1. Add a `StageDefinition` to `Stages/Stages.cpp`, after the stage it extends. Validation rules are in
-   [4.1](04-curriculum.md#41-defining-a-stage).
-2. Write `python/configs/<name>.yaml` with `extends: <parent>.yaml` and only what differs: `run_name`, budget, gamma,
-   evaluation report, convergence, target, and `distill:` for a merge stage.
-3. Leave `InDefaultQueue` true to add it to `forge start`, or false to train it only by name.
-4. Check it: `forge run <name> random 64`, then `forge fast <name>`.
-5. For mod-animus, nothing else is needed. `.animus stage list` shows it and companions can use its models.
-
-### Add a standalone scenario
-
-Implement `Animus::Scenario`, create it in `CreateScenario` and list it in `ScenarioNames`
-(`src/Scenario/Scenario.cpp`), and write a learner config. The protocol and learner are shape-generic. For more than one
-agent per env, provide a real global `State`.
-
-### Change a spec build
-
-Edit `tools/spec_builds/builds.py`, run `validate.py`, then `generate.py` to rewrite `SpecBuilds.cpp`. After a rebuild,
-`forge talents <class_role> [spec] [points] [plan]` prints the build a character gets at any point count, under any of
-the three talent plans. Talent features change, so models of that class must be retrained.
-
-## 7.10 Changing the forge core
-
-Follow [chapter 2's rules](02-forge-core.md#21-rules-the-fork-follows): a `Forge*` replacement called from the top of
-the original, no config gates, the upstream body left verbatim, and a header comment explaining what was dropped and
-why. Build with `acore.sh compiler build` in the dev container. When a module needs a new core capability, add the API
-to the core and a seam in `CoreHooks`, and install it from mod-animus-forge.
-
-## 7.11 Performance
-
-- **Measure it: `forge bench`.** It times the sim at every `AnimusForge.Bench.Threads` x `Envs` pair, then runs the
-  fastest few again with the real learner (x `Bench.LearnerTorchThreads`), and reports the env steps per second of
-  each. Trials run in `<OutputDir>/bench/` with evaluation, seeding and distillation off, so no real run is touched;
-  the results are in `bench/bench.json`, and `forge bench apply` writes the winner in place: `MapUpdate.Threads` into
-  `worldserver.conf`, `AnimusForge.Envs` and (when a torch thread count won) `AnimusForge.Learner.TorchThreads` into
-  `mod_animus_forge.conf`, backing each file up as `<file>.before-bench`. The thread count takes effect when the
-  worldserver restarts, the env count at the next `forge start`. `forge cancel` stops a sweep and restores the
-  configured thread count.
-- **Know which side is the bottleneck.** `forge status` shows env steps per second and where a decision's wall time
-  goes: **world** (the map update, spread over `MapUpdate.Threads`; every env is its own instance), **sim** (this
-  module's rewards, observations and actions, on the world thread, linear in envs) and **learner** (blocked on its
-  actions and updates). In remote mode every decision is one Python round trip for all envs.
-  - If the learner's forward pass dominates (high CPU in the learner process, the world thread idle waiting), fewer,
-    larger batches help: raise `AnimusForge.Envs`.
-  - If the world thread dominates, more map threads (`MapUpdate.Threads`) and fewer classes or simpler arenas help.
-  - The learner's torch and the map update threads share the cores: `AnimusForge.Learner.TorchThreads` caps torch,
-    and the benchmark sweeps both together.
-- **Know which part of the sim.** The `sim parts` row splits that **sim** share into reward, observe (which carries
-  the action mask), final observe (the same work without the mask, for an episode that just ended), reset (building
-  the next episode's characters) and apply. Observe against final observe, per call, is the cheapest read on what
-  mask building costs; reset against the episodes rebuilt per decision says whether episode turnover is worth
-  attacking. Measure here before optimising the sim: the answer decides what is worth doing.
-- **Characters are reused.** Building a character (race, level, spec, talents, gear) was 6.4 ms of a 24 ms decision
-  at 0.96 episodes rebuilt per decision. `AnimusForge.Curriculum.Characters.ReuseEpisodes` (4) lets a seat keep its
-  character when the next episode draws the same class and build: it is healed, cleared of buffs and cooldowns,
-  restocked and moved to the new spawn, and the env keeps its level. The `sim parts` row shows the characters reused
-  per decision beside the episodes rebuilt. Evaluations always build, so the yardstick is unchanged; a battleground
-  episode always builds too. Set it to 0 to build every episode.
-- **Three measurements, each one `forge fast` pair, decide three defaults.** Read them from `metrics.csv` and record
-  the numbers here before flipping anything:
-  1. *`overlap_updates` on the GPU*: a fast stage on vs off, comparing `rollout_seconds` (contention shows as a
-     longer rollout), not `update_seconds`. If the rollout does not lengthen, `overlap_updates: true` in
-     `stage4_duel.yaml` and `stage1_move.yaml` buys back the 36-42% below.
-  2. *Take one trunk* (chapter 4, "The measurement that decides it"): one class's `stage4_duel` seeded from the
-     shared root against a class-only movement chain; `eval.at_start` and the first three evaluations.
-  3. *Character reuse* on vs off: `env_steps_per_sec`, the `reset` ms, and the first three evaluations of a fast
-     duel, to see the policy does not overfit the fewer characters.
-- **Envs are also a training setting.** One update is `rollout_length x envs x seats` env steps, so a different env
-  count changes the batch PPO trains on, not only the speed. `forge bench` says so when its winner differs from the
-  env count you train with.
-- **Updates versus rollouts.** `update_seconds` in `metrics.csv` is time spent in PPO updates, which a GPU speeds up.
-  Rollouts stay on the CPU on purpose. Serially that time is sim idle time: `env_steps_per_sec` in `metrics.csv` is the
-  rollout's own rate, and the rate over the wall clock is lower by the update's share. `overlap_updates` runs the
-  update on a worker thread while the sim collects the next rollout and closes most of that gap; the rollout then acts
-  on the update before last, and update stats are logged one update late. It is **off**, and `stage4_duel` sets it
-  off for the whole curriculum that extends it. The serial cost is real and large -- `stage1_move` is a 1.82 s update
-  against a 3.2 s rollout, `stage14_stealth` 3.08 s against 4.26 s, so 36-42% of wall clock with the sim blocked in
-  `ReceiveAny`, and the rollout being the longer of the two is the case overlap should hide completely. It was
-  measured on this machine anyway and gained nothing: 5,365 against 5,323 env steps/s, inside the noise. Whatever
-  the rollout's forward pass and the update contend for does not show up in the per-decision buckets. Do not
-  re-enable it on the arithmetic alone.
-  What would settle it: that measurement was taken at a 1.1 s update against a 2 s rollout -- the same ratio as
-  today, but updates now run on the GPU, and `forge bench` moves learner time by 0.1% between `torch_threads` 0 and
-  8, which is what a GPU-bound update looks like. One A/B on a fast stage would say. Compare `rollout_seconds`, not
-  `update_seconds`: contention shows up as a longer rollout.
-- **Evaluation cost.** Every evaluation resets all envs and runs `eval.episodes` seeded episodes plus confirmation
-  episodes. Large evaluations every few million steps can take a significant share of wall time. `eval.every_env_steps`
-  and `eval.episodes` trade that time against the reliability of convergence decisions -- but the trade is cheap in the
-  curriculum stages: an evaluation is seconds of sim time against tens of minutes of training, while its noise sets the
-  convergence margin and the per (class, role) gates. Too few episodes is the more common mistake.
-- **Asset builds** take a few seconds per class at the start of each stage (trainer data and item pools). This is
-  expected.
-- **Memory.** Instances are created once and reused. Bots reuse two GUIDs per slot. Steadily growing memory during a run
-  points to a leak worth investigating (a new per-GUID core cache, or instances not unloading).
-
-## 7.12 Troubleshooting
-
-| Symptom | Cause and fix |
-|---|---|
-| Server exits at once in Docker | The console read end of file. Run through `forge.sh`/Compose, which gives it a TTY. A server without a TTY skips the console and keeps running |
-| Every `AnimusForge.*` (or `Animus.*`) key logs "Missing property" | The module's `.conf` doesn't exist: AzerothCore no longer reads a module's `.dist`. Installing creates it when missing (Docker copies it to the config volume on start); for an install that predates that, copy it from the `.dist` |
-| "The world ticks N ms, but AnimusForge.DecisionMs M over TicksPerDecision T wants X ms" | The worldserver and the module disagree about the split, because it was built before this, or because the conf changed without restarting both. Run `./forge.sh --build` |
-| Configure fails: "mod-animus-forge needs mod-animus-lib, which is disabled" or linkage mismatch | Build both the same way. Set the named variable to `static` or `dynamic` |
-| Configure fails: "mod-animus and mod-animus-forge each carry their own copy of the curriculum" | Enable one, not both: `-DMODULE_MOD-ANIMUS=disabled` on a forge core |
-| "Learner directory ... does not contain animus/train.py" | The worldserver runs from a baked image, or the module moved. Set `AnimusForge.Learner.WorkDir` |
-| "waiting for learner" forever | Auto-start failed (see the server log and `animus-learner.log`), or `AutoStart = 0`. Run the printed command by hand |
-| The learner exits right after connecting | Config error (unknown key, wrong type), target validation (a gate on a missing metric), or a resume mismatch. See `animus-learner.log` |
-| "cannot resume ...: the scenario's layouts changed" | Shapes changed since the checkpoint. Use `forge start <stage>` instead |
-| "trunk.…: the trunk in the checkpoint does not match (hidden sizes must be equal)" | The stage's `mappo.hidden` differs from the ancestor's. Keep `[256, 512, 512]` across stages |
-| A stage always starts "from scratch" | Its ancestors have no `best.pt`/`latest.pt` in this `runs/`. Train them first, or move old runs from `modules/mod-animus-forge/python/runs/` to `var/animus-forge/runs/` |
-| "Stage X is left out: ..." at startup | A definition broke a validation rule (4.1). Fix `Stages.cpp` |
-| Evaluation "stopped after N decisions with k of M episodes" | Episodes are longer than `SPEC.EpisodeSeconds` suggests, or envs are stuck rebuilding. Check for "could not build its episode" errors |
-| "env N could not build its episode" repeated | Character or encounter build failures, usually spawn point or map problems, or missing world data. Check `AnimusForge.SpawnPoint.*` and the log lines before it |
-| Async query queue or memory keeps growing | A database write on a bot path. Check that the core has sim sessions and groups (2.8) and look at sync-query warnings |
-| Realm refuses a model: "its manifest differs" | Different animus-lib revision, world database or DBC data than training. Retrain with the realm's, or align versions |
-| Realm: "no layout manifest ... beside the model" | Copy the `.json` next to the `.amdl`. The CMake install step copies only `.amdl` |
-| Companion only follows you | Its model is missing or refused (`.animus list`), or it has no target and can't act without one |
-| Stage viewer: "you are not in an instance of its map" | `Animus.Stage.SpawnPoint.MapId` isn't instanceable, or the teleport failed within 60 s |
-| Not enough detail in the log | Set `Logger.module.animus=1,Console Server` in `worldserver.conf` for debug-level Animus logging (both modules and animus-lib log under `module.animus`) |
+The rules a change must keep are [principles.md](principles.md). Differences from upstream are listed in
+[reference/01-forge-core-delta.md](reference/01-forge-core-delta.md); read its merge-risk section before touching
+`World`, `Map*`, `WorldSession` or the movement handlers. Do not add a switch for behaviour nobody uses; delete the code.
+How to extend the curriculum (stages, blocks, encounters, rewards) is described in the `cpp-*` reference documents
+(UNVERIFIED: the former chapter 7.9 was written for the first curriculum and was removed).
