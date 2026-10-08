@@ -19,7 +19,6 @@
 #ifndef ANIMUS_LIB_CURRICULUM_SEAT_VIEW_H
 #define ANIMUS_LIB_CURRICULUM_SEAT_VIEW_H
 
-#include "RouteShortcut.h"
 #include "MoveControls.h"
 #include "Aptitude.h"
 #include "Block.h"

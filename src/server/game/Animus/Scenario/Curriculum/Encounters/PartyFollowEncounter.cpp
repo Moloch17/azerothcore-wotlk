@@ -28,6 +28,7 @@
 #include "ObjectMgr.h"
 #include "ObjectPool.h"
 #include "PartyFramesBlock.h"
+#include "PathGenerator.h"
 #include "Player.h"
 #include "Random.h"
 #include "SeatView.h"
@@ -37,17 +38,48 @@
 #include "StageState.h"
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace
 {
     /// The leader has reached a stop, or a corner of its way, this close.
     constexpr float LEADER_ARRIVE = 3.0f;
-    /// A route re-planned when the leader strays this far from the corner it walks to.
+    /// A leader that strays this far from the corner it walks to turns for the nearest corner of its leg.
     constexpr float LEADER_STRAY = 15.0f;
+    /// Chained calls of the stock PathGenerator for one leg: it stops at MAX_POINT_PATH_LENGTH points (~296 yd).
+    constexpr uint32 PATH_LEGS = 16;
+    /// A leg whose path ends this far from its stop was cut short (a closed door, a gap in the navmesh).
+    constexpr float LEG_SHORT_YARDS = 5.0f;
     /// The party gathers at the door this long before the leader sets off (not a regroup: it starts together).
     constexpr uint32 START_PAUSE_MS = 3000;
     /// A fall of the leader's this deep counts as a drop it took.
     constexpr float DROP_YARDS = 4.0f;
+
+    /// The corners of the stock PathGenerator's way from `from` to `to` (the smoothed path its creatures walk, a point
+    /// every 4 yd), chained while it stops short of the end; the point `from` itself is left out. Empty when there is
+    /// no path at all. Once per map, never per decision.
+    std::vector<Position> PathLeg(Player* walker, Position from, Position const& to)
+    {
+        std::vector<Position> corners;
+        for (uint32 leg = 0; leg < PATH_LEGS; ++leg)
+        {
+            PathGenerator path(walker);
+            path.CalculatePath(from.GetPositionX(), from.GetPositionY(), from.GetPositionZ(), to.GetPositionX(),
+                to.GetPositionY(), to.GetPositionZ(), false);
+            if ((path.GetPathType() & PATHFIND_NOPATH) || path.GetPath().size() < 2)
+                break;
+            for (std::size_t i = 1; i < path.GetPath().size(); ++i)
+                corners.emplace_back(path.GetPath()[i].x, path.GetPath()[i].y, path.GetPath()[i].z);
+            G3D::Vector3 const& end = path.GetPath().back();
+            Position const reached(end.x, end.y, end.z);
+            if (from.GetExactDist2d(&reached) < 1.0f)
+                break;
+            from = reached;
+            if (!(path.GetPathType() & (PATHFIND_INCOMPLETE | PATHFIND_SHORT)))
+                break;
+        }
+        return corners;
+    }
     /// A scripted leader that died stands up where it fell after this long.
     constexpr uint32 LEADER_RISE_MS = 2000;
 }
@@ -278,6 +310,9 @@ bool Animus::Curriculum::PartyFollowEncounter::Build(Env& env, Map* map, uint8 l
     party.Built = true;
     leader->SetFaction(first->GetFaction());
     env.Allies = { leader->GetGUID() };
+    // The leader's legs, as the stock PathGenerator walks them (cached per map: the first episode of a map pays).
+    party.Legs = LegsFor(map, leader, party.Entrance, party.Stops);
+    party.Corner = 0;
 
     party.Mode = Phase::Stopped;
     party.StopUntilMs = env.EpisodeElapsedMs + START_PAUSE_MS;
@@ -299,6 +334,31 @@ std::vector<Position> Animus::Curriculum::PartyFollowEncounter::RouteStops(uint3
             if (CreatureData const* spawn = InstanceEncounter::FindSpawn(row))
                 stops.emplace_back(spawn->posX, spawn->posY, spawn->posZ, spawn->orientation);
     return stops;
+}
+
+std::vector<std::vector<Position>> Animus::Curriculum::PartyFollowEncounter::LegsFor(Map* map, Player* walker,
+    Position const& door, std::vector<Position> const& stops)
+{
+    // The stops and the ground are fixed after startup: worked out once per map, here on the thread that resets.
+    std::lock_guard<std::mutex> lock(_routesLock);
+    auto const known = _legs.find(map->GetId());
+    if (known != _legs.end())
+        return known->second;
+    std::vector<std::vector<Position>>& legs = _legs[map->GetId()];
+    Position cursor(door);
+    uint32 corners = 0;
+    uint32 cut = 0;
+    for (Position const& stop : stops)
+    {
+        legs.push_back(PathLeg(walker, cursor, stop));
+        corners += uint32(legs.back().size());
+        if (legs.back().empty() || legs.back().back().GetExactDist2d(&stop) > LEG_SHORT_YARDS)
+            ++cut;
+        cursor = stop;
+    }
+    LOG_INFO("module.animus", "{}: map {} follow route: {} legs, {} corners, {} cut short of their stop (the leader "
+        "gives those up)", _scenario.Name(), map->GetId(), legs.size(), corners, cut);
+    return legs;
 }
 
 Player* Animus::Curriculum::PartyFollowEncounter::Leader(Env const& env) const
@@ -325,7 +385,6 @@ void Animus::Curriculum::PartyFollowEncounter::Stop(Env const& env, EnvParty& pa
     party.Mode = Phase::Stopped;
     party.StopStartMs = env.EpisodeElapsedMs;
     party.StopUntilMs = env.EpisodeElapsedMs + ms;
-    party.Way.Clear();
     if (!counts || ms < _scenario.Tuning().PartyFollow.RegroupMinStopMs)
         return;
     ++party.RegroupStops;
@@ -383,7 +442,7 @@ void Animus::Curriculum::PartyFollowEncounter::Steer(Env& env, EnvParty& party, 
         {
             ++party.NextStop;
             party.LegStuckMs = seat.StuckMs;
-            party.Way.Clear();
+            party.Corner = 0;
             if (arrived)
             {
                 ++party.StopsReached;
@@ -405,24 +464,27 @@ void Animus::Curriculum::PartyFollowEncounter::Steer(Env& env, EnvParty& party, 
         Position const target = party.Mode == Phase::BackStep ? party.BackTo : party.Stops[party.NextStop];
         float x = target.GetPositionX();
         float y = target.GetPositionY();
-        if (party.Mode == Phase::Walking)
+        if (party.Mode == Phase::Walking && party.NextStop < party.Legs.size())
         {
-            if (!party.Way.Valid || party.Way.To.GetExactDist2d(&target) > 1.0f)
+            // The corners of the cached leg, no query: on past each one reached (every one a spline step carried it
+            // past, not only the next), and the nearest when it has strayed (a fall, a step back).
+            std::vector<Position> const& leg = party.Legs[party.NextStop];
+            while (party.Corner < leg.size() && leader->GetExactDist2d(&leg[party.Corner]) <= LEADER_ARRIVE)
+                ++party.Corner;
+            if (party.Corner < leg.size() && leader->GetExactDist2d(&leg[party.Corner]) > LEADER_STRAY)
             {
-                Position const from(leader->GetPositionX(), leader->GetPositionY(), leader->GetPositionZ(), 0.0f);
-                RoutePlanner::Instance().Plan(leader->GetMap(), from, target, party.Way);
+                float nearest = std::numeric_limits<float>::max();
+                for (std::size_t corner = 0; corner < leg.size(); ++corner)
+                    if (float const away = leader->GetExactDist(&leg[corner]); away < nearest)
+                    {
+                        nearest = away;
+                        party.Corner = uint32(corner);
+                    }
             }
-            if (party.Way.Valid)
+            if (party.Corner < leg.size())
             {
-                party.Way.Advance(leader->GetPositionX(), leader->GetPositionY(), leader->GetPositionZ(),
-                    LEADER_ARRIVE);
-                if (party.Way.Next < party.Way.Count)
-                {
-                    x = party.Way.X[party.Way.Next];
-                    y = party.Way.Y[party.Way.Next];
-                    if (leader->GetExactDist2d(x, y) > LEADER_STRAY)
-                        party.Way.Valid = false;    // strayed: planned again next decision
-                }
+                x = leg[party.Corner].GetPositionX();
+                y = leg[party.Corner].GetPositionY();
             }
         }
         held = Movement::Seek(seat.Mover.Body, x, y);

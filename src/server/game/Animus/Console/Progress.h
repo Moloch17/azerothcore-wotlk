@@ -200,7 +200,7 @@ namespace AnimusForge
         };
 
         VisionStats Vision;
-        /// The last resets one by one (Animus::RecentResets): placement, its route plans, the reset as a whole.
+        /// The last resets one by one (Animus::RecentResets): placement, the reset as a whole.
         Animus::ResetSamples::Summary Resets;
         /// Observation thread time per decision by block (and "view", the seat's work before its blocks), largest
         /// first.

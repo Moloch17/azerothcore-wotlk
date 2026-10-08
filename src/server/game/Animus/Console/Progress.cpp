@@ -93,11 +93,9 @@ namespace
         Animus::ResetSamples::Summary const& resets = sim.Resets;
         if (resets.Count)
             table.AddRow({ "placement", Acore::StringFormat("{:.1f} ms p95", resets.Placement.P95Ms),
-                Acore::StringFormat("per reset over the last {}: placement p50 {:.1f}, max {:.1f}; route plans "
-                    "p50 {:.1f}, p95 {:.1f}, max {:.1f} ({:.1f} a reset); whole reset p50 {:.1f}, p95 {:.1f}, max "
-                    "{:.1f} ms",
-                    resets.Count, resets.Placement.P50Ms, resets.Placement.MaxMs, resets.Route.P50Ms,
-                    resets.Route.P95Ms, resets.Route.MaxMs, resets.RoutesPerReset, resets.Reset.P50Ms,
+                Acore::StringFormat("per reset over the last {}: placement p50 {:.1f}, max {:.1f}; whole reset p50 "
+                    "{:.1f}, p95 {:.1f}, max {:.1f} ms",
+                    resets.Count, resets.Placement.P50Ms, resets.Placement.MaxMs, resets.Reset.P50Ms,
                     resets.Reset.P95Ms, resets.Reset.MaxMs) });
     }
 
@@ -374,17 +372,15 @@ std::string AnimusForge::ResetStallText(Animus::ResetSamples::Summary const& res
     Animus::StallVerdict const verdict = Animus::Stall(resets, resetMsPerDecision, decisionMs);
     if (verdict.Cause == Animus::StallCause::None)
         return {};
-    char const* const on = verdict.Cause == Animus::StallCause::Routes
-        ? "route planning (RoutePlanner, serial on the thread that resets: long trips, ledge reaches)"
-        : verdict.Cause == Animus::StallCause::Placement
-        ? "placement (the encounters' Build less its routes: objective and ledge searches, spawn retries)"
+    char const* const on = verdict.Cause == Animus::StallCause::Placement
+        ? "placement (the encounters' Build: objective and ledge searches, spawn retries)"
         : "the reset's characters, kit and despawns";
     return Acore::StringFormat("Reset stall: resets take {:.0f}% of a decision ({:.1f} ms a decision of {:.1f}){}, "
-        "mostly {}: route plans {:.1f} ms, placement {:.1f} ms, the reset {:.1f} ms on average (p95 {:.1f}, max "
-        "{:.1f}) over the last {} resets; see the placement row", 100.0 * verdict.Share, resetMsPerDecision, decisionMs,
+        "mostly {}: placement {:.1f} ms, the reset {:.1f} ms on average (p95 {:.1f}, max {:.1f}) over the last {} "
+        "resets; see the placement row", 100.0 * verdict.Share, resetMsPerDecision, decisionMs,
         verdict.Tail ? Acore::StringFormat(", and one in twenty takes {:.1f} ms or more, longer than a whole decision",
-            resets.Reset.P95Ms) : std::string(), on, resets.Route.MeanMs, resets.Placement.MeanMs,
-        resets.Reset.MeanMs, resets.Reset.P95Ms, resets.Reset.MaxMs, resets.Count);
+            resets.Reset.P95Ms) : std::string(), on, resets.Placement.MeanMs, resets.Reset.MeanMs,
+        resets.Reset.P95Ms, resets.Reset.MaxMs, resets.Count);
 }
 
 void AnimusForge::ProgressMonitor::Report(ForgeConfig const& config, SimSnapshot const& sim,

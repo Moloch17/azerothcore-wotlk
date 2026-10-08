@@ -45,16 +45,13 @@ namespace Animus
         uint64 DespawnNs = 0;       // the previous episode's targets despawned
         uint64 SeatsNs = 0;         // the seats' loop as a whole (create, place and configure are inside it)
         uint64 ScenarioNs = 0;      // Scenario::Reset as a whole, from the pool
-        uint64 RouteNs = 0;         // RoutePlanner::Plan, wherever in the reset it was asked (inside EncounterNs
-                                    // when an encounter's Build plans)
-        uint32 Routes = 0;          // ... and how many plans
     };
 
     inline thread_local ResetTiming CurrentReset;
 
     /// The last WINDOW resets one by one, for the status line's p50 / p95 (player-controller C8). A mean per decision
-    /// hides a reset that stalls among the cheap ones -- a 500 yard route planned on the thread that resets (M5), a
-    /// ledge search that tries again and again (M3) -- and the decision waits for it all the same. Added to by the
+    /// hides a reset that stalls among the cheap ones -- a ledge search that tries again and again (M3) -- and the
+    /// decision waits for it all the same. Added to by the
     /// world thread and by the map threads' reset tasks; a reset is rare next to a lock.
     class ResetSamples
     {
@@ -63,9 +60,7 @@ namespace Animus
 
         struct Sample
         {
-            uint64 PlacementNs = 0;     // the encounters' Build: objectives, routes, spawn retries (EncounterNs)
-            uint64 RouteNs = 0;
-            uint32 Routes = 0;
+            uint64 PlacementNs = 0;     // the encounters' Build: objectives, spawn retries (EncounterNs)
             uint64 ResetNs = 0;         // the reset as a whole
         };
 
@@ -81,9 +76,7 @@ namespace Animus
         {
             uint32 Count = 0;           // resets in the window
             Quantiles Placement;
-            Quantiles Route;            // per reset, every plan it made together
             Quantiles Reset;
-            double RoutesPerReset = 0.0;
         };
 
         void Add(Sample const& sample)
@@ -103,29 +96,22 @@ namespace Animus
         [[nodiscard]] Summary Summarise() const
         {
             std::vector<uint64> placement;
-            std::vector<uint64> route;
             std::vector<uint64> reset;
-            uint64 routes = 0;
             {
                 std::lock_guard<std::mutex> guard(_lock);
                 std::size_t const count = std::min(_added, WINDOW);
                 placement.reserve(count);
-                route.reserve(count);
                 reset.reserve(count);
                 for (std::size_t i = 0; i < count; ++i)
                 {
                     placement.push_back(_ring[i].PlacementNs);
-                    route.push_back(_ring[i].RouteNs);
                     reset.push_back(_ring[i].ResetNs);
-                    routes += _ring[i].Routes;
                 }
             }
             Summary out;
             out.Count = uint32(placement.size());
             out.Placement = Of(placement);
-            out.Route = Of(route);
             out.Reset = Of(reset);
-            out.RoutesPerReset = out.Count ? double(routes) / double(out.Count) : 0.0;
             return out;
         }
 
@@ -164,8 +150,8 @@ namespace Animus
     enum class StallCause : uint8
     {
         None = 0,
-        Routes,         // RoutePlanner::Plan is at least half of the reset time (M5's long trips, M3's ledge reaches)
-        Placement,      // the encounters' Build less its routes is (M3's ledge search, objectives, spawn retries)
+        Placement,      // the encounters' Build is at least half of the reset time (M3's ledge search, objectives,
+                        // spawn retries, a dungeon's stock path legs)
         Reset,          // the rest of the reset is: characters, kit, despawns
     };
 
@@ -184,13 +170,13 @@ namespace Animus
         bool Tail = false;              // one reset in twenty longer than a whole decision (and the floor)
     };
 
-    /// Whether the resets stall the sim (the M3 dry check, 2026-10-05: route plans of ~150 ms at p95, under the 250 ms
+    /// Whether the resets stall the sim (the M3 dry check, 2026-10-05: resets of ~150 ms at p95, under the 250 ms
     /// decision cadence the old rule compared against while the sim ran 17 ms decisions, and sps halved -- reported
     /// only at the stage's end). Two ways: the reset time summed per decision (`resetMsPerDecision`: the world
     /// thread's and the map threads' resets per decision, from the pool's timings) is STALL_SHARE or more of the
     /// decision's wall time (`decisionMs`: world + sim + learner), which is throughput lost; or one reset in twenty
     /// takes longer than a whole decision, which is a decision held up. The cause is where the reset time goes in sum
-    /// (the means): route planning, the rest of placement, or the rest of the reset.
+    /// (the means): placement, or the rest of the reset.
     [[nodiscard]] inline StallVerdict Stall(ResetSamples::Summary const& resets, double resetMsPerDecision,
         double decisionMs)
     {
@@ -202,8 +188,7 @@ namespace Animus
         if (out.Share < STALL_SHARE && !out.Tail)
             return out;
         double const total = std::max(resets.Reset.MeanMs, 1e-9);
-        out.Cause = resets.Route.MeanMs * 2.0 >= total ? StallCause::Routes
-            : resets.Placement.MeanMs * 2.0 >= total ? StallCause::Placement : StallCause::Reset;
+        out.Cause = resets.Placement.MeanMs * 2.0 >= total ? StallCause::Placement : StallCause::Reset;
         return out;
     }
 
