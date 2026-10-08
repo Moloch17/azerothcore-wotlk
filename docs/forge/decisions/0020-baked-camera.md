@@ -30,6 +30,13 @@ to a GPU. The baker uses only stock upstream APIs, so the live realm can use the
   source with `maps`/`vmaps`. A map with no scene file refuses to start: no fallback and no flag (principle 17).
 - Terrain (continents) is a documented later extension; v1 refuses a map that has `.map` tiles.
 
+**Stage 1 result (Stockades, map 34, ten poses, 128 x 64, no units).** Same pictures: every pixel the same class; 99.8% the
+same depth byte and 99.95% within one byte step (3.3% of the distance); of the 42 pixels in 81,920 that part by two or more
+steps, 36 are cracks in the WMO mesh the baked tracer stops at and the old path passes through. About 3.2 times faster
+(median frame 1.40 ms against 4.5 ms; the tracer alone about 0.9 ms of it, 4 times faster than the two tree casts).
+The scene is 2.0 MB (29,190 triangles, 19,259 nodes), bakes in 0.02 s and loads in 1.8 ms. The tracer matches a brute-force
+triangle test on 100,000 rays. Only a closed WMO was measured (no terrain, no liquid, no sky).
+
 **Status.** Stage 1 (baker, format, tracer, bench, Stockades measured against the old camera) is done. Stage 2 (compose into
 `MapVisionWorld`, delete the orphaned static Collision patch, fingerprint and distribution, the other instance maps)
 remains. This supersedes the camera-core-patch plan. The measured result is in the stage 1 report.

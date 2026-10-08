@@ -5,7 +5,7 @@ Reads the old camera's snapshots (`forge camera snapshot`: oldcam-<pose>-{depth.
 old_console.json) and the baked camera's (scene_baker bench: newcam-<pose>-... and new_timing.json), and writes into
 <root>/compare/:
 
-  <pose>-compare.png     old kind | new kind | old depth | new depth | difference, 3x, captioned with the timings
+  <pose>-compare.png     old kind | new kind | old depth | new depth | old slope | new slope | difference, 3x, captioned with the timings
   contact-sheet.png      every pose, one row each
   metrics.json           per pose and overall agreement
   summary.md             the agreement and timing tables
@@ -88,6 +88,81 @@ def old_timing(text):
     }
 
 
+def load_scene_triangles(path):
+    """The scene's solid triangles as (vertex 0, edge 1, edge 2) in double precision (Scene header and slot 0)."""
+    import struct
+    data = Path(path).read_bytes()
+    count = struct.unpack_from("<I", data, 72)[0]
+    offset = struct.unpack_from("<QQ", data, 256)[0]
+    return np.frombuffer(data, dtype="<f4", count=count * 9, offset=offset).reshape(-1, 3, 3).astype(np.float64)
+
+
+def pixel_ray(pose, row, col, width=128, height=64, fov_h=120.0, fov_v=60.0):
+    """The camera and the unit direction of a pixel, as Vision::PlaceCamera (zoom 0) and PixelDirection."""
+    px, py, pz, yaw, pitch, _zoom = pose
+    rad = math.pi / 180.0
+    origin = np.array([px, py, pz + 0.9 * 2.0])
+    yaw_right = ((col + 0.5) / width * fov_h - fov_h / 2.0) * rad
+    pitch_up = (fov_v / 2.0 - (row + 0.5) / height * fov_v) * rad
+    azimuth, elevation = yaw * rad - yaw_right, pitch * rad + pitch_up
+    return origin, np.array([math.cos(elevation) * math.cos(azimuth), math.cos(elevation) * math.sin(azimuth),
+                             math.sin(elevation)])
+
+
+def first_hit(tris, origin, direction, slack):
+    """Nearest distance along the ray to a triangle fattened by `slack` (barycentric), or None."""
+    v0, e1, e2 = tris[:, 0], tris[:, 1], tris[:, 2]
+    p = np.cross(direction, e2)
+    det = (e1 * p).sum(1)
+    ok = np.abs(det) > 1e-18
+    inv = np.where(ok, 1.0 / np.where(ok, det, 1.0), 0.0)
+    s = origin - v0
+    u = (s * p).sum(1) * inv
+    q = np.cross(s, e1)
+    v = (q * direction).sum(1) * inv
+    t = (e2 * q).sum(1) * inv
+    hit = ok & (u >= -slack) & (v >= -slack) & (u + v <= 1 + slack) & (t >= 0)
+    return float(t[hit].min()) if hit.any() else None
+
+
+def attribute(tris, pose, pixels):
+    """For pixels where the two cameras part by 2 or more depth steps: who passes through a crack of the mesh.
+
+    exact = the nearest hit of the triangles as extracted; closed = the nearest once triangles are fattened by 1
+    percent of their size (a crack of the mesh shut). old / new are the cameras' distances (from their bytes)."""
+    out = []
+    for row, col, old_byte, new_byte in pixels:
+        origin, direction = pixel_ray(pose, row, col)
+        exact = first_hit(tris, origin, direction, 0.0)
+        closed = first_hit(tris, origin, direction, 0.01)
+        old_d, new_d = float(yards(np.array([old_byte]))[0]), float(yards(np.array([new_byte]))[0])
+        near = lambda a, b: a is not None and abs(a - b) <= 0.04 * b + 0.05
+        if closed is not None and exact is not None and closed < exact - 0.05:
+            if near(closed, old_d) and near(exact, new_d):
+                kind = "crack: old stops at it, new passes through"
+            elif near(closed, new_d) and near(exact, old_d):
+                kind = "crack: new stops at it, old passes through"
+            else:
+                kind = "crack: neither matches (a different edge)"
+        elif near(exact, new_d) and not near(exact, old_d):
+            kind = "no crack here: new = extracted geometry, old differs"
+        elif near(exact, old_d) and not near(exact, new_d):
+            kind = "no crack here: old = extracted geometry, new differs"
+        else:
+            kind = "other"
+        out.append({"row": row, "col": col, "old_byte": old_byte, "new_byte": new_byte,
+                    "old_yd": round(old_d, 2), "new_yd": round(new_d, 2),
+                    "exact_yd": None if exact is None else round(exact, 2),
+                    "closed_yd": None if closed is None else round(closed, 2), "kind": kind})
+    return out
+
+
+def old_slope(path):
+    """The old snapshot's slope panel (the 4th of oldcam-<pose>.png, 2x nearest, 4 pixels between panels)."""
+    image = np.array(Image.open(path).convert("L"))
+    return image[::2, 3 * 260:3 * 260 + 256:2]
+
+
 def difference_image(old_depth, new_depth, old_class, new_class):
     """Black where the depth bytes agree, blue to red as they part, magenta where the class differs."""
     step = np.abs(old_depth.astype(int) - new_depth.astype(int))
@@ -127,7 +202,7 @@ def pose_metrics(old_depth, new_depth, old_class, new_class):
         "abs_diff_yd_max": float(absd.max()) if absd.size else None,
         "max_depth_step": int(step.max()),
         "class_mismatches": dict(pairs),
-        "pixels_2_or_more_steps": [[int(r), int(c), int(old_depth[r, c]), int(new_depth[r, c])] for r, c in big][:40],
+        "pixels_2_or_more_steps": [[int(r), int(c), int(old_depth[r, c]), int(new_depth[r, c])] for r, c in big],
     }
 
 
@@ -146,6 +221,8 @@ def depth_rgb(depth):
 
 def main():
     root = Path(sys.argv[1] if len(sys.argv) > 1 else "var/baked-camera-compare")
+    scene = Path(sys.argv[2]) if len(sys.argv) > 2 else root / "data" / "scenes" / "034.scene"
+    tris = load_scene_triangles(scene) if scene.exists() else None
     old = json.loads((root / "old" / "old_console.json").read_text())
     new = json.loads((root / "new" / "new_timing.json").read_text())
     out = root / "compare"
@@ -159,10 +236,20 @@ def main():
         n_kind = read(root / "new" / f"newcam-{name}-kind.ppm")
         n_height = read(root / "new" / f"newcam-{name}-height.pgm")
         o_class, n_class = classes_of(o_kind), classes_of(n_kind)
+        o_slope = old_slope(root / "old" / f"oldcam-{name}.png")
+        n_slope = read(root / "new" / f"newcam-{name}-normal.pgm")
         stat = pose_metrics(o_depth, n_depth, o_class, n_class)
         timing_old = old_timing(record["console"])
         timing_new = new["poses"][name]
+        slope_step = np.abs(o_slope.astype(int) - n_slope.astype(int))
+        stat["slope_same_byte"] = float((slope_step == 0).mean())
+        stat["slope_within_2_bytes"] = float((slope_step <= 2).mean())
+        stat["slope_within_10_bytes"] = float((slope_step <= 10).mean())
+        stat["slope_mean_abs_byte"] = float(slope_step.mean())
+        stat["slope_max_abs_byte"] = int(slope_step.max())
         stat["timing_old"], stat["timing_new"] = timing_old, timing_new
+        if tris is not None:
+            stat["attribution"] = attribute(tris, record["pose"], stat["pixels_2_or_more_steps"])
         stat["speedup"] = timing_old["wall_us"] / timing_new["median_us"]
         metrics[name] = stat
 
@@ -170,6 +257,8 @@ def main():
         panels = [panel(o_kind, "old kind", small), panel(n_kind, "new kind", small),
                   panel(depth_rgb(o_depth), "old depth (near dark)", small),
                   panel(depth_rgb(n_depth), "new depth", small),
+                  panel(depth_rgb(o_slope), "old slope (white floor, black wall)", small),
+                  panel(depth_rgb(n_slope), "new slope", small),
                   panel(diff, "difference: black same byte, blue 1, light blue 2, yellow 3-5, red >5, magenta class", small)]
         gap = 8
         width = sum(p.width for p in panels) + gap * (len(panels) - 1)
@@ -202,7 +291,7 @@ def main():
         solo.save(root / "new" / f"newcam-{name}.png", optimize=True)
 
     # Contact sheet: every pose, half size.
-    half = [r.resize((r.width // 2, r.height // 2), Image.LANCZOS) for r in sheet_rows]
+    half = [r.resize((r.width * 2 // 3, r.height * 2 // 3), Image.LANCZOS) for r in sheet_rows]
     sheet = Image.new("RGB", (half[0].width, sum(r.height for r in half)), (20, 20, 20))
     y = 0
     for r in half:
@@ -218,6 +307,8 @@ def main():
     overall = {key: statistics.mean(metrics[n][key] for n in names)
                for key in ("same_class", "same_depth_byte", "depth_within_1_step", "depth_within_3_steps")}
     overall["class_mismatches"] = dict(pooled)
+    kinds = Counter(a["kind"] for n in names for a in metrics[n].get("attribution", []))
+    overall["attribution_of_pixels_2_or_more_steps"] = dict(kinds)
     overall["worst_depth_step"] = max(metrics[n]["max_depth_step"] for n in names)
     overall["speedup_median"] = statistics.median(metrics[n]["speedup"] for n in names)
     metrics["overall"] = overall
@@ -232,6 +323,11 @@ def main():
                      f"{pct(m['depth_within_3_steps'])} | {pct(m['rel_within_1pct'])} | {pct(m['rel_within_5pct'])} | "
                      f"{pct(m['rel_within_10pct'])} | {m['abs_diff_yd_mean']:.3f} / {m['abs_diff_yd_median']:.3f} / "
                      f"{m['abs_diff_yd_max']:.3f} |")
+    lines += ["", "| pose | slope same byte | within 2 bytes | within 10 bytes | mean / max abs byte |", "|---|---|---|---|---|"]
+    for n in names:
+        m = metrics[n]
+        lines.append(f"| {n} | {100 * m['slope_same_byte']:.2f}% | {100 * m['slope_within_2_bytes']:.2f}% | "
+                     f"{100 * m['slope_within_10_bytes']:.2f}% | {m['slope_mean_abs_byte']:.3f} / {m['slope_max_abs_byte']} |")
     lines += ["", "| pose | old wall us | old trees / liquid / terrain us | new median us | new min us | new us/ray | "
               "new trace alone us | new reach us | new pixel dir+encode us | speed-up (old wall / new median) |",
               "|---|---|---|---|---|---|---|---|---|---|"]

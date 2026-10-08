@@ -34,9 +34,9 @@ namespace Animus::Vision
 {
     /// Barycentric slack of the triangle test: a triangle counts as hit within this share of its size outside its
     /// edges. The collision meshes are not watertight (WMO groups leave gaps of a few millimetres and T-junctions
-    /// along shared edges), so an exact test lets a ray through a crack of a solid wall; this closes cracks up to a
-    /// thousandth of a triangle's size and makes a hit grazing an edge count, which no one can see.
-    constexpr float BAKED_EDGE_SLACK = 1e-3f;
+    /// along shared edges), so an exact test lets a ray through a crack of a solid wall; this closes cracks up to
+    /// three thousandths of a triangle's size and makes a hit grazing an edge count, which no one can see.
+    constexpr float BAKED_EDGE_SLACK = 3e-3f;
 
     class BakedWorld
     {
