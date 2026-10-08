@@ -46,7 +46,6 @@ The yaml section is `mappo:` (`TrainConfig.mappo`, `config.py:657`); unknown key
 | `chunk_length` | 0 | BPTT chunk (`_chunk_length :1568`: largest divisor of T at most `chunk_length`; 0 when a distiller teaches) |
 | `rollout_graphs` | True | `_graphs_off_reason` |
 | `vision_chunk_rows` | 0 | `_encode_vision` chunking |
-| `map_vin` | False | read by `trainer_inputs` (`train.py:516`), not by the trainer |
 | `rank_sync`, `weight_sync_every` | "gradients", 1 | `update()` (`:1469`); also `train.py:549` (async), `async_sync.Link` |
 | `goal_count`, `goal_targets`, `goal_every_decisions`, `goal_slots` | 0, 1, 16, 1 | goal head; the goal clock `age % goal_every_decisions == 0` |
 | `hindsight_coef` | 0.0 | hindsight imitation term (needs `goal_slots > 1`) |

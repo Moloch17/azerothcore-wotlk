@@ -55,7 +55,6 @@ Call chain (`train.py:502-531`, also used by `tools/resume_check.py` and `tests/
    - `vision_of(stage, names)` (`networks.py:968`): one dict per layout with a `vision` block, else `None`;
    - `check_image_bytes` and `check_look_heads` (`networks.py:1080, 1089`) against SPEC; a mismatch is a `SystemExit`
      (`train.py:514`);
-   - `with_map_vin(vision, mappo.map_vin)` (`networks.py:1059`) which sets `map.vin = True` where a map exists.
 3. `make_trainer` (`train.py:519`) passes `[(obs_dim, num_actions)...]`, `state_dim`, `config.mappo`, the two devices,
    `seat_sets` and `vision` to `MappoTrainer.__init__` (`trainer.py:602`).
 4. `MappoTrainer.__init__` constructs, in order (`trainer.py:644-696`):
@@ -93,7 +92,7 @@ Source: `tests/golden/learner_update.json`, case `move2_seek` (`actor_shapes`, `
 `configs/move2_seek.yaml` (which `extends` `move1_controls.yaml`). Ten layouts. Config in force:
 `hidden [256, 512, 512]`, `recurrent_size 128`, `goal_count 12`, `goal_targets 29`, `goal_slots 4`,
 `slow_goal_size 128`, `foresight_coef 0.25` with `foresight_horizons_seconds [5, 30]`, `foresight_obs_targets`,
-`foresight_feedback`, `goal_lookahead`, `seat_sets false`, `map_vin false`; the stage has camera (patch 8), entity
+`foresight_feedback`, `goal_lookahead`, `seat_sets false`; the stage has camera (patch 8), entity
 list (32 slots x 20), mental map (48x48x6, 4 scalars), look heads (7,5,5); no sight list.
 
 The golden file lists **state_dict keys** (parameters and buffers). Both counts verified from the file: actor 153,
@@ -247,7 +246,6 @@ Config keys are `MappoConfig` fields (`trainer.py:41`) unless stated. "Live yaml
 | Feature | Keys (default) | Live yaml | Depends on it |
 |---|---|---|---|
 | Seat sets (`EntitySets`) | `mappo.seat_sets` (false); `mappo.entity_attention` (false) | false, set explicitly in `move1_controls.yaml:57` and `combat1_fight.yaml:53`; every other stage inherits it. Never on. | `EntitySets` and `_attach_entity_sets`; pointer heads for slot-naming actions; `_graphs_off_reason` disables rollout graphs when on (`trainer.py:893`); `stage.json` `layouts.<n>.sets` is still written by the sim ([cpp-stagescenario.md](cpp-stagescenario.md)); `export` tests `test_export_seat_sets.py` |
-| Map VIN | `mappo.map_vin` (false) | false in `move2_seek.yaml:51` and `combat1_fight.yaml:91` | `MapValueIteration`, `with_map_vin`; adds `vision.map.vin.*` params; zero-initialised output so a seeded policy is unchanged |
 | Style reward | `style.enabled` (false), `style.dataset`, `style.reference`, ... (`config.StyleConfig`, `config.py:271`) | `style: enabled: false` in `move1_controls.yaml:208` and `combat1_fight.yaml:172` | `style.py`, `human/motion.py`; the realism columns work with `style.reference` alone |
 | Go-Explore | `explore.enabled` (false), `share`, `table_size`, `max_cells`, `depth_weight` (`config.ExploreConfig`, `config.py:321`) | `true`, `share 0.5` in `dungeon2_ragefire.yaml:35`; inherited by `dungeon3_deadmines` (no `explore` key there, checked); `false` in `group2_corridor.yaml:36`, inherited by `dungeon1_pulls` | `explore.py`, `ForgeEnv.set_explore_starts`, the wing episode-info columns |
 | Rank sync | `rank_sync` ("gradients"), `weight_sync_every` (1) | not in any yaml. Injected by the worldserver: `LearnerProcess.cpp:138` passes `mappo.rank_sync=` the config's `DistSync` or "weights". The live cluster value is UNVERIFIED (per-machine conf, `ForgeConfig.h:212`) | `parallel.py` ("gradients", "weights"), `async_sync.py` ("async") |

@@ -88,7 +88,6 @@ mappo:
   min_layout_rows: 32
   target_kl: 0.02
   vision_chunk_rows: 2048
-  map_vin: false
 
 # Fixed seeds: seed i plays (class, build) pair i mod pairs at rung (i / pairs) mod 6 (DifficultyLadder's spread) from
 # corridor point i mod points, so successive checkpoints fight the same fights; 240 episodes cover every pair at every

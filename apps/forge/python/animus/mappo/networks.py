@@ -1056,15 +1056,6 @@ def vision_of(stage: dict | None, layout_names: Sequence[str]) -> list[dict | No
     return out if any(entry is not None for entry in out) else None
 
 
-def with_map_vin(vision: list[dict | None] | None, vin: bool) -> list[dict | None] | None:
-    """`vision` with the mental map's value iteration network switched on (mappo.map_vin) where the layouts have a
-    map; as it is otherwise."""
-    if vision is None or not vin:
-        return vision
-    return [None if entry is None or entry.get("map") is None else {**entry, "map": {**entry["map"], "vin": True}}
-            for entry in vision]
-
-
 def vision_image_bytes(vision: list[dict | None] | None) -> int:
     """The bytes of an agent's camera row stage.json's camera makes, 0 without one: its image (height x width x bytes
     a pixel, the sim's Spec.image_bytes) and, with a map block, its map crop after it (Spec.map_bytes) -- the row the
@@ -1161,50 +1152,6 @@ def _spatial_softmax(features: torch.Tensor, grid_x: torch.Tensor, grid_y: torch
     return torch.cat([x, y], dim=-1)
 
 
-class MapValueIteration(nn.Module):
-    """**The value iteration network** over the mental map's crop (perception-goals plan 2c, REDESIGN §3; behind
-    mappo.map_vin, off by default): a reward map (tanh, so the values stay bounded) from the crop's patch features and
-    the goal -- "the object seen" (any objective pixel in this decision's frame) or "unexplored" (none) -- a value
-    iteration over the patch grid as many steps as the grid is wide, so a value crosses the whole crop (a 3 x 3
-    convolution of [reward, value] into ACTIONS move values, the value their max), and its read-out: the values round
-    the body (the grid's centre READ x READ) and the softmax's expected (x, y) of the value map. Fixed shapes and steps,
-    nothing read back: a rollout graph captures it. Its output projection starts at zero, so switching it on leaves a
-    seeded policy as it was."""
-
-    ACTIONS = 8
-    READ = 4
-
-    def __init__(self, channels: int, grid: tuple[int, int], out_width: int):
-        super().__init__()
-        self.grid = grid
-        self.iterations = max(grid)
-        self.reward = nn.Conv2d(channels + 1, 1, 1)
-        self.transition = nn.Conv2d(2, self.ACTIONS, 3, padding=1, bias=False)
-        self.out = nn.Linear(self.READ * self.READ + 2, out_width)
-        nn.init.zeros_(self.out.weight)
-        nn.init.zeros_(self.out.bias)
-        grid_y, grid_x = torch.meshgrid(torch.linspace(-1.0, 1.0, grid[0]), torch.linspace(-1.0, 1.0, grid[1]),
-                                        indexing="ij")
-        self.register_buffer("grid_x", grid_x.reshape(-1), persistent=False)
-        self.register_buffer("grid_y", grid_y.reshape(-1), persistent=False)
-
-    def values(self, features: torch.Tensor, seen: torch.Tensor) -> torch.Tensor:
-        """The value map [N, 1, H, W] after the iterations, from the features [N, C, H, W] and the goal [N]."""
-        goal = seen.to(features.dtype)[:, None, None, None].expand(-1, 1, *features.shape[2:])
-        reward = torch.tanh(self.reward(torch.cat([features, goal], dim=1)))
-        value = torch.zeros_like(reward)
-        for _ in range(self.iterations):
-            value = self.transition(torch.cat([reward, value], dim=1)).amax(dim=1, keepdim=True)
-        return value
-
-    def forward(self, features: torch.Tensor, seen: torch.Tensor) -> torch.Tensor:
-        value = self.values(features, seen)
-        rows, cols = self.grid
-        top, left = (rows - self.READ) // 2, (cols - self.READ) // 2
-        around = value[:, 0, top:top + self.READ, left:left + self.READ].flatten(1)
-        return self.out(torch.cat([around, _spatial_softmax(value, self.grid_x, self.grid_y)], dim=-1))
-
-
 class MapEncoder(nn.Module):
     """**The mental map's encoder** (perception-goals REDESIGN §3, the Change): the one heading-up crop (48 x 48 cells
     of 2 yd, protocol 24's bytes after the camera's image), shared by every layout as the camera is. Per cell, the code
@@ -1213,8 +1160,7 @@ class MapEncoder(nn.Module):
     (8 yd square at 2 yd; a 12 x 12 grid at 48 x 48) through Linear -> 64 + SiLU and Linear 64 -> 64 + SiLU, each
     channel's spatial-softmax keypoint over the grid, the channels' mean, the block's scalars (its own columns, read
     raw), and Linear -> EMBED. A convolution stack at the crop's own resolution was measured first: 3.6 times the
-    camera's update cost on the host's card, the patches a fraction of it. Optionally the value iteration network over
-    the patch grid (MapValueIteration, mappo.map_vin).
+    camera's update cost on the host's card, the patches a fraction of it.
 
     **The join** (`join`, orthogonal): EMBED -> the camera's embedding width, after a SiLU, added to the camera's
     embedding before its own SiLU, so both networks read the map through their own camera join. Seeding from a
@@ -1245,7 +1191,6 @@ class MapEncoder(nn.Module):
         self.register_buffer("grid_x", grid_x.reshape(-1), persistent=False)
         self.register_buffer("grid_y", grid_y.reshape(-1), persistent=False)
         self.embed = nn.Linear(3 * self.WIDTHS[1] + self.scalars, self.EMBED)
-        self.vin = MapValueIteration(self.WIDTHS[1], self.grid, self.EMBED) if crop.get("vin") else None
         self.join = _linear(self.EMBED, out_width, math.sqrt(2))
         # Each layout's first map column (the scalars), -1 for a layout without the map.
         self.register_buffer("start", torch.tensor(list(starts), dtype=torch.long), persistent=False)
@@ -1267,10 +1212,8 @@ class MapEncoder(nn.Module):
         cut = planes.reshape(planes.shape[0], rows, self.PATCH, cols, self.PATCH, self.planes_per_cell)
         return cut.permute(0, 1, 3, 2, 4, 5).reshape(planes.shape[0], rows * cols, -1)
 
-    def forward(self, obs: torch.Tensor, layout: torch.Tensor, crops: torch.Tensor,
-                seen: torch.Tensor | None = None) -> torch.Tensor:
-        """What the map adds to the camera's embedding (before its SiLU), [N, out_width]. `seen` [N]: the frame shows
-        the objective (the VIN's goal); none, unexplored."""
+    def forward(self, obs: torch.Tensor, layout: torch.Tensor, crops: torch.Tensor) -> torch.Tensor:
+        """What the map adds to the camera's embedding (before its SiLU), [N, out_width]."""
         silu = nn.functional.silu
         layout = layout.reshape(-1).long()
         columns = (self.start[layout].clamp(min=0)[:, None] + self.offsets[None, :]).clamp(max=obs.shape[-1] - 1)
@@ -1278,11 +1221,7 @@ class MapEncoder(nn.Module):
         features = silu(self.mix(silu(self.patch(self.patches(self.planes(crops))))))     # [N, patches, C]
         grid = features.transpose(1, 2).reshape(features.shape[0], -1, *self.grid)
         pooled = torch.cat([_spatial_softmax(grid, self.grid_x, self.grid_y), features.mean(dim=1), scalars], dim=-1)
-        embedded = self.embed(pooled)
-        if self.vin is not None:
-            goal = seen if seen is not None else torch.zeros(obs.shape[0], device=obs.device)
-            embedded = embedded + self.vin(grid, goal)
-        return self.join(silu(embedded))
+        return self.join(silu(self.embed(pooled)))
 
 
 class VisibleEntities(EntitySets):
@@ -1715,9 +1654,7 @@ class VisionEncoder(nn.Module):
         out = self.embed(torch.cat([self.keypoints(features), scalars], dim=-1))
         if self.map is not None:
             crops = image.reshape(-1, self.image_bytes + self.map_bytes)[:, self.image_bytes:]
-            # The VIN's goal: the frame shows the objective (any pixel's objective flag).
-            seen = (decoded[..., IMAGE_CHANNELS - 1] > 0.5).flatten(1).any(dim=1)
-            out = out + self.map(obs, layout, crops, seen).to(out.dtype)
+            out = out + self.map(obs, layout, crops).to(out.dtype)
         if self.entities is not None:
             slots = decode_slots(self.pixels(image), self.height, self.width)
             linked = self.link_features(features, slots)

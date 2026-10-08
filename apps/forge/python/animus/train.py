@@ -46,7 +46,7 @@ from .evaluation import (ConvergenceTracker, EvalResult, action_mask_table, cast
                          run_evaluation)
 from .mappo.buffer import RolloutBuffer
 from .mappo.trainer import LOOK_COMMANDS, MappoTrainer, horizon_seconds, per_decision, schedule
-from .mappo.networks import check_image_bytes, check_look_heads, seat_sets_of, vision_of, with_map_vin
+from .mappo.networks import check_image_bytes, check_look_heads, seat_sets_of, vision_of
 from .progress import ProgressWriter
 from . import blas, episode_means, protocol
 from .async_sync import Hub, Link, fetch_shared, shared_listing
@@ -513,7 +513,7 @@ def trainer_inputs(config: TrainConfig, spec, stage: dict | None) -> TrainerInpu
         check_look_heads(vision, spec.look_heads)
     except ValueError as error:
         raise SystemExit(f"vision: {error}") from None
-    return TrainerInputs(seat_sets, with_map_vin(vision, config.mappo.map_vin))
+    return TrainerInputs(seat_sets, vision)
 
 
 def make_trainer(config: TrainConfig, spec, inputs: TrainerInputs, ranks=None, device=None) -> MappoTrainer:
@@ -655,7 +655,7 @@ class TrainingRun:
                 crop = image["map"]
                 print(f"Mental map: a {crop['width']} x {crop['height']} heading-up crop of {crop['cell']:g}-yard "
                       f"cells, {crop['channels']} channels ({crop['map_bytes']} bytes an agent), read by the camera's "
-                      f"map encoder{' with its value iteration network' if crop.get('vin') else ''}", flush=True)
+                      f"map encoder", flush=True)
 
         self.make_trainer = lambda: make_trainer(config, spec, inputs, ranks=self.ranks.update)
         self.trainer = self.make_trainer()

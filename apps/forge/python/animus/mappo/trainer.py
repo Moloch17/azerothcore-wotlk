@@ -55,10 +55,6 @@ class MappoConfig:
     # without its graph, once more for its gradient -- so the decoded images and the patch activations live a chunk
     # at a time; 0 = the whole minibatch at once.
     vision_chunk_rows: int = 0
-    # The mental map's value iteration network (MapValueIteration; perception-goals REDESIGN §3, P4) over its crop, in
-    # a stage with a map block: off by default, switched on only if the map alone does not lift M2 (a config change,
-    # no rebuild). Turning it on adds the VIN's parameters; a checkpoint without them seeds the rest.
-    map_vin: bool = False
     value_coef: float = 1.0
     actor_lr: float = 5e-4
     critic_lr: float = 5e-4

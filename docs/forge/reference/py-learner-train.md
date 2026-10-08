@@ -256,7 +256,7 @@ Top level: `run_name`, `runs_dir`, `layouts_dir`, `socket`, `cluster_sims`, `clu
 `local_rank`, `local_ranks`, `dist_address`, `dist_iface`, `dist_timeout`, `seed`, `total_env_steps`,
 `rollout_length`, `log_every`, `checkpoint_every`, `checkpoint_env_steps`, `keep_checkpoints`, `overlap_updates`,
 `train_device`, `rollout_device`, `torch_threads`, `init_from`, `seed_from`, `merge_from`, `finetune_from`, and the
-sections `mappo` (rank_sync, recurrent_size, seat_sets, map_vin, gamma, gae_lambda, reference_decision_ms,
+sections `mappo` (rank_sync, recurrent_size, seat_sets, gamma, gae_lambda, reference_decision_ms,
 foresight_*, goal_*, slow_goal_*, weight_sync_every, entropy_coef, ...), `eval`, `convergence`, `fade`, `costs`,
 `entropy_floor`, `layout_sampling`, `distill`, `cast`, `style`, `status`, `explore`. Defaults:
 [py-learner-config.md](py-learner-config.md).

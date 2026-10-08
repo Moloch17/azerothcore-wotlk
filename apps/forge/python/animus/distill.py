@@ -20,7 +20,7 @@ import torch
 
 
 from .mappo.networks import (LayoutActor, MASKED_LOGIT, load_actor_state, seat_sets_of, vision_image_bytes,
-                              vision_look_heads, vision_of, with_map_vin)
+                              vision_look_heads, vision_of)
 from .stages import Span, arena_names, arena_state_span, block_spans, revised_blocks
 
 #: The blocks the camera's encoder reads (VisionEncoder, its MapEncoder, the entity list and SightEntities): a frozen
@@ -106,8 +106,8 @@ def frozen_actor(checkpoint: dict, device) -> LayoutActor:
     t_stage = checkpoint.get("stage")
     # And a stage's seat sets, when its actor was trained with them (mappo.seat_sets), from its own stage.json.
     seat_sets = seat_sets_of(t_stage, t_names) if mappo.get("seat_sets", False) else None
-    # Its camera, from its own stage.json, with the map's value iteration network as its own run had it.
-    vision = with_map_vin(vision_of(t_stage, t_names), bool(mappo.get("map_vin", False)))
+    # Its camera, from its own stage.json.
+    vision = vision_of(t_stage, t_names)
     if vision is None and any(key.startswith("vision.") for key in checkpoint["trainer"]["actor"]):
         raise ValueError("the checkpoint's actor has a camera (vision.* weights) but no stage.json describes it")
     actor = LayoutActor(t_layouts, hidden, foresight_outputs, recurrent_size, goal_count, goal_targets, slow_size,

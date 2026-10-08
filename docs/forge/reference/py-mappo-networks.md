@@ -10,7 +10,7 @@ that defines the policy and critic networks. Parameter lists and shape chains fo
 | `test_golden_update.py` | key names and shapes of the live M2 actor/critic, one update's numbers (CPU) |
 | `test_vision_encoder.py`, `test_vision_identity.py`, `test_vision_bytes.py` | camera: decode, patches, class embedding, shared encoder, blind columns, link to the entity list, bytes on the wire |
 | `test_free_look.py` | patch 8 at 128x64, render sizes, look head, camera chunking, seeding |
-| `test_mental_map.py` | map decode, `MapEncoder`, VIN switch |
+| `test_mental_map.py` | map decode, `MapEncoder` |
 | `test_sight.py`, `test_interact.py` | sight list, pointer heads, named row |
 | `test_seat_sets.py` | `EntitySets`, attention, blind columns |
 | `test_recurrent.py`, `test_normalisation.py`, `test_masking.py`, `test_goals.py`, `test_goal_queue.py`, `test_goal_targets.py`, `test_two_clock.py`, `test_foresight.py` | recurrent core, normalisers, masks, goal head and slots |
@@ -203,17 +203,12 @@ frontier).
 `MapEncoder` (shared by all layouts): per cell the code embedded (4), the entity class through the **camera's class
 embedding** (held by reference via `__dict__`, `:1238`), five values: 4+6+5 = 15 planes; 4x4 patches (`PATCH=4`) of a
 48x48 crop -> 12x12 grid; `Linear(240->64)` SiLU `Linear(64->64)` SiLU; features pooled as spatial-softmax keypoints
-(128) + mean (64) + the block's 4 scalars = 196 -> `Linear(196->128)`; optional VIN adds a 128-wide term; then
+(128) + mean (64) + the block's 4 scalars = 196 -> `Linear(196->128)`; then
 `join = Linear(128 -> 256)` (orthogonal init gain sqrt(2)) after a SiLU, added to the camera embedding before its SiLU
-(`VisionEncoder.forward :1716`). `MapValueIteration` (only when `crop["vin"]`, off): a reward map `Conv2d(64+1 -> 1)`
-tanh, `max(grid)` iterations of `Conv2d(2 -> 8, 3x3)` max over 8 move values, read-out of the centre 4x4 plus
-spatial-softmax expected (x,y) -> `Linear(18 -> 128)` zero-initialised. The VIN's goal bit is "any objective pixel in
-the
-frame" (`:1719`). Fixed shapes, no host reads (graph-capturable). Seeding from a checkpoint without a map zeroes the
+(`VisionEncoder.forward :1716`). Seeding from a checkpoint without a map zeroes the
 join
 (`bootstrap._seed_map`, [py-learner.md](py-learner.md)).
-Tests: `test_mental_map.py`. Quirk: the VIN's iteration count equals the grid's larger side, so cost is O(grid) conv
-passes; the VIN is off.
+Tests: `test_mental_map.py`. 
 
 ## `VisibleEntities` (`:1288`), `SightEntities` (`:1363`), `SightPointers` (`:1531`)
 

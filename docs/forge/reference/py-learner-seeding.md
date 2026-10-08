@@ -44,7 +44,7 @@ Non-overlay (the base): `_seed_shared` copies every key that starts with `trunk.
 `_seed_entity_sets` (per-set encoders where shape equal, pool columns for carried sets, pool bias, pointer queries,
 and the attention layer, type embeddings by name and each layout's own token by name), `_seed_vision` (camera encoder:
 copied only if the old checkpoint has it, the vision block revision is equal in both stage.jsons and every shape equal;
-otherwise fresh with the join zeroed), `_seed_map` (key by key, join and VIN read-out zeroed when fresh), `_seed_sight`
+otherwise fresh with the join zeroed), `_seed_map` (key by key, join zeroed when fresh), `_seed_sight`
 (sight encoder and pointer queries, the pool zeroed when fresh; a narrower `sight.extra` is widened with zeros),
 `_seed_look` (look head, same rule as the camera). Lines are printed for each.
 Everything else stays freshly initialised: critic state encoder and value head, the value normaliser, and any module

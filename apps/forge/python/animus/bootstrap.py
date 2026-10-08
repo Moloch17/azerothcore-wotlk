@@ -516,10 +516,9 @@ def _seed_entity_sets(new: dict, old: dict, new_layouts: list[str] | None = None
 VISION = ("vision.", "vision_join.")
 VISION_JOIN = "vision_join."
 #: The mental map's encoder inside the camera's (MapEncoder, perception-goals REDESIGN §3): seeded on its own, so a
-#: camera carries from a checkpoint without a map, and the map starts fresh with its join (and the VIN's output)
-#: zeroed.
+#: camera carries from a checkpoint without a map, and the map starts fresh with its join zeroed.
 MAP = "vision.map."
-MAP_ZEROED = ("vision.map.join.", "vision.map.vin.out.")
+MAP_ZEROED = "vision.map.join."
 #: The sight list's encoder inside the camera's (SightEntities, dungeon-curriculum I1 and I2) and the actor's pointer
 #: queries over it (SightPointers): seeded on their own, so a camera carries from a checkpoint without a sight block,
 #: and the list starts fresh with its pool zeroed -- the seeded policy acts as it did.
@@ -567,10 +566,9 @@ def _seed_vision(new: dict, old: dict, new_stage: dict | None, old_stage: dict |
 
 
 def _seed_map(new: dict, old: dict) -> str | None:
-    """Carry the mental map's encoder from a checkpoint that has one, key by key where the shapes agree (the VIN,
-    switched on later, starts fresh beside a carried map); else it starts fresh. Whatever starts fresh with an output
-    into the camera's embedding -- the map's join, the VIN's read-out -- is zeroed, so the seeded policy starts as it
-    was. None when this network has no map."""
+    """Carry the mental map's encoder from a checkpoint that has one, key by key where the shapes agree; else it
+    starts fresh. Whatever starts fresh with an output into the camera's embedding -- the map's join -- is zeroed, so
+    the seeded policy starts as it was. None when this network has no map."""
     keys = [key for key in new if key.startswith(MAP)]
     if not keys:
         return None
