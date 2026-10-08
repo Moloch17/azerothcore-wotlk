@@ -377,3 +377,194 @@ alike.
   Candidate: move to `docs/forge/decisions/` or delete (R-27).
 - `docs/forge/decisions/0002` to `0017` are 11-line records; fine, but `0014` carries "UNVERIFIED: exact date".
 
+## 3. Build system, containers and CI
+
+### 3.1 What the forge changes in CMake
+
+| Change | Where | Observation |
+|---|---|---|
+| Default build type Release (stock: RelWithDebInfo) | `CMakeLists.txt:92` | contradicted by the container, see R-08 below |
+| `include(ConfigureLTO)`; `WITH_LTO` default 1 | `CMakeLists.txt:103`; `conf/dist/config.cmake:113`; `ConfigureLTO.cmake:18-77` | applies to Release, RelWithDebInfo and MinSizeRel, so the unit-test tree gets LTO too (`forgectl-test.sh:34` builds RelWithDebInfo) |
+| `-O3`, `-march=native`, optional `-mtune=znver5/4`, `-fno-semantic-interposition` for x86-64 | `clang/settings.cmake:50-70`, `gcc/settings.cmake:49-68` | `-O3` is appended after the config's own `-O2` so it wins; the Zen test reads `/proc/cpuinfo` at configure time, so a tree configured on one machine and built on another gets the first one's tuning |
+| `FORGE_PGO=off|generate|use` | `clang/settings.cmake:77-88`, `gcc/settings.cmake:75-84` | no caller anywhere in the tracked tree sets it (`grep -rn FORGE_PGO` finds only the two compiler files and `conf/dist/config.cmake`); PGO is unused build surface |
+| Source hash into `ForgeSourceHash.h` | `game/CMakeLists.txt:61-72` | see 3.2 |
+| zstd, `REQUIRED` | `game/CMakeLists.txt:77-78` | no tracked CI or installer installs `libzstd-dev` (`grep zstd .github apps/ci apps/installer` is empty); only `Dockerfile.dev-server:45` and `Dockerfile` do. A fresh machine configures to a hard failure |
+| `libforge-gpu.so` with hipcc | `game/CMakeLists.txt:112-147` | see 3.3 |
+| `MODULES_FOLDED_INTO_CORE` | `modules/CMakeLists.txt:20-29,374-393` | see 3.4 |
+| `FORGE_PYTHON_DIR` compile definition | `game/CMakeLists.txt:55-56` | bakes the build machine's source path into the binary; the worldserver in a container finds the learner at `/azerothcore/apps/forge/python` only because the bind mount keeps that path |
+
+### 3.2 The source-hash step
+
+`file(GLOB_RECURSE ... Animus/*.cpp *.h *.hip)`, SHA-256 of each, then a 16-character digest written with
+`file(CONFIGURE)` to `ForgeSourceHash.h` in the build tree (`game/CMakeLists.txt:61-72`), consumed at
+`AnimusForge.cpp:64-68,99`. Weaknesses (the delta document notes the first, not the rest):
+
+- It covers `Animus/` only. `Forge/`, `ForgeMain.cpp`, `ClientMovement.cpp`, `CpuPlacement.*`, `cs_forge.cpp` and every
+  in-place edit of an upstream file (the whole of the delta document's sections B to F) are outside it, as are the
+  compiler, flags, `libforge-gpu.so`, and the Python learner. A worker with an older `MapUpdater.cpp` or a different
+  build type is accepted (R-06).
+- The header is optional: `#if __has_include("ForgeSourceHash.h")` falls back to the string `"unhashed"`
+  (`AnimusForge.cpp:64-68`), so two builds that both lost the generated file agree with each other. Nothing logs it.
+- It is computed at **configure** time. A source edited after configure and built without a configure carries the old
+  hash; `forge-worldserver.sh:30-36` always configures first, a hand-run `make` does not.
+- It hashes contents in sorted path order and not the paths themselves, so a rename that keeps the sort position does
+  not change it (the delta document notes the same).
+
+### 3.3 The HIP device-library step
+
+`find_program(FORGE_HIPCC hipcc)`; if present, every `Animus/Gpu/Device/*.hip` is compiled with
+`--offload-arch=${FORGE_GPU_ARCHS}` (default `gfx1100`, `game/CMakeLists.txt:113`) into `libforge-gpu.so`, installed
+beside the worldserver, which loads it at run time; with no `hipcc`, the library is skipped with one status line
+(`:147`). Problems:
+
+- **Architecture contradiction (R-09).** `Dockerfile.dev-server:62-64` says "Compile with --offload-arch=native ... an
+  explicit --offload-arch=gfx1100 produces a binary whose kernels fail to load ('invalid device function')". The CMake
+  step passes exactly `--offload-arch=gfx1100`. Either the comment is outdated or the build relies on a default that
+  works on the dev card only. Nothing in the tracked tree sets `FORGE_GPU_ARCHS` for another card, while
+  `animus/blas.py:3` says the cluster has RDNA4 cards (`gfx12`) and `blas.py:5` mentions an RTX 3060 Ti (NVIDIA, which
+  `hipcc` does not target). Whether those machines build a usable device library is UNVERIFIED (per-machine
+  `docker-compose.override.yml` and build arguments are untracked).
+- **The fingerprint does not record whether a worker has the device library**, so a mixed cluster (some with
+  `libforge-gpu.so`, some without) is accepted, and `game/CMakeLists.txt:108-110` says such a machine has "no device
+  observations and no GPU camera".
+- **HIP 5.7 headers against a 6.4 runtime** (`DeviceApi.h:28-35`): the device library is built with Ubuntu's `hipcc` and
+  works only because it resolves its symbols from the learner's torch runtime, "measured: 6.4 to 6.4 works". Torch
+  versions seen in the code base are 2.9.1+rocm6.4 (the dev venv), 2.10+rocm7.0 and 2.13+rocm7.1 (`blas.py:6-8`).
+  A torch upgrade on any machine is a possible silent break of device sharing; the API version check
+  (`FORGE_GPU_API_VERSION = 5`) does not cover the runtime (R-15).
+- It adds `-ffp-contract=off` to match the CPU caster; the CPU caster is built with `-march=native` and clang's default
+  contraction, so the two differ by design and `forge camera diff` measures it (`VisionDevice.h:45-46`).
+- `DeviceRuntime.h:23` says "CUDA under the same names, so the kernels and Runtime.hip are one source", but the CMake
+  has no CUDA path.
+
+### 3.4 `modules/CMakeLists.txt` and `MODULES_FOLDED_INTO_CORE`
+
+`MODULES_FOLDED_INTO_CORE` is `mod-animus-forge` (`:20`), the checkout the owner's notes call dead. The build still
+walks it: it drops the module from the list, but then **installs its `.conf.dist` from the stale checkout**
+(`:374-393`, "a folded module keeps its config file"). So (a) the live template `mod_animus_forge.conf.dist` comes from
+a directory nobody maintains, (b) deleting that checkout changes what is installed (the message becomes "no config
+directory left"), and (c) the per-machine `mod_animus_forge.conf` the whole cluster tool-chain reads is a compatibility
+artefact of this block (R-19, R-20). The same duplicate-symbol hazard applies to `mod-animus`, which the owner's
+checkout also holds and which carries its own `animus-lib` in namespace `Animus`; `03-animus-lib.md:46-50` says its
+`mod-animus.cmake` stops the configure with a message. That guard lives in the module (not read) and the forge
+list does not mention it: UNVERIFIED that a forge build with `MODULES=static` and `mod-animus` present stops cleanly.
+
+### 3.5 Compiler flags, `-march=native`, reproducibility
+
+- Each worker builds for itself (`forge-worldserver.sh:38-57` rebuilds when the CPU signature differs). That fixes the
+  illegal-instruction problem of the old `-march=znver5` setting (comment at `clang/settings.cmake:44-49`) and creates
+  a different one: the fleet is a Ryzen 9 9950X3D (dev), 7900X, 3800X, an i7-6700K and a Xeon E5-2640
+  (`cluster.md:10-17`). They differ in FMA and AVX-512 availability, so clang's default floating-point contraction
+  gives different rounding on different machines. For a simulator whose physics, ray casts and pathing feed an RL
+  loop, runs are not bit-reproducible across machines, an evaluation seed ("seeded evaluation episodes",
+  `Random.cpp`) gives the same episode only on the same machine, and a host cannot tell (R-07). The code base knows
+  the effect for the camera (`VisionDevice.h:45-46`) and measures it with `forge camera diff`; nothing measures it for
+  the world.
+- `-fno-semantic-interposition` and LTO make the worldserver a single optimised unit; they make a crash backtrace
+  harder to read, which is why `forge-worldserver.sh:21-24` builds RelWithDebInfo while `env.ac:13-19` says Release
+  because of "a third of a gigabyte of debug info" and "a much slower link once LTO is on". Both are written down by
+  the same author and they disagree: **three defaults** are in force, `CMakeLists.txt:92` Release, `env.ac:19` Release,
+  `forge-worldserver.sh:24` and `forgectl-test.sh:34` RelWithDebInfo. What the cluster actually builds is the last
+  (the `export CTYPE` overrides `env.ac`), so the `env.ac` comment describes a build nobody makes (R-08).
+- `-Wno-profile-instr-unprofiled` and other PGO options are dead (section 3.1).
+
+### 3.6 Build times and what drives them
+
+No build was run. The only recorded numbers: "a rebuild is slow (20 to 60 minutes a machine)" (`decisions/0014`) and
+"the slowest build takes up to an hour" (`deploy-gate.md:714`); the first build "takes a long time" (`forgectl.md:238`).
+Drivers visible in the tree (all UNVERIFIED as to magnitude):
+
+- **No unity build** (`grep UNITY` over the CMake files is empty), PCH on by default (`conf/dist/config.cmake:98-99`,
+  `CMakeLists.txt:97-98` turns it off only for a hidden dev option), `forgectl-test.sh:35` turns it off for tests.
+- **LTO plus `-O3` on a 254 KB translation unit.** `StageScenario.cpp` is 5,192 lines; `AnimusForge.cpp` 3,087;
+  `InstanceEncounter.cpp` 2,752; `cs_forge.cpp` 1,256 (compiled into the scripts, static). Under LTO the link, not the
+  compile, is the serial tail; on the 8-thread i7-6700K it is the whole critical path.
+- **Header fan-out**, counted as direct `#include "..."` sites in `src/server` and `src/test`: `SeatView.h` 30,
+  `Layout.h` 29, `CurriculumTuning.h` 18, `StageScenario.h` 17, `StageState.h` 15, `AnimusForge.h` 7. And
+  `AnimusForge.h:24-26` includes `Map.h`, `MapMgr.h` and `MapUpdater.h`, which `World.cpp`, `MapMgr.cpp` and
+  `MapUpdater.cpp` include for that reason (`AnimusForge.h` has 7 direct includers). A change to a core map header
+  rebuilds both trees. `CurriculumTuning.h` (1,185 lines, one struct of about 725 keys, F2) is the widest.
+- **`file(GLOB)`** means every added file needs a configure (`forge-worldserver.sh:28-29`), which re-hashes all
+  `Animus/` sources (`game/CMakeLists.txt:61-72`; fast, a few hundred files).
+- **The authserver is built too** (R-10): `conf/dist/config.sh:88` sets `CAPPS_BUILD=${CAPPS_BUILD:-all}`; `env.ac`
+  does not override it; the sim never starts `authserver` (compose profile `stock`). `APPS_BUILD=world-only` is an
+  existing option (`conf/dist/config.cmake:16`). `forgectl-test.sh:34` also builds `all`.
+- **Workers compile inside the run container**, from source, one by one (`forge-worldserver.sh:30-56`), and the dev
+  machine does not ship a binary even though the cluster fingerprint is designed to prove builds are interchangeable
+  (R-34). Shipping would defeat `-march=native`, which is a reason, not a defence.
+
+### 3.7 Containers, compose and `forge.sh`
+
+- **Images.** `Dockerfile.dev-server` is the only forge-specific image: `FROM ubuntu:24.04` with no digest (`:10`), apt
+  packages unpinned (`:31-73`), so a rebuild a month later is a different toolchain. It installs `mysql-server` (`:43`)
+  although the database runs in the separate `ac-database` container, both gcc and clang, `libboost-all-dev` (`:44`),
+  and gives the user passwordless sudo (`:86-87`, stock). The base `Dockerfile` (stock, for `ac-db-import` and
+  `ac-authserver`, profile `stock`) is a second full compile of the core inside `docker build`
+  (`docker-compose.yml:75-79`
+  explains it is skipped by default). Image sizes: UNVERIFIED (no docker use); but see the next item.
+- **`.dockerignore` (R-13).** It ignores `/var/*`, `/env/dist/*`, `/build*/` and `.idea`
+  (`.dockerignore:1-11`); it does not ignore `apps/forge/python/.venv`, `apps/forge/probes` or `apps/forge/models`. The
+  compose build context is `.` (`docker-compose.yml:39`) and `Dockerfile.dev-server:109` does `COPY ... apps`. On the
+  owner's checkout that is 15 GB of venv, 3.1 GB of probes and 580 MB of models sent to the daemon and, by the `COPY`,
+  written into an image layer that the bind mount then hides at run time. `:112` also copies all of `data/`
+  (847 MB of upstream SQL) for the sake of the upstream dashboard.
+- **The dev image is not the test image.** `cluster.toml:24` and `deploy-gate.md:22` run tests in a container named
+  `claude-syntax`; no tracked file creates it (`grep claude-syntax` finds only those and tests). It is also not
+  `ac-animus-forge-dev-server`, which `deploy-gate.md:22` says "--build recreates". `forgectl-test.sh:53-58` relinks
+  `unit_tests` with `-resource-dir=/usr/lib/llvm-17/lib/clang/17` because "the container's clang is version 18 and its
+  resource directory has no compiler-rt libraries"; `Dockerfile.dev-server` installs `clang llvm lldb lld` (`:35`) and
+  nothing named 17, so the test script depends on state the image does not provide (R-12). Why an instrumented link is
+  needed at all is unclear (UNVERIFIED: perhaps a stale `FORGE_PGO=generate` in a cached tree).
+- **Compose.** `docker-compose.yml` (284 lines): GPU passed with `/dev/kfd` and `/dev/dri` plus
+  `seccomp=unconfined` on both build and run services (`:48-52`); `cluster.md:13` still says the two device lines live
+  in `docker-compose.override.yml`, which is stale because they are in the shared anchor now (and a duplicate in the
+  override file is untested). `:151` uses the `:cached` mount option, a no-op on Linux. Named volumes hold the build
+  tree and ccache (`:152-153,277-280`), so the build tree is invisible to the host, backups and `du`. The torch index
+  default is ROCm 6.4 (`:138`), the version empty (`:140`, R-15). `restart: "no"` (`:126`) is deliberate.
+- **The override file** (`/*.override.yml` is gitignored, `.gitignore`) carries each machine's GPU and volume choices,
+  so the cluster's per-machine runtime configuration is not in the repository: not an error, but `cluster.md` and
+  `deploy-gate.md` should say what it must contain (UNVERIFIED what it contains).
+- **`docker-compose.cluster.yml`** sets `network_mode: host` and resets `networks` and `ports` (`:15-17`), puts the DB
+  address on `127.0.0.1` and sets `FORGE_LOCAL_ONLY=1` so TensorBoard stays on loopback (`:25`; honoured by
+  `forge-worldserver.sh:82-86`). Its header says "Open the cluster ports in the firewall between the machines": no
+  firewall rule is in the repository (section 6).
+- **`forge.sh`** (109 lines) is a clean wrapper: `--build` writes `env/dist/.forge-build`, recreates the worldserver
+  container, then polls `docker logs` every 10 s for a `[ nn%]` line (`:48-67`). It greps the logs for `error:` or
+  `Error N` to report a failed build (`:56`), so a build that fails without either reports only "container is
+  exited". It has no
+  check that the dev machine's tree equals the cluster's, which is `forgectl`'s job.
+- **`forge-worldserver.sh`** (95 lines) is the container command: build if asked or if the CPU signature changed
+  (`:38-57`), copy missing `.conf` from `.dist` (`:61-68`; it never overwrites, so a new key added to a `.conf.dist`
+  never reaches an existing `.conf`, which is why `forgectl conf-sync` exists), then `animus-venv.sh`, TensorBoard,
+  `exec ./worldserver`. The CPU signature (`:42-45`) hashes the first match of `vendor_id`, `cpu family`, `model` and
+  `flags`, and misses a microcode or kernel change that disables a feature (e.g. a mitigation switching off `avx512`
+  after a BIOS update); the next start would run a binary compiled for a flag the CPU no longer reports. Edge case.
+- **`animus-venv.sh`** installs `torch` then `-e .[tensorboard,dev]` only when the import fails (`:29-42`): an existing
+  venv is never upgraded or checked against a version, which is how two machines drift (R-15).
+
+### 3.8 CI
+
+15 of the 16 workflows carry `if: github.repository == 'azerothcore/azerothcore-wotlk'` (`grep` over
+`.github/workflows`; the 16th, `add-to-project.yml`, files labelled issues into upstream's project board URLs and is
+inert). `core-build-pch.yml` and
+`core-build-nopch.yml` build and run `unit_tests` through `.github/actions/linux-build/action.yml:215-219` upstream; on
+`Moloch17/azerothcore-wotlk` they never start, and they trigger only on `master` or pull requests. The forge's
+46 GTest files and 95 pytest files are run only by `forgectl test` on the dev machine (`known-issues.md` D4).
+
+What a fork CI would take, in order:
+
+1. One workflow `forge-ci.yml` with `if: github.repository == 'Moloch17/azerothcore-wotlk'`, on `forge`, in a container
+   built from `Dockerfile.dev-server` (needs `libzstd-dev`, present; `hipcc` optional, so the device library is
+   skipped, which is also the cheapest path).
+2. Job A: configure with `-DBUILD_TESTING=ON -DUSE_COREPCH=OFF -DAPPS_BUILD=world-only -DWITH_LTO=OFF` (LTO off to save
+   the link), build `unit_tests`, run `apps/ci/ci-run-unit-tests.sh`. The data-dependent tests skip without
+   `FORGE_VISION_DATA` (`known-issues.md` C4), so CI proves compilation and the logic tests, not the map tables.
+3. Job B: `python -m venv`, `pip install torch --index-url .../cpu`, `pip install -e apps/forge/python[dev]`,
+   `pytest -q` (the default excludes `slow`). `test_forgectl.py` hard-codes the real cluster (R-28) but uses a fake ssh,
+   so it runs anywhere. The GPU tests (`test_rollout_graph*.py`) skip without a card (`known-issues.md` A5) and need a
+   self-hosted runner.
+4. A third, weekly job: the semantic merge checklist of section 1.6 against `upstream/master`, so the merge cost is
+   visible before it is paid. Budget: a hosted runner needs ccache and `-j` of 4; an uncached full build is likely well
+   over an hour (UNVERIFIED), so the cache is a requirement.
+5. The untouched upstream workflows should be left as they are: they are inert and a merge will keep updating them.
+
