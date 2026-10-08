@@ -169,9 +169,14 @@ namespace
 
         // 1. The collision trees, cast apart so a door (the dynamic tree) is told from a model (R8).
         SurfaceHit const model = world.StaticHit(origin, end);
+        Charge(breakdown, &Breakdown::StaticNs, mark);
         SurfaceHit const door = world.DynamicHit(origin, end);
+        Charge(breakdown, &Breakdown::DynamicNs, mark);
         if (breakdown)
-            breakdown->TreeCasts += 2;
+        {
+            ++breakdown->StaticCasts;
+            ++breakdown->DynamicCasts;
+        }
         bool const modelHit = model.Distance >= 0.0f && model.Distance <= limit;
         bool const doorHit = door.Distance >= 0.0f && door.Distance <= limit;
         if (modelHit || doorHit)
@@ -186,7 +191,6 @@ namespace
             // (the encoding clamps it to 0, a wall's).
             best.NormalZ = hit.NormalZ;
         }
-        Charge(breakdown, &Breakdown::TreeNs, mark);
 
         // 2. A WMO's liquid, entered from above (a rising ray only meets one from below, which it sees through).
         if (liquids && dir.Z < 0.0f)

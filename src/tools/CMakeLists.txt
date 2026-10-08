@@ -24,7 +24,7 @@ if (TOOLS_BUILD MATCHES "-only")
   set(BUILD_TOOLS_USE_WHITELIST ON)
 
   if (TOOLS_BUILD STREQUAL "maps-only")
-    list(APPEND BUILD_TOOLS_WHITELIST map_extractor mmaps_generator vmap4_assembler vmap4_extractor)
+    list(APPEND BUILD_TOOLS_WHITELIST map_extractor mmaps_generator scene_baker vmap4_assembler vmap4_extractor)
   endif()
 
   if (TOOLS_BUILD STREQUAL "db-only")
@@ -165,6 +165,19 @@ foreach(TOOL_NAME ${TOOLS_BUILD_LIST})
     PROPERTIES
       FOLDER
         "tools")
+
+  # The scene baker renders its bench frames with the camera's own caster and tracer (pure, no core types).
+  if (${TOOL_PROJECT_NAME} STREQUAL "scene_baker")
+    set(ANIMUS_VISION_DIR ${CMAKE_SOURCE_DIR}/src/server/game/Animus/Runtime/Vision)
+    target_sources(${TOOL_PROJECT_NAME}
+      PRIVATE
+        ${ANIMUS_VISION_DIR}/BakedWorld.cpp
+        ${ANIMUS_VISION_DIR}/VisionCaster.cpp)
+    target_include_directories(${TOOL_PROJECT_NAME}
+      PRIVATE
+        ${ANIMUS_VISION_DIR}
+        ${CMAKE_SOURCE_DIR}/src/server/game/Animus/Runtime/Movement)
+  endif()
 
   if (UNIX)
     install(TARGETS ${TOOL_PROJECT_NAME} DESTINATION bin)

@@ -362,9 +362,10 @@ namespace
                 camera.Pitch / Vi::DEGREES, camera.Zoom, width, height, settings.FovH, settings.FovV);
             handler->PSendSysMessage("  {} rays in {:.0f} us ({:.2f} us a ray)", rays, wallUs,
                 rays ? wallUs / double(rays) : 0.0);
-            handler->PSendSysMessage("  with the breakdown's clocks: trees {:.0f} us ({} casts), WMO liquids {:.0f} us "
-                "({} casts), terrain {:.0f} us ({} grids, {} cells), hazards {:.0f} us ({} tests)",
-                double(breakdown.TreeNs) / 1e3, breakdown.TreeCasts, double(breakdown.LiquidNs) / 1e3,
+            handler->PSendSysMessage("  with the breakdown's clocks: static {:.0f} us ({} casts), dynamic {:.0f} us "
+                "({} casts), WMO liquids {:.0f} us ({} casts), terrain {:.0f} us ({} grids, {} cells), hazards "
+                "{:.0f} us ({} tests)", double(breakdown.StaticNs) / 1e3, breakdown.StaticCasts,
+                double(breakdown.DynamicNs) / 1e3, breakdown.DynamicCasts, double(breakdown.LiquidNs) / 1e3,
                 breakdown.LiquidCasts, double(breakdown.TerrainNs) / 1e3, breakdown.TerrainTiles,
                 breakdown.TerrainCells, double(breakdown.HazardNs) / 1e3, breakdown.HazardTests);
             handler->PSendSysMessage("  boom {:.2f} yd, pivot above floor {:.2f} (/10), underwater {}, airborne {}",
