@@ -361,9 +361,9 @@ def builds_table():
 def render():
     rows, mismatches, unread = builds_table()
     out = [BEGIN, "",
-           "Generated from the FORGE section of `src/server/apps/worldserver/worldserver.conf.dist` and the string "
-           "literals in the sources; do not edit by hand (run `python3 apps/forge/tools/gen_config_reference.py`). "
-           f"{len(rows)} keys.", "",
+           "Generated from the FORGE section of `src/server/apps/worldserver/worldserver.conf.dist` and the",
+           "string literals in the sources; do not edit by hand",
+           f"(run `python3 apps/forge/tools/gen_config_reference.py`). {len(rows)} keys.", "",
            "| Group | Key | Template value | Code default | Range / validation | Reader | Same on every machine | "
            "In the cluster fingerprint | Meaning |",
            "|---|---|---|---|---|---|---|---|---|"]

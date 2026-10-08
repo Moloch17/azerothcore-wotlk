@@ -187,8 +187,9 @@ at run time (`Gpu.Single|Multi.*`, `Stage.<name>.*`) are matched by the `DYNAMIC
 
 <!-- BEGIN GENERATED KEY TABLE (apps/forge/tools/gen_config_reference.py) -->
 
-Generated from the FORGE section of `src/server/apps/worldserver/worldserver.conf.dist` and the string literals in the
-sources; do not edit by hand (run `python3 apps/forge/tools/gen_config_reference.py`). 103 keys.
+Generated from the FORGE section of `src/server/apps/worldserver/worldserver.conf.dist` and the
+string literals in the sources; do not edit by hand
+(run `python3 apps/forge/tools/gen_config_reference.py`). 103 keys.
 
 | Group | Key | Template value | Code default | Range / validation | Reader | Same on every machine | In the cluster fingerprint | Meaning |
 |---|---|---|---|---|---|---|---|---|
