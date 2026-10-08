@@ -20,7 +20,7 @@ learner_log = "env/dist/logs/animus-learner.log"
 server_log = "env/dist/logs/Server.log"
 errors_log = "env/dist/logs/Errors.log"
 
-[dev]                   # the container `forgectl test` builds and tests in
+[dev]                   # the dev container (local builds)
 container = "claude-syntax"
 python = "/azerothcore/apps/forge/python/.venv/bin/python"
 build_dir_name = "forgectl-build"

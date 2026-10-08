@@ -79,7 +79,6 @@ trust them over the code.
 | `src/server/game/Forge/` | `ForgeCore` (playtest flag, `HasClients`, tick override) |
 | `src/server/game/Animus/` | the sim: env pool, bots, bridge, scenarios, blocks, encounters, movement, vision, GPU |
 | `src/server/scripts/Commands/cs_forge.cpp` | the `forge` console commands |
-| `src/test/server/game/Animus/` | the sim's unit tests (GTest) |
 | `apps/forge/python/` | the learner (`animus/`), per-stage yaml (`configs/`), tests |
 | `apps/forge/forgectl/`, `./forgectl` | the cluster command line |
 | `apps/forge/tools/`, `apps/forge/patches/` | helper scripts, obsolete patches for the realm module |

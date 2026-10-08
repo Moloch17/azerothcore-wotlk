@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import audit, cluster, config as config_module, confsync, deploy, logs, stage, testcmd, videos
+from . import audit, cluster, config as config_module, confsync, deploy, logs, stage, videos
 from .config import ConfigError
 from .ui import Failure, say
 
@@ -81,13 +81,6 @@ def parser() -> argparse.ArgumentParser:
     cs.add_argument("--check", action="store_true", help="only compare; change nothing; exit 1 if they differ")
     cs.add_argument("--yes", action="store_true", help="do not ask")
 
-    ts = add("test", "build and run the GTests and the CPU pytest in the dev container; one summary",
-             "forgectl test            |   forgectl test --gpu")
-    ts.add_argument("--gpu", action="store_true", help="run pytest on the card instead of the CPU")
-    ts.add_argument("--tree", help="the source tree as the container sees it (default: this checkout, found from the "
-                                   "container's mounts)")
-    ts.add_argument("--build-dir", help="the build directory inside the container")
-    ts.add_argument("--jobs", type=int, default=16, help="compile jobs (default 16)")
 
     vd = add("videos", "collect a stage's evaluation videos from the workers into the run folder",
              "forgectl videos move2_seek --check")
@@ -115,8 +108,6 @@ def dispatch(args, config) -> int:
         return deploy.build(config, args.cluster, args.yes, args.timeout, stop_running=args.stop_running)
     if args.command == "conf-sync":
         return confsync.run(config, args.check, args.yes)
-    if args.command == "test":
-        return testcmd.run(config, args.tree, args.build_dir, args.gpu, args.jobs)
     if args.command == "videos":
         return videos.run(config, args.stage, args.check, args.dry_run, args.on_host, args.yes)
     raise Failure(f"unknown command {args.command}")

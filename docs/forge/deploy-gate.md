@@ -19,7 +19,7 @@ looks like.
 >   do without them, and "stop" means stop in a safe state, not "ask someone else".
 
 Commands run from the repository root on the dev machine unless a line says `ssh`. `DEV` below means the dev container,
-`docker exec -w /azerothcore claude-syntax` (the one `forgectl test` uses; `ac-animus-forge-dev-server` is the dev
+`docker exec -w /azerothcore claude-syntax` (the dev container; `ac-animus-forge-dev-server` is the dev
 machine's worldserver build container and `--build` recreates it); its Python is
 `apps/forge/python/.venv/bin/python`. The machines are `sarah@192.168.0.68` (host) and the workers
 `spencer@192.168.0.66`, `thomas@192.168.0.67` and `moloch@192.168.0.117` (cluster.md); each keeps its checkout at
@@ -37,7 +37,6 @@ a plan and asks `Proceed? [y/N]`; read the plan against the step.
 | Step | forgectl | Manual fallback in the step |
 |---|---|---|
 | 0 pre-flight, and the look at the cluster after every later step | `forgectl cluster` (add `forgectl status`, `forgectl logs <machine> --errors`) | `ssh` + `docker logs`, step 0 |
-| 2, 3 tests | `forgectl test` (step 3: `forgectl test --gpu`) | the `cmake`/`pytest` lines |
 | 6 stop the stage | `forgectl stage cancel` (the host, then every worker's console) | `forge cancel` in each console |
 | 6 conf keys equal | `forgectl conf-sync --check` (read-only; `conf-sync` writes the workers' Curriculum keys) | the `grep`/`sha256sum` loop |
 | 7 push, pull, rebuild | `forgectl build --cluster` (pushes, rebuilds all machines in parallel, waits for each `ready`) | the `for` loop over `cluster-pull.sh` |
@@ -68,8 +67,6 @@ working day, 6 to 9 hours, and do not start in the evening**: the cluster is can
 |---|---|---|
 | 0 pre-flight | 10 min | |
 | 1 tag, style | 5 min | |
-| 2 GTests build + run, CPU pytest | first build of the tree 40 to 90 min; later 5 to 15 min; pytest about 10 min | the link of `unit_tests` is quiet for minutes |
-| 3 GPU pytest | 10 to 20 min | |
 | 4 dev build (`./forge.sh --build`) | 30 to 60 min (`-march=native` worldserver compile) | no output while the container compiles |
 | 4 twelve `forge run <stage> random 1` | 1 to 3 min a stage; a dungeon stage up to 10 min (it plays a whole episode) | `forge status` shows the episode count |
 | 4 `stage_json_diff`, `sim_metrics --check`, `resume_check --fresh --all` | under 5 min together (the trainers build on CPU: a minute for the largest) | |
@@ -104,9 +101,9 @@ ssh -o BatchMode=yes <m> 'git -C ~/animus-forge rev-parse --short HEAD; df -h ~/
   The cluster's smallest disks are sarah's 221 GB and spencer's 228 GB; if one has under 30 GB free, **clear it before
   the gate** (`docker builder prune` on that machine, old `archive/` runs), never during.
 - [ ] **The dev card is idle and nothing else uses the dev build directory.** `rocm-smi` on the dev machine shows no
-  process on the card (the dev GPU is the one step 3 runs on, `HIP_VISIBLE_DEVICES=0`), and no other agent, forge run
+  process on the card (a busy card spoils any measurement), and no other agent, forge run
   or build is using the dev GPU or `var/gate-build` / `var/animus-forge/gate` (`docker ps`, `ps aux | grep -E
-  'forge|cmake|pytest'`). The GPU pytest on a busy card proves nothing either way.
+  'forge|cmake|pytest'`).
 - [ ] **The owner has been told** a deploy is starting, at what time, and that M2 will be cancelled for about
   `<duration>` hours; their reply (or that they are away) is written in `var/gate/NOTES.txt`.
 - [ ] **Rehearsals done** (next section): pause/resume on M2, local `forgectl build`, the rollback rehearsal on one
@@ -183,64 +180,17 @@ Success: the tag is on `lan` and `origin` (`git ls-remote lan 'refs/tags/pre-*'`
 `Everything looks good` (exit status 0), and `var/gate/tested-sha.txt` holds the 40-character sha of the branch under
 test. **If the branch moves after this line, the gate starts again at step 1.**
 
-## 2. GTests and the CPU pytest
+## 2. and 3. Tests: none (removed 2026-10-07)
 
-`forgectl test` does all of this in the dev container (build a tree, relink `unit_tests`, run the GTests, run the
-pytest suite on CPU) and ends `RESULT: PASS`. The manual version, in a throwaway tree of your own (never a tree another
-run uses). The dev container links the test binary with a clang resource directory, which `link.txt` does not carry, so
-the link is repeated by hand:
+The owner removed every forge test (the 46 GTest files under `src/test/server/game/Animus/` and the Python suite under
+`apps/forge/python/tests/`, 2026-10-07: "I would prefer to just not have any tests at all for now"). Nothing runs them
+and nothing in the gate depends on them. They are kept in git history: `git checkout archive/with-tests -- <path>`
+brings any of them back.
 
-```
-DEV cmake -S /azerothcore -B /azerothcore/var/gate-build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=ON \
-   -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DMODULES=static -DSCRIPTS=static \
-   -DAPPS_BUILD=all -DTOOLS_BUILD=none -DUSE_COREPCH=OFF -DUSE_SCRIPTPCH=OFF
-DEV nice -n 15 cmake --build /azerothcore/var/gate-build --target unit_tests -j16
-```
-
-If the build stops at the link of `unit_tests` (`cannot find -l...` or a missing clang runtime), re-run the link line
-from `var/gate-build/src/test/CMakeFiles/unit_tests.dir/link.txt` with
-`-resource-dir=/usr/lib/llvm-17/lib/clang/17` after `clang++`. Then:
-
-```
-DEV /azerothcore/var/gate-build/src/test/unit_tests
-```
-
-Success: `[  PASSED  ] N tests.` and no `[  FAILED  ]` line.
-
-The learner's tests on CPU (the dev container's GPU stays hidden so nothing depends on a card):
-
-```
-docker exec -e HIP_VISIBLE_DEVICES= -w /azerothcore/apps/forge/python claude-syntax \
-   .venv/bin/python -m pytest -q -rs -p no:cacheprovider
-```
-
-Success: `N passed, M skipped` with no failures and no errors, where every skip is one of three kinds, and `-rs`
-lists them: a GPU test (`rollout graphs need a GPU`, `the fused GRU call runs on the GPU`), `test_human_reader` without
-its capture sample, `test_stage_validation` without a configured build to borrow compile flags from. (At the cleanup:
-888 passed, 13 skipped, 7 slow deselected.) `test_conf_prune.py::test_between_the_tag_and_head...` needs git to read
-the tag: it runs from a plain checkout, and from a worktree too (it finds the worktree's git directory); it skips with
-its reason otherwise. `-m ""` also runs the
-slow multi-process tests; run them once before a deploy that touches the learner.
-
-## 3. The GPU pytest
-
-**Precondition: the GPU is idle.** `rocm-smi` shows no process on the card and step 0's checks still hold. A run on a
-busy card proves nothing either way: a pass may be a lucky share of the card, and a failure (a timeout, an
-out-of-memory) may be the other job's. If the card is busy, wait or stop; do not run it and read the result.
-
-The same suite on a card, so the GPU tests run instead of skipping. Use a card nothing is training on
-(`HIP_VISIBLE_DEVICES=0` is the dev machine's; the cluster's cards are busy). `forgectl test --gpu` is the same run.
-
-```
-docker exec -e HIP_VISIBLE_DEVICES=0 -w /azerothcore/apps/forge/python claude-syntax \
-   .venv/bin/python -m pytest -q -rs -p no:cacheprovider; echo exit=$?
-```
-
-Success: `exit=0`, a summary line `N passed` with **zero failures and zero skips caused by a missing GPU** (`-rs` prints
-no skip whose reason says a GPU is needed), and no `Segmentation fault`. The fused-GRU tests (`test_recurrent.py`, the
-ones
-marked `requires_gpu`) once crashed the interpreter; a segfault ends pytest with no summary line at all, so **a run
-that prints no summary is a failure**, not a pass. Run it a second time: it must be the same.
+What stands in for them in this gate: step 4 (the build compiles; the stage.json files are diffed against the old
+build's), step 5 (`resume_check.py` on the real checkpoint) and step 8 (the first minutes of the resumed run). The
+rollout-graph code can only be confirmed by that last step: look for the `rollout graph captured` log line (and its
+batch shape) in the first minutes. If it says graphs are NOT used, that is a throughput loss, not a crash: note it.
 
 ## 4. Build the new revision and compare stage.json with the old build's
 
@@ -694,7 +644,6 @@ what you saw; do not try a second fix.
 | 0 | a machine is `UNREACHABLE`, `STALLED`, `DOWN`, or shows a `*` on its rev | **Stop** | Nothing is cancelled yet, so nothing is at risk. `forgectl logs <machine> --errors`; a `*` rev: that machine is on other code, re-run `forgectl build --cluster` **later**, not now. Reschedule the gate. |
 | 0 | disk under 30 GB on a machine, the dev card busy, someone else's job on the cluster, owner not told | **Stop** | Clear the disk (`docker builder prune`, old `archive/` runs) or wait for the card or the job; tell the owner; start step 0 again. |
 | 1 | the tag cannot be pushed, or codestyle fails | **Stop** | Fix the push (`git remote -v`, the `lan` repo is on the dev machine) or the style complaint; the tag must be on both remotes before anything is built. |
-| 2 | a GTest or a CPU pytest fails | **Stop** | Read the failing test name. It is a defect in the branch: do not deploy it. Re-run once to see whether it is flaky; a test that fails twice blocks the deploy. If it is a *skip* of a new kind (not the three listed), that is a stop too. |
 | 2 | the build or the link fails | **Stop** | The link error `cannot find -l...` has the documented workaround in the step; any other error is the branch's. |
 | 3 | the card was busy | **Stop** | Not a result. Wait for an idle card and run it again. |
 | 3 | a GPU test fails, or the run prints no summary line (a segfault) | **Stop** | A failing GPU test blocks the deploy. Run once more; a second identical failure is real. Write the test name down for the owner. |

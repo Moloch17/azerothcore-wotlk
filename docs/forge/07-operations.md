@@ -121,7 +121,6 @@ Logs: `env/dist/logs/Server.log`, `Errors.log`, `animus-learner.log` (rank k: `a
   `forge fast 30M` overrides) with `AnimusForge.Fast.Envs` envs (default 16) and the overlay `configs/fast.yaml`, into
   `<OutputDir>/fast/` (`FastProfile`, `ForgeConfig.cpp:709`). `convergence.patience=0` is passed so a stage trains its whole
   budget. Clean with `forge clean fast`.
-- `forgectl test [--gpu]`: GTests plus the CPU pytest in the dev container (forgectl.md).
 
 ## 7.6 Benchmarking
 

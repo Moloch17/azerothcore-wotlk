@@ -37,7 +37,6 @@ may itself be listed (`local = true` there: no ssh).
 | `forgectl stage status\|start\|resume\|pause\|cancel` | drive a stage | console commands |
 | `forgectl build [--cluster]` | rebuild here, or push and rebuild every machine | restarts worldservers |
 | `forgectl cluster move-host <machine> [<stage>]` | move the host role and a run | everything |
-| `forgectl test [--gpu]` | GTests and the CPU pytest in the dev container | no (builds in the container) |
 | `forgectl videos <stage>` | collect evaluation videos from the workers | writes the run folder |
 
 ## `forgectl cluster`
@@ -227,27 +226,6 @@ rebuilt. It lists each machine's conf backup path and the exact command that res
 or undo (restore, then `forgectl build --cluster` so the worldservers read the restored confs). Do not resume a stage
 until it is settled. The audit line notes the mixed stop.
 Without `<stage>` no run is copied or resumed. The target must have `in_cluster = true`.
-
-## `forgectl test [--gpu]`
-
-Runs [`apps/forge/tools/forgectl-test.sh`](../../apps/forge/tools/forgectl-test.sh) inside the dev container named in
-`cluster.toml` (`docker exec`): configures a build tree if there is none, builds `unit_tests`, relinks it against the
-llvm-17 profile runtime (the container's clang 18 has no compiler-rt libraries, so the plain link fails), runs the
-GTests, and runs the pytest suite with `HIP_VISIBLE_DEVICES=""` (`--gpu`: on the card). The tree is found from the
-container's mounts and the build directory is `<mount>/var/forgectl-build-<tree name>` (override with `--tree` and
-`--build-dir`; `--jobs N`). The first build takes a long time; later ones are incremental. It prints one summary:
-
-```
-== forgectl test summary ==
-GTests: 810 passed, 0 failed, 2 skipped (exit 0)
-pytest: 1500 passed, 0 failed, 30 skipped (exit 0)
-RESULT: PASS
-```
-
-Failing tests are listed by name; a build failure shows its first compiler errors and stops (a stale binary is never
-run); a crashed test binary is a failure. Exit 0 only on PASS. The logs stay in the container next to the build
-directory (`.build.log`, `.unit.log`, `.pytest.log`). forgectl's own tests (`apps/forge/python/tests/test_forgectl.py`)
-are part of that pytest run.
 
 ## `forgectl videos <stage>`
 
