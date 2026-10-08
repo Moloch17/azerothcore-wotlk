@@ -42,6 +42,21 @@ are not needed.
 | `./forge.sh dev` | also start `ac-dev-server` |
 | `./forge.sh stop` | stop `ac-worldserver` (the learner saves) |
 
+**Baked camera scenes.** The camera traces the static world from one baked scene file per map a stage runs on
+(maps 34, 36, 389 and 43 today). They are not in git and not shipped: the worldserver bakes a missing or out-of-date
+scene itself at startup (log: `Scene map N baked (reason) ... s`; a few hundredths of a second each for the dungeons,
+4-5 s and about 0.7 GB for a continent) from the extracted data under `DataDir` (`vmaps/`, `maps/`, `dbc/`), and
+loads the rest (`Scene map N loaded`). They live in `<AnimusForge.DataDir>/scenes`, by default
+`env/dist/etc/modules/animus/scenes` (the `etc/` volume the config also lives in; `DataDir` itself is a read-only volume
+under Docker, which is why they are not baked there): that directory must be writable and persisted, and CMake
+creates it empty at install. A container recreated without its `etc/` volume simply bakes again. If a bake fails
+(unwritable directory, missing vmap tree) `forge start` refuses and names the map, the path and the cause. Every
+machine of a cluster bakes its own copy; the bake is deterministic, the cluster fingerprint carries each scene's
+checksum (`scenes=34:...,36:...`), and a worker whose scene differs from the host's is refused. `forgectl doctor`
+(check `camera scenes`) shows which machine and map differs; fix it by copying the host's `.scene` over, or by
+deleting the worker's file and restarting its worldserver. A changed extraction (different `vmaps`, `maps` or
+`LiquidType.dbc`) is detected by content hash and re-baked at the next start.
+
 Settings come only from config: `worldserver.conf` (the `Forge.*` and `AnimusForge.*` keys are in
 `worldserver.conf.dist`) and, if present, `env/dist/etc/modules/mod_animus_forge.conf`, read after it. There are no
 worldserver flags. Key reference: [reference/config-keys.md](reference/config-keys.md). The cluster-machine overlay is

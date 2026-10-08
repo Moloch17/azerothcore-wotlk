@@ -13,11 +13,18 @@ old_console.json) and the baked camera's (scene_baker bench: newcam-<pose>-... a
 and <root>/new/newcam-<pose>.png (the new kind, depth and height panels).
 
     python3 apps/forge/tools/baked_camera_compare.py var/baked-camera-compare
+    python3 apps/forge/tools/baked_camera_compare.py var/baked-camera-compare --map 36 --old old36 --new new36 \\
+        --out compare36 --scene var/baked-camera-compare/data/scenes/036.scene
+
+Arguments: <root> and, all optional, --map (the map id shown in the captions, default 34), --old / --new / --out
+(directories under <root>, default old, new, compare), --scene (the scene file, for attributing parting pixels to
+cracks of the mesh; default <root>/data/scenes/<map>.scene).
 
 The depth channel is read back from the .pgm byte (round(255 x the log-scaled distance), sky 255): one step is about
 3.3 percent of the distance, so "within 1 percent" means "the same byte". Distances below are that byte turned back
 into yards (NEAR 0.25 to DISTANCE_REFERENCE 1000 on a log scale), which is only as exact as the byte.
 """
+import argparse
 import json
 import math
 import re
@@ -220,24 +227,33 @@ def depth_rgb(depth):
 
 
 def main():
-    root = Path(sys.argv[1] if len(sys.argv) > 1 else "var/baked-camera-compare")
-    scene = Path(sys.argv[2]) if len(sys.argv) > 2 else root / "data" / "scenes" / "034.scene"
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("root", nargs="?", default="var/baked-camera-compare")
+    parser.add_argument("--map", type=int, default=34)
+    parser.add_argument("--old", default="old")
+    parser.add_argument("--new", default="new")
+    parser.add_argument("--out", default="compare")
+    parser.add_argument("--scene", default=None)
+    args = parser.parse_args()
+    root = Path(args.root)
+    scene = Path(args.scene) if args.scene else root / "data" / "scenes" / f"{args.map:03d}.scene"
     tris = load_scene_triangles(scene) if scene.exists() else None
-    old = json.loads((root / "old" / "old_console.json").read_text())
-    new = json.loads((root / "new" / "new_timing.json").read_text())
-    out = root / "compare"
+    old_dir, new_dir = root / args.old, root / args.new
+    old = json.loads((old_dir / "old_console.json").read_text())
+    new = json.loads((new_dir / "new_timing.json").read_text())
+    out = root / args.out
     out.mkdir(exist_ok=True)
     small, normal = font(13), font(15)
     metrics, rows, sheet_rows = {}, [], []
     for name, record in old.items():
-        o_depth = read(root / "old" / f"oldcam-{name}-depth.pgm")
-        n_depth = read(root / "new" / f"newcam-{name}-depth.pgm")
-        o_kind = read(root / "old" / f"oldcam-{name}-kind.ppm")
-        n_kind = read(root / "new" / f"newcam-{name}-kind.ppm")
-        n_height = read(root / "new" / f"newcam-{name}-height.pgm")
+        o_depth = read(old_dir / f"oldcam-{name}-depth.pgm")
+        n_depth = read(new_dir / f"newcam-{name}-depth.pgm")
+        o_kind = read(old_dir / f"oldcam-{name}-kind.ppm")
+        n_kind = read(new_dir / f"newcam-{name}-kind.ppm")
+        n_height = read(new_dir / f"newcam-{name}-height.pgm")
         o_class, n_class = classes_of(o_kind), classes_of(n_kind)
-        o_slope = old_slope(root / "old" / f"oldcam-{name}.png")
-        n_slope = read(root / "new" / f"newcam-{name}-normal.pgm")
+        o_slope = old_slope(old_dir / f"oldcam-{name}.png")
+        n_slope = read(new_dir / f"newcam-{name}-normal.pgm")
         stat = pose_metrics(o_depth, n_depth, o_class, n_class)
         timing_old = old_timing(record["console"])
         timing_new = new["poses"][name]
@@ -249,7 +265,7 @@ def main():
         stat["slope_max_abs_byte"] = int(slope_step.max())
         stat["timing_old"], stat["timing_new"] = timing_old, timing_new
         if tris is not None:
-            stat["attribution"] = attribute(tris, record["pose"], stat["pixels_2_or_more_steps"])
+            stat["attribution"] = attribute(tris, [float(v) for v in record["pose"]], stat["pixels_2_or_more_steps"])
         stat["speedup"] = timing_old["wall_us"] / timing_new["median_us"]
         metrics[name] = stat
 
@@ -268,9 +284,9 @@ def main():
         for p in panels:
             image.paste(p, (x, caption))
             x += p.width + gap
-        pose = record["pose"]
+        pose = [float(v) for v in record["pose"]]
         draw = ImageDraw.Draw(image)
-        draw.text((6, 4), f"{name}   map 34, feet ({pose[0]}, {pose[1]}, {pose[2]}), yaw {pose[3]}, pitch {pose[4]}, "
+        draw.text((6, 4), f"{name}   map {args.map}, feet ({pose[0]}, {pose[1]}, {pose[2]}), yaw {pose[3]}, pitch {pose[4]}, "
                   f"zoom {pose[5]}   128x64, 120x60 deg", fill=(255, 255, 255), font=normal)
         draw.text((6, 26), f"old {timing_old['wall_us']:.0f} us ({timing_old['wall_us'] / timing_old['rays']:.2f} us/ray)   "
                   f"new median {timing_new['median_us']:.0f} us / min {timing_new['min_us']:.0f} us "
@@ -288,7 +304,7 @@ def main():
         for p in trio:
             solo.paste(p, (x, 0))
             x += p.width + 8
-        solo.save(root / "new" / f"newcam-{name}.png", optimize=True)
+        solo.save(new_dir / f"newcam-{name}.png", optimize=True)
 
     # Contact sheet: every pose, half size.
     half = [r.resize((r.width * 2 // 3, r.height * 2 // 3), Image.LANCZOS) for r in sheet_rows]

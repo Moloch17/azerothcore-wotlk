@@ -26,6 +26,9 @@ echo "logage=$(( $(date +%s) - $(stat -c %Y "$L" 2>/dev/null || echo 0) ))"
 echo "errline=$(tail -n 400 "$L" 2>/dev/null | grep -a -E 'Traceback|Error|CRITICAL|FATAL|Exception' \
   | tail -n 1 | cut -c1-200)"
 echo "partials=$(find {runs} -maxdepth 3 -name '*.pt.partial' -mmin +{minutes} 2>/dev/null | head -n 3 | tr '\n' ' ')"
+S={scenes}
+echo "scenes=$(for f in "$S"/*.scene; do [ -f "$f" ] && printf '%s:%s ' "$(basename "$f" .scene)" \\
+  "$(od -An -tx8 -j104 -N8 "$f" | tr -d ' ')"; done)"
 """
 
 
@@ -51,6 +54,7 @@ def read_extra(config: Config, machine: Machine) -> dict:
     script = EXTRA.format(path=remote.sh_path(machine.path),
                           learner_log=remote.sh_path(config.path_of(machine, "learner_log")),
                           runs=remote.sh_path(config.path_of(machine, "runs")),
+                          scenes=remote.sh_path(config.path_of(machine, "scenes")),
                           minutes=int(config.doctor["partial_stale_minutes"]))
     result = remote.on(machine, script, timeout=45)
     fields = {}
@@ -74,6 +78,46 @@ def read_confs(config: Config, machines: list[Machine]) -> dict:
         except Failure as failure:
             return failure
     return dict(zip([m.name for m in machines], remote.parallel_map(one, machines)))
+
+
+def scene_checksums(text: str) -> dict[str, str]:
+    """map id -> checksum of the scene files a machine reported (`<map>:<checksum>` words)."""
+    out = {}
+    for word in text.split():
+        name, sep, checksum = word.partition(":")
+        if sep and name.isdigit():
+            out[str(int(name))] = checksum
+    return out
+
+
+def scene_check(config: Config, live: list) -> Check:
+    """The baked camera scenes (decision 0020): every machine bakes its own, so each worker's must be the host's byte
+    for byte (the cluster fingerprint refuses a worker whose scenes differ)."""
+    host = next((f for f in live if f.status.machine.name == config.host_name), None)
+    if host is None:
+        return Check("camera scenes", WARN, "the host is not reachable, so there is nothing to compare against")
+    reference = scene_checksums(host.extra.get("scenes", ""))
+    if not reference:
+        return Check("camera scenes", WARN, f"{host.status.machine.name} has no scene file yet",
+                     "the worldserver bakes them when it starts (look for 'Scene map' in its log); is "
+                     f"{config.paths['scenes']} where its AnimusForge.DataDir puts them?")
+    bad = []
+    for f in live:
+        if f is host:
+            continue
+        mine = scene_checksums(f.extra.get("scenes", ""))
+        problems = [f"{m} missing" if m not in mine else f"{m} differs" for m in sorted(reference, key=int)
+                    if mine.get(m) != reference[m]]
+        if problems:
+            bad.append(f"{f.status.machine.name}: {', '.join(problems)}")
+    if not bad:
+        return Check("camera scenes", PASS, f"maps {', '.join(sorted(reference, key=int))} equal on "
+                     f"{len(live)} machines")
+    where = config.paths["scenes"]
+    return Check("camera scenes", FAIL, "; ".join(bad), "the host's file is the reference: copy "
+                 f"{where}/<map>.scene from the host to the same place on that machine, or delete the worker's file "
+                 "and restart its worldserver to bake it again; a worker whose scenes differ is refused by the "
+                 "cluster fingerprint")
 
 
 def dev_card(max_busy: float) -> tuple[str, str]:
@@ -210,6 +254,7 @@ def checks(config: Config, facts: list[Facts], dev_rev: str | None, confs: dict,
         out.append(Check(f"cadence {f.status.machine.name}", INFO,
                          f"decision_ticks {shown(c['ticks_per_decision'])}, HalfBatch {shown(c['half_batch'])}, "
                          f"Envs {shown(c['envs'])}, Cpus {shown(c['learner_cpus'])}, stage ticks: {stage}"))
+    out.append(scene_check(config, live))
     empty = [f.status.machine.name for f in live if f.status.conf_lines is not None and f.status.conf_lines <= 0]
     out.append(Check("conf not empty", FAIL, f"the conf is empty or unreadable on {', '.join(empty)}",
                      "restore it from its mod_animus_forge.conf.bak-* before ANY restart")

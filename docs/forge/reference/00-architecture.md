@@ -361,7 +361,8 @@ host   -> worker REFUSED <keys>   START <stage> <resume> <fast> [envs=] ticks=  
   every `Animus/*.cpp`, `.h`, `.hip` file, computed by CMake at configure time (`game/CMakeLists.txt`; nothing outside
   `Animus/` and no Python is hashed), `protocol=` `PROTOCOL_VERSION`, `curriculum=` the FNV-1a of the serialised
   `CurriculumTuning::Load("AnimusForge.Curriculum.")` (every value in force, defaults included), `decision=`
-  `DecisionMs/TicksPerDecision`. The host registers a worker only when the strings are equal and otherwise answers
+  `DecisionMs/TicksPerDecision`, `scenes=` `<map>:<checksum>` of each baked camera scene (decision 0020), ascending by map
+  id; every machine bakes its own, so this compares what each produced. The host registers a worker only when the strings are equal and otherwise answers
   `REFUSED` with the differing keys; the worker retries a minute later.
 - **START**: the host sends the stage, resume flag, fast flag, its own per-stage env cap (the worker runs at most that
   many) and its world ticks a decision (which the worker runs whatever its conf says, `WorkerPlan`). A worker builds a

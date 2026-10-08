@@ -98,9 +98,11 @@ The table lists everything; this is what the groups are for.
   sim listens), 7702 distributed-learner rendezvous (host).
 - **Enforced match (the fingerprint).** `ClusterFingerprint` (`AnimusForge.cpp:75-105`) builds
   `src=<FORGE_SOURCE_HASH> protocol=<PROTOCOL_VERSION> curriculum=<FNV-1a hash of the effective
-  AnimusForge.Curriculum.* tuning JSON> decision=<DecisionMs>/<TicksPerDecision>`. The host registers a worker only if
+  AnimusForge.Curriculum.* tuning JSON> decision=<DecisionMs>/<TicksPerDecision> scenes=<map>:<checksum>,...`
+  (each baked camera scene's header checksum, ascending by map id: every machine bakes its own). The host registers a worker only if
   the string is equal (`ClusterLink.cpp:293-310`); otherwise it logs `Cluster: refused the worker at ...`. From the
-  non-Curriculum keys only `DecisionMs` and the global `TicksPerDecision` are in it.
+  non-Curriculum keys only `DecisionMs` and the global `TicksPerDecision` are in it. `AnimusForge.DataDir` (where the
+  scenes live) is per machine and not compared; the scenes it holds are, through `scenes=`.
   `FORGE_SOURCE_HASH` comes from the CMake configure step
   (`ForgeSourceHash.h`, `AnimusForge.cpp:63-67`; "unhashed" if the header is missing).
 - **Not enforced, but must match** (deploy-gate.md step 6 table, confirmed against the code): `Vision.*`, `Map.*`,

@@ -131,7 +131,7 @@ advertise)` only records settings; `Poll()` calls `ConnectToHost()` every 3 s wh
 ### The fingerprint (`AnimusForge.cpp:75-101`)
 
 `src=<FORGE_SOURCE_HASH> protocol=25 fields=<count>/<bytes> curriculum=<FNV-1a of the serialized CurriculumTuning::Load(
-"AnimusForge.Curriculum.") JSON> decision=<DecisionMs>/<TicksPerDecision>`.
+"AnimusForge.Curriculum.") JSON> decision=<DecisionMs>/<TicksPerDecision> scenes=<map>:<checksum>,...` (the baked camera scenes the machine loaded, ascending by map id).
 
 - `FORGE_SOURCE_HASH`: first 16 hex digits of the SHA-256 of the concatenated SHA-256 of every `Animus/**/*.cpp`, `*.h`,
   `*.hip` (sorted), computed by CMake at configure time (`src/server/game/CMakeLists.txt:60-75`). The `Animus/` tree

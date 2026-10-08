@@ -88,14 +88,10 @@ them forward:
 | `src/common/Collision/BoundingIntervalHierarchy.h` | +30 -7 | G | read-only tree accessors for the GPU copy; a primitive with non-finite or inside-out bounds is left out of the tree (was `std::terminate` in `subdivide`) |
 | `src/common/Collision/DynamicTree.cpp` | +35 -5 | G | surface-normal and model out-parameters on `GetIntersectionTime`; read-only listing of models and cells for the camera |
 | `src/common/Collision/DynamicTree.h` | +13 -1 | G | declarations for the above |
-| `src/common/Collision/Maps/MapTree.cpp` | +39 -4 | G | `GetLiquidIntersection`, `GetSurfaceIntersection`, normal out-parameter, read-only spawn listing |
-| `src/common/Collision/Maps/MapTree.h` | +15 -1 | G | declarations for the above |
 | `src/common/Collision/Models/GameObjectModel.cpp` | +6 -2 | G | normal out-parameter; accessors |
 | `src/common/Collision/Models/GameObjectModel.h` | +21 -1 | G | accessors for the GPU copy |
-| `src/common/Collision/Models/ModelInstance.cpp` | +22 -2 | G | normal out-parameter; liquid intersection |
-| `src/common/Collision/Models/ModelInstance.h` | +10 -1 | G | declarations |
-| `src/common/Collision/Models/WorldModel.cpp` | +190 -10 | G | `IntersectLiquid`, Moeller-Trumbore triangle test, normals, read-only views of group data |
-| `src/common/Collision/Models/WorldModel.h` | +26 -2 | G | declarations |
+| `src/common/Collision/Models/WorldModel.cpp` | +23 -10 | G | normal out-parameter through `GroupModel`/`WorldModel::IntersectRay` (the dynamic tree's, for doors) |
+| `src/common/Collision/Models/WorldModel.h` | +6 -2 | G | declarations |
 | `src/common/Configuration/Config.h` | +3 -1 | A | `LoadAdditionalFile` made public so `main()` can read the legacy `modules/mod_animus_forge.conf` |
 | `src/common/Threading/CpuPlacement.cpp` | +278 -0 | F | new: CPU topology order (largest-L3 die first, physical cores before SMT siblings), pinning |
 | `src/common/Threading/CpuPlacement.h` | +62 -0 | F | new: `Order`, `AwayFrom`, `Split`, `Parse`, `PinThisThread`, `PinProcess`, `Describe` |
@@ -143,8 +139,6 @@ them forward:
 | `src/server/game/Forge/Forge.h` | +51 -0 | A | new: `ForgeCore` declarations |
 | `src/server/game/Globals/ObjectAccessor.cpp` | +11 -2 | F | `PlayerNameMapLock`; `GetPlayer(Map const*, guid)` answers from the map's own index |
 | `src/server/game/Globals/ObjectMgr.cpp` | +8 -0 | F | `SetHighestGuids` creates every global GUID generator up front |
-| `src/server/game/Grids/GridTerrainData.cpp` | +151 -73 | G | `resolveLiquid` factored out of `GetLiquidData`; `GetMaxHeight`, `GetCellHeights`, `HasLiquid`, `GetLiquidSurface` |
-| `src/server/game/Grids/GridTerrainData.h` | +19 -0 | G | declarations; `gridMaxHeight` |
 | `src/server/game/Grids/GridTerrainLoader.cpp` | +9 -2 | F | instance-0 vmap/mmap tile loads are deferred while map tasks run |
 | `src/server/game/Groups/Group.cpp` | +37 -20 | E | `m_simGroup`, `IsPersisted()` replace the `!isBGGroup() && !isBFGroup()` tests |
 | `src/server/game/Groups/Group.h` | +8 -0 | E | `SetSimGroup`, `IsPersisted` |
@@ -152,9 +146,9 @@ them forward:
 | `src/server/game/Instances/InstanceSaveMgr.cpp` | +33 -10 | E | no bind rows for sim sessions; the weekly/daily global reset skips instances that hold a sim seat |
 | `src/server/game/Instances/InstanceScript.cpp` | +4 -0 | C | `LoadInstanceSavedGameobjectStateData` returns on a sealed pool |
 | `src/server/game/Maps/Map.cpp` | +153 -13 | F | phase timing, unseen-spawn skipping, `_playersByGuid`, `OnCreateMap` for replicas, update-list removal fix, `SendObjectUpdates` drains without a client, sealed-pool guards |
-| `src/server/game/Maps/Map.h` | +123 -0 | F | `UpdateTiming`, `TaskSample`, accrued diff, `GetPlayerByGuid`, `GetCreatedGridTerrainData` |
-| `src/server/game/Maps/MapCollisionData.cpp` | +91 -0 | G | `GetLiquidHit`, `GetSurfaceHit` (static and dynamic), `AnyHit` (static and dynamic): the camera's additions only |
-| `src/server/game/Maps/MapCollisionData.h` | +21 -0 | G | declarations |
+| `src/server/game/Maps/Map.h` | +120 -0 | F | `UpdateTiming`, `TaskSample`, accrued diff, `GetPlayerByGuid` |
+| `src/server/game/Maps/MapCollisionData.cpp` | +45 -0 | G | `DynamicVMapCollisionData::GetSurfaceHit`, `AnyHit` (doors stay on the live dynamic tree) |
+| `src/server/game/Maps/MapCollisionData.h` | +7 -0 | G | declarations |
 | `src/server/game/Maps/MapInstanced.cpp` | +49 -12 | F | empty children are not ticked; half-batch freeze; heap-trim notice |
 | `src/server/game/Maps/MapMgr.cpp` | +275 -31 | F | uniform per-tick map update, continent replicas, deferred tile loads, heap trim, task timing |
 | `src/server/game/Maps/MapMgr.h` | +100 -10 | F | declarations for the above |
@@ -389,32 +383,32 @@ pass.
 changes to map update order, grid loading, or `LFGMgr` locking will need reasoning against the lock-free design and the
 `MapTasksRunning` contract.
 
-## G. Read-only accessors for the bots' camera
+## G. What the bots' camera still needs of the collision code
 
-The camera casts rays over the same terrain and collision data the server uses, on the CPU and (with the device library)
-on the GPU. The core gained read-only access, with no change to any existing query's result:
+The camera's static world (WMOs, M2s, their liquids, the terrain) is not cast against the core's trees any more: it is
+traced from baked scene files (decision 0020, `Animus/Runtime/Vision/BakedWorld`), and the baker that makes them
+(`SceneBaker`) uses only stock, public APIs plus the `.map` and `.dbc` files read by hand. Stage 2 deleted the camera's
+patch of the static path: `StaticMapTree::GetSurfaceIntersection`/`GetLiquidIntersection` (and `MapRayCallback`'s normal,
+`MapLiquidCallback`), `ModelInstance`'s normal out-parameter and `intersectLiquid`, `WorldModel`/`GroupModel`
+`IntersectLiquid`, `WmoLiquid::IntersectRay`, `StaticVMapCollisionData::GetSurfaceHit/GetLiquidHit/AnyHit`,
+`Map::GetCreatedGridTerrainData` and the `GridTerrainData` accessors. `MapTree.*`, `ModelInstance.*` and
+`GridTerrainData.*` are upstream's again; before/after against `upstream/master` (added lines, `git diff --numstat`):
+`MapTree.cpp` 39 -> 0, `MapTree.h` 10 -> 0, `ModelInstance.cpp` 22 -> 0, `ModelInstance.h` 6 -> 0,
+`WorldModel.cpp` 190 -> 23, `WorldModel.h` 14 -> 6, `GridTerrainData.cpp` 151 -> 0, `GridTerrainData.h` 19 -> 0,
+`MapCollisionData.cpp` 97 -> 45, `MapCollisionData.h` 21 -> 7, `Map.cpp` 153 -> 145, `Map.h` 123 -> 120.
 
-- `StaticMapTree::GetLiquidIntersection` and `GetSurfaceIntersection`, a normal out-parameter on the intersection
-  routines, read-only listing of spawns and models (`MapTree.cpp:152` and others);
-  `DynamicMapTree` model and cell listing, `GetIntersectionTime(..., normal, model)`; `GameObjectModel`, `ModelInstance`
-  and `WorldModel` accessors including `IntersectLiquid` and a Moeller-Trumbore triangle test
-  (`WorldModel.cpp`).
-- `GridTerrainData::resolveLiquid` (the body of `GetLiquidData`, factored out), `GetMaxHeight`, `GetCellHeights`,
-  `HasLiquid`, `GetLiquidSurface`; `Map::GetCreatedGridTerrainData` (never creates a grid).
-- `StaticVMapCollisionData::GetLiquidHit/GetSurfaceHit`, `DynamicVMapCollisionData::GetSurfaceHit`
-  (`MapCollisionData.cpp:117,148,230`).
-- `StaticVMapCollisionData::AnyHit` and `DynamicVMapCollisionData::AnyHit` (entity-sensing): ungated any-hit segment
-  tests for the entity sensor's shadow rays. The static one is `StaticMapTree::isInLineOfSight` with
-  `ModelIgnoreFlags::Nothing`, NOT `StaticVMapCollisionData::isInLineOfSight` (gated by `CONFIG_VMAP_ENABLE_LOS` and the
-  disable table, so it could disagree with the pixels); the dynamic one is `DynamicMapTree::isInLineOfSight`. Used by
-  `MapVisionWorld::Blocked`.
+What stays serves the dynamic path (closed doors and other game objects stay on the live tree this phase) and the sim:
+
+- `DynamicMapTree` model and cell listing, `GetIntersectionTime(..., normal, model)`; `GameObjectModel` accessors and the
+  normal out-parameter, and through it `WorldModel::IntersectRay`/`GroupModel::IntersectRay`'s (`WorldModel.cpp`).
+- `DynamicVMapCollisionData::GetSurfaceHit` and `AnyHit` (`MapCollisionData.cpp`): the door hit and the entity sensor's
+  shadow rays through doors (`DynamicMapTree::isInLineOfSight`, `ModelIgnoreFlags::Nothing`, not gated by the LOS
+  config). Called by `MapVisionWorld`.
 - A hardening fix: `BIH` leaves out a primitive whose bounds are not finite or inside out
   (`BoundingIntervalHierarchy.h:89-92`; seen as `std::terminate` from `BIH::subdivide`).
 
-Callers: `Animus/Vision/MapVisionWorld.cpp`. Note the dynamic-tree listing may only run
-while the owning map is not updating (comment in `DynamicTree.cpp`).
-**Merge risk.** Low (additive), except the `GetLiquidData` refactor, which touches upstream logic: re-check it on every
-merge of `GridTerrainData.cpp`.
+Note the dynamic-tree listing may only run while the owning map is not updating (comment in `DynamicTree.cpp`).
+**Merge risk.** Low (additive). `GridTerrainData`, `MapTree` and `ModelInstance` merge as upstream.
 
 ## H. Movement and the player controller
 
