@@ -89,3 +89,164 @@ Effort: S under a day, M a few days, L a week or more. "Risk of fixing" is the c
 | R-34 | Build | Worker containers compile inside the run container, each from source, with no artefact promotion; "up to an hour" on the slowest | `forge-worldserver.sh:30-56`; `deploy-gate.md:714` | Med | L | Med |
 | R-35 | Repo | Upstream cruft that the fork never uses: `.coderabbit.yml`, `FUNDING.yml` (upstream donation link), `flake.nix`, `doc/changelog`, `apps/{installer,startup-scripts,DatabaseSquash}` | `ls`; `.github/FUNDING.yml` | Low | S | Low |
 
+## 1. The upstream relationship
+
+### 1.1 How far behind, measured
+
+`git fetch upstream` (read-only) then `git rev-list --count forge..upstream/master` gives **494** commits;
+`upstream/master` is `bce7ed5a6`, dated 2026-10-07. The delta document counts 206 against `386f3a13f` of 2026-09-15
+(`01-forge-core-delta.md:11-13`), so the number has more than doubled in three weeks. Since the merge-base `37de65eb0`
+upstream changed 519 files (95,149 lines added, 5,163 removed); 75,089 of those changed lines are `data/sql`
+(`git diff --numstat`), and the forge touches no SQL, so a merge also brings a world-database schema and data update
+that the sim picks up through `Updates.AutoSetup` (`docker-compose.yml:75-78`). The source part is about 17,000 lines
+under `src/server`, 632 under `src/test`.
+
+Of the forge's 119 edited upstream files, **41 were also edited upstream** and **78 were not**. The 78 include the
+files the delta document ranks as the highest risk: `MapMgr.cpp/.h`, `MapUpdater.cpp/.h`, `MapInstanced.cpp`,
+`MovementHandler.cpp`, `LFGMgr.cpp`, `GridTerrainData.cpp`, `DatabaseWorkerPool.h`, `ObjectMgr.cpp` and
+`ObjectAccessor.cpp`. So today's merge is easy where the delta document expects it to be hard, and hard where it
+expects it to be easy.
+
+### 1.2 Dry-run result, and the ranking of the 119 files
+
+`git merge-tree --write-tree --name-only --messages forge upstream/master` (no working tree touched; one tree object
+`54dd8dc6ad4d949d069e250fda55bb92c936361c` written). Result: not clean. In order of cost:
+
+**Tier 1: conflicts a person must resolve (6 content files plus `AGENTS.md`, 1 modify/delete that matters).**
+
+| File | Hunks | Why it conflicts | Resolution |
+|---|---|---|---|
+| `src/server/apps/worldserver/Main.cpp` | modify/delete | forge deleted it; upstream added `SaveSessionEnd`, `OnModuleDatabasesLoading`, `OnModuleDatabasesClosing`, `OnDatabaseWarnAboutSyncQueries` (16 lines) | keep the deletion; port the four calls into `ForgeMain.cpp` by hand or consciously drop them (R-04) |
+| `src/server/game/Spells/Spell.cpp` | 4 (merge result `:3892,4216,4882,4969`) | upstream `fe6913668` replaced `m_caster` with `unitCaster` in `OnSpellCast/OnSpellCastCancel` and moved `Unit* unitCaster` into `SendSpellStart/Go`; forge adds `Animus::Hooks::CastCancelled/CastCompleted` and `HasClients` early returns on the same lines | take upstream's names, re-add the two hooks (their first parameter must become `unitCaster`, see R-02) and the two `HasClients` returns before `unitCaster` is read |
+| `src/server/game/Entities/Unit/Unit.cpp` | 1 (`:6656-6675`) | forge's `HasClients`-gated `Unit::SendSpellMiss` against upstream's deletion of it | delete the forge copy; gate the new `WorldObject::SendSpellMiss` instead (R-02) |
+| `src/server/game/Server/WorldSession.cpp` | 2 (`:174-178`, `:885-891`) | `if (!m_simSession)` against upstream `if (!_headless)`, and `!m_simSession` against `OnPlayerCanMarkAccountOffline` | take upstream's forms and delete `m_simSession` where `_headless` suffices (R-05) |
+| `src/server/game/Entities/Player/Player.cpp` | 1 (`:12068-12077`) | upstream folded the equip proc-cooldown into a lambda `applyProcCooldown` that reads `std::chrono::steady_clock::now()`; the forge line is `GameTime::Now()` | take the lambda, change its clock to `GameTime::Now()`. The conflict is easy; losing the clock change is the bug (section B of the delta document) |
+| `src/server/game/Entities/Player/PlayerUpdates.cpp` | 1 (`:2473-2482`) | forge's early return in `UpdateAdditionalSaves` against upstream's rename `isLogingOut` to `IsLoggingOut` | keep the forge return, upstream's name below it. The merged `Player.cpp:10444` and `PlayerStorage.cpp:7315` already use the new name; no stale caller was found in `Animus/` |
+| `AGENTS.md` | 3 (`:10,29,44`) | forge removed four e2e lines; upstream edited them | keep the forge side |
+
+Noise that resolves with `git rm`: 27 `e2e/**` files, `.github/workflows/e2e-live.yml` and
+`.agents/docs/e2e-policy.md` (modify/delete: the forge removed the Go e2e suite, upstream kept editing it). Expect the
+same noise at every merge until the owner decides whether upstream's e2e suite is wanted again (Q-6).
+
+**Tier 2: merges cleanly, but does not compile or silently loses a forge guarantee.** This is the dangerous class
+because git reports success.
+
+| File | What happens | Evidence |
+|---|---|---|
+| `src/common/Threading/PCQueue.h` | forge added `Reset()` (`forge:PCQueue.h:100`); upstream added an identical `Reset()` (`c1893c0e5`, used by `DatabaseWorkerPool::Open`). The merge keeps both: **redefinition, compile error**. Drop the forge copy; this also retires F-9 of the delta document | merge result `PCQueue.h:100` and `:116` |
+| `src/server/game/Entities/Object/Object.cpp` | upstream added 793 lines, including `WorldObject::SendSpellMiss` and `SendSpellNonMeleeDamageLog` (`fe6913668`). Forge's gate is on the `Unit` versions; the new ones build and send a packet with no `HasClients` test | merge result `Object.cpp:3855-3859` |
+| `Animus/Env/AnimusHooks.h` callers in `Spell.cpp` | `CastCompleted(Unit*, Spell*)`, `CastCancelled(Unit*, Spell*, bool)`, `HealCast`, `Damage`, `Heal` take `Unit*`; upstream's `Spell::m_caster` is a `WorldObject*` after `fe6913668`, so the call needs `ToUnit()` and a null check | `AnimusHooks.h:45-49`; forge `Spell.cpp:3775,4091` |
+| `src/server/game/World/World.cpp` | upstream added a `LoginDatabase` write at start-up and `SaveSessionEnd`; `OnModuleDatabasesKeepAlive` landed inside the ping block the forge kept. Harmless today; `SaveSessionEnd` is called only from the deleted `Main.cpp`, so the session outcome is never recorded for the forge | merge result `World.cpp:909-916,1278-1285` |
+| `src/server/game/Maps/Map.cpp` | `CanSendObjectUpdatesToPlayer` landed correctly after the forge's `HasClients` drain. New `ForceCreatureRespawn` calls `SaveCreatureRespawnTime`, a character-database write that a sealed pool drops with a log line | merge result `Map.cpp:1875` |
+| `src/server/game/Time/GameTime.cpp` | upstream added `StartSteadyPoint = steady_clock::now()`; the forge's `AdvanceGameTimers` seeds its own point. Harmless unless something reads the new one in gameplay | upstream diff of `GameTime.cpp` |
+| `Creature.cpp`, `Pet.cpp`, `SpellAuras.cpp`, `Group.cpp`, `InstanceSaveMgr.cpp` | auto-merged; upstream changed behaviour in the same files (lazy creature terrain status `b573d7e61`; a pet-save refactor of 145/122 lines; group invite and loot-roll fixes). `Pet.cpp` keeps the forge's early `return` above upstream's new body, so upstream's pet-save changes are dead code in the fork | `Pet.cpp:547-560` |
+
+**Tier 3: both sides edited, auto-merged, low risk (about 25 files):** `Battleground.h`, `BattlegroundSA.h`,
+`LFGMgr.h`, `Creature.h`, `DynamicObject.h`, `GameObject.cpp/.h`, `Object.h`, `Player.h`, `PlayerStorage.cpp`,
+`Unit.h`, `Group.h`, `InstanceScript.cpp`, `Map.h`, `WorldSession.h`, `SpellAuraEffects.cpp`, `GameTime.h`,
+`World.h`, `boss_xt002.cpp`, `spell_druid.cpp`, `spell_paladin.cpp`, `DatabaseWorkerPool.cpp`,
+`worldserver.conf.dist` (upstream +20 lines in a file the forge extended by 1,823).
+
+**Tier 4: forge-only edits upstream has not touched (78 files)**, including every file in the delta document's
+sections F (except `Map`, `LFG` and `Battleground` headers) and H and all of the camera accessors (G). Zero risk this
+round, and the likely source of surprises later.
+
+Two points of method. First, git cannot see semantic conflicts, so section 1.6 gives a checklist. Second, upstream's
+`data/sql` volume means the useful first step of a merge is to read the commit subjects: the list for `src/server`,
+`src/common`, `Maps`, `Movement`, `DungeonFinding` and `database` is 21 commits, readable in ten minutes.
+
+### 1.3 What happens to the build if upstream changes a file the forge edited in place
+
+Three things, in order of how loud they are.
+
+1. **A textual conflict** (Tier 1): the merge stops; loud.
+2. **A semantic break**: a compile error (R-01) is loud; a lost guard (R-02) is silent and shows up as wasted CPU,
+   not wrong results (the delta document's section D says the same). A new post-startup `AsyncQuery` or holder would
+   `ABORT` the process on the sealed pool; the scan of the upstream diff found none, only synchronous writes the seal
+   drops (`World.cpp`, `Guild.cpp`, `ArenaTeam.cpp`, all `Execute`).
+3. **The cluster does not notice.** `FORGE_SOURCE_HASH` hashes only `Animus/` (`game/CMakeLists.txt:61-72`), so a
+   worker that missed a core change, or built it differently, passes the fingerprint (R-06). The build also reads
+   sources through `file(GLOB)` at configure time (`forge-worldserver.sh:28-29` documents it): an upstream file added
+   by a merge is not compiled until the next configure, which `./forge.sh --build` does and a plain restart does not.
+
+### 1.4 What could be upstreamed or replaced by an upstream hook
+
+Upstream has moved toward the forge's needs since the fork point. Mapping each to a forge edit:
+
+| Upstream (commit) | What it gives | Forge edit it can replace | Verdict |
+|---|---|---|---|
+| headless sessions (`92fed92ea`): `_headless(!sock)`, `IsHeadless()`, `m_Address = "headless"`, no `account` writes in the destructor | a session built with a null socket is headless automatically | `m_simSession`, `SetSimSession`, `IsSimSession` (`WorldSession.h:501-502,1314`), the guards at `WorldSession.cpp:171` and `InstanceSaveMgr.cpp:793,809`. `BotFactory.cpp:76` already builds the session with `nullptr` | replace; shrinks the delta, removes two conflict hunks |
+| `OnPlayerCanMarkAccountOffline` (`2d6742b26`) | veto the account-offline write on logout | `!redirecting && !m_simSession` at `WorldSession.cpp:872` | replace with a `PlayerScript` in `Animus/` that returns false for a headless session |
+| `CanSendObjectUpdatesToPlayer` (`6792c7de3`) | per-player veto of an update packet | partly `Map::SendObjectUpdates` | cannot replace it: the forge's early drain (`Map.cpp:1824-1838`) skips `BuildUpdate` for every object, which the hook cannot do |
+| `SessionScript::OnSessionUpdate`, `OnPacketSent` (`6792c7de3`, `92fed92ea`) | observe a session tick and every packet sent | possibly the movement-order inbox (`WorldSession::EnableMovementOrders`, `WorldSession.cpp:306`) | UNVERIFIED: depends on whether `Animus::Client::Inbox` needs the packet before or after the socket test |
+| `NextQueuedPacket` (`92fed92ea`) | drain a headless session's receive queue | the same inbox | UNVERIFIED |
+| `OnModuleDatabasesLoading/Closing/KeepAlive` (`e1823bb2d`) | modules that own a database | nothing; the forge seals instead | not applicable, but `Main.cpp` calls them (R-04) |
+| `129a2d0e2` read-only module accessors | accessors for modules | possibly part of section G of the delta document (collision accessors) | UNVERIFIED; read the commit before the next merge |
+
+Forge changes that **cannot** be hooks, because they change a hot path rather than react to an event: `HasClients`
+packet gating (a global predicate used inside `Object.cpp`, `Unit.cpp`, `Spell.cpp`), the sealed database pool, the
+`MapUpdater`/`MapMgr` rewrite, `GameTime::AdvanceGameTimers`, the `UpdateMask` bit packing and the world-loop rewrite.
+
+Forge changes that are **genuine bug fixes upstream would take** and could be sent as small pull requests (the owner
+said no pull requests unless asked; this is a list for a decision, Q-7):
+
+- `_scheduler.Update(diff)` where upstream passed nothing, so the scheduler ran on the wall clock: `boss_jeklik.cpp`,
+  `zone_howling_fjord.cpp` (delta table); `TaskScheduler::GetNextGroupOccurrence` measuring against `_now`.
+- 64-bit cooldown and respawn timestamps (`SpellCooldown::end`, `m_ProhibitSchoolTime`, `m_cooldownTime`,
+  `m_lastSanctuaryTime`, SotA demolisher respawn): an overflow after 49.7 days of uptime that also affects a real
+  realm.
+- `BoundingIntervalHierarchy` leaving out a primitive with non-finite or inside-out bounds instead of
+  `std::terminate` in `subdivide` (`BoundingIntervalHierarchy.h:89-92`).
+- `LFGMgr::_storeLock`, `PlayerNameMapLock`, atomic `ObjectGuidGenerator::_nextGuid`: thread-safety for anything that
+  places players from map threads.
+- `RemoveFromMap` always calling `RemoveObjectFromMapUpdateList` (fixes an assert, `Map.cpp:855`).
+- `UpdateMask` one bit per field (a pure speedup, applies with clients).
+- `InstanceSaveMgr` leaking an unexecuted prepared statement (`InstanceSaveMgr.cpp:809-860`, noted in the delta
+  document).
+
+### 1.5 Dead core additions and gates in core code
+
+Dead (no caller in `src`, re-verified with `grep -rw` over `src`):
+
+| Symbol | Location | Note |
+|---|---|---|
+| `Battleground::SetSimOwned/IsSimOwned`, `_simOwned` | `Battleground.h:570-571` | F-10 |
+| `Group::IsSimGroup` | `Group.h:230` | F-10 |
+| `PathGenerator::SetIncludeFlags/GetIncludeFlags` | `PathGenerator.h:90-91` | F-10 |
+| `GetBGObject(type, logMissing = false)` form | `Battleground.h:437` | F-10; no call passes `false` |
+| `PCQueue::Reset` (forge copy) | `PCQueue.h:100` | F-9; now also a merge break (R-01) |
+| **`MapUpdater::ParallelFor`** | `MapUpdater.h:85`, `MapUpdater.cpp:182` | **new**: only its declaration, definition and a comment exist; the delta document describes it as used "for a map task's own parallel pieces" |
+| `MapMgr::SetMapUpdateInterval` | `MapMgr.h:101` (no-op), called at `World.cpp:205` | F-13; the caller is dead weight too |
+
+Gates (forge settings read from upstream code): `OutdoorPvPMgr.cpp:49` reads `AnimusForge.Enable` straight from
+`sConfigMgr` (F-6, already filed); `Forge.cpp:36` reads `Forge.Playtest`, which `World.cpp:1157,1225` and
+`ForgeMain.cpp` branch on (17 lines in `ForgeMain.cpp`); `ForgeMain.cpp:229` reads `Forge.SealStrict`; `:276-281` read
+`AnimusForge.DecisionMs`, `TicksPerDecision` and `HalfBatch` in the world loop; `:354-360` dual-reads the legacy
+`modules/mod_animus_forge.conf`. Everything else reaches the forge through `ForgeCore::HasClients()` (a predicate on
+session count, `Forge.cpp`), not through configuration. The one genuine behavioural gate is `Forge.Playtest`, which
+principle 17 names and the owner's own notes mark as abandoned (R-30, Q-4).
+
+### 1.6 Recommended upstream-merge routine
+
+Cadence: monthly, or when an upstream commit touches a forge-edited file (`git log forge..upstream/master -- <the
+119 files>` shows it). A merge is a review task, not a mechanical one; the owner decides when (principle 20: work and
+merges go on `forge`).
+
+1. `git fetch upstream`. Read the commit subjects that touch `src/server`, `src/common` and `src/test`.
+2. Dry run: `git merge-tree --write-tree --name-only --messages forge upstream/master`. Compare the conflict list with
+   section 1.2; anything new is a new Tier 1 file.
+3. Merge on a throwaway branch. Resolve Tier 1 with the table above. `git rm` the e2e noise.
+4. Run the **semantic checklist** on the merged tree, each a single grep over the added lines of the merge diff:
+   `getMSTime\(|steady_clock::now|system_clock::now` (wall clock in gameplay code: convert to `GameTime::Now()`);
+   `Send[A-Z][A-Za-z]*\(` builders on a hot path without `ForgeCore::HasClients()`; `AsyncQuery|DelayQueryHolder`
+   after startup (aborts a sealed pool); `!isBGGroup\(\) && !isBFGroup\(\)` (should be `IsPersisted()`); anything that
+   assumes `Spell::m_caster` is a `Unit`; two definitions of one member (`PCQueue::Reset`).
+5. `./forgectl test` (GTests and CPU pytest in the dev container), then `./forgectl test --gpu` on a free card.
+6. A short `forge run <stage>` on the sealed pool with the learner (the only test of the seal), then the deploy gate
+   ([../deploy-gate.md](../deploy-gate.md)). The cluster needs one rebuild per merge (principle 18).
+7. Record the merged upstream commit in `01-forge-core-delta.md` ("master today is ...") so the next dry run starts
+   from a known base; today's figure is stale by a month.
+
+Who: the owner or an agent the owner starts for it; nothing here is safe to automate without a person reading the
+Tier 2 table, because git reports it as clean.
+
