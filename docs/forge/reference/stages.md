@@ -1,7 +1,7 @@
 # Reference: the twelve live stages
 
 Purpose and scope: one section per live curriculum stage (`move1_controls` to `dungeon3_deadmines`), written from the
-stage's definition in `src/server/game/Animus/Scenario/Curriculum/Stages/Stages.cpp`, its learner config
+stage's definition in `src/server/game/Animus/Runtime/Scenario/Curriculum/Stages/Stages.cpp`, its learner config
 `apps/forge/python/configs/<stage>.yaml` (with its `extends:` chain merged as `animus/config.py` `load_yaml` does) and
 the encounters and tuning it uses. It describes what the code does, not what a comment says; where they disagree the
 text says so. Facts that could not be checked are marked `UNVERIFIED`. The chapter that explains how to run and tune a
@@ -15,8 +15,8 @@ stage is [../04-curriculum.md](../04-curriculum.md). Related references: [00-arc
 
 | Path | Lines | Role |
 |---|---|---|
-| `src/server/game/Animus/Scenario/Curriculum/Stages/Stages.cpp` | 1393 | The twelve `StageDefinition`s, the map data tables they use (hallways, rooms, objects, sight pairs, Deadmines sites) and the stage and arena validation |
-| `src/server/game/Animus/Scenario/Curriculum/Stages/StageDefinition.h` | 331 | `StageDefinition`, `ArenaDefinition`, `Opposition`, the drills and `MAX_ARENAS` |
+| `src/server/game/Animus/Runtime/Scenario/Curriculum/Stages/Stages.cpp` | 1393 | The twelve `StageDefinition`s, the map data tables they use (hallways, rooms, objects, sight pairs, Deadmines sites) and the stage and arena validation |
+| `src/server/game/Animus/Runtime/Scenario/Curriculum/Stages/StageDefinition.h` | 331 | `StageDefinition`, `ArenaDefinition`, `Opposition`, the drills and `MAX_ARENAS` |
 | `src/server/game/Animus/Scenario/Curriculum/CurriculumTuning.h` | 1185 | Every reward weight and draw parameter (`AnimusForge.Curriculum.*`) with its default |
 | `src/server/game/Animus/Scenario/Curriculum/Rewards/RewardLedger.h` | 387 | `RewardTerm`, `RewardCategory` (Outcome, Cost, Shaping), the score and the scales |
 | `src/server/game/Animus/Scenario/Curriculum/Encounters/SightEncounter.cpp` | see cpp-encounters.md | M1 |

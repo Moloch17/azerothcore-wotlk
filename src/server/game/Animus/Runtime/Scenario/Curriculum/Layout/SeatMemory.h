@@ -20,7 +20,7 @@
 #define ANIMUS_LIB_CURRICULUM_SEAT_MEMORY_H
 
 #include "Block.h"
-#include "CurriculumTuning.h"
+#include "ActionTuning.h"
 #include "ObjectGuid.h"
 #include <array>
 #include <vector>
@@ -34,7 +34,7 @@ namespace Animus::Curriculum
     struct Layout;
 
     /// What a seat remembers from one decision to the next, the same for a forge seat and a live companion so a model
-    /// plays with what it trained with: when each action may be pressed again (CurriculumTuning::ActionTuning), what
+    /// plays with what it trained with: when each action may be pressed again (ActionTuning), what
     /// it pressed and when, and how its and its target's health have been going.
     ///
     /// A policy sees one observation at a time. Without these it cannot tell a stance it just took from one it has
@@ -58,11 +58,11 @@ namespace Animus::Curriculum
         /// (StopCastMinMs), or a stance, form, aspect, aura, seal, armor or pet stance within ModeLockMs of the last
         /// change of its kind.
         [[nodiscard]] bool Paced(Layout const& layout, uint32 action, uint64 nowMs,
-            CurriculumTuning::ActionTuning const& tuning) const;
+            ActionTuning const& tuning) const;
 
         /// The seat pressed `action`. `knownRanks`: per catalog action the highest rank the bot knows, or null to
         /// resolve them from `bot`.
-        void Press(Layout const& layout, uint32 action, uint64 nowMs, CurriculumTuning::ActionTuning const& tuning,
+        void Press(Layout const& layout, uint32 action, uint64 nowMs, ActionTuning const& tuning,
             Player* bot, std::vector<SpellInfo const*> const* knownRanks);
 
         // Features (CoreBlock), each in [0, 1] or [-1, 1].

@@ -81,6 +81,23 @@ Other Animus code under `src/common` is only `Config::LoadAdditionalFile` (`src/
 (`OnMapsJoined`), `:478` (`IsMapFrozen`); `Unit.cpp:987,8148,8435`, `SpellAuraEffects.cpp:6657`, `Spell.cpp:3775,4091`
 (`Animus::Hooks::*`); `src/server/game/OutdoorPvP/OutdoorPvPMgr.cpp:49` reads `AnimusForge.Enable`.
 
+## Runtime/ vs training
+
+`src/server/game/Animus/Runtime/` holds the part of the sim a trained model needs to play: the movement controller,
+the camera and mental map, the bot factory, the blocks, the character building and action catalog, the layout and the
+stage table. Everything outside it (`AnimusForge.*`, `ForgeConfig.*`, `ForgeCommands.cpp`, Bridge, Learner, Gpu,
+Console, Env, the encounters, `StageScenario`, rewards, `CurriculumTuning`) is training. The rule: **`Runtime/` never
+includes a training header.** Includes are bare basenames, resolved by the core's directory-collecting CMake, so the
+directory split costs nothing at build time; `apps/forge/tools/runtime_graph_check.py` resolves them the same way and
+exits 1 listing every `Runtime/` file that includes a file outside it (run it before committing a change under
+`Animus/`). Sub-paths below `Animus/` are kept (`Animus/Movement/Client.h` is `Animus/Runtime/Movement/Client.h`).
+Counts at the split: 114 files / 25,666 lines under `Runtime/` (113 moved, plus `ActionTuning.h`), 106 files /
+36,773 lines of training.
+
+Three headers carry the seams: `Layout/ActionTuning.h` (`ActionTuning`, `OptionTuning`; `CurriculumTuning` aliases
+them), `Stages/StageDefinition.h` (`ROLE_TANK/HEALER/DAMAGE`, `DrilledRole`; `RolesDraw` re-exports them) and
+`Character/GearBuilder.h` (`WarmGearCaches`; `WarmCaches.h` includes it).
+
 ## Tick order (what runs when)
 
 One world tick (`World::Update`, `src/server/game/World/World.cpp`):

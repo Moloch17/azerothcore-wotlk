@@ -17,7 +17,6 @@
  */
 
 #include "GearBuilder.h"
-#include "WarmCaches.h"
 #include "ClassKit.h"
 #include "CreatureData.h"
 #include "DBCStores.h"

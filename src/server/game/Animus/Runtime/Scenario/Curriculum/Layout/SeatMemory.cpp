@@ -119,7 +119,7 @@ void Animus::Curriculum::SeatMemory::Observe(Player* bot, Unit* target, uint64 n
 }
 
 bool Animus::Curriculum::SeatMemory::Paced(Layout const& layout, uint32 action, uint64 nowMs,
-    CurriculumTuning::ActionTuning const& tuning) const
+    ActionTuning const& tuning) const
 {
     if (action < _readyMs.size() && nowMs < _readyMs[action])
         return true;
@@ -136,7 +136,7 @@ bool Animus::Curriculum::SeatMemory::Paced(Layout const& layout, uint32 action, 
 }
 
 void Animus::Curriculum::SeatMemory::Press(Layout const& layout, uint32 action, uint64 nowMs,
-    CurriculumTuning::ActionTuning const& tuning, Player* bot, std::vector<SpellInfo const*> const* knownRanks)
+    ActionTuning const& tuning, Player* bot, std::vector<SpellInfo const*> const* knownRanks)
 {
     std::optional<BlockId> const block = layout.BlockOfAction(action);
     if (!block || action >= _readyMs.size())
