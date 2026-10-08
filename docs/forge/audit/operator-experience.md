@@ -44,11 +44,11 @@ days, **L** over a week. "py" means forgectl or learner Python only; "C++" needs
 
 | Id | Who, when | What happens | Evidence | Sev | Fix | Effort |
 |---|---|---|---|---|---|---|
-| OX-01 | Anyone, after a worker reboots or loses power | The worldserver container stays down; the worker is out of the cluster until someone ssh-es in and runs `./forge.sh`. The host would re-order it onto the stage on its own. | `docker-compose.yml:126` `restart: "no"` with a comment that "every start retrains the queue from scratch" - no longer true (`AnimusForge.cpp:246`: idle at start). The database and dev services already use `unless-stopped` (`:68`, `:187`). | H | `restart: unless-stopped` for `ac-worldserver` (keep `stop_grace_period: 1m`); docs say how to stop for good (`docker compose stop`). Check the build step in `forge-worldserver.sh` does not rebuild on restart (it builds only if no binary, a build request, or a CPU change). | S |
+| OX-01 | Anyone, after a worker reboots or loses power | The worldserver container stays down; the worker is out of the cluster until someone ssh-es in and runs `./forge.sh`. The host would re-order it onto the stage on its own. | `docker-compose.yml:126` `restart: "no"` with a comment that "every start retrains the queue from scratch" - no longer true (`AnimusForge.cpp:246`: idle at start). The database and dev services already use `unless-stopped` (`:68`, `:187`). | H | `restart: unless-stopped` for `ac-worldserver` (keep `stop_grace_period: 1m`); docs say how to stop for good (`docker compose stop`). Check the build step in `forge-worldserver.sh` does not rebuild on restart (it builds only if no binary, a build request, or a CPU change) and that no machine will start a benchmark on boot (`Bench.AutoTune`, `AnimusForge.cpp:403`). | S |
 | OX-02 | Whoever started an overnight stage | Nothing tells them a stage converged, stalled, collapsed a rung, the learner died or a worker dropped. They find out by running `forgectl cluster` and reading. | No notify, webhook or mail code anywhere (grep). Warnings exist only in `forge status` text (`Progress.cpp` warnings list) and the periodic report is off by default (`AnimusForge.Progress.Interval` 0). `events.log` holds only ladder alarms (`StageScenario.cpp:1717-1726`). The learner raises `ladder_collapsed` / `ladder_stalled` into `progress.json` (`stage.py:299-335`). | H | A watcher in forgectl (`forgectl watch`) that polls `progress.json`, `finished.json`, the learner log age and `forgectl cluster` facts, deduplicates, and notifies (section 2.5). | M, py |
 | OX-03 | Anyone resuming a dungeon stage (D1-D3) after a rebuild | The sim's wing ladder restarts at rung 0 (or the conf value) while the learner resumes at its saved rung. Nothing says so. The workaround, `Instance.WingRungStart`, is itself a fingerprinted key, so setting it by hand on the host makes every worker mismatch until all confs are edited and every worldserver restarts. | `StageScenario.cpp:302-303` builds the ladder from `WingRungStart`; `CurriculumTuning.h:243` and `:924` list it in the visitor that `Json()` hashes into the fingerprint (`AnimusForge.cpp:91-100`); `known-issues.md` A1, D1. The learner side is checkpointed (`stage.py:351-374`). `forgectl` has no reference to the rung (grep). | H | The sim writes `ladder.json` in the run directory on every rung change and reads it on `resume`, before the fingerprint; exclude the start key from the fingerprint. Interim, py: `forgectl stage resume` warns for stages with a wing ladder and shows the last rung in `events.log`. | M, C++ |
 | OX-04 | Anyone driving the console | The only transport is `docker attach` on a tty. Detach is Ctrl-P Ctrl-Q; Ctrl-C or end-of-file stops the server. Two people (or `forgectl` on two computers) type into one prompt. | `docker-compose.yml:118-121`; `ForgeMain.cpp:489-495` (console only when stdin is a terminal); `CliRunnable.cpp:236-239` (`feof` -> `StopNow`); `forge.sh:42-45` warns; the forgectl lock covers one computer only (`console.py:machine_lock`, `forgectl.md` "One operator at a time"). | H | A control socket (section 2.1). Interim: forgectl already hides the detach; SOAP over an ssh tunnel is an optional stopgap. | L, C++ |
-| OX-05 | Anyone watching the console | Replies to commands are buried among log lines. | Replies are printed through `utf8print` to stdout (`CliRunnable.cpp:77-85`), the log goes to the same terminal via `Appender.Console` (`worldserver.conf.dist:701`) for `Logger.module` (`:734`). Uncapped sources: the `WingTrace` family above; `Cluster:` lines; periodic plan lines. Calendar and guild messages: their source is core startup code, not Animus code (grep of `Animus/` finds none) - UNVERIFIED which logger. | H | Section 2.3: conf-only routing first (Console shows Warn and up for `module.animus`, everything stays in files), then split the single `module.animus` logger by area and cap the per-episode families. | S conf, M C++ |
+| OX-05 | Anyone watching the console | Replies to commands are buried among log lines. | Replies are printed through `utf8print` to stdout (`CliRunnable.cpp:77-85`), the log goes to the same terminal via `Appender.Console` (`worldserver.conf.dist:701`) for `Logger.module` (`:734`). Uncapped sources: the `WingTrace` family above; `Cluster:` lines; periodic plan lines. Calendar and guild messages: their source is core startup code, not Animus code (grep of `Animus/` finds none) - UNVERIFIED which logger. | H | Section 2.3: conf-only routing first (take `Console` out of `Logger.module`; everything stays in `Server.log`; the console appender's own level stays 4), then split the single `module.animus` logger by area and cap the per-episode families. | S conf, M C++ |
 | OX-06 | forgectl, scripts, dashboards | There is no machine-readable status. forgectl scrapes text: it drops console log lines by their colour escape (`console.py:LOG_LINE`), finds the reply by the echoed command and the `AC> ` prompt, decides idle with `"idle" in first_line.lower()` (`stage.py:host_plan_state`), and reads the learner's progress from a regex over `update N \| steps ...` lines of `animus-learner.log` (`cluster.py:UPDATE`, `stage.py:parse_learner_line`). Changing a column name or a colour setting silently breaks the tool. | `TextTable.h` is the only reply form; `LineSink` is line-only. `progress.json` is flat and unversioned (`progress.py:1-10`). | H | Stable status schema (section 2.2) and a structured `status` in C++ (0001 item 3). Interim, py: `forgectl status --json` built from `progress.json` and `finished.json` read over ssh, not from text. | M py, then M C++ |
 | OX-07 | Whoever changes a tuning value or adds a machine | 239 `AnimusForge.Curriculum.*` keys are hand-synced across untracked per-machine confs; `conf-sync` exists but writes files that a restart then reads. A key typed on one machine only refuses that worker. | `cluster.md` (239 keys); `confsync.py`; the fingerprint hashes about 313 effective tuning values, defaults included (`CurriculumTuning.h:852`, `CurriculumTuning.cpp:96-101`, `AnimusForge.cpp:91-100`). | H | Tracked per-stage tuning (section 2.7); `forgectl config check`. | L, C++ and py |
 | OX-08 | Anyone using `forgectl stage ...` | The command reports "Done: accepted" and exits 0 when the console printed a refusal ("X is running: cancel it first", "Nothing is running"). | `stage.py:run` returns 0 when every `send_checked` saw the prompt; `ConsoleResult.ok` means only `prompt_seen` (`console.py:ConsoleResult`). The reply text is shown but never classified. | M | Classify replies against the known refusal phrases now (py, S); return an `ok` flag from the socket later (OX-04). | S py |
@@ -107,7 +107,10 @@ XML. Use it only if the socket slips, through `ssh -L`. It is correct about fail
   sealed-database step, removed at shutdown. Mode `0660`. Which user owns it inside the container, and whether the
   host's ssh user can open it through the bind mount, is UNVERIFIED (the container runs as whatever
   `docker-compose.yml` selects); the fallback is `docker exec` with a relay, which is what forgectl does today anyway.
-- Conf: `AnimusForge.Control.Enable = 1` (default 0, as 0001 says), `AnimusForge.Control.Path`.
+- Conf: `AnimusForge.Control.Path`, and `AnimusForge.Control.Enable` (0001 proposes default 0). Principle 17 says
+  there are no switches for behaviour, and the project allows one gate (`Forge.Playtest`); an Enable toggle is in
+  tension with that. Owner decision (section 7, item 11): an always-on Unix socket whose security is its file
+  permissions (consistent with 17), or the 0001 toggle. This document does not resolve it.
 - Framing: one UTF-8 JSON object per line, at most 64 KB, one request at a time per connection.
 - Request: `{"v":1,"id":7,"cmd":"exec","line":"forge resume move2_seek","confirm":false}`.
 - Replies stream: zero or more `{"id":7,"line":"Resuming move2_seek from update 3802"}` frames (the same strings the
@@ -157,8 +160,9 @@ exit status 1
 
 **Security model.**
 
-1. Off unless enabled; Unix socket only in v1. Reach it from another computer over ssh (`ssh -L` of a socket path, or
-   `ssh host python3 relay.py`); the machine's ssh key is the credential, as for everything else in `cluster.md`.
+1. Unix socket only in v1 (off-by-default or always-on: owner decision, see the conf bullet above). Reach it from
+   another computer over ssh (`ssh -L` of a socket path, or `ssh host python3 relay.py`); the machine's ssh key is the
+   credential, as for everything else in `cluster.md`.
 2. Same authority as the console: every line runs as `SEC_ADMINISTRATOR`, i.e. nothing the console cannot do.
 3. `SO_PEERCRED` (uid, pid) of each connection is logged with the line, so section 1's OX-19 is closed for the socket.
 4. A TCP listener is not in v1. If it is ever wanted, follow 0001: bind only to an RFC 1918 or loopback address, a long
@@ -235,26 +239,36 @@ silent, learner exited, reset stall, entropy, KL/clip, non-finite) and two as le
 ### 2.3 Log routing: replies separate from noise
 
 **Facts that shape it.** A command reply is written through `utf8print` to stdout (`CliRunnable.cpp:77-85`); it never
-passes through the logger. Logs go to appenders by logger name. Every Animus message uses one logger,
-`module.animus` (251 call sites), routed to `Console Server` at Info (`worldserver.conf.dist:734`). So the console is
-a mix only because the console appender prints everything at Info. `forgectl` waits for the `ready` line in
-`docker logs` (`deploy.py:ready_script`) and tells replies from logs by the log colour escape (`console.py:LOG_LINE`),
-so any change must keep `server.worldserver` Info on the console.
+passes through the logger. Logs go to appenders by logger name. Every Animus message uses one logger, `module.animus`
+(about 250 call sites), routed to `Console Server` at Info (`worldserver.conf.dist:734`). So the console is a mix only
+because the console appender prints everything at Info. `forgectl` waits for the `ready` line in `docker logs`
+(`deploy.py:ready_script`) and tells replies from logs by the log colour escape (`console.py:LOG_LINE`), so any change
+must keep `server.worldserver` Info on the console.
 
 **Step 1: conf only (no rebuild).** In each machine's `worldserver.conf` (or `AC_LOGGER_*` / `AC_APPENDER_*`
 environment variables in compose, which makes it identical everywhere and tracked - UNVERIFIED that the env override
 works for these keys; the core's config manager supports `AC_<KEY>` overrides in general):
 
 ```
-Appender.Console=1,3,0,"1 9 3 6 5 8"          # console shows Warning and above only
+Appender.Console=1,4,0,"1 9 3 6 5 8"          # unchanged from the template (:701): an appender filters by its own level
 Appender.Server=2,5,17,Server.log,w           # flag 17 = timestamp + backup of the previous file; all levels
-Logger.server=4,Console Server                # keep the 'ready' line and startup on the console
-Logger.module=4,Server                        # module.animus: Info to the file, nothing to the console
-Logger.module.animus.plan=4,Console Server    # (step 2) plan start/end, cluster join/lost, alarms: console too
+Logger.server=4,Console Server                # unchanged: the 'ready' line and startup stay on the console
+Logger.module=4,Server                        # module.animus: Info to the file; Console taken out of the list
 ```
 
-Result: the console shows replies, plan events and warnings; the Info flood (WingTrace, seats, route logs) is in
-`Server.log`, which `forgectl logs` can search. This alone removes most of OX-05.
+Do not lower `Appender.Console` to Warning: an appender drops every message above its own level whatever the logger
+says (`Appender.cpp:55`, `if (!level || level < message->level) return`), so level 3 would also drop the
+`server.worldserver` `ready` line that `forgectl build --cluster` waits for, and every `Plan ended` line. The safe
+step is to remove `Console` from `Logger.module`'s list. If `module.animus` warnings and errors should still reach the
+console in this step, add a second console appender `Appender.ConsoleWarn=1,3,0,"1 9 3 6 5 8"` and set
+`Logger.module=4,Server ConsoleWarn`; that two console appenders are accepted by the config manager is UNVERIFIED
+(test on the dev machine first).
+
+Result: the console shows replies, startup and the `server.*` lines; the Info flood (WingTrace, seats, route logs) is
+in `Server.log`, which `forgectl logs` can search. This alone removes most of OX-05. One side effect to accept: until
+step 2 gives the plan and cluster loggers back to the console, plan start/end lines (logged under `module.animus`)
+leave the console too, so forgectl must read them from `Server.log` where it reads them from `docker logs` today
+(`deploy.py:wait_for_log`, `wait_plan_ended`); change that in the same step.
 
 **Step 2: split the logger by area (C++, string edits).** Replace `"module.animus"` at each call site with a child:
 
@@ -410,12 +424,14 @@ being down, ssh unreachable, disk).
 Principle: recover from the boring failures without a human, never from a deliberate stop, and never in a loop.
 
 **Level 0, compose (OX-01).** `restart: unless-stopped` on `ac-worldserver` in `docker-compose.yml` (the database and
-dev services already have it). `docker compose stop` still stops it for good, and a reboot brings it back: `docker`
-must itself start at boot (`systemctl is-enabled docker`; UNVERIFIED on the four machines, and part of `doctor`). A
-restarted worldserver is idle (`AnimusForge.cpp:246`), so a reboot cannot restart training behind anyone's back. The
-`forge-worldserver.sh` start only builds when there is no binary, a build request, or a different CPU
-(`forge-worldserver.sh`, `cpu_signature`), so a reboot is a fast start. Also add the log rotation block here
-(OX-17):
+dev services already have it). `docker compose stop` still stops it for good, and a reboot brings it back: `docker` must
+itself start at boot (`systemctl is-enabled docker`; UNVERIFIED on the four machines, and part of `doctor`). A restarted
+worldserver is idle (`AnimusForge.cpp:246`), so a reboot does not restart training behind anyone's back, with one
+exception to check: `AnimusForge.Bench.AutoTune` runs `forge bench auto` at start on a machine with no cached benchmark
+of its CPU (`AnimusForge.cpp:403`), and that runs the learner. Before enabling the policy, confirm every machine has its
+`bench/bench.json` or has `AutoTune` off. The `forge-worldserver.sh` start only builds when there is no binary, a build
+request, or a different CPU (`forge-worldserver.sh`, `cpu_signature`), so a reboot is a fast start. Also add the log
+rotation block here (OX-17):
 
 ```
     restart: unless-stopped
@@ -912,3 +928,5 @@ A written routine beats a clever tool for a single operator. Proposed, to put in
 8. Tracked tuning: one global file first with per-stage overlays later (proposed), or per-stage from the start?
 9. Retention: may archived runs lose their numbered checkpoints and `tb/` immediately, and videos after 30 days?
 10. May `RUNLOG.md` be replaced by `forgectl runs note`?
+11. Control socket and principle 17: an always-on Unix socket protected by file permissions, or `Control.Enable` as in
+    decision 0001 (a switch, which principle 17 discourages)?
