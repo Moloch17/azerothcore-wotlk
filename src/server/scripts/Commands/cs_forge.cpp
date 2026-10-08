@@ -49,7 +49,6 @@
 #include <fstream>
 #include <set>
 #include <vector>
-#include "RoutePlanner.h"
 #include "Optional.h"
 #include "StringConvert.h"
 #include "TextTable.h"
@@ -119,7 +118,6 @@ namespace
                 { "cancel",    HandleCancel,    SEC_ADMINISTRATOR, Console::Yes },
                 { "skip",      HandleSkip,      SEC_ADMINISTRATOR, Console::Yes },
                 { "run",       HandleRun,       SEC_ADMINISTRATOR, Console::Yes },
-                { "route",     HandleRoute,     SEC_ADMINISTRATOR, Console::Yes },
                 { "controller", controllerCommandTable },
                 { "camera",    cameraCommandTable },
                 { "tasks",     HandleTasks,     SEC_ADMINISTRATOR, Console::Yes },
@@ -164,8 +162,6 @@ namespace
                 "leaving the grids created round the feet is sky (idle only)" });
             table.AddRow({ "forge tasks", "every map's update task since the last `forge tasks`: how many ran, "
                 "their mean and longest time, and the envs on the map, slowest first" });
-            table.AddRow({ "forge route <map> <x> <y> <z> <x> <y> <z>", "plan a way between two points and print "
-                "it: corners, length against the straight line, and whether it arrives" });
             table.AddRow({ "forge talents <class> [spec] [points] [plan]",
                 "print a build the curriculum would give that class (plan: standard, noisy, random)" });
             table.AddRow({ "forge bench [scenario]", "time the sim and the learner at every AnimusForge.Bench.* "
@@ -562,7 +558,7 @@ namespace
 
         /// Every grid of `map` over the box, with a grid's margin: terrain, collision and navmesh tiles only
         /// (EnsureGridCreated). Not LoadGrid: that loads the grid's creatures too, which an instanced map's base map --
-        /// one with no instance, as the console reads it -- cannot hold (`forge route 34 ...` crashed the sim).
+        /// one with no instance, as the console reads it -- cannot hold (a console command on map 34 crashed the sim).
         static void CreateGrids(Map* map, float x1, float y1, float x2, float y2)
         {
             auto const [gx1, gx2] = GridSpan(x1, x2, 1.0f);
@@ -570,55 +566,6 @@ namespace
             for (int32 gx = gx1; gx <= gx2; ++gx)
                 for (int32 gy = gy1; gy <= gy2; ++gy)
                     map->EnsureGridCreated(CoreGrid(gx, gy));
-        }
-
-        /// Plan a route between two points, with no seat, policy or run.
-        ///
-        /// The bench for the route planner, and the answer to a question an evaluation cannot ask: when an
-        /// episode fails, was there ever a way? PathGenerator says PATHFIND_NORMAL when it has not pathfound at
-        /// all, so "reachable" has meant less than it reads. This plans with the planner's own query -- a large
-        /// node pool, no 74-point cap -- and says plainly whether the way arrives or stops short.
-        static bool HandleRoute(ChatHandler* handler, uint32 mapId, float fromX, float fromY, float fromZ,
-            float toX, float toY, float toZ)
-        {
-            if (!sAnimusForge->IsIdle())
-            {
-                handler->SendSysMessage("forge route runs only while the forge is idle (it creates grids)");
-                return true;
-            }
-            Map* map = sMapMgr->CreateBaseMap(mapId);
-            if (!map)
-            {
-                handler->PSendSysMessage("No such map: {}", mapId);
-                return true;
-            }
-
-            // Every grid between the ends: their navmesh tiles, and the way's.
-            CreateGrids(map, fromX, fromY, toX, toY);
-
-            handler->PSendSysMessage("Route on map {} from ({:.2f}, {:.2f}, {:.2f}) to ({:.2f}, {:.2f}, {:.2f}):",
-                mapId, fromX, fromY, fromZ, toX, toY, toZ);
-
-            Position const from(fromX, fromY, fromZ, 0.0f);
-            Position const to(toX, toY, toZ, 0.0f);
-            std::string const report = Animus::Curriculum::RoutePlanner::Instance().Report(map, from, to);
-
-            std::string line;
-            for (char c : report)
-            {
-                if (c == '\n')
-                {
-                    handler->SendSysMessage(line);
-                    line.clear();
-                }
-                else
-                    line += c;
-            }
-
-            if (!line.empty())
-                handler->SendSysMessage(line);
-
-            return true;
         }
 
         /// `forge talents <class> [spec] [points] [plan]` prints a build the curriculum would give that

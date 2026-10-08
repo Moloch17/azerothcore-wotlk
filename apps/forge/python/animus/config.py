@@ -82,8 +82,8 @@ class EvalConfig:
     sampled_every: int = 0
     # Actions the evaluation may not take, by name, resolved per layout (the same name is a different index in
     # every class): an evaluation-only mask, for measuring what an action carried -- re-scoring a checkpoint with
-    # follow_route and face_objective forbidden says how much of its arrival rate was the pathfinder's. A name no
-    # layout has is refused at startup. Training and the baseline are untouched.
+    # one action forbidden says how much of its result rode on it. A name no layout has is refused at startup.
+    # Training and the baseline are untouched.
     mask_actions: tuple[str, ...] = ()
     # Held-out arenas (their name -> seeded episodes), played after every evaluation and reported apart as
     # `heldout_<arena>`: content the stage never trains on (stage.json "eval_only", ArenaDefinition::EvalOnly), so a
