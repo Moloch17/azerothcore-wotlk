@@ -101,8 +101,8 @@ writer no longer emits (a diff of old and new stage.json will report them remove
 `layouts.<class>` : `obs_dim`, `num_actions`, `action_names` [N], `spec_names` (the class's builds in the order the `spec` episode column
 indexes), `spec_roles` ("tank"/"healer"/"damage" per build), `sets` (seat entity sets, `DescribeSeatSets`; `[]` in the backup),
 and `blocks` [ {name, obs [first,count], actions [first,count], revision? , action_features? (core), rescaled? [{tag,first,count}] (core),
-obs_names? (named columns, e.g. move: 57 names), plus per block manifests: vision: `image` {height 64, width 128, channels 5, bytes_per_pixel 5,
-class_byte 3, slot_byte 4, classes 24 with `class_names`, `class_kinds`, `entity_slots` 32, `patch` 8, `render_sizes` [[32,16],[48,24],[64,32],[128,64]],
+obs_names? (named columns, e.g. move: 57 names), plus per block manifests: vision: `image` {height 64, width 128, channels 5, bytes_per_pixel 4,
+class_byte 3, classes 24 with `class_names`, `class_kinds`, `pixel_classes` [0,1,2,3,4,5,23] (revision 6; `slot_byte` and `entity_slots` are gone), `patch` 8, `render_sizes` [[32,16],[48,24],[64,32],[128,64]],
 `render_weights`}, `camera` {mode "free, never adjust", yaw_rates, pitch_rates, ...}, `look`; entities: `entities`; map: `map` {height 48, width 48, cell 2.0,
 heading_up, channels 6, channel_names, map_bytes 13824, code_names [unknown, floor, wall, door, hazard], ...}; sight: `sight` } ].
 Block revision numbers in the backup: core 1, move 5, vision 5, entities 1, map 1.

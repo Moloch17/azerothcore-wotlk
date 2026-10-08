@@ -77,7 +77,7 @@ What the `stage.json` has to contain for each network feature (`networks.py` rea
 | Feature | stage.json source | Reader | Refusals |
 |---|---|---|---|
 | layout widths | `layouts.<name>.obs_dim`, `num_actions` (via SPEC) | `make_trainer` | none |
-| camera | block `vision` with `image` (`height,width,channels,classes,class_channel,scalars,bytes_per_pixel`, `patch`, `render_sizes`, `class_limit`) and `look.heads` | `vision_of` (`networks.py:968`) | no image; transport not `bytes`; no `classes` (before revision 5); 5 bytes/pixel and 5 channels only; images differing between layouts; scalars != block width |
+| camera | block `vision` with `image` (`height,width,channels,classes,class_channel,scalars,bytes_per_pixel`, `pixel_classes`, `patch`, `render_sizes`, `class_limit`) and `look.heads` | `vision_of` (`networks.py:968`) | no image; transport not `bytes`; no `classes` or `pixel_classes` (before revision 6); 4 bytes/pixel and 5 channels only; images differing between layouts; scalars != block width |
 | entity list | block `entities` with `entities` description | `_entities_of` (`:902`) | span mismatch |
 | mental map | block `map` with `map` description | `_map_of` (`:878`) | not 6 channels and 5 codes; bytes != h*w*6; scalars != block width; map in some layouts but not all (`:1053`) |
 | sight list | block `sight` | `_sight_of` (`:923`) | needs the entity list; visible half and leading columns must equal the entity list's; named row must follow the slots |
@@ -272,7 +272,7 @@ block (`trainer.py:620`).
 8. The long comment explaining the foresight heads (`trainer.py:90-94`) sits above `recurrent_size` (`:102`), not above
    `foresight_coef` (`:173`).
 9. `fixtures/seek_spec.json` is protocol 24 and `tiny_case` hardcodes `version=24` (`test_golden_update.py:79`) while
-   `PROTOCOL_VERSION` is 25 (`protocol.py:14`). UNVERIFIED whether protocol 25 changed the SPEC layout the fixture
+   `PROTOCOL_VERSION` is 26 (`protocol.py:14`). UNVERIFIED whether protocol 25 changed the SPEC layout the fixture
    mirrors; see [protocol.md](protocol.md).
 11. The module docstring of `networks.py` (`:1-19`) says an adapter + trunk + head of one layout "is a plain MLP too
     (see

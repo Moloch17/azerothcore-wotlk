@@ -44,7 +44,7 @@ Non-overlay (the base): `_seed_shared` copies every key that starts with `trunk.
 `_seed_vision` (camera encoder:
 copied only if the old checkpoint has it, the vision block revision is equal in both stage.jsons and every shape equal;
 otherwise fresh with the join zeroed), `_seed_map` (key by key, join zeroed when fresh), `_seed_sight`
-(sight encoder and pointer queries, the pool zeroed when fresh; a narrower `sight.extra` is widened with zeros),
+(sight encoder and pointer queries, the pool zeroed when fresh; fresh too when the sight block revision differs from the checkpoint's, entity sensing's 2 -> 3; a narrower `sight.extra` is widened with zeros),
 `_seed_look` (look head, same rule as the camera). Lines are printed for each.
 Everything else stays freshly initialised: critic state encoder and value head, the value normaliser, and any module
 not named above (UNVERIFIED which actor modules that includes: foresight and slow-goal modules are not in

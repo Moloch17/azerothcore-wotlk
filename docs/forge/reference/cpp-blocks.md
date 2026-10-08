@@ -455,46 +455,54 @@ interrupt when a held interrupt finds nothing in the core block. Tests: pin (nam
 the mask builds and deletes a `Spell` per ability per observation; guardians with no `CharmInfo` mask all orders;
 `DefaultStance` makes a passive pet defensive once per pet GUID (called from StageScenario).
 
-## vision (id 20, revision 5)
+## vision (id 20, revision 6)
 
 Camera scalars (11) and the image (bytes beside the observation). Size 11 obs (`Vi::ObsCount`), 0 actions. Scalars
 (`Vision/Camera.h:282`): yaw sin, yaw cos, pitch, zoom, boom, pivot height, underwater, airborne, yaw rate, pitch rate,
-render width. The image is `Vi::BYTES_PER_PIXEL = 5` bytes per pixel on the canonical `Height x Width` (conf
-`AnimusForge.Vision.*`); not a float column. `Observe` advances free look by the decision length, clears the seen list
-and ray hits, gathers sight entities around the pivot, calls `Vi::Render`, fills `view.Seen`. Look head is not an action
-of the block (separate head, `FreeLook::HEADS`). Manifest carries image, look and camera objects. Revision history
-(`VisionBlock.h:47`): 1 first layout; 2 log distance channel; 3 image to bytes; 4 free look + mixed render sizes; 5
-five bytes per pixel with class and entity slot. Declared by every live stage. Details in cpp-vision.md. Tests:
-`VisionBlockTest`, `VisionTest`, `VisionProtocolTest`, others in cpp-vision.md. Reviewer notes: Observe mutates seat
-camera state through const; correct only if each seat is observed once per decision (comment at `VisionBlock.cpp:127`).
+render width. The image is `Vi::BYTES_PER_PIXEL = 4` bytes per pixel on the canonical `Height x Width` (conf
+`AnimusForge.Vision.*`); not a float column; **the static world only** (manifest `pixel_classes` [0,1,2,3,4,5,23]).
+`Observe` advances free look by the decision length, clears the seen list and ray hits, places the camera once
+(`Vi::PlaceCamera`), gathers entity candidates around the pivot (`GatherCandidates`), senses who is in view
+(`Vi::Sense`: frustum + shadow rays), classifies the survivors into `view.Seen` (`ClassifySeen`), and calls `Vi::Render`
+for the static image with the sensed hazards painted on the floor; the sensor runs even without an image. Look head is
+not an action of the block (separate head, `FreeLook::HEADS`). Manifest carries image (with `pixel_classes`; no
+`slot_byte`, no `entity_slots`), look and camera (`caster` "raycast+sight") objects. Revision history
+(`VisionBlock.h`): 1 first layout; 2 log distance channel; 3 image to bytes; 4 free look + mixed render sizes; 5
+five bytes per pixel with class and entity slot; 6 entity sensing: four bytes, no slot, static world only. Declared by
+every live stage. Details in cpp-vision.md. Tests: none (removed 2026-10-07). Reviewer notes: Observe mutates seat
+camera state through const; correct only if each seat is observed once per decision (comment in `VisionBlock.cpp`).
 
-## entities (id 21, revision 1)
+## entities (id 21, revision 2)
 
-The visible-entity set: 32 slots x 20 columns = 640, no actions. Inserted automatically after vision. Per slot
-(`EntitiesBlock.h:49`): 0 present, 1 class (raw `Vision::Class`), 2 type (raw template entry), 3 object, 4 level/80, 5
+The visible-entity set: 32 slots x 20 columns = 640, no actions, the entities the sensor found in view (a clear line to
+at least one sample point inside the frame), nearest the camera first. Inserted automatically after vision. Per slot
+(`EntitiesBlock.h`): 0 present, 1 class (raw `Vision::Class`), 2 type (raw template entry), 3 object, 4 level/80, 5
 level delta/10, 6 health, 7 reaction (-1,0,1), 8 quest, 9 lootable, 10 usable, 11 distance (log scaled NEAR..1000),
 12-15
-yaw sin/cos, pitch sin/cos, 16-17 centroid x,y, 18 pixel share, 19 entity memory id (0 without memory). Raw columns, not
+yaw sin/cos, pitch sin/cos, 16 los (clear samples / tried, in (0, 1]), 17 ang_width (`2 atan(radius / distance) / FovH`,
+clamped to 1), 18 ang_height (`2 atan(height / 2 / distance) / FovV`, clamped to 1), 19 entity memory id (0 without
+memory). Revision 1 had centroid_x, centroid_y and share at 16-18; revision 2 replaced them one for one (still 20
+columns). Raw columns, not
 normalised (kept out of the learner's adapters). `Observe` first advances and writes `view.Recall` (entity memory), then
-writes. Manifest object "entities". Tests: `VisionEntitiesTest`, `SightBlockTest`, `CombatPerceptionTest`.
+writes. Manifest object "entities" (`features` names the columns). `ReadMarks(row, marks)` reads a row back into `Vision::EntityMark`s (the audit's overlay). Tests: `VisionEntitiesTest`, `SightBlockTest`, `CombatPerceptionTest`.
 Reviewer notes: class and type are raw indices (the learner hashes type modulo `TYPE_BUCKETS 4096`).
 
 ## map (id 22, revision 1)
 
 The mental map: 4 scalars + the 48x48x6 byte crop (`Vision::CROP`; separate STEP section). Scalars: known, frontier,
 visited, kept (share of cells ever seen, frontier, visited, map kept from the previous episode). `Observe` advances the
-map clock, writes the frame's rays (`view.Hits`) and the body, crops heading-up. Declared from move2 on. Tests:
+map clock, writes the frame's rays (`view.Hits`), the listed entities (`view.Seen`) and the body, crops heading-up. Entity sensing: also writes the listed entities' cells (`MentalMap::WriteEntities(*view.Seen)`), since the image no longer carries units or objects. Declared from move2 on. Tests:
 `MentalMapTest`. Reviewer notes: uses `bot->GetPosition*` for the crop centre before the body override only when no
 body exists; no actions.
 
-## sight (id 23, revision 2)
+## sight (id 23, revision 3)
 
 Seen and remembered list and pointer presses. Size `64 x W + 23` obs where `W = 32` (move3) or `32 + 13 = 45` with the
 combat block in the layout (`SightBlock::Width`), actions 321. Pinned: 2071 / 321 (no combat), 2903 / 321. Per slot: the
 20
 entity columns, then 12 memory columns: visible, age (log2 scaled over 3600 s), dead, open, used, heading sin/cos, speed
 (/7, max 2), course sin/cos, selected, focused; then (with combat) 13 combat columns (visible units only). Slots 0-31
-are the frame's visible entities in slot order, 32-63 the most relevant remembered ones. After the slots, the named row
+are the frame's visible entities in slot order, 32-63 the most relevant remembered ones (their los is 0 and their angular size is from the radius and height last seen). After the slots, the named row
 (23 columns): 20 entity columns (present, class, type, object only) + 3 task one-hot (reach, interact, use_item), from
 `view.NamedTask`. Actions: five groups of 64 (select, interact, use_item, assist, focus) then `clear_focus`: names
 `select_<k>` ... `focus_<k>`, `clear_focus`. Mask: only slots with an entity; game objects cannot be selected, assisted
