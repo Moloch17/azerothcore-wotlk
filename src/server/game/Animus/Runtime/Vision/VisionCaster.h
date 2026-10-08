@@ -168,13 +168,15 @@ namespace Animus::Vision
     /// the clock reads cost something of their own.
     struct Breakdown
     {
-        uint64_t TreeNs = 0;        // the static and dynamic casts
+        uint64_t StaticNs = 0;      // the static world's cast (the static tree, or the baked scene)
+        uint64_t DynamicNs = 0;     // the dynamic tree's cast (doors and other game objects)
         uint64_t LiquidNs = 0;      // the WMO liquids
         uint64_t TerrainNs = 0;     // the loaded grids' extent and the terrain cells (their triangles and liquid)
         uint64_t HazardNs = 0;      // the hazard discs on a floor hit
         uint32_t Rays = 0;          // pixel rays and the boom
         uint32_t SegmentRays = 0;   // the entity sensor's shadow rays (SegmentBlocked)
-        uint32_t TreeCasts = 0;
+        uint32_t StaticCasts = 0;
+        uint32_t DynamicCasts = 0;
         uint32_t LiquidCasts = 0;
         uint32_t TerrainTiles = 0;  // grids a ray's terrain cast entered
         uint32_t TerrainCells = 0;  // cells whose triangles or liquid it tested
