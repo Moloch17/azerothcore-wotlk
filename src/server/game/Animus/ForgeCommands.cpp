@@ -17,7 +17,7 @@
  */
 
 /*
- * The forge's console commands (see Hooks/ForgeCommandScript.cpp for the command table). Every command runs on the
+ * The forge's console commands (see src/server/scripts/Commands/cs_forge.cpp for the command table). Every command runs on the
  * world thread; the ones that start or stop scenarios only record a request that OnUpdate applies.
  */
 
@@ -503,7 +503,7 @@ bool AnimusForge::Forge::CommandFast(std::vector<std::string> scenarios, LineSin
         return false;
     }
 
-    // A leading step count is this run's budget: `forge fast 30M`, `forge fast 30M stage8_duel`. Only the first
+    // A leading step count is this run's budget: `forge fast 30M`, `forge fast 30M <stage>`. Only the first
     // word is considered, and only if it parses as one, so a scenario name is never eaten by mistake.
     uint64 budget = _config.FastBudget;
     if (!scenarios.empty())

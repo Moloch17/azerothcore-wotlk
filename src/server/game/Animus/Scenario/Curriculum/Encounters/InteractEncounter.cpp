@@ -470,13 +470,6 @@ bool Animus::Curriculum::InteractEncounter::Build(Env& env, Map* map, uint8 /*le
     return state.Placed;
 }
 
-bool Animus::Curriculum::InteractEncounter::SelectTarget(Env const& /*env*/, uint32 /*seat*/, Unit*& target)
-{
-    // Nothing to fight: the seat acts without a target (its selection is its own, StageScenario::CurrentTarget).
-    target = nullptr;
-    return true;
-}
-
 void Animus::Curriculum::InteractEncounter::OnSeatAction(Env& env, uint32 /*seat*/, SeatActionResult const& result)
 {
     EnvInteract& state = _envs[env.Index];

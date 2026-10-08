@@ -236,7 +236,7 @@ namespace
             table.AddRow({ "forge start [scenario ...]", "train these from scratch in order (default: "
                 "AnimusForge.Queue)" });
             table.AddRow({ "forge fast [scenario ...]", "quick low-resolution test run of these (default: "
-                "AnimusForge.Queue) in the fast output directory" });
+                "AnimusForge.Fast.Queue) in the fast output directory" });
             table.AddRow({ "forge resume [scenario ...]", "unpause; or continue the first from its latest.pt, then the "
                 "rest (default: where the last plan stopped)" });
             table.AddRow({ "forge pause", "freeze the sim and the learner after the current decision" });
@@ -281,7 +281,7 @@ namespace
                 "CPU)" });
             table.AddRow({ "forge export [scenario] [best|latest]", "write the scenario's .amdl models to "
                 "AnimusForge.ModelDir" });
-            table.AddRow({ "forge clean archive", "delete runs/_archive/" });
+            table.AddRow({ "forge clean archive", "delete <OutputDir>/archive" });
             table.AddRow({ "forge clean scenario <scenario>", "delete runs/<scenario>/ (its checkpoints and logs)" });
             table.AddRow({ "forge clean exports", "delete the exported models" });
             table.AddRow({ "forge clean fast", "delete the fast test runs, layouts and models" });

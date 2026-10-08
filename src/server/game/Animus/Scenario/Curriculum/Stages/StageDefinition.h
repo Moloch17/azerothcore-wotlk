@@ -186,15 +186,15 @@ namespace Animus::Curriculum
         /// a dungeon it has not seen -- so a policy that memorised its own route is told from one that learned to run
         /// dungeons (peak-play W2).
         bool EvalOnly = false;
-        /// SeatPlan::Party: how many learned seats the party has, every episode (1 to GROUP_SEATS); 0 = the party's
-        /// own draw (Party.SizeWeight*, or a whole group). The party follow's four followers beside its leader.
+        /// SeatPlan::Party: how many learned seats the party has, every episode (1 to GROUP_SEATS); 0 = a whole group.
+        /// The party follow's four followers beside its leader.
         uint32 PartySize = 0;
         uint32 EpisodeSeconds = 0;      // episode length; 0 = StageSettings::EpisodeSeconds
         /// A full party of five drawn as a dungeon's is (StageScenario::FitsDungeonRole): a tank, a healer and three
         /// damage dealers by what their specs are geared for.
         bool ProperParty = false;
         /// The role this arena drills (DungeonRole: 1 tank, 2 healer, 3 damage; 0 none): that seat is seat 0 -- the
-        /// one whose class and build climbs the pack ladder -- and its role's terms are weighted Raid.DrillWeight.
+        /// one whose class and build climbs the pack ladder -- and its role's terms are paid by RolesEncounter.
         uint8 DrillRole = 0;
         /// Every pull contains a creature that puts something on the ground (OpponentPool::RandomHazardCaster),
         /// whatever rung the ladder is on. The pack ladder only reaches hazards at rung 3, so a class/role that
@@ -207,8 +207,6 @@ namespace Animus::Curriculum
         /// ground on several maps, which is what lets one stage replay a whole phase. An arena on a map of its own
         /// stands on its own SpawnPoints.
         uint32 MapId = 0;
-        /// The lowest level this arena's characters may be, over the stage's MinLevel.
-        uint8 MinLevel = 0;
         /// Opposition::Seek: the rooms an object may be hidden in (one drawn an episode, by the room ladder), the
         /// objects (one drawn an episode, uniformly), and how near the object a stop finds it, yards (interaction
         /// range).
@@ -278,7 +276,6 @@ namespace Animus::Curriculum
         std::string Summary;
         std::vector<BlockId> Blocks;    // in layout order: every block any of its arenas needs
         std::vector<ArenaDefinition> Arenas;
-        bool InDefaultQueue = true;     // trained by an empty AnimusForge.Queue (false: only when named)
         /// Where its envs are: 0 = the host's StageSettings::SpawnMapId and SpawnPosition. A continent (not
         /// instanceable) is shared by every env, so each env gets its own phase; one of SpawnPoints is drawn for
         /// each episode, so a seat sees all of this ground rather than the one patch its env index picked out.

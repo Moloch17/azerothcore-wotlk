@@ -77,8 +77,10 @@ namespace Animus
 
     /// A training scenario: how an env is built, reset, observed, acted on and scored.
     ///
-    /// All calls happen on the world thread, outside MapMgr::Update. Buffers are pre-sized by
-    /// EnvPool: per-agent arrays hold AgentsPerEnv rows in agent order.
+    /// Buffers are pre-sized by EnvPool: per-agent arrays hold AgentsPerEnv rows in agent order. Reset, Reward,
+    /// IsTerminal, Observe, ApplyActions, ApplyGoals, ApplyLook and SubTick of an env run on the map thread that
+    /// updates its map (EnvPool::ResetMapEnvs, ApplyActionsForMap, ObserveMap); the rest run on the world thread,
+    /// outside MapMgr::Update.
     class Scenario
     {
     public:

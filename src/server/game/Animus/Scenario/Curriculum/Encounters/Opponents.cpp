@@ -343,8 +343,7 @@ Creature* Animus::Curriculum::Opponents::SummonOpponent(Player* bot, Map* map, u
     // that envs sharing a continent do not see each other, and a summon with no summoner is created in the
     // world's phase (Map::SummonCreature): the two never overlapped, so the opponent could not be attacked, could
     // not aggro, and was not even a valid target -- start_attack was masked in every decision of every creature
-    // stage, and the scripted baseline dealt no damage at all (stage8_duel, first run on format 7: dps 0.0 for
-    // all ten classes, in_melee_share 0.0).
+    // stage, and no seat dealt any damage at all (dps 0.0 for all ten classes, in_melee_share 0.0).
     opponent->SetPhaseMask(bot->GetPhaseMask(), true);
     opponent->SetFaction(FACTION_MONSTER);
     opponent->SetReactState(REACT_AGGRESSIVE);

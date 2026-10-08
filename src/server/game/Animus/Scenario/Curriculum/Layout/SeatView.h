@@ -299,7 +299,7 @@ namespace Animus::Curriculum
         // a hunter's beasts on offer.
         float CombatTime = 0.0f;                    // time in combat / 60 s, clamped; 0 out of combat
         BattleSupplies Supplies;
-        bool SelfResurrectAllowed = true;           // not in the PvP stages
+        bool SelfResurrectAllowed = true;           // always true: no stage forbids it
         std::array<uint32, STABLE_SLOTS> Stable{};
         uint32 StableCount = 0;
 

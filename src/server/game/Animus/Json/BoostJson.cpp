@@ -24,7 +24,7 @@
 #include <boost/version.hpp>
 
 #if BOOST_VERSION < 107500
-#error "mod-animus-lib needs Boost 1.75 or newer for Boost.JSON"
+#error "The Animus Forge needs Boost 1.75 or newer for Boost.JSON"
 #endif
 
 #include <boost/json/src.hpp>

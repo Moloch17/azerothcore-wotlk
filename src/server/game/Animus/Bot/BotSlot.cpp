@@ -20,7 +20,6 @@
 #include "Player.h"
 #include "SharedDefines.h"
 #include "DBCStores.h"
-#include "Player.h"
 #include "Position.h"
 #include "WorldSession.h"
 

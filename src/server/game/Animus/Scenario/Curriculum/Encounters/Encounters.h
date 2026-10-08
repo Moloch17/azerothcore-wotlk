@@ -42,7 +42,6 @@
 #include <functional>
 #include <map>
 #include <string>
-#include <mutex>
 #include <vector>
 
 class Battleground;
@@ -169,7 +168,6 @@ namespace Animus::Curriculum
         bool Build(Env& env, Map* map, uint8 level) override;
         void UpdateEnemies(Env& env) override;
         void Update(Env& env) override;
-        bool SelectTarget(Env const& env, uint32 seat, Unit*& target) override;
         void View(Env const& env, uint32 seat, SeatView& view) const override;
         void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
         void WriteState(Env const& env, float* state) const override;

@@ -233,29 +233,6 @@ namespace
         return AptitudeDemand::Anything();
     }
 
-    /// How many party seats get a character, drawn from the size weights.
-    uint32 RandomPartySize(CurriculumTuning::PartyTuning const& tuning)
-    {
-        std::array<int32, MAX_SEATS> const weights =
-            { tuning.SizeWeight1, tuning.SizeWeight2, tuning.SizeWeight3, tuning.SizeWeight4 };
-
-        int32 total = 0;
-        for (int32 weight : weights)
-            total += weight;
-        if (total <= 0)
-            return MAX_SEATS;
-
-        int32 roll = irand(0, total - 1);
-        for (uint32 size = 1; size <= MAX_SEATS; ++size)
-        {
-            if (roll < weights[size - 1])
-                return size;
-            roll -= weights[size - 1];
-        }
-
-        return MAX_SEATS;
-    }
-
     float OtherPower(Unit const* unit)
     {
         Powers const power = unit->getPowerType();
@@ -1992,19 +1969,16 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
             s.EquippedItems, s.KnownRanks };
     }
 
-    // How many seats play this episode, and their class/roles: the arena's seats, except in a party, which has 1-4
-    // like a player's companions; the rest stay empty: no character, no layout, only the no-op allowed.
+    // How many seats play this episode, and their class/roles: the arena's seats; the rest stay empty: no
+    // character, no layout, only the no-op allowed.
     data.ActiveSeats = arena.SeatCount();
     if (arena.Seats == SeatPlan::Party)
     {
         // An instance is run by a full group with somebody to hold the pull and somebody to keep them up: a heroic
         // attempted by two or three was lost before it started, and the dungeon stage fielded a full five 40% of the
-        // time. Companions in the open world keep the random size (1-4, Party.SizeWeight*).
+        // time.
         bool const instance = arena.Against == Opposition::Instance && arena.Seats == SeatPlan::Party;
         bool const proper = (instance && arena.Instance == InstanceLadder::Wing) || arena.ProperParty;
-        // A party of a fixed size (ArenaDefinition::PartySize: the party follow's followers) keeps it.
-        if (arena.Seats == SeatPlan::Party && !instance && !arena.ProperParty && !arena.PartySize)
-            data.ActiveSeats = RandomPartySize(_tuning.Party);
 
         // Some parties are the classic makeup (somebody to hold the pull, somebody to keep the hurt one up, and no
         // demand on the rest, in a random order); the others draw every seat's demand on its own. The makeup is
@@ -2161,7 +2135,7 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
                 minLevel = std::max(minLevel, s.L->Assets->Kit->LevelOf(TankModeSpell(s.L->Profile->Class)));
         }
 
-    minLevel = std::max({ minLevel, _stage.MinLevel, arena.MinLevel });
+    minLevel = std::max(minLevel, _stage.MinLevel);
 
     // Characters.ReuseEpisodes: a seat whose draw gave it the class and build it already has keeps its character
     // for a few episodes rather than building a new one (the build was a quarter of a decision's cost). The env then

@@ -940,8 +940,7 @@ std::vector<std::string> AnimusForge::Forge::DefaultQueue() const
 
     std::vector<std::string> stages;
     for (Animus::Curriculum::StageDefinition const& stage : Animus::Curriculum::CurriculumStages())
-        if (stage.InDefaultQueue)
-            stages.push_back(stage.Name);
+        stages.push_back(stage.Name);
 
     return stages;
 }
@@ -975,8 +974,8 @@ bool AnimusForge::Forge::RunAdvanced(ForgeConfig const& config, std::string cons
 /// animus.config.resolved_init_from walks the seed chain and takes the first best.pt that exists, whether or not
 /// that stage finished -- an interrupted run does not write finished.json. RunAdvanced answers a different question
 /// (did this stage finish), and using it here warned that a parent would not be seeded from whenever its run had
-/// merely been cancelled, while the learner went on to seed from it: every `forge start stage19_duo_led` this
-/// session printed that warning and then seeded from stage15_arena's best.pt in the next breath. A warning that is
+/// merely been cancelled, while the learner went on to seed from it: every `forge start <stage>` of an
+/// earlier session printed that warning and then seeded from its parent's best.pt in the next breath. A warning that is
 /// usually wrong teaches operators to skip them.
 bool AnimusForge::Forge::RunSeedable(ForgeConfig const& config, std::string const& scenario) const
 {

@@ -674,9 +674,9 @@ void Animus::EnvPool::ResetEnv(Env& env)
     std::vector<ObjectGuid> const previousBots = env.Bots;
     std::vector<ObjectGuid> const previousAllies = env.Allies;
 
-    // An evaluation episode is built from its seed: the world thread's random numbers restart from it for
-    // the reset (race, level, spec, talents, gear, opponents, spawn points) and go back to entropy afterwards.
-    // Resets run on the world thread, and everything a scenario rolls there comes from those numbers.
+    // An evaluation episode is built from its seed: the resetting thread's random numbers (the map thread's under
+    // ResetOnMapThreads) restart from it for the reset (race, level, spec, talents, gear, opponents, spawn points)
+    // and go back to entropy afterwards. Everything a scenario rolls there comes from those numbers.
     auto const seedFor = [](uint32 base, uint32 index)
     {
         uint32 const seed = (base + 1) * 2654435761u ^ (index + 1) * 2246822519u;
@@ -885,9 +885,9 @@ void Animus::EnvPool::RecordTargetInterrupted(Unit const* caster, Spell* spell, 
     if (env == _envByInstance.end())
         return;
 
-    // A target slot holds a creature or the scripted enemy player; in self-play the enemy is another seat's bot and
-    // is in no slot, so matching only the slots left every interrupt in stage15_arena and stage17_flag unrecorded --
-    // and so unpaid and uncounted, however well the seat played it.
+    // A target slot holds a creature or an enemy player; an enemy that is another seat's bot is in no slot, so
+    // matching only the slots left every interrupt on one unrecorded -- and so unpaid and uncounted, however well the
+    // seat played it.
     Env& owner = _envs[env->second];
     ObjectGuid const casterGuid = caster->GetGUID();
     bool const known = std::find(owner.Targets.begin(), owner.Targets.end(), casterGuid) != owner.Targets.end()

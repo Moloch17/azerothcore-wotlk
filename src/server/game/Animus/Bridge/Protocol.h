@@ -23,7 +23,7 @@
  *
  * Every message is a MsgHeader followed by `length` payload bytes. Little-endian, no padding.
  *
- *   client -> server  HELLO  { u32 version }
+ *   client -> server  HELLO  { u32 version, u32 rank, u32 ranks } (HelloMsg)
  *   server -> client  SPEC   SpecMsg, then u32 layout count and that many LayoutMsg, then the episode info
  *                            column names as comma-separated ASCII filling the rest of the payload
  *                            (no terminator). ObsDim and NumActions are the largest layout's. SpecMsg ends with
@@ -68,7 +68,7 @@
  *                                                     zeros for an agent without a body (protocol 20)
  *                            and, only in a stage with a vision block (I = SPEC's ImageBytes > 0; protocol 21):
  *                              u8  image[E*A*I]       each agent's camera image after any auto-reset, [row][col][byte]
- *                                                     row 0 at the top, 4 bytes a pixel (Vision::EncodePixel,
+ *                                                     row 0 at the top, 5 bytes a pixel (Vision::EncodePixel,
  *                                                     camera-vision.BYTES.md); for an agent with no frame,
  *                                                     Vision::FillNoFrame's pattern (sky, height 0). Absent
  *                                                     when the learner reads it from the device buffers (DEVICE)
@@ -323,7 +323,6 @@ namespace AnimusForge
         uint32 Count;
     };
 
-    /// Then the arrays of envs [EnvBegin, EnvBegin + EnvCount), in the order of the learner's Spec.step_layout.
     /// DEVICE: device buffers holding this rank's obs [E, A, O] float, state [E, S] float and mask [E, A, N] uint8,
     /// env-major in the rank's own env numbering, on HIP device `Device`. Handles are hipIpcMemHandle_t bytes. In a
     /// stage with a vision block the message is followed by one more handle, DEVICE_HANDLE_BYTES: the images

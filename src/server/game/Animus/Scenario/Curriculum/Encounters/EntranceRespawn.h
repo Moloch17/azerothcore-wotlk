@@ -35,8 +35,8 @@ namespace Animus::Curriculum
     /// the party. It walks back on the player controller, by its own map and memory, and has rejoined once it is
     /// within Respawn.RejoinYards of the party (its leader, or the living party's centroid while the leader is down).
     ///
-    /// This is the per-seat clock and the measures, with no world in it, so a test can feed it a death and a walk back
-    /// (EntranceRespawnTest). RiseAtEntrance does the standing up.
+    /// This is the per-seat clock and the measures, with no world in it: it is fed a death and a walk back.
+    /// RiseAtEntrance does the standing up.
     struct RespawnClock
     {
         enum class Step : uint8

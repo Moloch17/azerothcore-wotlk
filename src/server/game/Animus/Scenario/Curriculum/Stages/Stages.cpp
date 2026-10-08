@@ -1035,6 +1035,9 @@ namespace
             return "an instance arena runs a row of its ladder";
         if (instance && !stage.Has(BlockId::Pack))
             return "an instance needs the pack block";
+        // The seat picks its own target from what it sees (StageScenario::CurrentTarget): no encounter selects one.
+        if (instance && !stage.Has(BlockId::Sight))
+            return "an instance needs the sight block: the seat selects its own target";
         if (instance && arena.Seats != SeatPlan::Party)
             return "an instance is fought by a party";
         // Its members are read through the party frames.

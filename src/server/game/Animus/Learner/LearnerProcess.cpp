@@ -123,7 +123,7 @@ namespace
         // machines': this machine's `rank` is its local index (it shares this sim's envs with this machine's other
         // learners), its global rank counts from DistRankBase, and they meet at the host's DistAddress. Across
         // machines only the networks are averaged, once an update (mappo.rank_sync = weights): per-step gradients
-        // would be ~8 Gbit/s a link for stage8_duel's networks.
+        // would be ~8 Gbit/s a link for a stage's networks.
         if (config.DistWorld > 1)
         {
             set("rank=" + std::to_string(config.DistRankBase + rank));

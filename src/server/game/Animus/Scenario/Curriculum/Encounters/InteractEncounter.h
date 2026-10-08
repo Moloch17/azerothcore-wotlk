@@ -78,7 +78,6 @@ namespace Animus::Curriculum
         void AddEpisodeInfo(EpisodeInfoTable& table) override;
         void ResetEpisode(Env& env) override;
         bool Build(Env& env, Map* map, uint8 level) override;
-        bool SelectTarget(Env const& env, uint32 seat, Unit*& target) override;
         void OnSeatAction(Env& env, uint32 seat, SeatActionResult const& result) override;
         void View(Env const& env, uint32 seat, SeatView& view) const override;
         void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;

@@ -29,8 +29,8 @@ class WorldSession;
 struct Position;
 
 /*
- * Bots are players without a client or a character row, built with public core APIs only, so the same code runs on the
- * forge core and on a stock AzerothCore.
+ * Bots are players without a client or a character row, built with the forge core's APIs (SetSimSession,
+ * EnableMovementOrders, Player::CreateUnlinked).
  *
  * Mirrors the create path (CharacterHandler: new Player -> MotionMaster::Initialize -> Create) and the in-world half
  * of the login path (HandlePlayerLoginFromDB: SetPlayer -> SetMover -> ObjectAccessor::AddObject ->

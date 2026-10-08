@@ -86,10 +86,6 @@ Animus::Curriculum::CurriculumTuning Animus::Curriculum::CurriculumTuning::Load(
     ClampRolePair(prefix, "StandIn.TankChance", tuning.StandIn.TankChance, "StandIn.HealerChance",
         tuning.StandIn.HealerChance);
 
-    tuning.Party.SizeWeight1 = std::max(0, tuning.Party.SizeWeight1);
-    tuning.Party.SizeWeight2 = std::max(0, tuning.Party.SizeWeight2);
-    tuning.Party.SizeWeight3 = std::max(0, tuning.Party.SizeWeight3);
-    tuning.Party.SizeWeight4 = std::max(0, tuning.Party.SizeWeight4);
     return tuning;
 }
 

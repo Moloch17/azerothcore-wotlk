@@ -2692,34 +2692,6 @@ void Animus::Curriculum::InstanceEncounter::Reward(Env& env, uint32 seatIndex, P
             1.0f / tierScale);
 }
 
-bool Animus::Curriculum::InstanceEncounter::SelectTarget(Env const& env, uint32 seatIndex, Unit*& target)
-{
-    SeatState& seat = _scenario.Data(env).Seats[seatIndex];
-    if (Unit* selected = env.FindTargetUnit(seat.TargetSlot); selected && selected->IsAlive())
-    {
-        target = selected;
-        return true;
-    }
-
-    // The selection died or despawned: the boss while it lives, else the nearest living enemy.
-    target = nullptr;
-    Player* bot = env.FindBot(seatIndex);
-    for (uint32 slot = 0; slot < env.Targets.size(); ++slot)
-    {
-        Unit* enemy = env.FindTargetUnit(slot);
-        if (!enemy || !enemy->IsAlive())
-            continue;
-        if (!target || (bot && slot != 0 && bot->GetDistance(enemy) < bot->GetDistance(target)))
-        {
-            target = enemy;
-            seat.TargetSlot = slot;
-        }
-        if (slot == 0)
-            break;
-    }
-    return true;
-}
-
 float Animus::Curriculum::InstanceEncounter::TierScale(Env const& env) const
 {
     // A wing's difficulty is its support ladder's rung, not its pinned row (a stage's row is the same every run): the
