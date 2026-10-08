@@ -172,6 +172,17 @@ collapse alarm but no stall alarm (`Encounters/WingLadder.h`), unlike the learne
 describe the first curriculum (not this chapter set). **D7.** Evaluation of D2/D3 takes hours of sim time per heldout
 run; `heldout_every: 4` (default) is the guard.
 
+**D8.** Baked camera (decision 0020, stage 3): (a) interior frames of a map with a big static scene (Deadmines, 1.7 to
+2.2 ms) are bound by the static BVH trace (about 1.2 ms of it) and the liquid cast, not by the terrain; (b) open-air
+frames over hilly ground cost about 3 to 3.7 ms: a ray grazing the relief visits about 16 cells that the block ranges
+cannot reject, and a finer range level (4 x 4 cells) would cut that; (c) the scene-wide liquid band takes the extreme
+levels of the map files, and Deadmines carries a -500 liquid level (probably a sentinel), which widens the height clip
+of descending rays on that map; (d) the digest check cannot see a source file changed in place with the same size and
+nanosecond mtime; (e) after a copy of the data the continent identity check pays the content hash once (about 0.2 s for
+map 0, cached) and rewrites the digest, then the next start is a few milliseconds; (f) the culled and the reference
+cell walks differ in float formulation (reciprocal multiply against divide), so a ray through the exact shared corner
+of four cells could in theory pick a different first cell: none in 3,000,000 random rays.
+
 ## E. Design debts
 
 **E1.** Seed chain and config chain differ and nothing checks they agree in intent (`combat1_fight.yaml` standalone;

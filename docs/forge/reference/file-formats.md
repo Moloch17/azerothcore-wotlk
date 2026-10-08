@@ -250,15 +250,35 @@ whole `tuning`, so any tuning change replays it). Only exists when `eval.baselin
 ## Baked camera scene: `<AnimusForge.DataDir>/scenes/<map id padded to 3>.scene`
 
 Written by `SceneBaker::BakeMap` (the worldserver at startup, or `scene_baker bake`), read by `BakedWorld::Load`;
-never in git (each machine bakes its own, and the cluster fingerprint compares their checksums). Format version 2,
+never in git (each machine bakes its own, and the cluster fingerprint compares their checksums). Format version 3,
 little-endian, pointer-free: a 512-byte `SceneHeader` (magic `ABSC`, version, map id, flags, solid and liquid boxes,
 counts, baker version, `SourceHash` = FNV-1a 64 over the contents of every source file the bake read, `Checksum` =
-FNV-1a 64 of the whole file with that field read as zero, the section table), then 16-byte-aligned sections: solid
+FNV-1a 64 of the whole file with that field and `SourceFilesDigest` read as zero, the terrain's lowest and highest
+ground height and liquid level, `SourceFilesDigest`, the section table), then 16-byte-aligned sections: solid
 triangles (vertex 0 and two edges, world space), face normals, kinds (WMO or M2), the BVH nodes, WMO liquid triangles,
-kinds and BVH, the terrain index (`TerrainRec` per `.map` tile, sorted), V9 and V8 height floats, hole words and per-cell
-liquid level and kind. Authoritative layout: `Animus/Runtime/Vision/BakedScene.h`. A file is valid when its magic,
-version and checksum are right, its baker version is `SceneBaker::BAKER_VERSION` and its `SourceHash` equals the hash of
-the data on disk; otherwise it is baked again.
+kinds and BVH, the terrain index (`TerrainRec` per `.map` tile, sorted: tile, flags, the header's `MaxHeight`,
+`FlatHeight`, the three section indices and, since v3, `MinHeight`, the lowest height of the tile's arrays), V9 and V8
+height floats, hole words and per-cell liquid level and kind.
+
+Version 3 added (everything the terrain cast culls with):
+
+- `SLOT_TERRAIN_BLOCKS`: per height-bearing non-flat tile (in `HeightIndex` order) 256 `BlockRange {float Min, Max}`,
+  block `bx * 16 + by` for the 8 x 8 cells `[8 bx, 8 bx + 8) x [8 by, 8 by + 8)`: the lowest and highest of its 9 x 9
+  V9 corners and 8 x 8 V8 centres (holes included, so a bound). `SLOT_TERRAIN_LIQUID_BLOCKS`: the same per liquid tile
+  (`LiquidIndex` order) over the levels of the cells that have liquid; a block with none reads `Min = FLT_MAX,
+  Max = -FLT_MAX`. The reader derives one more level above them (4 x 4 super-blocks of 4 x 4 blocks) at load.
+- Header: `TerrainHeightMin/Max` (the arrays' extreme heights over all tiles, a flat tile's `FlatHeight`),
+  `TerrainLiquidMin/Max`.
+- `SLOT_SOURCE_MODELS`: the model files the bake read (names below `vmaps/`, each NUL-ended), and the header's
+  `SourceFilesDigest` = FNV-1a 64 over the (name, size, mtime in ns) of every source file in name order (LiquidType.dbc,
+  the map's vmtree and vmtiles, those model files, the `.map` tiles). The digest is machine-specific and sits outside
+  the checksum, so the cluster still compares equal checksums.
+
+Authoritative layout: `Animus/Runtime/Vision/BakedScene.h`. A file is valid when its magic, version and checksum are
+right, its baker version is `SceneBaker::BAKER_VERSION` and it is current against the data on disk: its
+`SourceFilesDigest` equals the digest of the source files now (sizes and times only: the quick accept), or else its
+`SourceHash` equals the content hash of the data now (and the digest is then rewritten in place); otherwise it is baked
+again. A version-2 scene fails the version check and is baked again at the next start.
 
 ## RUNLOG.md
 
