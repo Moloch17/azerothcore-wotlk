@@ -14,7 +14,7 @@ This file maps itself: it has no source files of its own; it summarises those na
 | **Aimless** | A Cost paid for a press that works against the goal the seat itself holds; judged by `StageScenario::JudgePress`, priced in `Actions.Aimless*`. |
 | **Aptitude** | What a class build is geared to play (tank, healer, damage), read off its spec; `Character/Aptitude.cpp`. A role is never chosen by the caller, it is read off the build. |
 | **Arena** | One situation a stage's episodes can be (a hallway, a pack drill, a dungeon wing), drawn by weight each episode; `ArenaDefinition` in `Stages/StageDefinition.h`. A drill is an arena, not a stage. |
-| **Arm** | An extra evaluation beside the plain "all bots" one: `with_human` (the stand-in in one seat) or `with_partners`; `eval.arms`, `animus/config.py`. Never moves best.pt or convergence. |
+| **Arm** | An extra evaluation beside the plain "all bots" one: `with_human` (the stand-in in one seat), `with_partners`, or an input ablation (`no_flag`, `no_camera`, `no_compass`: the learner's own image or compass edited, M1); `eval.arms`, `animus/config.py`. Never moves best.pt or convergence. |
 | **Best / latest** | `best.pt` is the checkpoint with the best evaluation score (kept per gate-stepped rung as `best_rung<k>.pt`); `latest.pt` is the newest and is what a later stage is seeded from (`seed_from: latest`). |
 | **Block** | A named slice of a layout with its own observation columns and action rows (core, move, vision, sight, ...); `Layout/Block.h`, ids never renumbered. Seeding carries a block by name; a change in meaning bumps its revision. |
 | **BlockId** | The explicit numeric id of a block (core 0 to goal 26, with gaps); `Layout/Block.h`. |

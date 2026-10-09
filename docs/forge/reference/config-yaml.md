@@ -136,7 +136,7 @@ Read by `evaluation.py` (`run_evaluation`, line 451), `train.py` (1150-1310, 222
 | `heldout_every` | int | 4 | at least 1 (`config.py:127-129`) |
 | `heldout_on_best` | bool | true | also play on a new `best.pt` |
 | `score` | str | `outcome` | `outcome` or `return` (checked in `score_column`, `config.py:131-134`, not at load) |
-| `arms` | dict | `{}` | arm name to episodes; arms must be in `EVAL_ARMS = (with_human, with_partners)`, counts non-negative ints (`config.py:119-124`) |
+| `arms` | dict | `{}` | arm name to episodes; arms must be in `EVAL_ARMS = (with_human, with_partners, no_flag, no_camera, no_compass)`, counts non-negative ints (`config.py:119-124`) |
 | `arms_every` | int | 1 | at least 1 |
 
 ### `convergence:` (`ConvergenceConfig`, `config.py:138`), read by `stage.py` `ConvergenceController` (line 460) and
@@ -294,9 +294,8 @@ the `gate_metric`/`measure`/`headline` names with `apps/forge/tools/sim_metrics.
 
 ## Observed issues
 
-- Stale commentary in the yamls: `move1_controls.yaml` fade comments describe a ladder starting at x0.5 then x0.25 then
-  x0, while the value is `rungs: [0.0]` (a one-rung ladder at zero shaping). A reader should trust the value. The
-  `PartnerConfig.stages` comment in `config.py` still cites `stage_c3_survive`; `StatusConfig` and `ConvergenceConfig`
+- Stale commentary in the yamls: the `PartnerConfig.stages` comment in `config.py` still cites `stage_c3_survive`;
+  `StatusConfig` and `ConvergenceConfig`
   comments cite `stage9_deadmines`, `stage3_rotation`, `stage4_duel` (archived); `FadeConfig` cites "stage9's 1e12".
 - `combat1_fight.yaml` is a second full root (173 lines) that repeats most of `move1_controls.yaml`'s `mappo` block with
   small differences (chunk_length 128 vs 32, epochs 2 vs 4, vision_chunk_rows auto vs 0; lr and look entropy now equal M2's). A shared

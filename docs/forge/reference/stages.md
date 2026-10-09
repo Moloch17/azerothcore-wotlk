@@ -144,7 +144,7 @@ party_frames 24, combat 25, goal 26 (`Layout/Block.h`; never renumbered). What e
 
 | Stage | gamma (per 100 ms) | epochs | actor and critic lr | look_entropy_coef | chunk_length | other |
 |---|---|---|---|---|---|---|
-| `move1_controls` | 0.997 | 4 | 1.5e-4 | 0.001 | 32 | vision_chunk_rows 0 |
+| `move1_controls` | 0.997 | 2 | 1.5e-4 | 0.001 | 32 | vision_chunk_rows 0 |
 | `move2_seek` | 0.998 | 2 | 1.5e-4 | 0.004 | 128 | vision_chunk_rows auto (was 2048) |
 | `move3_interact` | 0.998 (inherited) | 2 | 1.5e-4 | 0.004 | 128 | |
 | `move4_follow` | 0.999 | 2 | 1.5e-4 | 0.004 | 128 | |
@@ -185,9 +185,9 @@ the run starts from it, copied block by block (the redesign of 2026-10-06 was st
 0.75 (1 minus the shaping scale) a `CornerShare` 0.25 of the episodes put it just round a corner. Arriving is stopping
 (`Standing::Stopped`) with the feet within the object's bounding radius plus `ArriveTolerance` 1.0 of its centre, on its
 floor (within `ArriveRise` 2.0). The compass is withheld for an episode (presence and values 0, an absent input, never a
-mask) with chance `Withhold0..3` = 0, 0.25, 0.6, 0.9 at fade scales 1, 0.5, 0.25, 0 (`SightDraw::Rung` takes the nearest
-of
-the four scales).
+mask) with chance `Withhold0..3` = 0.25, 0.6, 0.9, 0.9 at fade scales 1, 0.5, 0.25, 0 (the code defaults since
+2026-10-08; `SightDraw::Rung` takes the nearest of the four scales): a quarter of the episodes already lack the compass at
+the first rung, each paid the rung's dense shaping, and the last step (x0.25 to x0) takes only the shaping away.
 
 **Rewards** (`SightEncounter::Reward`, `SightEncounter.cpp:319` to `416`). Outcome: `Arrive` 3.0 once on the stop
 (`Markers.Arrive`). Cost: `StepCost` 0.002 per 50 ms (about 0.04 a second; `Markers.StepCost`), `Death` 3.0
@@ -195,23 +195,27 @@ the four scales).
 `WallSlide` 0.5; `AddFixed`, so off the cost ladder). Shaping: `Progress` 1.0 on the straight distance, `Facing` 0.25 on
 the cosine of the object's bearing (`Markers.Progress`, `Markers.Facing`), both scaled by the fade.
 
-**Ladder.** One fade with the compass withholding riding on it. As configured (`move1_controls.yaml`) `fade.rungs` is
-`[0.0]`: a single rung, so a resumed M1 sits at scale 0 (compass withheld 90%, no shaping). The comments in the yaml
-describe the earlier path x0.5, x0.25, x0 and say the fade "starts at x0.5"; the code does not (Observed issues).
-`gate_metric: arrived_at_rung`, `gate_value: 0.8`, `window 3`, `give_up 2`; `require_plateau` is the default **true**
-here
-(the only live stage where it is), but with one rung nothing steps. `costs.enabled: false`; `entropy_floor.fraction
-0.3`.
+**Ladder.** One fade with the compass withholding riding on it. As configured (`move1_controls.yaml`, Design A,
+2026-10-08) `fade.rungs` is `[1.0, 0.5, 0.25, 0.0]`: it starts at x1 (compass withheld 25%, full shaping) and steps
+x0.5 (60%), x0.25 (90%, corners on), x0 (90%, no shaping) on `gate_metric: arrived_at_rung` >= 0.85, `require_plateau:
+false` (a rung steps as soon as the gate is met at one evaluation; the ladder never steps back on the score, decision
+0010), `window 3`, `give_up 2`. `costs.enabled: false`; `entropy_floor.fraction 0.3`. The earlier file carried `[0.0]`
+(the end state of a hand-stepped run) and started every fresh run at the hardest rung, 0.000 no-compass arrival for 28M
+steps; the archived run `move1_controls-20261009-002430` is the one success (0.968 no-compass arrival), reached by
+stepping the same rungs from x1.
 
 **Evaluation.** Every 5M steps, 512 episodes, `sampled_every: 3` (every third evaluation also scores sampled actions),
 `trace_episodes: 64`. The sim plays 32 fixed (spawn, object) pairs (24 in sight, 8 round a corner,
-`StockadeSightPairs()`), each with the compass and without, spread over every class and race. No arms and no heldout.
+`StockadeSightPairs()`), each with the compass and without, spread over every class and race. Arms (the learner's input
+edited on the first 128 seeds, 31 castings a round, every evaluation): `no_flag` (objective bit of every pixel cleared),
+`no_camera` (the image replaced by the no-frame pixel), `no_compass` (compass columns zeroed); reported as
+`arrived_no_compass_no_flag` and the like. No heldout. `layout_sampling.replay_fraction 0`: the pairs are not replayed.
 
 **Status.** Headline: arrived, arrived_no_compass, arrived_with_compass, compass_withheld, arrive_seconds_sight,
 time_ratio_sight, time_ratio_corner, stop_distance, overshoot, stops_near, course_kinks, control_changes_per_minute,
 wall_seconds, timed_out, died. Targets: arrived >= 0.95, arrive_seconds_sight <= 18, time_ratio_sight <= 1.1,
 stop_distance <= 0.5, overshoot <= 0.5, stops_near <= 1.2, course_kinks <= 5, wall_seconds <= 0.5, timed_out <= 0.02,
-died <= 0.01. `convergence.measure: arrived`. `layout_sampling.metric: arrived`, `replay_fraction 0.2`.
+died <= 0.01. `convergence.measure: arrived`. `layout_sampling.metric: arrived`, `replay_fraction 0`.
 
 **Key conf knobs.** `Controls.*` (Nearest, Furthest, CornerShare, CornerFrom, Withhold0..3, Stuck, Wall), `Markers.*`.
 
