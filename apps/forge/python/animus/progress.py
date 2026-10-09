@@ -15,6 +15,8 @@ import math
 import time
 from pathlib import Path
 
+from .evaluation import ABLATION_COLUMNS
+
 PROGRESS_FILE = "progress.json"
 
 #: Split measures only an evaluation arm reads (H, dungeon-curriculum I7): arm -> {its column: (the plain evaluation's
@@ -87,7 +89,9 @@ class ProgressWriter:
     def arm_columns(self, arm: str) -> tuple[str, ...]:
         """The episode columns an arm's summary needs for the headline: clear_rate for clear_rate_with_human."""
         suffix = f"_{arm}"
-        return tuple(metric[:-len(suffix)] for metric in self.headline if metric.endswith(suffix))
+        # arrived_no_compass is a plain column that ends in the no_compass arm's suffix, not that arm's arrived.
+        return tuple(metric[:-len(suffix)] for metric in self.headline
+                     if metric.endswith(suffix) and metric not in ABLATION_COLUMNS)
 
     def arm_evaluated(self, arm: str, summary: dict) -> None:
         """An evaluation arm's summary: its score as eval_<arm>_score, and each headline metric <metric>_<arm> as

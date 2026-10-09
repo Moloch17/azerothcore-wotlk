@@ -41,8 +41,8 @@ from .partners import PARTNERS_DIR, Partners, partner_snapshot, with_partners_ch
 from .config import TrainConfig
 from .distill import Distiller, auto_teachers, build_teacher
 from .env import ClusterEnv, ForgeEnv
-from .evaluation import (ConvergenceTracker, EvalResult, action_mask_table, casting_weights, format_summary,
-                         run_evaluation)
+from .evaluation import (ABLATIONS, ConvergenceTracker, EvalResult, ablation_chooser, action_mask_table,
+                         casting_weights, format_summary, run_evaluation)
 from .mappo.buffer import RolloutBuffer
 from .mappo.trainer import (LOOK_COMMANDS, VISION_CHUNK_AUTO, VISION_CHUNK_FALLBACK, MappoTrainer, horizon_seconds,
                             per_decision, schedule)
@@ -1433,7 +1433,8 @@ class TrainingRun:
 
     def evaluate_arms(self, plain: dict | None) -> None:
         """eval.arms: the evaluation's own seeds played again beside the plain "all bots" one -- "with_human", the
-        sim's human stand-in in one seat of every party, and "with_partners", the fixed co-op partner set in some -- and
+        sim's human stand-in in one seat of every party, "with_partners", the fixed co-op partner set in some, and the
+        ablations "no_flag", "no_camera" and "no_compass" (the learner's input edited, evaluation.ablation_chooser) -- and
         reported apart as policy <arm> in eval.csv and eval.jsonl, with the gap to the plain one. A reading only:
         neither the tracker, the controller nor the partners' pool sees it."""
         config = self.config
@@ -1454,6 +1455,10 @@ class TrainingRun:
                 if arm_partners is None:
                     continue
                 choose, options["excluded"] = with_partners_chooser(choose, arm_partners)
+            elif arm in ABLATIONS:
+                # The learner's own input edited (the flag cleared, the image blank, the compass zeroed): the same
+                # seeds, the sim untouched, so the plain evaluation's episode columns read the arm's own result.
+                choose = ablation_chooser(choose, arm, self.spec, self.stage)
             result = self._evaluate_share(choose, episodes, config.eval.seed, arenas=self.arena_names,
                                           action_names=self.action_names, **options)
             if self.cast is not None or self.partners is not None:

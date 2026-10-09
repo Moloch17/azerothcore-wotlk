@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import math
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable
 
 import numpy as np
@@ -445,6 +445,73 @@ def standard_error(values: np.ndarray, groups: np.ndarray | None = None) -> floa
         groups = np.asarray(groups)
         values = np.array([values[groups == group].mean() for group in np.unique(groups)])
     return float(np.std(values, ddof=1) / math.sqrt(len(values))) if len(values) > 1 else 0.0
+
+
+#: The ablation eval arms (config.EVAL_ARMS): the learner's own input, edited, on the evaluation's seeds. The sim is not
+#: told: it still withholds the compass and shows the flag as the episode asks, so the episode columns stay the plain
+#: ones and the arm's gap to the plain evaluation is what the edited input carried.
+ABLATIONS = ("no_flag", "no_camera", "no_compass")
+#: What an ablation arm reports and shows in forge status (<column>_<arm>).
+ABLATION_COLUMNS = ("arrived", "arrived_no_compass", "arrived_with_compass", "objective_visible")
+#: Bit 5 of the class byte (byte 3) of every pixel: the objective flag (Vision EncodePixel, cpp-vision.md).
+OBJECTIVE_FLAG_BIT = 0x20
+CLASS_BYTE = 3
+
+
+def ablate_image(image: np.ndarray, arm: str) -> np.ndarray:
+    """A copy of `image` [..., I] uint8 (4 bytes a pixel) as the arm leaves it: "no_flag" clears the objective bit of
+    every pixel's class byte, "no_camera" is p.no_frame (every pixel NO_FRAME_PIXEL), anything else as it was."""
+    image = np.array(host(image), dtype=np.uint8, copy=True)
+    if arm == "no_camera":
+        return p.no_frame(image.shape)
+    if arm == "no_flag":
+        width = len(p.NO_FRAME_PIXEL)
+        pixels = image.reshape(*image.shape[:-1], image.shape[-1] // width, width)
+        pixels[..., CLASS_BYTE] &= np.uint8(~OBJECTIVE_FLAG_BIT & 0xFF)
+        image = pixels.reshape(image.shape)
+    return image
+
+
+def compass_spans(spec, stage: dict | None, block: str = "compass") -> list[tuple[int, int]]:
+    """Per layout of `spec` (its order), the (first column, count) of the named block in its observation; (0, 0) for a
+    layout without one. From the stage.json block spans (animus.stages.block_spans)."""
+    from .stages import block_spans
+    spans = []
+    for layout in spec.layouts:
+        found = (block_spans(stage, layout.name) or {}).get(block)
+        spans.append((int(found[0][0]), int(found[0][1])) if found else (0, 0))
+    return spans
+
+
+def ablate_obs(obs: np.ndarray, layout: np.ndarray, spans: list[tuple[int, int]]) -> np.ndarray:
+    """A copy of `obs` [E, A, O] with each row's compass columns (its layout's span) zeroed: what the sim writes when it
+    withholds the compass (presence and values 0)."""
+    obs = np.array(host(obs), copy=True)
+    layout = np.asarray(host(layout))
+    for index, (first, count) in enumerate(spans):
+        if count:
+            obs[layout == index, first:first + count] = 0.0
+    return obs
+
+
+def ablation_chooser(choose: Callable, arm: str, spec, stage: dict | None) -> Callable:
+    """`choose` (run_evaluation's chooser) for an ablation arm: the step it is given has its image or compass edited
+    first (`dataclasses.replace`: the run_evaluation's own step keeps the real bytes for scoring)."""
+    if arm not in ABLATIONS:
+        raise ValueError(f"unknown ablation arm {arm!r}; expected one of {list(ABLATIONS)}")
+    spans = compass_spans(spec, stage) if arm == "no_compass" else []
+    if arm == "no_compass" and not any(count for _, count in spans):
+        raise ValueError("eval.arms.no_compass: the stage has no compass block to zero")
+
+    def chooser(step):
+        if arm == "no_compass":
+            return choose(replace(step, obs=ablate_obs(step.obs, step.layout, spans)))
+        image = getattr(step, "image", None)
+        if image is None:
+            raise ValueError(f"eval.arms.{arm}: the stage has no camera image to edit")
+        return choose(replace(step, image=ablate_image(image, arm)))
+
+    return chooser
 
 
 def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline: str = "",

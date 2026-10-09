@@ -109,6 +109,9 @@ class EvalConfig:
     # nothing about an arm moves best.pt or convergence.
     #   with_human: the "human" stand-in (the sim's StandIn.*) in one seat of every party; its row is not scored.
     #   with_partners: cast.partners' fixed set (eval_partners) in some seats of every party; their rows not scored.
+    #   no_flag, no_camera, no_compass: ablations of the learner's own input on the same seeds (evaluation.ABLATIONS),
+    #     to see what the policy steers by: the objective flag (bit 5 of every pixel's class byte) cleared, the whole
+    #     image replaced by the no-frame pixel, or the compass block's columns zeroed. They change nothing in the sim.
     arms: dict = field(default_factory=dict)
     arms_every: int = 1
 
@@ -352,7 +355,7 @@ class DistillConfig:
 
 
 #: The evaluation arms beside the plain one ("all bots"): eval.arms names them (dungeon-curriculum I7).
-EVAL_ARMS = ("with_human", "with_partners")
+EVAL_ARMS = ("with_human", "with_partners", "no_flag", "no_camera", "no_compass")
 
 
 @dataclass
