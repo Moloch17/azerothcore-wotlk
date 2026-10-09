@@ -1286,8 +1286,11 @@ class TrainingRun:
 
             against = f", baseline {baseline_summary['score']:.4g}" if baseline_summary else ""
             played = summary.get("return")
+            # A gate-stepped ladder's step re-baselines the tracker inside controller.observe above, so at the first
+            # evaluation of a new rung it has no best yet (None): print a dash, do not format it.
+            best = "-" if tracker.best is None else format(tracker.best, ".4g")
             print(f"Eval at {self.env_steps} env steps: score {result.score:.4g} +/- {result.stderr:.2g} "
-                  f"(best {tracker.best:.4g}, {tracker.evals_since_best} evals since, margin {tracker.last_margin:.2g})"
+                  f"(best {best}, {tracker.evals_since_best} evals since, margin {tracker.last_margin:.2g})"
                   f"{against}; return {played if played is None else format(played, '.4g')} at shaping "
                   f"x{self.shaping_scale_now:g}, noise priced x{self.cost_scale_now:g}; "
                   f"{result.episodes} episodes in {result.seconds:.0f} s"
@@ -1571,7 +1574,8 @@ class TrainingRun:
         tracker = self.tracker
         self.eval_log.write_outcome(self.update, self.env_steps, outcome)
         pending = {name: row["missing"] for name, row in (outcome.report or {}).items() if not row["converged"]}
-        print(f"Stage complete ({outcome.reason}): best score {tracker.best:.4g} at {tracker.best_env_steps} env "
+        best = "-" if tracker.best is None else format(tracker.best, ".4g")
+        print(f"Stage complete ({outcome.reason}): best score {best} at {tracker.best_env_steps} env "
               f"steps; {len((outcome.report or {})) - len(pending)} of {len(outcome.report or {})} classes converged.",
               flush=True)
         for name, missing in pending.items():
