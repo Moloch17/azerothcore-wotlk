@@ -61,6 +61,8 @@ eval:
     sweep: 195
   heldout_every: 1000
   heldout_on_best: false
+  # M1's ablation arms (the flag, the camera and the compass edited) are its own: M2 has no compass to zero.
+  arms: {}
   report: [found, found_hallway, found_doorway, found_room, found_deep, seek_rung, rung_carried, find_seconds,
            sighted, sight_seconds, sight_to_arrival, rooms_looked, rooms_entered, rooms_reentered, revisit_rate,
            rooms_before_found, objective_visible, room_depth, difficulty, deep_room, object_fallback,
@@ -108,8 +110,8 @@ convergence:
 # moves on once its own found rate (the evaluation plays the training rung) has plateaued at 80% or more, with the
 # fade's window and regress rules -- a curriculum ladder, not a pass gate: the stage still ends on convergence.
 fade:
-  # Its own rungs (hallway, doorway, front room, deep): M2 extends M1, whose fade was cut to [0.0] while it finished,
-  # and would otherwise start M2 at the deep rung.
+  # Its own rungs (hallway, doorway, front room, deep), restated: they are M2's placements, not M1's shaping fade,
+  # and this stage's gate and plateau rule are its own below.
   rungs: [1.0, 0.5, 0.25, 0.0]
   gate_metric: found
   gate_value: 0.8
@@ -124,3 +126,5 @@ costs:
 
 layout_sampling:
   metric: found
+  # A fifth of training resets replay a lost evaluation episode (M1 turned this off for its 32 held-out pairs).
+  replay_fraction: 0.2

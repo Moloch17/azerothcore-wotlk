@@ -8,9 +8,11 @@
 # (Stages.cpp move1_controls, SightEncounter).
 #
 # The compass fades out by rung: each episode it is withheld (its presence and values 0, an absent input, never a mask)
-# with the chance the shaping fade's rung asks -- 0, 0.25, 0.6, 0.9 at x1, x0.5, x0.25, x0 (Controls.Withhold0..3). By
-# the top rung the seat goes to what it sees. Wall and Stuck are charged from the first step at a small fixed price
-# (Controls.Wall/Stuck, 0.02 a second each), off the cost ladder.
+# with the chance the shaping fade's rung asks -- 0.25, 0.6, 0.9, 0.9 at x1, x0.5, x0.25, x0 (Controls.Withhold0..3, the
+# code defaults since stage1-vision Design A). The seat that has to go by what it sees therefore carries the dense
+# shaping (Progress, Facing) in its withheld episodes until x0, and the last step takes only the shaping away. Wall and
+# Stuck are charged from the first step at a small fixed price (Controls.Wall/Stuck, 0.02 a second each), off the cost
+# ladder.
 #
 # Every class and race, at level 1 (death knights at 55): one policy, one layout per class (its own adapter and head
 # around a shared trunk), so every class learns the movement from the start, with a kit too small to matter.
@@ -112,6 +114,15 @@ eval:
   deterministic: true
   sampled_every: 3
   trace_episodes: 64
+  # Ablations of the learner's own input on the first 128 seeds of the evaluation (stage1-vision X1; about four
+  # rounds of the 31 castings, so both compass draws): no_flag clears the objective bit of every pixel, no_camera
+  # blanks the image, no_compass zeroes the compass columns. What each costs the arrival says what the policy steers by.
+  # Read as arrived_no_compass_no_flag and the like in forge status; a reading, never a gate.
+  arms:
+    no_flag: 128
+    no_camera: 128
+    no_compass: 128
+  arms_every: 1
   report: [arrived, arrived_no_compass, arrived_with_compass, compass_withheld, compass_withhold_chance, compass_rung,
            arrive_seconds, time_ratio, arrive_seconds_sight, time_ratio_sight, arrive_seconds_corner,
            time_ratio_corner, markers_sight, markers_corner, stop_distance, overshoot, stops_near, distance_travelled,
@@ -123,14 +134,16 @@ eval:
 # forge status for this stage (the user, 2026-10-05; REDESIGN 2026-10-06): did it stop beside the object, with the
 # compass and without, how fast, how precisely, and how cleanly it got there. compass_withheld is the share of the
 # episodes that withheld it (training: the rung's chance). Watch arrived_no_compass against it (amendment 5): near 0 at
-# the 0.6 rung means the camera is not being learned. stop_distance is the air between the body and the object's widest
-# side. The time and its ratio are read in sight of the spawn (_sight): round a corner (_corner) the optimum is still
+# the first rungs (25%, 60% withheld) means the camera is not being learned. stop_distance is the air between the body
+# and the object's widest side. The time and its ratio are read in sight of the spawn (_sight): round a corner (_corner) the optimum is still
 # the straight line through the wall, so its ratio reads high by the corner, not by slowness; the evaluation's tables
 # also split every measure by placement (category objective_corner). Targets are a readout, never a gate.
 status:
   headline: [arrived, arrived_no_compass, arrived_with_compass, compass_withheld, arrive_seconds_sight,
              time_ratio_sight, time_ratio_corner, stop_distance, overshoot, stops_near, course_kinks,
-             control_changes_per_minute, wall_seconds, timed_out, died]
+             control_changes_per_minute, wall_seconds, timed_out, died,
+             arrived_no_compass_no_flag, arrived_no_compass_no_camera, arrived_with_compass_no_camera,
+             arrived_with_compass_no_compass, objective_visible_no_flag]
   targets:
     arrived: ">= 0.95"
     arrive_seconds_sight: "<= 18"
@@ -158,25 +171,33 @@ convergence:
   lr_hold_until_plateau: true
 
 # The fade is two ladders in one: the shaping (Progress on the straight distance, Facing on the object's bearing) fades,
-# and the compass is withheld more often each rung (SightEncounter reads the rung off the shaping scale). It steps on
-# the existing rules -- the window, the plateau, the regression back -- gated on arrived_at_rung: the evaluation's
+# and the compass is withheld more often each rung (SightEncounter reads the rung off the shaping scale), but the
+# withholding starts at 25% on the first rung and is no longer tied to the shaping reaching 0 (Controls.Withhold0..3
+# 0.25 / 0.6 / 0.9 / 0.9). The ladder starts at x1 and steps on its gate alone, arrived_at_rung: the evaluation's
 # arrival at the rung's own withholding mix (animus.evaluation), never the 50/50 evaluation's plain arrival, which a
-# policy at the first rung (never shown an absent compass) could not bring to the gate (amendment 7). A curriculum
-# ladder, not a pass gate: the stage still ends on convergence.
+# policy at the first rung (never shown an absent compass) could not bring to the gate (amendment 7). With
+# require_plateau off a rung steps as soon as the gate is met at one evaluation, and the ladder never steps back on the
+# score (decision 0010: a harder rung scores lower by design); a collapse or stall only warns. A curriculum ladder, not
+# a pass gate: the stage still ends on convergence, at the top rung.
+#
+# Why this schedule (stage1-vision analysis, Design A, 2026-10-08): a run that started at x0 (rungs [0.0]: withheld 90%,
+# no shaping from the first update; two runs, one of them four epochs) sat at 0.000 no-compass arrival
+# for 28M steps: a withheld episode paid a constant time cost and nothing else, so the camera never got a gradient. The
+# one success, the archived run move1_controls-20261009-002430, started at x1 and stepped x0.5, x0.25, x0 and reached
+# 0.968 no-compass arrival: the climb happened while the withheld episodes still carried dense shaping. Here the same
+# ladder is gated on its own mix instead of stepped by hand, with a quarter of the episodes withheld from the start so
+# no-compass arrival rises from the first window. At gate 0.85 and a with-compass arrival near 0.99 the steps ask for
+# no-compass arrival of about 0.43 (x1), 0.76 (x0.5) and 0.83 (x0.25).
 fade:
   enabled: true
-  # Starts at x0.5 (the compass withheld a quarter of the time): x1 (always shown) was mastered (99.6% arrive, 0.17 yd
-  # stops) and the fade waited on a score plateau to leave it (the user, 2026-10-06: start the fade now).
-  # Then x0.25 (withheld 60%, corners on), at the user's word (2026-10-06) with no-compass arrivals at 75% (eval) / 91%
-  # (train) on x0.5 and the score still rising.
-  # Then x0 (withheld 90%, corners on, no shaping), at the user's word (2026-10-06) with no-compass arrivals at 85%
-  # (eval) / 89% (train) on x0.25.
-  rungs: [0.0]
+  rungs: [1.0, 0.5, 0.25, 0.0]
   window: 3
   regress_z: 2.0
   give_up: 2
   gate_metric: arrived_at_rung
-  gate_value: 0.8
+  gate_value: 0.85
+  # The ladder steps on the gate alone and never back on the score (decision 0010).
+  require_plateau: false
 
 # The noise prices (Repeat, Jitter, Aimless, Effort, Fidget): free until 80% of runs stop beside the object at the
 # rung's mix, then in to full price. Wall and Stuck are not on this ladder (a fixed price from the first step), and
@@ -195,14 +216,15 @@ entropy_floor:
   max_boost: 4.0
   rate: 0.05
 
-# More episodes for the classes stopping beside the object least often, and a fifth of training resets replay an
-# evaluation episode that missed it (its pair; its compass is the rung's draw).
+# More episodes for the classes stopping beside the object least often. No replay of lost evaluation episodes
+# (replay_fraction 0, stage1-vision X2): the 32 evaluation pairs are the stage's only held-out reading, and replaying
+# them in a fifth of training resets would train on them.
 layout_sampling:
   enabled: true
   strength: 1.0
   max_ratio: 4.0
   metric: arrived
-  replay_fraction: 0.2
+  replay_fraction: 0.0
 
 # The movement-style reward (animus.style): off until human data exists.
 style:
