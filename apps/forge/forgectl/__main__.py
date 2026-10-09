@@ -157,9 +157,9 @@ def changes_state(args) -> bool:
     return False
 
 
+def planned_machines(args, config) -> list:
     """The machines a state-changing command is expected to touch (the intent line; the result line has the ones it
     did)."""
-    """The machines a state-changing command is expected to touch (the intent line; the result line has the ones it did)."""
     if args.command == "stage":
         return [config.host] + (config.workers if args.action in ("pause", "cancel") else [])
     if args.command == "build":
