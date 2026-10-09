@@ -32,6 +32,7 @@ total_env_steps: 200000000
 eval:
   every_env_steps: 10000000
   episodes: 64
+  sampled_every: 0
   heldout:
     sweep: 60
   heldout_every: 1000
@@ -90,5 +91,12 @@ costs:
   gate_metric: right_object
   gate_value: 0.8
 
+mappo:
+  # M2's 2.2e-4 (deep rung, 2026-10-09) is M2's own: this stage keeps the 1.5e-4 it inherited before it.
+  actor_lr: 0.00015
+  critic_lr: 0.00015
+
 layout_sampling:
   metric: right_object
+  # M2 stopped replaying lost evaluation episodes (2026-10-09); this stage keeps the 0.2 it inherited.
+  replay_fraction: 0.2

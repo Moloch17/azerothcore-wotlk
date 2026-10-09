@@ -42,8 +42,12 @@ mappo:
   # 3e-4 configured here was really about 3e-4 x 0.41. kl_move read 0.0136 at that reduced rate; at the full 3e-4 expect
   # ~0.03, over the 0.02 target. The (now correct) anneal lowers it further at the last rung. Revisit if the first
   # reads show kl_move well under 0.01 and found rising slowly.
-  actor_lr: 0.00015
-  critic_lr: 0.00015
+  # 2.2e-4 from the deep rung (owner, 2026-10-09; analysis .agents/plans/m2-search): move KL read ~0.006, under the
+  # 0.01 line this comment names, and found was still rising slowly. Free in throughput. Roll back if approx_kl_move
+  # passes 0.03, explained_variance falls under 0.7 or found_deep drops by 0.08. M3 and M4 extend this file and keep
+  # 1.5e-4 (restated there).
+  actor_lr: 0.00022
+  critic_lr: 0.00022
   # The camera's update in chunks (overseer, P2 review): the cluster's 8 GB and 16 GB cards need it, and the bench
   # ran out of memory at 192 envs unchunked (live M1 fit at 16 of 21.5 GB without it; the difference is unexplained).
   # "auto" (was 2048 for every card): the learner picks the chunk at start from the device's free memory, the whole
@@ -56,10 +60,15 @@ mappo:
 # last evaluation only (heldout_every past any stage's evaluations, and not on every new best).
 eval:
   every_env_steps: 10000000
-  episodes: 78
+  # 156 (was 78) since the deep rung (2026-10-09): 78 episodes carry +-0.05, and a score swing of 0.5 between two
+  # evaluations (60M to 70M) came from 8 frozen episodes. The sampled policy is played at every evaluation and the
+  # held-out sweep too (fresh seeds, every room and object once at the top rung): the shipped bot's policy and a
+  # held-out reading beside the training rung's.
+  episodes: 156
+  sampled_every: 1
   heldout:
     sweep: 195
-  heldout_every: 1000
+  heldout_every: 1
   heldout_on_best: false
   # M1's ablation arms (the flag, the camera and the compass edited) are its own: M2 has no compass to zero.
   arms: {}
@@ -126,5 +135,6 @@ costs:
 
 layout_sampling:
   metric: found
-  # A fifth of training resets replay a lost evaluation episode (M1 turned this off for its 32 held-out pairs).
-  replay_fraction: 0.2
+  # No replay of lost evaluation episodes since the deep rung (2026-10-09), as M1: the evaluation seeds are held out
+  # (the fresh-seed sweep read 0.52 against 0.81 in the replayed evaluation at 80M). M3 and M4 restate 0.2.
+  replay_fraction: 0.0

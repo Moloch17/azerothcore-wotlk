@@ -25,12 +25,17 @@ total_env_steps: 250000000
 mappo:
   # Episodes of 300 s with the plan's longer horizon (perception-goals §3: 0.999 from M4).
   gamma: 0.999
+  # M2's 2.2e-4 (deep rung, 2026-10-09) is M2's own: this stage keeps the 1.5e-4 it inherited before it.
+  actor_lr: 0.00015
+  critic_lr: 0.00015
 
 # Every evaluation plays both dungeons' fixed routes (the route is the dungeon's: door, then each boss's place) from
 # seeded episodes -- the same parties, stops and sudden stops each time -- at the training rung.
 eval:
   every_env_steps: 10000000
   episodes: 64
+  # M2 plays the sampled policy at every evaluation since its deep rung (2026-10-09); this stage keeps its own.
+  sampled_every: 0
   # M2's held-out "sweep" is an arena this stage does not have: left inherited, the learner refuses to start
   # (train.heldout_arenas). Null drops it.
   heldout: null
@@ -91,3 +96,5 @@ costs:
 
 layout_sampling:
   metric: follow_kept_share
+  # M2 stopped replaying lost evaluation episodes (2026-10-09); this stage keeps the 0.2 it inherited.
+  replay_fraction: 0.2
