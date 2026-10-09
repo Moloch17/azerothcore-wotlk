@@ -88,7 +88,9 @@ returned
    image bytes or look heads), then `make_trainer`. Prints the device line. `per_decision` converts `mappo.gamma`
    and `gae_lambda` (per `reference_decision_ms`) to the sim's `decision_ms`; foresight discounts likewise.
 6. `recurrent_size <= 0` raises (the flat update was removed). `ConvergenceController(config, layout names)`.
-   `score_kind` = `eval.score_column()` if the sim reports that column, else "" (the return).
+   `score_kind` = `eval.score_column()` if the sim reports that column, else "" (the return). `judged_kind` =
+   `convergence.measure` if the sim reports that column, else "" (the score): the overall tracker's column, saved
+   in checkpoints beside `evaluation_signature`; `controller.measure` is set to it.
 7. `_make_style()`, then `_load_or_seed()` (below), `trainer.set_goal_space`, then either
    `camera_columns_clear()` (resume, else `SystemExit`) or `clear_blind_columns()` (fresh).
 8. Broadcast `(update, env_steps)` from the leader and `broadcast_module` each network, value_norm, style disc.
@@ -104,7 +106,7 @@ returned
 Resume: load `latest.pt`; `resume_mismatch(checkpoint spec, spec)` over `runs.RESUME_SPEC_KEYS` (scenario,
 agents_per_env, obs_dim, state_dim, num_actions, layouts) else `SystemExit` "start it fresh"; `layout_changes(checkpoint
 stage, stage)` else `SystemExit`; `trainer.load_state_dict`; style state; `update`, `env_steps`;
-`restore_evaluation_state`. Then the parents (also computed on resume, but seeding runs only when not resuming; the
+`restore_evaluation_state` (with the run's `judged_kind` and `evaluation_signature`; a reason it drops state is printed and written to events.log). A fresh start that finds a `finetune_from` checkpoint (the stage's own, `{runs_dir}/_finetune/{run_name}/best.pt`) also carries its value normaliser (`trainer.value_norm`), which `seed_trainer` does not copy, so the seeded critic reads returns on the scale it was trained on; another stage's seed does not (its returns are another scale). Then the parents (also computed on resume, but seeding runs only when not resuming; the
 teachers are built either way): see [py-learner-seeding.md](py-learner-seeding.md) for seeding, cast, partners and
 distillation. Not checked on resume: `episode_info_names`, `image_bytes`, `map_bytes`, `look_heads`, `kinematics_dim`,
 `goal_count`, `decision_ms`, and every config value (config differences are checked only by

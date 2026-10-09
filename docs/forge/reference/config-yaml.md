@@ -156,7 +156,13 @@ Read by `evaluation.py` (`run_evaluation`, line 451), `train.py` (1150-1310, 222
 | `hold_share` | 0.02 | draw share of a converged class (`stage.py:28, 711`) |
 | `lr_hold_until_plateau` | true | `stage.py:531` |
 | `top_rung` | true | a ladder stage converges only at its top rung (`stage.py:23, 589`) |
-| `measure` | `""` | the stage's own measure column the per-class plateau reads (`stage.py:26, 666`) |
+| `measure` | `""` | the stage's own measure column (a 0-1 share): the per-class plateau and, since 2026-10-09 (decision 0022), the overall tracker (best.pt, the plateau the learning rate anneals from, `progress.json` `best_score` with `best_kind`) read it, with a binomial standard error; empty = the score |
+
+Overlays: `--overlay <yaml>` (repeatable) merges over the stage config and its extends chain, before any `--set`
+(`TrainConfig.load`). `configs/overlays/move2_seek_reseed.yaml` is the reseed overlay for a move2_seek run that starts at
+the last rung from a fine-tune checkpoint (`fade.rungs: [0.0]`, lr 1.5e-4); it lives in a subdirectory so
+`resume_check`'s `configs/*.yaml` stage listing does not take it for a stage, and it is applied by hand through
+`AnimusForge.Learner.Args`.
 
 ### `fade:` (`FadeConfig`, `config.py:177`) and `costs:` (`CostLadderConfig`, `config.py:231`)
 

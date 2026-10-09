@@ -132,7 +132,9 @@ class ProgressWriter:
             "last_eval_env_steps": env_steps,
             "last_eval_score": score,
             "baseline_score": baseline_score,
+            # What best_score is of: the stage's measure (a share) or, "score", the evaluation score.
             "best_score": tracker.best,
+            "best_kind": (controller.measure if controller else "") or "score",
             "best_env_steps": tracker.best_env_steps,
             "evals_since_best": tracker.evals_since_best,
             # The convergence rule per class (animus.stage): who is done, who is not, and what the one furthest

@@ -252,6 +252,22 @@ and `seek_object_y`, `seek_object_z` the same way (and `seek_spot_x/y/z` from `S
 
 Unverified: nothing here was run on a GPU or against a sim; the Python writers were exercised with a fake environment (var/verify_arms.py in the worktree that wrote this).
 
+## Overall tracker and the anneal latch, 2026-10-09 (decision 0022)
+
+- Fixed 2026-10-09: the overall `ConvergenceTracker` judged the heavy-tailed return (stderr 0.2-0.3, margin 0.6-1.1 on
+  M2) and kept its best across an evaluation-format change (move2_seek at the first resume: 78 -> 156 episodes, replay
+  off, sampled policy, sweep; the old best -1.34 at 90.1M, margin 1.14, so nothing counted until 170M). Now it judges
+  `convergence.measure` and a checkpoint's evaluation signature resets it (decision 0022).
+- OPEN: `plateau_env_steps` is a latch. Once the tracker declares a plateau, the anneal runs to `total_env_steps` even if
+  the stage then improves (move2_seek: found 0.48-0.56 at 100-140M, 0.77 at 170M, `lr_scale` 0.34 at 215M). The found
+  rate WAS flat for 30M steps (a patience-3 plateau by any tracker: score, found, reset or not; var/a_replay.py), so the
+  declaration was not an artefact once the stale best is gone; what is wrong is that a later genuine new best does not
+  return the rate. A fix would clear the latch on a margin-passing new best after the anneal began (all stages), or
+  raise `convergence.patience` for M2; neither is done.
+- Seeding (`finetune_from`, `init_from`) copies the networks, the GRU memory, the goal heads, the adapters, observation
+  normalisers and heads, the camera, map and look head, but NOT the value normaliser, the optimisers or any schedule;
+  the value normaliser is now carried for a fine-tune of the same stage only (`Run._load_or_seed`).
+
 ## H. Layout and protocol cleanup, 2026-10-08 (lands with the next layout bump)
 
 Fixed (commits `Layout cleanup: ...` and `Drop the duplicate epochs_done metric`):

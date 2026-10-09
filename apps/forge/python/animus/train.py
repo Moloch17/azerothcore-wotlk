@@ -65,7 +65,7 @@ STALL_MIN_UPDATES = 20
 UPDATE_BOUND_WAIT = 0.2
 from .runs import (FINISHED_FILE, archive_run, archive_rung_best, prune_checkpoints, resume_checkpoint_path,
                    resume_mismatch)
-from .stage import ADVANCE, ConvergenceController, Outcome, restore_evaluation_state
+from .stage import ADVANCE, ConvergenceController, Outcome, evaluation_signature, restore_evaluation_state
 from .stages import STAGE_FILE, arena_names, layout_changes, load_stage
 from .device import host
 
@@ -776,6 +776,11 @@ class TrainingRun:
         # else the return ("") -- the kind a checkpoint's scores are of, and a baseline's.
         wanted = config.eval.score_column()
         self.score_kind = wanted if wanted in spec.episode_info_names else ""
+        # What the overall tracker judges: the stage's own measure where the sim writes it (a share, with a binomial
+        # standard error), else the score. A checkpoint records both so a resume forgets a best of another kind.
+        measure = config.convergence.measure
+        self.judged_kind = measure if measure in spec.episode_info_names else ""
+        self.controller.measure = self.judged_kind
         self.update = 0
         self.env_steps = 0
         # A follower first takes whatever the leader read that this machine lacks -- parents, teachers, the cast's
@@ -1001,8 +1006,15 @@ class TrainingRun:
             self.env_steps = int(checkpoint.get("env_steps", 0))
             # The convergence test and the best evaluation carry on where the run stopped -- unless they were scored
             # on another kind of score, which no score from here on could be compared with.
-            if dropped := restore_evaluation_state(self.tracker, self.controller, checkpoint, self.score_kind):
+            notes: list[str] = []
+            dropped = restore_evaluation_state(self.tracker, self.controller, checkpoint, self.score_kind,
+                                               self.judged_kind, evaluation_signature(config, self.judged_kind), notes)
+            if dropped:
                 print(f"Resuming {config.run_name}: {dropped}", flush=True)
+                if self.ranks.leader:
+                    self.log_event(f"resumed with the evaluation state dropped: {dropped}")
+            for note in notes:
+                print(f"Resuming {config.run_name}: {note}", flush=True)
             print(f"Resumed {config.run_name} from {self.resume_path} at update {self.update}, {self.env_steps} env "
                   f"steps", flush=True)
 
@@ -1033,6 +1045,15 @@ class TrainingRun:
                                   source=f"{spec.scenario} from {base_path}")
             print(f"Seeded the networks from {base_path}: trunk and {len(seeded)} of {len(spec.layouts)} layouts",
                   flush=True)
+            # A fine-tune of the same stage returns on the scale its critic was trained on; a fresh normaliser reads
+            # the critic's outputs at the wrong one until its running mean catches up (the first updates' advantages).
+            # Another stage's returns are another scale: its normaliser is not taken.
+            saved_norm = base.get("trainer", {}).get("value_norm")
+            if (finetune and base_path.parent == Path(finetune).parent and saved_norm is not None
+                    and self.trainer.value_norm is not None):
+                self.trainer.value_norm.load_state_dict(saved_norm)
+                self.trainer._sync_rollout()
+                print("  value normaliser: carried (a fine-tune of this stage)", flush=True)
             for layout, blocks in (seed_merges(self.trainer, merged, spec, self.stage, base) if merged else {}).items():
                 print(f"  {layout}: {', '.join(blocks)} from the merged stages", flush=True)
             # Farthest first, so the nearest restricted stage's layouts are the ones that stand.
@@ -1159,11 +1180,22 @@ class TrainingRun:
     def _checkpoint_extra(self) -> dict:
         # The stage (its block positions) travels with the checkpoint, for seeding the stages that extend it.
         return {"convergence": self.tracker.state_dict(), "controller": self.controller.state_dict(),
-                "stage": self.stage, "score_kind": self.score_kind,
+                "stage": self.stage, "score_kind": self.score_kind, "judged": self.judged_kind,
+                "evaluation_signature": evaluation_signature(self.config, self.judged_kind),
                 # The partner pool's scores (and which members are retired), so a resume does not draw evenly again.
                 **({"partner_scores": self.partners.pool.scores_state()}
                    if getattr(self, "partners", None) is not None else {}),
                 **({"style": self.style.state_dict()} if getattr(self, "style", None) is not None else {})}
+
+    def log_event(self, text: str) -> None:
+        """One line in the run's events.log, in the sim's format (`<UTC> <stage>: <text>`)."""
+        line = f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} {self.config.run_name}: {text}\n"
+        try:
+            self.run_dir.mkdir(parents=True, exist_ok=True)
+            with (self.run_dir / "events.log").open("a") as f:
+                f.write(line)
+        except OSError as error:
+            print(f"events.log: {error}", flush=True)
 
     def _save(self, path: Path) -> None:
         self.drain_update()
@@ -1317,7 +1349,9 @@ class TrainingRun:
             # A gate-stepped ladder's step re-baselines the tracker inside controller.observe above, so at the first
             # evaluation of a new rung it has no best yet (None): print a dash, do not format it.
             best = "-" if tracker.best is None else format(tracker.best, ".4g")
-            print(f"Eval at {self.env_steps} env steps: score {result.score:.4g} +/- {result.stderr:.2g} "
+            judged = (f" judged on {self.judged_kind} {tracker.history[-1][1]:.3g} +/- {tracker.history[-1][2]:.2g}"
+                      if self.judged_kind and tracker.history else "")
+            print(f"Eval at {self.env_steps} env steps: score {result.score:.4g} +/- {result.stderr:.2g}{judged} "
                   f"(best {best}, {tracker.evals_since_best} evals since, margin {tracker.last_margin:.2g})"
                   f"{against}; return {played if played is None else format(played, '.4g')} at shaping "
                   f"x{self.shaping_scale_now:g}, noise priced x{self.cost_scale_now:g}; "
@@ -1621,8 +1655,9 @@ class TrainingRun:
         self.eval_log.write_outcome(self.update, self.env_steps, outcome)
         pending = {name: row["missing"] for name, row in (outcome.report or {}).items() if not row["converged"]}
         best = "-" if tracker.best is None else format(tracker.best, ".4g")
-        print(f"Stage complete ({outcome.reason}): best score {best} at {tracker.best_env_steps} env "
-              f"steps; {len((outcome.report or {})) - len(pending)} of {len(outcome.report or {})} classes converged.",
+        print(f"Stage complete ({outcome.reason}): best {self.judged_kind or 'score'} {best} at "
+              f"{tracker.best_env_steps} env steps; {len((outcome.report or {})) - len(pending)} of "
+              f"{len((outcome.report or {}))} classes converged.",
               flush=True)
         for name, missing in pending.items():
             print(f"  {name}: not converged, missing {', '.join(missing) or 'nothing'}", flush=True)
