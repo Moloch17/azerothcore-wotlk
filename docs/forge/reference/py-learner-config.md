@@ -82,8 +82,9 @@ index falls back to `cuda:0`, no GPU to `cpu`, each with a line).
 | `heldout_every` | 4 | >= 1 |
 | `heldout_on_best` | True | |
 | `score` | `outcome` | `outcome` -> `score_outcome` column, `return` -> whole return; checked lazily in `score_column()` (`:131`), not in `__post_init__` |
-| `arms` | {} | names in `EVAL_ARMS = (with_human, with_partners, no_flag, no_camera, no_compass)`, int episodes >= 0 |
+| `arms` | {} | names in `EVAL_ARMS = (with_human, with_partners, no_flag, no_camera, no_compass, no_map, no_memory)`, int episodes >= 0 |
 | `arms_every` | 1 | >= 1 |
+| `keep_motion_files` | 12 | >= 0 (int); evaluations whose `eval_motion_<env_steps>*.npz` route files are kept (`realism.prune_routes`), 0 = none written and no held-out motion |
 
 ## `ConvergenceConfig` (`:137`), section `convergence`
 

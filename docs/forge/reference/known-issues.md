@@ -238,6 +238,20 @@ change, and `resume_check.py` against the live run's checkpoint.
 - `forge run ... random` and `forge status` show the `decision time` row; the evaluation videos play at the nominal
   `DecisionMs` per frame, so their game-time pace varies with the jitter.
 
+## M2 route recording: what Python records and the C++ half still missing (2026-10-09)
+
+Python half (done): every plain evaluation and held-out sweep writes `eval_motion_<env_steps>[_heldout_<arena>].npz` ([file-formats.md](file-formats.md)): the raw kinematic track of each scored seat, with its `seed`, layout, `found` and episode info row.
+
+What a track already holds. The kinematic sample (protocol 20, `Animus/Env/Kinematics.h`, filled by `StageScenario::AgentKinematics`, `StageScenario.cpp` ~3448) is 10 floats: `t` (`EpisodeElapsedMs` / 1000), `x`, `y`, `z` (`Player::GetPositionX/Y/Z`: absolute map coordinates of the instance map, not deltas), `yaw` (`GetOrientation`), `pitch` (the seat's `Mover.Body.Pitch`), `mode`, `mounted`, `speed`, `in_combat`; zeros for a seat with no body. `motion.SAMPLE_DIM` = 10 includes world position. So the spawn (first sample), the route and the end position (last sample, the decision before the done) need no C++ change; the "body-frame only" reading in m2-routes was about `eval_motion.npz`'s windows, not the sample.
+
+Still missing: the object's position and the placed spot. `SeekEncounter::EnvSeek` (`SeekEncounter.h`) holds `Position Spot` (the object's base) and `Position Centre` (the objective point the flag marks); neither is an episode info column (`SeekEncounter::AddEpisodeInfo`, `SeekEncounter.cpp` ~102 has `seek_room`, `seek_object`, `room_depth`, ... only). Minimal change: in `AddEpisodeInfo` add
+
+    table.Add("seek_object_x", [this](Env const& env, uint32) { return _envs[env.Index].Centre.GetPositionX(); });
+
+and `seek_object_y`, `seek_object_z` the same way (and `seek_spot_x/y/z` from `Spot` if the base is wanted), in world coordinates like the samples (float32; the Stockades coordinates are in the hundreds, so exact to well under a yard). No spawn column is needed (first sample); `_scenario.SpawnPointFor(env)` is the same point. Checks before building: that `Centre` is set for every placement path including the hallway and fallback rungs (`Place`, `PlaceHallway`, `Fallback`); that the new names are classed as per-episode values in `animus/episode_means.py` (not per-event means) and listed in `docs/forge/reference/cpp-encounters.md` and the stage's `episode_info` list. `episode_info_dim` grows by 3 (6): the learner reads names and width from the handshake, so no protocol number or layout signature changes, but a rebuilt sim and learner must go together (a new `spec.json`), so it rides the next planned rebuild. Until then a route's target is only known as `seek_room` and `seek_object`; room positions are in `Stages.cpp` (`StockadeRooms()`).
+
+Unverified: nothing here was run on a GPU or against a sim; the Python writers were exercised with a fake environment (var/verify_arms.py in the worktree that wrote this).
+
 ## H. Layout and protocol cleanup, 2026-10-08 (lands with the next layout bump)
 
 Fixed (commits `Layout cleanup: ...` and `Drop the duplicate epochs_done metric`):

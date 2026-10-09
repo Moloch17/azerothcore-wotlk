@@ -68,7 +68,7 @@ returned
   `style` and `partner_scores` (the pool's scores, restored on resume). The partner pool's membership, the cast, the layout weights and the replay seeds are not saved.
 - Other files in the run dir: `config.yaml` and `spec.json` and `stage.json` (leader, at start), `progress.json`
   (every update and around evaluations), `finished.json`, `best.pt`, `latest.pt`, `checkpoint_<update:06d>.pt`,
-  `best_rung<k>.pt`, `eval_baseline*.json`, `eval_motion.npz`, `partners/`, `partners.json`, `tb/`.
+  `best_rung<k>.pt`, `eval_baseline*.json`, `eval_motion.npz`, `eval_motion_<env_steps>[_heldout_<arena>].npz`, `partners/`, `partners.json`, `tb/`.
 - `finished.json` (`:2247`): `reason`, `advanced`, `env_steps`, `update`, `best_score`, `best_env_steps`, `layouts`.
 
 ## `TrainingRun.__init__` order (`train.py:541-903`)
@@ -181,13 +181,13 @@ Every `_save` first `drain_update()`s an overlapped update.
    `eval.deterministic`), with `trace_episodes` and motion collection. Switches the sim to seeded MODE and back
    (`env.set_mode(True, ...)`, `set_mode(False, stand_in=...)`); every env resets, so training episodes in progress
    are cut. Reset cast and partner memories.
-3. Leader: `summary = result.summary(report)`; `improved = controller.observe(summary, env_steps)`; `score_motion`;
+3. Leader: `summary = result.summary(report)`; `improved = controller.observe(summary, env_steps)`; `score_motion`; `save_routes` (raw tracks of the evaluation with seed ids, `eval.keep_motion_files` newest evaluations kept);
    `eval_log.write`; `progress.evaluated`; console block (`format_summary`, the excluded-classes line, ladder messages,
    collapse and stall alarms). If improved, `_save(best.pt)`. For each `controller.rung_exits`:
    `archive_rung_best` copies best.pt to `best_rung<k>.pt`. Decide `sampled` (every `eval.sampled_every` evaluations),
    `heldout` (`heldout_due`: final, or improved and `heldout_on_best`, or every `heldout_every`-th), `arms`.
 4. Broadcast the decisions; an improved best joins the partner pool; `evaluate_sampled`, `evaluate_heldout`,
-   `evaluate_arms` (each is a reading only: tracker and controller never see them).
+   `evaluate_arms` (each is a reading only: tracker and controller never see them). `evaluate_heldout` collects motion too (`eval.keep_motion_files > 0`) and writes `eval_motion_<env_steps>_heldout_<arena>.npz`. The arms "no_flag", "no_camera", "no_map" and "no_memory" are `evaluation.ablation_chooser` over `_acting`'s chooser (`choose.acting` is its `ActingState`, which "no_memory" resets before every decision).
 5. `apply_holds()` (freeze converged classes' adapters and heads and drop them from the sample:
    `trainer.freeze_layouts`);
    the leader sends layout weights (`casting_weights` times `hold_weights`, WEIGHTS) and the replay seeds (REPLAY).

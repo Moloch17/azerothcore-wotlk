@@ -136,8 +136,9 @@ Read by `evaluation.py` (`run_evaluation`, line 451), `train.py` (1150-1310, 222
 | `heldout_every` | int | 4 | at least 1 (`config.py:127-129`) |
 | `heldout_on_best` | bool | true | also play on a new `best.pt` |
 | `score` | str | `outcome` | `outcome` or `return` (checked in `score_column`, `config.py:131-134`, not at load) |
-| `arms` | dict | `{}` | arm name to episodes; arms must be in `EVAL_ARMS = (with_human, with_partners, no_flag, no_camera, no_compass)`, counts non-negative ints (`config.py:119-124`) |
+| `arms` | dict | `{}` | arm name to episodes; arms must be in `EVAL_ARMS = (with_human, with_partners, no_flag, no_camera, no_compass, no_map, no_memory)`, counts non-negative ints (`config.py:119-124`) |
 | `arms_every` | int | 1 | at least 1 |
+| `keep_motion_files` | int | 12 | 0 or more: how many evaluations' route files (`eval_motion_<env_steps>[_heldout_<arena>].npz`) are kept; 0 writes none and the held-out arenas collect no motion |
 
 ### `convergence:` (`ConvergenceConfig`, `config.py:138`), read by `stage.py` `ConvergenceController` (line 460) and
 `evaluation.py` `ConvergenceTracker` (line 623)
