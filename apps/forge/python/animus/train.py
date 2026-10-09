@@ -1207,6 +1207,8 @@ class TrainingRun:
                 return actions, goals, look
             return (actions, goals) if goals is not None else actions
 
+        # The state it carries, for the arms that edit it (evaluation.ablation_chooser: no_memory).
+        choose.acting = acting
         return choose
 
     def _evaluate_share(self, choose_actions, episodes: int, seed: int, **options) -> EvalResult | None:
@@ -1303,6 +1305,7 @@ class TrainingRun:
             summary = result.summary(self.report)
             improved = controller.observe(summary, self.env_steps)
             self.score_motion(result, summary)
+            self.save_routes(result, f"eval_motion_{self.env_steps}.npz")
             self.eval_log.write(self.update, self.env_steps, result, summary, tracker)
             self.progress.evaluated(self.env_steps, result.score,
                                     baseline_summary["score"] if baseline_summary else None, tracker, controller,
@@ -1367,6 +1370,21 @@ class TrainingRun:
         if leader:
             self.send_layout_weights(summary)
             self.send_replay(result)
+
+    def save_routes(self, result: EvalResult, name: str) -> None:
+        """eval.keep_motion_files: the evaluation's raw tracks to <run>/`name` with the ids that match them to the
+        episodes log (realism.write_routes), the files of all but the newest evaluations pruned."""
+        keep = self.config.eval.keep_motion_files
+        if keep <= 0 or not result.motion_tracks:
+            return
+        realism.write_routes(self.run_dir / name, result.motion_tracks, result.motion_ids, result.info_names, {
+            "source": "eval", "policy": result.policy, "run": self.config.run_name, "scenario": self.spec.scenario,
+            "update": self.update, "env_steps": self.env_steps, "seed": self.config.eval.seed,
+            "episodes": result.episodes, "step_seconds": self.spec.decision_ms / 1000.0,
+            "columns": ["t", "x", "y", "z", "yaw", "pitch", "mode", "mounted", "speed", "in_combat"]})
+        dropped = realism.prune_routes(self.run_dir, keep)
+        if dropped:
+            print(f"Routes: kept the last {keep} evaluations' files, deleted {len(dropped)}", flush=True)
 
     def score_motion(self, result: EvalResult, summary: dict) -> None:
         """The evaluation's motion (protocol 20 kinematics of the scored seats): its windows to eval_motion.npz for the
@@ -1446,12 +1464,15 @@ class TrainingRun:
         the controller sees it."""
         for name, (pin, episodes) in self.heldout.items():
             result = self._evaluate_share(self.learner_actions(), episodes, self.config.eval.seed + HELDOUT_SEED_OFFSET,
-                                          arenas=self.arena_names, action_names=self.action_names, arena=pin)
+                                          arenas=self.arena_names, action_names=self.action_names, arena=pin,
+                                          collect_motion=(self.config.eval.keep_motion_files > 0
+                                                          and self.spec.kinematics_dim == motion.SAMPLE_DIM))
             if self.cast is not None or self.partners is not None:
                 self._reset_far_side()
             if not self.ranks.leader:
                 continue
             result.policy = f"heldout_{name}"
+            self.save_routes(result, f"eval_motion_{self.env_steps}_heldout_{name}.npz")
             summary = result.summary(self.report)
             self.eval_log.write(self.update, self.env_steps, result, summary, self.tracker)
             shown = ", ".join(f"{column} {summary[column]:.3g}" for column in self.report
@@ -1462,8 +1483,8 @@ class TrainingRun:
     def evaluate_arms(self, plain: dict | None) -> None:
         """eval.arms: the evaluation's own seeds played again beside the plain "all bots" one -- "with_human", the
         sim's human stand-in in one seat of every party, "with_partners", the fixed co-op partner set in some, and the
-        ablations "no_flag", "no_camera" and "no_compass" (the learner's input edited, evaluation.ablation_chooser)
-        -- and
+        ablations "no_flag", "no_camera", "no_compass", "no_map" (the learner's input edited) and
+        "no_memory" (its recurrent state reset every decision), all evaluation.ablation_chooser -- and
         reported apart as policy <arm> in eval.csv and eval.jsonl, with the gap to the plain one. A reading only:
         neither the tracker, the controller nor the partners' pool sees it."""
         config = self.config
@@ -1485,7 +1506,7 @@ class TrainingRun:
                     continue
                 choose, options["excluded"] = with_partners_chooser(choose, arm_partners)
             elif arm in ABLATIONS:
-                # The learner's own input edited (the flag cleared, the image blank, the compass zeroed): the same
+                # The learner's own input edited (flag, image, compass, map) or its memory reset: the same
                 # seeds, the sim untouched, so the plain evaluation's episode columns read the arm's own result.
                 choose = ablation_chooser(choose, arm, self.spec, self.stage)
             result = self._evaluate_share(choose, episodes, config.eval.seed, arenas=self.arena_names,

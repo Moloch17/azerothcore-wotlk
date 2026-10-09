@@ -43,7 +43,7 @@ in [config-keys.md](config-keys.md) and [config-yaml.md](config-yaml.md); stages
 ```
 
 `runs/<stage>/` while a stage trains (live run listing): `config.yaml`, `spec.json`, `stage.json`, `metrics.csv`, `layouts.csv`,
-`progress.json`, `eval.csv`, `eval.jsonl`, `eval_episodes.jsonl`, `eval_trace.jsonl`, `stage.jsonl`, `eval_motion.npz`,
+`progress.json`, `eval.csv`, `eval.jsonl`, `eval_episodes.jsonl`, `eval_trace.jsonl`, `stage.jsonl`, `eval_motion.npz`, `eval_motion_<env_steps>*.npz`,
 `eval_baseline.json` (only with `eval.baseline`), `latest.pt`, `best.pt`, `best_rung<k>.pt`, `checkpoint_NNNNNN.pt`, `finished.json`
 (when the stage was decided), `partners.json` and `partners/*.pt` (with partners), `events.log` (written by the sim, dungeon
 ladder alarms), `RUNLOG.md` (by hand), `camera/` (audit images, written by the sim), `videos/<label>/` (eval videos, sim), `tb/`
@@ -236,6 +236,10 @@ mode_ground, mode_swim, mode_fly, mode_airborne, mounted, in_combat), `context` 
 `style.eval_windows`), and `meta` a 0-d string holding JSON `{source:"eval", run, scenario, update, env_steps, tracks, steps, step_seconds, window}`. Same layout as the human dataset
 (`human_motion_windows.npz`, FORMAT.md section 5 of the human pipeline: see [py-human-and-misc.md](py-human-and-misc.md)). `human_reference.json` (reader `load_reference`): `{"format": 1,
 "motion": {context id: {name, steps, hist: {feature: counts}}}}` with histogram bins fixed by `motion.HIST_BINS` (61 edges for most features, 31 for `planar`).
+
+## eval_motion_<env_steps>.npz and eval_motion_<env_steps>_heldout_<arena>.npz
+
+`realism.write_routes` (`Trainer.save_routes`, 2026-10-09), one per plain learner evaluation and, with `eval.keep_motion_files > 0`, one per held-out arena played; atomic (`.partial.npz` renamed). Unlike `eval_motion.npz` they hold the raw tracks (absolute world x, y, z, not body-frame features). `savez_compressed` arrays: `samples` f32 [N, 10] (every track end to end; columns `t, x, y, z, yaw, pitch, mode, mounted, speed, in_combat`, `motion.SAMPLE_DIM`; t is the episode clock in seconds, one sample per decision, the first sample the spawn, the last the decision before the episode ended), `starts` i64 [T + 1] (track i is `samples[starts[i]:starts[i+1]]`), `seed` i32 [T] (the `seed` of the `eval_episodes.jsonl` line), `agent` i16 [T], `layout` str [T], `found` f32 [T] (the episode's `found`, NaN where the stage has none), `info` f32 [T, K] (the episode info row, names in meta), `meta` JSON `{source, policy, run, scenario, update, env_steps, seed (eval.seed), episodes, step_seconds, columns, info_names, tracks}`. To match a track to its line: `eval_episodes.jsonl` rows with the same `env_steps`, `policy` (`learner` or `heldout_<arena>`) and `seed`. Retention: the files of all but the `eval.keep_motion_files` (12) newest `env_steps` are deleted (`realism.prune_routes`); `eval_motion.npz` is never touched. Size: the compressed file is about 0.45 bytes per raw byte (random-walk routes, a worst case for compression): 156 episodes x 1,200 decisions is 7.5 MB raw, 3.4 MB; the 195-episode sweep 4.2 MB; about 8 MB per evaluation at the deep rung, about 100 MB for 12 retained. Not written for arm rows, `learner_sampled` or the baseline.
 
 ## eval_baseline.json and eval_baseline_<seed>_<episodes>.json
 

@@ -70,8 +70,19 @@ eval:
     sweep: 195
   heldout_every: 1
   heldout_on_best: false
-  # M1's ablation arms (the flag, the camera and the compass edited) are its own: M2 has no compass to zero.
-  arms: {}
+  # The ablation arms, each replaying the evaluation's seeds (the training rung's placements, the deterministic policy)
+  # with one input taken away; 64 episodes each, after every evaluation (arms_every 1), read as found_no_flag and the
+  # like in forge status and as policy rows in eval.csv. no_flag and no_camera exist from M1 (the objective flag
+  # cleared; the image blanked, the map kept); no_map zeroes the map block's columns and the mental map's crop;
+  # no_memory resets the recurrent state (GRU memory, slow memory, held goal and queue) before every decision, so the
+  # policy acts from what it sees now. M1's no_compass has nothing to zero here (null drops the inherited key).
+  # Readings, never gates. M3 and M4 extend this file and restate `arms: {}`.
+  arms:
+    no_compass: null
+    no_flag: 64
+    no_camera: 64
+    no_map: 64
+    no_memory: 64
   report: [found, found_hallway, found_doorway, found_room, found_deep, seek_rung, rung_carried, find_seconds,
            sighted, sight_seconds, sight_to_arrival, rooms_looked, rooms_entered, rooms_reentered, revisit_rate,
            rooms_before_found, objective_visible, room_depth, difficulty, deep_room, object_fallback,
@@ -87,7 +98,8 @@ eval:
 status:
   headline: [found, found_hallway, found_doorway, found_room, found_deep, seek_rung, found_deepest, find_seconds,
              sight_seconds, sight_to_arrival, rooms_looked, rooms_before_found, revisit_rate, objective_visible,
-             wall_seconds, timed_out, died]
+             wall_seconds, timed_out, died,
+             found_no_flag, found_no_camera, found_no_map, found_no_memory]
   targets:
     # M1's targets are not M2's measures (null drops an inherited key).
     arrived: null

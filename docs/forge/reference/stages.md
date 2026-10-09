@@ -259,7 +259,8 @@ per
 **Evaluation.** Every 10M, 78 episodes at the training rung (each room in turn, objects cycled). Heldout `sweep: 195`
 (every
 (room, object) pair once, 39 x 5, at the top rung), `heldout_every: 1000` (so only the stage's last evaluation) and
-`heldout_on_best: false`.
+`heldout_on_best: false`. (Since 2026-10-09: 156 episodes, the sampled policy and the sweep every evaluation; see the yaml.)
+**Arms** (2026-10-09): `no_flag`, `no_camera`, `no_map`, `no_memory`, 64 episodes each, every evaluation ([metrics.md](metrics.md)); headline gains `found_no_flag`, `found_no_camera`, `found_no_map`, `found_no_memory`.
 
 **Status.** Headline: found, found_hallway, found_doorway, found_room, found_deep, seek_rung, found_deepest,
 find_seconds,

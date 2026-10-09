@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from pathlib import Path
 
 import numpy as np
@@ -124,6 +125,47 @@ def motion_windows(feats: list[np.ndarray], contexts: list[np.ndarray], window: 
         weight = np.full(cap, len(windows) / cap, dtype=np.float32)
         windows, context = windows[keep], context[keep]
     return windows.astype(np.float32), context, weight
+
+
+def write_routes(path: str | Path, tracks: list, ids: list, info_names: tuple[str, ...], meta: dict) -> None:
+    """The raw tracks of an evaluation (<run>/eval_motion_<env_steps>.npz), one per scored seat and episode, with the
+    ids that match each to its eval_episodes.jsonl line. Arrays: `samples` f32 [N, SAMPLE_DIM] (every track end to
+    end), `starts` i64 [T + 1] (track i is samples[starts[i]:starts[i + 1]]), `seed` i32 [T] (the "seed" of the
+    episodes log), `agent` i16 [T], `layout` U (the class), `found` f32 [T] (the episode's `found` where it has the
+    column, else NaN), `info` f32 [T, K] (the episode info row, `info_names` in meta), `meta` JSON text. Written
+    beside and renamed over."""
+    path = Path(path)
+    partial = path.with_name(path.name + ".partial.npz")
+    lengths = np.array([len(track) for track in tracks], dtype=np.int64)
+    info = np.array([ident[3] for ident in ids], dtype=np.float32).reshape(len(ids), len(info_names))
+    found = info[:, list(info_names).index("found")] if "found" in info_names else np.full(len(ids), np.nan, np.float32)
+    np.savez_compressed(
+        partial,
+        samples=(np.concatenate(tracks).astype(np.float32) if tracks else np.zeros((0, 0), np.float32)),
+        starts=np.concatenate([[0], np.cumsum(lengths)]).astype(np.int64),
+        seed=np.array([ident[0] for ident in ids], dtype=np.int32),
+        agent=np.array([ident[1] for ident in ids], dtype=np.int16),
+        layout=np.array([ident[2] for ident in ids], dtype=str),
+        found=found.astype(np.float32), info=info,
+        meta=np.asarray(json.dumps({**meta, "info_names": list(info_names), "tracks": len(tracks)})))
+    partial.replace(path)
+
+
+def prune_routes(run_dir: str | Path, keep: int) -> list[str]:
+    """Delete the per-evaluation route files (eval_motion_<env_steps>[_heldout_<arena>].npz) of all but the `keep`
+    newest evaluations (distinct env_steps); returns the deleted names. eval_motion.npz is never touched."""
+    run_dir = Path(run_dir)
+    found = {}
+    for path in run_dir.glob("eval_motion_*.npz"):
+        match = re.fullmatch(r"eval_motion_(\d+)(?:_heldout_.+)?\.npz", path.name)
+        if match:
+            found.setdefault(int(match.group(1)), []).append(path)
+    dropped = []
+    for env_steps in sorted(found)[:max(0, len(found) - max(0, keep))]:
+        for path in found[env_steps]:
+            path.unlink(missing_ok=True)
+            dropped.append(path.name)
+    return dropped
 
 
 def write_motion(path: str | Path, windows: np.ndarray, context: np.ndarray, weight: np.ndarray, meta: dict) -> None:

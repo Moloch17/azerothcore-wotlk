@@ -109,11 +109,19 @@ class EvalConfig:
     # nothing about an arm moves best.pt or convergence.
     #   with_human: the "human" stand-in (the sim's StandIn.*) in one seat of every party; its row is not scored.
     #   with_partners: cast.partners' fixed set (eval_partners) in some seats of every party; their rows not scored.
-    #   no_flag, no_camera, no_compass: ablations of the learner's own input on the same seeds (evaluation.ABLATIONS),
-    #     to see what the policy steers by: the objective flag (bit 5 of every pixel's class byte) cleared, the whole
-    #     image replaced by the no-frame pixel, or the compass block's columns zeroed. They change nothing in the sim.
+    #   no_flag, no_camera, no_compass, no_map, no_memory: ablations of the learner's own input on the same seeds
+    #     (evaluation.ABLATIONS), to see what the policy steers by: the objective flag (bit 5 of every pixel's class
+    #     byte) cleared, the camera's image replaced by the no-frame pixel, the compass block's columns zeroed, the
+    #     map block's columns and the mental map's crop zeroed, or the recurrent state (GRU memory, slow memory, held
+    #     goal and queue) reset before every decision. They change nothing in the sim.
     arms: dict = field(default_factory=dict)
     arms_every: int = 1
+    # The routes of every evaluation, kept: the learner's scored seats' raw kinematic tracks (x, y, z, yaw, ...) with
+    # their seed and episode info, in <run>/eval_motion_<env_steps>.npz, and the held-out arenas' beside them
+    # (eval_motion_<env_steps>_heldout_<arena>.npz). This many evaluations' files are kept, the oldest deleted; 0 writes
+    # none (and the held-out arenas collect no motion). The newest plain evaluation is also eval_motion.npz (windows
+    # for the realism report), overwritten each time. A stage without kinematics (spec.kinematics_dim) writes none.
+    keep_motion_files: int = 12
 
     def __post_init__(self) -> None:
         if self.baseline not in ("", "random"):
@@ -127,6 +135,10 @@ class EvalConfig:
                 raise ValueError(f"eval.arms.{arm}: expected a number of episodes, got {episodes!r}")
         if self.arms_every < 1:
             raise ValueError(f"eval.arms_every: expected at least 1, got {self.arms_every!r}")
+        if not isinstance(self.keep_motion_files, int) or isinstance(self.keep_motion_files, bool) \
+                or self.keep_motion_files < 0:
+            raise ValueError(f"eval.keep_motion_files: expected 0 (none) or a number of evaluations, got "
+                             f"{self.keep_motion_files!r}")
         if self.heldout_every < 1:
             raise ValueError(f"eval.heldout_every: expected at least 1 (1 = every evaluation), got "
                              f"{self.heldout_every!r}")
@@ -355,7 +367,7 @@ class DistillConfig:
 
 
 #: The evaluation arms beside the plain one ("all bots"): eval.arms names them (dungeon-curriculum I7).
-EVAL_ARMS = ("with_human", "with_partners", "no_flag", "no_camera", "no_compass")
+EVAL_ARMS = ("with_human", "with_partners", "no_flag", "no_camera", "no_compass", "no_map", "no_memory")
 
 
 @dataclass

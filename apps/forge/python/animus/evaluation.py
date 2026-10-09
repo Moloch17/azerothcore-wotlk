@@ -79,6 +79,9 @@ class EvalResult:
     # The scored seats' kinematic samples (protocol 20), one [T, SAMPLE_DIM] track per seat and episode, when the
     # evaluation was asked to keep them (run_evaluation's collect_motion): the realism score's input.
     motion_tracks: list = field(default_factory=list)
+    # One (seed index, agent, layout name, episode info row [K]) per motion track, in the tracks' order: the seed is
+    # the "seed" of eval_episodes.jsonl, so a route can be matched to its episode (Trainer.save_routes).
+    motion_ids: list = field(default_factory=list)
 
     @property
     def episodes(self) -> int:
@@ -170,7 +173,8 @@ class EvalResult:
             action_counts=stacked("action_counts"), allowed_counts=stacked("allowed_counts"),
             action_names=first.action_names, spec_names=first.spec_names, categories=first.categories,
             trace=[row for part in parts for row in part.trace], score_column=first.score_column,
-            motion_tracks=[track for part in parts for track in part.motion_tracks])
+            motion_tracks=[track for part in parts for track in part.motion_tracks],
+            motion_ids=[ident for part in parts for ident in part.motion_ids])
 
     def failed_seeds(self, metric: str) -> list[int]:
         """Seed indexes of the episodes where some scored row fell short on `metric` (a 0/1 episode info column), for
@@ -450,7 +454,14 @@ def standard_error(values: np.ndarray, groups: np.ndarray | None = None) -> floa
 #: The ablation eval arms (config.EVAL_ARMS): the learner's own input, edited, on the evaluation's seeds. The sim is not
 #: told: it still withholds the compass and shows the flag as the episode asks, so the episode columns stay the plain
 #: ones and the arm's gap to the plain evaluation is what the edited input carried.
-ABLATIONS = ("no_flag", "no_camera", "no_compass")
+#:   no_flag     the objective bit of every camera pixel cleared;
+#:   no_camera   the camera's image replaced by the no-frame pixel (the mental map's crop stays: it is no_map's);
+#:   no_compass  the compass block's observation columns zeroed;
+#:   no_map      the map block: its observation columns zeroed and the mental map's crop (the bytes after the image in
+#:               the camera's row) zeroed, which is what the sim sends a seat without a map (every cell unknown);
+#:   no_memory   the recurrent state (the actor GRU memory, slow memory, held goal and its age, goal queue)
+#:               reset to its episode-start value before every decision: the policy acts from the current observation.
+ABLATIONS = ("no_flag", "no_camera", "no_compass", "no_map", "no_memory")
 #: What an ablation arm reports and shows in forge status (<column>_<arm>).
 ABLATION_COLUMNS = ("arrived", "arrived_no_compass", "arrived_with_compass", "objective_visible")
 #: Bit 5 of the class byte (byte 3) of every pixel: the objective flag (Vision EncodePixel, cpp-vision.md).
@@ -458,17 +469,24 @@ OBJECTIVE_FLAG_BIT = 0x20
 CLASS_BYTE = 3
 
 
-def ablate_image(image: np.ndarray, arm: str) -> np.ndarray:
+def ablate_image(image: np.ndarray, arm: str, image_bytes: int | None = None) -> np.ndarray:
     """A copy of `image` [..., I] uint8 (4 bytes a pixel) as the arm leaves it: "no_flag" clears the objective bit of
-    every pixel's class byte, "no_camera" is p.no_frame (every pixel NO_FRAME_PIXEL), anything else as it was."""
+    every pixel's class byte, "no_camera" is p.no_frame (every pixel NO_FRAME_PIXEL), "no_map" zeroes the mental map's
+    crop, anything else as it was. A stage with a map block sends the camera's whole row, the image's `image_bytes`
+    then the map's crop (protocol 24); the flag and camera arms edit the image part only, never the map's bytes."""
     image = np.array(host(image), dtype=np.uint8, copy=True)
+    width = len(p.NO_FRAME_PIXEL)
+    whole = image.shape[-1]
+    seen = whole if image_bytes is None else min(int(image_bytes), whole)
+    if arm == "no_map":
+        image[..., seen:] = 0
+        return image
     if arm == "no_camera":
-        return p.no_frame(image.shape)
-    if arm == "no_flag":
-        width = len(p.NO_FRAME_PIXEL)
-        pixels = image.reshape(*image.shape[:-1], image.shape[-1] // width, width)
+        image[..., :seen] = p.no_frame((*image.shape[:-1], seen))
+    elif arm == "no_flag":
+        pixels = image[..., :seen].reshape(*image.shape[:-1], seen // width, width)
         pixels[..., CLASS_BYTE] &= np.uint8(~OBJECTIVE_FLAG_BIT & 0xFF)
-        image = pixels.reshape(image.shape)
+        image[..., :seen] = pixels.reshape(*image.shape[:-1], seen)
     return image
 
 
@@ -484,8 +502,8 @@ def compass_spans(spec, stage: dict | None, block: str = "compass") -> list[tupl
 
 
 def ablate_obs(obs: np.ndarray, layout: np.ndarray, spans: list[tuple[int, int]]) -> np.ndarray:
-    """A copy of `obs` [E, A, O] with each row's compass columns (its layout's span) zeroed: what the sim writes when it
-    withholds the compass (presence and values 0)."""
+    """A copy of `obs` [E, A, O] with each row's block columns (its layout's span: the compass or the map) zeroed: what
+    the sim writes when it withholds the compass (presence and values 0)."""
     obs = np.array(host(obs), copy=True)
     layout = np.asarray(host(layout))
     for index, (first, count) in enumerate(spans):
@@ -494,22 +512,41 @@ def ablate_obs(obs: np.ndarray, layout: np.ndarray, spans: list[tuple[int, int]]
     return obs
 
 
+def forget(acting, envs: int) -> None:
+    """Reset what `acting` (trainer.ActingState) carries to its episode-start value in every env: the actor's and the
+    critic's memory, the held goal and its age, the goal queue and the slow memory (ActingState.clear on all)."""
+    acting.clear(np.ones(envs, dtype=bool))
+
+
 def ablation_chooser(choose: Callable, arm: str, spec, stage: dict | None) -> Callable:
-    """`choose` (run_evaluation's chooser) for an ablation arm: the step it is given has its image or compass edited
-    first (`dataclasses.replace`: the run_evaluation's own step keeps the real bytes for scoring)."""
+    """`choose` (run_evaluation's chooser) for an ablation arm: the step it is given has its image, compass or map
+    edited first (`dataclasses.replace`: the run_evaluation's own step keeps the real bytes for scoring), or, for
+    "no_memory", the acting state reset before it decides. `choose` from Trainer._acting carries its state as
+    `choose.acting`."""
     if arm not in ABLATIONS:
         raise ValueError(f"unknown ablation arm {arm!r}; expected one of {list(ABLATIONS)}")
-    spans = compass_spans(spec, stage) if arm == "no_compass" else []
-    if arm == "no_compass" and not any(count for _, count in spans):
-        raise ValueError("eval.arms.no_compass: the stage has no compass block to zero")
+    block = {"no_compass": "compass", "no_map": "map"}.get(arm)
+    spans = compass_spans(spec, stage, block) if block else []
+    if block and not any(count for _, count in spans):
+        raise ValueError(f"eval.arms.{arm}: the stage has no {block} block to zero")
+    if arm == "no_memory":
+        acting = getattr(choose, "acting", None)
+        if acting is None or all(getattr(acting, name) is None for name in ("memory", "goal", "slow_memory", "queue")):
+            raise ValueError("eval.arms.no_memory: the policy carries no memory, goal or queue to reset")
 
     def chooser(step):
+        if arm == "no_memory":
+            forget(choose.acting, len(step.done))
+            return choose(step)
         if arm == "no_compass":
             return choose(replace(step, obs=ablate_obs(step.obs, step.layout, spans)))
         image = getattr(step, "image", None)
         if image is None:
             raise ValueError(f"eval.arms.{arm}: the stage has no camera image to edit")
-        return choose(replace(step, image=ablate_image(image, arm)))
+        edited = replace(step, image=ablate_image(image, arm, getattr(spec, "image_bytes", None)))
+        if arm == "no_map":
+            edited = replace(edited, obs=ablate_obs(step.obs, step.layout, spans))
+        return choose(edited)
 
     return chooser
 
@@ -583,6 +620,7 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
         and np.shape(step.kinematics)[-1] > 0
     moving: list[list[np.ndarray]] = [[np.array(step.kinematics[e])] for e in range(envs)] if collect_motion else []
     motion_tracks: list[np.ndarray] = []
+    motion_ids: list[tuple] = []
 
     def playing() -> bool:
         mine = len(finished) < episodes and decisions < max_decisions
@@ -626,10 +664,10 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
             if collect_motion:
                 if counted:
                     track = np.stack(moving[e], axis=1)  # [A, T, SAMPLE_DIM]
-                    motion_tracks.extend(
-                        track[a] for a in range(agents)
-                        if (present is None or step.episode_info[e, a, present] > 0.0)
-                        and len(track[a]) > 1)
+                    for a in range(agents):
+                        if (present is None or step.episode_info[e, a, present] > 0.0) and len(track[a]) > 1:
+                            motion_tracks.append(track[a])
+                            motion_ids.append((index, a, names[int(layout[e, a])], step.episode_info[e, a].copy()))
                 moving[e] = [np.array(step.kinematics[e])]
             if counted:
                 dropped = excluded(int(e)) if excluded is not None else np.zeros(agents, dtype=bool)
@@ -679,6 +717,7 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
         categories=dict(categories or {}),
         score_column=score_column,
         motion_tracks=motion_tracks,
+        motion_ids=motion_ids,
     )
 
     training_step = env.set_mode(False, stand_in=training_stand_in)
