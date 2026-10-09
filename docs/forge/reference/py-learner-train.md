@@ -205,8 +205,8 @@ A run that raises in the loop still saves `latest.pt` here, whatever state the n
 
 The sim is the server and the learner the client. One STEP per decision carries every env's observations; the sim
 blocks until the ACT. Frame: `HEADER <II` (type, length). Messages (`protocol.MsgType`): HELLO 1, SPEC 2, STEP 3, ACT 4,
-CLOSE 5, MODE 6, WEIGHTS 7, REPLAY 8, DEVICE 9, DEVICE_ACK 10, PROGRESS 11 (12 is unused). `PROTOCOL_VERSION = 25`
-(`protocol.py:14`; the sim's `Bridge/Protocol.h:180` agrees). `MODE_FLAG_STAND_IN = 2`; bit 1 is unused (`:67-70`).
+CLOSE 5, MODE 6, WEIGHTS 7, REPLAY 8, DEVICE 9, DEVICE_ACK 10, PROGRESS 11 (12 is unused). `PROTOCOL_VERSION = 27`
+(`protocol.py:14`; the sim's `Bridge/Protocol.h` agrees). `MODE_FLAG_STAND_IN = 2`; bit 1 is unused (`:67-70`).
 
 - Connect: `ForgeEnv._connect` retries every second until `connect_timeout` (600 s), Unix socket or `tcp://host:port`
   (TCP_NODELAY). Send HELLO (version, rank, ranks); receive SPEC (`decode_spec`; version mismatch raises

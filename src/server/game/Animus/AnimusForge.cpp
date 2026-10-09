@@ -89,9 +89,12 @@ namespace
         for (auto const& [mapId, checksum] : Animus::Vision::SceneRegistry::Instance().Checksums())
             scenes += Acore::StringFormat("{}{}:{:016x}", scenes.empty() ? "" : ",", mapId, checksum);
 
-        return Acore::StringFormat("src={} protocol={} curriculum={:016x} decision={}/{} scenes={}",
+        // The decision's timing is part of what it is: DecisionMs / ticks, then the tick jitter (ADR 0021). The jitter
+        // seed is each machine's own and is left out, so the machines draw different streams of the same distribution.
+        return Acore::StringFormat("src={} protocol={} curriculum={:016x} decision={}/{}/{}/{:g}/{} scenes={}",
             FORGE_SOURCE_HASH, AnimusForge::PROTOCOL_VERSION, hash, config.DecisionMs,
-            config.TicksPerDecision, scenes.empty() ? "none" : scenes);
+            config.TicksPerDecision, config.Jitter.JitterMs, config.Jitter.SpikeProb, config.Jitter.SpikeMaxMs,
+            scenes.empty() ? "none" : scenes);
     }
 
     /// How long an idle or paused world thread sleeps per tick: an idle sim would otherwise spin a core.
@@ -291,7 +294,11 @@ void AnimusForge::Forge::OnWorldPrologue(uint32 diff)
         return;
 
     // Half-batch: the groups' maps take turns, one per world tick, and a group's maps tick with the time of both
-    // (MapMgr::ForgeTickDiff), so its envs' clocks move a whole TickMs. Otherwise the one group ticks every tick.
+    // (MapMgr::ForgeTickDiff), so its envs' clocks move the time of every tick since its maps last ticked -- two
+    // ticks of a half, which with jittered ticks (AnimusForge.Decision.*) are not the same length. Otherwise the one
+    // group ticks every tick.
+    _groupAccruedMs[0] += diff;
+    _groupAccruedMs[1] += diff;
     _turn = _halfBatch ? _nextTurn : 0;
     _nextTurn = _halfBatch ? (_turn + 1) % 2 : 0;
     if (_turn >= _pool->GroupCount())
@@ -304,8 +311,8 @@ void AnimusForge::Forge::OnWorldPrologue(uint32 diff)
     // Game time accrues every tick, whether or not the policy chose on this one: an episode's clock, and
     // everything the library measures against it, is in game milliseconds and does not care how often anyone
     // decides. It is advanced before the maps tick because the terminal check that follows them reads it.
-    _pool->AdvanceClock(_turn, _halfBatch ? 2 * diff : diff);
-    _tickDiff = _halfBatch ? 2 * diff : diff;
+    _tickDiff = std::exchange(_groupAccruedMs[_turn], 0u);
+    _pool->AdvanceClock(_turn, _tickDiff);
 
     // Above TicksPerDecision = 1 the world runs several times between decisions. The intervening ticks move
     // splines, auras and the fight at the finer step and are otherwise silent -- no observation, no action, no
@@ -328,6 +335,23 @@ bool AnimusForge::Forge::IsMapFrozen(Map const& map) const
 
     int32 const group = _pool->GroupOfMap(map);
     return group >= 0 && uint32(group) != _turn;
+}
+
+uint32 AnimusForge::Forge::NextWorldTickMs(uint32 nominal)
+{
+    _plannedTickMs = nominal;
+    if (!_jitterOn || !_config.Enable || !_pool || (_state != State::Training && _state != State::Running))
+        return nominal;
+
+    // A decision's ticks are sized when its first is asked for, from the ticks counted since the last decision (the
+    // prologue counts them). Half-batch decides on every world tick, so each tick is its own decision of half a
+    // decision's time and a group lives the sum of two.
+    uint32 const position = _halfBatch ? 0 : _ticksSinceDecision;
+    if (!position)
+        _decisionClock.Plan(_halfBatch ? 1 : _runTicks, nominal, _halfBatch);
+
+    _plannedTickMs = _decisionClock.TickMs(position);
+    return _plannedTickMs;
 }
 
 uint32 AnimusForge::Forge::EnvsOnMap(Map const& map) const
@@ -472,12 +496,14 @@ void AnimusForge::Forge::OnUpdate(uint32 diff)
     // `forge start` runs inside it) was sized before the run's tick, so the check waits for the next one.
     bool const tickJustSet = _tickJustSet;
     _tickJustSet = false;
-    if (diff != _runWorldTickMs && !tickJustSet && !_tickMismatchLogged)
+    // With the tick jitter the world runs the tick NextWorldTickMs planned; a world that runs another is a stale one.
+    uint32 const expectedTick = _jitterOn ? _plannedTickMs : _runWorldTickMs;
+    if (diff != expectedTick && !tickJustSet && !_tickMismatchLogged)
     {
         _tickMismatchLogged = true;
         LOG_ERROR("module.animus", "The world ticks {} ms, but AnimusForge.DecisionMs {} over TicksPerDecision {}{} "
             "wants {} ms: rebuild the worldserver (./forge.sh --build)", diff, run.DecisionMs, _runTicks,
-            _halfBatch ? ", halved for AnimusForge.HalfBatch," : "", _runWorldTickMs);
+            _halfBatch ? ", halved for AnimusForge.HalfBatch," : "", expectedTick);
     }
 
     // The clock and the count of ticks to a decision are the prologue's, before the maps tick: what is left here
@@ -777,6 +803,24 @@ bool AnimusForge::Forge::StartCurrent()
         _pool->SetGroups(_pool->NumEnvs());
     }
     _turn = _nextTurn = 0;
+    _groupAccruedMs[0] = _groupAccruedMs[1] = 0;
+    // The tick jitter (AnimusForge.Decision.*): a stream of this machine's and this scenario's own, so the same run
+    // meets the same ticks again, and a cluster's machines meet different ones of the same distribution.
+    {
+        uint64 seed = 1469598103934665603ull ^ (uint64(config.Jitter.Seed) << 32);
+        for (unsigned char c : entry.Scenario + "/" + _config.ClusterAdvertise)
+            seed = (seed ^ c) * 1099511628211ull;
+        _decisionClock.Reset({ config.Jitter.JitterMs, config.Jitter.SpikeProb, config.Jitter.SpikeMaxMs }, seed);
+        _jitterOn = _decisionClock.Active();
+        _plannedTickMs = _runWorldTickMs;
+        if (_jitterOn)
+            LOG_INFO("module.animus", "{}: decisions last {} ms on average with tick jitter (AnimusForge.Decision.*): "
+                "overshoot U(0, {}) ms{}", entry.Scenario, config.DecisionMs, config.Jitter.JitterMs,
+                config.Jitter.SpikeProb > 0.0f && config.Jitter.SpikeMaxMs > 50
+                    ? Acore::StringFormat(", and a spike of U(50, {}) ms with probability {:g}",
+                        config.Jitter.SpikeMaxMs, config.Jitter.SpikeProb)
+                    : std::string());
+    }
     _awaitingAnswer[0] = _awaitingAnswer[1] = false;
     _actionsPending[0] = _actionsPending[1] = false;
 
@@ -2166,6 +2210,23 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
     if (_scenario)
         sim.WingLadderCollapsed = _scenario->ClusterLadderCollapsed();
 
+    // The decisions' game time under the tick jitter, since the scenario started.
+    {
+        ForgeConfig const& run = RunConfig();
+        Animus::DecisionClock::Stats const& stats = _decisionClock.Statistics();
+        sim.Decision.Jitter = _jitterOn;
+        sim.Decision.NominalMs = run.DecisionMs;
+        sim.Decision.Count = stats.Count;
+        sim.Decision.MeanMs = stats.Mean();
+        sim.Decision.MinMs = stats.MinMs;
+        sim.Decision.P95Ms = _decisionClock.Quantile(0.95);
+        sim.Decision.MaxMs = stats.MaxMs;
+        sim.Decision.SpikeShare = stats.Count ? double(stats.Spikes) / double(stats.Count) : 0.0;
+        sim.Decision.Setting = Acore::StringFormat("U(0, {}) ms{}", run.Jitter.JitterMs,
+            run.Jitter.SpikeProb > 0.0f ? Acore::StringFormat(" + {:g} spikes of U(50, {}) ms", run.Jitter.SpikeProb,
+                run.Jitter.SpikeMaxMs) : std::string());
+    }
+
     // Rates over the time since the last periodic report; a status in between shows the rate so far.
     double const seconds = std::chrono::duration<double>(now - _rateTime).count();
     uint64 const ticks = _ticks - std::min(_ticks, _rateTicks);
@@ -2766,6 +2827,11 @@ bool AnimusForge::Forge::SendSpec(uint32 rank)
     msg.ImageBytes = spec.ImageBytes;
     msg.LookHeads = spec.LookHeads;
     msg.MapBytes = spec.MapBytes;
+    // The decision's timing jitter (protocol 27): what the sim does to the ticks, so the learner can tell a run's mean
+    // decision from the nominal one. All zero when this run has none.
+    msg.JitterMs = _jitterOn ? RunConfig().Jitter.JitterMs : 0;
+    msg.SpikeMaxMs = _jitterOn ? RunConfig().Jitter.SpikeMaxMs : 0;
+    msg.SpikeProb = _jitterOn ? RunConfig().Jitter.SpikeProb : 0.0f;
 
     uint32 const layoutCount = uint32(spec.Layouts.size());
     std::vector<LayoutMsg> layouts(layoutCount);

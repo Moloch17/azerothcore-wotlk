@@ -3109,6 +3109,9 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     // the same seat's own).
     view.Options = _tuning.Options;
     view.NowMs = env.EpisodeElapsedMs;
+    // The nominal decision, not the one that was lived (StepMs): the realm hands its models DecisionMs every time
+    // (CompanionParty), so what ages in the observation -- the memories, the map, the free look, and the breath
+    // spent (ApplySeatAction) -- must age by that in training too.
     view.DecisionMs = _decisionMs;
     view.LastStepDamage = seat.LastStepDamage;
     view.LastStepPowerDelta = seat.LastStepPowerDelta;
@@ -3260,16 +3263,16 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
         bool const under = bot->IsUnderWater();
         bool const swimming = bot->Unit::IsInWater();
         if (swimming)
-            seat.WaterMs += _decisionMs;
+            seat.WaterMs += StepMs(env);
         if (bot->GetShapeshiftForm() == FORM_AQUA)
-            seat.AquaticMs += _decisionMs;
+            seat.AquaticMs += StepMs(env);
         if (bot->HasWaterWalkAura() && !swimming
             && bot->GetMap()->GetLiquidData(bot->GetPhaseMask(), bot->GetPositionX(), bot->GetPositionY(),
                 bot->GetPositionZ(), bot->GetCollisionHeight(), {}).Status == LIQUID_MAP_WATER_WALK)
-            seat.WaterWalkMs += _decisionMs;
+            seat.WaterWalkMs += StepMs(env);
         if (under)
         {
-            seat.SubmergedMs += _decisionMs;
+            seat.SubmergedMs += StepMs(env);
             if (!seat.SubmergedSinceMs)
                 seat.SubmergedSinceMs = std::max<uint32>(1, env.EpisodeElapsedMs);
             if (bot->HasWaterBreathingAura())
@@ -3319,7 +3322,7 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     }
 
     if (running)
-        seat.OptionMs += _decisionMs;
+        seat.OptionMs += StepMs(env);
 
     seat.TargetSlot = view.TargetSlot;
     seat.StepPreparationMs += result.PreparationMs;
@@ -3590,7 +3593,7 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
             if (Unit const* friendUnit = Encoding::UnitThrough(*bot, hold.Friend); friendUnit && friendUnit->IsAlive()
                 && friendUnit->GetHealthPct() >= 50.0f && !friendUnit->getAttackers().empty())
             {
-                hold.ProtectSafeMs += DecisionMs();
+                hold.ProtectSafeMs += StepMs(env);
                 reached = hold.ProtectSafeMs >= _tuning.Goals.ProtectHoldMs;
             }
         if (reached && !hold.Rewarded)
@@ -4431,7 +4434,7 @@ void Animus::Curriculum::StageScenario::SettleIntent(Env& env, SeatState& seat, 
             || !bot->movespline->Finalized();
         bool const combat = bot->IsInCombat();
         if (combat)
-            seat.CombatMs += _decisionMs;
+            seat.CombatMs += StepMs(env);
 
         // Starting to move again moments after stopping is the stutter a player never shows: priced as jitter,
         // weighed by how recent the stop was (MovePrice::Recency, Options.JitterDecayMs) rather than in full up to a
@@ -4472,11 +4475,11 @@ void Animus::Curriculum::StageScenario::SettleIntent(Env& env, SeatState& seat, 
         if (moving && combat && !focusMoving && !gettingBehind && GoalGap(seat, bot, target) == 0.0f
             && !Encoding::StandingInHazards(bot, nullptr))
         {
-            seat.FidgetHeldMs += _decisionMs;
+            seat.FidgetHeldMs += StepMs(env);
             if (MovePrice::Settled(seat.FidgetHeldMs, tuning.SettleGraceMs))
             {
-                seat.StepFidgetMs += _decisionMs;
-                seat.FidgetMs += _decisionMs;
+                seat.StepFidgetMs += StepMs(env);
+                seat.FidgetMs += StepMs(env);
             }
         }
         else
@@ -4499,7 +4502,7 @@ void Animus::Curriculum::StageScenario::SettleIntent(Env& env, SeatState& seat, 
             needless = distance >= minRange && distance <= 30.0f && bot->IsWithinLOSInMap(target) && !meleed
                 && !Encoding::StandingInHazards(bot, nullptr);
             // Held Actions.SettleGraceMs first, as the fidget is.
-            seat.NeedlessHeldMs = needless ? seat.NeedlessHeldMs + _decisionMs : 0;
+            seat.NeedlessHeldMs = needless ? seat.NeedlessHeldMs + StepMs(env) : 0;
             if (needless && MovePrice::Settled(seat.NeedlessHeldMs, tuning.SettleGraceMs))
             {
                 ++seat.StepAimless;
@@ -4781,7 +4784,7 @@ void Animus::Curriculum::StageScenario::TrackSupport(Env& env, uint32 seatIndex,
 
     // An absorb that lost amount soaked it; one gone early (not expired, its friend alive) soaked the rest. A re-cast
     // (more time left than before) starts over.
-    int32 const expirySlack = int32(_decisionMs) + ABSORB_EXPIRY_SLACK_MS;
+    int32 const expirySlack = int32(StepMs(env)) + ABSORB_EXPIRY_SLACK_MS;
     for (SeatState::AbsorbTrack const& before : seat.Absorbs)
     {
         auto const friendRef = std::find_if(friends.begin(), friends.end(),
@@ -4805,7 +4808,7 @@ void Animus::Curriculum::StageScenario::TrackSupport(Env& env, uint32 seatIndex,
 
     seat.Absorbs.swap(now);
     if (low && bot->IsAlive())
-        seat.LowHealthMs += _decisionMs;
+        seat.LowHealthMs += StepMs(env);
 }
 
 bool Animus::Curriculum::StageScenario::GroupHealer(Env const& env, SeatState const& seat) const
@@ -4852,8 +4855,8 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
         // per episode so it can never be worth leaving a fight over: melee have to stand in melee.
         if (Encoding::StandingInHazards(bot, nullptr))
         {
-            seat.HazardMs += _decisionMs;
-            float const seconds = float(_decisionMs) / 1000.0f;
+            seat.HazardMs += StepMs(env);
+            float const seconds = float(StepMs(env)) / 1000.0f;
             float const room = std::max(0.0f, _tuning.Hazards.Max + seat.Rewards.Episode(RewardTerm::Hazard));
             seat.Rewards.Add(RewardTerm::Hazard, -std::min(_tuning.Hazards.Standing * seconds, room));
         }
@@ -4882,13 +4885,13 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
     // What the pet does while it is out.
     if (pet && pet->IsAlive())
     {
-        seat.PetOutMs += _decisionMs;
+        seat.PetOutMs += StepMs(env);
         if (pet->GetVictim())
-            seat.PetAttackingMs += _decisionMs;
+            seat.PetAttackingMs += StepMs(env);
         if (pet->HasReactState(REACT_PASSIVE))
-            seat.PetPassiveMs += _decisionMs;
+            seat.PetPassiveMs += StepMs(env);
         if (CharmInfo const* charmInfo = pet->GetCharmInfo(); charmInfo && charmInfo->HasCommandState(COMMAND_STAY))
-            seat.PetStayingMs += _decisionMs;
+            seat.PetStayingMs += StepMs(env);
     }
 
     // Standing again (resurrected, or recovered after a pull): the next death is paid for again.
@@ -4901,7 +4904,7 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
     if (_tuning.Output.Clock > 0.0f)
     {
         if (Data(env).StepEngaged)
-            seat.Rewards.Add(RewardTerm::CombatClock, -_tuning.Output.Clock * float(_decisionMs) / 1000.0f);
+            seat.Rewards.Add(RewardTerm::CombatClock, -_tuning.Output.Clock * float(StepMs(env)) / 1000.0f);
     }
 
     for (Encounter* encounter : ActiveRewardOrder(env))

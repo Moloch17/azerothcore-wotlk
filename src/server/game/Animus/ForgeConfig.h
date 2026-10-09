@@ -82,6 +82,20 @@ namespace AnimusForge
         {
             return std::max<uint32>(1, DecisionMs / std::max<uint32>(1, TicksPerDecision));
         }
+        /// AnimusForge.Decision.*: the tick jitter (ADR 0021). The realm decides on the first world tick that brings a
+        /// bot's accumulated tick time to DecisionMs (mod-animus CompanionParty::UpdateMember), and its ticks are
+        /// variable, so a decision lands on the tick that crosses the threshold, late by up to a tick, and a load
+        /// spike can make that tick long. The sim reproduces it: each decision's game time is DecisionMs less the
+        /// overshoot carried from the last decision plus this one's overshoot, drawn from a uniform body
+        /// U(0, JitterMs) and a rare spike of U(50, SpikeMaxMs) extra. JitterMs 0 and SpikeProb 0 is the exact tick.
+        struct DecisionJitter
+        {
+            uint32 JitterMs = 50;           // AnimusForge.Decision.JitterMs: the body of the overshoot, 0 = none
+            float SpikeProb = 0.02f;        // AnimusForge.Decision.SpikeProb: a decision's chance of a load spike
+            uint32 SpikeMaxMs = 400;        // AnimusForge.Decision.SpikeMaxMs: a spike adds U(50, this) ms
+            uint32 Seed = 1;                // AnimusForge.Decision.Seed: this machine's stream (not a must-match key)
+            [[nodiscard]] bool Active() const { return JitterMs > 0 || (SpikeProb > 0.0f && SpikeMaxMs > 50); }
+        } Jitter;
         /// AnimusForge.HalfBatch: the pool in two halves whose maps tick in turn, so the learner decides one half
         /// while the other's maps tick (see AnimusForge::Forge::IsMapFrozen). Needs TicksPerDecision 1.
         bool HalfBatch = false;

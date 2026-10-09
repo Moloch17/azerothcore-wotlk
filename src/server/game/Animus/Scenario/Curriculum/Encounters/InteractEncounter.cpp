@@ -547,7 +547,7 @@ void Animus::Curriculum::InteractEncounter::Found(Env const& env, EnvInteract& s
 void Animus::Curriculum::InteractEncounter::Reward(Env& env, uint32 seatIndex, Player* bot, RewardLedger& ledger)
 {
     CurriculumTuning::InteractTuning const& tuning = _scenario.Tuning().Interact;
-    ledger.Add(RewardTerm::StepCost, -tuning.StepCost * _scenario.DecisionScale());
+    ledger.Add(RewardTerm::StepCost, -tuning.StepCost * _scenario.StepScale(env));
 
     EnvInteract& state = _envs[env.Index];
     SeatState& seat = _scenario.Data(env).Seats[seatIndex];
@@ -593,7 +593,7 @@ void Animus::Curriculum::InteractEncounter::Reward(Env& env, uint32 seatIndex, P
     {
         Movement::ControlState const& held = seat.Controls.Held;
         UnitMoveType const kind = held.Walk ? MOVE_WALK : held.Forward < 0 && !held.Strafe ? MOVE_RUN_BACK : MOVE_RUN;
-        float const asked = bot->GetSpeed(kind) * float(_scenario.DecisionMs()) / 1000.0f;
+        float const asked = bot->GetSpeed(kind) * float(_scenario.StepMs(env)) / 1000.0f;
         float const charge = Standing::WallCharge(float(wallMs) / 1000.0f, moved, asked, tuning.Wall,
             tuning.WallSlide);
         if (charge > 0.0f)

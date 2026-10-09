@@ -21,6 +21,7 @@
 
 #include "CurriculumTuning.h"
 #include "Encounter.h"
+#include "Env.h"
 #include "EpisodeInfoTable.h"
 #include "Layout.h"
 #include "Position.h"
@@ -200,6 +201,14 @@ namespace Animus::Curriculum
         /// Decision interval / 50 ms: per-decision reward terms are tuned per 50 ms and scaled by this, so they mean
         /// the same per second at any StageSettings::DecisionMs.
         [[nodiscard]] float DecisionScale() const { return _decisionScale; }
+        /// The same for the decision `env` just lived: the time it took over 50 ms. The tick jitter
+        /// (AnimusForge.Decision.*) makes a decision longer or shorter than StageSettings::DecisionMs, and a per-second
+        /// term is charged for the time that went by. Valid wherever the decision just scored is the one asked about: a
+        /// reward, and the judging of the actions that follow it (the interval they end).
+        [[nodiscard]] float StepScale(Env const& env) const
+        {
+            return _decisionScale * float(StepMs(env)) / float(std::max<uint32>(1, _decisionMs));
+        }
         /// A rung of the whole dungeon's difficulty ladder: the levels above the dungeon's range and the wipes to
         /// spare.
         struct WingRung
@@ -236,6 +245,10 @@ namespace Animus::Curriculum
         [[nodiscard]] int32 ClusterLadderCollapsed() const override { return _wingLadder.CollapsedRung(); }
         /// The decision interval, in ms of game time.
         [[nodiscard]] uint32 DecisionMs() const { return _decisionMs; }
+        /// The ms of game time the decision `env` just lived took: DecisionMs on average, and exactly it without
+        /// jitter or before the env's first decision. What the observation advances by stays DecisionMs
+        /// (SeatView::DecisionMs), because that is all the realm's module knows.
+        [[nodiscard]] uint32 StepMs(Env const& env) const { return env.StepMs ? env.StepMs : _decisionMs; }
 
         /// Every class/role layout of the run, by Layout::Index (the index AgentLayouts reports).
         [[nodiscard]] std::vector<Layout> const& Layouts() const { return _layouts; }

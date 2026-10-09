@@ -141,7 +141,8 @@ Logs: `env/dist/logs/Server.log`, `Errors.log`, `animus-learner.log` (rank k: `a
 `forge bench [stage]` times every `AnimusForge.Bench.Threads x Envs` pair with a local policy and then the best few with
 the learner; results go to `<OutputDir>/bench/bench.json`; `forge bench apply` writes the winner into the configs.
 `AnimusForge.Bench.AutoTune` runs `bench auto` on a machine with no benchmark of its CPU. Per-decision timing columns
-in `forge status`: world (map update), sim (module work), learner wait; the reset stall warning
+in `forge status`: world (map update), sim (module work), learner wait; and the `decision time` row, the game time
+decisions really lasted under the tick jitter (decision 0021: mean, p95, min, max, spike share; "exact" when it is off); the reset stall warning
 ("Reset stall: ...") is logged by `WatchResets`.
 
 ## 7.7 After changing C++

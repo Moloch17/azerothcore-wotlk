@@ -34,7 +34,8 @@
  *                            LookHeads, the look head's categoricals per agent in ACT (Vision::FreeLook::HEADS, 3)
  *                            with a vision block, 0 without one (protocol 22); then u32 MapBytes, the bytes per
  *                            agent of each STEP's mental map crops, M below: the map block's 48 x 48 x 6 (13,824), 0
- *                            for a stage without one (protocol 24).
+ *                            for a stage without one (protocol 24); then u32 JitterMs, u32 SpikeMaxMs and f32 SpikeProb,
+ *                            the run's tick jitter (AnimusForge.Decision.*, protocol 27), all zero without one.
  *   server -> client  STEP   { u64 decision } then, in order, with E envs, A agents per env,
  *                            O obs dim, S state dim, N actions, K episode info dim:
  *                              f32 obs[E*A*O]         observation after any auto-reset
@@ -184,7 +185,10 @@ namespace AnimusForge
     // 3). The messages' layout is protocol 25's, less EXPLORE_STARTS: message type 12 (Go-Explore's, since 18) is
     // retired with the route packs (vision-only movement, 2026-10-08), so it is unused and a learner that sends it
     // is dropped like any unknown message.
-    constexpr uint32 PROTOCOL_VERSION = 26;
+    // 27: the tick jitter (AnimusForge.Decision.*, ADR 0021): SPEC ends with the jitter body in ms, the largest spike in
+    // ms and the spike probability (a float), all zero without jitter; every SPEC is twelve bytes longer. STEP and ACT
+    // are protocol 26's.
+    constexpr uint32 PROTOCOL_VERSION = 27;
     constexpr uint32 SCENARIO_NAME_SIZE = 32;
     constexpr uint32 POLICY_NAME_SIZE = 32;
     constexpr uint32 LAYOUT_NAME_SIZE = 48;
@@ -259,9 +263,15 @@ namespace AnimusForge
         /// Bytes per agent of each STEP's mental map crops (ScenarioSpec::MapBytes; 0 without a map block; protocol
         /// 24): the wire's cut, which the learner checks against stage.json's map.
         uint32 MapBytes;
+        /// The tick jitter of this run (AnimusForge.Decision.*, protocol 27): the body of the decisions' overshoot in
+        /// ms, the largest spike in ms and a decision's chance of one. All zero without jitter. A decision then lasts
+        /// TickMs x DecisionTicks on average, and varies around it; the STEP does not say by how much.
+        uint32 JitterMs;
+        uint32 SpikeMaxMs;
+        float SpikeProb;
     };
-    // The learner's SPEC (protocol.py): "<12I32s4I", 96 bytes.
-    static_assert(sizeof(SpecMsg) == 12 * 4 + SCENARIO_NAME_SIZE + 4 * 4 && sizeof(SpecMsg) == 96);
+    // The learner's SPEC (protocol.py): "<12I32s4I2If", 108 bytes.
+    static_assert(sizeof(SpecMsg) == 12 * 4 + SCENARIO_NAME_SIZE + 4 * 4 + 3 * 4 && sizeof(SpecMsg) == 108);
 
     struct LayoutMsg
     {

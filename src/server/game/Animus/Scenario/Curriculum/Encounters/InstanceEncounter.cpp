@@ -478,7 +478,7 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
     }
     // Back at full health and out of combat after having been fought: the script evaded, and the fight is lost.
     if (fight.Engaged && !fight.BossDead && !boss->IsInCombat() && boss->GetHealthPct() >= EVADED_HEALTH_PCT
-        && env.EpisodeElapsedMs > fight.EngageMs + _scenario.DecisionMs())
+        && env.EpisodeElapsedMs > fight.EngageMs + _scenario.StepMs(env))
         fight.Evaded = true;
 
     // A wipe: no seat left standing. Nobody stands up in an instance; the dead wait for the episode to end.
@@ -790,7 +790,7 @@ void Animus::Curriculum::InstanceEncounter::TraceWing(Env& env, EnvInstance& fig
         }
         fight.OnParty = engaged;
         if (engaged > _scenario.Tuning().Instance.WingCrowdFree)
-            fight.CrowdSeconds += float(_scenario.DecisionMs()) / 1000.0f;
+            fight.CrowdSeconds += float(_scenario.StepMs(env)) / 1000.0f;
         if (engaged > trace.PeakEngaged)
         {
             // Who they are, by entry: counted only on a new peak, the one time the stuck log is given them.
@@ -1232,7 +1232,7 @@ void Animus::Curriculum::InstanceEncounter::Reward(Env& env, uint32 seatIndex, P
     // charged alike, -177 a run swamped every seat's own role terms (a healer's healing paid 8.5), 2026-10-03.
     // Idle, a Cost at its full price from the first step (2026-10-07; it was Stall's Shaping, which the fade took).
     bool const tankSeat = _scenario.Data(env).Seats[seatIndex].DungeonRole == DUNGEON_TANK;
-    float const seconds = float(_scenario.DecisionMs()) / 1000.0f;
+    float const seconds = float(_scenario.StepMs(env)) / 1000.0f;
     if (env.EpisodeElapsedMs > fight.ProgressMs + tuning.WingStallGraceMs)
         ledger.Add(RewardTerm::Idle, -tuning.WingStall * (tankSeat ? 1.0f : tuning.WingStallOthers) * seconds);
     // The clock (Instance.WingClock): a run that clears sooner is better, at its full price from the first step.
@@ -1248,7 +1248,7 @@ void Animus::Curriculum::InstanceEncounter::Reward(Env& env, uint32 seatIndex, P
     // More on the party than a pack (Instance.WingCrowd, past WingCrowdFree): a pull that ran into the next.
     if (fight.OnParty > tuning.WingCrowdFree)
         ledger.Add(RewardTerm::Threat, -tuning.WingCrowd * float(fight.OnParty - tuning.WingCrowdFree)
-            * float(_scenario.DecisionMs()) / 1000.0f);
+            * float(_scenario.StepMs(env)) / 1000.0f);
     // Away from the leader (Instance.WingStray): the party's leader -- the stand-in when it leads, else the tank -- and
     // a seat further than WingStrayYards from it. Lost, a Cost (2026-10-07: "they have to stay with the leader"; as
     // Approach it was Shaping and faded). Never while a risen seat walks back from the entrance: Away prices that.

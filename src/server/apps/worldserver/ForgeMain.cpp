@@ -207,8 +207,11 @@ namespace
             // Fixed diff, never wall clock: the sim advances in deterministic steps and runs
             // as fast as the CPU allows. A stage with its own AnimusForge.Stage.<name>.TicksPerDecision sets its
             // tick while it runs (ForgeCore::TickMs, movement-smooth A6); otherwise the configured one.
+            //
+            // A running scenario's decisions are jittered (AnimusForge.Decision.*, ADR 0021): the module sizes this
+            // tick from the decision it belongs to, and hands back the nominal one when there is no jitter.
             uint32 const stageTickMs = ForgeCore::TickMs();
-            sWorld->Update(stageTickMs ? stageTickMs : tickMs);
+            sWorld->Update(sAnimusForge->NextWorldTickMs(stageTickMs ? stageTickMs : tickMs));
         }
 
         LoginDatabase.WarnAboutSyncQueries(false);

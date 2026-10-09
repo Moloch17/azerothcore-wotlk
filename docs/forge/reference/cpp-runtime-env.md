@@ -44,7 +44,12 @@ per env (`:121`).
 
 ### A decision, in phases
 
-1. World thread, before the maps tick: `AdvanceClock(group, diff)` then, if the tick ends a decision,
+0. (Before the world tick, ForgeMain's loop: `Forge::NextWorldTickMs(nominal)` sizes the tick. With the tick jitter
+   (decision 0021) the first tick of a decision plans the whole decision with `Animus::DecisionClock::Plan`: length
+   `max(ticks, nominal - carry + overshoot)` split over the decision's ticks. `Env::StepAccruedMs` collects what a
+   decision lived; `ObserveEnv` makes it `Env::StepMs` before `Reward`.)
+1. World thread, before the maps tick: `AdvanceClock(group, owed)` (`owed` = the game time the group's maps were owed, the
+   same `MapMgr::ForgeTickDiff` hands them; it is `diff` without half-batch) then, if the tick ends a decision,
    `BeginDecision(group)` (clears the group's per-env timing/`_observed`/`_finishedOnMap`, marks `_decisionOpen[group]`).
 2. Map thread, before `Map::Update`: `ApplyActionsForMap(map)` - for each env on the map, `ApplyGoals`, `ApplyLook` (if the
    buffers exist) and `ApplyActions`; adds its time to `_applyNs` (`:329`). Then `SubTickMap(map, diff, decided)` ->

@@ -328,6 +328,17 @@ def baseline_cache_key(policy: str, seed: int, episodes: int, arenas, tuning,
             "tuning": tuning, "score": score_kind, "shaping": round(float(shaping_scale), 6)}
 
 
+def decision_jitter_note(spec) -> str:
+    """What the sim does to the decisions' game time (protocol 27, ADR 0021), for the run's first lines: empty without
+    jitter. The discounts below stay compounded to the nominal decision, which is the mean to within a few ms."""
+    if not (spec.jitter_ms or (spec.spike_prob > 0.0 and spec.spike_max_ms > 50)):
+        return ""
+    spike = (f" and a spike of 50-{spec.spike_max_ms} ms with probability {spec.spike_prob:g}"
+             if spec.spike_prob > 0.0 and spec.spike_max_ms > 50 else "")
+    return (f", jittered: each lasts {spec.decision_ms} ms less the last one's overshoot plus its own "
+            f"(U(0, {spec.jitter_ms}) ms{spike}), {spec.mean_decision_ms:.1f} ms on average")
+
+
 def reward_terms_line(stage: dict | None) -> str:
     """What the sim says its reward terms are for (stage.json "reward_terms"), counted: the startup line."""
     categories = (stage or {}).get("reward_terms")
@@ -667,7 +678,7 @@ class TrainingRun:
         print(
             f"Scenario {spec.scenario}: {spec.num_envs} envs x {spec.agents_per_env} agents, {len(spec.layouts)} "
             f"layouts (obs up to {spec.obs_dim}, actions up to {spec.num_actions}), state {spec.state_dim}, decision "
-            f"every {spec.decision_ms} ms",
+            f"every {spec.decision_ms} ms" + decision_jitter_note(spec),
             flush=True,
         )
         self.arena_names = tuple(arena["name"] for arena in (self.stage or {}).get("arenas", ()))

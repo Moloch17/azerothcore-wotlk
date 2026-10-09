@@ -41,7 +41,8 @@ def spec_from_dict(raw: dict) -> p.Spec:
     fields["version"] = p.PROTOCOL_VERSION
     return p.Spec(**fields, layouts=layouts, episode_info_names=tuple(raw.get("episode_info_names", ())),
                   image_bytes=int(raw.get("image_bytes", 0)), look_heads=int(raw.get("look_heads", 0)),
-                  map_bytes=int(raw.get("map_bytes", 0)))
+                  map_bytes=int(raw.get("map_bytes", 0)), jitter_ms=int(raw.get("jitter_ms", 0)),
+                  spike_max_ms=int(raw.get("spike_max_ms", 0)), spike_prob=float(raw.get("spike_prob", 0.0)))
 
 
 def _read_exact(conn: socket.socket, size: int) -> bytes:
