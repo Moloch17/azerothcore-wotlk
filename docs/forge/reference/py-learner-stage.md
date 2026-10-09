@@ -221,16 +221,48 @@ max_boost)]`.
 - `at_budget()` (`:735`): always ADVANCE with reason "budget", even with `convergence.advance: false`.
 - A class never played is not waited for (`played` is set only when its row has a score).
 
-## `restore_evaluation_state` (`stage.py:428-457`)
+## The overall tracker judges the stage's measure (decision 0022, 2026-10-09)
 
-Called by `_load_or_seed` on resume (`train.py:969`). Loads `checkpoint["convergence"]` into the tracker and
+`ConvergenceController.measure` (set from `convergence.measure`; the Trainer narrows it to the episode info columns the
+scenario has, else `""`) is read by `_judged_score(row)` for the classes and, since 2026-10-09, for the overall tracker
+too: `observe(summary)` feeds `tracker.observe(*_judged_score(summary))`, a share with a binomial standard error over
+the summary's episodes, instead of `summary["score"]` and its stderr. The fade and cost ladders still read the score
+(M2's step is on its gate). `best.pt` is now the best by the measure, still gated by the margin
+(`max(min_improvement_abs, min_improvement x |best|, z x sqrt(se^2 + best_se^2))`, about 0.1 for a share near 0.7 at
+156 episodes); `progress.json` `best_score` is in the measure's units and `best_kind` names it (`"score"` when the stage
+has none). A stage with no measure is unchanged. Every stage with a measure (arrived, found, right_object,
+follow_kept_share, won, survived, full_clear, bar_clear) is a 0-1 share, so all of them take it; a value outside [0, 1]
+falls back to the row's own stderr (as the classes always did).
+
+Evidence (move2_seek's rung-3 evaluations, 90M-210M, var/a_replay.py in the session): the score's SNR per share-point is
+about the same as the share's (the score moved about 6.8 per unit of found with a stderr of 0.3, a share-equivalent 0.044
+against the binomial 0.04), so the measure does not by itself declare a plateau later on a flat stretch. What it removes
+is the heavy tail (a synthetic 156-episode evaluation with a Student-t return: a +0.06 per evaluation climb is called a
+plateau at a median evaluation 6 by the score tracker and 15 by the share's) and the cost terms and shaping drift that
+move the score without the stage's objective.
+
+## `restore_evaluation_state` (`stage.py`, after `evaluation_signature`)
+
+Called by `_load_or_seed` on resume. Loads `checkpoint["convergence"]` into the tracker and
 `checkpoint["controller"]` into the controller. If `controller.stale_ladder` it also clears both trackers. If the saved
 `score_kind` (default "" for old checkpoints) differs from the run's, it calls `tracker.forget_scores()` and
 `controller.forget_scores()` (best.pt stays on disk; the next evaluation is the new best). The controller's own
 `tracker` is the same object as the `TrainingRun.tracker` (`train.py:701`), so after `stale_ladder` and a kind change
 `forget_scores` runs twice on the same object (harmless).
-`controller.forget_scores` (`:744`) keeps KL, entropy and rung lists and the plateau, and clears best, baseline summary,
-the ladders' scores and each class's tracker, scores and convergence.
+`controller.forget_scores` keeps KL, entropy and rung lists, and clears the best, baseline summary, **the plateau
+(`plateau_env_steps = None`, so the learning-rate anneal returns to the full rate until a new tracker plateaus)**, the
+ladders' scores and each class's tracker, scores and convergence (it used to keep the plateau; the tracker that declared
+it is the one being dropped).
+
+Since 2026-10-09 the function also takes `judged` (the overall tracker's column, `""` = the score), `signature` and a
+`notes` list. Checkpoints now save `judged` and `evaluation_signature` (`evaluation_signature(config, judged)`:
+`episodes`, `sampled_every`, `deterministic`, the sorted `heldout` arena names, `layout_sampling.replay_fraction` and
+`judged`; the arms are not part of it). On resume, in order: stale ladder; score kind differs; `judged` differs (a
+checkpoint without the key counts as `""`, so every checkpoint saved before decision 0022 resets on a stage with a
+measure); signature differs (the reason lists the changed keys). Each calls `tracker.forget_scores()` and
+`controller.forget_scores()`, keeping `best.pt`, the rungs and the entropy/KL history. A checkpoint with no signature
+is unknown, not different: it is kept and `notes` gets one line (printed by the Trainer). The Trainer prints the reason
+and appends it to `runs/<stage>/events.log` (`Run.log_event`, the sim's line format).
 
 ## Config keys read here
 

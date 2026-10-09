@@ -165,7 +165,7 @@ def check_resume(run_dir: Path, stage_json: Path, config_path: Path, checkpoint_
 
     from animus.config import TrainConfig
     from animus.runs import resume_checkpoint_path, resume_mismatch
-    from animus.stage import ConvergenceController, restore_evaluation_state
+    from animus.stage import ConvergenceController, evaluation_signature, restore_evaluation_state
     from animus.stages import layout_changes
     from animus.train import make_trainer, trainer_inputs
 
@@ -245,8 +245,11 @@ def check_resume(run_dir: Path, stage_json: Path, config_path: Path, checkpoint_
     wanted = config.eval.score_column()
     score_kind = wanted if wanted in spec.episode_info_names else ""
     controller = ConvergenceController(config, [layout.name for layout in spec.layouts])
+    judged = config.convergence.measure if config.convergence.measure in spec.episode_info_names else ""
+    controller.measure = judged
     try:
-        dropped = restore_evaluation_state(controller.tracker, controller, checkpoint, score_kind)
+        dropped = restore_evaluation_state(controller.tracker, controller, checkpoint, score_kind, judged,
+                                           evaluation_signature(config, judged))
     except Exception as error:  # noqa: BLE001 - whatever the state is, say what it did
         report.add("FAIL", "restore_evaluation_state", f"{type(error).__name__}: {error}")
         return report

@@ -425,8 +425,23 @@ class CostLadder(ShapingFade):
         return not self.enabled or (self.settled and self.evals_at_rung >= self.window)
 
 
+def evaluation_signature(config: TrainConfig, judged: str) -> dict:
+    """What a score is a score of: the evaluation's format and the quantity the overall tracker judges.
+
+    A best measured under one format (78 frozen episodes, the replayed seeds) is not comparable with the next
+    (156 sampled ones, fresh seeds, a held-out sweep): the margin of an old, lucky best then keeps every later
+    evaluation from counting (move2_seek, 2026-10-09: nothing counted from 90M to 170M). `judged` is the column the
+    overall tracker reads ("" = the score). The arms are not part of it: they replay the evaluation's seeds and never
+    reach the tracker."""
+    evaluation = config.eval
+    return {"episodes": int(evaluation.episodes), "sampled_every": int(evaluation.sampled_every),
+            "deterministic": bool(evaluation.deterministic), "heldout": sorted(evaluation.heldout),
+            "replay_fraction": float(config.layout_sampling.replay_fraction), "judged": judged}
+
+
 def restore_evaluation_state(tracker: ConvergenceTracker, controller: "ConvergenceController", checkpoint: dict,
-                             score_kind: str) -> str | None:
+                             score_kind: str, judged: str = "", signature: dict | None = None,
+                             notes: list[str] | None = None) -> str | None:
     """Load a resumed checkpoint's evaluation state, unless its scores are of another kind than the run's now.
 
     `score_kind` is the episode info column the run scores on ("" = the return; EvalResult.score_column). A checkpoint
@@ -434,6 +449,11 @@ def restore_evaluation_state(tracker: ConvergenceTracker, controller: "Convergen
     tracker and the controller's score-based state start over -- best.pt stays on disk, but the next evaluation is
     the new best -- and the reason is returned for the run to print; None when nothing had to be dropped. A
     gate-stepped ladder's checkpoint saved before the convergence state was re-baselined per rung is dropped alike.
+
+    `judged` is the column the overall tracker reads now (ConvergenceController.measure; "" = the score) and
+    `signature` the evaluation's format now (evaluation_signature): a checkpoint whose tracker judged something else
+    (one saved before the overall tracker read the stage's measure judged the score) or was fed by another format
+    starts over alike. A checkpoint with no signature is unknown, not different: it is kept, and `notes` gets a line.
     """
     tracker.load_state_dict(checkpoint.get("convergence"))
     controller.load_state_dict(checkpoint.get("controller"))
@@ -454,6 +474,25 @@ def restore_evaluation_state(tracker: ConvergenceTracker, controller: "Convergen
         dropped.append(f"the checkpoint's evaluations were scored on {saved or 'the return'} and this run scores on "
                        f"{score_kind or 'the return'}: the best score and the convergence history start over (best.pt "
                        f"is kept)")
+    elif checkpoint.get("judged", "") != judged:
+        tracker.forget_scores()
+        controller.forget_scores()
+        dropped.append(f"the checkpoint's overall tracker judged {checkpoint.get('judged') or 'the score'} and this "
+                       f"run's judges {judged or 'the score'}: the best, the plateau the learning rate anneals from "
+                       f"and the convergence history start over (best.pt is kept)")
+    elif signature is not None:
+        before = checkpoint.get("evaluation_signature")
+        if before is None:
+            if notes is not None:
+                notes.append("the checkpoint carries no evaluation signature (saved before it was recorded): its "
+                             "evaluation state is kept as it is")
+        elif before != signature:
+            changed = ", ".join(f"{key} {before.get(key)!r} -> {signature[key]!r}" for key in signature
+                                if before.get(key) != signature[key])
+            tracker.forget_scores()
+            controller.forget_scores()
+            dropped.append(f"the evaluation changed since the checkpoint ({changed}): the best, the plateau the "
+                           f"learning rate anneals from and the convergence history start over (best.pt is kept)")
     return "; ".join(dropped) or None
 
 
@@ -466,6 +505,9 @@ class ConvergenceController:
         self.tracker = self._tracker(c.patience if self.evaluating else 0)
         self.layouts: dict[str, LayoutState] = {
             name: LayoutState(name, self._tracker(c.window)) for name in layout_names}
+        # The column the overall tracker and the classes judge (convergence.measure when the sim writes it, else the
+        # score, ""): the Trainer narrows it to the episode info columns the scenario has.
+        self.measure = c.measure
         self.best_summary: dict | None = None
         self.baseline_summary: dict | None = None
         self.last_outcome: Outcome | None = None
@@ -559,7 +601,11 @@ class ConvergenceController:
         self.evals += 1
         before_rungs = self._gate_rungs()
         stderr = summary.get("stderr", 0.0)
-        improved = self.tracker.observe(summary["score"], env_steps, stderr)
+        # The overall tracker (best.pt, the plateau the learning rate anneals from) judges what the stage is for: its
+        # measure, a share with a binomial standard error, when it has one. The score is a heavy-tailed return whose
+        # standard error (0.2-0.3 on M2) makes the margin 0.6-1.1, wider than most of what a stage gains.
+        judged, judged_stderr = self._judged_score(summary)
+        improved = self.tracker.observe(judged, env_steps, judged_stderr)
         if improved:
             self.best_summary = summary
         # The cost ladder climbs first; the anneal waits until it has been at full price for its window.
@@ -661,9 +707,10 @@ class ConvergenceController:
         self.baselined = self._gate_rungs()
 
     def _judged_score(self, row: dict) -> tuple[float, float]:
-        """A class's convergence score from its evaluation row: the stage's own measure when convergence.measure
-        names a column the row has (a share's standard error from its episodes), else the score."""
-        measure = self.config.convergence.measure
+        """The convergence score of an evaluation row (a class's, or the whole summary for the overall tracker): the
+        stage's own measure when convergence.measure names a column the row has (a share's standard error from its
+        episodes), else the score."""
+        measure = self.measure
         if measure and row.get(measure) is not None:
             value = float(row[measure])
             episodes = max(1, int(row.get("episodes", 1) or 1))
@@ -741,10 +788,13 @@ class ConvergenceController:
 
     def forget_scores(self) -> None:
         """Drop the score-based state -- the best summary, each class's tracker, scores and convergence -- when the
-        scores to come are of another kind (restore_evaluation_state). The signals with no score in them (KL, entropy,
-        rung, the plateau the learning rate anneals from) are kept: they mean the same either way."""
+        scores to come are of another kind or format (restore_evaluation_state). The signals with no score in them (KL,
+        entropy, rung) are kept: they mean the same either way. The plateau the learning rate anneals from goes: the
+        tracker that declared it is dropped, and an anneal under way from it returns to the full rate until the new
+        tracker plateaus (as rebaseline does)."""
         self.best_summary = None
         self.baseline_summary = None
+        self.plateau_env_steps = None
         self.fade.forget_scores()
         self.costs.forget_scores()
         for state in self.layouts.values():
