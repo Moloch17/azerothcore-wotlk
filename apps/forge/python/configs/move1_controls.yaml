@@ -135,9 +135,10 @@ eval:
 # compass and without, how fast, how precisely, and how cleanly it got there. compass_withheld is the share of the
 # episodes that withheld it (training: the rung's chance). Watch arrived_no_compass against it (amendment 5): near 0 at
 # the first rungs (25%, 60% withheld) means the camera is not being learned. stop_distance is the air between the body
-# and the object's widest side. The time and its ratio are read in sight of the spawn (_sight): round a corner (_corner) the optimum is still
-# the straight line through the wall, so its ratio reads high by the corner, not by slowness; the evaluation's tables
-# also split every measure by placement (category objective_corner). Targets are a readout, never a gate.
+# and the object's widest side. The time and its ratio are read in sight of the spawn (_sight): round a corner
+# (_corner) the optimum is still the straight line through the wall, so its ratio reads high by the corner, not by
+# slowness; the evaluation's tables also split every measure by placement (category objective_corner). Targets are a
+# readout, never a gate.
 status:
   headline: [arrived, arrived_no_compass, arrived_with_compass, compass_withheld, arrive_seconds_sight,
              time_ratio_sight, time_ratio_corner, stop_distance, overshoot, stops_near, course_kinks,

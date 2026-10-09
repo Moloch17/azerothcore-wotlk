@@ -1434,7 +1434,8 @@ class TrainingRun:
     def evaluate_arms(self, plain: dict | None) -> None:
         """eval.arms: the evaluation's own seeds played again beside the plain "all bots" one -- "with_human", the
         sim's human stand-in in one seat of every party, "with_partners", the fixed co-op partner set in some, and the
-        ablations "no_flag", "no_camera" and "no_compass" (the learner's input edited, evaluation.ablation_chooser) -- and
+        ablations "no_flag", "no_camera" and "no_compass" (the learner's input edited, evaluation.ablation_chooser)
+        -- and
         reported apart as policy <arm> in eval.csv and eval.jsonl, with the gap to the plain one. A reading only:
         neither the tracker, the controller nor the partners' pool sees it."""
         config = self.config
