@@ -1,0 +1,25 @@
+# Overlay for a RESEEDED move2_seek (owner, 2026-10-09: "build it and use this run to reseed stage 2 at the last rung").
+# Not a stage config: it never extends anything, nothing lists it as a stage (it lives under configs/overlays/), and it
+# is applied only by hand, `--overlay` on the learner command line (AnimusForge.Learner.Args), over move2_seek.yaml
+# with its whole extends chain, before any --set. Remove it from the args to get the normal stage back. The run keeps
+# the name and the stage move2_seek (the sim's stage table); what changes is where it starts and how fast it learns.
+#
+# The networks come from the live run's checkpoint through finetune_from (the default path
+# runs/_finetune/move2_seek/best.pt, picked up when the file exists): the trunk, the GRU memory, the goal heads, every
+# layout's adapters, observation normalisers and policy heads, the camera and map encoders and the look head, and the
+# value normaliser (a fine-tune of this stage). The optimisers, the evaluation trackers, the ladder, the learning-rate
+# and entropy schedules and the counters start fresh.
+
+# The ladder starts at its last rung, the deep placement, with the aids (Sighting, NewGround, RoomSeen) and the shaping
+# off and the 300 s episode: one rung, scale 0.0. The placement rung is read off the shaping scale by the sim
+# (SightDraw::Rung), and the lower rungs are not lost: a tenth of training episodes still draw the front-room rung
+# (SeekTuning.CarryShare, Draw::PlacedRung), as they do at the last rung of the four-rung ladder.
+fade:
+  rungs: [0.0]
+
+# The rate the stage ran at before the 2026-10-09 raise to 2.2e-4, which the false anneal mostly cancelled (the rate
+# was 0.4 x that from ~109M): a restart from a settled policy with fresh Adam moments should not also take a larger
+# step. Roll back (and go lower) if approx_kl_move passes 0.03 or found_deep drops by 0.08 against its first reading.
+mappo:
+  actor_lr: 0.00015
+  critic_lr: 0.00015
