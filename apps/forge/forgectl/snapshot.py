@@ -217,7 +217,9 @@ def run_doc(read: dict, now: float | None) -> dict:
             "reason": finished.get("reason"), "advanced": finished.get("advanced"),
             "env_steps": num(finished.get("env_steps")), "best_score": num(finished.get("best_score"))},
         "spec": {"decision_ticks": num(spec.get("decision_ticks")), "tick_ms": num(spec.get("tick_ms")),
-                 "env_groups": num(spec.get("env_groups")), "num_envs": num(spec.get("num_envs"))},
+                 "env_groups": num(spec.get("env_groups")), "num_envs": num(spec.get("num_envs")),
+                 "jitter_ms": num(spec.get("jitter_ms")), "spike_prob": num(spec.get("spike_prob")),
+                 "spike_max_ms": num(spec.get("spike_max_ms"))},
     }
 
 

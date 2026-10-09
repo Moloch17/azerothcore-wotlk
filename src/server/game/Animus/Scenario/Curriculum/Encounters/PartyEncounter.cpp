@@ -298,7 +298,7 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
                 if (Unit* enemy = env.FindTargetUnit(enemySlot);
                     enemy && enemy->IsAlive() && enemy->IsInCombat() && enemy->GetVictim() == bot)
                     ++onBot;
-            ledger.Add(RewardTerm::Threat, -tuning.PulledThreat * float(onBot) * _scenario.DecisionScale());
+            ledger.Add(RewardTerm::Threat, -tuning.PulledThreat * float(onBot) * _scenario.StepScale(env));
         }
     }
 
@@ -312,8 +312,8 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
             if (!data.Seats[member].L)
                 continue;
             Player* mate = _scenario.SeatBotInWorld(env, member);
-            seat.GroupMemberMs += _scenario.DecisionMs();
-            seat.GroupKeptMs += mate && mate->IsAlive() && mate->GetHealthPct() > 50.0f ? _scenario.DecisionMs() : 0;
+            seat.GroupMemberMs += _scenario.StepMs(env);
+            seat.GroupKeptMs += mate && mate->IsAlive() && mate->GetHealthPct() > 50.0f ? _scenario.StepMs(env) : 0;
         }
 
     // Every other seat, not only the ones the observation has slots for: a heal lands on whoever needed it.
@@ -353,7 +353,7 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
             seat.ThreatOnTeammates += onTeammate;
             if (IsTank(data.Seats[seatIndex]))
                 ledger.Add(RewardTerm::TeammateThreat,
-                    -tuning.TankLoseTeammate * float(onTeammate) * _scenario.DecisionScale());
+                    -tuning.TankLoseTeammate * float(onTeammate) * _scenario.StepScale(env));
         }
 
         if (teammate->IsAlive())
@@ -406,7 +406,7 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
     SeatState const& state = data.Seats[seatIndex];
     Aptitude const& apt = state.Apt;
     AgentStats const& step = env.StepStats[seatIndex];
-    float const scale = _scenario.DecisionScale();
+    float const scale = _scenario.StepScale(env);
     if (!bot->IsAlive())
         return;
 
@@ -440,8 +440,8 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
     if (tank && bot->IsAlive() && bot->IsInCombat())
     {
         SeatParty& reading = _envs[env.Index].Seats[seatIndex];
-        reading.TankFightMs += _scenario.DecisionMs();
-        reading.TankModeMs += InTankingStance(bot) ? _scenario.DecisionMs() : 0;
+        reading.TankFightMs += _scenario.StepMs(env);
+        reading.TankModeMs += InTankingStance(bot) ? _scenario.StepMs(env) : 0;
     }
     if (tank)
     {
@@ -466,7 +466,7 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
                 ledger.Add(RewardTerm::DamageDealt, rolePay * tuning.TankTarget * state.LastStepDamage);
             }
             if (onBot)
-                seat.PulledOffMs += _scenario.DecisionMs();
+                seat.PulledOffMs += _scenario.StepMs(env);
             ledger.Add(RewardTerm::Threat, -rolePay * tuning.PulledOff * float(onBot) * scale);
         }
 
@@ -514,7 +514,7 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
     uint64 const active = std::max<uint64>(seat.ActiveMs, state.PurposefulMs);
     if (bot->IsInCombat() && enemyNear && env.EpisodeElapsedMs >= active + tuning.IdleMs)
     {
-        seat.IdleMs += _scenario.DecisionMs();
+        seat.IdleMs += _scenario.StepMs(env);
         ledger.Add(RewardTerm::Stall, -tuning.Idle * scale);
     }
 }

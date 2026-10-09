@@ -214,6 +214,30 @@ mixes the rollout loop, evaluation, checkpointing and ladders. No tests cover it
 **How to verify any refactor here:** `stage_json_diff.py` old versus new build shows no change for a stage you did not mean to
 change, and `resume_check.py` against the live run's checkpoint.
 
+## Decision time jitter, 2026-10-08 (decision 0021)
+
+- The policy is not told the step. A decision lasts `DecisionMs` less the last overshoot plus its own (200-300 ms for the
+  default body, up to ~700 ms with a spike); neither the observation nor the STEP says which. The module knows its
+  accumulated tick time, so a `last_dt` input would be identical live, but it is a layout change (owner decision). Same for
+  a per-step dt on the wire to make the learner's discount `gamma ** (dt / reference_decision_ms)`.
+- The observation's own clocks stay nominal on purpose (`SeatView::DecisionMs`: entity and map memory age, free look, the
+  breath spent), because the realm's module passes `DecisionMs` for them; the module could pass its real accumulated time
+  and training follow, together.
+- The jitter defaults are an assumption (a stock world update and a rare spike), not a measurement: the audit could not
+  read the realm's tick. `python -m animus.human parity` reports the realm tick and decision intervals once captured;
+  set `Decision.JitterMs` / `SpikeMaxMs` from it.
+- All envs of a pool share a decision's length (the game clock is global). Under `HalfBatch` the mean decision drifts
+  about +7 ms with the default spikes (a spike swallows 125 ms periods); `HalfBatch` is off by default.
+- Changing `Decision.*` under a run you resume: the sim does not refuse it (the fingerprint compares only the machines
+  running now); the learner warns on start when `spec.json` of the run held other values (`train.py`). Verdict: warn, not
+  refuse -- a shift in the distribution the value function re-fits, not a shape mismatch. Resuming a run that trained on
+  exact ticks (M1 before this change) with the defaults is that shift; set `Decision.JitterMs 0` and `SpikeProb 0` to
+  keep it as it was.
+- About 2% of decisions at the defaults are followed by one of 5-50 ms (the carry after a spike); a floor is an option
+  (decision 0021), not done.
+- `forge run ... random` and `forge status` show the `decision time` row; the evaluation videos play at the nominal
+  `DecisionMs` per frame, so their game-time pace varies with the jitter.
+
 ## H. Layout and protocol cleanup, 2026-10-08 (lands with the next layout bump)
 
 Fixed (commits `Layout cleanup: ...` and `Drop the duplicate epochs_done metric`):

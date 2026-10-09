@@ -81,11 +81,11 @@ learner with "sent message type N with M bytes where ACT, MODE, WEIGHTS or REPLA
 
 ### SPEC payload
 
-`SpecMsg` (96 bytes, `"<12I32s4I"`, static_assert Protocol.h:260):
+`SpecMsg` (108 bytes, `"<12I32s4I2If"`, static_assert in Protocol.h):
 
 | Field | Type | Meaning |
 |---|---|---|
-| Version | u32 | `PROTOCOL_VERSION` (26). The learner refuses a mismatch (env.py:41). |
+| Version | u32 | `PROTOCOL_VERSION` (27). The learner refuses a mismatch (env.py:41). |
 | NumEnvs | u32 | This rank's envs (`RankEnvs(rank)`), not the pool's. |
 | AgentsPerEnv | u32 | Agent rows per env (seats plus any cast owner row). |
 | ObsDim | u32 | The largest layout's observation width; all rows padded to it. |
@@ -102,6 +102,13 @@ learner with "sent message type N with M bytes where ACT, MODE, WEIGHTS or REPLA
 | ImageBytes | u32 | Bytes per agent of the camera image: height x width x 4 (x 5 at 23-25); 0 without a vision block (21, 26). |
 | LookHeads | u32 | `FreeLook::HEADS` (3) with a vision block, else 0 (22). |
 | MapBytes | u32 | 13,824 (48 x 48 x 6) with a map block, else 0 (24). |
+| JitterMs | u32 | The run's tick jitter body (`AnimusForge.Decision.JitterMs`), 0 without jitter (27). |
+| SpikeMaxMs | u32 | The largest load spike, ms (`AnimusForge.Decision.SpikeMaxMs`), 0 without jitter (27). |
+| SpikeProb | f32 | A decision's chance of a spike (`AnimusForge.Decision.SpikeProb`), 0 without jitter (27). |
+
+With jitter (decision 0021) `TickMs * DecisionTicks` (`Spec.decision_ms`) is the NOMINAL decision; a decision really lasts
+that much less the overshoot carried from the last plus its own, `Spec.mean_decision_ms` on average. No STEP field says how
+long a given decision was (adding one is an owner option, see known-issues.md).
 
 Then `u32 layoutCount`, then `layoutCount` x `LayoutMsg { u32 ObsDim; u32 NumActions; char Name[48]; }` (`"<II48s"`), then the
 episode info column names as comma-separated ASCII filling the rest of the payload, no terminator and no count. Layout
@@ -268,8 +275,10 @@ into the core (`359b303c4`); their content is UNVERIFIED (no comment survives; c
 | 25 | `present` 2 = stand-in row played by a frozen partner; `MODE_FLAG_STAND_IN` in training MODE. | Protocol.h:178; ac9873986, 641cf015c, aa303bc33 (scripted stand-in removed) |
 | 26 | Entity sensing (vision block 6): pixel = 4 bytes again (no entity slot), the static world only, so ImageBytes is height x width x 4; entities block 2 (columns 16-18 los, ang_width, ang_height), sight block 3. Message layout otherwise protocol 25's, less message type 12. The layout cleanup of 2026-10-08 folds in with no change of structure: SPEC `GoalCount` 348 -> 207 (goal block revision 1), `StateDim` 1958 -> 1927, and stage.json gains `state.dim`. | entity-sensing (this change) |
 
+| 27 | SPEC gains the tick jitter (`JitterMs`, `SpikeMaxMs`, `SpikeProb`; 12 bytes); STEP and ACT are 26's. | decision 0021 (this change) |
+
 Message type 12 (added at 18) is unused since 2026-10-08 (decision 0019, vision-only movement). It was folded into the 26 bump
-(`PROTOCOL_VERSION` is 26 in Protocol.h and protocol.py).
+(`PROTOCOL_VERSION` is 27 in Protocol.h and protocol.py).
 
 Commit-date mapping for 15-25 was taken from `git log` subjects and is approximate: the commit that sets the constant
 (`git log -S"PROTOCOL_VERSION = N;"`) was checked only for 24 and 25 (both 641cf015c on 2026-10-07; 24 first at 8452ff458,

@@ -2,7 +2,8 @@
 
 Two groups. MUST MATCH on every machine, because the workers' data has to mean what the host's learner thinks it means:
 the camera (AnimusForge.Vision.*), the map sense (AnimusForge.Map.*), the memory (AnimusForge.Memory.*), the ticks of a
-decision (AnimusForge.TicksPerDecision and every AnimusForge.Stage.<stage>.TicksPerDecision) and AnimusForge.HalfBatch.
+decision (AnimusForge.TicksPerDecision and every AnimusForge.Stage.<stage>.TicksPerDecision), AnimusForge.HalfBatch
+and the decisions' tick jitter (AnimusForge.Decision.JitterMs / SpikeProb / SpikeMaxMs; its Seed is per machine).
 MAY DIFFER, shown so a deploy cannot change the cost silently (audit finding O1): AnimusForge.Envs,
 AnimusForge.Learner.Cpus, MapUpdate.Threads. A key that is not in the conf takes the build's default; here it is None.
 """
@@ -11,13 +12,15 @@ from __future__ import annotations
 import re
 
 MUST_MATCH = re.compile(r"^AnimusForge\.(Vision\.[A-Za-z0-9_.]+|Map\.[A-Za-z0-9_.]+|Memory\.[A-Za-z0-9_.]+|"
-                        r"TicksPerDecision|Stage\.[A-Za-z0-9_]+\.TicksPerDecision|HalfBatch)$")
+                        r"TicksPerDecision|Stage\.[A-Za-z0-9_]+\.TicksPerDecision|HalfBatch|"
+                        r"Decision\.(JitterMs|SpikeProb|SpikeMaxMs))$")
 MAY_DIFFER = ("AnimusForge.Envs", "AnimusForge.Learner.Cpus", "MapUpdate.Threads")
 STAGE_TICKS = re.compile(r"^AnimusForge\.Stage\.([A-Za-z0-9_]+)\.TicksPerDecision$")
 LINE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9_.]*)\s*=\s*(.*?)\s*$")
 
 # The shell filter the probe runs on a conf (so a machine sends a few lines, not the whole file).
-GREP = (r"grep -aE '^[[:space:]]*(AnimusForge\.(Vision|Map|Memory)\.|AnimusForge\.(Stage\.[A-Za-z0-9_]+\.)?"
+GREP = (r"grep -aE '^[[:space:]]*(AnimusForge\.(Vision|Map|Memory)\.|AnimusForge\.Decision\.(JitterMs|SpikeProb|"
+        r"SpikeMaxMs)[[:space:]]*=|AnimusForge\.(Stage\.[A-Za-z0-9_]+\.)?"
         r"TicksPerDecision[[:space:]]*=|AnimusForge\.(HalfBatch|Envs|Learner\.Cpus)[[:space:]]*=|"
         r"MapUpdate\.Threads[[:space:]]*=)'")
 
@@ -55,6 +58,8 @@ def cadence(keys: dict[str, str]) -> dict:
     stage_ticks = {m.group(1): unquote(v) for k, v in sorted(keys.items()) if (m := STAGE_TICKS.match(k))}
     return {"ticks_per_decision": unquote(keys.get("AnimusForge.TicksPerDecision")),
             "half_batch": unquote(keys.get("AnimusForge.HalfBatch")),
+            "jitter": {k: unquote(keys.get(f"AnimusForge.Decision.{k}"))
+                       for k in ("JitterMs", "SpikeProb", "SpikeMaxMs")},
             "envs": unquote(keys.get("AnimusForge.Envs")),
             "learner_cpus": unquote(keys.get("AnimusForge.Learner.Cpus")),
             "map_update_threads": unquote(keys.get("MapUpdate.Threads")),

@@ -476,6 +476,18 @@ void AnimusForge::ProgressMonitor::ReportTraining(ForgeConfig const& config, Sim
         sim.WorldMsPerTick + sim.SimMsPerTick + sim.LearnerMsPerTick),
         Acore::StringFormat("world {:.1f} ms (map update), sim {:.1f} ms, learner {:.1f} ms", sim.WorldMsPerTick,
             sim.SimMsPerTick, sim.LearnerMsPerTick) });
+    if (sim.Decision.Jitter && sim.Decision.Count)
+        table.AddRow({ "decision time", Acore::StringFormat("mean {:.1f} ms", sim.Decision.MeanMs),
+            Acore::StringFormat("p95 {} ms, min {}, max {} of {} ms asked, {:.1%} with a spike ({}); {} decisions",
+                sim.Decision.P95Ms, sim.Decision.MinMs, sim.Decision.MaxMs, sim.Decision.NominalMs,
+                sim.Decision.SpikeShare, sim.Decision.Setting, Format::Count(sim.Decision.Count)) });
+    else
+        table.AddRow({ "decision time", Acore::StringFormat("{} ms", sim.Decision.NominalMs),
+            sim.Decision.Jitter ? "tick jitter on, no decision yet" : "exact (AnimusForge.Decision.JitterMs 0)" });
+    if (sim.Decision.Jitter && sim.Decision.Count)
+        table.AddRow({ "decision time", Acore::StringFormat("mean {:.1f} ms", sim.Decision.MeanMs),
+            Acore::StringFormat("p95 {} ms, min {}, max {} of {} ms asked", sim.Decision.P95Ms, sim.Decision.MinMs,
+                sim.Decision.MaxMs, sim.Decision.NominalMs) });
     table.AddRow({ "sim parts", Acore::StringFormat("{:.2f} ms observe", sim.Collect.Observe),
         SimPartsNote(sim.Collect) });
     table.AddRow({ "reset parts", Acore::StringFormat("{:.2f} ms create", sim.Collect.ResetCreate),

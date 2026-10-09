@@ -246,13 +246,16 @@ def checks(config: Config, facts: list[Facts], dev_rev: str | None, confs: dict,
                          "make the conf equal to the host's (edit by hand; conf-sync does not copy these) and "
                          "restart that worldserver"))
     else:
-        out.append(Check("sim keys", PASS, "Vision.*, Map.*, Memory.*, TicksPerDecision (global and per stage) and "
-                                           "HalfBatch equal on " + str(len(live)) + " machines"))
+        out.append(Check("sim keys", PASS, "Vision.*, Map.*, Memory.*, TicksPerDecision (global and per stage), "
+                                           "HalfBatch and Decision.* (the tick jitter) equal on "
+                                           + str(len(live)) + " machines"))
     for f in live:
         c = confkeys.cadence(f.status.conf_keys)
         stage = ",".join(f"{k}={v}" for k, v in c["stage_ticks"].items()) or "none"
         out.append(Check(f"cadence {f.status.machine.name}", INFO,
                          f"decision_ticks {shown(c['ticks_per_decision'])}, HalfBatch {shown(c['half_batch'])}, "
+                         f"jitter {shown(c['jitter']['JitterMs'])} ms + {shown(c['jitter']['SpikeProb'])} x "
+                         f"{shown(c['jitter']['SpikeMaxMs'])} ms, "
                          f"Envs {shown(c['envs'])}, Cpus {shown(c['learner_cpus'])}, stage ticks: {stage}"))
     out.append(scene_check(config, live))
     empty = [f.status.machine.name for f in live if f.status.conf_lines is not None and f.status.conf_lines <= 0]

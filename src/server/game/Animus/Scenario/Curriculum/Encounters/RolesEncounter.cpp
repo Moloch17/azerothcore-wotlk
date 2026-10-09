@@ -558,8 +558,8 @@ void Animus::Curriculum::RolesEncounter::Reward(Env& env, uint32 seatIndex, Play
     CurriculumTuning const& all = _scenario.Tuning();
     CurriculumTuning::RolesTuning const& tuning = all.Roles;
     float const w = Draw::TierWeight(all.Difficulty.TierScale, roles.Tier);
-    float const scale = _scenario.DecisionScale();
-    float const decision = float(_scenario.DecisionMs()) / 1000.0f;
+    float const scale = _scenario.StepScale(env);
+    float const decision = float(_scenario.StepMs(env)) / 1000.0f;
     AgentStats const& step = env.StepStats[seatIndex];
     // The drilled seat: seat 0, playing the drill's role (a makeup that could not fit it pays no drill).
     bool const drilledSeat = seatIndex == Draw::DRILLED_SEAT && state.DungeonRole == Draw::DrilledRole(roles.Drill);

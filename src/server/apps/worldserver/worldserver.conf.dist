@@ -5206,6 +5206,66 @@ AnimusForge.Stage.dungeon3_deadmines.TicksPerDecision = 5
 AnimusForge.HalfBatch = 0
 
 #
+#    AnimusForge.Decision.JitterMs
+#        Description: Tick jitter: the body of the overshoot of a decision, in milliseconds. The realm decides on the
+#                     first world tick that brings a bot's accumulated tick time to DecisionMs and keeps the
+#                     remainder (mod-animus CompanionParty), and its ticks are variable (stock
+#                     MinWorldUpdateTime 1, MapUpdateInterval 10), so a decision comes
+#                         DecisionMs - (the last decision's overshoot) + (its own)
+#                     after the one before: DecisionMs on average, a tick either side at worst. Training with
+#                     exact ticks showed a model one cadence only. With this set, every decision of every stage is
+#                     sized from an overshoot drawn from U(0, JitterMs), and the world advances that much game
+#                     time -- movement, auras, cooldowns, regeneration and the episode clock all integrate the
+#                     real step, and a per-second reward term is charged for the time that went by. The
+#                     observation does not change: what ages in it (entity and map memory, the free look) ages
+#                     by DecisionMs, which is all the realm's module knows. One draw per decision for the whole
+#                     pool, because the game clock (cooldowns, the global cooldown) is one; with
+#                     TicksPerDecision above 1 all the decision's ticks share the time. 0 with SpikeProb 0
+#                     switches it off: every decision is exactly DecisionMs, as before. 50 is a stock world
+#                     update; tune it from `python -m animus.human parity`'s realm timing once captured.
+#                     Read at the start of every scenario; the learner is told (SPEC, protocol 27). The same on
+#                     every machine of a cluster (the fingerprint refuses a worker that differs). Changing it
+#                     under a run you resume shifts the step it was trained on: the learner is not told per
+#                     step, so resume it deliberately.
+#        Default:     50
+#        Range:       0 - 1000
+
+AnimusForge.Decision.JitterMs = 50
+
+#
+#    AnimusForge.Decision.SpikeProb
+#        Description: A decision's chance of a load spike on top of the jitter's body: the realm's world tick
+#                     now and then takes far longer (a save, a flush, another worker's load), and the
+#                     decision that tick ends is late by all of it, and the next comes sooner (the carry). The spike adds U(50, SpikeMaxMs) ms to that
+#                     decision's overshoot; a spike over DecisionMs makes one long decision and a short one
+#                     after it, as the realm does. 0 = none.
+#        Default:     0.02
+#        Range:       0 - 1
+
+AnimusForge.Decision.SpikeProb = 0.02
+
+#
+#    AnimusForge.Decision.SpikeMaxMs
+#        Description: The largest spike, in milliseconds (see SpikeProb). A value of 50 or less is no spike.
+#                     At the defaults the longest decisions run to about 650-700 ms and the shortest to a few ms
+#                     (the one after a spike).
+#        Default:     400
+#        Range:       0 - 5000
+
+AnimusForge.Decision.SpikeMaxMs = 400
+
+#
+#    AnimusForge.Decision.Seed
+#        Description: This machine's stream of the jitter. The stream is a hash of (Seed, the scenario's name, the
+#                     cluster advertise address, the decision number), never the world's random numbers
+#                     (an evaluation episode reseeds those), so a run on one machine repeats and the machines
+#                     of a cluster draw different streams of the same distribution. Not compared across
+#                     a cluster.
+#        Default:     1
+
+AnimusForge.Decision.Seed = 1
+
+#
 #    AnimusForge.EpisodeSeconds
 #        Description: Game-time length of an episode, in seconds. Episodes end by truncation.
 #        Default:     60

@@ -11,7 +11,10 @@ from enum import IntEnum
 
 import numpy as np
 
-PROTOCOL_VERSION = 26
+PROTOCOL_VERSION = 27
+# 27: the tick jitter (AnimusForge.Decision.*, docs/forge/decisions/0021-decision-time-jitter.md): SPEC ends with the
+# jitter body in ms, the largest spike in ms and the spike probability (a float), all zero without jitter. STEP and ACT
+# are protocol 26's.
 # 26: entity sensing (vision block revision 6): a camera pixel is four bytes again -- distance, height, normal, the
 # class and objective byte, no entity slot -- of the static world alone, so Spec.image_bytes is height x width x 4;
 # the entity list's columns 16-18 are los, ang_width and ang_height (entities block revision 2, sight block revision
@@ -61,7 +64,8 @@ class MsgType(IntEnum):
 HEADER = struct.Struct("<II")  # type, payload length
 HELLO = struct.Struct("<III")  # version, this learner's rank, data-parallel learners (0 and 1 alone)
 # ..., scenario name, kinematics width (20), image bytes per agent (21), look heads (22), map bytes per agent (24)
-SPEC = struct.Struct(f"<12I{SCENARIO_NAME_SIZE}s4I")
+# ..., the tick jitter's body ms, largest spike ms and spike probability (27)
+SPEC = struct.Struct(f"<12I{SCENARIO_NAME_SIZE}s4I2If")
 LAYOUT_COUNT = struct.Struct("<I")
 LAYOUT = struct.Struct(f"<II{LAYOUT_NAME_SIZE}s")  # obs dim, actions, name
 STEP_HEADER = struct.Struct("<QII")  # decision counter, first env, env count
@@ -138,6 +142,30 @@ class Spec:
     look_heads: int = 0
     # Bytes per agent of each STEP's mental map crop (protocol 24): the map block's 48 x 48 x 6, 0 without one.
     map_bytes: int = 0
+    # The tick jitter of this run (protocol 27, AnimusForge.Decision.*): decision_ms is the NOMINAL decision. Each one
+    # really lasts decision_ms less the overshoot carried from the last decision plus its own (the realm keeps the
+    # remainder of the tick that crossed the threshold), so the mean is decision_ms plus the whole periods a long spike
+    # swallows (mean_decision_ms), and a discount compounded to decision_ms is right on average. The STEP does not say
+    # how long a given decision was. All zero without jitter.
+    jitter_ms: int = 0
+    spike_max_ms: int = 0
+    spike_prob: float = 0.0
+
+    @property
+    def mean_decision_ms(self) -> float:
+        """The expected game time of one decision under the jitter: decision_ms plus decision_ms times the mean number
+        of whole decision periods an overshoot (the body, plus a spike with spike_prob) spans -- the module's `%=` drops
+        those. 2.5 ms over the nominal at the defaults (50 ms body, 2% spikes of 50-400 ms), 0 without a spike."""
+        if self.spike_prob <= 0.0 or self.spike_max_ms <= 50:
+            return float(self.decision_ms)
+        period = max(1, self.decision_ms)
+        body = np.full(self.jitter_ms + 1, 1.0 / (self.jitter_ms + 1))
+        spike = np.zeros(self.spike_max_ms + 1)
+        spike[50:] = 1.0 / (self.spike_max_ms - 49)
+        # P(overshoot = o): the body alone with 1 - p, the body plus a spike with p.
+        over = (1.0 - self.spike_prob) * np.pad(body, (0, len(spike) - 1)) + self.spike_prob * np.convolve(body, spike)
+        periods = (np.arange(len(over)) // period) * period
+        return float(period + (over * periods).sum())
 
     @property
     def camera_bytes(self) -> int:
@@ -315,6 +343,9 @@ def encode_spec(spec: Spec) -> bytes:
         spec.image_bytes,
         spec.look_heads,
         spec.map_bytes,
+        spec.jitter_ms,
+        spec.spike_max_ms,
+        spec.spike_prob,
     )
     body += LAYOUT_COUNT.pack(len(spec.layouts))
     for layout in spec.layouts:
@@ -341,6 +372,9 @@ def decode_spec(payload: bytes) -> Spec:
         image_bytes=fields[14],
         look_heads=fields[15],
         map_bytes=fields[16],
+        jitter_ms=fields[17],
+        spike_max_ms=fields[18],
+        spike_prob=float(fields[19]),
         layouts=tuple(layouts),
         episode_info_names=tuple(names.split(",")) if names else (),
     )

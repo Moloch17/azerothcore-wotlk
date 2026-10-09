@@ -709,7 +709,7 @@ void Animus::Curriculum::PartyFollowEncounter::Reward(Env& env, uint32 seatIndex
     {
         Movement::ControlState const& held = seat.Controls.Held;
         UnitMoveType const kind = held.Walk ? MOVE_WALK : held.Forward < 0 && !held.Strafe ? MOVE_RUN_BACK : MOVE_RUN;
-        float const asked = bot->GetSpeed(kind) * float(_scenario.DecisionMs()) / 1000.0f;
+        float const asked = bot->GetSpeed(kind) * float(_scenario.StepMs(env)) / 1000.0f;
         float const charge = Standing::WallCharge(float(wallMs) / 1000.0f, moved, asked, costs.Wall,
             costs.WallSlide);
         if (charge > 0.0f)

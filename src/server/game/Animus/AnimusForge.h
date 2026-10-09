@@ -24,6 +24,7 @@
 #include "Map.h"
 #include "MapMgr.h"
 #include "MapUpdater.h"
+#include "DecisionClock.h"
 #include "EnvPool.h"
 #include "EvalVideo.h"
 #include "ForgeConfig.h"
@@ -61,6 +62,11 @@ namespace AnimusForge
         /// decision. A decision's scoring and observation run inside the map tasks that follow
         /// (OnMapEpilogue), so both have to be settled before the first of them starts.
         void OnWorldPrologue(uint32 diff);
+
+        /// The game time of the next world tick, asked by the update loop before it runs one: `nominal` (the tick the
+        /// configuration asks for) with a running scenario's jitter applied (AnimusForge.Decision.*, ADR 0021). Each
+        /// decision's ticks are sized together when its first is asked for. World thread.
+        [[nodiscard]] uint32 NextWorldTickMs(uint32 nominal);
 
         /// Inside a map's task, on the thread updating it: the envs on this map take the last decision's
         /// actions before its tick (OnMapPrologue) and are scored and observed after it (OnMapEpilogue).
@@ -390,6 +396,14 @@ namespace AnimusForge
         /// The running stage's split and world tick (ForgeConfig::TicksFor, movement-smooth A6), set when it starts.
         uint32 _runTicks = 1;
         uint32 _runWorldTickMs = 0;
+        /// The decisions' tick jitter (AnimusForge.Decision.*): the clock that sizes every tick of a running scenario,
+        /// and the tick it handed the update loop last (what OnUpdate expects the world to have run).
+        Animus::DecisionClock _decisionClock;
+        bool _jitterOn = false;
+        uint32 _plannedTickMs = 0;
+        /// Game ms each group's maps are owed: every world tick adds to both, a group's tick takes its own. The same
+        /// time MapMgr::ForgeTickDiff hands the group's maps, so the clocks below move by what the maps do.
+        uint32 _groupAccruedMs[2] = { 0, 0 };
         /// Half-batch (AnimusForge.HalfBatch with TicksPerDecision 1): the world ticks at half a decision and the
         /// pool's two groups' maps take turns; `_turn` is the group whose maps tick this world tick and decide at
         /// its end, `_nextTurn` the next one's. Without half-batch the one group ticks every world tick.

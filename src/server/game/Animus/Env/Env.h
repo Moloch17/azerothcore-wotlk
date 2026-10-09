@@ -140,6 +140,12 @@ namespace Animus
         bool Evaluating = false;
 
         uint32 EpisodeElapsedMs = 0;
+        /// Game ms this env has lived since its last decision was scored, and the ms the decision just scored covered
+        /// (EnvPool sets StepMs as it scores). A decision is DecisionMs on average, not each time: the tick jitter
+        /// (AnimusForge.Decision.*) makes it longer or shorter, and what a decision costs per second is charged for
+        /// the time it took. 0 until the first decision: a scenario reads it through StageScenario::StepMs.
+        uint32 StepAccruedMs = 0;
+        uint32 StepMs = 0;
         uint32 EpisodeLengthMs = 0;
         uint32 EpisodesCompleted = 0;
 

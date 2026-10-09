@@ -574,7 +574,7 @@ void Animus::Curriculum::CombatEncounter::Reward(Env& env, uint32 seatIndex, Pla
     float const w = Draw::TierWeight(_scenario.Tuning().Difficulty.TierScale, combat.Tier);
     AgentStats const& step = env.StepStats[seatIndex];
     float const maxHealth = float(std::max<uint32>(1, bot->GetMaxHealth()));
-    float const decision = float(_scenario.DecisionMs()) / 1000.0f;
+    float const decision = float(_scenario.StepMs(env)) / 1000.0f;
 
     // Outcome: what was taken down.
     if (combat.NewKills)
@@ -669,7 +669,7 @@ void Animus::Curriculum::CombatEncounter::Reward(Env& env, uint32 seatIndex, Pla
                 ++combat.InViewDecisions;
         }
         if (bot->HasAuraType(SPELL_AURA_MOD_REGEN) || bot->HasAuraType(SPELL_AURA_MOD_POWER_REGEN))
-            combat.RestMs += _scenario.DecisionMs();
+            combat.RestMs += _scenario.StepMs(env);
     }
 
     // The episode's end: survived it, and the rung's window.

@@ -225,6 +225,17 @@ void AnimusForge::ForgeConfig::Load()
             "{} ms", DecisionMs, DecisionMs - 1);
         DecisionMs -= 1;
     }
+    // AnimusForge.Decision.*: the tick jitter. A spike's range starts at 50 ms, so a maximum at or under it is no spike.
+    Jitter.JitterMs = std::min<uint32>(sConfigMgr->GetOption<uint32>("AnimusForge.Decision.JitterMs", 50), 1000);
+    Jitter.SpikeProb = std::clamp(sConfigMgr->GetOption<float>("AnimusForge.Decision.SpikeProb", 0.02f), 0.0f, 1.0f);
+    Jitter.SpikeMaxMs = std::min<uint32>(sConfigMgr->GetOption<uint32>("AnimusForge.Decision.SpikeMaxMs", 400), 5000);
+    Jitter.Seed = sConfigMgr->GetOption<uint32>("AnimusForge.Decision.Seed", 1);
+    if (Jitter.SpikeProb > 0.0f && Jitter.SpikeMaxMs <= 50)
+    {
+        LOG_WARN("module.animus", "AnimusForge.Decision.SpikeMaxMs = {} ms is not over the 50 ms a spike starts at; "
+            "AnimusForge.Decision.SpikeProb is ignored", Jitter.SpikeMaxMs);
+        Jitter.SpikeProb = 0.0f;
+    }
     // AnimusForge.Stage.<name>.TicksPerDecision, held to what TicksPerDecision is held to above.
     StageTicks.clear();
     for (std::string const& key : sConfigMgr->GetKeysByString("AnimusForge.Stage."))

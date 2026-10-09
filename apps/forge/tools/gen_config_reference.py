@@ -43,9 +43,16 @@ STOP_MARK = "# CURRICULUM TUNING"
 # (key regex, same on every machine, in the cluster fingerprint). First match wins.
 SAME_RULES = [
     (r"AnimusForge\.DecisionMs", "yes, enforced (the fingerprint refuses a worker that differs)",
-     "yes: decision=<DecisionMs>/<TicksPerDecision> (ClusterFingerprint in AnimusForge.cpp)"),
+     "yes: decision=<DecisionMs>/<TicksPerDecision>/<JitterMs>/<SpikeProb>/<SpikeMaxMs> (ClusterFingerprint in "
+     "AnimusForge.cpp)"),
     (r"AnimusForge\.TicksPerDecision", "yes, enforced (the fingerprint refuses a worker that differs)",
-     "yes: decision=<DecisionMs>/<TicksPerDecision> (ClusterFingerprint in AnimusForge.cpp)"),
+     "yes: decision=<DecisionMs>/<TicksPerDecision>/<JitterMs>/<SpikeProb>/<SpikeMaxMs> (ClusterFingerprint in "
+     "AnimusForge.cpp)"),
+    (r"AnimusForge\.Decision\.(JitterMs|SpikeProb|SpikeMaxMs)",
+     "yes, enforced (the fingerprint refuses a worker that differs)",
+     "yes: decision=<DecisionMs>/<TicksPerDecision>/<JitterMs>/<SpikeProb>/<SpikeMaxMs> (ClusterFingerprint in "
+     "AnimusForge.cpp)"),
+    (r"AnimusForge\.Decision\.Seed", "no: each machine its own stream (the cluster address is mixed in too)", "no"),
     (r"AnimusForge\.Stage\.<name>\.TicksPerDecision|AnimusForge\.Stage\..*\.TicksPerDecision",
      "keep equal by hand; a worker runs the host's value anyway (the START order carries ticks=, WorkerPlan in "
      "AnimusForge.cpp)", "no"),
@@ -73,6 +80,9 @@ CODE_RULES = {
     "AnimusForge.DecisionMs": "at least 1; rounded down to a multiple of TicksPerDecision, with an error",
     "AnimusForge.TicksPerDecision": "at least 1; capped at DecisionMs",
     "AnimusForge.HalfBatch": "needs TicksPerDecision 1 (error otherwise); an odd DecisionMs is lowered by 1",
+    "AnimusForge.Decision.JitterMs": "capped at 1000",
+    "AnimusForge.Decision.SpikeProb": "clamped to 0..1; ignored (warning) with a SpikeMaxMs of 50 or less",
+    "AnimusForge.Decision.SpikeMaxMs": "capped at 5000; 50 or less is no spike",
     "AnimusForge.EpisodeSeconds": "at least 1",
     "AnimusForge.ReportEpisodes": "at least 1",
     "AnimusForge.Cluster.Role": "standalone, host or worker (anything else: error, standalone); a worker with an "

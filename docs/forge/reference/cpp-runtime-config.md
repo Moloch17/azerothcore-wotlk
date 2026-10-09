@@ -38,6 +38,10 @@ A boolean parse or a missing key gives the default below. Where code clamps, the
 | `AnimusForge.DecisionMs` | 250 | min 1; reduced to a multiple of `TicksPerDecision`; made even under half-batch | 198, 208-227 |
 | `AnimusForge.TicksPerDecision` | 1 | min 1; at most `DecisionMs` | 199, 202-207 |
 | `AnimusForge.Stage.<name>.TicksPerDecision` | global value | per-stage split; dropped with an error if it does not divide `DecisionMs` | 230-248 |
+| `AnimusForge.Decision.JitterMs` | 50 | tick jitter body, ms (decision 0021); capped at 1000; 0 with `SpikeProb` 0 = exact ticks; in the fingerprint | `ForgeConfig.cpp` (Load) |
+| `AnimusForge.Decision.SpikeProb` | 0.02 | a decision's chance of a load spike; clamped 0..1; ignored (warning) when `SpikeMaxMs` <= 50; in the fingerprint | `ForgeConfig.cpp` |
+| `AnimusForge.Decision.SpikeMaxMs` | 400 | a spike adds `U(50, this)` ms; capped at 5000; in the fingerprint | `ForgeConfig.cpp` |
+| `AnimusForge.Decision.Seed` | 1 | this machine's jitter stream (hashed with the scenario name and the cluster advertise address); not in the fingerprint | `ForgeConfig.cpp` |
 | `AnimusForge.HalfBatch` | 0 | needs `TicksPerDecision` 1 (error otherwise); stages with a finer split run one group | 200 |
 | `AnimusForge.ObserveAfterJoin` | 0 | read with logging off; documented in conf.dist (5626); a vision stage refuses it | 201 |
 | `AnimusForge.EpisodeSeconds` | 60 | min 1 | 250 |

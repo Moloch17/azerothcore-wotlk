@@ -108,6 +108,23 @@ namespace AnimusForge
 
         CollectMs Collect;
 
+        /// The game time of the decisions run so far under the tick jitter (AnimusForge.Decision.*, ADR 0021): what a
+        /// decision lasted, not what it was asked to. Jitter false = every decision was exactly NominalMs.
+        struct DecisionTime
+        {
+            bool Jitter = false;
+            uint32 NominalMs = 0;
+            uint64 Count = 0;
+            double MeanMs = 0.0;
+            uint32 MinMs = 0;
+            uint32 P95Ms = 0;
+            uint32 MaxMs = 0;
+            double SpikeShare = 0.0;        // decisions that held a load spike
+            std::string Setting;            // "U(0, 50) ms + 0.02 spikes of U(50, 400) ms"
+        };
+
+        DecisionTime Decision;
+
         /// Where the core's map update went, ms per decision summed over every map (Map::UpdateTiming).
         struct WorldMs
         {

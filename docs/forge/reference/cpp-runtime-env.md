@@ -10,7 +10,7 @@ the observation blocks in [cpp-blocks.md](cpp-blocks.md).
 `StageSettings::FirstEnvId + index`, used in bot names and account ids), `MapId`/`InstanceId` (the env's map; if both are set
 before `Setup` the env is built there, else the first seat's bot opens a new instance), `Bots`/`Targets`/`Allies` (GUID
 vectors; objects are resolved per use, never held as pointers across ticks), `EpisodeSeedIndex` (evaluation or replay seed
-index, `0xFFFFFFFF` for training), `Evaluating`, `EpisodeElapsedMs/LengthMs/Completed`, `StepStats`/`EpisodeStats`
+index, `0xFFFFFFFF` for training), `Evaluating`, `EpisodeElapsedMs/LengthMs/Completed`, `StepAccruedMs/StepMs` (game ms of the decision just lived, decision 0021), `StepStats`/`EpisodeStats`
 (`AgentStats` per agent), `StepInterruptedTargets`. `Find{Map,Bot,Target,TargetUnit}` resolve through `sMapMgr->FindMap`,
 `ObjectAccessor::FindPlayer`, `Map::GetCreature` (`Env.cpp:26-64`). Limits: `MAX_ALLIES` 4, `MAX_AGENTS` 40, `MAX_TARGETS` 24
 (`Env.h:35-43`); `StageScenario.cpp:95-98` `static_assert`s that `MAX_SEATS`, `PACK_SLOTS` fit them.
@@ -44,7 +44,12 @@ per env (`:121`).
 
 ### A decision, in phases
 
-1. World thread, before the maps tick: `AdvanceClock(group, diff)` then, if the tick ends a decision,
+0. (Before the world tick, ForgeMain's loop: `Forge::NextWorldTickMs(nominal)` sizes the tick. With the tick jitter
+   (decision 0021) the first tick of a decision plans the whole decision with `Animus::DecisionClock::Plan`: length
+   `max(ticks, nominal - carry + overshoot)` split over the decision's ticks. `Env::StepAccruedMs` collects what a
+   decision lived; `ObserveEnv` makes it `Env::StepMs` before `Reward`.)
+1. World thread, before the maps tick: `AdvanceClock(group, owed)` (`owed` = the game time the group's maps were owed, the
+   same `MapMgr::ForgeTickDiff` hands them; it is `diff` without half-batch) then, if the tick ends a decision,
    `BeginDecision(group)` (clears the group's per-env timing/`_observed`/`_finishedOnMap`, marks `_decisionOpen[group]`).
 2. Map thread, before `Map::Update`: `ApplyActionsForMap(map)` - for each env on the map, `ApplyGoals`, `ApplyLook` (if the
    buffers exist) and `ApplyActions`; adds its time to `_applyNs` (`:329`). Then `SubTickMap(map, diff, decided)` ->

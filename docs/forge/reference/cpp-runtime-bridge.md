@@ -17,7 +17,7 @@ little-endian (`:186`). The sim is the server (the listening side), the learner 
 | Message | Direction | Payload | Handled at |
 |---|---|---|---|
 | HELLO | learner -> sim | `HelloMsg {Version, Rank, Ranks}` (12 bytes) | `LockstepServer::AcceptClients` (`LockstepServer.cpp:186-210`) |
-| SPEC | sim -> learner | `SpecMsg` (96 bytes, `static_assert` `:260`), `u32 layoutCount`, `LayoutMsg[n]` (`ObsDim`, `NumActions`, 48-byte name), then the episode-info column names comma-joined with no terminator | `Forge::SendSpec` (`AnimusForge.cpp:2780`) |
+| SPEC | sim -> learner | `SpecMsg` (108 bytes, `static_assert` in Protocol.h; ends with the tick jitter, protocol 27), `u32 layoutCount`, `LayoutMsg[n]` (`ObsDim`, `NumActions`, 48-byte name), then the episode-info column names comma-joined with no terminator | `Forge::SendSpec` (`AnimusForge.cpp:2780`) |
 | DEVICE | sim -> learner | `DeviceMsg {Device, Envs, ObsHandle[64], StateHandle[64], MaskHandle[64]}` plus one more 64-byte handle when the stage has a camera | `OfferDevice` (`:2824`) |
 | DEVICE_ACK | learner -> sim | `DeviceAckMsg {Accepted}` | `AwaitDeviceAnswer` (`:2879`) |
 | STEP | sim -> learner | `StepHeader {u64 Decision, u32 EnvBegin, u32 EnvCount}` then the arrays below | `SendStep` (`:2938`) |

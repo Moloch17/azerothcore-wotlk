@@ -149,7 +149,10 @@ void Animus::EnvPool::AdvanceClock(uint32 group, uint32 diff)
 {
     auto const [begin, count] = GroupRange(group);
     for (uint32 e = begin; e < begin + count; ++e)
+    {
         _envs[e].EpisodeElapsedMs += diff;
+        _envs[e].StepAccruedMs += diff;
+    }
 }
 
 void Animus::EnvPool::SetGroups(uint32 split)
@@ -245,6 +248,8 @@ void Animus::EnvPool::ObserveEnv(Env& env, bool onMapThread)
     CollectTiming& timing = _envCollect[e];
     auto mark = std::chrono::steady_clock::now();
 
+    // The time this decision took, for every term charged per second (jittered ticks, AnimusForge.Decision.*).
+    env.StepMs = std::exchange(env.StepAccruedMs, 0u);
     _scenario.Reward(env, &Rewards[e * agentsPerEnv]);
     timing.RewardNs += Since(mark);
 
@@ -670,6 +675,8 @@ void Animus::EnvPool::RecordPrevented(AgentSlot const& victimSlot, bool victimIs
 void Animus::EnvPool::ResetEnv(Env& env)
 {
     env.EpisodeElapsedMs = 0;
+    env.StepAccruedMs = 0;
+    env.StepMs = 0;
 
     std::vector<ObjectGuid> const previousBots = env.Bots;
     std::vector<ObjectGuid> const previousAllies = env.Allies;
