@@ -84,7 +84,9 @@ mappo:
   lr_final_fraction: 0.1
   # A floor on exploration: 25 held controls, and the last half-yard of a stop is found by trying.
   entropy_final_fraction: 0.3
-  epochs: 4
+  # Two epochs, as every later stage (owner, 2026-10-08): at four the run showed approx KL 0.019 and clip 0.17, so
+  # the later epochs mostly reuse data the policy has already moved off; two is the project-wide setting.
+  epochs: 2
   minibatches: 4
   max_grad_norm: 0.5
   use_value_norm: true
