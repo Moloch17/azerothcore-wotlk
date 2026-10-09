@@ -73,6 +73,8 @@ status:
     died: "<= 0.01"
 
 convergence:
+  # M1's patience, restated: M2's reseed state raises its own to 6 (2026-10-09).
+  patience: 3
   # Converged on the stage's own measure, at the top of its ladder (at_top_rung: the ladder at the key rung).
   measure: right_object
 

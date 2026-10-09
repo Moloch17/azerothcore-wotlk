@@ -1,3 +1,12 @@
+# >>> RESEED STATE (2026-10-09, owner: 'use this run to reseed stage 2 at the last rung') <<<
+# This file is edited in place for a run that is a FRESH start of move2_seek seeded from the previous M2 run's
+# checkpoint (runs/_finetune/move2_seek/best.pt on the host): the ladder is the single deep rung (fade.rungs [0.0];
+# the four-rung ladder was [1.0, 0.5, 0.25, 0.0]), the learning rate is 1.5e-4, and the overall plateau waits 6
+# evaluations (convergence.patience 6; M1's 3 is restated in M3 and M4). RESTORE THE FOUR-RUNG LADDER BEFORE ANY
+# FROM-SCRATCH M2 (M1 -> M2): a start at fade rungs [0.0] from an M1 seed skips the easy rungs (the lesson of
+# move1_controls, whose yaml was left at its end state). The same state as a hand-applied overlay:
+# configs/overlays/move2_seek_reseed.yaml.
+#
 # M2 -- seek (perception-goals plan §4, "M2 in detail"; REDESIGN §2; the user, 2026-10-06: "M2 seek also happens
 # inside the same Stockades instance. It has to find an object in a room, and that object and room is randomized.").
 # The same empty Stockades as M1: the seat at a random hallway point (the entrance among them), facing a random way;
@@ -46,8 +55,8 @@ mappo:
   # 0.01 line this comment names, and found was still rising slowly. Free in throughput. Roll back if approx_kl_move
   # passes 0.03, explained_variance falls under 0.7 or found_deep drops by 0.08. M3 and M4 extend this file and keep
   # 1.5e-4 (restated there).
-  actor_lr: 0.00022
-  critic_lr: 0.00022
+  actor_lr: 0.00015
+  critic_lr: 0.00015
   # The camera's update in chunks (overseer, P2 review): the cluster's 8 GB and 16 GB cards need it, and the bench
   # ran out of memory at 192 envs unchunked (live M1 fit at 16 of 21.5 GB without it; the difference is unexplained).
   # "auto" (was 2048 for every card): the learner picks the chunk at start from the device's free memory, the whole
@@ -123,6 +132,9 @@ status:
     died: "<= 0.01"
 
 convergence:
+  # Six evaluations without a new best (60M steps) before the score counts as plateaued (M1's 3, which the
+  # reseeded run, starting near 0.77 found with a margin of ~0.1, would reach at once and start the anneal early).
+  patience: 6
   # Converged on the stage's own measure, the share of objects found; at the top of its ladder (at_top_rung: the
   # ladder at the deep rung, which is the fade's end).
   measure: found
@@ -133,7 +145,7 @@ convergence:
 fade:
   # Its own rungs (hallway, doorway, front room, deep), restated: they are M2's placements, not M1's shaping fade,
   # and this stage's gate and plateau rule are its own below.
-  rungs: [1.0, 0.5, 0.25, 0.0]
+  rungs: [0.0]
   gate_metric: found
   gate_value: 0.8
   # Steps on the gate alone (the dungeon plan's rule; M1 waited ~20M steps on a plateau with the gate long met).
