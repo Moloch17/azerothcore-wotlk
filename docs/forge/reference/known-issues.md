@@ -228,8 +228,15 @@ change, and `resume_check.py` against the live run's checkpoint.
   set `Decision.JitterMs` / `SpikeMaxMs` from it.
 - All envs of a pool share a decision's length (the game clock is global). Under `HalfBatch` the mean decision drifts
   about +7 ms with the default spikes (a spike swallows 125 ms periods); `HalfBatch` is off by default.
-- Changing `Decision.*` under a run you resume is not refused or warned about by the sim: the fingerprint compares only the
-  machines running now. `forge status` and the learner's first lines show the values in force.
+- Changing `Decision.*` under a run you resume: the sim does not refuse it (the fingerprint compares only the machines
+  running now); the learner warns on start when `spec.json` of the run held other values (`train.py`). Verdict: warn, not
+  refuse -- a shift in the distribution the value function re-fits, not a shape mismatch. Resuming a run that trained on
+  exact ticks (M1 before this change) with the defaults is that shift; set `Decision.JitterMs 0` and `SpikeProb 0` to
+  keep it as it was.
+- About 2% of decisions at the defaults are followed by one of 5-50 ms (the carry after a spike); a floor is an option
+  (decision 0021), not done.
+- `forge run ... random` and `forge status` show the `decision time` row; the evaluation videos play at the nominal
+  `DecisionMs` per frame, so their game-time pace varies with the jitter.
 
 ## H. Layout and protocol cleanup, 2026-10-08 (lands with the next layout bump)
 

@@ -484,6 +484,10 @@ void AnimusForge::ProgressMonitor::ReportTraining(ForgeConfig const& config, Sim
     else
         table.AddRow({ "decision time", Acore::StringFormat("{} ms", sim.Decision.NominalMs),
             sim.Decision.Jitter ? "tick jitter on, no decision yet" : "exact (AnimusForge.Decision.JitterMs 0)" });
+    if (sim.Decision.Jitter && sim.Decision.Count)
+        table.AddRow({ "decision time", Acore::StringFormat("mean {:.1f} ms", sim.Decision.MeanMs),
+            Acore::StringFormat("p95 {} ms, min {}, max {} of {} ms asked", sim.Decision.P95Ms, sim.Decision.MinMs,
+                sim.Decision.MaxMs, sim.Decision.NominalMs) });
     table.AddRow({ "sim parts", Acore::StringFormat("{:.2f} ms observe", sim.Collect.Observe),
         SimPartsNote(sim.Collect) });
     table.AddRow({ "reset parts", Acore::StringFormat("{:.2f} ms create", sim.Collect.ResetCreate),

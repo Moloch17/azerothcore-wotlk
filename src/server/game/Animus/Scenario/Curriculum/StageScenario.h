@@ -199,7 +199,8 @@ namespace Animus::Curriculum
         /// Release the owner's seat: its character goes and its slot reads empty.
         void ReleaseOwnerSeat(Env& env);
         /// Decision interval / 50 ms: per-decision reward terms are tuned per 50 ms and scaled by this, so they mean
-        /// the same per second at any StageSettings::DecisionMs.
+        /// the same per second at any StageSettings::DecisionMs. A reward charges StepScale(env) instead, the same for
+        /// the decision that was actually lived.
         [[nodiscard]] float DecisionScale() const { return _decisionScale; }
         /// The same for the decision `env` just lived: the time it took over 50 ms. The tick jitter
         /// (AnimusForge.Decision.*) makes a decision longer or shorter than StageSettings::DecisionMs, and a per-second

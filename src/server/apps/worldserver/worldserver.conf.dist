@@ -5236,7 +5236,7 @@ AnimusForge.Decision.JitterMs = 50
 #    AnimusForge.Decision.SpikeProb
 #        Description: A decision's chance of a load spike on top of the jitter's body: the realm's world tick
 #                     now and then takes far longer (a save, a flush, another worker's load), and the
-#                     decision that tick ends is late by all of it. The spike adds U(50, SpikeMaxMs) ms to that
+#                     decision that tick ends is late by all of it, and the next comes sooner (the carry). The spike adds U(50, SpikeMaxMs) ms to that
 #                     decision's overshoot; a spike over DecisionMs makes one long decision and a short one
 #                     after it, as the realm does. 0 = none.
 #        Default:     0.02
@@ -5247,7 +5247,8 @@ AnimusForge.Decision.SpikeProb = 0.02
 #
 #    AnimusForge.Decision.SpikeMaxMs
 #        Description: The largest spike, in milliseconds (see SpikeProb). A value of 50 or less is no spike.
-#                     At the defaults the longest decisions run to about 650-700 ms.
+#                     At the defaults the longest decisions run to about 650-700 ms and the shortest to a few ms
+#                     (the one after a spike).
 #        Default:     400
 #        Range:       0 - 5000
 

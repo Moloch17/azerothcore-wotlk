@@ -19,7 +19,9 @@ pattern in `Direct`). The tick that crosses the threshold overshoots it by `o`, 
 which is `DecisionMs + o_n - o_(n-1)` for an overshoot under a decision. The mean is `DecisionMs` however long the
 ticks are (the owner's first formulation, `DecisionMs + overshoot`, would have drifted the mean by +25 ms = 10%, and
 biased every nominal-dt conversion the learner makes); the spread is a tick either side (200-300 ms for a 50 ms body); a
-spike (one long tick) makes one long interval and a short one after it. A spike over a whole `DecisionMs` swallows the
+spike (one long tick) makes one long interval and a short one after it (a spike of 250 ms leaves a carry of about 250 and the next decision comes on the next tick:
+intervals of 5-50 ms exist, about 2% of decisions at the defaults, where the policy meets a near-duplicate observation and
+a near-zero reward -- faithful to the module, and an owner option below). A spike over a whole `DecisionMs` swallows the
 periods it spans (the module's single `if` per update fires once), which the formula reproduces. The audit
 (`train-ship-parity.AUDIT.md` C3-3, D-7) had the realm tick only from config defaults (`MinWorldUpdateTime 1`,
 `MapUpdateInterval 10`) and could not measure it; the defaults here are an assumption until `python -m animus.human
@@ -60,6 +62,9 @@ elapsed time in training; the module keeps its own clock from the real tick diff
 C2-f), so they are not worse for it.
 
 **What it does not do (options for the owner).**
+
+- A floor on a decision's length (e.g. `max(length, nominal / 2)`) would remove the 5-50 ms intervals the realm's carry
+  rule produces after a spike; it would also stop being the module's behavior. Not done.
 
 - The policy is not told the step: no observation feature carries `dt`. The module knows its accumulated tick time
   (`SinceDecisionMs` before the `%=`), so a `last_dt` input is possible live, but a layout change is an owner decision.

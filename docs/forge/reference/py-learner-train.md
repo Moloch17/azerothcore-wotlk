@@ -213,7 +213,7 @@ CLOSE 5, MODE 6, WEIGHTS 7, REPLAY 8, DEVICE 9, DEVICE_ACK 10, PROGRESS 11 (12 i
   `ConnectionError`); optionally receive DEVICE and answer DEVICE_ACK (`_answer_device`, `device.open_buffers`).
 - `Spec` (`protocol.py:112`): num_envs, agents_per_env, obs_dim, state_dim, num_actions, episode_info_dim, goal_count,
   tick_ms, decision_ticks, episode_seconds, scenario, layouts, episode_info_names, env_groups, kinematics_dim,
-  image_bytes, look_heads, map_bytes. `camera_bytes = image_bytes + map_bytes`. `decision_ms = tick_ms *
+  image_bytes, look_heads, map_bytes, jitter_ms, spike_max_ms, spike_prob (protocol 27; `mean_decision_ms`). `camera_bytes = image_bytes + map_bytes`. `decision_ms = tick_ms *
   decision_ticks`. `env_groups` 2 means half-batch.
 - `Spec.step_layout` gives the STEP payload arrays in wire order: obs, state, mask, layout, present, reward, done,
   terminated, final_obs, final_state, episode_info, episode_seed, kinematics, then image and final_image (if

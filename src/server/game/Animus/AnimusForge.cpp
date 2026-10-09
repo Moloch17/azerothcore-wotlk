@@ -298,7 +298,8 @@ void AnimusForge::Forge::OnWorldPrologue(uint32 diff)
     // ticks of a half, which with jittered ticks (AnimusForge.Decision.*) are not the same length. Otherwise the one
     // group ticks every tick.
     _groupAccruedMs[0] += diff;
-    _groupAccruedMs[1] += diff;
+    if (_halfBatch)
+        _groupAccruedMs[1] += diff;
     _turn = _halfBatch ? _nextTurn : 0;
     _nextTurn = _halfBatch ? (_turn + 1) % 2 : 0;
     if (_turn >= _pool->GroupCount())

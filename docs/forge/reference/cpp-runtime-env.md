@@ -10,7 +10,7 @@ the observation blocks in [cpp-blocks.md](cpp-blocks.md).
 `StageSettings::FirstEnvId + index`, used in bot names and account ids), `MapId`/`InstanceId` (the env's map; if both are set
 before `Setup` the env is built there, else the first seat's bot opens a new instance), `Bots`/`Targets`/`Allies` (GUID
 vectors; objects are resolved per use, never held as pointers across ticks), `EpisodeSeedIndex` (evaluation or replay seed
-index, `0xFFFFFFFF` for training), `Evaluating`, `EpisodeElapsedMs/LengthMs/Completed`, `StepStats`/`EpisodeStats`
+index, `0xFFFFFFFF` for training), `Evaluating`, `EpisodeElapsedMs/LengthMs/Completed`, `StepAccruedMs/StepMs` (game ms of the decision just lived, decision 0021), `StepStats`/`EpisodeStats`
 (`AgentStats` per agent), `StepInterruptedTargets`. `Find{Map,Bot,Target,TargetUnit}` resolve through `sMapMgr->FindMap`,
 `ObjectAccessor::FindPlayer`, `Map::GetCreature` (`Env.cpp:26-64`). Limits: `MAX_ALLIES` 4, `MAX_AGENTS` 40, `MAX_TARGETS` 24
 (`Env.h:35-43`); `StageScenario.cpp:95-98` `static_assert`s that `MAX_SEATS`, `PACK_SLOTS` fit them.

@@ -666,7 +666,21 @@ class TrainingRun:
         self.rank_envs = self.ranks.broadcast(self.ranks.gather(spec.num_envs)) if self.ranks.active \
             else [spec.num_envs]
         if leader:
-            (self.run_dir / "spec.json").write_text(json.dumps(asdict(spec), indent=2))
+            spec_file = self.run_dir / "spec.json"
+            if spec_file.is_file():
+                # A resumed run whose decisions' tick jitter changed (decision 0021) is a shift of the step it trained
+                # on: not a shape mismatch, so only said.
+                try:
+                    before = json.loads(spec_file.read_text())
+                    changed = [f"{name} {before.get(name, 0)} -> {getattr(spec, name)}"
+                               for name in ("jitter_ms", "spike_prob", "spike_max_ms")
+                               if abs(float(before.get(name, 0)) - float(getattr(spec, name))) > 1e-6]
+                except (OSError, ValueError):
+                    changed = []
+                if changed:
+                    print(f"WARNING: the sim's tick jitter differs from this run's last start ({', '.join(changed)}): "
+                          "the decisions' length distribution changed under a resumed run", flush=True)
+            spec_file.write_text(json.dumps(asdict(spec), indent=2))
 
         # The sim writes stage.json once it has built the scenario, which is before it accepts a learner.
         self.stage = load_stage(config.layouts_dir, spec.scenario)
