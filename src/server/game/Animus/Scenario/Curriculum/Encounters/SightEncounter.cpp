@@ -85,8 +85,8 @@ void Animus::Curriculum::SightEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
     // By compass: whether this episode withheld it (and its complement, the count arrived_with_compass is weighted
     // by), the chance the training rung withholds it with -- an evaluation's episodes too, which take the compass from
     // their seed -- and the arrival in each kind of episode, each a per-event column (PER_EVENT) so its mean is the
-    // arrival rate over the episodes of its kind. arrived_no_compass near 0 at the 0.6 rung means the camera is not
-    // being learned (REDESIGN amendment 5).
+    // arrival rate over the episodes of its kind. arrived_no_compass near 0 at the first rungs (withheld 25%, 60%)
+    // means the camera is not being learned (REDESIGN amendment 5).
     table.Add("compass_withheld", [this](Env const& env, uint32) { return _envs[env.Index].Withheld ? 1.0f : 0.0f; });
     table.Add("compass_present", [this](Env const& env, uint32) { return _envs[env.Index].Withheld ? 0.0f : 1.0f; });
     table.Add("compass_withhold_chance", [this](Env const& env, uint32) { return _envs[env.Index].WithholdChance; });

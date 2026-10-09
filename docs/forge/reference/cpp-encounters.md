@@ -370,7 +370,7 @@ decisions where the seat came to rest after moving with the object within `StopN
 ### Config keys read
 
 `Controls.{Nearest 10, Furthest 120, ArriveTolerance 1.0, CornerShare 0.25, CornerFrom 0.75, CornerStep 8, Attempts 64,
-Withhold0 0, Withhold1 0.25, Withhold2 0.6, Withhold3 0.9, Stuck 0.02, Wall 0.02, WallSlide 0.5}` and
+Withhold0 0.25, Withhold1 0.6, Withhold2 0.9, Withhold3 0.9, Stuck 0.02, Wall 0.02, WallSlide 0.5}` and
 `Markers.{Arrive 3, StepCost 0.002, Death 3, Progress 1, Facing 0.25, StopMoved 0.05, StopNear 10, ArriveRise 2}`
 (`Scenario/Curriculum/CurriculumTuning.h:480-504`, `:677-693`; visited at `:1001-1008`, `:1083-1096`). No clamping is
 applied to these keys in `CurriculumTuning.cpp:62-100`. The full table is in [cpp-tuning-keys.md](cpp-tuning-keys.md).
@@ -379,11 +379,11 @@ applied to these keys in `CurriculumTuning.cpp:62-100`. The full table is in [cp
 
 The ladder is the shaping fade: `SightDraw::Rung(ShapingScale())` and `WithholdChance(ShapingScale(), ...)` read the
 scale the learner sets (`StageScenario::SetShapingScale`, `StageScenario.cpp:4637`; default 1.0, `StageScenario.h:477`).
-`move1_controls.yaml` sets `fade.rungs: [0.0]` (one rung), `gate_metric: arrived_at_rung`, `costs.enabled: false`. If
-the learner applies that single rung's scale 0 from the first update (UNVERIFIED: check the fade code in
-`apps/forge/python/animus`), then in live training the shaping scale is 0 (Progress and Facing pay nothing), the rung
-is 3, the withhold chance is `Withhold3 = 0.9`, and corners are on (`1 - 0 >= 0.75`); `SightDraw` rungs 0-2 are then
-unreachable in training. `arrived_at_rung` is computed in Python (`evaluation.py:40`, `:213-235`) as
+`move1_controls.yaml` sets `fade.rungs: [1.0, 0.5, 0.25, 0.0]` (since 2026-10-08; before, `[0.0]`, a single rung at zero
+shaping), `gate_metric: arrived_at_rung` 0.85, `require_plateau: false`, `costs.enabled: false`. The run starts at
+scale 1 (rung 0, withhold `Withhold0 = 0.25`, full shaping) and steps on the gate alone to scale 0.5 (0.6), 0.25 (0.9,
+corners on: `1 - 0.25 >= 0.75`) and 0 (0.9, no shaping); `SightDraw` rungs 2 and 3 share a withhold chance, so the last
+step takes only the shaping away. `arrived_at_rung` is computed in Python (`evaluation.py:40`, `:213-235`) as
 `p * rate_no + (1 - p) * rate_with` with `p` the mean `compass_withhold_chance`.
 
 ### Tests

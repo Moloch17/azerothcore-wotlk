@@ -6509,6 +6509,10 @@ AnimusForge.Curriculum.Interact.SummonSweep = 80.0
 #        Attempts candidates are tested at most. Arriving is stopping within the object's bounding radius plus
 #        ArriveTolerance yards of its centre. The compass is withheld for an episode with Withhold0..3 at the fade's
 #        rungs x1, x0.5, x0.25 and x0 (linear between): its presence and values read 0, an absent input, never a mask.
+#        The defaults 0.25, 0.6, 0.9, 0.9 (shaping x1, x0.5, x0.25, x0) put a quarter of the episodes without the
+#        compass from the first rung, each paid the dense shaping at the rung's scale (the camera learns from a reward
+#        that points at the object), and fade only the shaping on the last step; the withholding is not tied to the
+#        shaping reaching 0.
 #        Stuck and Wall (per second; Wall at no movement, scaled by WallSlide as MarkerGround's) are charged at this
 #        fixed price from the first step, off the cost ladder: small beside Arrive 3, set from M1's first evaluation.
 #        Arrive, StepCost, Death, Progress, Facing and the stop's settings are Markers.*.
@@ -6519,9 +6523,9 @@ AnimusForge.Curriculum.Controls.CornerShare = 0.25
 AnimusForge.Curriculum.Controls.CornerFrom = 0.75
 AnimusForge.Curriculum.Controls.CornerStep = 8.0
 AnimusForge.Curriculum.Controls.Attempts = 64
-AnimusForge.Curriculum.Controls.Withhold0 = 0.0
-AnimusForge.Curriculum.Controls.Withhold1 = 0.25
-AnimusForge.Curriculum.Controls.Withhold2 = 0.6
+AnimusForge.Curriculum.Controls.Withhold0 = 0.25
+AnimusForge.Curriculum.Controls.Withhold1 = 0.6
+AnimusForge.Curriculum.Controls.Withhold2 = 0.9
 AnimusForge.Curriculum.Controls.Withhold3 = 0.9
 AnimusForge.Curriculum.Controls.Stuck = 0.02
 AnimusForge.Curriculum.Controls.Wall = 0.02

@@ -529,7 +529,11 @@ namespace Animus::Curriculum
         /// the body and the object's widest side: touching distance, M1's "within a yard of the mark" for a thing.
         ///
         /// The compass is withheld for the episode (its presence column and every value 0) with Withhold<i> at the
-        /// fade's rung i (scales 1, 0.5, 0.25, 0; SightDraw::WithholdChance): an absent input, never a mask.
+        /// fade's rung i (scales 1, 0.5, 0.25, 0; SightDraw::WithholdChance): an absent input, never a mask. The
+        /// defaults 0.25, 0.6, 0.9, 0.9 start the ladder with a quarter of the episodes already without it, every one
+        /// of them paid the dense shaping (the rung's scale), and fade the shaping alone on the last step: the seat
+        /// that has to go by the camera is never left without the reward that teaches it to look
+        /// (stage1-vision analysis, Design A).
         ///
         /// Wall and Stuck are charged at their own fixed price from the first step -- off the cost ladder
         /// (RewardLedger::AddFixed), unlike the ground course's -- and small beside Arrive 3: pinned to a wall for a
@@ -544,9 +548,9 @@ namespace Animus::Curriculum
             float CornerFrom = 0.75f;           // 1 - the shaping scale: rung 2 (x0.25) on
             float CornerStep = 8.0f;
             uint32 Attempts = 64;
-            float Withhold0 = 0.0f;
-            float Withhold1 = 0.25f;
-            float Withhold2 = 0.6f;
+            float Withhold0 = 0.25f;
+            float Withhold1 = 0.6f;
+            float Withhold2 = 0.9f;
             float Withhold3 = 0.9f;
             float Stuck = 0.02f;                // per second, fixed price
             float Wall = 0.02f;                 // per second at no movement, fixed price, scaled as WallSlide says

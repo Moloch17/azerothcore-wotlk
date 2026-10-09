@@ -435,9 +435,9 @@ through to `StandIn.Share`, so its default 0 is never consulted today (the "defe
 | Controls | `Controls.CornerFrom` | 0.75f | float | - | `Encounters/SightEncounter.cpp:262` | move1_controls |
 | Controls | `Controls.CornerStep` | 8.0f | float | - | `Encounters/SightEncounter.cpp:260` | move1_controls |
 | Controls | `Controls.Attempts` | 64 | uint32 | reader: max(1, ..) | `Encounters/SightEncounter.cpp:261` | move1_controls |
-| Controls | `Controls.Withhold0` | 0.0f | float | - | `Encounters/SightEncounter.cpp:219` | move1_controls |
-| Controls | `Controls.Withhold1` | 0.25f | float | - | `Encounters/SightEncounter.cpp:219` | move1_controls |
-| Controls | `Controls.Withhold2` | 0.6f | float | - | `Encounters/SightEncounter.cpp:219` | move1_controls |
+| Controls | `Controls.Withhold0` | 0.25f | float | - | `Encounters/SightEncounter.cpp:219` | move1_controls |
+| Controls | `Controls.Withhold1` | 0.6f | float | - | `Encounters/SightEncounter.cpp:219` | move1_controls |
+| Controls | `Controls.Withhold2` | 0.9f | float | - | `Encounters/SightEncounter.cpp:219` | move1_controls |
 | Controls | `Controls.Withhold3` | 0.9f | float | - | `Encounters/SightEncounter.cpp:220` | move1_controls |
 | Controls | `Controls.Stuck` | 0.02f | float | - | `Encounters/SightEncounter.cpp:365` | move1_controls |
 | Controls | `Controls.Wall` | 0.02f | float | - | `Encounters/SightEncounter.cpp:371` | move1_controls |
