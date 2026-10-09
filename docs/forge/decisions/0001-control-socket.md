@@ -7,7 +7,7 @@ human-operable plan: "add a real control socket, or keep driving the console").*
 
 `forgectl` sends `forge start|resume|pause|cancel|status` by typing a line into the worldserver's console through
 `docker attach` in a pty (over `ssh -tt` for a worker), and recovering the reply from a stream that also carries the
-sim's log output. It works, and it is tested against a fake console and against the live host, but it depends on:
+sim's log output. It works against the live host, but it depends on:
 
 - **keystrokes into a terminal**: the line is echoed, the reply arrives mixed with log lines (told apart by their
   colour escape), and the end of the reply is guessed from the prompt `AC> ` coming back;
@@ -75,8 +75,7 @@ The socket can stop a training run and start another, so it is not something to 
 4. Cluster fan-out of pause and cancel through the existing worker control connections, with each worker's
    acknowledgement collected into the reply.
 5. Events: reuse the Phase 4 event writer; `events.subscribe` tails it.
-6. GTests for the framing, the handlers' errors (no plan, unknown stage, bad token) and the fan-out; the Python side
-   (forgectl) gets a client and tests against a fake server.
+6. The Python side (forgectl) gets a client. No tests (removed 2026-10-07; see [tests.md](../reference/tests.md)).
 7. A protocol-version bump: the control channel is part of the cluster fingerprint, so this lands in a rebuild of
    every machine, which the plan already schedules once for the other C++ changes.
 

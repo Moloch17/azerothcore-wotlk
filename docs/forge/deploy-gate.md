@@ -49,13 +49,13 @@ used on this cluster. The reversible ones are exercised once, supervised, so tha
 Only then is `forgectl build --cluster` allowed to be used on the gate, and **never first-use `build --cluster` or a
 `conf-sync` write without a read-only `forgectl conf-sync --check` the same day**.
 
-| Tool (in `apps/forge/tools`) | What it answers | Test |
-|---|---|---|
-| `sim_metrics.py` | which metric names a stage's sim produces (read from the C++); `--check stage.json` compares that with a built binary's own list | `test_metric_names.py` |
-| `stage_json_diff.py old new` | what a new build changed about a stage's layouts, columns, reward terms, tuning, arenas | `test_stage_json_diff.py` |
-| `resume_check.py` | will this checkpoint resume on this build (a dry run of `forge resume`, on CPU, no sim); `--fresh`: does a stage that never ran start on the learner | `test_resume_check.py` |
-| `conf_prune.py` | which `AnimusForge.*` keys a build dropped; which keys of a machine's conf it no longer reads; `--list-backups` and `--restore <stamp>` | `test_conf_prune.py` |
-| `run_snapshot.py` | a run's headline, KL, steps/s in one table, and before/after | `test_run_snapshot.py` |
+| Tool (in `apps/forge/tools`) | What it answers |
+|---|---|
+| `sim_metrics.py` | which metric names a stage's sim produces (read from the C++); `--check stage.json` compares that with a built binary's own list |
+| `stage_json_diff.py old new` | what a new build changed about a stage's layouts, columns, reward terms, tuning, arenas |
+| `resume_check.py` | will this checkpoint resume on this build (a dry run of `forge resume`, on CPU, no sim); `--fresh`: does a stage that never ran start on the learner |
+| `conf_prune.py` | which `AnimusForge.*` keys a build dropped; which keys of a machine's conf it no longer reads; `--list-backups` and `--restore <stamp>` |
+| `run_snapshot.py` | a run's headline, KL, steps/s in one table, and before/after |
 
 ## Expected durations
 
@@ -103,7 +103,7 @@ ssh -o BatchMode=yes <m> 'git -C ~/animus-forge rev-parse --short HEAD; df -h ~/
 - [ ] **The dev card is idle and nothing else uses the dev build directory.** `rocm-smi` on the dev machine shows no
   process on the card (a busy card spoils any measurement), and no other agent, forge run
   or build is using the dev GPU or `var/gate-build` / `var/animus-forge/gate` (`docker ps`, `ps aux | grep -E
-  'forge|cmake|pytest'`).
+  'forge|cmake'`).
 - [ ] **The owner has been told** a deploy is starting, at what time, and that M2 will be cancelled for about
   `<duration>` hours; their reply (or that they are away) is written in `var/gate/NOTES.txt`.
 - [ ] **Rehearsals done** (next section): pause/resume on M2, local `forgectl build`, the rollback rehearsal on one
@@ -237,8 +237,7 @@ Success: 10 files, `ls var/animus-forge/gate/layouts/*/stage.json | wc -l` print
 
 **What is mandatory and what is recommended.** The comparison with the old build's file (below) is **mandatory for M1
 and M2** (they have real old files and checkpoints: a mismatch there is a resume that would be refused or would read
-old weights as new columns). It is **recommended for the other ten** (the layout pin test, `LiveLayoutPinTest`,
-already guards their layouts, and no checkpoint exists that a mismatch could break); their new files are needed
+old weights as new columns). It is **recommended for the other ten** (no checkpoint exists that a mismatch could break); their new files are needed
 anyway, for the metric check and for `resume_check.py --fresh --all` below. A difference in one of the ten is read and
 recorded, and is not by itself a stop unless it also fails one of the checks that are mandatory.
 
@@ -270,7 +269,7 @@ Success: exit 0 (it lists any column a build reports that the C++ reader missed;
 is the conditional columns of a stage and is not a failure).
 
 And the learner side of **all ten stages**, from their yamls and the files just written. M3 to D3 have never run on
-the learner (the M4 held-out bug was found only because a test read the yamls); this is the only check that they start:
+the learner (the M4 held-out bug was found only by reading the yamls); this is the only check that they start:
 
 ```
 DEV apps/forge/python/.venv/bin/python apps/forge/tools/resume_check.py --fresh --all \
@@ -371,8 +370,8 @@ ScriptedPlayers 22, Owner 19, Follow 16, MarkerVertical 15, MarkerWater 15, Flag
 MarkerMounted 12, MarkerRoutes 12, Dummy 10, Director 7, Death 5, Instance 5, Ambush 4, Duel 4, Opponent 4, Order 4,
 Raid 3, Evade 2, Support 2 (371 in `AnimusForge.Curriculum.*`), plus `AnimusForge.Human` 4, `AnimusForge.Stage`
 (`teacher_ragefire` and `teacher_deadmines` `.TicksPerDecision`) 2 and `AnimusForge.TravelPools` 1.
-The template diff **is** the tuning's `Visit` diff: `test_conf_covers_tuning.py` makes `worldserver.conf.dist` and
-`CurriculumTuning::Visit` agree both ways, and `test_conf_prune.py` checks it between the tag and HEAD.
+The template diff **is** the tuning's `Visit` diff: `worldserver.conf.dist` and `CurriculumTuning::Visit` should agree
+both ways, and `conf_prune.py --removed <old-rev> <new-rev>` checks it between the tag and HEAD.
 
 For every machine, first look, then prune (`--old` says which unknown keys this build removed and which the old build
 did not read either; keys of stages that no longer exist are listed too). **`conf_prune --ssh` has never run on a
@@ -406,7 +405,7 @@ stages and the gate's tools depend on; each must be present with the same value 
 |---|---|---|
 | `AnimusForge.Vision.EvalVideos` | 8 | the evaluation videos each machine films (`forgectl videos`, `collect-videos.sh`); a machine without it films the code default, also 8, but a conf that says 0 films none |
 | `AnimusForge.Vision.EvalVideoScale` | 4 | how large those frames are scaled; a different scale makes videos that do not compare |
-| `AnimusForge.Stage.<stage>.TicksPerDecision` for the 10 stages (`move1_controls move2_seek move3_interact move4_follow combat1_fight combat2_packs combat3_survive group1_roles dungeon2_ragefire dungeon3_deadmines`) | 5 each (a 50 ms world tick under 250 ms decisions) | the player controller's facing and heartbeat run once a world tick (`test_stage_ticks.py`); **a machine without the key runs the stage at the global `TicksPerDecision`, 1: a 250 ms world tick, different dynamics, silently, in the pooled data** |
+| `AnimusForge.Stage.<stage>.TicksPerDecision` for the 10 stages (`move1_controls move2_seek move3_interact move4_follow combat1_fight combat2_packs combat3_survive group1_roles dungeon2_ragefire dungeon3_deadmines`) | 5 each (a 50 ms world tick under 250 ms decisions) | the player controller's facing and heartbeat run once a world tick; **a machine without the key runs the stage at the global `TicksPerDecision`, 1: a 250 ms world tick, different dynamics, silently, in the pooled data** |
 | `AnimusForge.Vision.Width`, `Height`, `RenderSizes`, `FovH`, `FovV`, `Range`, `Zoom`, `Pitch` | 128, 64, "32x16, 48x24, 64x32, 128x64:0.4", 120, 60, 100, 6, -15 | the camera of every stage with a vision block; only the image's width and height are checked against the learner (the image byte count), the rest are not |
 | `AnimusForge.Map.MaxTiles`, `CoarseTiles`, `KeepShare`, `AgeOffsetSeconds`, `AnimusForge.Memory.MaxEntities` | 4096, 0, 0.5, 600, 64 | the mental map and the entity memory the observation carries (M2 on) |
 | `AnimusForge.Classes`, `EpisodeSeconds`, `SpawnPoint.MapId/X/Y/Z/O`, `ContinentReplicas`, `HalfBatch` | per the host's conf | what every episode is built from |
@@ -700,6 +699,5 @@ From the source:
   neither. The converse matters: a *known* key with different values on two machines changes `curriculum`, which is why
   step 6 compares them.
 
-So a stale key can only mislead a person into thinking it still acts; that is all `conf_prune.py` removes. No GTest was
-added: a test of the loader needs the unit-test build (step 2) to run, and a test written without running it would
-break the next deploy's build; `test_conf_prune.py` pins the tool, and the source references above are the evidence.
+So a stale key can only mislead a person into thinking it still acts; that is all `conf_prune.py` removes. No test was
+added (no tests exist, see [reference/tests.md](reference/tests.md)); the source references above are the evidence.

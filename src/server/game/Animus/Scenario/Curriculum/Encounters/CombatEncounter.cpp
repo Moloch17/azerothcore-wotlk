@@ -86,7 +86,6 @@ void Animus::Curriculum::CombatEncounter::AddEpisodeInfo(EpisodeInfoTable& table
     // I4's measures, as the party follow reports them (RespawnClock): rises at the entrance, rejoins, the mean seconds
     // from a rise to back at the fight (PER_EVENT on rejoins), the share of rises that came back (PER_EVENT on rises),
     // the seconds dead; and the seconds charged Away (dead, walking back, or off from the fighting pull).
-    table.Add("respawns", of([](EnvCombat const& c) { return c.Clock.Rises; }));
     table.Add("rises", of([](EnvCombat const& c) { return c.Clock.Rises; }));
     table.Add("rejoins", of([](EnvCombat const& c) { return c.Clock.Rejoins; }));
     table.Add("rejoin_seconds", of([](EnvCombat const& c) { return c.Clock.RejoinSeconds(); }));
@@ -121,9 +120,8 @@ void Animus::Curriculum::CombatEncounter::AddEpisodeInfo(EpisodeInfoTable& table
         return c.SelectedDecisions ? float(c.InViewDecisions) / float(c.SelectedDecisions) : 0.0f;
     }));
     table.Add("start_walk", of([](EnvCombat const& c) { return c.StartWalk; }));
-    // The rung: `combat_rung` for the evaluation videos (Vision::EvalVideoRungColumn) and the status, `difficulty`
-    // for the learner's per-class ladder tracking, `at_top_rung` its top.
-    table.Add("combat_rung", of([](EnvCombat const& c) { return c.Tier; }));
+    // The rung: `difficulty` for the learner's per-class ladder tracking, the status and the evaluation videos (their
+    // rung label falls back to it: Vision::EvalVideoRungColumn), `at_top_rung` its top.
     table.Add("difficulty", of([](EnvCombat const& c) { return c.Tier; }));
     table.Add("at_top_rung", [this](Env const& env, uint32)
     {

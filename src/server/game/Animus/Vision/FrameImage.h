@@ -39,9 +39,9 @@ namespace Animus::Vision
     /// size placed in `settings`' field of view, at least MARK_MIN_SIDE output pixels a side, one pixel thick. A mark
     /// with a line-of-sight share under 1 is dashed.
     constexpr uint32_t MARK_MIN_SIDE = 5;
-    /// The colour of output pixel (x, y) when a mark's outline passes through it (the last mark drawn wins); false
-    /// when none does.
-    [[nodiscard]] bool MarkAt(Settings const& settings, uint32_t scale, std::vector<EntityMark> const& marks,
+    /// Draws the marks' outlines into output pixel (x, y)'s colour `rgb`, in place (the last mark drawn wins); the
+    /// callers draw by that side effect, and the result only says whether any outline passed through the pixel.
+    bool MarkAt(Settings const& settings, uint32_t scale, std::vector<EntityMark> const& marks,
         uint32_t x, uint32_t y, uint8_t* rgb);
 
     /// Pixels of each class in a frame.

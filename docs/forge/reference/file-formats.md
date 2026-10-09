@@ -89,7 +89,7 @@ Top-level keys written by the current code:
 | episode_info | [string] | Episode-info column names in wire order (the SPEC's list). |
 | episode_categories | {column: [names]} | Columns that index a name list: `seek_room`, `seek_object`, `interact_site`, `interact_object`, `sight_object`, `objective_corner` (["in_sight","corner"]). |
 | reward_terms | {term: "outcome"\|"cost"\|"shaping"} | Category of every reward term (`RewardTermCategory`). |
-| goals | object | `kinds` [9 names], `accepts` [kind][target] 0/1, `targets` (23 since goal block revision 1; 29 in the backup), `block` "goal", `columns` {secondary_ended, event, from_order, order_kind, order_target, achieved_kind, achieved_target, width} (first-column offsets inside the goal block), `slots_on_wire` (2). |
+| goals | object | `kinds` [9 names], `accepts` [kind][target] 0/1, `targets` (23 since goal block revision 1; 29 in the backup), `block` "goal", `columns` {secondary_ended, event, achieved_kind, achieved_target, width} (68 since goal block revision 2; the order columns left) (first-column offsets inside the goal block), `slots_on_wire` (2). |
 | tuning | object | `CurriculumTuning::Json()`: every `AnimusForge.Curriculum.*` value in force (725 keys in the backup, e.g. `Characters.HighLevelFirst: 61`), written or default. This is what the cluster fingerprint hashes (protocol.md section 9). |
 
 `arenas[i]` (current writer): `name`, `weight` (the arena's draw weight as configured), `seats`, `episode_seconds`, `plan`
@@ -320,8 +320,8 @@ Little-endian: `"AMDL"`, `u32 version`, `u16 name length` + UTF-8 name, `u32 obs
 prefixed by a size/flag: GRU (`u32 recurrent_size` + 4 arrays), foresight feedback, slow GRU, goal head (kinds/targets/every, weights, `accepts`, `goal_block_at`, embeddings, lookahead flag, `goal_slots`
 (v6), kind/target scales (v7)), a never-written director byte (0), seat sets (v8) with the attention layer (v9), pointers. Observation normalisation is folded into the first layer; `num_agents` is 1 with a zero column.
 `export_layouts` writes `<model>.amdl` per class plus a copy of the layout manifest `<model>.json`. **It refuses any stage with a vision block or a checkpoint with `vision.`/`look_head.` weights** (export.py:~443-452), and every live
-stage has a vision block, so no live checkpoint can be exported today. The only reader in this repository is `export.read_amdl`/`reference_decide` (test reference); the C++ loader lives in a patch for the other module
-(`apps/forge/patches/mod-animus-amdl8.patch`, `amdl8-check/`), not in the core. Tests: test_export.py, test_export_seat_sets.py, test_goal_queue.py, test_goal_targets.py.
+stage has a vision block, so no live checkpoint can be exported today. The only reader in this repository is `export.read_amdl`/`reference_decide` (reference decode); the C++ loader lives in a patch for the other module
+(`apps/forge/patches/mod-animus-amdl8.patch`, `amdl8-check/`), not in the core.
 
 ## Camera audit (runs/<stage>/camera/)
 

@@ -161,14 +161,13 @@ WATERWALKING, FALLING_SLOW (from `SlowFall`).
 
 ### Tests
 
-`PlayerControllerTest.cpp` (27 tests, e.g. `OneLongTickIsTheSameAsFiveShortOnes`, `AHillsideIsAWall`, `ASwimJumpAtTheSurface...`,
-`MovementFlagsAreThePlayersOwn`) on fake worlds; `ReplayTest.cpp` replays the controller against itself (drift exactly 0).
+No tests (removed 2026-10-07); see [tests.md](tests.md).
 
 ### Reviewer notes
 
 - Hundreds of lines of terrain special cases (`TerrainShare`, `IntoTerrain`, `OverVoid`, `FootprintFloor`) exist because terrain is in no
   collision tree; each cites a dated dry-check failure. Removing one without the world that exposed it re-opens a bug. The
-  `WorldQuery` is the seam: any refactor should keep `PlayerControllerTest` green and add a live dry check.
+  `WorldQuery` is the seam: any refactor should add a live dry check.
 - Ground handling snaps to any floor in `[Z-STEP_UP.. Z+STEP_UP]` window (search 2*STEP_UP from Z+STEP_UP): descending ground within a
   step never becomes a fall; is that the client's behaviour? UNVERIFIED: C6 recording replays (`forge controller replay`) are the check.
 - `STEP_UP` doubles as the knee ray height (+0.05, `MapWorldQuery.cpp:44`) and the search window; changing it moves all three.
@@ -197,8 +196,7 @@ see 01-forge-core-delta.md for what the forge added.
 (comment in the header says "levitate"; levitate is not tested), `WaterWalk = HasWaterWalkAura()`. `ShapeOf` (:42) reads
 `GetCollisionRadius/Height`.
 
-Tests: `MapWorldQueryTest.cpp` covers only the pure `SweepRays` and `SweepShare` (2 tests). `MapWorldQuery` over a real `Map` and
-`SpeedsOf/ShapeOf` have no unit test (live dry checks and `forge controller probe`).
+`MapWorldQuery` over a real `Map` and `SpeedsOf/ShapeOf` are checked by live dry checks and `forge controller probe`.
 
 ## Client (Client.h/.cpp), ReportCadence
 
@@ -232,9 +230,7 @@ call and restores them (nested Tick -> Start works).
 
 `ReportCadence.h` (namespace `Animus::Movement::Cadence`): opcode constants (START_FORWARD 0x0B5 ... START_DESCEND 0x3A7), `HEARTBEAT_MS 500`,
 `HEARTBEAT_FLAGS 0x00c0100f`, `MOUSE_FACING_THRESHOLD 0.1`, `Changes` (:80; ordering of the client's checks), `NextFacingCrossing` (:120;
-the raw unwrapped difference means crossing 0/2pi always sends), `NextPitchCrossing` (:146). (`HeartbeatDue` and `Changes`'s unused `jumped`/`landed` parameters were deleted 2026-10-08.) Tests:
-`ClientTest.cpp` (29 tests: cadence independent of tick, refusal handling, knockback, orders queue across threads, flag stripping
-parity, turn to camera), `ReportCadenceTest.cpp` (2 tests).
+the raw unwrapped difference means crossing 0/2pi always sends), `NextPitchCrossing` (:146). (`HeartbeatDue` and `Changes`'s unused `jumped`/`landed` parameters were deleted 2026-10-08.)
 
 Reviewer notes: (a, b) fixed 2026-10-08: `HeartbeatDue` (the heartbeat is computed inline in Tick) and `Changes`'s `jumped`/`landed` parameters were deleted. (c) The nested
 `Start` inside `Tick` passes `nowMs - diffMs`. (d) `Client` namespace names collide conceptually: `Animus::Movement::Client` (this
@@ -249,9 +245,7 @@ every packet to every session), `Decode(opcode, data, size, self)` (:244; packed
 `SMSG_FORCE_RUN_SPEED_CHANGE` has an extra `u8`), `AckOpcode`, `Applies` (can-fly, water walk, feather fall, hover set the "applied" flag),
 `FlagsAfter` (:364: Root clears MASK_MOVING and sets ROOT; Knockback clears ROOT and sets FALLING; CanFly clears FALLING; etc.),
 `Clock` (steady clock starting at 1,000,000 ms so a time is never 0), `Inbox` (mutex + vector, `Push`/`Drain`).
-Tests: the header (line 38) claims `tests/ClientOrdersTest.cpp`; no such file exists. `ClientTest` covers `Inbox` ordering
-(`OrdersQueueAcrossThreads...`), `FlagsAfter` with `SanitizeFlags` (`TheServerStripsTheSameFlagsFromEveryReport`). `Decode` and `Clock` have
-no direct test (grep for `Decode(` in src/test finds only `Capture::Decode`). Note `Clock` is referenced as used by "CompanionClient" (a
+The header (line 38) claims `tests/ClientOrdersTest.cpp`; no such file exists. Note `Clock` is referenced as used by "CompanionClient" (a
 companion client that no longer exists in this tree); UNVERIFIED: grep for a `Clock` user outside this header finds none in Animus/.
 
 ## FlagRules (FlagRules.h)
@@ -262,7 +256,7 @@ too; the core's root rests on `SendMoveRoot`); HOVER without aura; opposite pair
 FWD/BACK) both stripped; WATERWALKING without aura or ghost; FALLING_SLOW without feather fall aura; FLYING|CAN_FLY without privilege or
 fly aura; FALLING stripped when CAN_FLY|DISABLE_GRAVITY; SPLINE_ENABLED without a running spline. Used by
 `WorldSession::SanitizeMovementFlags` (`Server/WorldSession.cpp:1131-1149`), which both real packets and `PlayerLink::Apply`
-(`PlayerLink.cpp:90`) call. Tested via `ClientTest.TheServerStripsTheSameFlagsFromEveryReport` (no separate FlagRules test).
+(`PlayerLink.cpp:90`) call.
 
 ## PlayerLink, LinkMemory
 
@@ -282,7 +276,7 @@ DISABLE_MOVE, unfinished spline, charmed, or dead-and-not-ghost.
 `QueueOrder` (:284) counts `OrderPackets` and pushes a decoded order.
 `LinkMemory` is per-seat state (SeatState::Link): good position, invalid streak, `FallDamage` (sum of health shares), `FallDeaths`,
 `VoidDeaths`. Fall damage itself is the core's `Player::HandleFall` via `ClientMovement::Apply`; the controller only supplies `FallMs`.
-No unit test for `PlayerLink` (needs a core `Player`); behaviour is covered by live runs.
+`PlayerLink` behaviour is covered by live runs.
 
 ## CastWatch
 
@@ -296,8 +290,7 @@ it was added in the same plan. No test.
 `ControllerCost::Ns/SeatTicks` (relaxed atomics, `Add(ns, seatTicks)`), one add per `SubTick` call. `Seek(body, x, y, tuning)` returns a
 `ControlState`: nothing within `ArriveYards 2`; else `TurnRate = clamp(error/0.25 s, +-2pi)`, `Forward=1` iff `|error| <= 45 deg`.
 Used by `Encounters/PartyFollowEncounter.cpp:428` for the party-follow leader (the M4 leader, the one scripted mover left; the header says
-"scripted actors only" and the tension with principle 14 is the owner's). Tests: `SeekTest.cpp` (2), plus `SeekEncounterTest/SeekFlagTest`
-which test the encounter, not this file.
+"scripted actors only" and the tension with principle 14 is the owner's).
 
 ## Capture and Replay
 
@@ -314,8 +307,7 @@ members. (`FromReport`, which filled `Ms = ClientMs = report.TimeMs`, had no cal
 positions: `Follow` (drift list), `Run` (segments every 5 s on ground packets, drift at 1/2/5/10 s all and flat, jump launch/apex/landing,
 step-ups, steep descents, wall disagreements, and "calibration" measures of each client constant vs recording). Used only by
 `forge controller replay` (`cs_forge.cpp:822-886`) and `forge controller record` (`:763`). `Run`'s `speedsAt` applies every Speeds record with
-`Ms <= packet.Ms` and always the first (Replay.cpp:178). Tests: `ReplayTest.cpp` (round trip of every field, the controller replaying itself
-with zero drift, a displaced recording drifting). No test with a real human recording is in the tree; the C6 calibration remains open (see
+`Ms <= packet.Ms` and always the first (Replay.cpp:178). No test with a real human recording is in the tree; the C6 calibration remains open (see
 below).
 
 ## Config keys

@@ -30,7 +30,7 @@ chain. All are in the default queue, so `forge start` with no stage name walks t
 | `dungeon2_ragefire` | 1500M | 20M | 64 |
 | `dungeon3_deadmines` | 2000M | 20M | 64 |
 
-The table is read by `apps/forge/python/tests/test_manual.py` and checked against each `configs/<stage>.yaml`
+The table is checked by hand against each `configs/<stage>.yaml`
 (`total_env_steps`, `eval.every_env_steps`, `eval.episodes`). Budgets are env steps (decisions x envs x seats). A budget
 is a
 ceiling, never a target (4.4).
@@ -94,7 +94,7 @@ carry the duel block if it fights; and have 1 to 16 uniquely named arenas, not a
 arena
 against its opposition (a seek arena has rooms and objects and no compass; an instance arena needs the pack block and a
 party;
-and so on). `test_stage_validation.py` runs the sim's own validation from Python.
+and so on).
 
 **A spawn point is drawn per episode, not per env,** so it is reproducible from an evaluation seed; a reset that cannot
 find
@@ -106,7 +106,7 @@ term; shaping is an aid that the fade removes; the noise prices (Repeat, Jitter,
 are
 Costs that the cost ladder may scale. The score the learner follows (`score_outcome`) is Outcome plus Cost at full
 price.
-`test_stage_purpose.py` fails if a stage does not name its purpose as one it pays. Term lists per stage:
+Term lists per stage:
 [reference/stages.md](reference/stages.md).
 
 ## 4.3 How an episode runs
@@ -177,12 +177,12 @@ classes a stage never fields by design (`status.excluded`). A run directory `run
   [reference/config-yaml.md](reference/config-yaml.md). A key that does not exist is an error at load.
 * **A stage's layout, rewards or arenas:** `Stages.cpp` and the encounter. A layout change changes every checkpoint of
   the
-  stage: `LiveLayoutPinTest` fails on purpose and its golden must not be edited to make it pass.
-* **Adding a stage** (what the tests insist on): a `StageDefinition` in `Stages.cpp` after its base; a
+  stage (the layout pin test that used to fail on purpose was removed; see [tests.md](reference/tests.md)).
+* **Adding a stage** (what a stage needs): a `StageDefinition` in `Stages.cpp` after its base; a
   `configs/<stage>.yaml` named after it; a row in the budget table above; `AnimusForge.Stage.<name>.TicksPerDecision`
   in the conf template for a movement stage; every `AnimusForge.Curriculum.*` key it reads in `worldserver.conf.dist`;
-  every metric its yaml names must be one the sim or learner produces (`test_metric_names.py`); the stage name wherever
-  written must exist (`test_stage_names.py`); the layout pin updated deliberately for a new stage. After any C++ change
+  every metric its yaml names must be one the sim or learner produces; the stage name wherever
+  written must exist. After any C++ change
   a
   cluster rebuild is needed: build the whole plan first ([decision
   0014](decisions/0014-one-cluster-rebuild-per-plan.md)),

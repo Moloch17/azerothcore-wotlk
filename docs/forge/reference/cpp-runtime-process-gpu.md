@@ -23,7 +23,7 @@ Startup order (`main`, `ForgeMain.cpp:337-520`):
    caches, open the learner socket, log status);
 7. outside playtest: `ForgeSealDatabases()` (:462): `AccountMgr::LoadSnapshot()`, then `Seal(strict)` on the three pools
    (`strict` = `Forge.SealStrict`, default on): later reads get no rows and are logged once with their origin; writes are
-   dropped (`DatabaseWorkerPool.h:49,216`; test `SealedWriteTest.cpp`);
+   dropped (`DatabaseWorkerPool.h:49,216`);
 8. optional SOAP thread (`SOAP.Enabled`), optional console thread (only when stdin is a tty);
 9. the update loop; at shutdown the console thread and the IoContext are joined, `sAnimusForge->OnShutdown()`,
    `sScriptMgr->OnShutdown()`; the `shared_ptr` handles unwind the map manager, the database and the scripts.

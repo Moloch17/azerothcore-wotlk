@@ -54,12 +54,8 @@ void Animus::Curriculum::GoalBlock::DescribeColumns(Layout const& /*layout*/, bo
         names.emplace_back("goal_kind_" + std::string(GoalName(SeatGoal(kind))));
     for (uint32 target = 0; target < GOAL_TARGETS; ++target)
         names.emplace_back("goal_target_" + TargetName(target));
-    for (char const* name : { "goal_ended", "goal_reached", "goal_secondary_ended", "goal_event", "goal_from_order" })
+    for (char const* name : { "goal_ended", "goal_reached", "goal_secondary_ended", "goal_event" })
         names.emplace_back(name);
-    for (uint32 kind = 0; kind < GOAL_COUNT; ++kind)
-        names.emplace_back("goal_order_kind_" + std::string(GoalName(SeatGoal(kind))));
-    for (uint32 target = 0; target < GOAL_TARGETS; ++target)
-        names.emplace_back("goal_order_target_" + TargetName(target));
     for (uint32 kind = 0; kind < GOAL_COUNT; ++kind)
         names.emplace_back("goal_achieved_kind_" + std::string(GoalName(SeatGoal(kind))));
     for (uint32 target = 0; target < GOAL_TARGETS; ++target)
@@ -105,16 +101,16 @@ void Animus::Curriculum::GoalBlock::Available(SeatView const& view, std::array<b
             friends = true;
         }
 
-    // A dungeon's way on (WorldView::RoutePlaces): its places and the assignment. A stage without it (the movement
-    // stages) has a trip's objective, which takes the assignment's slot, so TravelTo has a target there too.
+    // A dungeon's seen places (WorldView::HasSeenPlaces): its places and the assignment. A stage without them (the
+    // movement stages) has a trip's objective, which takes the assignment's slot, so TravelTo has a target there too.
     WorldView const& world = view.World;
     bool places = false;
-    for (uint32 i = 0; i < WorldView::JOURNAL_PLACES && world.RoutePlaces; ++i)
+    for (uint32 i = 0; i < WorldView::JOURNAL_PLACES && world.HasSeenPlaces; ++i)
         if (world.Places[i].Present)
             places = targets[GOAL_TARGET_PLACE_FIRST + i] = true;
-    if (world.RoutePlaces && world.HasAssignment)
+    if (world.HasSeenPlaces && world.HasAssignment)
         places = targets[GOAL_TARGET_ASSIGNMENT] = true;
-    if (!world.RoutePlaces && view.HasObjective)
+    if (!world.HasSeenPlaces && view.HasObjective)
         places = targets[GOAL_TARGET_ASSIGNMENT] = true;
 
     bool const combat = bot->IsInCombat();
@@ -145,7 +141,7 @@ void Animus::Curriculum::GoalBlock::Available(SeatView const& view, std::array<b
 bool Animus::Curriculum::GoalBlock::PlaceOf(SeatView const& view, uint32 t, Position& where)
 {
     WorldView const& world = view.World;
-    if (!world.RoutePlaces)
+    if (!world.HasSeenPlaces)
     {
         // A trip's objective, where there is no dungeon's route (Available) -- and only where the seat is told where it is
         // (SeatView::ObjectivePlaceKnown): with the compass withheld, or no compass at all, TravelTo's reached bit
@@ -154,7 +150,7 @@ bool Animus::Curriculum::GoalBlock::PlaceOf(SeatView const& view, uint32 t, Posi
             return where = view.Objective, true;
         return false;
     }
-    // A dungeon's way on: its places and the assignment (WorldView::RoutePlaces).
+    // A dungeon's seen places and the assignment (WorldView::HasSeenPlaces).
     if (t < GOAL_TARGET_PLACE_FIRST)
         return false;
     if (t >= GOAL_TARGET_PLACE_FIRST && t < GOAL_TARGET_ASSIGNMENT)

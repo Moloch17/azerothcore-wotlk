@@ -432,18 +432,17 @@ class GoalHead(nn.Module):
     @property
     def block_width(self) -> int:
         """The goal block's columns (GoalBlock::Obs): kinds there, targets there, ended, reached, and from the
-        next-run format on (slots > 1) the secondary ending, the event, an order's primary and what was
-        achieved."""
+        next-run format on (slots > 1) the secondary ending, the event and what was achieved (kind and target
+        one-hots; goal block revision 2: the order columns left it)."""
         base = self.kinds + self.targets + 2
-        return base if self.slots <= 1 else base + 3 + 2 * (self.kinds + self.targets)
+        return base if self.slots <= 1 else base + 2 + (self.kinds + self.targets)
 
     # Where the next-run columns sit in the goal block (GoalBlock::Obs; stage.json "goals"."columns").
     @property
     def columns(self) -> dict[str, int]:
         base = self.kinds + self.targets + 2
-        return {"secondary_ended": base, "event": base + 1, "from_order": base + 2, "order_kind": base + 3,
-                "order_target": base + 3 + self.kinds, "achieved_kind": base + 3 + self.kinds + self.targets,
-                "achieved_target": base + 3 + 2 * self.kinds + self.targets}
+        return {"secondary_ended": base, "event": base + 1, "achieved_kind": base + 2,
+                "achieved_target": base + 2 + self.kinds}
 
     def set_space(self, accepts, block_at) -> None:
         """The goal space the sim wrote (stage.json "goals"): accepts [kinds][targets], and per layout the goal
@@ -463,8 +462,7 @@ class GoalHead(nn.Module):
 
     def signals(self, obs: torch.Tensor, layout: torch.Tensor) -> dict[str, torch.Tensor]:
         """What the goal block says of the goals held, per flat row: the primary ended, the secondary ended, an
-        event (choose again now), an order's primary (from_order, order_goal) and what was achieved this decision
-        (achieved, -1 for nothing)."""
+        event (choose again now) and what was achieved this decision (achieved, -1 for nothing)."""
         obs = obs.reshape(-1, obs.shape[-1])
         block, has = self._block(obs, layout.reshape(-1))
         rows = obs.shape[0]
@@ -473,17 +471,12 @@ class GoalHead(nn.Module):
         out = {"ended": block[:, base] & has}
         if self.slots <= 1:
             none = torch.zeros(rows, dtype=torch.bool, device=obs.device)
-            out.update(secondary_ended=none, event=none, from_order=none,
-                       order_goal=torch.zeros(rows, dtype=torch.long, device=obs.device),
+            out.update(secondary_ended=none, event=none,
                        achieved=torch.full((rows,), -1, dtype=torch.long, device=obs.device))
             return out
         c = self.columns
         out["secondary_ended"] = block[:, c["secondary_ended"]] & has
         out["event"] = block[:, c["event"]] & has
-        out["from_order"] = block[:, c["from_order"]] & has
-        order_kind = block[:, c["order_kind"]:c["order_kind"] + k].float().argmax(-1)
-        order_target = block[:, c["order_target"]:c["order_target"] + t].float().argmax(-1)
-        out["order_goal"] = order_kind * t + order_target
         achieved_kind = block[:, c["achieved_kind"]:c["achieved_kind"] + k]
         achieved_target = block[:, c["achieved_target"]:c["achieved_target"] + t].float().argmax(-1)
         out["achieved"] = torch.where(achieved_kind.any(-1) & has,
@@ -520,21 +513,19 @@ class GoalHead(nn.Module):
             logits = torch.where(has[:, None], logits, logits.masked_fill(~only_none, MASKED_LOGIT))
         return logits
 
-    def draw(self, features: torch.Tensor, obs: torch.Tensor, layout: torch.Tensor, primary_given: torch.Tensor,
-             given: torch.Tensor, deterministic: bool, slots: torch.Tensor | None = None):
+    def draw(self, features: torch.Tensor, obs: torch.Tensor, layout: torch.Tensor, deterministic: bool,
+             slots: torch.Tensor | None = None):
         """The slots drawn at a choice, or scored when `slots` [rows, S] is given: (slots [rows, S] with -1 for
-        none, log probability, entropy). Where `given` the primary is `primary_given` (an order): it
-        conditions the later slots but is not drawn, so its log probability and entropy are left out."""
+        none, log probability, entropy)."""
         primary_logits = self.logits(features, obs, layout)
         if slots is None:
             primary, primary_lp = sample_logits(primary_logits, deterministic)
         else:
             primary = slots[:, 0].clamp(min=0)
             primary_lp = log_prob_of(primary_logits, primary)
-        log_prob = torch.where(given, torch.zeros_like(primary_lp), primary_lp)
-        entropy = torch.where(given, torch.zeros_like(primary_lp), _entropy(primary_logits))
-        conditioned = torch.where(given, primary_given, primary)
-        drawn, out = [conditioned], [primary]
+        log_prob = primary_lp
+        entropy = _entropy(primary_logits)
+        drawn, out = [primary], [primary]
         none = self.count
         for slot in range(1, self.slots):
             logits = self.slot_logits(features, slot, drawn, obs, layout)
@@ -1947,8 +1938,7 @@ class LayoutActor(nn.Module):
         - an ended secondary is dropped (the sim dropped it too);
         - an ended primary with a queue is replaced by the queue's head, with no choice made (the plan that queued
           it keeps the credit);
-        - a choice is made on the clock, where the primary ended with nothing queued, or on the block's event;
-        - an order set in the goal block, where there is one, is the primary whatever was held or drawn.
+        - a choice is made on the clock, where the primary ended with nothing queued, or on the block's event.
 
         Returns the pair held now (`goal`), the queue, which rows chose (`chosen`), their log probability (0 where
         none), the slots drawn [rows, S] (what the slow update scores) and the observed signals."""
@@ -1972,12 +1962,10 @@ class LayoutActor(nn.Module):
         queue = torch.where(promote[:, None], shifted, queue)
         chosen = clock | (signals["ended"] & ~promote) | signals["event"]
 
-        given = signals["from_order"]
-        slots, log_prob, _ = head.draw(features, obs, layout, signals["order_goal"], given, deterministic)
+        slots, log_prob, _ = head.draw(features, obs, layout, deterministic)
         primary = torch.where(chosen, slots[:, 0], primary)
         secondary = torch.where(chosen, slots[:, 1], secondary)
         queue = torch.where(chosen[:, None], slots[:, 2:], queue)
-        primary = torch.where(given, signals["order_goal"], primary)
         secondary = torch.where(secondary == primary, torch.full_like(secondary, -1), secondary)
         return {"goal": goal_pair(primary, secondary, head.count), "queue": queue, "chosen": chosen,
                 "log_prob": torch.where(chosen, log_prob, torch.zeros_like(log_prob)), "slots": slots, **signals}

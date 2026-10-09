@@ -21,7 +21,7 @@ This file maps itself: it has no source files of its own; it summarises those na
 | **Bot / session-less bot** | A server-side player character with no client or database row, made per seat per episode; `Bot/BotFactory.cpp`. |
 | **Camera / canonical image** | The seat's third-person ray-cast view; every frame is scaled by nearest pixel to the canonical image of `Vision.Height` x `Width` (128 x 64 by default; the cast size varies per episode), four bytes a pixel, the static world only (the entity list, found by line of sight, carries who is in view); `Blocks/VisionBlock.h`. |
 | **Cast** | Frozen checkpoints placed in seats a stage declares (`stage.json` `cast`, `cast.agents`), and the co-op partner pool config `cast.partners`; `animus/cast.py`, `animus/partners.py`. |
-| **Class table** | The table of classes, either the ten model classes (`ClassProfile`) or the camera's semantic classes (`Vision::Class`, `CLASS_LIMIT`); principles say classes only append. `UNVERIFIED`: which one the principle means; both are append-only in practice (`LiveLayoutPin.golden.inc` lists the model classes). |
+| **Class table** | The table of classes, either the ten model classes (`ClassProfile`) or the camera's semantic classes (`Vision::Class`, `CLASS_LIMIT`); principles say classes only append. `UNVERIFIED`: which one the principle means; both are append-only in practice. |
 | **Clock / tick / decision** | A *tick* is one world update (50 ms in every live stage); a *decision* is one policy step, `AnimusForge.DecisionMs` = 250 ms, here five ticks (`Stage.<name>.TicksPerDecision`). |
 | **Cluster fingerprint** | A hash a worker sends the host at registration (source, protocol version, decision timing, curriculum tuning); a mismatch is refused; `Bridge/ClusterLink.cpp`. |
 | **Collapse alarm / stall warning** | Warnings of a gate-stepped ladder: collapse = gate metric under a floor for three evaluations; stall = no improvement beyond the standard error for `stall_evals` and `stall_env_steps`; `animus/stage.py`. They never act. |
@@ -47,7 +47,7 @@ This file maps itself: it has no source files of its own; it summarises those na
 | **Goal / goal places** | The goal head's current objective kind and target; in a dungeon the places it can name are only what the seat discovered ([decision 0005](../decisions/0005-goal-places-seen-only.md)); `Blocks/GoalBlock.h`, `SeenPlaces.h`. |
 | **Heldout** | An arena marked `EvalOnly` (Wailing Caverns, M2's and M3's `sweep`): never drawn in training, played only by `eval.heldout`; a reading, not a target. |
 | **Host / worker** | In a cluster the host runs the run and holds the checkpoints; workers add envs and (with `Cluster.Learner = auto`) their own learner, exchanging weights; `docs/forge/cluster.md`. |
-| **Layout** | The exact observation vector and action list of one class at one stage, built by placing the stage's blocks in order; `Layout/Layout.cpp`. Pinned by `LiveLayoutPinTest`. |
+| **Layout** | The exact observation vector and action list of one class at one stage, built by placing the stage's blocks in order; `Layout/Layout.cpp`. |
 | **Ledger (reward ledger)** | A seat's per-decision reward total and per-term episode sums, with scales for shaping and noise; `Rewards/RewardLedger.h`. |
 | **Lock-step** | The world thread sends every env's observations to the learner and blocks until actions return; `Bridge/LockstepServer.cpp`. |
 | **MAPPO** | Multi-agent PPO with a centralised critic, the learner's algorithm; `animus/mappo/`. |

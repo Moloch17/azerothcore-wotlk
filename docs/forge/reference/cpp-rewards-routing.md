@@ -38,10 +38,6 @@ scales; evaluation, `best.pt` and the league judge on it. Everything else is Sha
 `PricesNoise(term)` = Repeat, Jitter, Aimless, Effort, Fidget, Stuck, Wall: the terms the learner's cost ladder scales.
 `static_assert(EveryRewardTermCategorised())` forces a category for each term. `stage.json reward_terms` publishes every
 term's category (`StageScenario.cpp:1448`).
-Tests: `RewardLedgerTest` (score ignores tier and role, shaping scale touches only shaping, cost scale only noise
-prices, every term has a name and category, drill lessons are outcomes), plus encounter tests that check term kinds
-(`CombatStagesTest.TheirTermsAreOutcomeAndCost`, `RolesStageTest.TheDrillTermsAreOutcomesAndCosts`,
-`PartyFollowTest.TheTermsAreOutcomeAndCost`).
 
 ### Fade ladder and cost ladder, simulator side
 

@@ -140,7 +140,7 @@ rebuilt at each stage start, and the learner maps by name.
 - `RewardLedger`, `RewardTerm`, `RewardTermName` and the tier scaling are documented in
   [cpp-rewards-routing.md](cpp-rewards-routing.md); layouts and blocks in
   [cpp-layout-character.md](cpp-layout-character.md) and [cpp-blocks.md](cpp-blocks.md).
-- `Standing.h` (69 lines, pure functions: `WallCharge`, `Stopped`, `Band`; tested by `StandingTest.cpp`) is the
+- `Standing.h` (69 lines, pure functions: `WallCharge`, `Stopped`, `Band`) is the
   movement encounters' shared reading of a seat's feet; it is documented with the movement encounters below.
 
 
@@ -230,8 +230,7 @@ were present, `ClearOwn` would despawn the episode's own object. It is called on
 
 **Data flow.** Called on the world thread from `Build`/`Teardown` of the three encounters. Nothing crosses threads.
 
-**Config keys.** None. **Tests.** No unit test names `ObjectPool` (a `grep` of `src/test` finds the word only in the
-data tests' comments); it is exercised only through a live map.
+**Config keys.** None. **Tests.** None (removed 2026-10-07).
 
 **Reviewer notes.** `Remove` relies on `Delete()` plus the phase/collision calls to take the model out of the dynamic
 tree immediately; a change in core `GameObject::Delete` would break the "placement sees nothing of last episode's
@@ -321,7 +320,7 @@ four chances between the scales, clamped to [0,1] (`:55-69`); `EvaluationPick(se
    candidate is found, the first seen candidate is used (`Corner = false`, reported as `corner_fallback`); failing
    that, a second pass over all band candidates (beyond `Attempts`) looks for any seen one (`:207-213`). None at all
    gives `Point = -1` and the Build fails.
-5. `Placement::Step` is returned but only `SightEncounterTest.cpp:367` reads it; the encounter does not.
+5. `Placement::Step` is returned but the encounter does not read it.
 
 ### Evaluation pick (`EvaluationPick`, `SightDraw.h:84-90`)
 
@@ -357,7 +356,7 @@ shaping scale; Arrive is Outcome; Death and StepCost are Cost.
 | `compass_withhold_chance` | the rung's chance (also in evaluations) | report; `evaluation.py` |
 | `arrived_no_compass`, `arrived_with_compass` | 1 if reached under that condition | report, status headline |
 | `compass_rung` | `SightDraw::Rung(shaping)` | report. This encounter writes no `at_top_rung` and no `difficulty` (`:103-106`). |
-| `marker_radius` | `Radius` | no config reads it; present in `apps/forge/python/tests/fixtures/stage_move1_controls.json:4543` |
+| `marker_radius` | `Radius` | no config reads it |
 | `arrive_seconds`, `time_ratio`, `overshoot` | per arrival; PER_EVENT over `markers` | report |
 | `markers_sight`, `markers_corner`, `arrive_seconds_sight/_corner`, `time_ratio_sight/_corner` | the same split by `Corner` | report; headline (`_sight`) |
 | `stop_distance`, `stops_near` | mean `StopGap` of the stops within `Markers.StopNear`; their count | report; headline; PER_EVENT `stop_distance` over `stops_near` |
@@ -389,14 +388,7 @@ unreachable in training. `arrived_at_rung` is computed in Python (`evaluation.py
 
 ### Tests
 
-`src/test/server/game/Animus/SightEncounterTest.cpp`: TheStageIsDefined, TheHallwayTableIsWellFormed,
-TheEvaluationPairsAreFixedAndInTheBand, TheCompassIsWithheldMoreOftenEachRung, AWithheldCompassReadsAsAbsent,
-EveryEvaluationPairIsPlayedWithAndWithoutTheCompass, InSightIsOneCameraRayFromTheEye,
-ThePlacementIsInSightOrJustRoundACorner, WallAndStuckArePaidOffTheCostLadder, TheStopIsMeasuredFromTheObjectsSide.
-Data tests `StockadeHallwaysDataTest.cpp` (EveryHallwayPointIsOnTheFloorAndClear, EveryEvaluationPairIsWhatItSays,
-AuthoringPairs; they need `FORGE_VISION_DATA`). Python: `apps/forge/python/tests/test_m1_sight.py`, `test_gates.py`,
-`test_stage_purpose.py` (UNVERIFIED which assert on this encounter's columns). `Build` and `Reward` need a live map and
-have no unit test; only the draws and the data are tested.
+No tests (removed 2026-10-07); see [tests.md](tests.md).
 
 ### Quirks, debts, dead ends
 
@@ -539,11 +531,7 @@ DoorwaySpread 1}` (`CurriculumTuning.h:588-615`, visited `:1037-1061`) and `Mark
 
 ### Tests
 
-`SeekEncounterTest.cpp`: TheStageIsDefined, TheRoomTableIsWellFormed, TheObjectPoolIsTheHardCodedList,
-TheLadderPlacesByRung, TheEvaluationPlaysTheTrainingRung, EpisodeLengthByRung, LookingIntoARoomIsPaidPerEpisode,
-ObjectsAreUniformAndEvaluationsCoverEveryRoom, PlacementPointsAreOnTheFloor, TheAidsAreShapingAndFindingIsTheOutcome.
-`StockadeRoomsDataTest.cpp` (EveryRoomSampleIsOnTheFloor, AuthoringScan). Python: `test_seek_metrics.py` (UNVERIFIED
-what it asserts). `LiveLayoutPinTest` pins the layout (see tests.md).
+No tests (removed 2026-10-07); see [tests.md](tests.md).
 
 ### Quirks, debts, dead ends
 
@@ -702,12 +690,7 @@ SightNearest 4, SightFurthest 30, Attempts 64, SummonSweep 80}` (`CurriculumTuni
 
 ### Tests
 
-`InteractStageTest.cpp`: TheStagesLayout, TheSites, TheLadder, DecoysAndEvaluationDraws, AWrongObjectPressIsPriced,
-TheDoorIsPaidOnceAnEpisode, AWrongObjectIsTakenByPressingOrStoppingNeverPassing, TheNamedRowIsAlwaysInTheSightBlock,
-and the fixture tests TheDistinguishGoalNamesATypeNotAPlace, ALeverPressThroughTheHandlerOpensItsDoor,
-TheKeyItemUseOpensTheLock, AnOpenDoorIsTheBandAtTheTopOfItsFrame. `DeadminesSitesDataTest.cpp`
-(EverySitePointIsOnTheFloorAndClear, OnlyTheShutDoorShowsTheFarSide, AuthoringScan). Python `test_interact.py`
-(UNVERIFIED contents).
+No tests (removed 2026-10-07); see [tests.md](tests.md).
 
 ### Quirks, debts, dead ends
 
@@ -897,7 +880,6 @@ encounter in the same stage creates a duplicate column; in M4 only this encounte
 - `PartyFollow` on the second episode in a new instance relies on `StageScenario.cpp:2294-2307` clearing creatures with
   `DUNGEON_CLEAR_RADIUS` 1000.
 - `SelectTarget` comment says nothing to fight but is only reached when the stage has no sight block (M4 has none).
-- Tests: `PartyFollowTest.cpp` (stage validity at `:428-445`; the pure helpers).
 
 ### Reviewer notes
 - `Steer` mixes plan state, key generation and counters in one 110-line function; `Phase::Done` is reached from two
@@ -1021,14 +1003,14 @@ UNVERIFIED: check the order of `Reward` and `IsTerminal` in `StageScenario::Rewa
 
 ### Episode info columns
 
-`won`, `survived`, `kills`, `packs_cleared`, `pulls`, `extra_pulls`, `interrupts`, `deaths`, `respawns`, `rises`
-(identical values: both are `Clock.Rises`), `rejoins`, `rejoin_seconds`, `rejoined` (`RejoinedShare` when rises),
+`won`, `survived`, `kills`, `packs_cleared`, `pulls`, `extra_pulls`, `interrupts`, `deaths`, `rises`
+(`Clock.Rises`), `rejoins`, `rejoin_seconds`, `rejoined` (`RejoinedShare` when rises),
 `dead_seconds`, `away_seconds`, `outcome_paid`, `interrupt_earnings` (`InterruptPaid / OutcomePaid`), `kill_seconds`,
 `ally_deaths`, `hurt_share`, `fire_share`, `hazard_pulls`, `linked_pulls`, `caster_pulls`, `rest_seconds`,
-`selected_share`, `target_in_view`, `start_walk`, `combat_rung`, `difficulty` (same value as `combat_rung`),
+`selected_share`, `target_in_view`, `start_walk`, `difficulty` (the tier; the video rung label falls back to it),
 `at_top_rung` (`Tier >= MaxTier`), and the twelve `reward_*` columns. Read by the learner configs
 `apps/forge/python/configs/combat1_fight.yaml` (headline `won, survived, kills, kill_seconds, hurt_share, deaths,
-rejoin_seconds, combat_rung, target_in_view, selected_share, ally_deaths`; convergence measure `won`; fade gate `won >=
+rejoin_seconds, difficulty, target_in_view, selected_share, ally_deaths`; convergence measure `won`; fade gate `won >=
 0.7`
 with rungs [1.0, 0.5, 0.25, 0.0]), `combat2_packs.yaml` (`packs_cleared`, `extra_pulls`, `interrupts`,
 `interrupt_earnings
@@ -1047,12 +1029,7 @@ All under `AnimusForge.Curriculum.` + `Combat.*` (defaults above and: `MaxTier` 
 
 ### Tests
 
-`CombatPerceptionTest.cpp` (`CombatDrawTest.TheRungsPulls`, `OutcomesScaleWithTheRung`,
-`TheCorridorPointsAreReachableAndApart`,
-`CombatRespawnTest.AwayIsDeadOrOffFromTheFight`, `TheClockRisesAfterTheDelayAndRejoinsAtTheFight`,
-`CombatStagesTest.*`);
-no test drives the encounter against a world (`Build`, `SpawnPull`, `Reward` are not unit-tested); `RolesStageTest.cpp`
-covers the shared stage setup.
+No tests (removed 2026-10-07); see [tests.md](tests.md).
 
 ### Reviewer notes
 
@@ -1064,8 +1041,7 @@ covers the shared stage setup.
 
 ### Observed issues
 
-1. `CombatEncounter.cpp:93-94`: `respawns` and `rises` report the same number.
-2. `difficulty` and `combat_rung` columns duplicate each other (`CombatEncounter.cpp:127-128`).
+1. (Fixed 2026-10-08.) The duplicate `respawns` (= `rises`) and `combat_rung` (= `difficulty`) columns were removed.
 3. `CombatDraw.h:CreatureLevel` clamps to 83 while the pools stop at `DEFAULT_MAX_LEVEL` (80).
 4. `Build` silently leaves the seat where it was when the map has no corridor point (`:208-221`); `FindCorridors`
    logs only the count.
@@ -1098,9 +1074,7 @@ This ladder **does step back on the score**, unlike the gate-stepped fade and wi
 older per-class pacing, kept for the combat and roles stages, and the learner also tracks the mean of the `difficulty`
 column per class (`apps/forge/python/animus/stage.py:21,51` "the ladder settled"; see [py-mappo.md](py-mappo.md) and
 [stages.md](stages.md)). Config: `Difficulty.RaiseAbove`, `LowerBelow`, `Window`, `ReviewChance`, `StretchChance`,
-`CasterChance`, `TierScale`, `MaxTierScale` 6 (the last is not read by this class). Tests: no direct test file
-(UNVERIFIED:
-grep found none for `DifficultyLadder`).
+`CasterChance`, `TierScale`, `MaxTierScale` 6 (the last is not read by this class).
 
 Observed: the rung counters are lost on every worldserver restart, so a resumed stage restarts every class at rung 0
 (the learner's `difficulty` column then drops); `Draw` uses `urand` and the ladder state is shared by all envs of the
@@ -1325,9 +1299,7 @@ core columns.
 `WinPulledSeconds 5`, `StandInShare 20`. Also read: `Combat.FightNearest/FightFurthest/NextNearest`, `Respawn.DelayMs`,
 `Respawn.RejoinYards`, `Difficulty.*`, `Party.TeammateHealing` (PartyEncounter).
 
-**Tests**: `RolesStageTest.cpp` (stage defined; packs by rung; the pull camp; the drill terms are outcomes and costs;
-Hold,
-Keep, Focus, Pull outcomes; a death rises at the entrance and rejoins; a wipe rises together), `StandInTest.cpp`.
+**Tests**: none (removed 2026-10-07).
 
 **Quirks / debts.**
 - A comment in `RolesEncounter.h:47` names a `Roles.StandInShare` percent of training episodes; it is real
@@ -1461,9 +1433,7 @@ leading stand-in is the party's leader), InstanceEncounter's `clear_standin`/`cl
 (Visit
 `CurriculumTuning.h:1170-1173`), `Roles.StandInShare` (20), per-arena `Arena.<stage>.<arena>.StandInShare`; the live
 dungeon
-arenas set `StandInShare = 20` in their definition (`Stages.cpp:621`). **Tests**: `StandInTest.cpp` (determinism per
-seed,
-style coverage, role within the build, present = 2, no stand-in without the mode flag, evaluation vs training share).
+arenas set `StandInShare = 20` in their definition (`Stages.cpp:621`).
 
 **Quirks.** `LeadChance` comment says "only where the party has no owner" (`StandIn.h:92`); the code allows leading
 unless the
@@ -1493,9 +1463,7 @@ PartyFollow; call sites `SightEncounter.cpp:371,404`, `SeekEncounter.cpp:489,542
 - `Band(distance, bandMin, bandMax, lostYards)`: 0 too close, 1 in band (`<= bandMax`), 2 behind (`<= lostYards`), 3
   lost.
 
-Tests: `StandingTest.cpp` (`WallChargesOnlyTheGroundNotCovered`, `StoppedReadsTheServersFlags`, `FollowBands`); its
-fourth
-test, `CourseKinksReadTheWayBetweenTicks`, tests `StageScenario::CourseKink`, not this header. The header comment lists
+The header comment lists
 "seek,
 sight, interact, the party follow" as readers: accurate per the call sites above. Keys that supply the parameters are in
 each
@@ -1536,7 +1504,7 @@ movement encounter's section (E1, E2).
     shows none).
 11. `StandIn.h:92` comment about "owner" is stale (no live stage has an owner except the follow leader, which has no
     stand-in).
-12. `Standing.h` header comment and `StandingTest.cpp:63` mix `StageScenario::CourseKink` into a file named for
+12. `Standing.h` header comment mixes `StageScenario::CourseKink` into a file named for
     Standing.h.
 13. `PartyEncounter.cpp` reward loops read `env.Targets` with `FindTargetUnit` per seat per teammate per decision
     (quadratic
@@ -1619,11 +1587,6 @@ Sneed, 1763 Gilnid, 639 Edwin VanCleef. Used by the PartyFollow stage; listed he
 | 389 | 11517 oggleflint, 11520 taragaman, 11518 jergosh, 11519 bazzalan |
 | 36 | 644 rhahkzor, 642 sneed_shredder, 643 sneed, 1763 gilnid, 646 smite, 647 greenskin, 645 cookie, 639 vancleef |
 | 43 | 3671 anacondra, 3669 cobrahn, 3653 kresh, 3670 pythas, 3674 skum, 5775 verdan, 3673 serpentis |
-
-Tests: `DungeonStagesTest.EveryBossOfTheDungeonsIsMeasured` (`src/test/server/game/Animus/DungeonStagesTest.cpp:374`)
-and
-`WailingCavernsIsNeverDrawnInTraining` (`:180`) read these tables.
-UNVERIFIED: what exactly the first test asserts against the table (read `DungeonStagesTest.cpp:374-401`).
 
 **Invariants / contracts.**
 
@@ -1903,9 +1866,6 @@ Per-seat rows; unless noted a column is the same for every seat of the env. "Yam
 The episode columns of the removed route, corridor, drill, chain-pull and cell code are gone from the table (removed
 2026-10-08, decision 0019; it duplicated `wing_cleared_share`); the learner finds columns by name.
 
-Tests: `DungeonStagesTest.ThePurposesAreOutcomesAndThePricesCosts`, `AWingsTierIsItsLaddersRung`,
-`TheStandInPlaysAShareOfEveryPartyStage`, `EveryBossOfTheDungeonsIsMeasured`.
-
 ### E3.9 Level range: `DungeonLevels`
 
 Scans `sLFGDungeonStore` for an entry with the row's `MapID` and `Difficulty`; returns `[TargetLevelMin or MinLevel,
@@ -1970,7 +1930,7 @@ for a reviewer of this function.
 
 `View` (only when a boss is built) copies the seat's food and drink item ids into the view and calls `SeenWorld`.
 `SeenWorld` fills `view.World.Places` (8 slots) and the assignment from `SeenPlaces::Choose`, and sets
-`world.RoutePlaces = true`. Inputs:
+`world.HasSeenPlaces = true`. Inputs:
 
 - **Memory**: the seat's `Recall.Entries()` (entity memory: last seen position, reaction < 0 = hostile, dead flag,
   gameobject flag).
@@ -1990,8 +1950,7 @@ non-gameobject** entries sorted nearest first and de-duplicated within `SAME_PLA
 nearest frontier point; slot 7 (`LEADER`) is the leader. The assignment is the first present of slot 0, `WAY_ON`,
 `LEADER`. The `static_assert(sizeof(Point) == 3 * sizeof(float))` is the code's guard that a place carries no creature
 data. A remembered hostile that has died but whose death the seat has not seen is still a place; a dead-as-last-seen
-entry is skipped. Tested by the `DungeonStagesTest` test that an unseen pack or boss never reaches the goal places of the goal head, and
-`TheFrontierIsOpenGroundBesideTheUnseen`.
+entry is skipped. An unseen pack or boss must never reach the goal places of the goal head.
 
 Quirk: `SeenWorld` writes `own.Frontier`, `FrontierMs`, `FrontierReady` through a `const` env reference (the members
 are `mutable`); observation of seat `s` therefore mutates state, from the map thread that observes it. The leader's
@@ -2039,17 +1998,8 @@ The complete table with clamps is in [cpp-tuning-keys.md](cpp-tuning-keys.md). T
 
 ### E3.15 Tests covering the encounter
 
-- `src/test/server/game/Animus/DungeonStagesTest.cpp`: stages, layouts and encounters validate, Wailing Caverns never
-  drawn in training, tier is the ladder's rung, purposes are Outcomes and prices Costs, stand-in share, every boss
-  measured, Deadmines doors, levers and cannon used through the handlers, movement stages unchanged, `Lost` priced from
-  the actual leader, a risen seat walking back is Away not Lost, an unseen pack or boss never reaches the goal places,
-  the frontier.
-- `src/test/server/game/Animus/WingLadderTest.cpp`: the ladder class.
-- `RolesStageTest.cpp`, `CombatPerceptionTest.cpp` and `PartyFollowTest.cpp` mention `EntranceRespawn` / `WingRun`
-  (UNVERIFIED which assertions).
-- No unit test constructs `InstanceEncounter` itself (it needs a live `Map`). `FindBoss`, `Build`, `Update`, `RiseDead`,
-  `TraceWing` and `UpdateWingEnemies` are covered only by live runs. (Tests of the removed corridor, chain-pull and
-  layout code left with it; check the test tree before quoting any name here.)
+No tests (removed 2026-10-07); see [tests.md](tests.md). `FindBoss`, `Build`, `Update`, `RiseDead`,
+`TraceWing` and `UpdateWingEnemies` are covered only by live runs.
 
 ### E3.16 Observed issues
 
@@ -2132,7 +2082,7 @@ live conf, so every "default" below is UNVERIFIED as the live value.
 | `EntranceRespawn.cpp` | 58 | `RiseAtEntrance`, `ForgetFrame` |
 | `SeenPlaces.h` | 210 | pure goal-place choice from what a seat has seen (no live creature data) |
 
-### E4.1 `WingRun.h` (pure helpers; tests: `DungeonStagesTest.cpp`)
+### E4.1 `WingRun.h` (pure helpers)
 
 - `RUNGS_PER_TIER = 2`; `TierOfRung(rung) = rung / 2`.
 - `LeaderSeat(standInSeat, standInLeads, tankSeat)`: the stand-in's seat when it leads and exists, else the tank's.
@@ -2235,10 +2185,6 @@ reads; it does not step back by itself (see events.log in the run directory)`. T
 (`fade.stall_evals`, py-mappo.md); the wing ladder is not a learner fade and nothing counts reads with no new best.
 A wing ladder that sits flat below target is silent; `deploy-gate.md` lists this as a wanted alarm.
 
-**Tests**: `WingLadderTest.cpp` (8 tests: steps on probes alone, never steps back, alarm fires once after three low
-reads
-and clears, reads are fresh probes not a sliding window, first rung warns after five reads, first rung over the floor
-never warns, a resumed ladder uses the absolute floor, a follower takes the host's rung).
 
 ### E4.3 The cluster's ladder: workers report, the host decides
 
@@ -2339,10 +2285,6 @@ the server's body. Returns whether the move succeeded (the bot is alive either w
 by the sim (movement principle 3 concerns movement, and the rise is a respawn), and `RiseAtEntrance` does not reset
 auras, cooldowns, pets or durability (`SetFullHealth` only); UNVERIFIED: whether `RiseDead` (E3.7) does that.
 
-Tests: `DungeonStagesTest.cpp:489-523` (`ARisenSeatWalkingBackIsAwayNotLost`, drives `RespawnClock::Note`: Died at 1000,
-Rise at 11000, Rejoined at 60000), `PartyFollowTest.cpp:54-69` (the follow stage's use). There is **no
-`EntranceRespawnTest`** though the header comment (`EntranceRespawn.h:30-31`) names one; `RiseAtEntrance`, `ForgetFrame`
-and `WipeLatch` have no test of their own (`WipeLatch` is referenced in no test found: grep over `src/test`).
 
 ### E4.5 Observed issues
 
@@ -2357,7 +2299,7 @@ and `WipeLatch` have no test of their own (`WipeLatch` is referenced in no test 
    them context.
 6. `AppendRunEvent` opens, appends and closes per call with no lock and no flush guard; concurrent map threads can
    interleave only if two alarms fire at once (the ladder lock serialises `NoteWingRun`, which is the only caller).
-7. `EntranceRespawn.h` names `EntranceRespawnTest`, which does not exist; `WipeLatch` is untested.
+7. `EntranceRespawn.h` names `EntranceRespawnTest`, which does not exist.
 
 ### E4.6 Reviewer notes
 

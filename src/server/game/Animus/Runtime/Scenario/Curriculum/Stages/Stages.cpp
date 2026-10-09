@@ -1320,7 +1320,8 @@ std::vector<Animus::Curriculum::StageDefinition> const& Animus::Curriculum::Curr
 
 std::vector<std::string> const& Animus::Curriculum::CurriculumProblems()
 {
-    CurriculumStages();
+    // Builds the table (and fills LeftOut) on first use; the table itself is not needed here.
+    (void) CurriculumStages();
     return LeftOut();
 }
 

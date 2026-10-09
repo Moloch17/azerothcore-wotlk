@@ -39,8 +39,10 @@ namespace Animus::Curriculum
     /// Revision 1 (2026-10-08): the Loot, Gather and Interact kinds and the journal objective, giver and turn-in
     /// targets left the goal space (nothing ever offered them; no looting, decision 0003), so every column from
     /// OBS_TARGET_FIRST on moved, and the columns are named (DescribeColumns) so the next revision carries them.
-    /// The order columns (OBS_FROM_ORDER .. OBS_ORDER_TARGET_FIRST + GOAL_TARGETS) are still written as zero: the
-    /// learner's GoalHead reads the block at fixed offsets (mappo/networks.py), so they leave with its next edit.
+    /// Revision 2 (2026-10-08): the order columns (from_order, the order's kind and target one-hots), written as zero
+    /// since the director was deleted, left the block together with the learner's GoalHead reads of them
+    /// (mappo/networks.py); the achieved columns moved up by 1 + GOAL_COUNT + GOAL_TARGETS. Still the unreleased
+    /// layout generation (protocol 26): bootstrap seeds by column name.
     class GoalBlock final : public Block
     {
     public:
@@ -53,17 +55,15 @@ namespace Animus::Curriculum
             // The next-run format: the columns above keep their places.
             OBS_SECONDARY_ENDED,                                        // the secondary ended: both sides drop it
             OBS_EVENT,                                                  // choose again now (SeatView::GoalEvent)
-            OBS_FROM_ORDER,                                             // the primary is the director's order ...
-            OBS_ORDER_KIND_FIRST,                                       // ... this kind
-            OBS_ORDER_TARGET_FIRST      = OBS_ORDER_KIND_FIRST + GOAL_COUNT,        // ... about this target
             // What was achieved this decision, whatever was pursued (hindsight):
-            OBS_ACHIEVED_KIND_FIRST     = OBS_ORDER_TARGET_FIRST + GOAL_TARGETS,
+            OBS_ACHIEVED_KIND_FIRST,
             OBS_ACHIEVED_TARGET_FIRST   = OBS_ACHIEVED_KIND_FIRST + GOAL_COUNT,
             OBS_COUNT                   = OBS_ACHIEVED_TARGET_FIRST + GOAL_TARGETS
         };
 
-        /// 1: Loot, Gather, Interact and the journal targets left the goal space (see the class comment).
-        [[nodiscard]] uint32 Revision() const override { return 1; }
+        /// 1: Loot, Gather, Interact and the journal targets left the goal space. 2: the order columns left the block
+        /// (see the class comment).
+        [[nodiscard]] uint32 Revision() const override { return 2; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void DescribeColumns(Layout const& layout, boost::json::array& names) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;

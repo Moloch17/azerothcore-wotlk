@@ -451,7 +451,7 @@ class _RolloutGraph:
         # decision's kernels.
         if trainer.goal_count:
             # The goal decision (LayoutActor.decide_goals): the queue promoted, the clock, the goal block's ended and
-            # event, and the primary an order set; masked by what the goal block says is there.
+            # event; masked by what the goal block says is there.
             goal_features = features
             slow_before = None
             if trainer.slow_goal_size:
@@ -1313,13 +1313,11 @@ class MappoTrainer:
         image = rows(buffer.image).reshape(length * columns, -1) if self.image_bytes else None
         layout = rows(buffer.layout).long().reshape(-1)
         goal = rows(buffer.goal).long().reshape(-1)
-        # With two goals and a queue: the slots each choice drew (scored again below), the primary as held for the
-        # lookahead's outcome, and whether the primary was an order's (not drawn, so not scored).
+        # With two goals and a queue: the slots each choice drew (scored again below) and the primary as held for the
+        # lookahead's outcome.
         slots = rows(buffer.goal_slots).long().reshape(length * columns, -1) if head.slots > 1 else None
         if slots is not None:
             goal = split_goal_pair(goal, head.count)[0]
-            signals = head.signals(obs, layout)
-            given, order_goal = signals["from_order"], signals["order_goal"]
         old_log_prob = rows(buffer.goal_log_probs).float().reshape(-1)
         advantages = rows(buffer.slow_advantages).float().reshape(-1)
         returns = rows(buffer.slow_returns).float().reshape(-1)
@@ -1359,7 +1357,7 @@ class MappoTrainer:
             states = _carry_sequence(self.actor.slow_memory, self.slow_goal_size, inputs, first, dones_seq)
             states = states.reshape(length * columns, -1)
             if slots is not None:
-                _, log_prob, entropy_rows = head.draw(states, obs, layout, order_goal, given, False, slots)
+                _, log_prob, entropy_rows = head.draw(states, obs, layout, False, slots)
             else:
                 logits = head.logits(states, obs, layout)
                 dist = torch.distributions.Categorical(logits=logits)

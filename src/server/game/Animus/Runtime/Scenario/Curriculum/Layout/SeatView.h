@@ -69,9 +69,10 @@ namespace Animus::Curriculum
             Position Where;
         };
         std::array<JournalPlace, JOURNAL_PLACES> Places{};
-        /// Places and the assignment are a dungeon's way on (the stage has them): the goal block reads them. False in
-        /// a stage without a route, where a trip's objective takes the assignment's slot.
-        bool RoutePlaces = false;
+        /// The stage has seen places (SeenPlaces: what the seat saw and remembers, its map's frontier -- not a route)
+        /// and an assignment: the goal block reads them. False in a stage without them, where a trip's objective
+        /// takes the assignment's slot.
+        bool HasSeenPlaces = false;
         bool HasAssignment = false;                 // the seat's own objective, in the assignment slot
         Position Assignment;
     };

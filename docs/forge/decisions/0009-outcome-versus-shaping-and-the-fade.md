@@ -6,6 +6,6 @@
 
 **Reason.** Stage 3 of the first curriculum collapsed because its lesson was paid as Shaping and the fade took it away (commit ad57c84e7, 2026-10-05); G1's drills held only once paid as Outcome (dungeon-curriculum plan).
 
-**What it constrains.** `test_stage_purpose.py` checks every stage names its purpose as an Outcome or Cost it pays. A new term needs a category (`static_assert` in RewardLedger.h).
+**What it constrains.** Every stage should name its purpose as an Outcome or Cost it pays (no test checks this since 2026-10-07). A new term needs a category (`static_assert` in RewardLedger.h).
 
 See also [principles.md](../principles.md) and the [index](README.md).

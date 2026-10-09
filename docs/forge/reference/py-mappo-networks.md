@@ -2,18 +2,8 @@
 
 Purpose and scope. A unit-by-unit reference for `apps/forge/python/animus/mappo/networks.py` (2382 lines), the only file
 that defines the policy and critic networks. Parameter lists and shape chains for the live M2 stage are in
-[py-mappo.md](py-mappo.md); the training use is in [py-mappo-trainer.md](py-mappo-trainer.md). Tests are in
-`apps/forge/python/tests/`; those that cover many units are listed once here:
-
-| Test file | Covers |
-|---|---|
-| `test_golden_update.py` | key names and shapes of the live M2 actor/critic, one update's numbers (CPU) |
-| `test_vision_encoder.py`, `test_vision_identity.py`, `test_vision_bytes.py` | camera: decode, patches, class embedding, shared encoder, blind columns, link to the entity list, bytes on the wire |
-| `test_free_look.py` | patch 8 at 128x64, render sizes, look head, camera chunking, seeding |
-| `test_mental_map.py` | map decode, `MapEncoder` |
-| `test_sight.py`, `test_interact.py` | sight list, pointer heads, named row |
-| `test_recurrent.py`, `test_normalisation.py`, `test_masking.py`, `test_goals.py`, `test_goal_queue.py`, `test_goal_targets.py`, `test_two_clock.py`, `test_foresight.py` | recurrent core, normalisers, masks, goal head and slots |
-| `test_rollout_graph.py`, `test_rollout_graph_log.py` | graph path (GPU) and log lines (CPU) |
+[py-mappo.md](py-mappo.md); the training use is in [py-mappo-trainer.md](py-mappo-trainer.md). There are no tests (removed 2026-10-07; see
+[tests.md](tests.md)).
 
 ## Map table (one file)
 
@@ -46,8 +36,7 @@ Unit index (line of the definition):
 - `log_prob_of`, `_entropy`: log-softmax gather and entropy computed directly.
 - `sample_logits(logits, deterministic)` (`:63`): Gumbel-max draw `argmax(logits - log(-log U))`; `U` in [0,1) so a
   masked logit cannot win. Returns `(choice, log_prob)`. Used by the graph path and the goal head; the eager path
-  uses `Categorical.sample()` (`trainer.py:1066`), a different random stream (test
-  `test_the_lean_sampler_draws_what_categorical_draws`).
+  uses `Categorical.sample()` (`trainer.py:1066`), a different random stream.
 - `skip_distribution_checks()` (`:248`) disables torch's distribution validation globally; called in
   `MappoTrainer.__init__` (`trainer.py:614`).
 
@@ -63,7 +52,6 @@ sight list's columns, which the adapters never read (`_attach_vision` `:1838`). 
 Used only on the rollout copies (`fold_normalisation`, `trainer.py:852`), which are re-synced and re-folded after every
 update. Invariant: the statistics are updated only **after** an update's epochs (`trainer.py:2013`), so the PPO ratio at
 epoch 0 is 1.
-Tests: `test_normalisation.py`, `test_masking.py`.
 Reviewer notes: `scale()` reads the count back to the host (`float(self.count)`, `:152`); it is only called by
 `fold_into` at sync time, which is acceptable. The `if count > 0` select means a brand-new network sees raw features.
 
@@ -91,8 +79,6 @@ row at episode ends into pieces (`_pieces :317`, computed on the CPU from `dones
 `pack_padded_sequence` and runs `torch._VF.gru` with the cell's own weights (`:373`), then un-packs back to `[T,N]`.
 The only place the learner touches a private torch API (`torch._VF.gru`). The positional arguments
 `(…, True, 1, 0.0, cell.training, False)` are `has_biases, num_layers, dropout, train, bidirectional`.
-Tests: `test_recurrent.py::test_fused_gru_matches_the_step_loop_at_the_real_size`, `..._at_odd_shapes` (need a GPU),
-`test_carrying_a_sequence_matches_stepping_through_it`.
 Reviewer notes: torch upgrades can break `_VF.gru`'s signature; the loop is the reference. Pieces start from the carried
 memory only for the row's first piece (`first = piece_start == 0`, `:366`).
 
@@ -115,18 +101,19 @@ Public methods:
   except index 0 when `has_space`. `allowed[:, 0] = True` always (goal 0 "Fight about no one" is never masked).
   With lookahead the predictions (detached) times `lookahead_weight` are added to the logits (`:566`).
 - `signals(obs, layout)` (`:464`): reads the goal block's columns > 0.5: `ended`, `secondary_ended`, `event`,
-  `from_order`, `order_goal`, `achieved` (-1 none). With `slots <= 1` only `ended` is real.
+  `achieved` (-1 none). With `slots <= 1` only `ended` is real.
 - `slot_logits(features, slot, drawn, obs, layout)` (`:494`): logits `[rows, count+1]` for a slot after the primary,
   last column = none; masked by the goal block like the primary; a row without a goal block has only none.
-- `draw(features, obs, layout, primary_given, given, deterministic, slots=None)` (`:523`): draws (or, with `slots`,
+- `draw(features, obs, layout, deterministic, slots=None)`: draws (or, with `slots`,
   scores) primary then secondary/queue slots, each conditioned on the earlier ones. Returns `(slots [rows,S] with -1
   for none, log_prob, entropy)`. The primary's entropy counts fully; later slots are weighted by `slot_entropy_weight`
   (default 0.1, overwritten from `MappoConfig.goal_slot_entropy_weight` by `trainer.py:665`, not by the constructor).
-  A primary `given` by an order is conditioned on but contributes no log-prob or entropy.
+  (The order-given primary path was removed with the goal block's order columns, goal block revision 2.)
 - `predictions(features)` (`:555`): `(success logits, sigmoid(duration))` per candidate goal.
 - `set_space(accepts, block_at)` (`:448`), `block_width` (`:433`), `columns` (`:442`): goal block layout
   (secondary_ended
-  = base, event, from_order, order_kind, order_target, achieved_kind, achieved_target with base = kinds+targets+2).
+  = base, event, achieved_kind, achieved_target with base = kinds+targets+2; `block_width` = base + 2 + kinds +
+  targets with slots > 1, goal block revision 2).
 - `ended(obs, layout)` (`:583`): **no caller anywhere**; dead.
 
 Data flow: built in `LayoutActor.__init__` (`:2021`) with width = `slow_size or head_width`. Called from the rollout
@@ -134,10 +121,6 @@ Data flow: built in `LayoutActor.__init__` (`:2021`) with width = `slow_size or 
 loop).
 Contract: the goal block's column positions must equal `GoalBlock::Obs` in the sim; there is no checksum other than
 `set_goal_space`'s kinds/targets count check ([cpp-blocks.md](cpp-blocks.md)).
-Known quirk: "the goal block's order columns are always zero" ([known-issues.md](known-issues.md)): `from_order` and
-`order_goal` are therefore always False/0 on live stages; the `given` branches of `draw`/`decide_goals` are exercised
-only by tests (`test_goal_queue.py::test_the_directors_primary_is_held_and_not_scored`).
-Tests: `test_goals.py`, `test_goal_queue.py`, `test_goal_targets.py`, `test_two_clock.py`.
 
 ## Blind columns: `attach_blind_columns`, `clear_blind_columns`, `without_blind_columns` (`:800-829`, `:1936`)
 
@@ -146,8 +129,7 @@ A layout's adapter must not read some columns (camera scalars, entity-list slots
 that multiplies the gradient by it, so those weight columns stay exactly zero through every update. Tags: `"set"` and
 `"vision"` (`BLIND_KEEP_PREFIXES` `:1933` also lists the retired `"blind_keep_"`). `clear_blind_columns(network)`
 (`:821`)
-re-zeroes after a seed or load. The keep buffers are **saved** in checkpoints (they are persistent buffers; see the
-golden key list) but **dropped on load** (`without_blind_columns`, `:1936`; `load_actor_state` `:1943`;
+re-zeroes after a seed or load. The keep buffers are **saved** in checkpoints (they are persistent buffers) but **dropped on load** (`without_blind_columns`, `:1936`; `load_actor_state` `:1943`;
 `MappoTrainer.load_state_dict` `trainer.py:2039`): the network's own masks, built from the current stage, win.
 Resume safety check: `MappoTrainer.camera_columns_clear()` (`trainer.py:825`) fails the resume if any adapter weight
 is non-zero at a blind column (`train.py:735`).
@@ -168,8 +150,7 @@ camera_bytes, [sight]}` or None; None altogether if no layout has a camera. Revi
 bytes/pixel with kinds, or 5 with an entity slot) are refused by name (`bytes_per_pixel` must be 4). `vision_image_bytes` returns `camera_bytes` (image + map crop) (`:1068`); `vision_look_heads` the
 `(7,5,5)` tuple. Duplicate knowledge hazard: the byte layout (4 bytes/pixel, class in the low 5 bits of byte 3, the
 objective in bit 5; map channels order) is re-implemented here and in C++ `Vision::DecodePixel` /
-`DecodeCropCell`; `test_vision_bytes.py::test_decoding_every_byte_is_the_sims_decode_pixel_exactly` and
-`test_mental_map.py::test_the_crop_decodes_as_the_sim_encodes_it` pin it.
+`DecodeCropCell`; change both together.
 
 `decode_image`: `[N, H*W*4] uint8 -> [N,H,W,5] float32`: distance `255 -> 1.0 else b/254`, height
 `(b-128)/125`, normal `b/255`, class `b & 31`, objective `(b>>5)&1`. (`decode_slots` and `SLOT_BYTE` are gone with the
@@ -187,7 +168,6 @@ embedding** (held by reference via `__dict__`, `:1238`), five values: 4+6+5 = 15
 (`VisionEncoder.forward :1716`). Seeding from a checkpoint without a map zeroes the
 join
 (`bootstrap._seed_map`, [py-learner.md](py-learner.md)).
-Tests: `test_mental_map.py`. 
 
 ## `VisibleEntities` (`:1288`), `SightEntities` (`:1363`), `SightPointers` (`:1531`)
 
@@ -207,7 +187,6 @@ softmax over present slots, `named_pool`, and per-press `named_gain` (starts at 
 (`:1507`) overwrites the press action ranges' logits with `tokens . query`. 
 Invariants: all layouts' lists must agree on slots/width/presses (raises otherwise, `:1391`); the sight list's leading
 columns equal the entity list's (`_sight_of`).
-Tests: `test_sight.py`, `test_interact.py`, `test_vision_identity.py`.
 Pointer logits use the same tokens as the camera embedding (`tokens(obs, layout)`: both are from the observation alone).
 
 ## `VisionEncoder` (`:1541`)
@@ -225,7 +204,6 @@ Adam (`vision_opt`) stepped once per minibatch. `blind` collects columns the ada
 (`:1638`).
 Mixed resolution: the sim renders at several sizes (`render_sizes` 32x16 ... 128x64) and scales to the canonical
 128x64 before sending, so the learner always sees 128x64 (`vision_of` validates each size is within the canonical one).
-Tests: `test_vision_encoder.py`, `test_free_look.py`, `test_vision_identity.py`.
 Reviewer notes: `forward` recomputes `decode_image` and (twice) `pixels(image)`; the `seen` objective test uses channel
 index `IMAGE_CHANNELS-1` (`:1719`).
 
@@ -239,7 +217,6 @@ pitch rate 5, zoom/command 5), init gain 0.01 and a bias `LOOK_HOLD_BIAS = 2.0` 
 time. `sample` returns choices `[N,heads]` and the joint log-prob; rows without a camera give 0/0 and no gradient.
 `evaluate` returns log-prob and entropy. Enters the PPO ratio as part of the joint log-prob (`trainer.py:1748`).
 Not exportable (`export.py:440`).
-Tests: `test_free_look.py`.
 
 ## `GoalEmbedding` (`:1868`)
 
@@ -250,7 +227,6 @@ secondary adds its embedding through a learned `gate` (init 0.5). The actor buil
 `kind_scale`/`target_scale` tables (zero-init) used as FiLM `features*(1+scale)+shift` (`condition :1918`); the critic
 adds the shift only (`forward :1914`). `_GOAL_SCALE_KEYS` (`:1928`): an actor saved before the scale existed loads with
 the scale at zero (`load_actor_state`).
-Tests: `test_goal_queue.py::test_an_actor_saved_before_the_goal_scale_loads_with_it_at_zero`.
 
 ## `LayoutActor` (`:1971`)
 
@@ -272,7 +248,6 @@ the detached (and foresight-fed) features. `initial_memory`, `fold_normalisation
 Config keys: all through constructor args from `MappoConfig` (see the trainer document).
 Quirks: `LayoutActor.forward` and `.step` are used by `distill.py:320` (`teacher.actor.step`) and `cast.py`; the update
 and rollout use `encode`/`features_from`/`action_logits` directly.
-Tests: `test_recurrent.py`, `test_goals.py`, `test_goal_queue.py`, `test_masking.py`, `test_free_look.py`.
 
 ## `LayoutCritic` (`:2262`)
 
@@ -284,7 +259,6 @@ Tests: `test_recurrent.py`, `test_goals.py`, `test_goal_queue.py`, `test_masking
 beside the actor choosing the goal (`_RolloutGraph._body`, `trainer.py:452`). `step_encoded` (`:2369`) runs the GRU and
 the head. Output is a **normalised** value when `ValueNorm` is used; the trainer denormalises.
 Note the critic has a GRU of its own cleared with the actor's (`ActingState.critic_memory`).
-Tests: `test_recurrent.py::test_critic_*`.
 
 ## Loading: what a by-name load tolerates
 
@@ -317,7 +291,7 @@ Tests: `test_recurrent.py::test_critic_*`.
 ## Reviewer notes
 
 - Refactor hazard: the tensor names (`adapters.N`, `heads.N`, `norms.N`, `vision.*`, `goal_head.*`) are the checkpoint
-  format; the golden test fails on any rename, and `bootstrap.py` seeds by these names.
+  format; a rename breaks old checkpoints, and `bootstrap.py` seeds by these names.
 - `networks.py` mixes five concerns (primitives, goal head, entity list, camera/map/sight, the two networks). A split
   by file is safe for imports because everything is imported by name from `.networks` (`train.py:49`, `distill.py:23`,
   `evaluate.py:30`, `trainer.py:18`, `cast.py`, `partners.py`, `export.py`).

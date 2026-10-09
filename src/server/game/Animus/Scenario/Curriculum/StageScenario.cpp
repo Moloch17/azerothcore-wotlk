@@ -1446,15 +1446,11 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
         goals["accepts"] = std::move(accepts);
         goals["targets"] = GOAL_TARGETS;
         goals["block"] = "goal";
-        // Where the next-run columns sit in the block, from its first column: the secondary ending, the event, the
-        // commanded primary (a flag, then kind and target one-hots) and what was achieved (kind and target), and
-        // how many goals ACT carries a seat.
+        // Where the next-run columns sit in the block, from its first column: the secondary ending, the event and
+        // what was achieved (kind and target), and how many goals ACT carries a seat.
         boost::json::object columns;
         columns["secondary_ended"] = uint32(GoalBlock::OBS_SECONDARY_ENDED);
         columns["event"] = uint32(GoalBlock::OBS_EVENT);
-        columns["from_order"] = uint32(GoalBlock::OBS_FROM_ORDER);
-        columns["order_kind"] = uint32(GoalBlock::OBS_ORDER_KIND_FIRST);
-        columns["order_target"] = uint32(GoalBlock::OBS_ORDER_TARGET_FIRST);
         columns["achieved_kind"] = uint32(GoalBlock::OBS_ACHIEVED_KIND_FIRST);
         columns["achieved_target"] = uint32(GoalBlock::OBS_ACHIEVED_TARGET_FIRST);
         columns["width"] = uint32(GoalBlock::OBS_COUNT);

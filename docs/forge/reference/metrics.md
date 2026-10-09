@@ -36,7 +36,6 @@ Stage abbreviations used in the tables: **M1** move1_controls, **M2** move2_seek
 | apps/forge/python/animus/stage.py | 829 | Convergence controller: what reads which measure. |
 | apps/forge/python/animus/config.py | 853 | `StatusConfig`, `EvalConfig`, `FadeConfig`, `CostLadderConfig`, `ConvergenceConfig`, `LayoutSamplingConfig`. |
 | apps/forge/tools/sim_metrics.py | 586 | Extracts the column names from the C++ (cross-check). |
-| apps/forge/python/tests/test_metric_names.py, test_layout_metrics.py, test_status_headline.py, test_outcome_score.py | | Tests that pin names (see Tests). |
 
 ## 1. How a column is made
 
@@ -175,10 +174,10 @@ rejoin_seconds, rejoined, dead_seconds, leader_stops_reached, leader_route_share
 
 ### C1-C3 (CombatEncounter)
 
-won (something taken down and no death), survived (no death), kills, packs_cleared, pulls, extra_pulls, interrupts, deaths, respawns (**the same quantity as rises**: both return `Clock.Rises`), rises, rejoins, rejoin_seconds, rejoined,
+won (something taken down and no death), survived (no death), kills, packs_cleared, pulls, extra_pulls, interrupts, deaths, rises, rejoins, rejoin_seconds, rejoined,
 dead_seconds, away_seconds (charged Away: dead, walking back, or off the fight), outcome_paid and interrupt_earnings (interrupt earnings over kill and clear earnings; to be scaled down above ~0.3), kill_seconds (per kill),
 ally_deaths, hurt_share / fire_share (health taken, all / ground fire, in max healths), hazard_pulls, linked_pulls, caster_pulls, rest_seconds (eating/drinking), selected_share, target_in_view, start_walk,
-combat_rung (= difficulty = the tier), at_top_rung (tier >= `Combat.MaxTier`).
+difficulty (the tier; also the evaluation videos' rung label), at_top_rung (tier >= `Combat.MaxTier`).
 
 ### G1 (RolesEncounter + PartyEncounter)
 
@@ -208,7 +207,7 @@ The sim_metrics extraction lists all boss names for both stages (a superset; the
 ### Which stages report what (union checked with `sim_metrics.py`)
 
 M1 221 exact names, M2 225, M3 222, M4 215, C1-C3 228, G1 247, D2/D3 (count not recomputed since the 2026-10-08 removal; a superset where the C++ guards a column by a condition). A name no stage reports but a yaml asks for reads as "never met" and
-silently stalls a ladder (sim_metrics.py docstring); `test_metric_names.py` checks the live yamls against the extraction.
+silently stalls a ladder (sim_metrics.py docstring); `sim_metrics.py --check <stage.json>` checks the live yamls against the extraction.
 
 ## 4. Reward columns `reward_<term>`
 
@@ -334,9 +333,9 @@ Headlines (`status.headline`) and targets, per stage (target in brackets, a read
 * **M2**: found [>=0.95], found_hallway, found_doorway, found_room, found_deep, seek_rung, found_deepest [>=0.9], find_seconds [<=90], sight_seconds [<=60], sight_to_arrival [<=15], rooms_looked, rooms_before_found [<=12], revisit_rate [<=0.2], objective_visible, wall_seconds [<=2], timed_out [<=0.05], died [<=0.01].
 * **M3**: right_object [>=0.9], right_distinguish/switch/key [>=0.9], interact_rung, door_by_lever, key_used, wrong_objects [<=0.1], lever_pressed, act_refused_locked, right_seconds, sight_seconds [<=30], sight_to_arrival [<=15], wall_seconds, timed_out, died.
 * **M4**: follow_kept_share [>=0.9], regroup_share [>=0.9], regroup_seconds [<=5], lost_seconds [<=5], blocking_seconds [<=3], deaths, rejoin_seconds, rejoined [>=0.9], leader_route_share, difficulty, wall_seconds [<=2], died [<=0.02].
-* **C1**: won [>=0.9], survived [>=0.9], kills [>=3], kill_seconds [<=25], hurt_share [<=0.8], deaths, rejoin_seconds, combat_rung, target_in_view [>=0.8], selected_share, ally_deaths [<=0.1].
-* **C2**: won [>=0.85], survived [>=0.85], packs_cleared [>=3], extra_pulls [<=0.1], interrupts, interrupt_earnings [<=0.3], fire_share [<=0.1], hurt_share [<=1.5], deaths, rejoin_seconds, combat_rung, target_in_view [>=0.8].
-* **C3**: survived [>=0.8], won [>=0.8], packs_cleared [>=3], deaths, rejoined [>=0.9], rejoin_seconds [<=60], dead_seconds, away_seconds, rest_seconds, extra_pulls [<=0.1], hurt_share [<=1.5], combat_rung.
+* **C1**: won [>=0.9], survived [>=0.9], kills [>=3], kill_seconds [<=25], hurt_share [<=0.8], deaths, rejoin_seconds, difficulty, target_in_view [>=0.8], selected_share, ally_deaths [<=0.1].
+* **C2**: won [>=0.85], survived [>=0.85], packs_cleared [>=3], extra_pulls [<=0.1], interrupts, interrupt_earnings [<=0.3], fire_share [<=0.1], hurt_share [<=1.5], deaths, rejoin_seconds, difficulty, target_in_view [>=0.8].
+* **C3**: survived [>=0.8], won [>=0.8], packs_cleared [>=3], deaths, rejoined [>=0.9], rejoin_seconds [<=60], dead_seconds, away_seconds, rest_seconds, extra_pulls [<=0.1], hurt_share [<=1.5], difficulty.
 * **G1**: won [>=0.7], won_hold/keep/focus/pull [>=0.7], hold_share [>=0.8], kept_share [>=0.8], focus_share [>=0.6], clean_share [>=0.9], extra_pulls [<=0.1], party_deaths, wipes [<=0.05], rejoined [>=0.9], rejoin_seconds [<=60], roles_rung. Excluded: death_knight.
 * **D2**: full_clear [>=0.7], cleared [>=0.7], wing_cleared_share, wing_wipes [<=1], boss_oggleflint/taragaman/jergosh/bazzalan, wing_rejoin_seconds [<=90], clear_allbot, clear_standin, standin_gap [<=0.1], wing_rung.
 * **D3**: bar_clear [>=0.7], cleared [>=0.7], full_clear [>=0.7], wing_wipes [<=1], boss_rhahkzor/sneed/gilnid/smite/greenskin/cookie/vancleef (vancleef [>=0.7]), deaths_tank/healer/damage, clear_allbot, clear_standin, standin_gap [<=0.1], wing_rung.
@@ -346,12 +345,11 @@ The `eval.report` lists (what the console and eval.jsonl summaries carry beyond 
 
 ## Tests that pin names and measures
 
-`test_metric_names.py` (every yaml metric must be a column, a reward column or a derived name; compares `sim_metrics.py` with real stage.json), `test_status_headline.py`, `test_layout_metrics.py` (layouts.csv and per-class means), `test_outcome_score.py` (score column),
-`test_shaping_fade.py`, `test_evaluation.py`, `test_heldout.py` (held-out arena validation), `test_partners.py` (arms), `test_run_logger.py` (CSV rotation), C++ `RewardLedgerTest`, `ReportCadenceTest`, `StandingTest`. See [tests.md](tests.md).
+No tests (removed 2026-10-07); see [tests.md](tests.md) (`sim_metrics.py --check <stage.json>` is the hand check).
 
 ## Observed issues
 
-* `respawns` and `rises` in CombatEncounter.cpp:89-90 are the same expression (`Clock.Rises`): a duplicate column (left for the Encounters owner, 2026-10-08).
+* (Fixed 2026-10-08: the duplicate `respawns` column (= `rises`) and `combat_rung` column (= `difficulty`) were removed from CombatEncounter.)
 * (Fixed 2026-10-08: the duplicate `epochs_done` metrics.csv column was removed; `epochs_run` stays.)
 * `CombatReward.cpp` hosts `RewardTermName` for terms that are no longer combat-only (known; the file name no longer fits).
 * `reward_goal_progress` never exists: `GoalProgress` has a name and category but nothing claims it.

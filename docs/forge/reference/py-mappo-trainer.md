@@ -13,10 +13,7 @@ caller is `TrainingRun` in `train.py` ([py-learner.md](py-learner.md)).
 |---|---|---|
 | `apps/forge/python/animus/mappo/trainer.py` | 2053 | `MappoConfig` (41), `ActingState` (209), `_Downloads` (276), `_Decided` (298), `_Packed` (339), `_RolloutGraph` (382), `MappoTrainer` (598) |
 
-Tests: `test_golden_update.py` (CPU update numbers), `test_update_stats.py` (+ `update_stats_reference.json`),
-`test_recurrent.py`, `test_masking.py`, `test_goals.py`, `test_goal_queue.py`, `test_two_clock.py`, `test_free_look.py`,
-`test_vision_encoder.py`, `test_normalisation.py`, `test_rollout_graph.py` (GPU),
-`test_rollout_graph_log.py` (CPU), `test_tick_split.py` (discounts), `test_span_gae.py`, `test_gae.py`.
+No tests (removed 2026-10-07); see [tests.md](tests.md).
 
 ## `MappoConfig` (`trainer.py:41-198`): every field, its default and who reads it
 
@@ -86,13 +83,12 @@ the end; with `overlap_updates` the caller passes `sync=False` and calls `sync_r
    actor (`_decide(vision_embedding=)`, `LayoutActor.features`) and the critic (`LayoutCritic.step(vision_embedding=)`), as
    the graph path and the update do; before, each network ran the camera and map encoder. The result is the same tensor.
 
-Both must agree; `test_rollout_graph.py::test_the_graph_decides_as_the_eager_path_does` (GPU only) is the guard. They
+Both must agree (no test checks this since 2026-10-07). They
 differ in the sampler: graph uses `sample_logits` (Gumbel-max), eager uses `Categorical`.
 
 ### Graph capture conditions (`_graphs_off_reason`, `:883`)
 
-Graphs are used iff all hold, else a one-time log line names the reason (`announce_graph`, `:371`, tests
-`test_rollout_graph_log.py`):
+Graphs are used iff all hold, else a one-time log line names the reason (`announce_graph`, `:371`):
 
 1. `_rollout_stream is not None`, i.e. `rollout_device.type == "cuda"` (`:680`; HIP shows as cuda);
 2. `config.rollout_graphs` is true;
@@ -119,8 +115,7 @@ and the `_Packed` layouts untouched":
 - `_Decided.finish` now returns four values (`:336`); `_decide` and `act` unpack four (`:960`), `act_and_value` unpacks
   four (`:1006`).
 
-Only GPU tests cover these (they skip on CPU), so the edit was verified on CPU only by the golden test, which uses the
-eager path (`test_golden_update.py` builds the trainer with `device="cpu"`). The residue of the trim (`_Decided`'s unused `envs`, `agents`, `goal_chosen`) was deleted.
+These paths have no tests (removed 2026-10-07). The residue of the trim (`_Decided`'s unused `envs`, `agents`, `goal_chosen`) was deleted.
 
 ## The update
 
@@ -241,8 +236,7 @@ what the failure looks like; torch raises on a group size mismatch).
    (checked by grep), so a stage restart never resets Adam state in the live code even though the docstring says "after
    a restart".
 10. The CPU path of the update leaves `_masked_stats` False (`:637`) so hindsight uses picked rows there and masked
-    arithmetic on CUDA: two code paths with one test for equivalence (`test_update_stats.py` runs the masked path on
-    CPU through the flag).
+    arithmetic on CUDA: two code paths.
 11. `value()` and `_decide` call `_groups`, which returns None on CUDA (dense rollout copies) and a grouping on CPU:
     the eager and graph paths differ in which adapters run (per-layout loop vs `DenseLayouts`).
 12. `act()` always passes `state` into `_decide` but ignores graphs: `act` is eager even on the GPU.
@@ -254,8 +248,7 @@ what the failure looks like; torch raises on a group size mismatch).
   `approx_kl_move` consistent (chunk starts are off-policy for memory)? `explained_variance` uses the denormalised
   buffer values versus returns: fine, but it ignores invalid rows only via `rows`.
 - The update is 420 lines in one method; the natural cuts are: data prep, per-minibatch actor half, critic half, stats.
-  Protect it with `test_golden_update.py` and `test_update_stats.py` before touching it, and re-run the GPU tests
-  (`forgectl test --gpu`, [forgectl.md](../forgectl.md)) for the stream/graph changes.
+  Nothing guards it since the tests were removed 2026-10-07 ([tests.md](tests.md)): compare a short run's first losses with the old build's.
 - Because the learner imports modules lazily, changing files under a running learner can mix versions (known fact);
   `trainer.py` imports `.networks` at import time, but `load_state_dict` imports `.networks` names lazily
   (`:2039`, `:838`).

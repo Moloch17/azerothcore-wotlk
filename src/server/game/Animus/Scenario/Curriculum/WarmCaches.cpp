@@ -33,8 +33,9 @@ void Animus::Curriculum::WarmCaches()
     ConsumablePool::Instance();
     WarmGearCaches();
     Opponents::OpponentPool::Instance();
-    WorldCreatures::SpawnedIds();
-    WorldCreatures::WaypointWalkerIds();
+    // Warm-ups: the first call reads the world database into a cache; the sets themselves are not needed here.
+    (void) WorldCreatures::SpawnedIds();
+    (void) WorldCreatures::WaypointWalkerIds();
 
     for (ClassProfile const& profile : ClassProfiles())
         ClassAssets::For(profile);

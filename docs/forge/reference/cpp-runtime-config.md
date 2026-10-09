@@ -157,8 +157,7 @@ error in `OnUpdate` (`AnimusForge.cpp:459-467`).
 
 ## Reviewer notes
 
-- Any new key must be added to `worldserver.conf.dist`; `apps/forge/python/tests/test_conf_covers_tuning.py` checks the
-  curriculum keys only (not these).
+- Any new key must be added to `worldserver.conf.dist` (no test checks this since 2026-10-07; see [tests.md](tests.md)).
 - Per-machine confs differ (cluster); only `AnimusForge.Curriculum.*` is fingerprinted, so `Envs`, `Stage.*.Envs`, `Vision.*`,
   `Map.*` and `Memory.*` can silently differ between machines. The host caps workers' envs and ticks per stage in START but
   does not check the camera or map settings; the learner's manifest check on `stage.json` would catch a vision size mismatch

@@ -38,16 +38,16 @@ does not carry them, and only the host's rung is broadcast to workers (`AnimusFo
 after the
 rebuild planned before the dungeon stages. Direction: persist the rungs in `progress.json`/the run directory and restore
 on
-`resume`, or document that the conf key must be set by hand. Verify: GTest for save and restore plus a resume dry run.
+`resume`, or document that the conf key must be set by hand. Verify: a resume dry run.
 `UNVERIFIED`: whether `forgectl stage resume` sets `WingRungStart`.
 
 **A2. A score-based ladder remains in the sim.** `DifficultyLadder::Record` moves a class down when a 200-fight window
 is under
 60% won (`Encounters/DifficultyLadder.cpp:93`), for C1 to C3 and G1. Principle 10 says difficulty ladders never step
 back on a
-score; the learner side obeys, this sim side does not, and there is no test for it (no GTest names `DifficultyLadder`).
+score; the learner side obeys, this sim side does not.
 Direction:
-decide whether the exception is intended; if not, remove `LowerBelow` or make it an alarm. Verify: a GTest on `Record`.
+decide whether the exception is intended; if not, remove `LowerBelow` or make it an alarm.
 
 **A3. Comment and config disagree on live stage settings.** `configs/move1_controls.yaml` has `fade.rungs: [0.0]` (a
 single rung)
@@ -55,9 +55,7 @@ while its comments describe the path x0.5, x0.25, x0; `configs/move2_seek.yaml` 
 ladder, but
 `costs.enabled` is false by inheritance. A refactor of the config chain that "fixes" the comment direction would change
 training.
-Direction: make the yaml say what runs; keep
-`test_metric_names.py::test_a_move4_costs_ladder_is_off_and_names_no_gate`-style tests for
-each stage's ladder switches. Verify: a test that loads every stage and asserts `fade.enabled`, `costs.enabled`,
+Direction: make the yaml say what runs. Verify: read each stage's resolved `fade.enabled`, `costs.enabled`,
 `require_plateau`.
 
 **A4. Learner imports modules lazily, so editing files under a running learner can mix versions.** Function-level
@@ -68,15 +66,9 @@ imports include
 this
 before recreating the container) can load new code into an old process. Direction: always stop the learner before
 changing
-the tree (deploy-gate.md does); consider hoisting the imports. Verify: grep for indented imports; a test that fails on
-new ones.
+the tree (deploy-gate.md does); consider hoisting the imports. Verify: grep for indented imports.
 
-**A5. Rollout-graph code edited in the learner trim is covered only by GPU tests.** `tests/test_rollout_graph.py:11` and
-`test_rollout_graph_log.py` skip without CUDA/ROCm (`pytest.mark.skipif(not torch.cuda.is_available())`); the CPU suite
-cannot
-catch a regression. Direction: run the GPU tests on a free card before each deploy (`forgectl test --gpu`, step 3 of the
-deploy
-gate). Verify: the GPU run reports zero skips.
+**A5. Rollout-graph code edited in the learner trim was covered only by GPU tests.** (Moot: the tests were removed 2026-10-07; see [tests.md](tests.md) for the hand check, the first minutes of a resumed run.)
 
 **A6. `forge pause` does not reach cluster workers.** Only the host's console command exists; `forgectl stage pause` and
 `cancel`
@@ -98,8 +90,7 @@ lines.
 and `HealingMana` are negative prices but `RewardCategory::Shaping`, so the fade removes them and they are not in
 `score_outcome`
 (`RewardLedger.h`). Same family as the 2026-10-07 fixes that moved Stall to Idle and Approach to Lost. Direction: decide
-per term; add a
-test listing every Shaping term that is only ever negative. Verify: `test_stage_purpose.py` style check.
+per term.
 
 **A9. Death knights are absent from dungeon training.** Decision 0004; the final models would play dungeons without a
 death-knight
@@ -110,16 +101,19 @@ casting draw).
 
 **B1.** Removed with the GPU camera (tag `archive/gpu-camera`): `GpuVision::Renderer::Forget` no longer exists.
 
-**B2.** (Left for the protocol owner, 2026-10-08.) `MODE_FLAG` bit 1 is unused (`Bridge/Protocol.h:274` defines only `MODE_FLAG_STAND_IN = 2`); the old
-`MODE_FLAG_SCRIPTED_OPPONENTS` is gone but the value is reserved until the next protocol change (commit aa303bc33).
-Decide whether to renumber at the next bump (protocol 26 now).
+**B2.** (Resolved as documentation, 2026-10-08.) Flag value 1 (bit 0) of `ModeMsg.Flags` is unused: the old
+`MODE_FLAG_SCRIPTED_OPPONENTS` is gone (commit aa303bc33) and `Bridge/Protocol.h` defines only `MODE_FLAG_STAND_IN = 2`
+(bit 1; the old comment said "Bit 1 is unused", which read the wrong way round). Nothing reads bit 0, and the sim does
+not check unknown bits. It is kept reserved on purpose: renumbering `STAND_IN` to 1 would change the wire value inside
+protocol 26 on both sides at once (sim `Protocol.h`, learner `protocol.py`) for no gain, so it waits for a protocol
+bump that changes the wire anyway. Comments in `Protocol.h` and `protocol.py` now say this.
 
-**B3.** `GoalBlock`'s order columns (`OBS_FROM_ORDER`, `OBS_ORDER_KIND_FIRST`, `OBS_ORDER_TARGET_FIRST`,
-`Blocks/GoalBlock.h`) are always zero since the director was deleted, but stay in the layout (101 observations since goal
-revision 1, 2026-10-08; 128 before). OPEN, blocked on `mappo/networks.py`: `GoalHead.columns`/`block_width`/`signals` read
-the block at fixed offsets (and `draw`/`trainer.py:1322`/`export.py:771` carry the `given` path), so the C++ columns and
-those readers must change in one commit; see section H. The rest of this item (Loot, Gather, Interact and the
-objective/giver/turn-in targets) is fixed.
+**B3.** (Resolved, 2026-10-08.) `GoalBlock`'s order columns (`OBS_FROM_ORDER`, `OBS_ORDER_KIND_FIRST`,
+`OBS_ORDER_TARGET_FIRST`) were always zero since the director was deleted. They left the block (101 -> 68 observations,
+goal block revision 1 -> 2) in one change with every reader: `GoalHead.columns`/`block_width`/`signals`, the `given` /
+`primary_given` path of `draw` and `decide_goals`, `trainer.py`'s slow update, `export.py`'s reference decision,
+stage.json `goals.columns`, the column names. See section H. (Loot, Gather, Interact and the objective/giver/turn-in
+targets were fixed earlier.)
 
 **B4.** (Resolved.) The learner's seat-set network (`EntitySets`, `mappo.seat_sets`, `entity_attention`, `SEAT_SET_NAMES`, the
 seat-set seeding) was deleted. `StageScenario.cpp:1346` still writes `sets` into `stage.json` (the learner ignores it for
@@ -144,29 +138,23 @@ of principles ("dead code is deleted, not gated").
 
 ## C. Coverage gaps
 
-**C1.** No GTest names `DifficultyLadder`, `CombatEncounter`, `PartyEncounter`, `StandInSeat` or `OpponentPool` (grep of
-`src/test/server/game/Animus`); combat is reached only through `CombatPerceptionTest.cpp` and `RolesStageTest.cpp`. Add
-tests before splitting those files.
+**C1.** (Moot: the tests were removed 2026-10-07; see [tests.md](tests.md).)
 
-**C2.** The full reward arithmetic of the dungeon stages (`InstanceEncounter::Reward`, 2530-2700) is covered by
-`DungeonStagesTest.cpp` only at the level of `WingRun` helpers (`UNVERIFIED`: check it asserts ledger totals).
+**C2.** The full reward arithmetic of the dungeon stages (`InstanceEncounter::Reward`, 2530-2700) has no test (tests removed 2026-10-07; see [tests.md](tests.md)).
 
-**C3.** Stages M3 to D3 have never trained; their configs are checked by tests for self-consistency (gates exist,
-columns exist) but not by a run. The first run of each is the test.
+**C3.** Stages M3 to D3 have never trained; their configs are checked for self-consistency (gates exist,
+columns exist) only by `CurriculumProblems()` at startup and by reading, not by a run. The first run of each is the test.
 
-**C4.** The map data tables are validated against vmaps by data tests that need `FORGE_VISION_DATA`
-(`StockadeHallwaysDataTest.cpp`, `StockadeRoomsDataTest.cpp`, `DeadminesSitesDataTest.cpp`); where that data is absent
-they skip. Their authoring scripts are in gitignored plan folders (`perception-goals/tools/*.py`;
+**C4.** The map data tables are not validated against vmaps any more (the data tests were removed 2026-10-07). Their authoring scripts are in gitignored plan folders (`perception-goals/tools/*.py`;
 `dungeon-curriculum/tools` is empty here), so the tables cannot be regenerated from the repository.
 
-**C5.** `test_combat_stages.py::test_the_seed_chain_runs_from_m2` asserts C1 extends `move3_interact`; the name is stale
-and would mislead a reader.
+**C5.** (Moot: the tests were removed 2026-10-07.)
 
 ## D. Operational gaps
 
 **D1.** Resume after a rebuild loses the sim ladders (A1). **D2.** `docker attach` is the only control path and `forge
 pause` is host-only (A6, decision 0001). **D3.** Conf files are per machine, untracked and hand-synced for 239 keys.
-**D4.** No CI for the forge; tests run through `forgectl test` in the dev container. **D5.** The wing ladder has a
+**D4.** No CI for the forge, and no tests (removed 2026-10-07; see [tests.md](tests.md)). **D5.** The wing ladder has a
 collapse alarm but no stall alarm (`Encounters/WingLadder.h`), unlike the learner's gate-stepped fade (`animus/stage.py`
 `_watch_stall`); D2 and D3 could sit flat on a rung unnoticed. **D6.** `docs/forge/README.md` and several chapters still
 describe the first curriculum (not this chapter set). **D7.** Evaluation of D2/D3 takes hours of sim time per heldout
@@ -189,7 +177,7 @@ of four cells could in theory pick a different first cell: none in 3,000,000 ran
 `move4_follow` extends `move2_seek` in both). **E2.** Values re-set by a standalone yaml silently reset an upstream
 decision: M2's lr 1.5e-4 and look entropy 0.004 do not reach C1 to D3 (3e-4 and 0.001). Decide per stage and say so in
 the yaml. **E3.** M4's scripted follow leader is the last script; the learned-leader path is unbuilt. **E4.** The goal
-head's order, secondary-goal and slot machinery serve stages that no longer have directors (the order columns: B3). **E5.** The stand-in is a
+head's order, secondary-goal and slot machinery serve stages that no longer have directors (its order columns are gone: B3). **E5.** The stand-in is a
 frozen partner from the pool and is absent while the pool is empty; G1 starts with only `combat3_survive` as a partner.
 **E6.** The first curriculum's stage-numbered terms still appear in comments and docs (`stage6`, `stage8`) in code such
 as `RewardLedger.h`.
@@ -210,22 +198,20 @@ that `move1_controls.yaml` also carries; make C1 extend a shared base or M3. **F
 and applying actions (2689-3530); `ObserveSeat` (3532-3800); goals (`GoalPotential` 3799 to about 4020); `JudgePress`
 and the intent prices (4027-4620); evaluation pinning and episode tracking (4622-4900); `SeatReward` (4909-5070);
 `WriteState`. Suggested split: Rebuild+character build; Observe+WriteState; Intent (JudgePress and goals); Reward.
-Verify with `LiveLayoutPinTest` unchanged, the full GTest set and a `forge run <stage> random 1` per stage.
+Verify with a stage.json diff and a `forge run <stage> random 1` per stage.
 
 **G2. `InstanceEncounter.cpp` (2752 lines).** Regions (method start lines): fight setup (about 181-1150), the
 run loop and boss and pack tracking (1151-1980), views and goal places (1982-2450), `Reward` (2530-2700), selection and
 teardown (2734+). The wing ladder and the run itself share one `EnvInstance`; split
-by behaviour with `WingRun.h` as the pure core. Verify with `DungeonStagesTest.cpp`, `WingLadderTest.cpp`.
+by behaviour with `WingRun.h` as the pure core. Verify with a `forge run <stage> random 1` per dungeon stage.
 
 **G3. `AnimusForge.cpp` (3087) and `ForgeCommands.cpp` (1304):** the state machine, cluster, learner supervision and
 commands are intertwined; the control-socket proposal (decision 0001) needs a seam here first.
 
 **G4. Python:** `mappo/networks.py` (2382), `train.py` (2309), `mappo/trainer.py` (2053) are the largest; `train.py`
-mixes the rollout loop, evaluation, checkpointing and ladders. Cover with `tests/golden/` and `test_golden_update.py`
-before moving code.
+mixes the rollout loop, evaluation, checkpointing and ladders. No tests cover it (removed 2026-10-07; see [tests.md](tests.md)).
 
-**How to verify any refactor here:** `forgectl test` (GTests and CPU pytest), `forgectl test --gpu` on a free card,
-`LiveLayoutPinTest` unchanged, `stage_json_diff.py` old versus new build shows no change for a stage you did not mean to
+**How to verify any refactor here:** `stage_json_diff.py` old versus new build shows no change for a stage you did not mean to
 change, and `resume_check.py` against the live run's checkpoint.
 
 ## H. Layout and protocol cleanup, 2026-10-08 (lands with the next layout bump)
@@ -247,7 +233,28 @@ check) leaves them fresh in the first stage of the chain; the goal block's adapt
 and revision 0 named no columns); everything else carries as before. The critic state encoder is always seeded fresh, so
 the state width costs nothing but a resume of a run trained at width 1958 (refused by `resume_mismatch`).
 
-Not done (needs a file owned by another stream, or not provable): the goal order columns and the `given` path (B3, A);
-`respawns`/`rises` and `difficulty`/`combat_rung` duplicate episode columns (`Encounters/CombatEncounter.cpp`, B);
-`MODE_FLAG` bit 1 (B2, `Bridge/Protocol.h`, A); the sight/entities `lootable` column (A); Duel `OBS_BOT_MOVING` and the
-`movespline->Finalized()` reads (not constant: fear, knockback, Charge and taxis still start splines).
+Not done (not provable): Duel `OBS_BOT_MOVING` and the `movespline->Finalized()` reads (not constant: fear, knockback,
+Charge and taxis still start splines).
+
+**Leftover cleanup, 2026-10-08 (second pass; same unreleased layout generation, protocol stays 26).**
+
+- Goal block revision 1 -> 2, 101 -> 68 columns: the order columns and all their readers are gone (B3). The remaining
+  columns keep their names, so a revision 1 checkpoint seeds them by name (`bootstrap._common_blocks` starts the block
+  fresh by position and `_by_name` then carries every named column). stage.json `goals.columns` no longer has
+  `from_order`, `order_kind`, `order_target`. `trainer.py` and `export.py` (still held) were updated in step.
+- `respawns` (the same quantity as `rises`: both `Clock.Rises`) and `combat_rung` (the same as `difficulty`: both the
+  tier) are gone from `CombatEncounter`'s episode columns. No yaml gate, fade, target or headline used `respawns`; the
+  three combat yamls that listed `combat_rung` now list `difficulty`, and the evaluation videos (which found the rung
+  by a column name ending `_rung`) fall back to `difficulty` when a stage has no such column
+  (`Vision::EvalVideoRungColumn`); PartyFollow's videos gain a rung label as a side effect.
+- B2 documented (above). The `RoutePlaces` flag of `WorldView` is `HasSeenPlaces` (C++ only; no manifest, stage.json or
+  python name carried it).
+- Not removed, on purpose: the `lootable` entity feature (`ENTITY_LOOTABLE`, column 9 of the 20-wide entity feature
+  vector in the entities and sight blocks). It is not always zero (a killed creature the seat may loot sparkles, and
+  so does a ready chest: `Vision::FactsOf`, `Identity`), and removing it would shift `ENTITY_FEATURES` from 20 to 19,
+  which the learner's entity encoder, adapters and the camera's class table all size from; keeping the width and
+  repurposing the slot is not wanted. Looting stays out of scope (decision 0003); the column just reports what the
+  client shows. Revisit only with a deliberate entity-width revision.
+- Not removed: the `detour` entry of `bootstrap.MOVE_REVISION_4_COLUMNS`. The table is the positional name list of the
+  63 columns of a revision 4 move block (checked against the block's width), so deleting one name would shift every
+  later column's name. It is unreachable only by M1 runs newer than 2026-10-06; older checkpoints still seed by it.

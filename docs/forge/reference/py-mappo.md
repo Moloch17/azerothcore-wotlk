@@ -20,8 +20,7 @@ Related: [00-architecture.md](00-architecture.md), [py-learner.md](py-learner.md
 
 Everything below is derived from the code at `bd32b9dc8` (branch `forge`). Line numbers are of that tree. "Live" means
 one of the ten stages in `apps/forge/python/configs/` (the yaml files are `move1_controls` ... `dungeon3_deadmines`;
-`fast.yaml` is an overlay, not a stage). Nothing was run: shapes come from reading the code and from the checked-in
-golden file `apps/forge/python/tests/golden/learner_update.json`.
+`fast.yaml` is an overlay, not a stage). Nothing was run: shapes come from reading the code and, originally, from a golden file that was removed with the tests 2026-10-07.
 
 ## Map table
 
@@ -45,7 +44,7 @@ replayed in order through the GRUs (`trainer.py:1603`). The flat (non-recurrent)
 
 ## How the networks are built from a stage.json
 
-Call chain (`train.py:502-531`, also used by `tools/resume_check.py` and `tests/test_golden_update.py`):
+Call chain (`train.py:502-531`, also used by `tools/resume_check.py`):
 
 1. The sim writes `<layouts_dir>/<scenario>/stage.json` (`stages.py:22 load_stage`). The learner connects, reads SPEC
    (`protocol.Spec`: `layouts` as (name, obs_dim, num_actions), `state_dim`, `image_bytes`, `map_bytes`,
@@ -85,16 +84,14 @@ What the `stage.json` has to contain for each network feature (`networks.py` rea
 
 ## Parameter inventory: the live M2 stage (`move2_seek`)
 
-Source: `tests/golden/learner_update.json`, case `move2_seek` (`actor_shapes`, `critic_shapes`); the case is built by
-`tests/test_golden_update.py:48` from `fixtures/seek_stage.json`, `fixtures/seek_spec.json` and
+Source: the removed golden case `move2_seek` (`actor_shapes`, `critic_shapes`), built from
 `configs/move2_seek.yaml` (which `extends` `move1_controls.yaml`). Ten layouts. Config in force:
 `hidden [256, 512, 512]`, `recurrent_size 128`, `goal_count 12`, `goal_targets 29`, `goal_slots 4`,
 `slow_goal_size 128`, `foresight_coef 0.25` with `foresight_horizons_seconds [5, 30]`, `foresight_obs_targets`,
 `foresight_feedback`, `goal_lookahead`; the stage has camera (patch 8), entity
 list (32 slots x 20), mental map (48x48x6, 4 scalars), look heads (7,5,5); no sight list.
 
-The golden file lists **state_dict keys** (parameters and buffers). Both counts verified from the file: actor 153,
-critic 80.
+The golden file listed **state_dict keys** (parameters and buffers): actor 153, critic 80.
 
 ### Actor, 153 keys
 
@@ -109,7 +106,7 @@ Per-layout keys, 8 per layout x 10 layouts = 80:
 
 with `obs_i` = 1555, 1548, 1543, 1449, 1528, 1526, 1518, 1516, 1559, 1595 and `actions_i` = 95, 95, 94, 82, 92, 91,
 91, 90, 96, 100 for warrior, paladin, hunter, rogue, priest, deathknight, shaman, mage, warlock, druid
-(`fixtures/seek_spec.json`).
+(from the removed test fixture `seek_spec.json`).
 
 Shared keys, 73:
 
@@ -168,7 +165,7 @@ columns past it are zeros written by the sim (`networks.py:171`).
 
 ## Shape chains
 
-### M2 (`move2_seek`), per decision, E envs x A=1 agent (`agents_per_env 1`, `fixtures/seek_spec.json`)
+### M2 (`move2_seek`), per decision, E envs x A=1 agent (`agents_per_env 1`)
 
 Wire (SPEC, see [protocol.md](protocol.md)): `obs [E,A,1595]` float32 (the widest layout, padded), `state [E,1958]`,
 `mask [E,A,100]` bool, `layout [E,A]`, `image [E,A,54784]` uint8 (the camera row, `spec.camera_bytes`).
@@ -187,9 +184,9 @@ Actor, per flat row (N = E*A rows):
 | patch MLP | `Linear 640->64`, SiLU, `Linear 64->64`, SiLU | `[N,128,64]` | `features :1684` |
 | keypoints | spatial softmax of 64 channels -> (x,y) | `[N,128]` | `keypoints :1689` |
 | scalars | 11 columns of the layout's vision block | `[N,11]` | |
-| embed | `Linear(128+11=139 -> 256)` | `[N,256]` | golden `vision.embed [256,139]` |
-| + map | map crop `[N,48,48,6]` -> planes 4+6+5=15, 4x4 patches, grid 12x12 x 240 -> `Linear 240->64`, `64->64`; pooled `3*64 + 4 scalars = 196` -> `Linear 196->128`; join `128->256` | `[N,256]` added | `MapEncoder :1208`, golden `map.embed [128,196]`, `map.patch [64,240]` |
-| + entity list | 32 slots x 20 columns; token = 18 kept cols + class embed 6 + type embed 8 = 32 -> `32->64->64` tanh MLP, + link (`64->64` of patch features under the slot's pixels); mean+max pooled over present slots 128 -> `Linear 128->256` | `[N,256]` added | `VisibleEntities :1288`, golden `entities.encoders.visible.0 [64,32]`, `pool [256,128]` |
+| embed | `Linear(128+11=139 -> 256)` | `[N,256]` | `vision.embed [256,139]` |
+| + map | map crop `[N,48,48,6]` -> planes 4+6+5=15, 4x4 patches, grid 12x12 x 240 -> `Linear 240->64`, `64->64`; pooled `3*64 + 4 scalars = 196` -> `Linear 196->128`; join `128->256` | `[N,256]` added | `MapEncoder :1208`, `map.embed [128,196]`, `map.patch [64,240]` |
+| + entity list | 32 slots x 20 columns; token = 18 kept cols + class embed 6 + type embed 8 = 32 -> `32->64->64` tanh MLP, + link (`64->64` of patch features under the slot's pixels); mean+max pooled over present slots 128 -> `Linear 128->256` | `[N,256]` added | `VisibleEntities :1288`, `entities.encoders.visible.0 [64,32]`, `pool [256,128]` |
 | SiLU | camera embedding | `[N,256]` | `:1729` |
 | vision join | `Linear 256->256`, zero for layouts without a camera | `[N,256]` added to the adapter output | `VisionJoin :1732` |
 | trunk | tanh, `Linear 256->512`+tanh, `Linear 512->512`+tanh | `[N,512]` | `_Trunk :234` |
@@ -219,21 +216,20 @@ differ
 (M1: 32, combat1: 128). The minibatch is a subset of the (chunked) envs (`order = randperm(envs)`, `tensor_split` into
 `minibatches` parts), flattened to `rows = steps * envs_here * agents`.
 
-### M1 (`move1_controls`), from `fixtures/stage_move1_controls.json`
+### M1 (`move1_controls`), from the removed test fixture `stage_move1_controls.json`
 
 Same layouts but no map block and a `compass` block: warrior obs 1556 = core 715 + move 57 + compass 5 + vision 11 +
 entities 640 + goal 128 (spans `core [0,715]`, `move [715,57]`, `compass [772,5]`, `vision [777,11]`,
 `entities [788,640]`, `goal [1428,128]`), 95 actions (`core` 70 + `move` 25). Patch is 8; the vision scalars 11; the
 look heads (7,5,5). The network has no `vision.map.*` keys (so fewer than 153 actor keys): the exact M1 key count is
-UNVERIFIED (there is no golden for it; derive it by deleting the 9 `vision.map.*` keys from the M2 list, giving 144,
+UNVERIFIED (there was no golden for it; derive it by deleting the 9 `vision.map.*` keys from the M2 list, giving 144,
 if M1's layout count and features are the same, which is also UNVERIFIED).
 
 ### Other live stages
 
 Widths of combat1..3, group1 and dungeon2..3 (these have a sight block; the `combat1_fight.yaml:42-45` comment says
 the enemies and friends are "the sight list (its own encoder and pointer heads)") are **UNVERIFIED**: no fixture holds
-their `stage.json`. Derive them from `<layouts_dir>/<stage>/stage.json` written by the sim, or from the golden-style
-procedure in `tests/test_golden_update.py` (do not run it from this document's reader's point of view unless intended).
+their `stage.json`. Derive them from `<layouts_dir>/<stage>/stage.json` written by the sim.
 M3 (`move3_interact`) and M4 (`move4_follow`) inherit M2's `mappo` section (`extends: move2_seek.yaml`).
 
 ## Switchable features
@@ -270,23 +266,17 @@ block (`trainer.py:620`).
 7. `update()` creates `_updates_since_sync` lazily with `getattr` (`trainer.py:1480`); it is not set in `__init__`.
 8. The long comment explaining the foresight heads (`trainer.py:90-94`) sits above `recurrent_size` (`:102`), not above
    `foresight_coef` (`:173`).
-9. `fixtures/seek_spec.json` is protocol 24 and `tiny_case` hardcodes `version=24` (`test_golden_update.py:79`) while
-   `PROTOCOL_VERSION` is 26 (`protocol.py:14`). UNVERIFIED whether protocol 25 changed the SPEC layout the fixture
-   mirrors; see [protocol.md](protocol.md).
+9. (Moot: the fixtures were removed with the tests 2026-10-07.)
 11. The module docstring of `networks.py` (`:1-19`) says an adapter + trunk + head of one layout "is a plain MLP too
     (see
     animus.export)"; with the camera and the GRU this is no longer true, and `export.py:440-449` refuses a camera
     checkpoint. No live model can be exported to the realm format (the realm is parked).
-12. The only test pinning M2's key set is the golden file; any intended shape change must regenerate it with
-    `python tests/test_golden_update.py write` (the `__main__` block of that test).
+12. (Moot: the golden file was removed with the tests 2026-10-07.)
 
 ## Reviewer notes
 
-- The golden test (`tests/test_golden_update.py`) is the safety net for any refactor of `networks.py` or the update:
-  it pins key names, shapes, one update's statistics and the parameter checksums on CPU. It does **not** exercise the
-  CUDA/HIP graphs, the fused GRU path (CPU uses `_carry_sequence_loop`), `DenseLayouts`, `SharedInputDense`, two-stream
-  updates or the chunked camera; those are covered only by tests that skip without a GPU (`test_rollout_graph.py`,
-  `test_recurrent.py::test_fused_gru_*`, `test_update_on_two_streams...`).
+- The golden test that was the safety net for any refactor of `networks.py` or the update was removed 2026-10-07; see
+  [tests.md](tests.md) for the hand check (`resume_check.py`, a short run's first losses).
 - The by-name loading rules (what a checkpoint may lack) are in the networks document ("Loading").
 - Dead features deleted: self-imitation, the map value-iteration network and the seat-set network (`EntitySets`) were removed;
   `SharedInputDense` (GPU only) is the one path left to judge.

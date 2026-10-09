@@ -66,8 +66,7 @@ at startup by `CurriculumStages()` and then treated as immutable (a function-loc
 
 The five authored tables are offline products: the comments (`Stages.cpp:77-90, 165-184, 357-364, 423-441`) say they
 were scanned from the navmesh and vmaps by throw-away scripts under `.agents/plans/...` (gitignored, so not in the tree)
-and validated by data tests that need the map data (`FORGE_VISION_DATA`): `StockadeHallwaysDataTest.cpp`,
-`StockadeRoomsDataTest.cpp`, `DeadminesSitesDataTest.cpp`. UNVERIFIED: whether the authoring scripts still exist on
+and validated by data tests (removed 2026-10-07; see [tests.md](tests.md)). UNVERIFIED: whether the authoring scripts still exist on
 the owner's machine; without them the tables cannot be regenerated from the repository.
 
 ### A.2 Types (`StageDefinition.h`)
@@ -122,7 +121,7 @@ the stage at this level, raised to the class minimum). Members `Has(block)`, `Se
 Free functions. `ArenaDrawWeights(arenas, weights, finals, evaluating, progress)` (`:1309`)
 returns `lround(100 * (from + (to - from) * along))` per arena, so the weights are integer percent-scaled; `along` is
 1 when evaluating, else `clamp(progress, 0, 1)`; `from` and `to` come from the passed vectors, falling back to the
-definition's `Weight` and then to `from`. An arena gets 0 if it is `EvalOnly`. Callers: `StageScenario.cpp:678`; `DungeonStagesTest.cpp:191,229-232`.
+definition's `Weight` and then to `from`. An arena gets 0 if it is `EvalOnly`. Callers: `StageScenario.cpp:678`.
 
 ### A.3 Registry and validation
 
@@ -195,8 +194,7 @@ Order is that of `Definitions()`
 | `dungeon2_ragefire` (940) `_ragefire` | group1_roles | `DungeonBlocks()`: Core, Move, Duel, Pet, Pack, Gauntlet, Vision, Entities, Map, Sight, PartyFrames, Combat, Goal | no stage map: each arena's row fixes it |
 | `dungeon3_deadmines` (963) `_deadmines` | dungeon2_ragefire | DungeonBlocks | same |
 
-`LiveLayoutPinTest.cpp` with `LiveLayoutPin.golden.inc` pins every live stage's resulting layout, so a change to a list
-or to the insertion rule shows there (see [cpp-layout-character.md](cpp-layout-character.md) and
+A change to a list or to the insertion rule changes the resulting layouts (see [cpp-layout-character.md](cpp-layout-character.md) and
 [cpp-blocks.md](cpp-blocks.md) for what the blocks are). The seed graph is a tree: move3 and move4 both extend move2;
 move4 reaches later stages only as a merge into G1. `docs/forge/04-curriculum.md` calls the chain "one line"; the
 code only demands that a base be an earlier valid stage.
@@ -237,11 +235,7 @@ separately (not a definition field; see [config-keys.md](config-keys.md)).
 
 ### A.6 Tests
 
-`DungeonStagesTest.cpp` (dungeon stage shape, draw weights, stand-in), `RolesStageTest.cpp`,
-`InteractStageTest.cpp`, `SeekEncounterTest.cpp`, `SightEncounterTest.cpp`, `PartyFollowTest.cpp`,
-`CombatPerceptionTest.cpp` (each asserts `CurriculumProblems().empty()`; the last also the focus band),
-`LiveLayoutPinTest.cpp`, `CompassBlockTest.cpp`, and the three data tests above. The python side: see
-[tests.md](tests.md) and [stages.md](stages.md).
+No tests (removed 2026-10-07); see [tests.md](tests.md) and [stages.md](stages.md).
 
 ### A.7 Reviewer notes
 
@@ -269,7 +263,7 @@ separately (not a definition field; see [config-keys.md](config-keys.md)).
    authoring scripts for the five ground tables are not in the tree.
 7. `Stages.cpp:1358-1360` mutates the block list during registration, so the literal lists are not the live lists.
 8. `StockadeRooms()` sets `Front` by a hard-coded name list (`:343-353`) rather than in the table; a renamed room
-   silently becomes a deep room (`SeekEncounterTest.cpp:151-160` would catch the count: 13 front, 26 deep).
+   silently becomes a deep room (the intended count is 13 front, 26 deep).
 
 
 ## Part B. The scenario interface and the small files (`Scenario/`)
@@ -395,7 +389,7 @@ It is not reset if `SummonCreature` throws (no RAII); in `SummonOpponent` it is 
 
 `SETUP_BUILD_ATTEMPTS = 8` and `template RetryBuild(attempts, build, onFailure)` (loops `build()` until true, calling
 `onFailure(attempt)` after each failure; returns whether one succeeded). Used once, at env setup
-(`StageScenario.cpp:1857-1860`); tested by `BuildRetryTest.cpp` (>= 4 attempts asserted). Distinct from the four spawn
+(`StageScenario.cpp:1857-1860`). Distinct from the four spawn
 attempts inside `Rebuild` (`SPAWN_ATTEMPTS`, `StageScenario.cpp:2327`).
 
 ### B.7 `Curriculum/WarmCaches.h/.cpp` (34 + 43 lines)
@@ -468,9 +462,6 @@ Three plain enums give the column offsets of the class-agnostic critic state (th
 - `stage.json` publishes the state width (`state.dim`, 1927) and where the arena one-hot sits (`state.arena_first`, `state.arena_count`,
   `StageScenario.cpp:1309-1311`). `WriteState` is at `StageScenario.cpp:5073` (a later part), and each encounter has
   its own `WriteState`.
-- `LiveLayoutPinTest` pins layout constants (`add("MAX_ARENAS", ...)` list at
-  `src/test/server/game/Animus/LiveLayoutPinTest.cpp:97-114`; UNVERIFIED: whether the `STATE_*` offsets are in the list
-  beyond line 114).
 
 ### Public API by group (`StageScenario.h:125-303`)
 
@@ -492,8 +483,7 @@ For the encounters (accessors): `Stage()`, `Arena(env)`, `Uses(env, encounter)`,
 (`StandInSeat`, `StandInShare`, `StandInLeads`, `DrawStandIn` are defined in
 `Encounters/StandInSeat.cpp`, not in `StageScenario.cpp`.)
 
-Static movement helpers: `StartMover`, `TrackController`, `CourseKink` (unit-tested:
-`src/test/server/game/Animus/StandingTest.cpp:65-78`), plus `WatchFall`, `MayLog`, `LogDeath`.
+Static movement helpers: `StartMover`, `TrackController`, `CourseKink`, plus `WatchFall`, `MayLog`, `LogDeath`.
 
 ### Contracts and invariants
 
@@ -587,8 +577,7 @@ All plain data; the only behaviour is `SeatState::ResetEpisode()`. It is include
 
 ### Tests
 
-No test names `EnvState`; `StandingTest.cpp` uses a default `SeatState` for `CourseKink`. The columns reach the learner
-through `stage.json`, covered by `apps/forge/python/tests/test_metric_names.py` and `test_stage_json_diff.py` (S1.7).
+The columns reach the learner through `stage.json` (S1.7).
 
 ### Observed issues (StageState.h)
 
@@ -716,7 +705,7 @@ stage start. In order:
 Contracts: a new encounter has to be added in three places: the `add` (405-456), the `initializer_list` of 460 and the
 `uses` lambda (469-477). `apps/forge/tools/sim_metrics.py` reads these `add(std::make_unique<...>)` lines and the
 `AnyArena(...)` conditions as text (header of that script, lines 14-17), so reformatting this block can break
-`apps/forge/python/tests/test_metric_names.py`.
+`sim_metrics.py`.
 
 Config read directly: `<prefix>Arena.<stage>.<arena>.Weight|WeightFinal|StandInShare`;
 everything else through `CurriculumTuning::Load`, `Vision::Current()` and `Vision::MapCurrent()`.
@@ -728,8 +717,8 @@ everything else through `CurriculumTuning::Load`, `Vision::Current()` and `Visio
 - `StageScenario.cpp:379-381` and `StageScenario.h:505-509` argue in comments that the leader "is no dead code"; they
   read as leftovers of a review thread.
 - The `_resetsStayOnMap` branch (319-348) runs for no live stage (if confirmed): dead in practice.
-- The constructor does file I/O and heavy asset building; a scenario cannot be constructed in a unit test without the
-  whole world stack, which is why only static helpers are tested.
+- The constructor does file I/O and heavy asset building; a scenario cannot be constructed without the
+  whole world stack.
 
 ## S1.5 Spawn ground, map, replica, phase, arena draw (`StageScenario.cpp:589-701`)
 
@@ -861,9 +850,7 @@ block's `map`, the sight block's `sight` (each from `GetBlock(id).DescribeManife
 and `rescaled` (`DescribeRescaled`) when non-empty. Seeding by name depends on `obs_names` (principle 15).
 
 Consumers: the learner (`apps/forge/python/animus/stages.py`: seed chain, merges, block spans, arena names, state
-span), bootstrap seeding, evaluation categories, export; the file is copied into every run directory. Tests that read
-or compare it: `apps/forge/python/tests/test_stage_json_diff.py`, `test_metric_names.py`, `test_bootstrap.py`,
-`test_export.py`, `test_export_seat_sets.py`, `test_party_frames_seeding.py`, `test_heldout.py`. File format for the
+span), bootstrap seeding, evaluation categories, export; the file is copied into every run directory. File format for the
 learner: [file-formats.md](file-formats.md).
 
 ### Observed issues (S1.7)
@@ -911,7 +898,6 @@ learner: [file-formats.md](file-formats.md).
 - `SetLayoutWeights(weights)` (1798-1835): empty clears; wrong length (`!= layouts * MAX_SPECS`), a non-finite or
   negative entry or a zero sum is logged as an error and the old weights kept; else copied. They come from the
   learner's WEIGHTS message (pairs furthest below baseline get more data).
-- Tests: UNVERIFIED; no test in `src/test` names `DrawCasting` or `SetLayoutWeights`.
 
 Reviewer notes: weights are layout-major and `MAX_SPECS` (4) wide, so a stale weights message from before an appended
 class has a different length and is refused with an error log, not a crash. A class with more than 4 specs would
@@ -1077,8 +1063,7 @@ fields
 `PartySize`, `ProperParty`, `DrillRole`, `Instance`, `MapId`, `Seats`. Full key table:
 [cpp-tuning-keys.md](cpp-tuning-keys.md).
 
-Tests: no unit test drives `Rebuild`. `DungeonStagesTest.cpp` and `LiveLayoutPinTest.cpp` check the stage definitions
-that feed it.
+No tests (removed 2026-10-07); see [tests.md](tests.md).
 
 ### Observed issues (Rebuild)
 
@@ -1166,9 +1151,7 @@ Rebirth standing its target up every decision.
    `CurriculumTuning`, so they are not in its `Visit` list and probably not in the conf.dist agreement test
    (UNVERIFIED; see [cpp-tuning-keys.md](cpp-tuning-keys.md)).
 5. `stage.json` `format` does not identify the schema (S1.7).
-6. Lines 1-2631 have no unit test of their own. Covering tests: `LiveLayoutPinTest.cpp` and `DungeonStagesTest.cpp`
-   (stage definitions and layout constants), `StandingTest.cpp` (`CourseKink`), and the Python
-   `test_metric_names.py` / `test_stage_json_diff.py`, which read what the constructor and `WriteStageFiles` produce.
+6. Lines 1-2631 have no test (tests removed 2026-10-07; see [tests.md](tests.md)).
 
 
 # Part C2. StageScenario.cpp 2570-5192
@@ -1323,8 +1306,7 @@ at the next tick's start, not by a direct set. The cast owner's row is applied w
 free: nothing prices or tallies it (comment 2700-2703). Caller: `EnvPool.cpp:345`.
 
 `CameraRenderSize` returns `{0,0}` without a vision block or for an empty seat; otherwise the seat's `Look.Render`
-resolution. Callers: `AnimusForge.cpp:1516, 1651`. Tests: `VisionFreeLookTest.cpp`, `VisionTest.cpp` cover free look and
-render sizes, not these wrappers.
+resolution. Callers: `AnimusForge.cpp:1516, 1651`.
 
 ## S2.4 Per-tick controller stepping and its diagnostics (2821-3045)
 
@@ -1367,7 +1349,7 @@ only once it has lasted 1000 ms (3001-3002: the whole run is added the moment it
 **`CourseKink`** (3025-3045, static and public for the test): true when the heading from the last tick's position to
 this
 one differs from the previous tick's heading by more than 0.3490659 rad (20 degrees) while moving at >= 0.5 yd/s over
-the tick (3035). State is `CourseX/Y`, `HasCoursePos`, `HasCourse`, `LastCourse`. Test: `StandingTest.cpp:66-78`.
+the tick (3035). State is `CourseX/Y`, `HasCoursePos`, `HasCourse`, `LastCourse`.
 
 **Info columns fed** (declared in S1, StageScenario.cpp:788-796, 1085-1094): `wall_seconds`, `stuck_seconds`,
 `course_kinks` (per minute), `jumps`, `drops`, `fall_damage`, `fall_deaths`, `void_deaths`, `into_terrain`.
@@ -1458,7 +1440,7 @@ zero map cells and a mask that allows only action 0. Finally `WriteState`.
 
 **`AgentLayouts`** (3465): per agent the seat layout's `Index` (0 for none), owner slot included.
 **`AgentPresence`** (3475): `StandIn::Presence(hasCharacter, standInSeat == seat)`: 0 absent, 1 learner, 2 stand-in
-(`Encounters/StandIn.h:56-62`; protocol 25); the owner slot is 1 only when `CastOwnerActive`. Test: `StandInTest.cpp`.
+(`Encounters/StandIn.h:56-62`; protocol 25); the owner slot is 1 only when `CastOwnerActive`.
 **`AgentKinematics`** (3489): per agent the body for the learner's kinematic prediction heads: x, y, z, yaw, pitch from
 the controller body, `K::ModeOf(jumping, inWater, false)` (3520), mounted, speed, in-combat; `K::Write(seconds, body,
 out)` (3528). `jumping` comes from `bot->movespline` (3510-3511), which is never active for a controller-moved seat, so
@@ -1608,8 +1590,7 @@ five cast causes share one price, `Actions.Aimless.CastFailed` (`AimlessPrice`).
 
 **`AimlessCauseName`** (3943): `off_focus, aoe_missed, in_range_cast, unprovoked_harm, help_off_goal, step_away,
 target_switch, pet_off_goal, consume_not_needed, trap_no_enemy, mode_flip, mode_reverse, needless_move, taunt_off_role,
-tank_mode_off_role, cast_facing, cast_range, cast_sight, cast_moving, cast_power, act_refused`. Test:
-`SightBlockTest.cpp:418` (`act_refused` only).
+tank_mode_off_role, cast_facing, cast_range, cast_sight, cast_moving, cast_power, act_refused`.
 
 **`LogDeath`** (4421-4443): once per seat death (`DeathLogged`), capped by `MayLog(LOG_DEATH, 8)` (4426), one
 `LOG_INFO "Seat died: ..."` line. Called from `SeatReward` so a death an episode outlives (a respawn arena) is seen.
@@ -1624,7 +1605,7 @@ tank_mode_off_role, cast_facing, cast_range, cast_sight, cast_moving, cast_power
   serving share); a ranged seat that stands in range and fires while holding Position is charged `InRangeCast`.
 - Comments carry incident notes from the deleted first curriculum ("stage6", "stage1_duel", "companion stage"). They
   explain the rules but no longer name live stages.
-- The `judgeFor` lambda is about 220 lines, captures everything by reference, and has no unit test.
+- The `judgeFor` lambda is about 220 lines, captures everything by reference.
 
 ## S2.12 Evaluation pin, shaping and cost scales (4590-4651)
 
@@ -1637,7 +1618,7 @@ tank_mode_off_role, cast_facing, cast_range, cast_sight, cast_moving, cast_power
   Applied to every seat's ledger at the start of `Reward` (4678-4682), so a change reaches every env at its next
   decision. Logs on change.
 
-Tests: none for these setters. `WingLadderTest.cpp` and `DungeonStagesTest.cpp` test the ladder and rung tables.
+No tests (removed 2026-10-07); see [tests.md](tests.md).
 
 ## S2.13 `Reward` and `SeatReward` (4653-4700, 4908-5071)
 
@@ -1746,15 +1727,7 @@ at
 
 ## S2.17 Tests that touch this half
 
-- `src/test/server/game/Animus/StandingTest.cpp:66-78`: `StageScenario::CourseKink`.
-- `src/test/server/game/Animus/StandInTest.cpp`: `StandIn::Presence` and `Fields` (used by `AgentPresence`).
-- `src/test/server/game/Animus/SightBlockTest.cpp:418`: `AimlessCauseName(ActRefused)`.
-- `src/test/server/game/Animus/RewardLedgerTest.cpp`: ledger semantics `Reward` relies on (UNVERIFIED which cases).
-- `src/test/server/game/Animus/GoalObjectiveLeakTest.cpp`: the goal block's reached/possible with the compass withheld
-  (the `ObjectivePlaceKnown` call at 3220).
-- `LiveLayoutPinTest.cpp` and `DungeonStagesTest.cpp` pin live layouts and rung tables.
-- No unit test builds a `SeatState` or `Env` to drive `JudgePress`, `SettleIntent`, `ObserveSeat`, `SeatReward`,
-  `AcceptResurrections`, `WatchFall`, `TrackSupport` or `WriteState`; they need a live `Player` and `Map`.
+No tests (removed 2026-10-07); see [tests.md](tests.md).
 
 ## S2.18 Observed issues (this half)
 

@@ -247,7 +247,7 @@ the
 rollouts run on the same GPU under a HIP torch. `animus/__init__.py` sets `HSA_ENABLE_IPC_MODE_LEGACY=0` before torch.
 `blas.py`: on gfx12 ROCm only, sends matmuls to rocBLAS with TunableOp, tunings in `var/animus-forge/tunableop`;
 `save()` writes the tuning file after each of the first 21 updates (`TUNING_UPDATES = 20`, condition `_saves > 20`) and
-then disables tuning. Tests: none found for `device.py` or `blas.py` (UNVERIFIED: grep shows no test imports them).
+then disables tuning.
 
 ## Config keys read by `TrainingRun`
 
@@ -262,11 +262,7 @@ foresight_*, goal_*, slow_goal_*, weight_sync_every, entropy_coef, ...), `eval`,
 
 ## Tests
 
-`test_train_run.py` (6: trains/evaluates/finishes, style and realism, overlapped updates, half-batch, cluster, worker
-dropout and rejoin), `test_run_logger.py` (3), `test_runs.py` (8), `test_protocol.py` (12), `test_evaluation.py` (27),
-`test_progress.py` (4), `test_resume_check.py` (23, drives `tools/resume_check.py`), `test_heldout.py`,
-`test_layout_metrics.py`, `test_rewards.py`, `test_outcome_score.py`. GPU-only rollout-graph code is covered by
-`test_rollout_graph*.py` (skipped on CPU).
+No tests (removed 2026-10-07); see [tests.md](tests.md).
 
 ## Observed issues
 
@@ -285,7 +281,6 @@ dropout and rejoin), `test_run_logger.py` (3), `test_runs.py` (8), `test_protoco
   (`:21`, `:86`).
 - `rewards.py:1-47` docstring and `OUTCOME_TERMS` describe v1 stages (stage 4, druid_dps); the live stages give
   `reward_terms` in stage.json.
-- `bench_learner.py` and `evaluate.main` have no tests beyond `mappo_from_checkpoint` (`test_config_unknown_keys.py`).
-- `device.py`, `blas.py`: no tests.
+- No tests (removed 2026-10-07).
 - `episode_means.PER_EVENT` is a hand-kept table of column to count column (`episode_means.py:14-81`); a new per-event
   metric not listed there is averaged over all episodes (a zero for an episode with no event).

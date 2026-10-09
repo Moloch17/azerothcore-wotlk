@@ -270,7 +270,9 @@ namespace AnimusForge
         char Name[LAYOUT_NAME_SIZE];
     };
 
-    /// ModeMsg::Flags. Bit 1 is unused (it was SCRIPTED_OPPONENTS) and goes at the next protocol change.
+    /// ModeMsg::Flags. Flag value 1 (bit 0) is unused and reserved: it was SCRIPTED_OPPONENTS, and STAND_IN keeps its
+    /// wire value 2 (bit 1) rather than being renumbered inside protocol 26. The sim ignores unknown bits (it only
+    /// compares the ranks' flags with each other), so a renumbering would be a wire change and wants a protocol bump.
     /// STAND_IN: the learner plays the "human" stand-in's row with a frozen partner (dungeon-curriculum I7): every
     /// party of an evaluation has the stand-in in one seat (the learner's "with the human stand-in" arm), and training
     /// draws it in its share of the parties (StandIn.Share and the arenas' own). Without it no party has one: a

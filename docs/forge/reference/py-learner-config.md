@@ -26,7 +26,7 @@ becomes
 a float. A section given as `null` becomes all defaults. `__post_init__` of each dataclass then validates. Dropping
 unknown
 `MappoConfig` keys applies only to a checkpoint's saved config in `evaluate.mappo_from_checkpoint`
-(`evaluate.py:37`); a yaml stays strict. Tests: `test_config.py` (3), `test_config_unknown_keys.py` (2).
+(`evaluate.py:37`); a yaml stays strict.
 
 Resolution helpers on `TrainConfig`: `local()` (`:592`, this learner's index and count among those sharing its sim),
 `shared_runs` (`<runs_dir>/../../shared/runs`, assumes runs live in `<output>/<class>/runs`), `format_path`,

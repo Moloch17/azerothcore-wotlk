@@ -33,7 +33,6 @@ stage is [../04-curriculum.md](../04-curriculum.md). Related references: [00-arc
 | `apps/forge/python/configs/*.yaml` | 11 files, 1159 | One learner config per stage, plus the `fast.yaml` overlay |
 | `apps/forge/python/animus/stage.py` | 829 | `ShapingFade`, `CostLadder`, `ConvergenceController` |
 | `apps/forge/python/animus/config.py` | 831 | Config dataclasses and their defaults |
-| `src/test/server/game/Animus/LiveLayoutPinTest.cpp` and `LiveLayoutPin.golden.inc` | 219, 149 | Pins every live stage's layout |
 
 (The other encounters' and tuning files' line counts are in the cpp-* documents.)
 
@@ -60,7 +59,7 @@ targets (see [../04-curriculum.md](../04-curriculum.md)).
 `StageDefinition::Extends` (and `Merges`) in `Stages.cpp` is the seed chain; the sim writes it into `stage.json` as
 `seed_chain` and `merges`, and the learner seeds from it (`animus/stages.py` `seed_chain`,
 `TrainConfig.resolved_init_from`
-with `init_from: auto`, `seed_from: latest` in every live yaml: `test_seed_from.py`).
+with `init_from: auto`, `seed_from: latest` in every live yaml).
 
 ```
 move1_controls
@@ -91,8 +90,8 @@ frames) from its `latest.pt`, input columns and action rows only. Details and th
 ### Blocks of each stage (effective)
 
 `CurriculumStages()` inserts the `Entities` block right after `Vision` in every stage that has a camera (`Stages.cpp`,
-end of the file), so the lists below include it. Widths are the pinned class-independent totals of
-`LiveLayoutPin.golden.inc` (observation, actions). `Duel`, `Pet` and `Core` are class dependent.
+end of the file), so the lists below include it. Widths are the class-independent totals
+(observation, actions), as the removed layout pin recorded them. `Duel`, `Pet` and `Core` are class dependent.
 
 | Stage | Blocks in layout order | Total obs, actions |
 |---|---|---|
@@ -108,12 +107,11 @@ end of the file), so the lists below include it. Widths are the pinned class-ind
 Block ids: core 0, move 1, compass 2, duel 3, pack 4, gauntlet 5, pet 11, vision 20, entities 21, map 22, sight 23,
 party_frames 24, combat 25, goal 26 (`Layout/Block.h`; never renumbered). What each block is:
 [cpp-blocks.md](cpp-blocks.md).
-The layout pin test covers all ten (`LiveLayoutPinTest.LiveStageLayoutsAreUnchanged`).
 
 ### Common to every stage
 
 * **Decisions and ticks.** `AnimusForge.DecisionMs` 250 and `AnimusForge.Stage.<name>.TicksPerDecision = 5` for every
-  live stage (`worldserver.conf.dist` lines 5202 to 5216), i.e. 50 ms world ticks (`test_stage_ticks.py`).
+  live stage (`worldserver.conf.dist` lines 5202 to 5216), i.e. 50 ms world ticks.
 * **Ladder machinery.** `fade` is the shaping ladder (`ShapingFade`, `animus/stage.py`); in this curriculum it is also
   the
   sim's difficulty ladder, because the sim reads the fade's scale as the rung for M1 to M4. `costs` is the cost ladder
@@ -220,8 +218,7 @@ died <= 0.01. `convergence.measure: arrived`. `layout_sampling.metric: arrived`,
 **Status of training.** Trained (it is the first stage and its run finished before M2 began). Its checkpoint is the
 seed of everything. `UNVERIFIED`: its final numbers (look in `var/animus-forge/shared/archive`).
 
-**Tests.** `test_m1_sight.py`, `SightEncounterTest.cpp`, `CompassBlockTest.cpp`, `StockadeHallwaysDataTest.cpp`,
-`MoveControlsTest.cpp`, `test_compass_split.py`, `LiveLayoutPinTest.cpp`.
+**Tests.** None (removed 2026-10-07).
 
 ## 2. `move2_seek`
 
@@ -280,9 +277,7 @@ at about 35% for 30M steps and the convergence bug that annealed the rate was fi
 0013).
 `UNVERIFIED`: its current rung.
 
-**Tests.** `SeekEncounterTest.cpp`, `SeekFlagTest.cpp`, `SeekTest.cpp`, `StockadeRoomsDataTest.cpp`,
-`MentalMapTest.cpp`,
-`test_seek_metrics.py`, `test_mental_map.py`, `test_rung_rebaseline.py`, `test_shaping_fade.py`.
+**Tests.** None (removed 2026-10-07).
 
 ## 3. `move3_interact`
 
@@ -323,12 +318,11 @@ timed_out,
 died. Targets: the right object rates >= 0.9, wrong_objects <= 0.1, sight_seconds <= 30, sight_to_arrival <= 15,
 wall_seconds <= 2, timed_out <= 0.05, died <= 0.01. `convergence.measure: right_object`.
 
-**Unproven.** Never trained. Its sites are authored tables validated by `DeadminesSitesDataTest`; the authoring script
+**Unproven.** Never trained. Its sites are authored tables formerly validated by a data test (removed 2026-10-07); the authoring script
 is not
 in the repository (Observed issues).
 
-**Tests.** `InteractStageTest.cpp`, `DeadminesSitesDataTest.cpp`, `SightBlockTest.cpp`, `EntityMemoryTest.cpp`,
-`test_interact.py`, `test_sight.py`.
+**Tests.** None (removed 2026-10-07).
 
 ## 4. `move4_follow`
 
@@ -378,7 +372,7 @@ regroup_seconds <= 5, lost_seconds <= 5, blocking_seconds <= 3, rejoined >= 0.9,
 **Unproven.** Never trained. The scripted leader is the one remaining script ([decision
 0002](../decisions/0002-no-scripted-teachers.md)).
 
-**Tests.** `PartyFollowTest.cpp`, `test_move4_follow.py`, `test_party_frames_seeding.py`.
+**Tests.** None (removed 2026-10-07).
 
 ## 5. `combat1_fight`
 
@@ -425,12 +419,12 @@ No cost ladder.
 **Evaluation.** Every 10M, 240 episodes (seed i plays pair i mod pairs at tier (i / pairs) mod 6), `sampled_every 3`,
 `trace_episodes 32`. No arms.
 
-**Status.** Headline: won, survived, kills, kill_seconds, hurt_share, deaths, rejoin_seconds, combat_rung,
+**Status.** Headline: won, survived, kills, kill_seconds, hurt_share, deaths, rejoin_seconds, difficulty,
 target_in_view,
 selected_share, ally_deaths. Targets: won >= 0.9, survived >= 0.9, kills >= 3, kill_seconds <= 25, hurt_share <= 0.8,
 target_in_view >= 0.8, ally_deaths <= 0.1. `convergence.measure: won`.
 
-**Unproven.** Never trained. **Tests.** `CombatPerceptionTest.cpp`, `test_combat_stages.py`, `test_sight.py`.
+**Unproven.** Never trained. **Tests.** None (removed 2026-10-07).
 
 ## 6. `combat2_packs`
 
@@ -454,11 +448,11 @@ cast
 interrupts,
 fire_share, interrupt_earnings. Headline: won, survived, packs_cleared, extra_pulls, interrupts, interrupt_earnings,
 fire_share,
-hurt_share, deaths, rejoin_seconds, combat_rung, target_in_view; targets: won/survived >= 0.85, packs_cleared >= 3,
+hurt_share, deaths, rejoin_seconds, difficulty, target_in_view; targets: won/survived >= 0.85, packs_cleared >= 3,
 extra_pulls <= 0.1, fire_share <= 0.1, hurt_share <= 1.5, target_in_view >= 0.8, interrupt_earnings <= 0.3 (a watch that
 `InterruptLanded` is not farmed). gamma 0.999. 300M, every 10M, 240 episodes.
 
-**Unproven.** Never trained. **Tests.** `test_combat_stages.py`, `CombatPerceptionTest.cpp`.
+**Unproven.** Never trained. **Tests.** None (removed 2026-10-07).
 
 ## 7. `combat3_survive`
 
@@ -479,7 +473,7 @@ Cost: `Away` 0.02 per second dead, walking back or beyond 30 yd of a fighting pu
 **Ladder.** Gate `survived` 0.7, `convergence.measure: survived`, `layout_sampling.metric: survived`. Headline:
 survived, won,
 packs_cleared, deaths, rejoined, rejoin_seconds, dead_seconds, away_seconds, rest_seconds, extra_pulls, hurt_share,
-combat_rung;
+difficulty;
 targets survived/won >= 0.8, packs_cleared >= 3, rejoined >= 0.9, rejoin_seconds <= 60, extra_pulls <= 0.1.
 
 **Unproven.** Never trained. Its checkpoint is also the first partner of `group1_roles` (`cast.partners.stages`).
@@ -520,8 +514,7 @@ seat. Stand-in share `Roles.StandInShare` 20%.
 extra_pulls, party_deaths, wipes, rejoined, rejoin_seconds, roles_rung; targets won rates >= 0.7, hold_share >= 0.8,
 kept_share >= 0.8, focus_share >= 0.6, clean_share >= 0.9. `convergence.measure: won`.
 
-**Unproven.** Never trained. **Tests.** `RolesStageTest.cpp`, `test_group1_roles.py`, `test_partners.py`,
-`StandInTest.cpp`.
+**Unproven.** Never trained. **Tests.** None (removed 2026-10-07).
 
 ## 9. `dungeon2_ragefire`
 
@@ -553,7 +546,7 @@ Headline: full_clear, cleared, wing_cleared_share, wing_wipes, boss_oggleflint, 
 boss_bazzalan, wing_rejoin_seconds, clear_allbot, clear_standin, standin_gap,
 wing_rung; target full_clear >= 0.7. gamma 0.999.
 
-**Unproven.** Never trained. **Tests.** none kept (all forge tests were removed 2026-10-07).
+**Unproven.** Never trained. **Tests.** None (removed 2026-10-07).
 
 ## 10. `dungeon3_deadmines`
 
@@ -585,8 +578,6 @@ evaluation).
 * (Fixed) `configs/combat1_fight.yaml` has no `extends` (it cannot extend `move3_interact` cleanly: its eval, gates and fade
   are the dungeon plan's) and used to reset `actor_lr`/`critic_lr` to 3e-4 and `look_entropy_coef` to 0.001, so M2's tuned
   values stopped at M4. It now sets 1.5e-4 and 0.004 itself, and C2 to D3 inherit them through their own `extends` chain.
-* `tests/test_combat_stages.py::test_the_seed_chain_runs_from_m2` asserts C1 extends `move3_interact`; the name is
-  stale.
 * `Stages.cpp` comments for the `Opposition::Sight` enum (`StageDefinition.h`) say the ladder "withholds more and more
   often" and "PvE and PvP" (`ArenaDefinition` comment); the PvP half is gone.
 * `RewardLedger.h`: `Threat` (the `WingCrowd` charge) and `HealingMana` are costs in meaning but categorised Shaping, so
@@ -594,7 +585,7 @@ evaluation).
 * The map data tables (hallways, rooms, sight pairs, sites) were authored by scripts under the gitignored
   `.agents/plans/*/tools` (`dungeon-curriculum/tools` is empty in this checkout); they cannot be regenerated from the
   repository.
-* `DifficultyLadder` has no GTest and steps classes down on a score
+* `DifficultyLadder` steps classes down on a score
   ([../decisions/0010-ladders-step-on-their-gate.md](../decisions/0010-ladders-step-on-their-gate.md)).
 * The wing ladder's rung and the per-class tiers live in worldserver memory and are not in `latest.pt`;
   a restart returns them to `Instance.WingRungStart`/0 unless the conf names them

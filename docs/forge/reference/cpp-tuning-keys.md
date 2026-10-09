@@ -5,7 +5,7 @@ review and refactor; everything is checked against the tree at `bd32b9dc8` (bran
 
 **Scope.** `CurriculumTuning.h` / `CurriculumTuning.cpp`: the 22 tuning groups, their 297 config keys (293 fields of the
 struct plus the four `StandIn.*` keys of `StandIn::Tuning`), how they are loaded, recorded and fingerprinted, the
-conf.dist agreement test, and the three per-arena override families that are read by name outside the
+the (removed) conf.dist agreement check, and the three per-arena override families that are read by name outside the
 Visit list. It does not describe what the encounters do with the numbers (see [cpp-encounters.md](cpp-encounters.md),
 [cpp-stagescenario.md](cpp-stagescenario.md), [cpp-rewards-routing.md](cpp-rewards-routing.md)) nor the forge's own
 non-curriculum keys (`AnimusForge.Stage.<name>.Envs` and so on; see [config-keys.md](config-keys.md)).
@@ -20,7 +20,6 @@ Paths relative to the repository root.
 | `src/server/game/Animus/Scenario/Curriculum/CurriculumTuning.cpp` | 115 | `Load` (reads every key from the config, then clamps), `Json` (every value as a JSON object), and two clamp helpers. |
 | `src/server/game/Animus/Scenario/Curriculum/Encounters/StandIn.h` | 161 | Defines `StandIn::Tuning` (lines 105-114), the fourth group's defaults; documented in [cpp-encounters.md](cpp-encounters.md). |
 | `src/server/apps/worldserver/worldserver.conf.dist` | 6755 | The only template that documents the keys (the section "CURRICULUM TUNING" starts at line 6004); every key has an uncommented `AnimusForge.Curriculum.<key> = <default>` line. |
-| `apps/forge/python/tests/test_conf_covers_tuning.py` | 49 | The conf.dist agreement test (key sets only). |
 | `apps/forge/tools/conf_prune.py` | 311 | Lists/comments out conf keys the build no longer reads; derives the "families" read by name. |
 | `apps/forge/forgectl/confsync.py` | 249 | `forgectl conf-sync`: copies the host's `AnimusForge.Curriculum.*` lines to every worker conf. |
 
@@ -87,7 +86,7 @@ double (`std::to_chars` then `strtod`), so `0.03f` is recorded as `0.03`, not `0
 (`WriteIfChanged`, `StageScenario.cpp:1506`) to `<LayoutsDir>/<stage>/stage.json` and copied into each run directory.
 The learner reads it back: `animus/train.py:326` puts it in the baseline-cache key
 (`baseline_cache_key`), so changing any tuning value invalidates a cached `eval_baseline*.json`
-(`train.py:1198`); `tests/test_stage_json_diff.py` covers the "tuning" section of the stage diff.
+(`train.py:1198`); `stage_json_diff.py` covers the "tuning" section of the stage diff.
 
 ### 1.4 The cluster fingerprint
 
@@ -106,22 +105,18 @@ differs ([cluster.md](../cluster.md)). Consequences:
   source hash differs anyway).
 - Environment variables `AC_ANIMUS_FORGE_...` (1.1) enter the hash; they are per machine and invisible in the conf.
 
-### 1.5 The conf.dist agreement test and the tools around it
+### 1.5 The conf.dist agreement check and the tools around it
 
-`apps/forge/python/tests/test_conf_covers_tuning.py` (pytest, runs only in the dev container per the project's notes):
-
-- `tuning_keys()` = the regex `f\("([A-Za-z0-9.]+)"` over `CurriculumTuning.h` (line 28-30): every string literal passed
-  to `f(` in the file. It would also pick up an unrelated `f("...")` call if one were added to the header.
-- `conf_keys()` = every *uncommented* line `X.Curriculum.<key> =` in `worldserver.conf.dist` (lines 32-36).
-- `test_every_tuning_key_is_in_the_conf_template` (39-43): Visit keys minus conf keys must be empty.
-- `test_the_conf_template_invents_no_keys` (46-49): conf keys minus Visit keys must be empty.
-- It compares **key sets only**, not default values or types. A script written for this document compared all 297
-  uncommented conf lines against the in-class defaults: they agree today (no test enforces it).
-- Arena/stage override keys are commented in conf.dist, so the test does not see them.
+The agreement test (`test_conf_covers_tuning.py`) was removed 2026-10-07 (see [tests.md](tests.md)). What it checked:
+the keys of `CurriculumTuning::Visit` (every string literal passed to `f(` in `CurriculumTuning.h`) and the uncommented
+`X.Curriculum.<key> =` lines of `worldserver.conf.dist` should be the same set, both ways. It compared **key sets only**,
+not default values or types. A script written for this document compared all 297 uncommented conf lines against the
+in-class defaults: they agree today. Arena/stage override keys are commented in conf.dist, so the check did not see them.
+By hand: `conf_prune.py --removed <old-rev> <new-rev>` and a read of `CurriculumTuning.h`.
 
 `conf_prune.py` treats `AnimusForge.Curriculum.Arena.<stage>.<arena>.<key>`
-as a family "read by name" (`conf_prune.py:16-19`, test `test_conf_prune.py:125-136` also lists `MaxRung` as valid, see
-Observed issues), and relies on this test: "the conf.dist diff IS the Visit diff" (`conf_prune.py:21-25`).
+as a family "read by name" (`conf_prune.py:16-19`), and relies on the principle that "the conf.dist diff IS the Visit
+diff" (`conf_prune.py:21-25`).
 
 ## 2. Override keys read outside `Visit`
 
@@ -526,9 +521,9 @@ through to `StandIn.Share`, so its default 0 is never consulted today (the "defe
 ## 5. Reviewer notes
 
 - The whole tuning is one flat struct with 297 keys and a hand-kept `Visit` list. Adding a key is four edits: the field,
-  the `Visit` line, a conf.dist block, and the reader. The agreement test catches a missing `Visit` line only in the
+  the `Visit` line, a conf.dist block, and the reader. The conf.dist agreement check (removed) caught a missing `Visit` line only in the
   direction "conf.dist has it, `Visit` has not" and the reverse; it does not catch a field that is not in `Visit`
-  (never loaded, never fingerprinted). Consider generating `Visit` from the struct, or a test that counts fields.
+  (never loaded, never fingerprinted). Consider generating `Visit` from the struct.
 - `Load` uses `showLogs = false` for everything: a typo in a value (`0,5`) silently keeps the default, and no key is
   ever reported as unknown at startup (`conf_prune.py --check` is the only unknown-key detector, and it works from
   conf.dist, not from the sim).
@@ -549,7 +544,7 @@ through to `StandIn.Share`, so its default 0 is never consulted today (the "defe
 2. `Load` reads with `showLogs = false` (`CurriculumTuning.cpp:60-62`): a malformed value is silently replaced by the
    default, and unsigned keys have no range check at all.
 3. (fixed 2026-10-08) conf.dist documented `Arena.<stage>.<arena>.MaxRung`, which nothing reads; the block is gone.
-   `test_conf_prune.py:127,134` and `04-curriculum.md:858` still list it (Python/doc side, not touched here).
+   `04-curriculum.md:858` still lists it (Python/doc side, not touched here).
 4. (fixed 2026-10-08) conf.dist now documents `Arena.<stage>.<arena>.WeightFinal`.
 5. The `Arena.*` overrides are not part of the fingerprint (section 1.4).
 6. `StageScenario.cpp:142-153` vs `:171`: the doc comment of `RandomLevel` sits above `TankModeSpell` (misplaced).

@@ -121,13 +121,12 @@ Prepare/Despawn/Seats/Scenario ns. `ResetSamples` keeps the last 1024 resets (`W
 mean for placement and whole reset; `Add` and `Summarise` lock a mutex. `Stall(resets, resetMsPerDecision,
 decisionMs)`: needs `STALL_MIN_RESETS` = 20 samples; stall if reset time per decision >= 25 % of the decision's wall time or
 the p95 reset > max(20 ms, a decision); the cause is placement (placement mean x2 >= total), else reset.
-`RecentResets` is the global instance. Tests: `ResetSamplesTest.cpp`.
+`RecentResets` is the global instance.
 
 ## `Kinematics` (`A/Env/Kinematics.h`)
 
 Defines the 10-float sample per agent (`t, x, y, z, yaw, pitch, mode, mounted, speed, in_combat`), `Mode` (ground, swimming,
-flying, airborne), `ModeOf`, `Write`, `Clear`. It mirrors the human-capture sample (`apps/forge/python/animus/human/`). Test:
-`KinematicsTest.cpp`.
+flying, airborne), `ModeOf`, `Write`, `Clear`. It mirrors the human-capture sample (`apps/forge/python/animus/human/`).
 
 ## Bots (`A/Bot/*`)
 
@@ -135,7 +134,7 @@ A bot is a `Player` with a socket-less `WorldSession`, never saved, never regist
 
 - `BotAccounts` (`BotAccounts.h`): `BASE = 0x7F000000`; seat account = `BASE + env*40*2 + seat*2 + session`
   (`SEATS_PER_ENV` 40, `SESSIONS_PER_BOT` 2); `SEAT_RANGE` 100000 -> `MAX_ENVS` = 1250 (`static_assert >= 1024`); probe
-  characters use `BASE - 1 - race`. `ForgeConfig` caps `Envs` to `MAX_ENVS`. Test: `BotAccountsTest.cpp`.
+  characters use `BASE - 1 - race`. `ForgeConfig` caps `Envs` to `MAX_ENVS`.
 - `BotFactory::Create(spec, session)` (`BotFactory.cpp:70`): builds a `WorldSession(accountId, name, ..., SEC_PLAYER, WotLK)`
   when no session is given, `InitRBACDataForTest()` (so `Player`'s constructor does not query), `SetSimSession(true)` (forge
   core: logout, play time and instance binds write nothing) and `EnableMovementOrders()` (server movement orders are kept

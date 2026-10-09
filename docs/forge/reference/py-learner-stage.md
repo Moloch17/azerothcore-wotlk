@@ -241,9 +241,7 @@ lr_hold_until_plateau, top_rung, measure), `fade.*` and `costs.*`, `entropy_floo
 
 ## Tests
 
-`test_stage.py` (16), `test_rung_rebaseline.py` (14), `test_top_rung_convergence.py` (8), `test_shaping_fade.py` (19),
-`test_cost_ladder.py` (8), `test_evaluation.py` (tracker, 27 total), `test_resume_check.py` (restore, via
-`apps/forge/tools/resume_check.py`), `test_progress.py`.
+No tests (removed 2026-10-07); see [tests.md](tests.md).
 
 ## Observed issues
 

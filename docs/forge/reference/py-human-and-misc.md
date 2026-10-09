@@ -46,10 +46,7 @@ Related: [protocol.md](protocol.md), [file-formats.md](file-formats.md), [metric
 | `human/companions.py` | 105 | per-model companion feedback |
 | `human/parity.py` | 1022 | bots vs players statistical comparison |
 
-Tests: `test_human_cli.py`, `test_human_fit.py`, `test_human_mapper.py`, `test_human_motion.py`, `test_human_parity.py`,
-`test_human_reader.py`, `test_human_tracks.py` (+ writer `human_capture_writer.py`), `test_realism.py`, `test_style.py`,
-`test_async_sync.py`, `test_parallel.py`, `test_rewards.py`, `test_vision_bytes.py` (device images),
-`test_protocol.py`, `test_train_run.py`, `test_evaluation.py`.
+No tests (removed 2026-10-07); see [tests.md](tests.md).
 
 ---
 
@@ -75,9 +72,6 @@ training run:
 The writer side is in **mod-animus**, a separate repository: `FORMAT.md:5-6` says mod-animus keeps a mirror at
 `doc/capture-format.md` and both must change together with `FORMAT_VERSION`. No mod-animus checkout exists in this tree
 (`modules/` holds only the module scaffolding), so the writer's output cannot be verified from here: UNVERIFIED.
-The test writer `tests/human_capture_writer.py` is "built from FORMAT.md, not from the reader's dtypes" (README).
-`test_human_reader.py::test_reads_the_cpp_serializers_sample_when_present` reads a C++ sample when
-`apps/forge/tools/capture-sample.bin` exists (it does not in this tree: UNVERIFIED; the test skips otherwise).
 
 ## What is captured (FORMAT.md summary)
 
@@ -114,7 +108,6 @@ later format appended (`MOVE: server_ms`): an older record is read with 0 there 
 `CaptureDir(root, start, end)` (`:535`) walks hour directories in a UTC range; `iter_stream`, `index_report`.
 Public surface: `Batch.get/records/tails`, `FileStats`, `read_file`, `read_all` (one hour shard only), `merge` (loses
 Snapshot tails), `HourDir.files/index`, `stream_map`.
-Tests: `test_human_reader.py` (12 tests incl. truncation, straddling members, unknown types, format 1-3 moves).
 Observed: `read_all` of a whole capture would not fit memory (documented "for one hour shard only"); `merge` drops
 `_raw` so `snapshot_details` is lost after a merge (documented).
 
@@ -137,7 +130,6 @@ filling**
 companions out unless `include_companions`.
 Duplicated constants (sync hazard): `MF_*` movement flags copied from `UnitDefines.h` (`:39`), `BASE_SPEEDS` from
 `Unit.cpp baseMoveSpeed` (`:54`), opcodes from `Opcodes.h` (`:51`).
-Tests: `test_human_tracks.py`.
 
 ## `segment.py` (281 lines)
 
@@ -149,7 +141,7 @@ hindsight destinations (a stay of `STAY_SECONDS` 5 s within `STAY_RADIUS` 3 yd, 
 a
 ground trip is mounted. `fights` (`:212`, gap `FIGHT_GAP` 8 s), `deaths` (`:241`, with corpse-run seconds and yards from
 raw packets), `stuck_spans` (`:264`, keys held `STUCK_SECONDS` 3 s moving under `STUCK_YARDS` 1.5).
-Tests: `test_human_tracks.py`. Observed: in `_trip` the mode tuple `("ground","swim","fly","ground")` is indexed by an
+Observed: in `_trip` the mode tuple `("ground","swim","fly","ground")` is indexed by an
 `argmax` over three counts, so its fourth entry is never used (`:206`).
 
 ## `dataset.py` (123 lines): `human_motion_windows.npz`
@@ -173,8 +165,6 @@ strafe and backpedal share, jumps/min, planar speed ratio, swim and fly share; a
 casts/min, cast failure rate and per code, overheal share, dps. `realism(reference, windows)` (`:273`) per-context
 per-feature EMD of bot window steps against the reference (string keys, JSON as read). `CLASS_NAMES` and `TREE_NAMES`
 duplicate the class/spec tables.
-Tests: `test_human_tracks.py` (`test_movement_metrics_count_reversals_stop_starts_and_strafes`,
-`test_realism_is_zero_against_itself`).
 
 ## `trips.py`, `hard_spots.py`, `build.py`
 
@@ -190,7 +180,6 @@ sidecar of death causes. `build.build(...)` (`build.py:46`) is the single pass o
 `animus/human`, `config.py`, `style.py` (a path mention) and tests. The C++ readers are not in this tree and travel
 encounters were trimmed with the first curriculum. So these two outputs have no known consumer: UNVERIFIED, likely dead
 output (see issues).
-Tests: `test_human_tracks.py::test_build_writes_the_four_files`, `test_human_cli.py`.
 
 ## `fit.py` (434 lines): the executor-fit study
 
@@ -204,7 +193,6 @@ decision-cadence question and the controller design (player-controller plan).
 Duplication hazard: `JUMP_SPEED_Z`, `GRAVITY`, `DIAGONAL`, `WALK_RATIO`, `BACK_RATIO` copy
 `PlayerController.h`/`Unit.cpp` (`fit.py:52-61`) and are copied again in `parity.py:69-84`. The emulator ignores terrain
 and collision.
-Tests: `test_human_fit.py`.
 
 ## `mapper.py` (328 lines), `prices.py` (217 lines), `companions.py` (105 lines)
 
@@ -224,7 +212,6 @@ per minute per term. It **never writes config**. `CURRENT` (`prices.py:38`) hard
 `SettleGraceMs 500`, `RepeatFree 3`, `CurriculumTuning.h:366-456`; `Effort`, `Repeat` UNVERIFIED). Fidget is a proxy.
 `companions.report` aggregates per model ratings, commands, dismissals, overrides and deaths from the companion stream;
 the companion feature is parked per the owner's notes, so this has no current use.
-Tests: `test_human_mapper.py`, `test_human_cli.py`.
 
 ## `parity.py` (1022 lines): bots against players in one capture
 
@@ -247,7 +234,6 @@ Duplicated constants: `parity.py:69-84` (`GRAVITY`, `JUMP_SPEED`, `SWIM_JUMP_SPE
 `WALKABLE_DEG`, `HEARTBEAT_MS`, `MOUSE_FACING_THRESHOLD`, ...) copy `PlayerController.h`/`ReportCadence.h`; the
 proposals
 section is how the owner decides to change the C++ constants.
-Tests: `test_human_parity.py` (7 tests with synthetic clients).
 
 ## `motion.py` (201 lines): the one definition of motion features (LIVE)
 
@@ -262,7 +248,6 @@ cut at gaps over 1.5 s); `histograms` and `histogram_distance` (EMD on fixed `HI
 over [0,3]); `features_of_tracks(samples, starts)` (`:179`) is `features` over many tracks laid end to end (how the bot
 side reads every seat at once). Invariant: "nothing else may compute motion features" so the human and bot sides never
 drift. `DECISION_SECONDS = 0.25` is a constant that must equal `AnimusForge.DecisionMs` (no check).
-Tests: `test_human_motion.py`, `test_style.py::test_the_seats_windows_are_the_players_features_exactly`.
 Observed: the docstring of `histograms` (`:156`) is garbled ("moving steps only for the course-dependent features is not
 needed").
 
@@ -273,7 +258,6 @@ needed").
 `realism_emd` = mean over contexts weighted by the seats' steps; unscored contexts listed. `columns(reference)`;
 `tracks_features`, `motion_windows(feats, contexts, window, cap, rng)` (uniform draw of `cap`, weight = inverse share),
 `write_motion(path, windows, context, weight, meta)` atomically writes `eval_motion.npz`.
-Tests: `test_realism.py` (6 tests).
 Two implementations of the same distance exist: `reference.realism()` (string-keyed raw JSON) and `realism.score()`
 (int-keyed loaded reference). `__main__.cmd_realism` (`:160`) runs both and overwrites the headline with
 `realism.score`'s so
@@ -287,15 +271,14 @@ odd one: it takes a positional `capture_dir` and an `--out` that is a file path 
 (`cmd_parity :182`, parser in `main :192`). Defaults: `build` `--stride 1`, `--max-windows 2_000_000`, `--trips-per-map
 5000`; `fit` `--max-clips 500
 --beam 32`; `prices` `--budget 0.005 --max-clips 2000 --beam 16`; `parity` `--bootstrap 1000`.
-Tests: `test_human_cli.py` (4 tests), `test_human_parity.py::test_the_cli_writes_both_reports`.
 
 ## Observed issues (human)
 
 1. `human_trips.json` and `human_hard_spots.json` have no consumer in the tree; FORMAT.md §5 still names
    "TravelEncounter"
    (trimmed with the first curriculum). Likely dead output; owner to decide.
-2. Physics and controller constants copied into `fit.py` and `parity.py` from C++ headers: a sync hazard (no test ties
-   them to the headers; `test_human_mapper.py::test_move_local_indices_follow_movecontrols` pins only the action order).
+2. Physics and controller constants copied into `fit.py` and `parity.py` from C++ headers: a sync hazard (nothing ties
+   them to the headers).
 3. Two EMD/realism implementations (`reference.realism`, `realism.score`).
 4. `parity` CLI signature differs from the other commands.
 5. `mapper.py` docstring says move revision 2; live is 5.
@@ -333,8 +316,7 @@ look,
 `LOOK_HOLD` by default), `receive_step()`, `set_mode(evaluate, seed_base, episodes, baseline, first_seed, arena,
 stand_in)`, `set_layout_weights`, `set_stage_progress(progress, shaping_scale, cost_scale)`, `set_replay`,
 `close`. The sim is lock-step: it blocks until each group's ACT arrives. The wire encodings are in
-`protocol.py` ([protocol.md](protocol.md)). Tests: `test_protocol.py`, `test_vision_bytes.py`, `test_free_look.py`
-(a sim over a socket), `test_train_run.py`, `test_evaluation.py`.
+`protocol.py` ([protocol.md](protocol.md)).
 
 **`ClusterEnv(endpoints, connect_timeout, rank, ranks, timeout=60)`** (`:245`): several sims as one pool (the host's own
 first, then each cluster worker's) with their envs laid end to end and every sim's groups as groups of the whole. A
@@ -363,8 +345,7 @@ ACT, so a decision must read them before it answers (this is why `_Downloads` wa
 declined
 if the rollout is not on the GPU, torch is not a HIP build, the GPU index differs, or the env count differs from the
 SPEC's. HIP only (the name `hipIpc*` is hardcoded).
-Tests: `test_vision_bytes.py::test_with_device_buffers_the_images_leave_the_step_but_the_final_images_stay` (decoding
-side); the IPC open itself needs a GPU.
+The IPC open itself needs a GPU.
 
 ## `blas.py` (78 lines)
 
@@ -391,7 +372,6 @@ without a gradient as one learner would), `average_parameters(modules)` (rank_sy
 Used when `mappo.rank_sync` is "gradients" or "weights"; "async" uses `async_sync.py` instead (`train.py:549`:
 `async_ranks = ranks > 1 and rank_sync == "async"`). Which mode the live cluster runs is UNVERIFIED (the sim injects
 `mappo.rank_sync`, `LearnerProcess.cpp:138`).
-Tests: `test_parallel.py` (two real processes against a fake sim).
 Reviewer notes: `Ranks.update` is created with `object.__new__` and a copied `__dict__` (`:55-60`), which shares
 `_dist`;
 `any()` uses `torch.cuda.current_device()` under nccl; `average_gradients` calls `.tolist()` on a device tensor (a
@@ -438,8 +418,7 @@ own pace and trade with it over plain TCP (length-prefixed pickles, `_send/_rece
   path must resolve under `root` (`:170`); the hub looks the name up in its own listing, never joins it onto a path.
 Data flow: constructed in `TrainingRun.__init__` (`train.py:748-760`) with `[actor, critic, value_norm, style.disc]`.
 Config: `mappo.rank_sync`, `mappo.weight_sync_every`, `dist_address`, `dist_timeout` (`TrainConfig`).
-Tests: `test_async_sync.py` (8 tests including a real socket exchange, statistics never traded as deltas, pushes kept as
-one). Security note: pickle over an unauthenticated TCP port (`Hub` binds all interfaces); acceptable only on the
+Security note: pickle over an unauthenticated TCP port (`Hub` binds all interfaces); acceptable only on the
 cluster
 LAN, as the module says.
 Observed: a lost leader stops a follower (`_trade`, `:395`); a follower's `Link.at_safe_point` assumes `self.pushed` is
@@ -471,7 +450,6 @@ Config: `style.{enabled,dataset,reference,coef 0.02,lr 1e-4,hidden (256,256),gra
 4,batch 512,ladder true,eval_windows 200000}`
 (`config.py:271`; `__post_init__` validates).
 Depends on: `human/motion.py`, protocol 20 kinematics (`Spec.kinematics_dim`), `human_motion_windows.npz`.
-Tests: `test_style.py` (11 tests).
 Observed: `StyleReward.train` always calls `optimizer.step()` even for a rank with no windows (needed so averaged
 gradients
 line up, comment `:268`); `disc_mean` is used by `train.score_motion` only. Unlike SIL it has no camera restriction.
@@ -486,7 +464,7 @@ largest
 outcome term (earnings only, never charges), `describe` formats the warning. `train.py:2119-2138` calls it and repeats
 the
 warning every `WARN_EVERY = 25` updates. The module docstring records three past faults (a farmable resurrection, a goal
-paid per decision held, an order nudge) that motivated it. Tests: `test_rewards.py`.
+paid per decision held, an order nudge) that motivated it.
 Observed: `rewards.audit` compares against the *largest* outcome term, so a stage with a small purpose term and a large
 unrelated outcome term (e.g. `kill` in a movement stage, if reported) would mask a shaping runaway; UNVERIFIED how
 often.
@@ -499,10 +477,10 @@ layout)`,
 `layout_signature` (`:74`; sha1 of the blocks' names, spans and revisions, 12 hex chars), `layout_changes(old, new)`
 (`:85`;
 human-readable changes per layout, used by `evaluate.py:85`, `tools/resume_check.py`), `model_names` (used by export).
-Consumers: `config.py`, `bootstrap.py`, `distill.py`, `partners.py`, `export.py`, `evaluate.py`, `train.py`. Tests:
-`test_stage.py`, `test_stage_json_diff.py`, `test_layout_revisions.py`, `test_compass_split.py`. `stage_dir` is called
+Consumers: `config.py`, `bootstrap.py`, `distill.py`, `partners.py`, `export.py`, `evaluate.py`, `train.py`.
+`stage_dir` is called
 by
-`load_stage` and many tests. `Span` is defined after its first use in an annotation (`:43` vs `:50`), fine under
+`load_stage`. `Span` is defined after its first use in an annotation (`:43` vs `:50`), fine under
 `from __future__ import annotations`.
 
 ## Observed issues (misc)
