@@ -19,7 +19,7 @@ mappo:
 
 eval:
   report: [won, survived, packs_cleared, extra_pulls, interrupts, fire_share, hurt_share, deaths, rejoin_seconds,
-           combat_rung, difficulty, at_top_rung, target_in_view, selected_share, pulls, hazard_pulls, linked_pulls,
+           difficulty, at_top_rung, target_in_view, selected_share, pulls, hazard_pulls, linked_pulls,
            caster_pulls, interrupt_earnings, outcome_paid, died, reward_clear, reward_survived,
            reward_interrupt_landed, reward_pull_extra, reward_fire_hurt, reward_hurt, reward_death, reward_step_cost,
            reward_damage_dealt, reward_repeat, reward_aimless, reward_effort, reward_jitter]
@@ -29,7 +29,7 @@ eval:
 # (scale Combat.InterruptLanded down if it reads above ~0.3).
 status:
   headline: [won, survived, packs_cleared, extra_pulls, interrupts, interrupt_earnings, fire_share, hurt_share, deaths,
-             rejoin_seconds, combat_rung, target_in_view]
+             rejoin_seconds, difficulty, target_in_view]
   targets:
     # C1's measures are not C2's (null drops an inherited key).
     kills: null

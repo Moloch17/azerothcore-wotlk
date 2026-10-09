@@ -17,8 +17,8 @@ run_name: combat3_survive
 total_env_steps: 300000000
 
 eval:
-  report: [won, survived, packs_cleared, deaths, respawns, rejoins, rejoin_seconds, rejoined, dead_seconds,
-           away_seconds, rest_seconds, extra_pulls, interrupts, fire_share, hurt_share, combat_rung, difficulty,
+  report: [won, survived, packs_cleared, deaths, rejoins, rejoin_seconds, rejoined, dead_seconds,
+           away_seconds, rest_seconds, extra_pulls, interrupts, fire_share, hurt_share, difficulty,
            at_top_rung, target_in_view, start_walk, died,
            reward_clear, reward_survived, reward_away, reward_interrupt_landed, reward_pull_extra, reward_fire_hurt,
            reward_hurt, reward_death, reward_step_cost, reward_damage_dealt, reward_repeat, reward_aimless,
@@ -28,7 +28,7 @@ eval:
 # (rejoined: rejoins over rises) at 0.9 or more -- and how long it was dead or away.
 status:
   headline: [survived, won, packs_cleared, deaths, rejoined, rejoin_seconds, dead_seconds, away_seconds, rest_seconds,
-             extra_pulls, hurt_share, combat_rung]
+             extra_pulls, hurt_share, difficulty]
   targets:
     interrupts: null
     interrupt_earnings: null

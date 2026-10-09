@@ -6,7 +6,7 @@
 
 **Reason.** A bot must move the way a player can, because the models are meant to play beside a human on a real realm.
 
-**What it constrains.** Navmesh data may author tables offline or, through the stock `PathGenerator`, drive the scripted leader's keys (M4) but is never a bot input. `AnimusForge.Stage.<name>.TicksPerDecision = 5` for every live stage (worldserver.conf.dist; test_stage_ticks.py).
+**What it constrains.** Navmesh data may author tables offline or, through the stock `PathGenerator`, drive the scripted leader's keys (M4) but is never a bot input. `AnimusForge.Stage.<name>.TicksPerDecision = 5` for every live stage (worldserver.conf.dist).
 
 **Update 2026-10-08 ([0019](0019-vision-only-movement.md)).** Movement is vision-only: no route, waypoint or path hint
 reaches the policy, and the forge's own navigation layers (private navmesh queries, route planners, route-ordered

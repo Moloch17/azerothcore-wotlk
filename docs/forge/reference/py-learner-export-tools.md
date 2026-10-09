@@ -42,9 +42,7 @@ block's ended column is set. The module docstring says the format "must be follo
 `AMDL_VERSION`".
 
 `read_amdl` and `reference_decide` (numpy forward pass incl. goals, attention, pointers) are the reference for the C++
-loader, which is not in this repository (it lives in the mod-animus module; UNVERIFIED location). Tests:
-`test_export.py`
-(7), `test_export_seat_sets.py`.
+loader, which is not in this repository (it lives in the mod-animus module; UNVERIFIED location).
 
 ## `evaluate.py`: score a checkpoint against a running sim
 
@@ -67,7 +65,7 @@ unlike `TrainingRun._acting` which sends `wire_goals`; it scores `SCORE_COLUMN` 
 was; `MappoTrainer` is built with its default devices (UNVERIFIED which); it does not use cast or partners. The goals
 are
 described as "scored and reported by the sim; they mask nothing" (`env.py:87-89`), UNVERIFIED how much the missing goals
-change a goal-head policy's score. Tests: `test_config_unknown_keys.py` covers `mappo_from_checkpoint` only.
+change a goal-head policy's score.
 
 ## `bench_learner.py`: time the loop against a fake sim
 
@@ -90,8 +88,7 @@ current protocol version; `tools/resume_check.py` also imports it. Nothing about
 values
 differ. `rung_best_name(ladder, rung)` is `best_rung<k>.pt` for the fade, `best_<ladder>_rung<k>.pt` otherwise (the
 second
-form is unreachable, see py-learner-stage.md). `archive_rung_best` copies `best.pt` atomically. Tests: `test_runs.py`
-(8).
+form is unreachable, see py-learner-stage.md). `archive_rung_best` copies `best.pt` atomically.
 
 ## `progress.py`: `progress.json`
 
@@ -107,7 +104,7 @@ row, the evaluation block (`evals`, `last_eval_*`, `best_*`, `evals_since_best`,
 `eval_<metric>_<arm>`, and `ARM_SPLITS`: `clear_standin` against `clear_allbot` giving `standin_gap`). `write(phase,
 ...)`
 merges them; phases written: `training`, `evaluating`, `finished`, `stopped`. `note(key, text)` stores a line (stand-in
-status). Tests: `test_progress.py` (4), `test_status_headline.py`. Reader: the C++ console,
+status). Reader: the C++ console,
 `src/server/game/Animus/Console/Progress.cpp` (the path in the docstring,
 `src/Console/Progress.cpp`, is stale).
 
@@ -121,7 +118,6 @@ are not reported as faults. The same table is applied inside `EvalResult.summary
 `MAX_SHAPING_SHARE = 0.5` of the largest positive outcome term; `outcome_terms(stage)` takes terms of category outcome
 or
 cost from stage.json `reward_terms` (fallback `OUTCOME_TERMS = (kill, clear, arrive)`); `WARN_EVERY = 25`. Print-only.
-Tests: `test_rewards.py`, `test_metric_names.py`, `test_outcome_score.py`.
 
 ## `device.py`, `blas.py`, `__init__.py`
 

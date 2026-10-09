@@ -14,9 +14,8 @@ Part of [py-learner.md](py-learner.md). Covers `bootstrap.py` (903 lines), `cast
 (`train.py:976-981`).
 
 `init_from_checkpoint(path, prefer)` (`train.py:276`): a candidate whose file name is `best.pt` or `latest.pt` is
-replaced by the run's `prefer` file (`seed_from`, default `latest`; all live yamls use `latest`,
-`test_seed_from.py:47`), falling back to the other, or None. Any other path is taken if it exists. So a path written as
-`best.pt` yields `latest.pt` by default. This is intended and pinned by `test_seed_from.py:18-44`, but comments
+replaced by the run's `prefer` file (`seed_from`, default `latest`; all live yamls use `latest`), falling back to the other, or None. Any other path is taken if it exists. So a path written as
+`best.pt` yields `latest.pt` by default. This is intended, but comments
 disagree:
 `config.py:627-630` ("a best.pt that does not exist falls back to the latest.pt") and `config.py:649-650` ("each merged
 stage's best.pt (else latest.pt)") understate it. It also applies to `finetune_from` and (with the default prefer)
@@ -71,8 +70,8 @@ and the actor head. With block spans in both stage.jsons (`stages.block_spans`) 
 - `_by_name` then fills still-empty new columns and actions from old columns of the same name in any block
   (`obs_names`; a revision-4 move block of 63 columns uses `MOVE_REVISION_4_COLUMNS`, the compass split).
 
-`CORE_GLOBAL_FEATURES` must equal `CoreBlock::OBS_GLOBAL_COUNT` in C++ (`bootstrap.py:60-66`); `test_bootstrap.py`
-reads the header. It was once 67 when the C++ had 94.
+`CORE_GLOBAL_FEATURES` must equal `CoreBlock::OBS_GLOBAL_COUNT` in C++ (`bootstrap.py:60-66`); nothing
+checks it since the tests were removed 2026-10-07. It was once 67 when the C++ had 94.
 
 Adapter weights for the segments move (`_seed_adapter_blocks`: new weights zeroed, then segments copied, bias copied);
 head rows move (`_seed_head_blocks`); normalisers move per feature with `count` capped at `SEED_COUNT_CAP = 16384` if
@@ -132,7 +131,7 @@ lacks, or with no legal mapped action, keeps the fallback action and is counted 
 `Residency(limit)` offloads the least recently used frozen actors to the CPU (`place`) past a cap; only partners use it
 (`Cast` does not, though a docstring mentions a `CastPool` that does not exist, `cast.py:44`).
 
-Config: `cast.agents`, `cast.deterministic`. Tests: `test_cast.py` (5), `test_cast_vision.py`.
+Config: `cast.agents`, `cast.deterministic`.
 
 ## Partners (`partners.py`, `config.PartnerConfig`)
 
@@ -180,7 +179,7 @@ scoring (`with_partners_chooser`). Readings only.
 
 Config: `cast.partners.{stages, paths, snapshot_every_env_steps, newest_share, share, max_partners, pool_size,
 keep_newest, rate_window, floor, score, deterministic, eval_partners, resident_members}`. `enabled` is true only with
-`share > 0` and some source. Tests: `test_partners.py` (18).
+`share > 0` and some source.
 
 ## Distillation (`distill.py`)
 
@@ -193,7 +192,7 @@ stage.json has that arena) or the named checkpoints; `build_teacher(checkpoint, 
 parent's actor from its own saved config and stage.json (`frozen_actor`, frozen, eval mode), maps layouts by name and
 columns by block (`_index_pairs`: blocks with equal sizes; a revised block is dropped from the mapping),
 and runs `check_camera` for camera teachers. `Distiller(stage, teachers)` needs the stage's `state.arena_first` span and
-**refuses any teacher with a camera** (`distill.py:256-259`; `test_cast_vision.py:230`). Every live stage has a vision
+**refuses any teacher with a camera** (`distill.py:256-259`). Every live stage has a vision
 block (`move1_controls` and `move2_seek` stage.json: all 10 layouts), so distillation is unusable in the live
 curriculum,
 and the restricted-stage overlay (`train.py:1019-1024`) would raise the same error.
@@ -202,9 +201,6 @@ In the update the trainer calls only `Distiller.sequence_loss` (`mappo/trainer.p
 without it (`:1499`). It returns `coef * mean KL(teacher || policy)` over taught rows (the arena's rows, over actions
 both have and the stage's mask allows, renormalised). Recurrent teachers are replayed in order per sequence.
 (`Distiller.__call__`, `.kl` and `.begin_sequence`, never called in production, were deleted.)
-`test_distill.py` is an empty file (one newline, no tests); distillation is exercised by `test_cast_vision.py` and a
-fake
-distiller in `test_recurrent.py`.
 
 ## `stages.py` (the stage.json reader)
 

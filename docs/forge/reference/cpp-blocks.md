@@ -109,8 +109,7 @@ needs vision and an `entities` entry before it; combat needs sight before it; co
 party_frames; a stage that fights needs duel. A stage's vision gets `entities` inserted right after it automatically
 (`Stages.cpp:1360`), which is why the move stages' `.Blocks` lists omit it.
 
-Declared blocks per live stage (exact; from `Stages.cpp:649-1020` and the pin golden
-`src/test/server/game/Animus/LiveLayoutPin.golden.inc`; `x` = in the layout, class-independent totals from the golden):
+Declared blocks per live stage (exact at the time the pin was removed; from `Stages.cpp:649-1020`; `x` = in the layout, class-independent totals):
 
 | Stage | core | move | compass | duel | pack | gaunt | pet | vision | entities | map | sight | party | combat | goal | class-indep obs / actions |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -133,21 +132,17 @@ Declared blocks per live stage (exact; from `Stages.cpp:649-1020` and the pin go
 Seed lineage (`Extends`): move1 -> move2 -> {move3, move4}; move3 -> combat1 -> combat2 -> combat3 -> group1 (also
 merges move4) -> dungeon2 -> dungeon3 (`Stages.cpp`).
 
-## Pin test and golden
+## Layout pin (removed)
 
-`src/test/server/game/Animus/LiveLayoutPinTest.cpp` (219 lines) with golden
-`src/test/server/game/Animus/LiveLayoutPin.golden.inc` (149 lines). It builds, for the live stages, the block list
-and, for every block except core, duel and pet (class-dependent, pinned only by name, id and revision), the obs and
-action counts, the `DescribeColumns` count and an FNV-1a hash over columns, action names and manifest entries. It also
-pins every sizing constant (`PACK_SLOTS=24`, `SIGHT_SLOTS=64`, `GOAL_JOINT_COUNT=207`, `BLOCK_COUNT=27`, state widths,
-`core.OBS_GLOBAL_COUNT=91`, ...) and the class list `warrior:1 paladin:2 hunter:3 rogue:4 priest:5 deathknight:6
-shaman:7 mage:8 warlock:9 druid:11` with their spec names. Regenerate only deliberately with `ANIMUS_PIN_PRINT=1
---gtest_filter=LiveLayoutPinTest.*`. Caveat: the test builds a bare `Layout` and sets `Stage` and `Blocks` but never
-`_blockMask`, so `Layout::Has` is false for everything while sizing; this is why `SightBlock::Width` reads
-`layout.Blocks` instead of `Has` (`SightBlock.cpp:109`). Any size function that used `Has` would be pinned wrong.
+The pin test and its golden file were removed 2026-10-07 (see [tests.md](tests.md) for the hand check: generate
+stage.json and compare with `stage_json_diff.py`). Caveat kept from it: sizing code must not use `Layout::Has` (it
+needs `_blockMask`, which a bare `Layout` never sets), which is why `SightBlock::Width` reads `layout.Blocks`
+instead of `Has` (`SightBlock.cpp:109`).
 
-Pinned revisions (golden): core 1, move 5, compass 2, duel 0, pack 0, gauntlet 0, pet 0, vision 5, entities 1, map 1,
-sight 2, party_frames 2, combat 1, goal 0.
+Revisions at removal: core 1, move 5, compass 2, duel 0, pack 0, gauntlet 0, pet 0, vision 5, entities 1, map 1,
+sight 2, party_frames 2, combat 1, goal 0. Class list: `warrior:1 paladin:2 hunter:3 rogue:4 priest:5 deathknight:6
+shaman:7 mage:8 warlock:9 druid:11`. Sizing constants included `PACK_SLOTS=24`, `SIGHT_SLOTS=64`,
+`GOAL_JOINT_COUNT=207`, `BLOCK_COUNT=27` and `core.OBS_GLOBAL_COUNT=91`.
 
 ## The by-name seeding contract
 
@@ -267,7 +262,7 @@ Config: none directly; pacing keys act in `SeatMemory` (see Layout doc). Revisio
 (player-controller C3) dropped three move-option clocks, shifting later columns by 3. Bump means a full restart of the
 block except by-name action matching in `_core_by_name`.
 
-Tests: `LiveLayoutPinTest` (name, id, revision, constants only). No unit test covers Observe/Apply/masks.
+No tests (removed 2026-10-07); see [tests.md](tests.md).
 
 Reviewer notes: Core has no `DescribeColumns`, so its global columns and talent columns carry only positionally; the
 talent segment is positional per class and moves if the talent DBC changes. `IsActionAllowed` for Trinket re-reads the
@@ -332,8 +327,7 @@ clearance; 5 objective columns moved to the compass block. Seeding from revision
 hard-coded list in bootstrap (`MOVE_REVISION_4_COLUMNS`).
 
 Config: `Actions.MoveRepeatMs` (300), `Options.JitterDecayMs` via `view.Options`.
-Tests: `MoveBlockTest` (no ray columns, column names), `MoveControlsTest` (layout, masks, presses, reversal pricing),
-`MovePriceTest`, `LiveLayoutPinTest`, plus `PlayerControllerTest`/`KinematicsTest` for the controller.
+No tests (removed 2026-10-07); see [tests.md](tests.md).
 
 Reviewer notes: `MovePrice::BearingSwing` and `MovePrice::Undone` are used only by tests (bearing design is gone).
 `CLEARANCE_RANGE`, `MAX_STEP`, `MARCH_SLOPE` are kept in `MoveBlock.h`. The block writes the trail inside a const method: a second
@@ -351,14 +345,12 @@ by move1_controls only. `view.CompassWithheld` zeroes all five (M1's withholding
 mask). Manifest: `objective_scale
 500`, `near_scale 40`. Reads `view.Body`, `view.Objective`, `view.Facing`. Revision 1: the columns that were the move
 block's up to its revision 4 (same names); revision 2 (2026-10-08, decision 0019) dropped the dead sixth column, and
-seeds carry by name. Tests: `CompassBlockTest` (names equal revision 4 move names, nothing without
-an objective, M1 carries it and seek does not), `GoalObjectiveLeakTest` (compass-withheld vs goal place).
+seeds carry by name.
 
 ## duel (id 3, revision 0)
 
 Does: fighting the selected target and the seat's own combat state, consumables, hunters' stable. Size: obs `111 + 5*S`,
-actions `10 + S`, with `S = 4` for hunters (`STABLE_SLOTS`) and 0 for other classes (`DuelBlock.cpp:138`; golden
-constants
+actions `10 + S`, with `S = 4` for hunters (`STABLE_SLOTS`) and 0 for other classes (`DuelBlock.cpp:138`; constants
 `duel.OBS_COUNT_WITHOUT_STABLE=111`, `ACTION_COUNT_WITHOUT_STABLE=10`, `STABLE_FEATURES=5`). No `DescribeColumns`.
 
 Columns 0-110 (header enum `DuelBlock.h:44`): 0 distance (/60), 1-2 bearing sin/cos, 3 behind_target, 4
@@ -393,7 +385,6 @@ Sight stages: a target the camera does not show is "hidden": position columns sh
 place; `view.TargetInView` false. Hazard columns use `view.HazardsSeen` (camera-seen ground fire) in sight stages and
 the
 unit's auras otherwise.
-Tests: `LiveLayoutPinTest` (names of the 10 fixed actions are pinned).
 Reviewer notes: `OBS_BOT_MOVING` reads `bot->movespline->Finalized()`, which is always finalised for controller-moved
 seats, so the column is effectively constant 0 (UNVERIFIED: confirm no code sets splines on seats). `OBS_BOT_STEALTHED`
 uses two different aura checks in the hidden-target and target branches (`HasStealthAura` vs `HasAuraType`). The header
@@ -416,7 +407,7 @@ and the option is not running. Apply: select (`Encoding::SelectEnemy`) or start 
 perception-true there. `DescribeSeatSets` exposes the pack as set "enemies" (slots 24, present column 0, segment
 `first = block.ObsFirst + 2`, stride 43, pointer action range 24 from the block's first action). Hash
 `a102ef2571ed2826`.
-Tests: pin only. Reviewer notes: `SLOT_ATTACKS_PET` tests `victim->GetOwnerGUID() == bot` only; select goes through
+Reviewer notes: `SLOT_ATTACKS_PET` tests `victim->GetOwnerGUID() == bot` only; select goes through
 `SelectEnemy` (server-side `SetSelection`, not the CMSG), unlike the sight block's select; `boss_faction_champions.cpp`
 (a script) also calls `SelectEnemy`.
 
@@ -429,7 +420,7 @@ arrival
 `movespline->Finalized()`, no regen aura already, `CanUseItemOn`; rest also needs not already running and health/mana
 < 90%. Apply eat/drink: in sight stages CMSG_USE_ITEM through the handler, else `UseItemOn`; counts `FoodUsed/Failed`,
 `DrinkUsed/Failed`. rest starts `RestUntilReady` for `Options.RestMaxMs` and `BeforeApply` repeats eat/drink until 90%
-or combat. Hash `7edc6ead75d0551b`. Declared from combat3 on. Tests: pin only. Reviewer notes: `IsAllowed` dereferences
+or combat. Hash `7edc6ead75d0551b`. Declared from combat3 on. Reviewer notes: `IsAllowed` dereferences
 `view.Option` without a null check on the rest path (`GauntletBlock.cpp:57`); `movespline->Finalized()` is always true
 for
 controller seats, so it never blocks eating while running.
@@ -447,7 +438,7 @@ interrupt, control, dispel, threat, positive, damage and cut to 6, cached per ti
 masked
 while fighting). Orders are applied server-side by the same state changes `HandlePetActionHelper` makes (NOT as packets,
 even in sight stages). Abilities cast through a fresh `Spell` after `CheckPetCast`. `BeforeApply` casts the pet's
-interrupt when a held interrupt finds nothing in the core block. Tests: pin (name/id/revision only). Reviewer notes:
+interrupt when a held interrupt finds nothing in the core block. Reviewer notes:
 the mask builds and deletes a `Spell` per ability per observation; guardians with no `CharmInfo` mask all orders;
 `DefaultStance` makes a passive pet defensive once per pet GUID (called from StageScenario).
 
@@ -465,7 +456,7 @@ not an action of the block (separate head, `FreeLook::HEADS`). Manifest carries 
 `slot_byte`, no `entity_slots`), look and camera (`caster` "raycast+sight") objects. Revision history
 (`VisionBlock.h`): 1 first layout; 2 log distance channel; 3 image to bytes; 4 free look + mixed render sizes; 5
 five bytes per pixel with class and entity slot; 6 entity sensing: four bytes, no slot, static world only. Declared by
-every live stage. Details in cpp-vision.md. Tests: none (removed 2026-10-07). Reviewer notes: Observe mutates seat
+every live stage. Details in cpp-vision.md. Reviewer notes: Observe mutates seat
 camera state through const; correct only if each seat is observed once per decision (comment in `VisionBlock.cpp`).
 
 ## entities (id 21, revision 2)
@@ -480,21 +471,21 @@ clamped to 1), 18 ang_height (`2 atan(height / 2 / distance) / FovV`, clamped to
 memory). Revision 1 had centroid_x, centroid_y and share at 16-18; revision 2 replaced them one for one (still 20
 columns). Raw columns, not
 normalised (kept out of the learner's adapters). `Observe` first advances and writes `view.Recall` (entity memory), then
-writes. Manifest object "entities" (`features` names the columns). `ReadMarks(row, marks)` reads a row back into `Vision::EntityMark`s (the audit's overlay). Tests: `VisionEntitiesTest`, `SightBlockTest`, `CombatPerceptionTest`.
+writes. Manifest object "entities" (`features` names the columns). `ReadMarks(row, marks)` reads a row back into `Vision::EntityMark`s (the audit's overlay).
 Reviewer notes: class and type are raw indices (the learner hashes type modulo `TYPE_BUCKETS 4096`).
 
 ## map (id 22, revision 1)
 
 The mental map: 4 scalars + the 48x48x6 byte crop (`Vision::CROP`; separate STEP section). Scalars: known, frontier,
 visited, kept (share of cells ever seen, frontier, visited, map kept from the previous episode). `Observe` advances the
-map clock, writes the frame's rays (`view.Hits`), the listed entities (`view.Seen`) and the body, crops heading-up. Entity sensing: also writes the listed entities' cells (`MentalMap::WriteEntities(*view.Seen)`), since the image no longer carries units or objects. Declared from move2 on. Tests:
-`MentalMapTest`. Reviewer notes: uses `bot->GetPosition*` for the crop centre before the body override only when no
+map clock, writes the frame's rays (`view.Hits`), the listed entities (`view.Seen`) and the body, crops heading-up. Entity sensing: also writes the listed entities' cells (`MentalMap::WriteEntities(*view.Seen)`), since the image no longer carries units or objects. Declared from move2 on.
+Reviewer notes: uses `bot->GetPosition*` for the crop centre before the body override only when no
 body exists; no actions.
 
 ## sight (id 23, revision 3)
 
 Seen and remembered list and pointer presses. Size `64 x W + 23` obs where `W = 32` (move3) or `32 + 13 = 45` with the
-combat block in the layout (`SightBlock::Width`), actions 321. Pinned: 2071 / 321 (no combat), 2903 / 321. Per slot: the
+combat block in the layout (`SightBlock::Width`), actions 321. Sizes: 2071 / 321 (no combat), 2903 / 321. Per slot: the
 20
 entity columns, then 12 memory columns: visible, age (log2 scaled over 3600 s), dead, open, used, heading sin/cos, speed
 (/7, max 2), course sin/cos, selected, focused; then (with combat) 13 combat columns (visible units only). Slots 0-31
@@ -505,8 +496,8 @@ are the frame's visible entities in slot order, 32-63 the most relevant remember
 or
 focused; clear_focus always. All presses are client packets through `EntityActions` (see layout doc). Spells in sight
 stages are cast through the client too. No looting. Manifest object "sight" includes pointers, named row, memory ids
-(`Vi::MEMORY_TRAINING_CAP`). Tests: `SightBlockTest`, `SightEncounterTest`, `InteractStageTest`, `CombatPerceptionTest`,
-`DungeonStagesTest`. Reviewer notes: no `DescribeColumns` (names exist only in the manifest "features"); the width
+(`Vi::MEMORY_TRAINING_CAP`).
+Reviewer notes: no `DescribeColumns` (names exist only in the manifest "features"); the width
 depends on layout membership of combat, which changes the block's shape between move3 and combat1 (see seeding
 question).
 
@@ -519,8 +510,8 @@ focused, target, target_hostile, target_mine, target_in_view. Dots are minimap p
 `PartyFollow.MinimapYards` (60); normalised by that radius. Actions `select_member<i>`, `focus_member<i>`,
 `assist_member<i>` (12). Mask: frame present. `FillFromGroup` fills `view.Frames` from the core group (leader first,
 own subgroup only); encounters without a core group fill their own. Revision history: 1 (M4: first 10 columns), 2 (G1:
-combat block's member frames merged, presses added). Tests: `PartyFollowTest` (PartyFramesTest cases),
-`CombatPerceptionTest`. Reviewer notes: the minimap dot reads the member's server position; a dot beyond the radius is
+combat block's member frames merged, presses added).
+Reviewer notes: the minimap dot reads the member's server position; a dot beyond the radius is
 absent.
 
 ## combat (id 25, revision 1)
@@ -536,29 +527,31 @@ threat,
 debuffs (written by `CombatBlock::WriteSlot` from `SightBlock::Observe`). Threat status is the client's
 `UnitThreatSituation` (0..3, /3) read from the server threat manager; debuffs shown only for the selection, the focus or
 visible units. Also provides `VisibleEnemies` (the encounter enemy list), `ReadHazards` (ground fire from the frame) and
-`InView`. Revision 1: member frames moved to party_frames. Tests: `CombatPerceptionTest` (18 cases). Reviewer notes: the
+`InView`. Revision 1: member frames moved to party_frames. Reviewer notes: the
 `FrameResolve` comment calls it a "party frame's click"; target-frame threat uses server threat lists as the client's
 threat colouring does.
 
-## goal (id 26, revision 1)
+## goal (id 26, revision 2)
 
-101 obs, 0 actions, always last (revision 0 was 128 wide: 12 kinds x 29 targets). Layout of the 101: 0-8 kind
-available, 9-31 target available, 32 ended, 33 reached, 34 secondary_ended, 35 event, 36 from_order, 37-45 order kind,
-46-68 order target, 69-77 achieved kind, 78-100 achieved target. Columns 36-68 (from_order, order kind, order target)
-are never written by `Observe` (always zero); stage.json `goals.columns` still reports them, and they stay only because
-`mappo/networks.py` (`GoalHead.columns`, `block_width`, `signals`, `draw`'s `given` path) reads the block at fixed
-offsets: they leave together with that file's next edit (known-issues B3). Revision 1 (2026-10-08) removed the
+68 obs, 0 actions, always last (revision 1 was 101 wide, revision 0 128: 12 kinds x 29 targets). Layout of the 68: 0-8
+kind available, 9-31 target available, 32 ended, 33 reached, 34 secondary_ended, 35 event, 36-44 achieved kind,
+45-67 achieved target. Revision 2 (2026-10-08, same unreleased layout generation, protocol 26) removed the order
+columns (`from_order`, order kind, order target: old columns 36-68, never written since the director was deleted)
+together with every reader of them (`GoalHead.columns`/`block_width`/`signals`, `draw`'s and `decide_goals`' `given`
+path, `trainer.py`, `export.py`): the achieved columns moved down by 33, stage.json `goals.columns` lost the three
+keys and reports `width` 68, and `DescribeColumns` lost `goal_from_order` and `goal_order_{kind,target}_*`, so a
+checkpoint of revision 1 carries every remaining column by name (`bootstrap._common_blocks`). Revision 1 (2026-10-08) removed the
 kinds Loot, Gather and Interact and the targets journal objective (4), giver and turn-in: `Available` never offered
 them, `Status` ended on nothing for them, and no looting is decision 0003. Every column from 9 on moved, so the block
 starts fresh when seeded from revision 0; it now names its columns (`DescribeColumns`, `goal_kind_<kind>`,
 `goal_target_<none|enemy_i|friend_i|place_i|assignment>`, `goal_ended`, `goal_reached`, `goal_secondary_ended`,
-`goal_event`, `goal_from_order`, `goal_order_kind_*`, `goal_order_target_*`, `goal_achieved_kind_*`,
-`goal_achieved_target_*`) so the next revision carries them by name. `Available` offers Fight always, Control with >= 2
+`goal_event`, `goal_achieved_kind_*`, `goal_achieved_target_*`) so the next revision carries them by name. `Available` offers Fight always, Control with >= 2
 enemies, Recover/Rest when hurt, Protect with a friend, Position with an enemy, Prepare out of combat, TravelTo with a
 route place or the assignment. `Status` evaluates reached/possible per kind; `Earned` is the "reached, not true at
 choice" rule used by the scenario for `Goals.Reached` payment. `PlaceOf` yields the TravelTo target (the assignment
-slot is the trip objective when the stage has no route places, only while `ObjectivePlaceKnown`). Constants
-`PROTECT_REACHED_PCT 70`, `PLACE_REACH 20`. Tests: `GoalObjectiveLeakTest`.
+slot is the trip objective when the stage has no seen places (`WorldView::HasSeenPlaces`, until 2026-10-08
+`RoutePlaces`), only while `ObjectivePlaceKnown`). Constants
+`PROTECT_REACHED_PCT 70`, `PLACE_REACH 20`.
 
 ## Observed issues
 
@@ -569,8 +562,7 @@ slot is the trip objective when the stage has no route places, only while `Objec
 - Duel `OBS_BOT_MOVING` and gauntlet `movespline->Finalized()` read spline state that controller-moved seats never set.
 - Core mask hides heal-on-full-health and refresh-with-plenty-left spells, and `SeatMemory` pacing masks repeats
   (`StageScenario.cpp:3711`); both conflict with principle 5 as worded (see layout doc).
-- Only 2 of the 14 blocks' Observe paths have unit tests that do not need a world; Core, Duel, Pack, Gauntlet, Pet,
-  Goal masks are untested.
+- No block's Observe, Apply or masks are tested (tests removed 2026-10-07; see [tests.md](tests.md)).
 
 ## Questions for the owner
 

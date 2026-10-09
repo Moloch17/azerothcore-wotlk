@@ -57,7 +57,7 @@ namespace Animus::Vision
     [[nodiscard]] std::string EvalVideoOutcome(std::vector<std::string> const& names, float const* row);
 
     /// The column holding the episode's rung: "rung" or "tier", or a name ending "_rung" or "_tier" (not at_top_rung,
-    /// a flag); -1 for none.
+    /// a flag), else `difficulty`; -1 for none.
     [[nodiscard]] int32_t EvalVideoRungColumn(std::vector<std::string> const& names);
 
     /// One seat an evaluation episode could film: its agent (the learner plays it: the "human" stand-in's and a

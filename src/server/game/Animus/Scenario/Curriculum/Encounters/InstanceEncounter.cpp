@@ -934,10 +934,6 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
     // dungeon's way on is opened the way a player opens it (2026-10-01: "they need to be able to use the proper
     // actions to activate doors and cannons"), with a press on it (the sight block's interact or use-item). Nothing
     // opens by itself.
-    bool fighting = false;
-    for (uint32 slot = 0; slot < env.Targets.size() && !fighting; ++slot)
-        if (Unit const* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive() && enemy->IsInCombat())
-            fighting = true;
     fight.Objects.clear();
     // One visit from the party's middle, wide enough to reach OBJECT_SIGHT past its farthest living seat, rather than
     // one per seat: what each seat can see is then picked out of it, as before.
@@ -1148,7 +1144,7 @@ void Animus::Curriculum::InstanceEncounter::SeenWorld(Env const& env, uint32 sea
     WorldView& world = view.World;
     world.Places = {};
     world.HasAssignment = false;
-    world.RoutePlaces = true;
+    world.HasSeenPlaces = true;
     if (!view.Bot || seat >= MAX_SEATS)
         return;
     SeatState const& state = _scenario.Data(env).Seats[seat];

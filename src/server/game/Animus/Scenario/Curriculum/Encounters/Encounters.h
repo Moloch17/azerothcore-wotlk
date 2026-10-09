@@ -32,10 +32,7 @@
 #include "WingRun.h"
 #include "SeenPlaces.h"
 #include <unordered_set>
-#include <atomic>
-#include <deque>
 #include <mutex>
-#include <unordered_map>
 #include <array>
 #include <functional>
 #include <map>

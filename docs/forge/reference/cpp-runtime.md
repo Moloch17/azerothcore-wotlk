@@ -252,11 +252,7 @@ learner) unless the sim is local-only, then `BenchReport`, `BenchSave` (`bench.j
 start when `bench.json` has no entry for this CPU (`OnUpdate` `:398-411`; `HasBenchForThisCpu` `:1730`); a worker that tunes
 itself joins its host only afterwards (`_joinAfterBench`).
 
-Tests: no unit test covers `Forge`, `ForgeConfig`, `EnvPool`, `LockstepServer` or `ClusterLink` directly. Related:
-`src/test/server/game/Animus/ResetSamplesTest.cpp`, `BotAccountsTest.cpp`, `KinematicsTest.cpp`, `VisionProtocolTest.cpp`
-(ACT cutting), `StandInTest.cpp` (includes `Protocol.h`);
-`src/test/server/database/SealedWriteTest.cpp`; Python `apps/forge/python/tests/test_protocol.py` drives a fake sim
-(`sim_threads.py`) against `protocol.py`. See [tests.md](tests.md).
+No tests (removed 2026-10-07); see [tests.md](tests.md).
 
 ## Observed issues
 

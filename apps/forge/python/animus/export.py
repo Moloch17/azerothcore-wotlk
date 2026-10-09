@@ -768,21 +768,17 @@ def _reference_goals(model: dict, goals: dict, obs: np.ndarray, raw: np.ndarray,
     allowed = accepts.copy()
     at = int(goals["block_at"])
     base = kinds + targets
-    ended = secondary_ended = event = from_order = False
-    order_goal = 0
+    ended = secondary_ended = event = False
     if at < 0 and targets > 1:
         allowed[:] = False              # no goal block: only the first goal, which means none
     if at >= 0 and targets > 1:
-        width = base + 2 + (3 + 2 * base if slots > 1 else 0)
+        width = base + 2 + (2 + base if slots > 1 else 0)
         block = obs[at : at + width] > 0.5
         present = block[:kinds, None] & block[kinds:base][None, :]
         allowed &= present
         ended = bool(block[base])
         if slots > 1:
-            secondary_ended, event, from_order = bool(block[base + 2]), bool(block[base + 3]), bool(block[base + 4])
-            order_kind = int(np.argmax(block[base + 5 : base + 5 + kinds]))
-            order_target = int(np.argmax(block[base + 5 + kinds : base + 5 + base]))
-            order_goal = order_kind * targets + order_target
+            secondary_ended, event = bool(block[base + 2]), bool(block[base + 3])
     allowed = allowed.reshape(-1)
     allowed[0] = True
 
@@ -824,7 +820,7 @@ def _reference_goals(model: dict, goals: dict, obs: np.ndarray, raw: np.ndarray,
                      + lookahead["weight"][1] * _sigmoid(factored(lookahead["duration"], source)))
         drawn = [int(np.where(allowed, joint.reshape(-1), -np.inf).argmax())]
         if slots > 1:
-            before = [order_goal if from_order else drawn[0]]
+            before = [drawn[0]]
             for slot in range(1, slots):
                 shifted = source + goals["slot_bias"][slot - 1]
                 for previous in before:
@@ -844,8 +840,6 @@ def _reference_goals(model: dict, goals: dict, obs: np.ndarray, raw: np.ndarray,
         else:
             primary = drawn[0]
     if slots > 1:
-        if from_order:
-            primary = order_goal
         if secondary == primary:
             secondary = -1
         goal = primary * (count + 1) + secondary + 1

@@ -91,7 +91,7 @@ ladders are settled, or at `total_env_steps`; then `latest.pt` and `finished.jso
 10. Stale v1 stage names and comments in `train.py`, `config.py`, `export.py`, `rewards.py`, `bench_learner.py`
     (`grep -n "stage[0-9]_" animus/*.py`), and two references to modules that do not exist (`animus.gates`,
     `target.min_layout_episodes`).
-11. `test_distill.py` is an empty file; `device.py`, `blas.py`, `bench_learner.py`, `evaluate.main` have no tests.
+11. `device.py`, `blas.py`, `bench_learner.py`, `evaluate.main` have no tests.
 12. Lazy imports can mix versions if source changes under a running learner (list in
     [py-learner-export-tools.md](py-learner-export-tools.md)).
 

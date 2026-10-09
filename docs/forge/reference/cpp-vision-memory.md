@@ -18,7 +18,7 @@ Read from `forge` bd32b9dc8; paths relative to `src/server/game/Animus/`. Part o
 Both are per-seat members of `SeatState` (`Scenario/Curriculum/StageState.h:206` `Map`, `:217` `Recall`), written only from the seat's own sight:
 - `MapBlock::Observe` (`Blocks/MapBlock.cpp:~101`): `map->Advance(decisionSeconds)`, `WriteFrame(*view.Hits, z, bodyHeight)` (when the vision block left rays), `WriteEntities(*view.Seen)` (the entities the sensor listed; entity sensing), `WriteBody(x,y,z,grounded)`,
   then `Crop(x, y, z, facing, row)` into the STEP's map section; the block's 4 float columns are known/frontier/visited share of the crop's cells and a "kept" flag
-  (golden: `map id=22 rev=1 obs=4`).
+  (`map id=22 rev=1 obs=4` when the pin was removed).
 - `EntitiesBlock::Observe` (`Blocks/EntitiesBlock.cpp:~76`): `memory->Advance(decisionSeconds)` then `memory->Write(*view.Seen)` (the only write), only if the seat has a `SeenList`
   (when `view.Seen` is null it returns before touching memory, so memory's clock does not advance that decision). `SightBlock::Write` reads it (`Find`, `Recall`).
 - Persistence across resets (`StageScenario.cpp:1936-1943` and `:3570-3590`): in a stage with a map or sight block, each reset rolls `MapKeep` (training only, never an evaluation) with probability
@@ -86,7 +86,7 @@ crop's cost besides `WriteFrame` (up to 64 grid steps per ray, about 2056 rays) 
 
 ### Tests
 
-`MentalMapTest.cpp`: `WritesComeOnlyFromCastPixelsAndTheBody`, `ARayOverAVoidMarksNoFloor`, `FreeAndWallsOnlyInTheBodysBand`, `TwoHeightLayers`, `TheCropTurnsWithTheFacing`, `TheTwoYardCellSummarisesItsFour`, `Frontier`, `PersistenceAndAgeing`, `CapsAndCoarseTiles`, `CropBytesRoundTrip` (:419, the byte contract), `TheMapBlockDescribesItsCrop`; `VisionTest.TheMentalMapReadsTheCastFrame`; golden pin `map id=22 rev=1 obs=4`.
+No tests (removed 2026-10-07); see [tests.md](tests.md).
 
 ## EntityMemory
 
@@ -100,7 +100,7 @@ In-process only: `Remembered` is never serialized (a grep of `Vision/` finds no 
 - Cost: `Slot`, `Find`, `Make` are linear scans over the cap (64) per listed entity; `Recall` ranks all entries.
 - Lifetime: as the map (above). The sight block reads ids as `ENTITY_MEMORY` (u16 cast to float) and `memory_ids` in the manifest is `MEMORY_TRAINING_CAP`.
 
-Tests: `EntityMemoryTest.cpp` (7): `OnlyWhatTheFrameShowsIsWritten`, `AKillOutOfSightStaysAPlaceUntilTheCorpseIsSeen`, `SightingsAgeWithTheClock`, `MemoryIdsAreStableWhileRemembered`, `TheOldestSightingIsForgottenFirst`, `APatrolsCourseIsRemembered`, `RecallTakesTheMostRelevantUnseen`; `SightBlockTest.cpp` for the columns; `InstanceEncounter.cpp:2464` iterates `Recall.Entries()` (encounter logic reading memory; see cpp-encounters.md).
+`InstanceEncounter.cpp:2464` iterates `Recall.Entries()` (encounter logic reading memory; see cpp-encounters.md).
 
 ## Observed issues
 

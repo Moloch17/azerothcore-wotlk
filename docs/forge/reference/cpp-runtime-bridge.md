@@ -44,9 +44,8 @@ section). With `LookHeads > 0` the look section is required and every value must
 filled with -1 (`AnimusForge.cpp:2580-2583`). Anything else, a wrong length or an unexpected type, logs an error and drops
 every client (`:2715-2722`).
 
-`ModeMsg.Flags`: `MODE_FLAG_STAND_IN = 2` (`Protocol.h:274`). Flag value 1 (bit 0) is unused (it was
-`SCRIPTED_OPPONENTS`); the comment calls it "Bit 1", which reads as bit index 1, the opposite of what the constant does:
-ambiguous wording. The sim does not check that unknown flag bits are zero (`ApplyModes` only compares the flags of the
+`ModeMsg.Flags`: `MODE_FLAG_STAND_IN = 2` (bit 1). Flag value 1 (bit 0) is unused and reserved (it was
+`SCRIPTED_OPPONENTS`); the comment now says so (known-issues B2). The sim does not check that unknown flag bits are zero (`ApplyModes` only compares the flags of the
 ranks with each other).
 
 Version history is in the comment `Protocol.h:142-179` (10 .. 25). A mismatch is refused in HELLO
@@ -136,8 +135,7 @@ advertise)` only records settings; `Poll()` calls `ConnectToHost()` every 3 s wh
 - `FORGE_SOURCE_HASH`: first 16 hex digits of the SHA-256 of the concatenated SHA-256 of every `Animus/**/*.cpp`, `*.h`,
   `*.hip` (sorted), computed by CMake at configure time (`src/server/game/CMakeLists.txt:60-75`). The `Animus/` tree
   contains only those three extensions, so every file is hashed. It does **not** cover `ForgeMain.cpp`, `cs_forge.cpp`,
-  core files (`Unit.cpp`, `Spell.cpp`, `MapMgr.cpp` ...), the Python learner, YAML configs or the `src/test` golden
-  files. Without the generated header the value is `unhashed` (`AnimusForge.cpp:64-68`).
+  core files (`Unit.cpp`, `Spell.cpp`, `MapMgr.cpp` ...), the Python learner or YAML configs. Without the generated header the value is `unhashed` (`AnimusForge.cpp:64-68`).
 - The fingerprint is set in `OnStartup` only when the role is not standalone (`:214-224`). The mismatch message lists the
   keys that differ (`Differences`, `ClusterLink.cpp:46`).
 - The wing ladder `RUNG` and worker settings other than those above (envs per stage, ticks) are not fingerprinted; the
@@ -184,8 +182,7 @@ The `forge pause` command is not cluster-aware; `forge cancel` on the host ends 
   never destroys the old; `UploadRows` calls `Init` each STEP, so ranks on different GPUs would create a stream per STEP.
   Latent while `Gpu.Observe = 0`.
 - `AnimusForge.cpp:2508-2530`: the receive limit is computed from the whole pool's action array (`_pool->Actions`) plus goals and look, not the rank's slice, so it is generous; a message above it is a protocol error that drops all learners.
-- The C++ side has no unit test for `SendSpec`/`SendStep` byte layout; only the static_asserts (`Protocol.h:260,314`) and
-  Python's `test_spec_matches_cpp_layout` / `test_mode_matches_cpp_layout` (`test_protocol.py:74,85`) pin it.
+- Nothing checks the `SendSpec`/`SendStep` byte layout but the static_asserts (`Protocol.h:260,314`) (no tests since 2026-10-07).
 
 ## Reviewer notes
 

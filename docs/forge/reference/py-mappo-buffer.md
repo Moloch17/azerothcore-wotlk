@@ -10,12 +10,7 @@ Overview: [py-mappo.md](py-mappo.md); the consumer is [py-mappo-trainer.md](py-m
 | `apps/forge/python/animus/mappo/buffer.py` | 398 | `compute_gae`, `compute_foresight`, `compute_span_gae`, `decisions_left`, `RolloutBuffer` |
 | `apps/forge/python/animus/mappo/valuenorm.py` | 46 | `ValueNorm` |
 
-Tests: `test_gae.py` (hand values, truncation, termination), `slow_gae_reference.py` (a reference used by
-`test_two_clock.py`), `test_span_gae.py`, `test_two_clock.py`, `test_foresight.py`, `test_masking.py`
-(`test_value_norm_follows_a_drifting_return_scale`),
-`test_vision_bytes.py::test_the_rollout_buffer_keeps_the_images_as_bytes`,
-`test_mental_map.py::test_the_buffer_keeps_camera_rows_with_their_map_as_bytes`,
-`test_free_look.py::test_the_rollout_buffer_holds_the_look`.
+No tests (removed 2026-10-07); see [tests.md](tests.md).
 
 ## `compute_gae` (`buffer.py:16`)
 
@@ -84,7 +79,7 @@ over all ranks in float64) with weight `1 - beta` (`beta` default 0.99); `normal
 deviation under 0.1 are not scaled up. The trainer holds one trained instance and one rollout copy (synced as a buffer
 pair). Saved in the checkpoint as `value_norm`; loaded only if both the config and the checkpoint have one
 (`trainer.py:2046`).
-Tests: `test_masking.py::test_value_norm_follows_a_drifting_return_scale`. Async learners trade its three buffers as
+Async learners trade its three buffers as
 part
 of the flat vector ([py-human-and-misc.md](py-human-and-misc.md), `async_sync`).
 

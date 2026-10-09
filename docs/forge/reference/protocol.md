@@ -81,7 +81,7 @@ learner with "sent message type N with M bytes where ACT, MODE, WEIGHTS or REPLA
 
 ### SPEC payload
 
-`SpecMsg` (96 bytes, `"<12I32s4I"`, static_assert Protocol.h:260, pinned by `test_spec_matches_cpp_layout`):
+`SpecMsg` (96 bytes, `"<12I32s4I"`, static_assert Protocol.h:260):
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -228,19 +228,19 @@ Applying is *without answer*: after WEIGHTS/PROGRESS/REPLAY the sim loops and wa
 
 Each of these is a duplicated definition; change both and bump `PROTOCOL_VERSION`:
 
-| Item | C++ | Python | Pinned by |
-|---|---|---|---|
-| SPEC size and field order | Protocol.h:233-260 | protocol.py:59, `encode_spec`/`decode_spec` | `test_spec_matches_cpp_layout` (test_protocol.py:74), `test_spec_is_96_bytes_with_the_look_heads_before_the_map_bytes` (test_free_look.py:385), `test_spec_carries_the_map_bytes_last` (test_mental_map.py:120), `test_spec_carries_the_image_bytes_as_the_sim_packs_them` (test_vision_bytes.py:117); C++ `static_assert(sizeof(SpecMsg) == 96)`. |
-| MODE size/flags | `ModeMsg`, `MODE_FLAG_STAND_IN` | `MODE`, `encode_mode` | `test_mode_matches_cpp_layout`, `test_the_stand_in_flag_rides_on_mode` (test_partners.py:99). |
-| STEP array order and dtypes | `SendStep` chunk list | `Spec.step_layout` | `test_step_round_trip_and_size`, `test_episode_info_travels_for_the_ended_envs_only`, `test_kinematics_travel_with_every_step`, `test_a_step_with_a_camera_reads_its_images_as_the_sim_writes_them`, `test_a_step_with_a_map_round_trips_its_own_section_after_the_images`, `test_a_stage_without_a_camera_is_protocol_20_on_the_wire`, `test_a_stage_without_a_map_is_protocol_23_on_the_wire`, `test_with_device_buffers_the_images_leave_the_step_but_the_final_images_stay`. These test Python against Python (a fake sim); there is no byte-level test of `SendStep` itself (UNVERIFIED: check src/test for one; none found). |
-| ACT cuts incl. look | `CutAct`, `BadLookRow` | `encode_act`/`decode_act` | C++ `VisionProtocolTest` (`SpecCarriesLookHeads`, `ActCarriesTheLook`, `ActWithoutVisionIsProtocol21`, `ActRefusesLookOutOfRange`, `LookingIsFree`); Python `test_act_round_trips_with_the_look_agent_major_after_the_goals`, `test_a_stage_without_look_heads_sends_protocol_21s_act`, `test_a_sim_with_look_heads_over_the_socket`, `test_a_sim_speaking_protocol_21_is_refused`. |
-| Version refusal | `AcceptClients` | `ForgeEnv.__init__` | `test_a_sim_speaking_another_protocol_is_refused` (test_protocol.py:269). |
-| TCP sim | `tcp://` Listen | `_connect` | `test_a_sim_on_another_machine_is_reached_over_tcp`. |
-| Pixel/class bytes, map channels | Vision::EncodePixel, CropChannel | vision encoder decode | `test_decoding_every_byte_is_the_sims_decode_pixel_exactly`, `test_the_sims_encoding_round_trips_through_the_learners_decoding`, `test_the_crop_decodes_as_the_sim_encodes_it`. |
-| Kinematics columns | Kinematics.h | human/motion.py | KinematicsTest (C++), `test_kinematics_travel_with_every_step`. |
-| Image/map size vs stage.json | SPEC ImageBytes/MapBytes | `check_image_bytes`/`check_look_heads` (networks.py) | `test_the_sim_and_stage_json_must_agree_about_the_camera`. |
+| Item | C++ | Python |
+|---|---|---|
+| SPEC size and field order | Protocol.h:233-260 | protocol.py:59, `encode_spec`/`decode_spec` |
+| MODE size/flags | `ModeMsg`, `MODE_FLAG_STAND_IN` | `MODE`, `encode_mode` |
+| STEP array order and dtypes | `SendStep` chunk list | `Spec.step_layout` |
+| ACT cuts incl. look | `CutAct`, `BadLookRow` | `encode_act`/`decode_act` |
+| Version refusal | `AcceptClients` | `ForgeEnv.__init__` |
+| TCP sim | `tcp://` Listen | `_connect` |
+| Pixel/class bytes, map channels | Vision::EncodePixel, CropChannel | vision encoder decode |
+| Kinematics columns | Kinematics.h | human/motion.py |
+| Image/map size vs stage.json | SPEC ImageBytes/MapBytes | `check_image_bytes`/`check_look_heads` (networks.py) |
 
-The Python fake sims used by the tests are in `apps/forge/python/tests/sim_threads.py`. The learner checks SPEC against
+The learner checks SPEC against
 stage.json (image bytes, map bytes, look heads) at start and exits (`SystemExit("vision: ...")`, train.py `trainer_inputs`).
 
 ## 8. Version history (what each bump changed)

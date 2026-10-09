@@ -892,6 +892,7 @@ void Animus::Curriculum::GearBuilder::StoreAmmo(Player* bot) const
 void Animus::Curriculum::WarmGearCaches()
 {
     RandomEnchantGroups();
-    GearStats::ItemSources();
-    GearStats::ObtainableItems();
+    // Warm-ups: the first call builds the function-local cache from the world database; the result is not needed here.
+    (void) GearStats::ItemSources();
+    (void) GearStats::ObtainableItems();
 }

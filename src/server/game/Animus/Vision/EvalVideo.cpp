@@ -168,6 +168,11 @@ int32_t Vi::EvalVideoRungColumn(std::vector<std::string> const& names)
         if (name == "rung" || name == "tier" || EndsWith(name, "_rung") || EndsWith(name, "_tier"))
             return int32_t(i);
     }
+    // A stage that names no rung column of its own reports its ladder as `difficulty` (the learner's per-class ladder
+    // column): that is the rung.
+    for (std::size_t i = 0; i < names.size(); ++i)
+        if (names[i] == "difficulty")
+            return int32_t(i);
     return -1;
 }
 

@@ -129,4 +129,3 @@ separated by two spaces, header underlined with dashes, trailing spaces trimmed;
 
 - Idle-only refusals return success; if scripts (SOAP) depend on the exit status, they cannot tell. Question: return false?
 - `status` reads `progress.json` from disk on every call, including once per plan row for finished entries.
-- Tests: none for `Progress`/`TextTable`; Python `test_progress.py` pins the writer's format.

@@ -97,7 +97,6 @@ runs plans, and talks to other machines. The map table lists it; every file of t
 | `apps/forge/forgectl/logs.py` | 96 | forgectl: `forgectl logs` |
 | `apps/forge/forgectl/remote.py` | 84 | forgectl: ssh helper |
 | `apps/forge/forgectl/stage.py` | 233 | forgectl: `forgectl stage` |
-| `apps/forge/forgectl/testcmd.py` | 165 | forgectl: `forgectl test` |
 | `apps/forge/forgectl/ui.py` | 58 | forgectl: prompts and tables |
 | `apps/forge/forgectl/videos.py` | 48 | forgectl: `forgectl videos` |
 | `apps/forge/forgectl/__init__.py` | 1 | forgectl: package marker |
@@ -483,4 +482,4 @@ The plain bools `_decisionTick` and `_applyTick` are read by map tasks without a
 - The learner exits 0 for converged and for budget; the sim cannot tell them apart without reading `finished.json`.
 - The lazy-import behaviour of the learner means changing files under a running learner can mix versions.
 - `forge pause` does not reach workers; `forge resume` of a worker is only by a new START.
-- Coverage of the rollout-graph code in the trimmed learner rests on GPU tests that are skipped on CPU ([tests.md](tests.md)).
+- The rollout-graph code in the trimmed learner has no tests (removed 2026-10-07; see [tests.md](tests.md)).

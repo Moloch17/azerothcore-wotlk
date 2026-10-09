@@ -65,7 +65,7 @@ longer stops at the objective object, so its segment can be longer and flag a pi
 map) are `{255,128,0,0}` per pixel (`FillNoFrame`; `NO_FRAME_PIXEL` in protocol.py), not zeros. A sky ray can still carry the objective bit
 (`ObjectiveFlag` is tested to the ray's reach).
 Wire placement: the image travels in the STEP's image section (`Bridge/Protocol.h`, protocol 26); the block's float columns are the scalars alone;
-live layout pins (docs only; the golden file is gone with the tests): `vision id=20 rev=6 obs=11`.
+layout at removal of the pin: `vision id=20 rev=6 obs=11`.
 
 ### The 11 scalars (Camera.h:282, written at VisionCaster.cpp:740-756)
 
@@ -100,8 +100,7 @@ called from `StageScenario.cpp:1926` with the world thread's random numbers; one
 The default draws 128x64 about 0.4/3.4 = 12% of episodes. `Render` casts at `min(RenderWidth, W) x min(RenderHeight, H)` with the SAME field of view (fewer,
 wider rays) and scales up into the canonical image by nearest pixel (`Upscale`, Camera.h:377: canonical (r,c) takes cast pixel `(floor(r*h/H), floor(c*w/W))`,
 every byte copied as is, so the objective bit is copied). The render size now changes only the static image: the entity list is geometric and the same at every size. The expected cost is `(512 + 1152 + 2048 + 0.4*8192)/3.4 = 2056` rays a frame at the default
-weights. The scalar `render_width` tells the network the size. Test: `VisionFreeLookTest.RenderSizeDraw*`, `UpscaleNearestPixel`, `ParseRenderSizes`;
-`VisionTest.RenderAtADrawnSize`.
+weights. The scalar `render_width` tells the network the size.
 
 ## Semantic classes (Camera.h:120)
 
@@ -115,7 +114,7 @@ map's; a pixel carries only `PIXEL_CLASSES` (0-5 and 23). Count 24 now:
 (the UI rule: quest marks, lootable and quest objects are per character). First match wins: unit: dead -> lootable corpse (if this seat may loot) or corpse;
 player -> hostile/friendly player; hostile -> hostile creature; quest mark -> quest giver; vendor; trainer; friendly/neutral creature. Game object: door or
 button -> door; mailbox; quest mark -> quest giver; chest locked by herbalism -> herb, by mining -> ore; quest relevant -> quest object; chest; usable ->
-usable object; else other. Tests: `VisionTest.ClassesFollowTheUiRule`.
+usable object; else other.
 
 ## The caster (VisionCaster.cpp)
 
@@ -158,7 +157,7 @@ the nearest `DynamicHit`, accepted when its `Object` is `ignore` and the rest of
 Approximations and quirks worth knowing: (i) terrain triangles are one-sided; (ii) the boom ignores liquids; (iii) the liquid level of a cell
 is sampled at its centre; (iv) a ray beyond 1000 yd saturates at byte 254, distinguishable from sky only by the class byte; (v) sky is "past the loaded grids", so which grids exist changes what the camera
 shows (a ray over an uncreated grid reads sky though a player's client would draw terrain); (vi) a hazard is painted only where the floor is within 0.5 yd of the area's height.
-Tests: none (all forge tests were removed 2026-10-07); verify with the audit frames and evaluation videos, which draw the listed entities over the image.
+No tests (removed 2026-10-07; see [tests.md](tests.md)); verify with the audit frames and evaluation videos, which draw the listed entities over the image.
 
 ## The entity sensor (EntitySensor.h/.cpp, entity-sensing)
 
@@ -203,7 +202,7 @@ The look head chooses three categoricals each decision, in wire order: yaw rate 
 steps zoom in/out (clamped), recentre zeros yaw offset/pitch/rates (zoom kept), face returns the yaw offset as a body turn (0 when within 1e-3) which the caller passes to the controller as
 `ControlState::FaceTurn` (a client SET_FACING, never a server SetFacing). `Advance(dt, bodyTurned)` subtracts the turn the controller really made from the offset, then integrates the held
 rates over the decision (not at the first observation). The camera never swings back behind the facing ("never adjust camera"). Looking is free: a look choice never reaches `ApplySeatAction`
-and has no mask (`Valid` rejects an out-of-range row, which then leaves the state alone). Tests: `VisionFreeLookTest.cpp` (14), `VisionProtocolTest.cpp` (look in SPEC/ACT).
+and has no mask (`Valid` rejects an out-of-range row, which then leaves the state alone).
 
 ## MapVisionWorld (MapVisionWorld.h/.cpp)
 
@@ -277,5 +276,5 @@ None: all forge tests were removed 2026-10-07 (tag `archive/with-tests`).
 ## Reviewer questions
 
 - Is "sky beyond the loaded grids" acceptable for the shipped realm where the set of created grids differs from training instances?
-- The pixel layout is pinned by the Python decode and the manifest: change them together or not at all (class table appends only).
+- The pixel layout is fixed by the Python decode and the manifest: change them together or not at all (class table appends only).
 - Is the sample-point sensor close enough to a client's nameplate rule for the realm (D2: listed with one clear sample)?

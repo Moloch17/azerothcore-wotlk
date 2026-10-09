@@ -91,7 +91,7 @@ mappo:
 
 # Fixed seeds: seed i plays (class, build) pair i mod pairs at rung (i / pairs) mod 6 (DifficultyLadder's spread) from
 # corridor point i mod points, so successive checkpoints fight the same fights; 240 episodes cover every pair at every
-# rung at least once. The eval videos (I0) film a sample of the same seeds, their rung read off combat_rung.
+# rung at least once. The eval videos (I0) film a sample of the same seeds, their rung read off difficulty.
 eval:
   every_env_steps: 10000000
   at_start: true
@@ -100,7 +100,7 @@ eval:
   deterministic: true
   sampled_every: 3
   trace_episodes: 32
-  report: [won, survived, kills, kill_seconds, hurt_share, deaths, respawns, rejoins, rejoin_seconds, combat_rung,
+  report: [won, survived, kills, kill_seconds, hurt_share, deaths, rejoins, rejoin_seconds,
            difficulty, at_top_rung, target_in_view, selected_share, ally_deaths, pulls, caster_pulls, start_walk,
            died, reward_kill, reward_survived, reward_hurt, reward_death, reward_step_cost, reward_teammate_death,
            reward_damage_dealt, reward_repeat, reward_aimless, reward_effort, reward_jitter]
@@ -109,7 +109,7 @@ eval:
 # how much it took, whether it found its targets by sight (a selection in the frame), how it held its friend, its rung.
 # Targets are a readout, never a gate.
 status:
-  headline: [won, survived, kills, kill_seconds, hurt_share, deaths, rejoin_seconds, combat_rung, target_in_view,
+  headline: [won, survived, kills, kill_seconds, hurt_share, deaths, rejoin_seconds, difficulty, target_in_view,
              selected_share, ally_deaths]
   targets:
     won: ">= 0.9"
