@@ -818,17 +818,20 @@ class MappoTrainer:
                     parameter.requires_grad_(int(parts[1]) not in self.frozen_layouts)
 
     def _layout_totals(self, totals: dict, layout: torch.Tensor, entropy: torch.Tensor, kl: torch.Tensor,
-                       weight: torch.Tensor | None = None) -> None:
+                       weight: torch.Tensor | None = None, kl_weight: torch.Tensor | None = None) -> None:
         """Add one minibatch's per-row entropy and KL into per-layout sums (weighted by `weight` where given). The
         sums stay on the device and are read once, in _finish_layout_stats: read per minibatch, they were three
         pipeline stalls per layout per minibatch."""
         flat_layout = layout.reshape(-1).long()
         flat_entropy = entropy.reshape(-1).detach()
         flat_weight = weight.reshape(-1).to(flat_entropy.dtype) if weight is not None else torch.ones_like(flat_entropy)
-        rows = torch.stack([flat_entropy * flat_weight, kl.reshape(-1).detach() * flat_weight, flat_weight], dim=1)
+        # The KL's own weight (exploration v3): the rows that were draws from the policy; the entropy keeps `weight`.
+        flat_kl_weight = flat_weight if kl_weight is None else kl_weight.reshape(-1).to(flat_entropy.dtype)
+        rows = torch.stack([flat_entropy * flat_weight, kl.reshape(-1).detach() * flat_kl_weight, flat_weight,
+                            flat_kl_weight], dim=1)
         sums = totals.get("sums")
         if sums is None:
-            sums = totals["sums"] = rows.new_zeros((len(self.layouts), 3))
+            sums = totals["sums"] = rows.new_zeros((len(self.layouts), 4))
         sums.index_add_(0, flat_layout, rows)
 
     def _finish_layout_stats(self, totals: dict) -> None:
@@ -836,11 +839,11 @@ class MappoTrainer:
         if self.ranks.active:
             # Every rank's rows: a collective, so a rank that had none contributes zeros rather than skipping it.
             if sums is None:
-                sums = torch.zeros((len(self.layouts), 3), device=self.train_device)
+                sums = torch.zeros((len(self.layouts), 4), device=self.train_device)
             sums = self.ranks.sum(sums)
         read = sums.double().cpu().tolist() if sums is not None else []
-        self.layout_stats = {index: {"entropy": e / max(n, 1e-9), "approx_kl": k / max(n, 1e-9), "rows": n}
-                             for index, (e, k, n) in enumerate(read) if n > 0}
+        self.layout_stats = {index: {"entropy": e / max(n, 1e-9), "approx_kl": k / max(m, 1e-9), "rows": n}
+                             for index, (e, k, n, m) in enumerate(read) if n > 0}
 
     def set_learning_rate_scale(self, scale: float) -> None:
         """Both optimizers at `scale` times their configured learning rate (see MappoConfig.lr_final_fraction)."""
@@ -2109,7 +2112,8 @@ class MappoTrainer:
                 self._switch_stream(main, wait_for=self._update_streams)
                 with torch.no_grad():
                     log_ratio = log_probs - taken
-                    self._layout_totals(layout_totals, layout_all, action_entropies, (ratio - 1) - log_ratio, pg)
+                    self._layout_totals(layout_totals, layout_all, action_entropies, (ratio - 1) - log_ratio, counted,
+                                        pg)
                     kl = (((ratio - 1) - log_ratio) * pg).sum() / pg_weight
                     totals["policy_loss"] += policy_loss.detach()
                     totals["value_loss"] += value_loss.detach()

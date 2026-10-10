@@ -27,7 +27,6 @@ import numpy as np
 from . import protocol as p
 from .device import host
 from .episode_means import PER_EVENT, event_weights
-from .mappo.networks import MAP_CHANNELS, MAP_SEARCHED
 
 LEVEL_BANDS = ((1, 20), (21, 40), (41, 60), (61, 80))
 
@@ -505,6 +504,7 @@ def ablate_image(image: np.ndarray, arm: str, image_bytes: int | None = None) ->
         image[..., seen:] = 0
         return image
     if arm == "no_searched":
+        from .mappo.networks import MAP_CHANNELS, MAP_SEARCHED     # torch: not at import, for the tools that only read
         crop = image[..., seen:]
         if crop.shape[-1] % MAP_CHANNELS == 0 and crop.shape[-1]:
             cells = crop.reshape(*image.shape[:-1], -1, MAP_CHANNELS).copy()
