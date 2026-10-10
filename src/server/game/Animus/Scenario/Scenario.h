@@ -107,7 +107,8 @@ namespace Animus
         /// what clients are shown (movement-smooth A2). No observation, no action, no reward.
         virtual void SubTick(Env& /*env*/, uint32 /*diffMs*/, bool /*decided*/) { }
 
-        /// goals: [AgentsPerEnv] the goal each agent is pursuing (0..GoalCount-1, or Curriculum::NO_GOAL), sent with
+        /// goals: [AgentsPerEnv * GOAL_WIRE_INTS] per agent (protocol 28) the goals of the four plan positions
+        /// (primary, secondary, queue: 0..GoalCount-1, or Curriculum::NO_GOAL) then their four cell words, sent with
         /// the actions by a policy that has a goal head. Called before ApplyActions. A goal is scored, reported and
         /// shown to teammates; it never masks an action, so a goal out of range is simply ignored.
         virtual void ApplyGoals(Env& /*env*/, int32 const* /*goals*/) { }

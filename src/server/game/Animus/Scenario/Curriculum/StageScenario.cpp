@@ -2687,8 +2687,11 @@ void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
         }
         // The secondary is the seat's own, and none when it would repeat the primary -- two cell goals are two
         // goals, whatever their joint: their tickets tell them apart.
-        if (joints[1] == joints[0] && !hasCell[1])
+        if ((joints[1] == joints[0] && !hasCell[1]) || (hasCell[0] && hasCell[1] && tickets[0] == tickets[1]))
+        {
             joints[1] = NO_GOAL;
+            hasCell[1] = false;
+        }
 
         // The plan table: a ticket seen before keeps the point it latched (wherever the learner has moved it to); a
         // new one is decoded against the crop of the observation it was drawn from, once. Tickets that are gone drop.
@@ -2780,7 +2783,7 @@ void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
                 && GoalBlock::IsPlaceGoal(goal);
             if (!same || again)
             {
-                bool const advance = cellGoal && slot == 0 && from[0] > 0 && hold.Ended && hold.WasReached;
+                bool const advance = cellGoal && slot == 0 && from[0] >= 2 && hold.Ended && hold.WasReached;
                 hold = GoalHold();
                 hold.Goal = goal;
                 // A cell goal is not held unpaid when it is true on choice (a cell at the seat's feet is reached and
