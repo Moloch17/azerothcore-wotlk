@@ -35,8 +35,24 @@ eval:
   sampled_every: 0
   heldout:
     sweep: 60
-  # M2's ablation arms (no_flag, no_camera, no_map, no_memory, no_goal, random_goal, random_cell, no_plan) are its own: this stage plays none.
-  arms: {}
+  # M2's ablation arms with a meaning here, as M2 plays them (move2_seek.yaml): the evaluation's seeds again with one
+  # input taken away, 64 episodes each after every evaluation (arms_every 1), read as right_object_no_camera and the
+  # like in forge status and as policy rows in eval.csv. no_camera blanks the image (the entity list stays, so the sight
+  # block's presses still work: what the picture is worth beyond the list), no_map zeroes the map block and the mental
+  # map's crop, no_memory resets the recurrent state before every decision. Readings, never gates. The rest of M2's arms
+  # are its own: no_flag, no_goal, random_goal, random_cell and no_plan (null drops each inherited key; the goal here
+  # names what, never where, and the cell goals are M2's alone).
+  arms:
+    no_compass: null
+    no_flag: null
+    no_goal: null
+    random_goal: null
+    random_cell: null
+    no_plan: null
+    no_camera: 64
+    no_map: 64
+    no_memory: 64
+  arms_every: 1
   heldout_every: 1000
   heldout_on_best: false
   report: [right_object, right_distinguish, right_switch, right_key, interact_rung, rung_carried, right_seconds,
@@ -53,7 +69,7 @@ eval:
 status:
   headline: [right_object, right_distinguish, right_switch, right_key, interact_rung, door_by_lever, key_used,
              wrong_objects, lever_pressed, act_refused_locked, right_seconds, sight_seconds, sight_to_arrival,
-             wall_seconds, timed_out, died]
+             wall_seconds, timed_out, died, right_object_no_camera, right_object_no_map, right_object_no_memory]
   targets:
     # M2's targets are not M3's measures (null drops an inherited key).
     found: null
@@ -104,5 +120,6 @@ mappo:
 
 layout_sampling:
   metric: right_object
-  # M2 stopped replaying lost evaluation episodes (2026-10-09); this stage keeps the 0.2 it inherited.
-  replay_fraction: 0.2
+  # No replay of lost evaluation episodes, as M1 and M2 (2026-10-09): the evaluation seeds are held out. M2's fresh-seed
+  # sweep read 0.52 against 0.81 in the replayed evaluation, and this stage's gate and convergence read that evaluation.
+  replay_fraction: 0.0

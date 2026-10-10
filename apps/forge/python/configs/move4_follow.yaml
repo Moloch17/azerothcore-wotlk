@@ -20,7 +20,8 @@ seed_from: latest
 total_env_steps: 250000000
 
 # The leader's row is the script's: no checkpoint walks dungeon routes yet, so PartyFollow.CastShare is 0 and no cast
-# is configured. When one exists: cast.agents.leader (stage.json declares the owner's slot as "leader").
+# is configured. stage.json declares no "leader" cast entry at CastShare 0, and the scripted leader's row is never
+# present, so nothing trains it. When a checkpoint exists: CastShare > 0 and cast.agents.leader.
 
 mappo:
   # Episodes of 300 s with the plan's longer horizon (perception-goals §3: 0.999 from M4).
@@ -74,6 +75,11 @@ status:
     rejoined: ">= 0.9"
     wall_seconds: "<= 2"
     died: "<= 0.02"
+  # Death knights are never fielded here, by design: the party follows through a dungeon at its level band (13-20) and a
+  # death knight starts at 55; the sim draws the seat again among the classes that fit (StageScenario's level redraw,
+  # which the party follow takes as a dungeon does). forge status lists it under the headline, as group1_roles does.
+  excluded:
+    death_knight: "the party follows through a dungeon at its level band (13-20) and a death knight starts at 55"
 
 convergence:
   # M1's patience, restated: M2's reseed state raises its own to 6 (2026-10-09).
@@ -102,5 +108,6 @@ costs:
 
 layout_sampling:
   metric: follow_kept_share
-  # M2 stopped replaying lost evaluation episodes (2026-10-09); this stage keeps the 0.2 it inherited.
-  replay_fraction: 0.2
+  # No replay of lost evaluation episodes, as M1 and M2 (2026-10-09): the evaluation seeds are held out. M2's fresh-seed
+  # sweep read 0.52 against 0.81 in the replayed evaluation, and this stage's gate and convergence read that evaluation.
+  replay_fraction: 0.0
