@@ -343,7 +343,7 @@ only for a stage that has no map of its own; none of the ten live stages is such
 that are in the world and within `radius` (2-D distance), and despawns them for a week. Both only remove
 database-spawned creatures; neither touches gameobjects (doors, levers, chests: `ObjectPool::ClearOwn` does, see
 cpp-encounters.md). Callers: `StageScenario.cpp:2294-2307` on the env's first build of an instanceable map (and for the
-party follow whenever a new instance opens): ClearMap with `INSTANCE_CLEAR_RADIUS 300` (`:108`) for Seek, Sight, Combat,
+party follow whenever a new instance opens, and since general search a Seek env whose episode moved to another map: `(firstBuild || ((partyFollow || seek) && newInstance))`): ClearMap with `INSTANCE_CLEAR_RADIUS 300` (`:108`) for Seek on the Stockades, Sight, Combat,
 Roles;
 `DUNGEON_CLEAR_RADIUS 1000` for PartyFollow (`:113`); `INTERACT_CLEAR_RADIUS 600` for Interact; `Clear` (60 yd)
 otherwise (Instance arenas, which spawn their own instance fresh). No test covers either. A creature despawned with
@@ -604,7 +604,7 @@ The columns reach the learner through `stage.json` (S1.7).
 | `PARTY_SPACING` | 3.0 yd | spread of party seats at spawn (`Rebuild`, 2242-2243) |
 | `REWARD_TUNING_MS` | 50 | decision interval the reward terms are tuned for; `_decisionScale = DecisionMs / 50` (300) |
 | `MAX_COMBAT_TIME_MS`, `MAX_UNSEEN_TIME_MS` | 60000, 20000 | UNVERIFIED: not used in lines 1-2631 (check later part, else dead) |
-| `INSTANCE_CLEAR_RADIUS` | 300 yd | `SpawnArea::ClearMap` for Seek, Sight, Combat, Roles (2302) |
+| `INSTANCE_CLEAR_RADIUS` | 300 yd | `SpawnArea::ClearMap` for Seek on map 34, Sight, Combat, Roles (2302); a seek arena off the Stockades (389, 36) uses `DUNGEON_CLEAR_RADIUS` 1000 |
 | `INTERACT_CLEAR_RADIUS` | 600 yd | Interact (2305) |
 | `DUNGEON_CLEAR_RADIUS` | 1000 yd | party follow (2302) |
 | `GOAL_RANGE_SLACK_YARDS` 5, `LOW_HEALTH_PCT` 35, `INTERRUPTIBLE_CAST_RANGE` 30 | | used in later parts (UNVERIFIED) |
@@ -745,6 +745,14 @@ everything else through `CurriculumTuning::Load`, `Vision::Current()` and `Visio
   non-`EvalOnly` arena; (5) a weighted `urand` pick from the world thread's engine, so an evaluation's draw
   follows its seed.
 
+- General search (2026-10-10): `DrawArena(evaluating, seed)` takes the episode's seed index; a seeded, unpinned
+  episode (`seed != NO_EPISODE_SEED`, no pin) returns `trainable[seed % TrainableArenaCount()]` in definition order
+  (the non-`EvalOnly` arenas), before the weighted draw, so an evaluation's episodes are split evenly over the maps
+  (156 a map in 312 for M2); the pinned and training draws are as before. `TrainableArenaCount()` is public: the seek
+  encounter divides the seed by it for its room cycle.
+- The constructor calls `MapBlock::ConfigureCoverage(Seek.ClusterMinCells, Seek.PocketMinCells)` once (the coverage
+  analysis's sizes, process-wide).
+
 ### Observed issues
 
 - `StageScenario.cpp:672`: the single-arena shortcut returns 0 without a random draw ("so its random numbers are as
@@ -752,6 +760,18 @@ everything else through `CurriculumTuning::Load`, `Vision::Current()` and `Visio
   reproducibility.
 
 ## S1.6 Episode info: `AddCoreEpisodeInfo` (`StageScenario.cpp:710-1238`)
+
+Movement pacing (M7, decision 0027, 2026-10-10): `TrackController` calls `TrackPacing` every world tick, which reads
+the controller's body between ticks (`CourseX/Y` hold the last tick's; never the server's position, credited only
+from the client's reports) and keeps on `SeatState`: straight runs (ticks moving at >= 0.5 yd/s with the course within
+15 degrees of the run's first leg; a quarter-second histogram for the p90), pauses (>= 750 ms with no movement key and
+the body under 0.1 yd/s; the body's yaw and the camera's yaw offset swept during one), turning in place (a turn rate
+held, no key, still), camera moves (counted where `FreeLook::Apply` is called: a rate, the zoom, the offset or a turn
+to camera changed), pin events (the Stuck run reaching 1 s; the body's yaw over the last second, eight slots of 125
+ms, for the onset's turning) and escapes (4 yd of net displacement from the pin point within 20 s). Columns, every
+stage: `straight_run_mean_s`, `straight_run_p90_s`, `pauses`, `pauses_per_min`, `pause_mean_s`, `pause_look_share`,
+`camera_moves_per_min`, `turn_in_place_share`, `pin_events`, `pin_onset_turning_share`, `contact_escapes`,
+`time_to_escape_s`.
 
 `_info` is an `EpisodeInfoTable` (`Encounters/EpisodeInfoTable.h`): ordered (name, getter
 `float(Env const&, uint32 seat)`). `StageScenario::EpisodeInfo` (line 5161, later part) writes one row per seat.
@@ -830,7 +850,7 @@ failure, 1248-1251) and `stage.json`. Every write goes through `WriteIfChanged`.
 | `stage`, `suffix`, `extends`, `summary` | from `StageDefinition` | 1255-1258 |
 | `seats` | `_seatCount` | 1259 |
 | `blocks` | the stage's block names in layout order | 1261-1263 |
-| `arenas[]` | per arena: `name`, `weight` (the configured initial weight), `seats`, `episode_seconds`, `plan` ("solo" or "party"), `eval_only`, `stand_in_share` (resolved), `drill_seat` (0 if `DrillRole` else -1) | 1266-1286 |
+| `arenas[]` | per arena: `name`, `weight` (the configured initial weight), `seats`, `episode_seconds`, `plan` ("solo" or "party"), `eval_only`, `stand_in_share` (resolved), `drill_seat` (0 if `DrillRole` else -1), and since general search (2026-10-10) `map_id` (the arena's, else the stage's) and, for a seek arena, `rooms` (the table's length) and `table_terms` | 1266-1286 |
 | `cast[]` | with `_castOwner` and, for the party follow, only when `PartyFollow.CastShare > 0`: `{agent: OwnerAgent(), name: "leader"}` (or "owner" when `_partyFollow` is null); `[]` at CastShare 0, so the scripted leader needs no `cast.agents` entry (its row is never present, never trained) | 1289-1296 |
 | `seed_chain` | the `Extends` ancestors, closest first, via `FindStage` | 1299-1301 |
 | `merges` | the stage's `Merges` | 1304-1306 |
@@ -838,7 +858,7 @@ failure, 1248-1251) and `stage.json`. Every write goes through `WriteIfChanged`.
 | `models` | class name -> model name | 1315-1317 |
 | `layouts{class}` | `obs_dim`, `num_actions`, `action_names`, `spec_names`, `spec_roles` ("tank" / "healer" / "damage" by `StatProfile`), `sets` (`DescribeSeatSets`), `blocks[]` | 1320-1403 |
 | `episode_info` | the column names in order | 1405-1407 |
-| `episode_categories` | name lists for categorical columns: `seek_room`, `seek_object`, `interact_site`, `interact_object`, `sight_object`, `objective_corner` (`["in_sight","corner"]`) | 1411-1453 |
+| `episode_categories` | name lists for categorical columns: `seek_room` (since general search the UNION of the stage's distinct seek room tables in arena order, each once, by `SeekEncounter::RoomOffsets`; the column is offset + room), `seek_object`, `interact_site`, `interact_object`, `sight_object`, `objective_corner` (`["in_sight","corner"]`) | 1411-1453 |
 | `reward_terms` | every `RewardTerm` name -> "outcome", "cost" or "shaping" | 1457-1466 |
 | `goals` | `kinds`, `accepts` (kind by target 0/1 matrix), `targets`, `block` = "goal", `columns` (the goal block's column offsets, revision 4: `held2`, `next`, `plan_left`, `from`, `width` 122), `place_slots`, `slots_on_wire` (4), `wire_ints` (8), `cells` (the cell goal's constants and `source`) | 1471-1530 |
 | `tuning` | `_tuning.Json()`, the effective tuning | 1504 |

@@ -59,7 +59,7 @@ two functions; the file name no longer fits (rename suggestion: `RewardTerms.cpp
 terms; the enum has 53 (a script count and a hand count agree; see the table). `RewardLedger::Add`'s doc says no
 term is potential-based; `GoalProgress` is potential-style but explicitly Shaping.
 
-## The 53 reward terms
+## The 57 reward terms
 
 Columns: kind (O outcome, C cost, S shaping, N = also a noise price); who pays; tuning key (config suffix under the
 curriculum prefix `AnimusForge.Curriculum.`) and default; live stages. Payer = the code that calls `Add`. "Scenario"
@@ -118,7 +118,11 @@ stage (`Stages.cpp`): Sight m1, Seek m2, Interact m3, PartyFollow m4, Combat c1-
 | FrontierPull `frontier_pull` | S (`Exploring`) | Seek (`Seek.FrontierPull` per yard closed on the nearest frontier cluster, cap `FrontierCap`) | 0.015; cap 2.0 (was 0.004; 1.0) | m2 |
 | RoomEntry `room_entry` | S (`Exploring`) | Seek (`Seek.RoomEntry` once per table room entered, x `RoomEntryBackMult` for back rooms, cap `RoomEntryCap`) | 0.3 (was 0.1); x2; cap 2.0; rung >= `ExploreFromRung` | m2 |
 | Circling `circling` | C, N | Seek via `AddFixed` (`Seek.Circling` per second; window `CircleWindowMs`) | 0.02 | m2 |
-| Stale `stale` | C, N | Seek via `AddFixed` (`Seek.Stale` per second after `StaleRoomMs` with no new table room entered; rung >= `ExploreFromRung`) | 0.005; 60000 ms | m2 |
+| Stale `stale` | C, N | Seek via `AddFixed` (`Seek.Stale` per second after `StaleRoomMs` with no new table room entered on a table arena, or no pocket entered nor frontier cluster cleared on a table-free one; rung >= `ExploreFromRung`) | 0.005; 60000 ms | m2 |
+| FrontierClear `frontier_clear` | S (`Exploring`) | Seek (`Seek.FrontierClear` once per 10-yd frontier-cluster bin of the seat's own crop cleared by positive evidence: within `ClearRadius`, the bin wholly known and frontier-free, no cluster within 10 yd; shares `FrontierCap` with FrontierPull; general search, decision 0027) | 0.1; `ClearMinCells` 3; `ClearRadius` 36 | m2 |
+| PocketEntry `pocket_entry` | S (`Exploring`) | Seek (`Seek.PocketEntry` once per pocket -- a chamber behind a narrowing seen as a separate one within `PocketMemoryMs` -- entered for `EnterDwellMs`, never the start chamber; shares `RoomEntryCap` with RoomEntry) | 0.3; 10000 ms; `PocketMinCells` 6; `ClusterMinCells` 2 | m2 |
+| Revisit `revisit` | C, N | Seek via `AddFixed` (`Seek.Revisit` per second on a 2-yd cell the body stood on earlier this episode, x min(1, time since / `RevisitAgeMs`); not on a decision that paid Stuck or Wall; rung >= `ExploreFromRung`) | 0.002; 60000 ms | m2 |
+| Recovered `recovered` | Aid | Seek (`Seek.RecoverShare` x the Stuck + Wall charge of a pin run of 1 s or more, at most `RecoverCap`, once per run, when the body is `RecoverYards` from the pin point within `RecoverMs`; movement pacing M5) | 0.5; cap 0.3; 4 yd; 10000 ms | m2 |
 | Escape `escape` | A | Seek (`Seek.Escape`, once, trap drill; needs a body turn of `TrapEscapeTurnDeg` 90 as well as `TrapEscapeYards`) | 0.3 | m2 |
 | DoorOpened `door_opened` | O | Interact (`Interact.DoorOpened`) | 1.0 | m3 |
 | WrongObject `wrong_object` | C | Interact (`Interact.WrongObject`) | 0.5 | m3 |

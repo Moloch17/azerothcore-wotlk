@@ -48,6 +48,15 @@ Constants: `FLOOR_NORMAL 0.7`, `CEILING_NORMAL -0.3`, `LAYER_MERGE 1.5`, `EDGE_R
 coarse 8-yd tiles when `CoarseTiles > 0` (`Fold`, :275: floors as layers, flags OR-ed, newer look and entity kept) and evicting the oldest coarse tile when that cap is reached. With `CoarseTiles = 0` (training) an evicted tile is forgotten.
 `FindCell` never reads coarse tiles; only `Crop` does (`FindCoarse`, :323).
 
+**Tile counters** (general search, decision 0027, 2026-10-10): a `Tile` also carries `uint16 KnownCells`,
+`VisitedCells`, `SearchedCells` and `SearchedEpoch`. `MarkSeen(cell, stamp)` (every look; `WriteEntity` goes through it
+now) counts a `Seen 0 -> stamp` transition as known and a `Seen < epoch -> >= epoch` one as searched (restarting the
+count when `SearchedEpoch != _epoch`, and adding to the map's `_searchedTotal`); `NoteGround` counts a first
+`MAP_VISITED`. Both rely on the cell being the one `Touch` returned last (its tile is `_lastTile`), which every write
+path honours. Coarse tiles have no counters (`Fold` keeps them out). Readers: `TileCounts(tx, ty, known, visited,
+searched)` (zeros for a missing tile, `searched` 0 for another epoch's count) for the coverage block, and
+`SearchedCells()` (reset by `BeginEpisode` / `Clear`) for the map block's `searched_cells` scalar.
+
 ### Writes
 
 `WriteFrame(hits, feetZ, bodyHeight)` (:379), per cast ray (at the cast size, before upscaling):

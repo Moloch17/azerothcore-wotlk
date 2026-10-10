@@ -471,3 +471,35 @@ Charge and taxis still start splines).
 - `rooms_approached` is a reading (6 yd of a room's opening, 2D, |dz| <= 4); it resets nothing.
 - The far-frontier vector (bearing and distance of the nearest frontier) was left out of the map block on purpose; it
   would be a second revision and a second rebuild.
+
+## General search and movement pacing, 2026-10-10 (C++ stream, branch gs-cpp; nothing run, syntax check only; decision 0027)
+
+- UNVERIFIED end to end: no sim ran. 66 Animus TUs of the compile database compile (`-fsyntax-only`, no warnings) and
+  the three new TUs (`Coverage.cpp`, `CoverageBlock.cpp`, `SeekTables.cpp`, absent from that database) compile with a
+  sibling's command line; `codestyle-cpp.py` and `runtime_graph_check.py` pass. The Ragefire and Deadmines tables were
+  checked against the baked scenes offline (counts in `SeekTables.cpp`), never walked by a seat.
+- The arena list of `move2_seek` is `rooms, ragefire, sweep, sweep_rotating, deadmines` (the contract's order):
+  `sweep` and `sweep_rotating` moved from indexes 1-2 to 2-3, so the archived run's numeric `arena` column no longer
+  lines up with the new stage.json; the `arena_<name>` columns are the stable reading.
+- Ragefire's rooms are convex, flat chunks of a cave: the "openings" are wide borders, not 3-yd doorways, so
+  `TrapPose`'s jamb search there mostly fails (the corner and pillar poses still serve) and `DoorwaySpot` may land
+  outside the chunk (`Place` checks the floor and the clearance, not `Inside`). `IsHardRoom`, `BackRoomName` and
+  `RoomEntryBackMult` are inert on 389 and 36 by name.
+- The replay table records Stuck-run onsets from EVERY unseeded training env, not the greedy envs alone: the sim is
+  not told which envs the learner runs greedily (no flag in the protocol; the Python side was finished first). The
+  replayed held keys reach the controller through `SeatState::Controls.Held` set in `Build` (the seat's reset runs
+  before the encounters build; `StartMover` seeds the body after): UNVERIFIED that `FaceTurn`/`Jump` cleared there is
+  all the controller needs.
+- `Recovered`'s 1 s minimum pin run is a constant (`RECOVER_MIN_MS`): the contract names no key. Its window runs from the
+  run's start.
+- Pockets are "a chamber behind a narrowing" (reachable over open cells), not the plan's "reachable through one opening";
+  the own chamber is the one holding a cell under the body (-1 in a doorway), never "the nearest".
+- The coverage analysis runs every decision in `MapBlock::Observe` (the contract allows every second decision if the
+  map cost line passes 0.2 ms); the map cost line (`Vi::Cost::AddMap`) now includes it.
+- `Seek.Revisit` keys the body's 2-yd cell by storey (`CellKey(.., 2.0)`); `seek.Cells` (4 yd, NewGround's) is untouched.
+- The pacing columns read the controller's body between world ticks (`TrackPacing`), so they exist for every stage; in a
+  stage without a camera `pause_look_share` reads the body's yaw sweep alone.
+- The seeded round-robin draw (`DrawArena(evaluating, seed)`) replaces the weighted draw for every seeded, unpinned
+  episode of every stage (not only M2): a stage with one trainable arena is unchanged; one with several (M4's two
+  maps) now alternates them by seed instead of drawing by weight.
+

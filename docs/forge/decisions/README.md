@@ -30,3 +30,4 @@ Decisions with lasting consequences, one file each. Dates are the day the owner 
 | [0024](0024-search-goal-kind.md) | Looking for an object is its own goal kind, search | 2026-10-10 |
 | [0025](0025-exploration-v2.md) | Exploration v2 pays for going in, lasts the whole search, and charges stale ground | 2026-10-10 |
 | [0026](0026-searched-state.md) | The seat sees what it has searched this episode; stale means no new room; the trap and the wall pin cost more | 2026-10-10 |
+| [0027](0027-general-search.md) | Search that transfers: two maps trained, one held out, the search terms from the seat's own map; the movement pacing amendments | 2026-10-10 |

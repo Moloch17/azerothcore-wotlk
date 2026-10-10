@@ -236,10 +236,18 @@ it precedes everything that perceives and remembers entities.
 behind
 and the map block starts fresh (its join at zero). `seed_from: latest`.
 
-**Place.** The same emptied Stockades; seat at a random hallway point. Arenas: `rooms` (weight 1, 420 s ceiling; an episode lasts its rung's `Seek.RungSeconds*`), `sweep` and, since decision 0025, `sweep_rotating`
-(both `EvalOnly`, never in training; 420 s: a sweep plays the deep rung's `Seek.RungSeconds3`; the rotating one on seed indexes shifted each evaluation). 39 rooms (`StockadeRooms()`), five objects.
+**Place.** The emptied Stockades and, since general search (decision 0027, 2026-10-10), the emptied Ragefire Chasm, 1:1:
+an env's episode draws its arena and so its map, and an env that moved to another map clears the new instance when it
+opens (whole dungeon radius off the Stockades). Seat at a random hallway point of the arena's table. Arenas: `rooms`
+(map 34, weight 1, 420 s ceiling; an episode lasts its rung's `Seek.RungSeconds*`; `TableTerms`), `ragefire` (map 389,
+weight 1, 28 rooms of `SeekTables::RagefireRooms()`, 4 front, 192 hallway points; map-derived terms only), `sweep` and,
+since decision 0025, `sweep_rotating` (both `EvalOnly`, never in training; 420 s: a sweep plays the deep rung's
+`Seek.RungSeconds3`; the rotating one on seed indexes shifted each evaluation), and `deadmines` (map 36, `EvalOnly`: the
+held-out transfer measure, 33 rooms of `SeekTables::DeadminesRooms()`, every (room, object) pair once = 165 episodes,
+`found_heldout_map` the headline). 39 Stockades rooms (`StockadeRooms()`), five objects. A seeded, unpinned evaluation
+episode goes round the trainable arenas by its index (156 a map in 312) and cycles the rooms on the index divided by two.
 
-**Blocks.** core, move, vision, entities, map, goal.
+**Blocks.** core, move, vision, entities, map, coverage, goal (the coverage block is M2's alone; M3 and M4 keep their lists).
 
 **Episode.** One object placed by the ladder: hallway in sight of the spawn (rung 0), just inside a front cell's opening
 (1), anywhere in a front cell (2), deep (3). Each rung keeps `Seek.CarryShare` 0.1 of the one below. Episode seconds by
@@ -250,6 +258,15 @@ rung
 (a 300 s episode costs 3.0), `Death` 6.0, `Stuck` and `Wall` 0.02 fixed. Shaping: `Sighting` 0.5 once, `NewGround` 0.004
 per
 4 yd cell first walked, `RoomSeen` 0.1 once per room whose floor the camera first shows (3 rays). Exploration v2 (decision 0025, 2026-10-10): `ExploreCap` 5.0, a cell seen from inside its own room x3 (`ExploreInsideBonus`), `RoomEntry` 0.1 per first room entry (x2 back rooms, cap 2.0), `FrontierPull` 0.015 a yard toward frontiers at a door or beyond (cap 2.0), `Stale` 0.01 a second after 20 s with no newly seen floor (Cost). Since 2026-10-10 (explore-unstuck, decision 0023): `Explore` 0.002 per newly seen 2-yd floor cell (x2 in a room not yet entered, cap 1.0) and `FrontierPull` 0.004 a yard (cap 1.0), both paid at least at `Seek.ExploreFloor` 0.5 of their price whatever the fade; `Circling` 0.02 a second (Cost); 12% of training episodes start in a trap pose against a door jamb, `Escape` 0.3 (Aid) for getting 6 yd away within 20 s.
+
+**General search and movement pacing** (decision 0027, 2026-10-10): on `ragefire` and `deadmines` the room table is
+placement geometry only; the search terms come from the seat's own crop (`FrontierClear` 0.1 in `FrontierCap`,
+`PocketEntry` 0.3 in `RoomEntryCap`, the table-free `Stale` clock, the pocket weights of `Explore`); `Revisit` 0.002 a
+second (Cost) on ground stood on before; `StepCost` 0.00025; `ExploreFromRung` 1; the trap drill from `TrapFromRung` 1
+with corner and pillar poses and `TrapReplayShare` 0.5 of its episodes started where a training seat pinned;
+`TrapEscapeTurnDeg` 0; `Circling`'s turn clause only with a movement key held; `Recovered` (Aid) pays back half a pin's
+Stuck and Wall charges (cap 0.3) once the seat is 4 yd away within 10 s. Inputs: map block revision 3 (eight coverage
+scalars), the coverage block, move block revision 6 (contact side, blocked share, hold and pinned age).
 
 **Ladder.** `fade.rungs [1.0, 0.5, 0.25, 0.0]` (hallway, doorway, front room, deep), `gate_metric found`, `gate_value
 0.8`,
