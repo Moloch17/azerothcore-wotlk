@@ -202,7 +202,7 @@ Writer: `EvalLog.write_outcome` after each controller decision (train.py `handle
 
 `EvalLog.write` (train.py:~165). Header: `update, env_steps, policy, episodes, score, stderr, margin, best, evals_since_best, seconds`, then extra columns only when
 `style.reference` is set (`realism_emd`, `realism_emd_<context>`, `realism_disc`). One row per scored policy: `learner` (the argmax evaluation), `learner_sampled`,
-`heldout_<arena>`, `with_human`, `with_partners`, and the baseline name (`random`). `margin/best/evals_since_best` are the *overall tracker's* state at that moment
+`heldout_<arena>` (an arena named `<x>_rotating` is the frozen `<x>`'s placements on seed indexes shifted every evaluation: `heldout_sweep_rotating`; the `eval_motion_<env_steps>_heldout_<arena>.npz` file follows the name), `with_human`, `with_partners`, and the baseline name (`random`). `margin/best/evals_since_best` are the *overall tracker's* state at that moment
 (for non-learner rows they repeat the last). `score` = mean of `score_outcome` (or the return with `eval.score: return`); `stderr` is the standard error over **episodes** (agents of one episode averaged first,
 `standard_error`). `seconds` is wall time of the evaluation. See the live file: 16 rows with `learner_sampled` every 3rd evaluation.
 

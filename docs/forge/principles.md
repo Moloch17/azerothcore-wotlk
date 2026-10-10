@@ -33,7 +33,7 @@ came from a failure name it.
 9. **A stage's purpose is paid as Outcome.** Shaping and noise prices are aids that fade away. *Why:* a lesson paid as
    shaping disappears when the fade ends; stage 3 collapsed that way. *The one exception:* exploring unseen territory
    (M2's `Explore` and `FrontierPull`) is paid at a floor, `max(shaping scale, Seek.ExploreFloor)`, and capped per
-   episode, because at shaping 0 nothing paid for reaching an unvisited door. *(Decision 0023.)*
+   episode, because at shaping 0 nothing paid for reaching an unvisited door. *(Decisions 0023, 0025: the caps, `RoomEntry` and the inside bonus.)*
 10. **Ladders are curriculum, not pass gates.** A ladder steps on its gate metric alone; it never waits on another
     ladder or a score plateau (`require_plateau: false`), and a ladder whose rungs are difficulty never steps back on
     the score, because a harder rung always scores lower. It raises a warning if its rung collapses instead.

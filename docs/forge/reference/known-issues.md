@@ -378,7 +378,7 @@ Charge and taxis still start splines).
 
 - UNVERIFIED end to end: no sim ran. Compiles (clang `-fsyntax-only`, 90 Animus TUs, no warnings); the rest is reading.
 - `Explore` pays for turning the camera: a seat that stands and sweeps its view reveals new cells without moving. It is
-  bounded by `Seek.ExploreCap` (1.0, a third of `Arrive`) and by `Circling` (a spin of 540 degrees in 6 s with under
+  bounded by `Seek.ExploreCap` (1.0, a third of `Arrive`; 5.0 since exploration v2, see the section below) and by `Circling` (a spin of 540 degrees in 6 s with under
   4 yd of net displacement is charged 0.02 a second), but a slow look-around is paid. Watch `explore_cells` against
   `distance_travelled` in the first evaluation; if cells per yard collapse, price the turning or pay only on moved cells.
 - The record of seen cells is the episode's own (`EnvSeek::Seen`, 2-yd cells by storey), not the mental map, which is
@@ -406,3 +406,35 @@ Charge and taxis still start splines).
   pinned (behind a door or a corner), which is the failure the evidence names; `Explore` pays the corridor.
 - `TrapPose` casts against the static tree (WMOs and M2s: `SurfaceHit::Distance` is yards along the segment, as the
   camera's own use shows); the Stockades is all WMO, so the jamb is found; on a terrain map it would not be.
+
+## M2 exploration v2, 2026-10-10 (C++ and learner stream; nothing run, syntax check only; decision 0025)
+
+- UNVERIFIED end to end: no sim ran. Compiles (clang `-fsyntax-only`, 90 Animus TUs, no warnings); `codestyle-cpp.py`,
+  `runtime_graph_check.py`, `py_compile` and `yaml.safe_load` of the stage yamls pass. No torch on the authoring host,
+  so the learner's `train.py` change (rotating seed shift) was not imported.
+- The reward audit (`rewards.py`, `MAX_SHAPING_SHARE` 0.5 of the largest outcome) will warn: `Explore` can now pay
+  2.5 an episode (cap 5.0 at the 0.5 floor, 83% of `Arrive`), over its 1.5 line. By design (decision 0025); a warning,
+  not a gate. Ceiling of exploration pay at the floor: Explore 2.5 + RoomEntry 1.0 + FrontierPull 1.0 = 4.5 against
+  `Arrive` 3.0; observed episodes bank far less (nominal 3.9 on average before the cap, 7.1 at p95, of a whole-map 10.5).
+  Watch `reward_explore` plus `reward_room_entry` plus `reward_frontier_pull` against `reward_arrive` in the first
+  evaluations; if a policy sweeps rooms past the object, lower `RoomEntryCap` or `FrontierCap`.
+- Hacking surfaces: `RoomEntry` is once a room an episode and needs `EnterDwellMs` continuous inside, so walking in
+  and out of a polygon pays once; the start room (a seat that begins in a room, as the trap drill's pose does) is
+  never paid, even on a later re-entry. `ExploreInsideBonus` pays only cells in the
+  room the seat stands in, each once, so a spin inside a room pays at most that room's floor (the room's 2-yd cells x
+  0.006); the cell pool is finite (1,701 room cells whole-map). Hubs and `hall_end` are table rooms and pay both
+  `RoomEntry` (hubs 0.1 each) and the inside bonus: a few tenths, once.
+- `Stale` is a Cost in the score: a long stale spell can cost up to 0.01 x 400 s = 4.0 (more than `Arrive`) in an
+  episode that wanders a mapped hallway for its whole length; the score of such an episode drops by that. It is not
+  charged on `Stuck`/`Wall` decisions and is charged beside `Circling` (a tight oscillation is both, 0.03 a second).
+  Once every reachable cell is seen (a full sweep) it keeps charging; a fully swept episode has failed anyway.
+- The frontier rule (a point in a table room polygon, or within 3 yd of a room's opening) keeps `FrontierPull` off the
+  corridor, but it also drops the corridor stretches of the hall that no room covers: a seat that has seen every door
+  and has only unseen hallway left gets no frontier pull. `FrontierPull`'s nearest-eligible choice also changes which
+  cluster it ratchets on, so `frontier_pull_reward` is not comparable with runs before 2026-10-10 evening.
+- Sweep clock: both sweeps now last `Seek.RungSeconds3` (420 s) where `sweep` kept 300 s through the run of the
+  diagnosis, so `heldout_sweep` `found` after this change is not comparable with its history; use `found_300`.
+  The arenas' `EpisodeSeconds` are 420 too (it only sets `spec.episode_seconds`, the evaluation's decision budget).
+- `sweep_rotating`: seed index = `first + 195 x (env_steps // eval.every_env_steps) + i`. At an episode count other
+  than 195 the (room, object) pairs rotate too. Two evaluations inside one `every_env_steps` bucket (the advance-time
+  one, `train.py` ADVANCE) reuse a shift. The frozen `sweep` is unchanged.
