@@ -127,6 +127,9 @@ void Animus::Curriculum::MoveBlock::DescribeManifest(Layout const& /*layout*/, b
     block["fall_height_scale"] = double(FALL_HEIGHT_SCALE);
     // No ground rays, flight rays or clearance since revision 4: the camera (the vision block) is how a seat sees.
     block["ground_probe"] = "none";
+    // The contact-side columns' scales (revision 6).
+    block["hold_age_scale_s"] = double(HOLD_AGE_SCALE_S);
+    block["pinned_age_scale_s"] = double(PINNED_AGE_SCALE_S);
 }
 
 std::string Animus::Curriculum::MoveBlock::ColumnName(uint32 column)
@@ -171,6 +174,10 @@ std::string Animus::Curriculum::MoveBlock::ColumnName(uint32 column)
         case OBS_MOVE_RATE:             return "move_rate";
         case OBS_CLOSE_RATE:            return "close_rate";
         case OBS_TRAIL_DWELL:           return "trail_dwell";
+        case OBS_CONTACT_SIDE:          return "contact_side";
+        case OBS_BLOCKED_AHEAD:         return "blocked_ahead";
+        case OBS_HOLD_AGE:              return "hold_age";
+        case OBS_PINNED_AGE:            return "pinned_age";
         default:                        break;
     }
     if (column >= OBS_MODE_FIRST && column < OBS_MODE_FIRST + OBS_MODE_COUNT)
@@ -254,7 +261,15 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
                 ? std::clamp((body->FallApexZ - body->Z) / FALL_HEIGHT_SCALE, 0.0f, 1.0f) : 0.0f;
             out[OBS_AGAINST_WALL] = body->AgainstWall ? 1.0f : 0.0f;
             out[OBS_STEEP_SLOPE] = body->SteepSlope ? 1.0f : 0.0f;
+            out[OBS_CONTACT_SIDE] = float(body->ContactSide);
+            out[OBS_BLOCKED_AHEAD] = std::clamp(body->BlockedShare, 0.0f, 1.0f);
         }
+        // How long the hands have been where they are, and how long the keys have got nowhere (the scenario's Stuck
+        // run, SeatView::PinnedMs).
+        if (view.Controls)
+            out[OBS_HOLD_AGE] = std::min(1.0f, float(view.NowMs - std::min<uint64>(view.NowMs,
+                view.Controls->ChangedMs)) / (1000.0f * HOLD_AGE_SCALE_S));
+        out[OBS_PINNED_AGE] = std::min(1.0f, float(view.PinnedMs) / (1000.0f * PINNED_AGE_SCALE_S));
 
         // How deep the feet are, the core's own liquid query at the body.
         if (Map* map = bot->GetMap())

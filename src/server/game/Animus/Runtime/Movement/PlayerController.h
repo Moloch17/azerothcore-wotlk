@@ -163,6 +163,11 @@ namespace Animus::Movement
         bool OverVoid = false;      // a step was refused for nothing at all below it: no floor, no terrain, no water
         float Moved = 0.0f;         // yards actually travelled this step (3D)
         float Commanded = 0.0f;     // yards the held controls asked for this step
+        /// What the last blocked move found (movement pacing M1, decision 0027): which side's slide was clear
+        /// (+1 left, -1 right, 0 none or no block this step) and how much of the straight move the wall took
+        /// (1 - the free share; 0 with no block). Reset by each Step, like AgainstWall.
+        int8_t ContactSide = 0;
+        float BlockedShare = 0.0f;
     };
 
     struct Liquid

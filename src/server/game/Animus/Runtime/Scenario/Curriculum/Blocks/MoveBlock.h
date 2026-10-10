@@ -130,8 +130,21 @@ namespace Animus::Curriculum
             /// zero; the dwell share is what tells them apart.
             OBS_TRAIL_FIRST,
             OBS_TRAIL_DWELL         = OBS_TRAIL_FIRST + 2 * TRAIL_SAMPLES,
+            /// **Where the wall is** (revision 6, movement pacing M1): which side the controller's last blocked step
+            /// found clear (+1 left, -1 right, 0 none: BodyState::ContactSide), how much of the straight move the
+            /// wall took (BodyState::BlockedShare), how long the held controls have been as they are (seconds over
+            /// HOLD_AGE_SCALE_S, clamped) and how long the held keys have got nowhere (the Stuck run, seconds over
+            /// PINNED_AGE_SCALE_S, clamped): the price escalates with it, so the policy sees what is being charged.
+            /// The feel of which shoulder is on the wall is what a player has from the screen and the character
+            /// not moving; no path hint (decision 0019).
+            OBS_CONTACT_SIDE,
+            OBS_BLOCKED_AHEAD,
+            OBS_HOLD_AGE,
+            OBS_PINNED_AGE,
             OBS_COUNT
         };
+        static constexpr float HOLD_AGE_SCALE_S = 8.0f;
+        static constexpr float PINNED_AGE_SCALE_S = 4.0f;
 
         static constexpr float FALL_TIME_SCALE_MS = 3000.0f;
         static constexpr float FALL_HEIGHT_SCALE = 50.0f;
@@ -145,8 +158,8 @@ namespace Animus::Curriculum
         /// purpose: findDistanceToWall searches outward through the polygon graph and the shared query has a
         /// 1024-node pool, and room beyond a few yards is not a thing a seat needs to tell apart.
         static constexpr float CLEARANCE_RANGE = 8.0f;
-        /// Its layout revision: MoveControls::REVISION (5), past the bearing design's 0 and 1, the controls' 2, the
-        /// rays' removal (4) and the compass's leaving (5).
+        /// Its layout revision: MoveControls::REVISION (6), past the bearing design's 0 and 1, the controls' 2, the
+        /// rays' removal (4), the compass's leaving (5) and the contact-side columns (6).
         [[nodiscard]] uint32 Revision() const override { return MoveControls::REVISION; }
         /// Each column's name (stage.json obs_names), so a seed can follow a column that moved: revision 4's
         /// objective columns are the compass block's names, and bootstrap maps a revision 4 move block by them.

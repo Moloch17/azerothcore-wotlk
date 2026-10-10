@@ -218,6 +218,7 @@ namespace
             return;
         }
         body.AgainstWall = true;
+        body.BlockedShare = std::max(body.BlockedShare, 1.0f - std::max(0.0f, free));
         float const length = std::sqrt(dx * dx + dy * dy);
         float bestProgress = std::max(0.0f, free * length - SKIN);
         float const keep = length > 1e-6f ? bestProgress / length : 0.0f;
@@ -244,6 +245,8 @@ namespace
             if (progress > bestProgress + SLIDE_GAIN)
             {
                 bestProgress = progress;
+                // The side that was free: a positive slide angle turns left (WoW's yaw runs counter-clockwise).
+                body.ContactSide = angle > 0.0f ? 1 : -1;
                 float const k = (f * length * c - SKIN) / std::max(1e-6f, length * c);
                 outX = rx * std::max(0.0f, k);
                 outY = ry * std::max(0.0f, k);
@@ -666,6 +669,8 @@ void Animus::Movement::Step(BodyState& body, ControlState& control, Speeds const
     body.AgainstWall = false;
     body.SteepSlope = false;
     body.OverVoid = false;
+    body.ContactSide = 0;
+    body.BlockedShare = 0.0f;
     body.Landed = false;
     body.LandedInWater = false;
     body.Jumped = false;
@@ -684,6 +689,8 @@ void Animus::Movement::Step(BodyState& body, ControlState& control, Speeds const
     bool wall = false;
     bool steep = false;
     bool overVoid = false;
+    int8_t contactSide = 0;
+    float blockedShare = 0.0f;
     for (uint32_t i = 0; i < steps; ++i)
     {
         SubStep(body, control, speeds, shape, world, sub);
@@ -694,7 +701,13 @@ void Animus::Movement::Step(BodyState& body, ControlState& control, Speeds const
         wall = wall || body.AgainstWall;
         steep = steep || body.SteepSlope;
         overVoid = overVoid || body.OverVoid;
+        // The last blocked sub-step's side, and the worst block of the step.
+        if (body.ContactSide)
+            contactSide = body.ContactSide;
+        blockedShare = std::max(blockedShare, body.BlockedShare);
         body.Landed = body.LandedInWater = body.AgainstWall = body.SteepSlope = body.Jumped = body.OverVoid = false;
+        body.ContactSide = 0;
+        body.BlockedShare = 0.0f;
     }
     body.Landed = landed;
     body.Jumped = jumped;
@@ -703,6 +716,8 @@ void Animus::Movement::Step(BodyState& body, ControlState& control, Speeds const
     body.AgainstWall = wall;
     body.SteepSlope = steep;
     body.OverVoid = overVoid;
+    body.ContactSide = contactSide;
+    body.BlockedShare = blockedShare;
 }
 
 void Animus::Movement::Launch(BodyState& body, float vx, float vy, float vz)
