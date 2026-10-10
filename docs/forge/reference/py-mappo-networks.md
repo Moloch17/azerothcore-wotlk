@@ -103,12 +103,12 @@ captured graph never reads the device. `set_space(accepts, block_at, goals)` tak
 `columns.place_features` and `place_slots {first, count, features}` (`_place_spec_of`; nothing hard-coded; absent keys, a
 goal block before revision 3, turn the pointer off and say so, a `features` other than 5 or a span past
 `columns.width` raises). `place_scores` gathers each slot's 5 values from the goal block (rows without a goal block read
-zeros), `_with_places` adds the MLP's score to each place target's logit for every kind alike, in `logits()` and
+zeros), `_with_places` adds the MLP's score to each place target's logit for every kind alike (the kinds that cannot take a place are masked, which leaves `search` and `travel_to`), in `logits()` and
 `slot_logits()` (so the primary, the secondary and the queue), before the goal block's target-there mask: an unbound or
 checked slot is never chosen. No data-dependent Python branch, so the rollout graph captures it.
 
-**The cell pointer** (free-choice-goals, 2026-10-09; `docs/forge/decisions/0024` and the plan in
-`.agents/plans/free-choice-goals/`). A cell goal is the joint goal `travel_to / target 21` (joint 159, `goals.cells.joint`)
+**The cell pointer** (free-choice-goals, 2026-10-09; the plan in `.agents/plans/free-choice-goals/`). A cell goal is the joint goal `search / target 21`
+(joint 228 since goal block revision 5, 159 as `travel_to / 21` before and at `Seek.SearchGoals` 0; always `goals.cells.joint`)
 plus a block of the mental map's crop: the 48 x 48 heading-up crop pooled `pool` 2 into 24 x 24 blocks of 4 yd, the
 index row-major, 576 candidates. `CellPointer` (`goal_head.cell.*`): `local` Linear(18, 32) (SiLU in the head), `query`
 Linear(width, 32), `score` Linear(32, 1) **zero weight and bias**, `chain` Sequential(Linear(3, 16), Tanh, Linear(16, 1))
@@ -278,6 +278,10 @@ secondary adds its embedding through a learned `gate` (init 0.5). The actor buil
 adds the shift only (`forward :1914`). `_GOAL_SCALE_KEYS` (`:1928`): an actor saved before the scale existed loads with
 the scale at zero (`load_actor_state`). `_GOAL_POINTER_PREFIXES` (`goal_head.pointer.`, `goal_head.place_spec`) likewise:
 an actor saved before the pointer loads with it as initialised (a no-op) and no place slots.
+`GOAL_KIND_ROW_KEYS` / `grow_goal_rows(state, current)` (search-kind, 2026-10-10): the goal tensors with a row per kind (or per joint,
+`drawn`) of a checkpoint with FEWER kinds are padded with the network's own rows before loading (`load_actor_state` and the critic in
+`MappoTrainer.load_state_dict`; the optimisers then start fresh); MORE kinds than the network raises `ValueError`. `load_actor_state`
+returns the keys grown.
 
 ## `LayoutActor` (`:1971`)
 

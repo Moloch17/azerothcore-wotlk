@@ -22,7 +22,7 @@ in [config-keys.md](config-keys.md) and [config-yaml.md](config-yaml.md); stages
 | apps/forge/python/animus/human/realism.py | 136 | eval_motion.npz writer; human_reference.json reader. |
 | apps/forge/python/animus/human/motion.py | 201 | The motion features that npz holds. |
 | src/server/game/Animus/Scenario/Curriculum/StageScenario.cpp | (large) | `WriteStageFiles` (stage.json and the layout manifests), `AppendRunEvent` (events.log). |
-| src/server/game/Animus/Runtime/Scenario/Curriculum/Layout/Layout.cpp | | `Layout::Manifest` (`<model>.json`, manifest format 9). |
+| src/server/game/Animus/Runtime/Scenario/Curriculum/Layout/Layout.cpp | | `Layout::Manifest` (`<model>.json`, manifest format 10). |
 | src/server/game/Animus/Vision/EvalVideo.cpp | | Evaluation videos, sidecars, index. |
 | src/server/game/Animus/AnimusForge.cpp | | Camera audit (`audit.csv`, PNGs), bench.json, eval video naming. |
 | src/server/game/Animus/Console/Progress.cpp | | Reads progress.json and finished.json for `forge status`. |
@@ -89,7 +89,7 @@ Top-level keys written by the current code:
 | episode_info | [string] | Episode-info column names in wire order (the SPEC's list). |
 | episode_categories | {column: [names]} | Columns that index a name list: `seek_room`, `seek_object`, `interact_site`, `interact_object`, `sight_object`, `objective_corner` (["in_sight","corner"]). |
 | reward_terms | {term: "outcome"\|"cost"\|"shaping"} | Category of every reward term (`RewardTermCategory`). |
-| goals | object | `kinds` [9 names], `accepts` [kind][target] 0/1, `targets` (23 since goal block revision 1; 29 in the backup), `block` "goal", `columns` {secondary_ended, event, achieved_kind, achieved_target, held, place_features, width} (first-column offsets inside the goal block; `held` 68, `place_features` 73 and `width` 108 since goal block revision 3, 2026-10-09; 68 wide at revision 2; a revision 2 file has no `held` or `place_features`), `place_slots` {first 14, count 7, features 5, feature_names [sin, cos, dist, cover, age]} (the place targets whose 5 features per slot sit at `place_features`; absent at revision 2), `slots_on_wire` (4 since protocol 28; 2 before), `wire_ints` (8), `cells` {target 21, joint 159, grid 24, pool 2, crop 48, crop_cell_yards 2.0, channels 6, code_channel, height_channel, floor_code 1, door_code 3, wall_code 2, hazard_code 4, height_zero 128, rise_units 16, min_floor_cells 2, positions 4, ticket_bits 11, cell_bits 12, source "cells"\|"rooms" (`Seek.GoalSource`)} (since 2026-10-09, free choice goals; written in every stage), and `columns` also has `held2` 108, `next` 113, `plan_left` 118, `from` 119 and `width` 122 since goal block revision 4. `reward_terms` values are `outcome`, `cost`, `shaping` or, since 2026-10-09, `aid`. |
+| goals | object | `kinds` [10 names: ... resurrect, search; 9 up to goal block revision 4], `accepts` [kind][target] 0/1, `targets` (23 since goal block revision 1; 29 in the backup), `block` "goal", `columns` {secondary_ended, event, achieved_kind, achieved_target, held, place_features, width} (first-column offsets inside the goal block; `held` 68, `place_features` 73 and `width` 108 since goal block revision 3, 2026-10-09; 68 wide at revision 2; a revision 2 file has no `held` or `place_features`), `place_slots` {first 14, count 7, features 5, feature_names [sin, cos, dist, cover, age]} (the place targets whose 5 features per slot sit at `place_features`; absent at revision 2), `slots_on_wire` (4 since protocol 28; 2 before), `wire_ints` (8), `cells` {target 21, joint 228 (159 up to revision 4, and at `Seek.SearchGoals` 0), grid 24, pool 2, crop 48, crop_cell_yards 2.0, channels 6, code_channel, height_channel, floor_code 1, door_code 3, wall_code 2, hazard_code 4, height_zero 128, rise_units 16, min_floor_cells 2, positions 4, ticket_bits 11, cell_bits 12, source "cells"\|"rooms" (`Seek.GoalSource`)} (since 2026-10-09, free choice goals; written in every stage), and `columns` also has `held2` 108, `next` 113, `plan_left` 118, `from` 119 and `width` 122 since goal block revision 4. `reward_terms` values are `outcome`, `cost`, `shaping` or, since 2026-10-09, `aid`. |
 | tuning | object | `CurriculumTuning::Json()`: every `AnimusForge.Curriculum.*` value in force (725 keys in the backup, e.g. `Characters.HighLevelFirst: 61`), written or default. This is what the cluster fingerprint hashes (protocol.md section 9). |
 
 `arenas[i]` (current writer): `name`, `weight` (the arena's draw weight as configured), `seats`, `episode_seconds`, `plan`
@@ -112,7 +112,7 @@ whose stage.json differs in any block span or revision is refused (train.py:_loa
 
 ### Layout manifests `<layouts>/<stage>/<model>.json`
 
-`Layout::Manifest` (Layout.cpp:~190), `MANIFEST_FORMAT = 9`: `format, model, stage, class_name, class, obs_dim, num_actions, action_names,
+`Layout::Manifest` (Layout.cpp:~190), `MANIFEST_FORMAT = 10` (9 before the search kind, 2026-10-10): `format, model, stage, class_name, class, obs_dim, num_actions, action_names,
 specs` [{name, tree, aptitude{feature: value}}], `blocks` [{name, obs, actions, revision?, plus `DescribeManifest` output}]. Copied beside an
 `.amdl` by export. (Not read by the learner at training time.)
 

@@ -56,12 +56,34 @@ the revisions, the number of tensors reset, the rows copied. Same revision, an a
 stage.json) or an overlay seed: exactly as before. A manifest without `place_slots` resets but copies nothing.
 The new goal-block columns reach the adapter at zero weight (the block's revision change makes `_common_blocks` start it
 fresh, then by name: `_seed_adapter_blocks` zeroes what is not carried), and the pointer's last layer is zero.
-**Revision 3 -> 4** (free-choice-goals, cell goals) is the one pair that **keeps** the head: `goal_head.*` comes with the
+**Revision 3 -> 4** (free-choice-goals, cell goals) and **4 -> 5** (search-kind) are the pairs that **keep** the head: `goal_head.*` comes with the
 shared weights, `slow_memory.*` and `slow_value.*` are copied from the checkpoint (`_reseed_goals(..., old_actor)`; they
 are not in `SHARED_PREFIXES`), `goal_head.cell.*` is absent from the checkpoint and stays as initialised (score and chain
 at zero: uniform over the choosable blocks), and the embeddings are warm-copied for the cell goal's target
 (`goals.cells.target`, 21, appended to `_goal_ids`' place targets) wherever the row is still zero. Printed: what was kept
-and what is fresh. Any other revision pair, including 2 -> 4, resets as above. The new columns (108..121) are new names and
+and what is fresh. Any other revision pair, including 2 -> 4 and 3 -> 5, resets as above.
+
+**A grown goal space** (search-kind, goal block revision 5: the tenth kind `search`; `_grow_goal_kinds`, before `_seed_shared`).
+The kind count is read off the checkpoint's `goal_head.kind.weight` against the new network's. Equal: nothing is done (every
+other seed). Fewer in the checkpoint (9 -> 10): kinds are only appended, so a joint id `kind * 23 + target` keeps its row; the
+checkpoint's kind-indexed goal tensors (`networks.GOAL_KIND_ROW_KEYS`: `goal_head.kind.*`, `pair`, `drawn.weight`, `accepts`,
+the lookahead's `success.*`/`duration.*`, `goal_embedding.kind` and `kind_scale`; the critic's `goal_embedding.kind`) are
+padded to the new shapes with the new network's own rows (`networks.grow_goal_rows`), so `_seed_shared` carries them like any
+other; then each new kind named in `GOAL_KIND_WARM` (`search` <- `travel_to`) takes its source's rows (kind embedding and
+scale, kind logit and bias, the pair row, the joint ids' `drawn` embeddings, the lookahead's rows; actor and critic), so a head
+that chose `travel_to` about a place now chooses `search` about it with the same logit, and the policy it conditioned reads the
+goal as it did. The kind-count logic is by tensor shape, so it also covers a checkpoint whose stage.json predates the manifest;
+the names (`goals.kinds`) are used for the warm copy and checked: the checkpoint's must be the first of the stage's. **More**
+kinds in the checkpoint than the stage (a newer checkpoint into an older sim) is refused (`ValueError`, "cannot seed a sim with
+fewer goal kinds"); so are kind lists that are not a prefix. Printed: the kinds, the tensors grown, the warm copies. The goal
+block's columns that moved are carried by name; `goal_kind_search` and `goal_achieved_kind_search` are new names and reach
+the adapter at zero. A multi-revision seed that grows the space while the old `travel_to` embedding row is still zero (a
+checkpoint of revision 2) warm-copies zeros: `search` starts untrained, as `travel_to` was. Resume: `MappoTrainer.load_state_dict`
+and `load_actor_state` pad a smaller goal space the same way, tolerantly (new rows as initialised, the optimisers then start
+fresh, a line printed); a resume of a revision-4 checkpoint is refused anyway by `layout_changes`. Teachers and partners
+(`distill.frozen_actor`, `cast`) are rebuilt in their checkpoint's own 9-kind space and decide their goals in it; ids of the
+first nine kinds are unchanged, so a 9-kind partner's goals mean the same on the wire (a 9-kind cell goal, `travel_to / 21`,
+is not offered by a `Seek.SearchGoals` 1 sim and ends lost). The new columns (108..121) are new names and
 reach the adapter at zero. A new M2 run is a seeded start, not a resume (protocol 28 and the wider block): `forge` overlay
 `configs/overlays/move2_seek_cells.yaml`.
 Everything else stays freshly initialised: critic state encoder and value head, the value normaliser, and any module
@@ -126,7 +148,7 @@ Seeding does not carry the partner pool, the cast, or `best.pt` scores.
 Resume (`train.py:949-972`) loads everything via `MappoTrainer.load_state_dict` (optimisers too) after the shape and
 layout
 checks, plus `restore_evaluation_state`. Loader tolerance for old keys: `load_actor_state` ignores blind-column masks,
-zeroes the missing goal-scale parameters (`_GOAL_SCALE_KEYS`) and raises on any other missing or unexpected actor key;
+pads goal tensors of a smaller goal space (`grow_goal_rows`), zeroes the missing goal-scale parameters (`_GOAL_SCALE_KEYS`) and raises on any other missing or unexpected actor key;
 the critic is loaded non-strictly with the same exception list and raises likewise; `value_norm` and optimisers are
 loaded
 only if present; top-level keys use `.get` defaults (`update`, `env_steps`, `convergence`, `controller`, `score_kind`,

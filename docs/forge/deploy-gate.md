@@ -280,7 +280,7 @@ DEV apps/forge/python/.venv/bin/python apps/forge/tools/resume_check.py --fresh 
 Success: ten lines `PASS` and `10 of 10 stages start on the learner`, exit 0. A `FAIL` line names the stage, the
 check (held-out arenas, `eval.mask_actions`, the ladders' gate column, the trainer) and the first error.
 `--fresh` builds the spec from `stage.json`; the sim's state width (`state.dim`, 1927 since 2026-10-08) and goal count
-(goals.kinds x targets, 207) are read from it (`--state-dim`, `--goal-count` override them).
+(goals.kinds x targets, 230) are read from it (`--state-dim`, `--goal-count` override them).
 
 ## 5. Resume dry run for the current stage
 

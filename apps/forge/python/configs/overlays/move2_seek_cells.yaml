@@ -1,3 +1,6 @@
+# NOTE 2026-10-10 (search-kind, decision 0024): this describes the revision 3 -> 4 start. Since goal block revision 5 the
+# cell goal is joint 228 (search / 21; travel_to / 21 = 159 before), and a revision 4 checkpoint seeds the 4 -> 5 branch of
+# bootstrap._reseed_goals (docs/forge/reference/py-learner-seeding.md); the overlay's own keys are unchanged.
 # Overlay for the SEEDED START of move2_seek with FREE-CHOICE CELL GOALS (free-choice-goals plan section 8 and CONTRACT
 # section 9; owner, 2026-10-09). Not a stage config: it extends nothing, nothing lists it as a stage (it lives under
 # configs/overlays/), and it is applied only by hand, `--overlay` on the learner command line, over move2_seek.yaml

@@ -1,4 +1,4 @@
-# The sim-learner protocol (version 28) and the cluster messages
+# The sim-learner protocol (version 29) and the cluster messages
 
 Purpose and scope: a byte-exact description of what the C++ sim and the Python learner say to each other, and of the
 text lines the cluster machines exchange. Written from the code at `forge` bd32b9dc8. "Wire" means the lock-step
@@ -193,7 +193,8 @@ The first STEP after SPEC/MODE carries freshly reset envs: reward and done are z
 2. Optionally `i32 goals[E*A*8]` (`GOAL_WIRE_INTS`, protocol 28; it was `E*A*2` up to 27): per agent the joint goal ids of
    the four plan positions, primary, secondary, queue 0, queue 1 (`GOAL_SLOTS_ON_WIRE = 4`; 0..GoalCount-1 or -1 for none),
    then their four cell words (0 none, else `(ticket << 12) | (cell + 1)`, ticket 1..2047: a pooled block of the seat's
-   crop for the joint goal `travel_to place_7` = 159; the sim ignores a word whose joint is not 159). Present iff the
+   crop for the cell goal, the joint `search place_7` = 228 since protocol 29 (`travel_to place_7` = 159 before, and at
+   `Seek.SearchGoals` 0; `stage.json goals.cells.joint` says which); the sim ignores a word whose goal is not a cell goal). Present iff the
    policy has a goal head; without it the sim fills joints -1 and cell words 0. Goals never mask an action.
 3. If `LookHeads` L > 0 (a camera stage): `i32 look[E*A*L]`: yaw rate 0..6, pitch rate 0..4, zoom 0..4 (head sizes
    `FreeLook::HEAD_SIZES`). Required; every value must be in range or the learner is dropped. Rows without a camera send
@@ -287,6 +288,7 @@ into the core (`359b303c4`); their content is UNVERIFIED (no comment survives; c
 
 | 27 | SPEC gains the tick jitter (`JitterMs`, `SpikeMaxMs`, `SpikeProb`; 12 bytes); STEP and ACT are 26's. | decision 0021 (this change) |
 | 28 | ACT's goal section is `GOAL_WIRE_INTS` (8) ints an agent: four plan positions' joint ids then their cell words (`GOAL_SLOTS_ON_WIRE` 2 -> 4); free choice goals. STEP and SPEC are 27's. | free-choice-goals CONTRACT sec 1 |
+| 29 | The goal space has a tenth kind, `search` (goal block revision 5): SPEC's `GoalCount` is 10 x 23 = 230 (was 207), ACT's goal ids run to 229, the cell goal is the joint 228 (was 159). The messages' layout is 28's. | decision 0024 |
 
 Message type 12 (added at 18) is unused since 2026-10-08 (decision 0019, vision-only movement). It was folded into the 26 bump
 (`PROTOCOL_VERSION` is 28 in Protocol.h and protocol.py).
@@ -370,6 +372,11 @@ its interface (check `ForgeConfig` / `LearnerProcess` for `DistIface`).
 * Half-batch and ranks multiply the cases: `EnvBegin` is *local* per rank, `RankGroup` splits each group evenly across ranks.
 * Question: should `present = 2` stay a magic number shared by `StandIn::Presence` (C++) and `PRESENT_STAND_IN` (Python)?
 * Question: the bit-1 gap in `Flags` is waiting for a protocol change; fold it into the next bump.
+
+2026-10-10 (search-kind, protocol 29; learner and sim rebuild together): `GoalCount` 207 -> 230, every stage's `obs_dim` grows
+by 2 (goal block revision 5: one more kind column and one more achieved-kind column), the layout manifest `format` is 10, and
+the episode info gains `goal_search_share` and `goal_success_search` in every stage. A checkpoint of protocol 28 seeds the
+new space (py-learner-seeding.md); it cannot resume (the layouts changed).
 
 2026-10-09 (free choice goals, protocol 28; learner and sim rebuild together): ACT's goal section is eight ints an agent
 (above); every stage's `obs_dim` grows by 14 (goal block revision 4, zero outside the seek stage's cell-goal episodes);

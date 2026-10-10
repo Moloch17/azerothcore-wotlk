@@ -79,8 +79,8 @@ always the no-op (`SeatEncoder`); `ModelName() = Profile->Name + Stage->Suffix` 
 ### Manifest (`Layout::Manifest`, `Layout.cpp:193`)
 
 JSON written to `<LayoutsDir>/<stage>/<ModelName>.json` by `StageScenario::WriteStageFiles` (`StageScenario.cpp:1244`).
-`MANIFEST_FORMAT = 9` (`Layout.cpp:51`; format history in its comment: 3 generic block list, 5 3D steering, 6
-pathfinder choices left, 7 jump drop, 8 controller move block, 9 engine moves gone). Keys: `format`, `model`, `stage`,
+`MANIFEST_FORMAT = 10` (`Layout.cpp`; format history in its comment: 3 generic block list, 5 3D steering, 6
+pathfinder choices left, 7 jump drop, 8 controller move block, 9 engine moves gone, 10 the search goal kind: the goal block is two columns wider). Keys: `format`, `model`, `stage`,
 `class_name`, `class` (id), `obs_dim`, `num_actions`, `action_names`, `specs` (per spec `name`, `tree`, `aptitude`
 object
 of the 26 features from the standard build at level cap), `blocks` (per block `name`, `obs` `[first,count]`, `actions`

@@ -86,7 +86,7 @@ What the `stage.json` has to contain for each network feature (`networks.py` rea
 
 Source: the removed golden case `move2_seek` (`actor_shapes`, `critic_shapes`), built from
 `configs/move2_seek.yaml` (which `extends` `move1_controls.yaml`). Ten layouts. Config in force:
-`hidden [256, 512, 512]`, `recurrent_size 128`, `goal_count 12`, `goal_targets 29`, `goal_slots 4`,
+`hidden [256, 512, 512]`, `recurrent_size 128`, `goal_count 10`, `goal_targets 23`, `goal_slots 4`,
 `slow_goal_size 128`, `foresight_coef 0.25` with `foresight_horizons_seconds [5, 30]`, `foresight_obs_targets`,
 `foresight_feedback`, `goal_lookahead`; the stage has camera (patch 8), entity
 list (32 slots x 20), mental map (48x48x6, 4 scalars), look heads (7,5,5); no sight list.

@@ -1280,7 +1280,7 @@ cpp-blocks.md).
 `GoalHold` with `Fresh = true` and counts `GoalsChosenBy[kind]` (2679-2683). Only seats `< _seatCount` are touched; the
 cast owner has no goals.
 
-**Cell goals** (free choice goals, 2026-10-09; the joint `travel_to place_7` = 159, `GoalBlock::IsCellGoal`; only in an
+**Cell goals** (free choice goals, 2026-10-09; the joint `search place_7` = 228 since goal block revision 5, `travel_to place_7` = 159 before and at `Seek.SearchGoals` 0, `GoalBlock::IsCellGoal`; only in an
 episode whose last observation set `SeatState::CellGoals`). `ApplyGoals` reads each position's cell word
 (`CellGrid::ParseWord`): a ticket seen in the previous table (`SeatState::Plan[4]`, `CellPlan{Ticket, Valid, Stale,
 Where}`) keeps the point it latched, at whatever position the learner moved it to (a promotion from the queue); a new

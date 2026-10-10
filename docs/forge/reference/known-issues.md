@@ -356,3 +356,21 @@ Charge and taxis still start splines).
   `goal_from_*` columns.
 - Ticket wrap: tickets are 11 bits (1..2047) and the learner counts choices from the episode's start, so a table entry
   could only collide after 2047 plan positions in one episode.
+
+## Search goal kind, 2026-10-10 (search-kind; nothing run, syntax check only)
+
+- The seeded head is a warm copy: `search` starts with `travel_to`'s logits, and `travel_to` is masked in M2 (not offered at
+  `Seek.SearchGoals` 1), so nothing separates them until the stage trains; `goal_search_share` and `goal_success_search` are the
+  columns to read. The goal block's `goal_kind_search` and `goal_achieved_kind_search` adapter columns start at zero (new names);
+  in M2 the old `goal_kind_travel_to` column is now always 0 there.
+- Resume of a protocol-28 checkpoint is refused by design (the layouts changed); `load_actor_state` and
+  `MappoTrainer.load_state_dict` pad a smaller goal space but only matter when the adapters fit, i.e. never across this bump.
+- Frozen partners and teachers (a 9-kind checkpoint) decide in their own space and are fed a goal block of another revision
+  (not mapped, `distill.build_teacher`); a 9-kind partner's `travel_to / 21` cell goal is not offered by a `SearchGoals` 1 sim
+  and ends lost. No such stage exists today (M2 is solo).
+- `Seek.SearchGoals` is a second temporary switch beside `Seek.Goals` and `Seek.GoalSource`; delete it (and `travel_to` in M2's
+  offers) once the search kind is the only way M2 is run.
+- The layout manifest `format` went 9 -> 10 (the goal block is wider in every layout); a runtime holding a format 9 model must
+  refuse it.
+- `Seek.SearchGoals` and the cell joint: the manifest is written in every stage from the conf, so a stage that never offers
+  cell goals still publishes `goals.cells.joint` 228.
