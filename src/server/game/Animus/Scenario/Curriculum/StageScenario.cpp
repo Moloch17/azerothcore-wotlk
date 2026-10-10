@@ -1456,6 +1456,14 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
                 GetBlock(id).DescribeManifest(layout, manifest);
                 block["map"] = manifest["map"];
             }
+            // The coarse coverage grid: its size and channels, for the learner's coverage encoder (general search
+            // sec 5; the learner refuses the block without them).
+            if (id == BlockId::Coverage)
+            {
+                boost::json::object manifest;
+                GetBlock(id).DescribeManifest(layout, manifest);
+                block["coverage"] = manifest["coverage"];
+            }
             // The seen and remembered list and its pointer presses (dungeon-curriculum I1, I2), for the learner's
             // sight encoder beside the camera's entity list.
             if (id == BlockId::Sight)
