@@ -1420,7 +1420,7 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
         {
             RewardCategory const category = RewardTermCategory(RewardTerm(term));
             categories[RewardTermName(RewardTerm(term))] = category == RewardCategory::Outcome ? "outcome"
-                : category == RewardCategory::Cost ? "cost" : "shaping";
+                : category == RewardCategory::Cost ? "cost" : category == RewardCategory::Aid ? "aid" : "shaping";
         }
         stageFile["reward_terms"] = std::move(categories);
     }
@@ -1453,8 +1453,18 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
         columns["event"] = uint32(GoalBlock::OBS_EVENT);
         columns["achieved_kind"] = uint32(GoalBlock::OBS_ACHIEVED_KIND_FIRST);
         columns["achieved_target"] = uint32(GoalBlock::OBS_ACHIEVED_TARGET_FIRST);
+        // Revision 3 (M2 goals): the held goal's place and the place slots' features; the learner reads the offsets
+        // from here and tolerates their absence (a revision 2 stage.json has no pointer features).
+        columns["held"] = uint32(GoalBlock::OBS_HELD_FIRST);
+        columns["place_features"] = uint32(GoalBlock::OBS_PLACE_FIRST);
         columns["width"] = uint32(GoalBlock::OBS_COUNT);
         goals["columns"] = std::move(columns);
+        boost::json::object slots;
+        slots["first"] = uint32(GOAL_TARGET_PLACE_FIRST);
+        slots["count"] = GoalBlock::PLACE_SLOTS;
+        slots["features"] = GoalBlock::PLACE_FEATURES;
+        slots["feature_names"] = boost::json::array{ "sin", "cos", "dist", "cover", "age" };
+        goals["place_slots"] = std::move(slots);
         goals["slots_on_wire"] = GOAL_SLOTS_ON_WIRE;
     }
     stageFile["tuning"] = _tuning.Json();
@@ -2622,7 +2632,15 @@ void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
             {
                 ++state.GoalChanges;
                 if (!hold.Ended)
+                {
                     ++state.StepGoalSwitches;   // charged at the next reward (Goals.Switch)
+                    // ... and a room goal given up (a room or the way on) is Seek.RoomSwitch, an aid's charge.
+                    if (state.RoomGoals && GoalBlock::IsPlaceGoal(hold.Goal))
+                    {
+                        ++state.StepRoomSwitches;
+                        ++state.RoomGoalSwitches;
+                    }
+                }
             }
 
             // A new goal is a new thing to reach, and is paid for again when it is. Its progress is measured from
@@ -2634,6 +2652,8 @@ void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
                 hold.Fresh = true;
                 if (goal != NO_GOAL)
                     ++state.GoalsChosenBy[GoalKindOf(goal)];
+                if (state.RoomGoals && goal != NO_GOAL && GoalBlock::IsRoomGoal(goal))
+                    ++state.RoomGoalsChosen;
             }
         }
     }
@@ -3569,6 +3589,7 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
         view.MapKept = seat.MapKept;
     }
     view.Option = &seat.Option;
+    seat.RoomGoals = view.World.RoomGoals;
 
     // Each goal held, read off the world as it now is: reached (paid now, into this decision's reward) or no longer
     // possible -- either way it has ended. A primary that ended makes the learner promote its queue or choose again
@@ -3605,6 +3626,15 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
             hold.Rewarded = true;
             ++seat.GoalsReached;
             ++seat.GoalsReachedBy[GoalKindOf(hold.Goal)];
+            // A room goal's room checked after the choice: the room goal's aid, once, into the same row.
+            if (seat.RoomGoals && GoalBlock::IsRoomGoal(hold.Goal))
+            {
+                ++seat.RoomGoalsReached;
+                float const aid = seat.Rewards.AddTaken(RewardTerm::RoomGoal,
+                    _tuning.Seek.RoomGoal * (slot ? _tuning.Goals.SecondaryShare : 1.0f));
+                if (float* reward = Data(env).StepReward)
+                    reward[seatIndex] += aid;
+            }
             float const value = GroupHealer(env, seat) && SeatGoal(GoalKindOf(hold.Goal)) == SeatGoal::Fight ? 0.0f
                 : GoalValue(hold, bot) * (slot ? _tuning.Goals.SecondaryShare : 1.0f);
             float const paid = seat.Rewards.AddTaken(RewardTerm::GoalReached, value);
@@ -3612,7 +3642,11 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
                 reward[seatIndex] += paid;
         }
         else if (!possible)
+        {
             ++seat.GoalsLost;
+            if (seat.RoomGoals && GoalBlock::IsRoomGoal(hold.Goal) && bot && bot->IsAlive())
+                ++seat.RoomGoalsLost;
+        }
         hold.Ended = reached || !possible;
         hold.WasReached = reached;
         if (slot && hold.Ended)
@@ -3647,7 +3681,7 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
         seat.Holds[1] = GoalHold();
 
     // The event (choose again now) and what the seat achieved this decision (the hindsight columns).
-    ObserveGoalSignals(env, seat, bot);
+    ObserveGoalSignals(env, seatIndex, seat, bot);
     view.GoalEvent = seat.Event;
     view.Achieved = seat.Achieved;
     view.Goal2 = seat.Holds[1].Goal;
@@ -3738,8 +3772,10 @@ float Animus::Curriculum::StageScenario::GoalGap(SeatState const& seat, GoalHold
 
     SeatGoal const goal = SeatGoal(GoalKindOf(hold.Goal));
     // A goal about a place: the yards still to go to it.
+    // ... except a room goal's: the straight line to a room is not the walk (rooms are behind walls), so a gap that
+    // opens on the way would read as walking away.
     if (goal == SeatGoal::TravelTo && hold.HasPlace)
-        return std::max(0.0f, bot->GetExactDist2d(&hold.Place) - GoalBlock::PLACE_REACH);
+        return seat.RoomGoals ? -1.0f : std::max(0.0f, bot->GetExactDist2d(&hold.Place) - GoalBlock::PLACE_REACH);
     if ((goal != SeatGoal::Fight && goal != SeatGoal::Position) || !target || !target->IsAlive())
         return -1.0f;
 
@@ -3818,7 +3854,7 @@ float Animus::Curriculum::StageScenario::GoalPotential(Env const& env, SeatState
             return gap > 0.0f ? far(gap) : 0.0f;
         }
         case SeatGoal::TravelTo:
-            return hold.HasPlace ? far(bot->GetExactDist(&hold.Place)) : 0.0f;
+            return hold.HasPlace && !seat.RoomGoals ? far(bot->GetExactDist(&hold.Place)) : 0.0f;
         case SeatGoal::Resurrect:
         {
             // A dead friend raised; standing itself up is over once alive.
@@ -3855,7 +3891,8 @@ float Animus::Curriculum::StageScenario::GoalValue(GoalHold const& hold, Player*
     }
 }
 
-void Animus::Curriculum::StageScenario::ObserveGoalSignals(Env const& env, SeatState& seat, Player* bot) const
+void Animus::Curriculum::StageScenario::ObserveGoalSignals(Env const& env, uint32 seatIndex, SeatState& seat,
+    Player* bot) const
 {
     seat.Event = false;
     seat.Achieved = NO_GOAL;
@@ -3886,6 +3923,13 @@ void Animus::Curriculum::StageScenario::ObserveGoalSignals(Env const& env, SeatS
         seat.Achieved = MakeGoal(SeatGoal::Recover, GOAL_TARGET_NONE);
     seat.EnemySeenAlive = alive;
     seat.BelowRecover = below;
+    // ... or something an encounter saw it do (the seek stage's room checked), when nothing above was.
+    for (Encounter* encounter : ActiveEncounters(env))
+    {
+        if (seat.Achieved != NO_GOAL)
+            break;
+        seat.Achieved = encounter->AchievedGoal(env, seatIndex);
+    }
 
     // The event: something a plan should answer changed -- the seat newly below the escape line, more enemies in
     // the fight than before.
@@ -4594,9 +4638,15 @@ void Animus::Curriculum::StageScenario::Reward(Env& env, float* reward)
     // reached at the next observation is paid at the same scales.
     float const shaping = _shapingScale.load(std::memory_order_relaxed);
     float const costs = _costScale.load(std::memory_order_relaxed);
+    // The aid scale (RewardCategory::Aid) follows the stage's progress, not its rung: 1 at the start, 0 from
+    // Seek.AidUntil of the budget on.
+    float const aidUntil = _tuning.Seek.AidUntil;
+    float const aid = aidUntil > 0.0f
+        ? std::clamp(1.0f - _stageProgress.load(std::memory_order_relaxed) / aidUntil, 0.0f, 1.0f) : 0.0f;
     for (uint32 seat = 0; seat < _seatCount; ++seat)
     {
         Data(env).Seats[seat].Rewards.SetShaping(shaping);
+        Data(env).Seats[seat].Rewards.SetAid(aid);
         Data(env).Seats[seat].Rewards.SetCosts(costs);
         // The world has ticked since the last decision: its targets are asked again (DecisionTarget).
         Data(env).Seats[seat].DecisionTargetKnown = false;
@@ -4924,6 +4974,8 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
         ++seat.GoalDecisions[kind];
         if (GoalTargetOf(seat.Holds[0].Goal) != GOAL_TARGET_NONE)
             ++seat.GoalTargetedDecisions;
+        if (seat.RoomGoals && GoalBlock::IsPlaceGoal(seat.Holds[0].Goal))
+            ++seat.PlanDecisions;
         if (GoalHeld(env, seatIndex, bot, target))
             ++seat.GoalMatches[kind];
     }
@@ -4953,6 +5005,9 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
 
     seat.Rewards.Add(RewardTerm::GoalSwitch, -_tuning.Goals.Switch * float(seat.StepGoalSwitches));
     seat.StepGoalSwitches = 0;
+    if (seat.StepRoomSwitches)
+        seat.Rewards.Add(RewardTerm::RoomSwitch, -_tuning.Seek.RoomSwitch * float(seat.StepRoomSwitches));
+    seat.StepRoomSwitches = 0;
 
     seat.StepPreparationMs = 0;
 

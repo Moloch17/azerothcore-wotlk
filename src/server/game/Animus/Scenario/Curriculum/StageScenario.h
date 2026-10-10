@@ -402,7 +402,7 @@ namespace Animus::Curriculum
         [[nodiscard]] float GoalValue(GoalHold const& hold, Player* bot) const;
         /// GoalBlock's event (choose again now) and hindsight (what the seat achieved this decision), from what
         /// changed since the last observation.
-        void ObserveGoalSignals(Env const& env, SeatState& seat, Player* bot) const;
+        void ObserveGoalSignals(Env const& env, uint32 seatIndex, SeatState& seat, Player* bot) const;
         /// At the reward: settle a step's verdict, the fidget seconds, stops and starts, and charge the decision's
         /// aimless presses, effort and fidgeting.
         void SettleIntent(Env& env, SeatState& seat, Player* bot, Unit* target);
