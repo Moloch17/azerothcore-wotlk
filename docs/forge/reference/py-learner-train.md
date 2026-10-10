@@ -189,7 +189,7 @@ Every `_save` first `drain_update()`s an overlapped update.
    `archive_rung_best` copies best.pt to `best_rung<k>.pt`. Decide `sampled` (every `eval.sampled_every` evaluations),
    `heldout` (`heldout_due`: final, or improved and `heldout_on_best`, or every `heldout_every`-th), `arms`.
 4. Broadcast the decisions; an improved best joins the partner pool; `evaluate_sampled`, `evaluate_heldout`,
-   `evaluate_arms` (each is a reading only: tracker and controller never see them). `evaluate_heldout` collects motion too (`eval.keep_motion_files > 0`) and writes `eval_motion_<env_steps>_heldout_<arena>.npz`. The arms "no_flag", "no_camera", "no_map" and "no_memory" are `evaluation.ablation_chooser` over `_acting`'s chooser (`choose.acting` is its `ActingState`, which "no_memory" resets before every decision).
+   `evaluate_arms` (each is a reading only: tracker and controller never see them). `evaluate_heldout` collects motion too (`eval.keep_motion_files > 0`) and writes `eval_motion_<env_steps>_heldout_<arena>.npz`. The arms "no_flag", "no_camera", "no_map", "no_memory", "no_goal", "random_goal", "random_cell" and "no_plan" are `evaluation.ablation_chooser` over `_acting`'s chooser (`choose.acting` is its `ActingState`, which "no_memory" resets before every decision).
 5. `apply_holds()` (freeze converged classes' adapters and heads and drop them from the sample:
    `trainer.freeze_layouts`);
    the leader sends layout weights (`casting_weights` times `hold_weights`, WEIGHTS) and the replay seeds (REPLAY).
@@ -207,7 +207,7 @@ A run that raises in the loop still saves `latest.pt` here, whatever state the n
 
 The sim is the server and the learner the client. One STEP per decision carries every env's observations; the sim
 blocks until the ACT. Frame: `HEADER <II` (type, length). Messages (`protocol.MsgType`): HELLO 1, SPEC 2, STEP 3, ACT 4,
-CLOSE 5, MODE 6, WEIGHTS 7, REPLAY 8, DEVICE 9, DEVICE_ACK 10, PROGRESS 11 (12 is unused). `PROTOCOL_VERSION = 27`
+CLOSE 5, MODE 6, WEIGHTS 7, REPLAY 8, DEVICE 9, DEVICE_ACK 10, PROGRESS 11 (12 is unused). `PROTOCOL_VERSION = 28` (the ACT goal section is `GOAL_WIRE_INTS` = 8 int32 an agent: four plan joints, four cell words)
 (`protocol.py:14`; the sim's `Bridge/Protocol.h` agrees). `MODE_FLAG_STAND_IN = 2`; bit 1 is unused (`:67-70`).
 
 - Connect: `ForgeEnv._connect` retries every second until `connect_timeout` (600 s), Unix socket or `tcp://host:port`
