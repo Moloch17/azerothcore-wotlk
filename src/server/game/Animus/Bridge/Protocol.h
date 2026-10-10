@@ -195,7 +195,10 @@ namespace AnimusForge
     // four plan positions (primary, secondary, queue 0, queue 1; GOAL_SLOTS_ON_WIRE 4), then their cell words, so a
     // goal can be a cell of the seat's own map crop (goal block revision 4; the cell and its ticket are latched by the
     // sim at the choice). STEP and SPEC are protocol 27's; the manifest names goals.slots_on_wire and goals.wire_ints.
-    constexpr uint32 PROTOCOL_VERSION = 28;
+    // 29: the goal space has a tenth kind, search (goal block revision 5, docs/forge/decisions/0024): SPEC's GoalCount is
+    // 10 x 23 = 230 joint ids (was 207) and ACT's goal ids run to 229; a cell goal is the joint search / place_7 = 228
+    // (was travel_to / place_7 = 159). The messages' layout is protocol 28's.
+    constexpr uint32 PROTOCOL_VERSION = 29;
     constexpr uint32 SCENARIO_NAME_SIZE = 32;
     constexpr uint32 POLICY_NAME_SIZE = 32;
     constexpr uint32 LAYOUT_NAME_SIZE = 48;

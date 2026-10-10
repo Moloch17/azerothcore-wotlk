@@ -53,6 +53,10 @@ namespace Animus::Curriculum
     /// (OBS_PLAN_LEFT) and where the seat stands in the frame of its latest choice (OBS_FROM_*). The held goal's place
     /// (OBS_HELD_*) is also the latched point of a cell goal (GOAL_CELL_JOINT). Written only in an episode that offers
     /// cell goals (WorldView::CellGoals); zero everywhere else.
+    /// Revision 5 (2026-10-10, search-kind): the goal space has a tenth kind, Search (looking for an object in or at a
+    /// place), appended to the kinds (ids of the others do not move): the kind one-hots grow by one, so every column
+    /// from OBS_TARGET_FIRST on moved up by one and the achieved-kind one-hots by one more. The columns keep their
+    /// names (DescribeColumns), which the learner's seeding carries them by. Width 124 (was 122).
     class GoalBlock final : public Block
     {
     public:
@@ -104,7 +108,8 @@ namespace Animus::Curriculum
         /// 1: Loot, Gather, Interact and the journal targets left the goal space. 2: the order columns left the block.
         /// 3: the held-goal and place-slot columns (see the class comment).
         /// 4: the secondary hold, the plan's next step, the plan left and the choice frame (cell goals).
-        [[nodiscard]] uint32 Revision() const override { return 4; }
+        /// 5: the search kind (one more kind column and achieved-kind column; the columns after the kinds moved).
+        [[nodiscard]] uint32 Revision() const override { return 5; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void DescribeColumns(Layout const& layout, boost::json::array& names) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
@@ -153,15 +158,22 @@ namespace Animus::Curriculum
             return target >= GOAL_TARGET_PLACE_FIRST && target < GOAL_TARGET_PLACE_FIRST + GOAL_ROOM_SLOTS;
         }
 
-        /// Whether a goal is a travel_to about a room slot (IsRoomGoal) or about a room slot or the way on
+        /// Whether a kind is one about a place: TravelTo, and Search, which the seek stage's room and cell goals are
+        /// (Seek.SearchGoals; travel_to when it is 0).
+        [[nodiscard]] static constexpr bool IsPlaceKind(int32 kind)
+        {
+            return kind == int32(SeatGoal::TravelTo) || kind == int32(SeatGoal::Search);
+        }
+
+        /// Whether a goal is a place kind about a room slot (IsRoomGoal) or about a room slot or the way on
         /// (IsPlaceGoal): what the seek stage's room goals count and price.
         [[nodiscard]] static constexpr bool IsRoomGoal(int32 goal)
         {
-            return goal >= 0 && SeatGoal(GoalKindOf(goal)) == SeatGoal::TravelTo && IsRoomTarget(GoalTargetOf(goal));
+            return goal >= 0 && IsPlaceKind(GoalKindOf(goal)) && IsRoomTarget(GoalTargetOf(goal));
         }
         [[nodiscard]] static constexpr bool IsPlaceGoal(int32 goal)
         {
-            return goal >= 0 && SeatGoal(GoalKindOf(goal)) == SeatGoal::TravelTo
+            return goal >= 0 && IsPlaceKind(GoalKindOf(goal))
                 && GoalTargetOf(goal) >= GOAL_TARGET_PLACE_FIRST
                 && GoalTargetOf(goal) < GOAL_TARGET_PLACE_FIRST + GOAL_PLACE_SLOTS;
         }

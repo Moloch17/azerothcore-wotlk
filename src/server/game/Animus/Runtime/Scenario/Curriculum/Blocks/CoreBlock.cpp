@@ -93,6 +93,7 @@ namespace
             case SeatGoal::Prepare:
             case SeatGoal::Rest:
             case SeatGoal::TravelTo:
+            case SeatGoal::Search:
             {
                 if (bot->GetHealthPct() < GOAL_ESCAPE_HEALTH_PCT || !bot->getAttackers().empty()
                     || bot->HasStealthAura())

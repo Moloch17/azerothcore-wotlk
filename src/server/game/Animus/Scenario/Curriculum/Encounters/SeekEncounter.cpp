@@ -587,6 +587,7 @@ void Animus::Curriculum::SeekEncounter::View(Env const& env, uint32 seatIndex, S
     world.HasAssignment = false;
     world.HasSeenPlaces = _scenario.Tuning().Seek.Goals != 0;
     world.RoomGoals = seek.Placed && seek.RoomGoals && view.Bot && view.Bot->IsAlive();
+    world.SearchGoals = world.RoomGoals && _scenario.Tuning().Seek.SearchGoals != 0;
     // Cell goals (Seek.GoalSource 1): the goal is a block of the seat's own crop, so there are no room slots and no
     // way on to fill; RoomGoals stays true beside it (the gates that exempt a place goal from the straight-line gap).
     CurriculumTuning::SeekTuning const& tuning = _scenario.Tuning().Seek;
@@ -651,13 +652,15 @@ void Animus::Curriculum::SeekEncounter::View(Env const& env, uint32 seatIndex, S
 
 int32 Animus::Curriculum::SeekEncounter::AchievedGoal(Env const& env, uint32 /*seat*/) const
 {
-    // The room that was checked at this decision, whatever the seat pursued: the goal it would have been (hindsight).
+    // The room that was checked at this decision, whatever the seat pursued: the goal it would have been (hindsight),
+    // of the kind the stage offers its places as (search, or travel_to at Seek.SearchGoals 0).
     // Not in cell mode: a room slot's id would be a lie there, and the planner's hindsight reads the goal block's
     // choice-frame columns instead.
     EnvSeek const& seek = _envs[env.Index];
     bool const rooms = seek.RoomGoals && _scenario.Tuning().Seek.GoalSource == 0;
-    return rooms && seek.AchievedSlot >= 0 ? MakeGoal(SeatGoal::TravelTo, GOAL_TARGET_PLACE_FIRST
-        + uint32(seek.AchievedSlot)) : NO_GOAL;
+    SeatGoal const kind = _scenario.Tuning().Seek.SearchGoals != 0 ? SeatGoal::Search : SeatGoal::TravelTo;
+    return rooms && seek.AchievedSlot >= 0 ? MakeGoal(kind, GOAL_TARGET_PLACE_FIRST + uint32(seek.AchievedSlot))
+        : NO_GOAL;
 }
 
 void Animus::Curriculum::SeekEncounter::TrackRooms(Env const& env, EnvSeek& seek, ArenaDefinition const& arena,

@@ -457,6 +457,10 @@ namespace Animus::Curriculum
         /// max(0, 1 - progress / AidUntil). Return (Cost, fixed price) prices going back into a visited room after at
         /// least ReturnAwayMs outside its polygon by ReturnAwayYards.
         ///
+        /// **Search goals** (search-kind, 2026-10-10; SearchGoals 1, the default): the room and cell goals are of the
+        /// kind search (looking for an object in or at a place), not travel_to (going there for its own sake); 0 offers
+        /// them as travel_to, as before goal block revision 5. Reached and lost by the same rules either way.
+        ///
         /// **Cell goals** (free choice goals, 2026-10-09; GoalSource 1, the default, the temporary A/B switch against
         /// the room slots of GoalSource 0, deleted with the loser): the goal head names a block (4 yd) of the seat's
         /// own mental-map crop instead of a room, and a plan is up to four of them in order. The sim latches the
@@ -496,6 +500,7 @@ namespace Animus::Curriculum
             float DoorwaySpread = 1.0f;
             uint32 Goals = 1;
             uint32 GoalsFromRung = 2;
+            uint32 SearchGoals = 1;
             float RoomGoal = 0.05f;
             float RoomSwitch = 0.03f;
             float Return = 0.05f;
@@ -948,6 +953,7 @@ namespace Animus::Curriculum
             f("Seek.DoorwaySpread", tuning.Seek.DoorwaySpread);
             f("Seek.Goals", tuning.Seek.Goals);
             f("Seek.GoalsFromRung", tuning.Seek.GoalsFromRung);
+            f("Seek.SearchGoals", tuning.Seek.SearchGoals);
             f("Seek.RoomGoal", tuning.Seek.RoomGoal);
             f("Seek.RoomSwitch", tuning.Seek.RoomSwitch);
             f("Seek.Return", tuning.Seek.Return);

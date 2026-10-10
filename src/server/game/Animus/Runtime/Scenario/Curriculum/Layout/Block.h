@@ -162,6 +162,11 @@ namespace Animus::Curriculum
         /// Stand up again after dying: at the own corpse (target none) or a dead member raised (a friend slot).
         /// In the goal space from the next-run format on; offered only once death runs exist (Wave 6).
         Resurrect,
+        /// Look for an object in or at a place (goal block revision 5, search-kind, 2026-10-10): a room slot, the way
+        /// on or a block of the seat's own map. Not a fight (no enemy is named) and not a trip for its own sake
+        /// (TravelTo); the place is where the seat means to look, so it is reached when the place is checked (a room)
+        /// or stood at (a cell). Appended: the kinds before it keep their ids.
+        Search,
         Count
     };
 
@@ -198,16 +203,19 @@ namespace Animus::Curriculum
         return int32(uint32(kind) * GOAL_TARGETS + target);
     }
 
-    /// **A cell goal** (free choice goals, 2026-10-09; goal block revision 4): the joint goal travel_to / place_7 --
-    /// the last place target, which the room goals never offer -- plus a cell of the seat's own mental-map crop, chosen by
-    /// the learner's pointer head and sent beside it (CellGrid, ACT's cell words).
+    /// **A cell goal** (free choice goals, 2026-10-09; goal block revision 4): the joint goal search / place_7 (travel_to
+    /// / place_7 before goal block revision 5) -- the last place target, which the room goals never offer -- plus a cell
+    /// of the seat's own mental-map crop, chosen by the learner's pointer head and sent beside it (CellGrid, ACT's cell
+    /// words). Derived: Search * GOAL_TARGETS + GOAL_CELL_TARGET = 9 * 23 + 21 = 228; stage.json goals.cells.joint
+    /// carries it to the learner.
     constexpr uint32 GOAL_CELL_TARGET = GOAL_TARGET_PLACE_FIRST + GOAL_PLACE_SLOTS;
-    constexpr int32 GOAL_CELL_JOINT = MakeGoal(SeatGoal::TravelTo, GOAL_CELL_TARGET);
+    constexpr int32 GOAL_CELL_JOINT = MakeGoal(SeatGoal::Search, GOAL_CELL_TARGET);
     /// The kind of a goal (NO_GOAL stays NO_GOAL as -1 compares), and its target.
     [[nodiscard]] constexpr int32 GoalKindOf(int32 goal) { return goal < 0 ? NO_GOAL : goal / int32(GOAL_TARGETS); }
     [[nodiscard]] constexpr uint32 GoalTargetOf(int32 goal) { return goal < 0 ? 0 : uint32(goal) % GOAL_TARGETS; }
     /// Whether a kind can be about a target: Fight, Control and Position about an enemy (Fight and Position about
     /// no one in particular too), Protect about a friend, TravelTo about any route place or the assignment,
+    /// Search about a place (a room slot, the way on or the cell target; never the assignment),
     /// Resurrect about no one or a friend; Recover, Prepare and Rest about nothing.
     [[nodiscard]] bool GoalAccepts(SeatGoal kind, uint32 target);
     /// The episode clock's scale: the longest arena's episode, so it rises through every episode instead of
