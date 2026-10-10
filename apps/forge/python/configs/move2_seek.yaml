@@ -80,7 +80,10 @@ mappo:
 # (room, object) pair once, 195 episodes at the top rung, 300 s -- is the held-out "sweep" arena, played at the stage's
 # last evaluation only (heldout_every past any stage's evaluations, and not on every new best).
 eval:
-  every_env_steps: 10000000
+  # 5M (was 10M; owner, 2026-10-10): the ladder steps on an evaluation's found rate (0.8), so evaluating twice as often
+  # lets a rung step as soon as it is earned. Patience and the rotating sweep's cadence count evaluations and are
+  # doubled below to keep their meaning in steps (60M without a new best; the rotating sweep every 20M).
+  every_env_steps: 5000000
   # 312 (was 156, 78 before the deep rung of 2026-10-09: 78 episodes carry +-0.05, and a score swing of 0.5 between two
   # evaluations came from 8 frozen episodes): 8 per room at the deep rung, a +-0.02 reading. The sampled policy is
   # played at every evaluation and the held-out sweep too (fresh seeds, every room and object once at the top rung):
@@ -98,7 +101,7 @@ eval:
   # The rotating sweep every second evaluation (exploration v3; the 195-episode second sweep doubled the held-out time;
   # the stage's last evaluation plays both). The rotation moves on by the evaluation number either way.
   heldout_cadence:
-    sweep_rotating: 2
+    sweep_rotating: 4
   # Every decision of every seed of every evaluation set, per policy, as compact arrays in
   # eval_trace_<env_steps>_<policy>.npz (learner, learner_sampled, heldout_<arena>, each arm), with the routes of the
   # sampled and arm sets beside them (eval_motion_<env_steps>_<policy>.npz): pose, camera yaw and pitch, flag pixels,
@@ -192,9 +195,10 @@ status:
     died: "<= 0.01"
 
 convergence:
-  # Six evaluations without a new best (60M steps) before the score counts as plateaued (M1's 3, restated in M3 and
-  # M4): with found near 0.9 and +-0.03 between evaluations on the deep rung, three would end the stage early.
-  patience: 6
+  # Twelve evaluations without a new best (60M steps at 5M an evaluation; was six at 10M) before the score counts as
+  # plateaued (M1's 3, restated in M3 and M4): with found near 0.9 and +-0.03 between evaluations on the deep rung,
+  # a few would end the stage early.
+  patience: 12
   # Converged on the stage's own measure, the share of objects found; at the top of its ladder (at_top_rung: the
   # ladder at the deep rung, which is the fade's end).
   measure: found
