@@ -507,7 +507,7 @@ namespace Animus::Curriculum
         struct SeekTuning
         {
             float Arrive = 3.0f;
-            float StepCost = 0.0005f;
+            float StepCost = 0.00025f;
             float Death = 6.0f;
             float ArriveRise = 2.0f;
             float Sighting = 0.5f;
@@ -576,14 +576,33 @@ namespace Animus::Curriculum
             float Escape = 0.3f;
             float TrapEscapeYards = 6.0f;
             uint32 TrapEscapeMs = 20000;
-            float TrapEscapeTurnDeg = 90.0f;
+            float TrapEscapeTurnDeg = 0.0f;
             float TrapGapNear = 0.45f;
             float TrapGapFar = 0.8f;
             float TrapFacingSlack = 0.3f;
             float WallEscalateSeconds = 4.0f;
             float WallEscalateMax = 4.0f;
-            uint32 ExploreFromRung = 2;
+            uint32 ExploreFromRung = 1;
             float HardRoomWeight = 3.0f;
+            // General search (decision 0027): the table terms' switch, the map-derived terms and the revisit cost.
+            uint32 TableTerms = 1;
+            float FrontierClear = 0.1f;
+            uint32 ClearMinCells = 3;
+            float ClearRadius = 36.0f;
+            float PocketEntry = 0.3f;
+            uint32 PocketMemoryMs = 10000;
+            uint32 PocketMinCells = 6;
+            uint32 ClusterMinCells = 2;
+            float Revisit = 0.002f;
+            uint32 RevisitAgeMs = 60000;
+            // Movement pacing (decision 0027's amendments to 0023 and 0026): the trap drill's own rung and its replayed
+            // pin poses, and the pin rebate.
+            uint32 TrapFromRung = 1;
+            float TrapReplayShare = 0.5f;
+            float RecoverYards = 4.0f;
+            uint32 RecoverMs = 10000;
+            float RecoverShare = 0.5f;
+            float RecoverCap = 0.3f;
         } Seek;
 
         /// **M3 interact** (Opposition::Interact, InteractEncounter; dungeon-curriculum M3): in an empty Deadmines, the
@@ -1066,6 +1085,22 @@ namespace Animus::Curriculum
             f("Seek.WallEscalateMax", tuning.Seek.WallEscalateMax);
             f("Seek.ExploreFromRung", tuning.Seek.ExploreFromRung);
             f("Seek.HardRoomWeight", tuning.Seek.HardRoomWeight);
+            f("Seek.TableTerms", tuning.Seek.TableTerms);
+            f("Seek.FrontierClear", tuning.Seek.FrontierClear);
+            f("Seek.ClearMinCells", tuning.Seek.ClearMinCells);
+            f("Seek.ClearRadius", tuning.Seek.ClearRadius);
+            f("Seek.PocketEntry", tuning.Seek.PocketEntry);
+            f("Seek.PocketMemoryMs", tuning.Seek.PocketMemoryMs);
+            f("Seek.PocketMinCells", tuning.Seek.PocketMinCells);
+            f("Seek.ClusterMinCells", tuning.Seek.ClusterMinCells);
+            f("Seek.Revisit", tuning.Seek.Revisit);
+            f("Seek.RevisitAgeMs", tuning.Seek.RevisitAgeMs);
+            f("Seek.TrapFromRung", tuning.Seek.TrapFromRung);
+            f("Seek.TrapReplayShare", tuning.Seek.TrapReplayShare);
+            f("Seek.RecoverYards", tuning.Seek.RecoverYards);
+            f("Seek.RecoverMs", tuning.Seek.RecoverMs);
+            f("Seek.RecoverShare", tuning.Seek.RecoverShare);
+            f("Seek.RecoverCap", tuning.Seek.RecoverCap);
             f("Interact.Arrive", tuning.Interact.Arrive);
             f("Interact.DoorOpened", tuning.Interact.DoorOpened);
             f("Interact.WrongObject", tuning.Interact.WrongObject);

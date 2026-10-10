@@ -77,7 +77,11 @@ namespace Animus::Curriculum
         /// select or focus the player frame or the pet frame. After the sight block.
         Combat = 25,
         Goal = 26,           // which goal kinds and targets are there, and whether the goal held ended (no actions; last)
-        Count = 27
+        /// A coarse, heading-up map of what the seat has seen, stood on and searched this episode (general search,
+        /// decision 0027): COVERAGE_GRID x COVERAGE_GRID tiles of 32 yd from the mental map's per-tile counters; no
+        /// actions. After the map block, whose map it samples; before the goal block, which stays last.
+        Coverage = 27,
+        Count = 28
     };
 
     /// **The ids are explicit and never reused.** A manifest, a checkpoint and the learner's seeding by name know a block

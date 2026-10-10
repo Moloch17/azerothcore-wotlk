@@ -20,11 +20,14 @@
 #define ANIMUS_LIB_CURRICULUM_SEEK_ENCOUNTER_H
 
 #include "Block.h"
+#include "Coverage.h"
 #include "Encounter.h"
 #include "ObjectGuid.h"
+#include "PlayerController.h"
 #include "Position.h"
 #include "SeenPlaces.h"
 #include <array>
+#include <mutex>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -33,6 +36,7 @@ namespace Animus::Curriculum
 {
     struct ArenaDefinition;
     struct SeatState;
+    struct StageDefinition;
 
     /// **M2 seek** (Opposition::Seek; perception-goals plan §4, "M2 in detail"): one real object hidden in one of a
     /// dungeon's rooms, found by sight and stopped beside. The seat has no compass: the object is shown only by the
@@ -84,6 +88,23 @@ namespace Animus::Curriculum
     /// pose is tighter and its Escape needs a turn of Seek.TrapEscapeTurnDeg too; the Wall charge grows with the
     /// contiguous pin (Seek.WallEscalateSeconds, WallEscalateMax).
     ///
+    /// **General search** (decision 0027): the stage trains on the Stockades and Ragefire Chasm (an env's episode
+    /// draws its arena, hence its map) and is measured on the Deadmines, held out. The map-derived terms read the
+    /// seat's own map alone (the coverage analysis of this decision's crop, Coverage::Summary): FrontierClear pays a
+    /// frontier cluster approached and resolved by positive evidence, PocketEntry a chamber behind a narrowing
+    /// entered for the first time (seen as a separate one before), in FrontierPull's and RoomEntry's caps; Stale's
+    /// clock restarts on those events on a table-free arena; Explore's bonuses are the pockets' there, and
+    /// FrontierPull aims at the nearest cluster at a pocket. The table terms (RoomEntry, the room-based Stale clock,
+    /// the corridor filter, the table's Explore bonuses) pay only on an arena with TableTerms. Revisit charges ground
+    /// stood on again. A seeded, unpinned episode goes round the trainable arenas (StageScenario::DrawArena) and
+    /// cycles the rooms with the seed divided by their count.
+    ///
+    /// **Movement pacing** (decision 0027's amendments): the trap drill has its own rung (Seek.TrapFromRung), more
+    /// poses (an inside corner, a pillar's edge) and, Seek.TrapReplayShare of the time, a pose where a training seat
+    /// pinned (recorded with its held keys into a per-stage ring buffer, never a script); Circling's turn clause holds
+    /// only while a movement key is held; Recovered (Aid) pays back a share of a pin's Stuck and Wall charges once the
+    /// seat is away from it.
+    ///
     /// Paid: Arrive once, stopped within the arena's SeekRadius of the object (Outcome); StepCost and Death (Cost);
     /// Stuck and Wall (Cost, at their own fixed price from the first step: RewardLedger::AddFixed); Sighting,
     /// NewGround and RoomSeen, the training-only aids (Shaping, faded), each by the episode's own bookkeeping, never
@@ -111,6 +132,11 @@ namespace Animus::Curriculum
         /// seek_object index them (stage.json episode_categories).
         [[nodiscard]] static std::vector<std::string> RoomNames(ArenaDefinition const& arena);
         [[nodiscard]] static std::vector<std::string> ObjectNames(ArenaDefinition const& arena);
+        /// Each arena's offset into the union of the stage's seek room tables (seek_room = offset + room): the distinct
+        /// tables in arena order, told apart by their first room's name, each listed once; arenas sharing a table
+        /// share its offset (the Stockades' keep 0). Empty for a stage with no seek arena; 0 for an arena that is not
+        /// one.
+        [[nodiscard]] static std::vector<uint32> RoomOffsets(StageDefinition const& stage);
 
     private:
         /// What the episode knows of one room (room goals): the floor cells its rays hit, the centroid of the hit
@@ -255,7 +281,62 @@ namespace Animus::Curriculum
             uint32 WallPinMax = 0;
             uint32 WallPinEvents = 0;
             float WallExtra = 0.0f;
+
+            // **General search** (decision 0027). FrontierClear: each cluster key's largest size seen, the keys
+            // cleared, and the nominal paid. PocketEntry: when each chamber key was last a pocket (and where),
+            // how long the seat has dwelt in each own chamber, the pockets entered, the chamber it started in, and
+            // the nominal paid; the decisions it stood in a chamber. Stale's table-free clock (LastNewMs: the last
+            // room on a table arena, else the last entry or clear). The pocket cells Explore paid (the 2x ones).
+            struct Place
+            {
+                uint32 Ms = 0;              // the stamp (PocketSeenMs), or the size peak (ClusterPeak)
+                float X = 0.0f;             // the bin's centroid, for the 10-yd neighbourhood tests
+                float Y = 0.0f;
+            };
+            std::unordered_map<uint64, Place> ClusterPeak;
+            std::unordered_map<uint64, Place> ClustersCleared;
+            float FrontierClearNominal = 0.0f;
+            std::unordered_map<uint64, Place> PocketSeenMs;
+            uint64 OwnKey = 0;              // the own chamber's key at the last decision (0 none)
+            uint32 OwnDwellMs = 0;          // how long it has been the own one
+            std::unordered_map<uint64, Place> PocketsEntered;
+            uint64 StartChamber = 0;
+            float StartChamberX = 0.0f;
+            float StartChamberY = 0.0f;
+            float PocketEntryNominal = 0.0f;
+            uint32 ChamberDecisions = 0;
+            uint32 LastNewMs = 0;
+            uint32 ExplorePocketCells = 0;
+            // Revisit: when the body last stood on each 2-yd cell (episode-local), the weighed seconds charged and
+            // the decisions on stood ground.
+            std::unordered_map<uint64, uint32> StoodMs;
+            float RevisitSeconds = 0.0f;
+            uint32 RevisitDecisions = 0;
+            // **Movement pacing**: the pin the rebate watches (a run of Stuck- or Wall-charged decisions: its
+            // charge, its length, where it began, when it ended), the rebates paid and their nominal sum; the trap
+            // pose's source (0 geometric, 1 replayed) and whether this episode's pin onset was recorded.
+            float PinCharge = 0.0f;
+            uint32 PinRunMs = 0;
+            bool PinOn = false;
+            bool PinWatch = false;          // a run of RECOVER_MIN_MS or more ended or runs: an escape is watched for
+            Position PinPoint;
+            uint32 PinWatchMs = 0;          // when the watch began (the run's start)
+            uint32 Recoveries = 0;
+            float RecoveredNominal = 0.0f;
+            uint32 TrapSource = 0;
+            bool PinSpent = false;          // the run's rebate was paid or its window passed: nothing more this run
+            uint32 LastStuckRunMs = 0;      // the controller's Stuck run at the last decision (the record's edge)
         };
+
+        /// **A pin pose** (movement pacing M3): where a training seat's Stuck run reached two seconds, with the keys it
+        /// held -- the per-stage replay table the trap drill draws from (TrapReplayShare), a ring of PIN_POSES.
+        struct PinPose
+        {
+            uint32 MapId = 0;           // the map the pose is on: a pose is replayed on its own map only
+            Position Pose;
+            Movement::ControlState Held;
+        };
+        static constexpr std::size_t PIN_POSES = 512;
 
         /// Put the episode's object in `room` of `arena`: a spot on its floor, clear of walls, else its centre; at
         /// the doorway rung, just inside its opening (else on its floor).
@@ -273,21 +354,49 @@ namespace Animus::Curriculum
             bool paid, RewardLedger& ledger);
         /// Circling for one decision: the window's path, turning and net displacement; charged unless `stuck` (the
         /// decision already paid Stuck).
-        void Circle(Env const& env, EnvSeek& seek, Player* bot, float moved, bool stuck, RewardLedger& ledger);
+        void Circle(Env const& env, EnvSeek& seek, Player* bot, float moved, bool stuck, bool keys,
+            RewardLedger& ledger);
         /// Stale for one decision: the cost per second once Seek.StaleRoomMs have passed with no new room of the table
-        /// entered, unless the decision already paid Stuck or Wall (`paid`).
+        /// entered (a table arena) or no pocket entered nor cluster cleared (table-free), unless the decision already
+        /// paid Stuck or Wall (`paid`).
         void Stale(Env const& env, EnvSeek& seek, bool paid, RewardLedger& ledger);
         /// The trap drill's pose: a point Seek.TrapGapNear-Far yd from the jamb of a random door of the arena's room
-        /// table, facing it, on the room's floor with the way to the opening clear. False when no pose passed.
+        /// table, facing it, on the room's floor with the way to the opening clear; or an inside corner (two walls
+        /// within a few yards at right angles, facing the vertex) or a pillar's edge (a solid ahead that the slides
+        /// either side clear) on a random room's floor. False when no pose passed.
         bool TrapPose(Map* map, ArenaDefinition const& arena, Player* bot, Position& pose) const;
+        /// ... one of the recorded pin poses (PinPose) on `mapId`, with its held keys; false while the table holds
+        /// none for that map.
+        bool ReplayPose(uint32 mapId, Position& pose, Movement::ControlState& held);
+        /// Record a pin onset into the replay table.
+        void RecordPin(uint32 mapId, Position const& pose, Movement::ControlState const& held);
+
+        /// FrontierClear for one decision: the clusters of this decision's summary against the episode's record (the
+        /// peaks, the keys cleared by positive evidence), paid unless `paid` is false.
+        void Clusters(Env const& env, EnvSeek& seek, SeatState const& seat, bool paid, bool tableTerms,
+            RewardLedger& ledger);
+        /// PocketEntry for one decision: the pockets of the summary stamped, the own chamber's dwell, an entry paid.
+        void Pockets(Env const& env, EnvSeek& seek, SeatState const& seat, bool paid, bool tableTerms,
+            RewardLedger& ledger);
+        /// Revisit for one decision: the body's 2-yd cell against when it last stood there, charged unless `paid`.
+        void Revisit(Env const& env, EnvSeek& seek, Player* bot, bool paid, RewardLedger& ledger);
+        /// The pin rebate's bookkeeping for one decision: `charge` what Stuck and Wall took this decision.
+        void Recover(Env const& env, EnvSeek& seek, Player* bot, float charge, RewardLedger& ledger);
 
         /// The room goals' bookkeeping for one decision, after the frame's floor hits were added (`counts`: the rays on
         /// each room): the glimpses, the checks, the visits and returns (charged to `ledger`), and the slots. `room` is
         /// the room the seat stands in (-1 for none).
         void TrackRooms(Env const& env, EnvSeek& seek, ArenaDefinition const& arena, Player* bot, int32 room,
-            std::vector<uint32> const& counts, RewardLedger& ledger);
+            std::vector<uint32> const& counts, bool tableTerms, RewardLedger& ledger);
+        /// Whether `arena` pays the table terms: its flag and Seek.TableTerms.
+        [[nodiscard]] bool TableTerms(ArenaDefinition const& arena) const;
 
         std::vector<EnvSeek> _envs;
+        // The replay table, written by Reward on the map threads and read by Build on the world thread.
+        std::mutex _pinMutex;
+        std::array<PinPose, PIN_POSES> _pins{};
+        std::size_t _pinCount = 0;
+        std::size_t _pinNext = 0;
     };
 }
 

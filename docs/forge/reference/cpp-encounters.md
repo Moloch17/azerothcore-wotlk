@@ -551,6 +551,50 @@ static std::vector<std::string> ObjectNames(ArenaDefinition const&);  // seek_ob
 
 `Found` is set at arrival; `FoundMs = EpisodeElapsedMs`; `RoomsBeforeFound = RoomsEntered`.
 
+**General search** (decision 0027, 2026-10-10). The stage trains on `rooms` (34) and `ragefire` (389) 1:1 and is
+measured on `deadmines` (36, `EvalOnly`); the two new arenas' tables (`Runtime/.../Stages/SeekTables.cpp`, authored
+offline; 28 and 33 rooms) are placement geometry only. `TableTerms(arena)` = `arena.TableTerms && Seek.TableTerms`:
+on a table arena nothing above changes; on a table-free one `RoomEntry` never pays (visits, checks, returns and
+`Return` still run), `Explore`'s weights are the pockets' (a cell in the own chamber once entered as a pocket x
+`ExploreInsideBonus`, counted in `explore_inside_cells`; a cell in a pocket not entered x `ExploreRoomBonus`, counted in
+`explore_pocket_cells`; else 1), `FrontierPull`'s target is the nearest cluster of the summary whose cells touch a
+pocket, else the nearest cluster (its centroid, keyed at 10 yd; the ratchet and cap unchanged), and `Stale`'s clock
+`EnvSeek::LastNewMs` restarts on a pocket entry or a cluster clear (on a table arena it is set with `LastNewRoomMs`).
+The summary is `SeatState::CoverageSummary` (`Coverage::Summary`, written by `MapBlock::Observe` from the same frame
+as `seat.Hits`).
+
+| Term | Kind | Formula / condition | Key (default) |
+|---|---|---|---|
+| `frontier_clear` | Exploring | `Clusters`: every cluster of the summary raises `ClusterPeak[key]` (size, centroid); a key whose peak reached `ClearMinCells` is cleared when (i) the body is within `ClearRadius` of the key's 10-yd bin centre, (ii) all 25 crop cells of the bin (located in this frame; any outside the window fails) are known and none frontier, (iii) no cluster of the summary has its centroid within 10 yd of the bin; absence alone never clears. Inserted into `ClustersCleared` (with its centroid); paid `Seek.FrontierClear` once, not when a cleared key lies within 10 yd; cap shared with FrontierPull (`FrontierNominal`); `LastNewMs` restarts (table-free). Not on the first look; rung >= `ExploreFromRung`. | `Seek.FrontierClear` (0.1), `Seek.ClearMinCells` (3), `Seek.ClearRadius` (36), `Seek.ClusterMinCells` (2) |
+| `pocket_entry` | Exploring | `Pockets`: every pocket of the summary stamps `PocketSeenMs[key]` (now, centroid); the own chamber's key accrues `OwnDwellMs` (reset on a change). An ENTRY: `OwnDwellMs >= EnterDwellMs`, the own key (or a key within 10 yd of the own centroid) stamped within `PocketMemoryMs`, neither it nor a neighbour in `PocketsEntered`, and not the start chamber (`StartChamber`, the own chamber at the first look, nor within 10 yd of it). Pays `Seek.PocketEntry` once, cap shared with RoomEntry (`RoomEntryNominal`); `LastNewMs` restarts (table-free). A corridor revealed ahead was never a separate chamber, so walking it pays nothing. | `Seek.PocketEntry` (0.3), `Seek.PocketMemoryMs` (10000), `Seek.PocketMinCells` (6), `Seek.EnterDwellMs` (1000) |
+| `revisit` | Cost (noise, `AddFixed`) | `Revisit`: the body's 2-yd cell (`CellKey(.., 2.0)`, by storey) against `StoodMs` (episode-local); on a cell stood on before, `-Seek.Revisit * stepSeconds * min(1, (now - last) / RevisitAgeMs)`, then the stamp moves to now; not on a decision that paid Stuck or Wall (the stamp still moves); rung >= `ExploreFromRung`; not on the first look; in the score. Worst case 0.84 a 420 s episode. | `Seek.Revisit` (0.002), `Seek.RevisitAgeMs` (60000) |
+| `recovered` | Aid | `Recover` (movement pacing M5): a run of decisions that charged Stuck or Wall (what the ledger paid, `pinCharge`) is a PIN once it reaches `RECOVER_MIN_MS` (1000, a constant); from then the body's 2D distance from the run's first point is watched; at `Seek.RecoverYards` within `Seek.RecoverMs` of the run's start, `min(RecoverShare x the run's charge, RecoverCap)` is paid once (`PinSpent`); past the window nothing. Every rung. | `Seek.RecoverYards` (4), `Seek.RecoverMs` (10000), `Seek.RecoverShare` (0.5), `Seek.RecoverCap` (0.3) |
+
+The seeded draw: a seeded, unpinned episode's arena is `trainable[seed % T]` (`StageScenario::DrawArena`, T =
+`TrainableArenaCount()` = 2 here) and `Build` cycles the rooms with `RungEvaluationPick(seed / T, ...)`; the pinned
+sweeps keep the raw seed. The clear: a Seek env whose episode moved to another map clears the new instance when it
+opens (`Rebuild`: `(firstBuild || ((partyFollow || seek) && newInstance))`), a seek arena off map 34 with
+`DUNGEON_CLEAR_RADIUS` (1000). Columns: `seek_map`, `arena_<name>` / `found_arena_<name>` for every seek arena,
+`seek_room` over the union of the distinct tables (`RoomOffsets`: `rooms`/`sweep`/`sweep_rotating` 0, `ragefire` 39,
+`deadmines` 67), `frontier_clusters_peak`, `frontier_clusters_cleared`, `frontier_clear_reward`, `pockets_seen`,
+`pockets_entered`, `pocket_entry_reward`, `seat_in_chamber_share`, `explore_pocket_cells`, `revisit_seconds`,
+`revisit_share`, `recoveries`, `trap_source`.
+
+**Movement pacing** (decision 0027's amendments to 0023 and 0026). `Seek.TrapFromRung` (1) gates the trap drill
+(split from `ExploreFromRung`, itself 1 now: a camera sweep pays from the doorway rung); `TrapEscapeTurnDeg` 0 (a
+strafe-out counts). `TrapPose` draws, per attempt, a kind at random: the jamb (as above), an INSIDE CORNER (a random
+point of a random room's floor with a wall within `CORNER_REACH` 3 yd along two perpendicular axes at knee height; the
+seat the gap from each, facing the vertex) or a PILLAR'S EDGE (a solid within `PILLAR_REACH` 2.5 yd along a random
+heading that rays 60 degrees either side clear for `PILLAR_CLEAR` 4 yd; the seat the gap from it, facing it); each on
+the room's floor with the way back to the drawn point clear. `Seek.TrapReplayShare` (0.5) of the drill's episodes
+instead take a REPLAYED PIN: `Reward` records, in every unseeded training episode that is not itself a trap, the pose
+(the controller's body) and held keys when the controller's Stuck run reaches `PIN_RECORD_MS` (2000), with its map,
+into a per-stage ring of `PIN_POSES` 512 (`_pins`, a mutex: map threads write, the world thread reads); `Build` draws
+among the entries on this episode's map (`ReplayPose(mapId, ...)`, false when there are none: the geometric poses
+then), sets the seat's `Controls.Held` to the recorded keys (`FaceTurn` and `Jump` cleared) and teleports to the pose
+(`trap_source` 1). A start distribution, never a script.
+`Circle` takes `keys` (a movement key held): the `CircleTurnDeg` clause holds only then; the path clause is unchanged.
+
 **Explore, don't circle, get unstuck** (2026-10-10, decision 0023). `Explore` and `FrontierPull` are in the new
 `RewardCategory::Exploring`: `RewardLedger::Shaped` returns `max(shaping, floor)` for it, the floor being set by the
 encounter every decision (`SetShapingFloor(Seek.ExploreFloor)`), so StageScenario's fade is untouched; stage.json lists

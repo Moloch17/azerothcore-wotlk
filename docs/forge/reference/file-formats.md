@@ -95,7 +95,28 @@ Top-level keys written by the current code:
 
 `arenas[i]` (current writer): `name`, `weight` (the arena's draw weight as configured), `seats`, `episode_seconds`, `plan`
 ("solo" or "party"; note: the code only ever writes these two, although `partners.py` and a comment mention "raid"), `eval_only`,
-`stand_in_share` (percent), `drill_seat` (0 when `DrillRole`, else -1). The backup's arenas also have
+`stand_in_share` (percent), `drill_seat` (0 when `DrillRole`, else -1), and since general search (2026-10-10) `map_id` (the
+arena's map, the stage's when it names none: the learner's `found_heldout_map` reads which held-out arenas are on a map no
+trainable arena is on) and, for a seek arena, `rooms` (its room table's length; the held-out sweep is `rooms x objects`
+episodes: `deadmines` 33 x 5 = 165) and `table_terms` (whether it pays the table terms). `episode_categories.seek_room` is
+the UNION of the stage's distinct seek room tables in arena order, each table once (told apart by its first room's name;
+the Stockades' `rooms`, `sweep` and `sweep_rotating` share one at offset 0, `ragefire` follows at 39, `deadmines` at 67):
+the `seek_room` column is the arena's offset plus the room (`SeekEncounter::RoomOffsets`), 100 names in `move2_seek`.
+New episode columns (seek): `seek_map`, `arena_<name>` and `found_arena_<name>` for every seek arena (`rooms`,
+`ragefire`, `sweep`, `sweep_rotating`, `deadmines`; per event over `arena_<name>`), `frontier_clusters_peak`,
+`frontier_clusters_cleared`, `frontier_clear_reward`, `pockets_seen`, `pockets_entered`, `pocket_entry_reward`,
+`seat_in_chamber_share`, `explore_pocket_cells`, `revisit_seconds`, `revisit_share`, `recoveries`, `trap_source`;
+(every stage, movement pacing M7): `straight_run_mean_s`, `straight_run_p90_s`, `pauses`, `pauses_per_min`,
+`pause_mean_s`, `pause_look_share` (per event over `pauses`), `camera_moves_per_min`, `turn_in_place_share`,
+`pin_events`, `pin_onset_turning_share`, `contact_escapes`, `time_to_escape_s` (per event over `contact_escapes`);
+and the reward columns `reward_frontier_clear`, `reward_pocket_entry`, `reward_revisit`, `reward_recovered`.
+`blocks` of `move2_seek` is `core, move, vision, entities, map, coverage, goal`; the coverage block's manifest is
+`coverage` {grid 12, cell_yards 32, channels 3, channel_names [known, visited, searched], heading_up, scale 1024, layout
+"row_col_channel"} (432 columns, no `obs_names`); the map block is revision 3 with `scalars` 15 (`scalar_names` + frontier_sin,
+frontier_cos, frontier_dist, region_sin, region_cos, region_dist, clusters, searched_cells; `coverage_cell_yards`,
+`coverage_reach_yards`, `cluster_scale`, `floor_scale`, `cluster_min_cells`, `pocket_min_cells`); the move block is revision 6
+(61 `obs_names`, + contact_side, blocked_ahead, hold_age, pinned_age; `hold_age_scale_s`, `pinned_age_scale_s`).
+`format` 3, `MANIFEST_FORMAT` 10 and protocol 30 are unchanged (additive keys; no wire change). The backup's arenas also have
 `pvp`, `ambushers`, `checkpoints`, `team_seats`, `lone_seats`, `directed`, `taught` and the top level has `director_agents`: keys the current
 writer no longer emits (a diff of old and new stage.json will report them removed; `stage_json_diff.py --allow-removed-keys`).
 

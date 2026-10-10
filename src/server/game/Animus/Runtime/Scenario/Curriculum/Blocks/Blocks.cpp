@@ -23,6 +23,7 @@
 #include "CombatBlock.h"
 #include "CompassBlock.h"
 #include "CoreBlock.h"
+#include "CoverageBlock.h"
 #include "DuelBlock.h"
 #include "EntitiesBlock.h"
 #include "MoveBlock.h"
@@ -91,6 +92,7 @@ Animus::Curriculum::Block const& Animus::Curriculum::GetBlock(BlockId id)
     static PartyFramesBlock const partyFrames;
     static CombatBlock const combat;
     static GoalBlock const goal;
+    static CoverageBlock const coverage;
 
     // Keyed by id: the ids have gaps (the deleted blocks' numbers are not reused).
     static std::array<Block const*, BLOCK_COUNT> const blocks = [&]
@@ -110,6 +112,7 @@ Animus::Curriculum::Block const& Animus::Curriculum::GetBlock(BlockId id)
         table[std::size_t(BlockId::PartyFrames)] = &partyFrames;
         table[std::size_t(BlockId::Combat)] = &combat;
         table[std::size_t(BlockId::Goal)] = &goal;
+        table[std::size_t(BlockId::Coverage)] = &coverage;
         return table;
     }();
 

@@ -6550,8 +6550,35 @@ AnimusForge.Curriculum.PartyFollow.CastShare = 0
 #        the window (0 drops that). The Wall charge of a decision is multiplied by 1 + t / WallEscalateSeconds, t the
 #        run of seconds of Wall-charged decisions before it, up to WallEscalateMax; the run ends on a decision that
 #        charged no Wall; WallEscalateSeconds 0 switches it off.
+#        General search (2026-10-10, decision 0027): the seek stage trains on the Stockades and Ragefire Chasm and is
+#        measured on the Deadmines (held out), so the search terms come from the seat's own map, not the room table.
+#        TableTerms 1 honours each arena's table flag (the Stockades arenas pay the table terms RoomEntry, the
+#        room-based Stale clock and FrontierPull's corridor filter; Ragefire and the Deadmines do not); 0 turns the
+#        table terms off everywhere (the ablation). The map-derived terms read the mental-map crop every decision
+#        (Runtime/Scenario/Curriculum/Blocks/Coverage): a FRONTIER CLUSTER is an 8-connected set of ClusterMinCells or
+#        more frontier cells; a CHAMBER a 4-connected part of PocketMinCells or more cells of the open floor eroded by
+#        a cell, a POCKET a chamber the seat does not stand in that it can reach over open cells (behind a narrowing).
+#        FrontierClear (Exploring, in FrontierPull's cap FrontierCap) pays once per cluster of ClearMinCells or more
+#        cells when its 10-yd bin is wholly known and frontier-free while the body is within ClearRadius of it.
+#        PocketEntry (Exploring, in RoomEntry's cap RoomEntryCap) pays once per pocket entered: EnterDwellMs in a
+#        chamber that was a pocket within the last PocketMemoryMs while the seat stood elsewhere, never the chamber it
+#        started in. On a table-free arena Stale's clock restarts on those two events instead of a room, Explore's
+#        bonuses are the pockets' (ExploreRoomBonus looking into a pocket not entered, ExploreInsideBonus inside an
+#        entered one) and FrontierPull aims at the nearest cluster touching a pocket. Revisit (Cost, fixed price, in
+#        the score) charges each second stood on a 2-yd cell of ground the seat stood on earlier this episode, times
+#        min(1, the time since / RevisitAgeMs); not on a decision that charged Stuck or Wall.
+#        Movement pacing (2026-10-10, decision 0027 amending 0023 and 0026): StepCost 0.00025 (halved: a pause costs
+#        half what it did), ExploreFromRung 1 (a camera sweep pays from the doorway rung) and the trap drill has its own
+#        rung TrapFromRung (1). TrapEscapeTurnDeg 0: a strafe-out counts. The drill's poses are a door jamb, an
+#        inside corner or a pillar's edge of the room table, or -- TrapReplayShare of the drill's episodes -- a pose
+#        where a training seat pinned (a Stuck run of 2 s or more, recorded in memory with its held keys; never a
+#        script). Circling's turn clause (CircleTurnDeg) applies only while a movement key is held: a keys-up spin to
+#        look round is free. Recovered (Aid, fades at AidUntil, outside the score) pays back RecoverShare of what a pin
+#        of Stuck and Wall charges (a run of 1 s or more) cost, at most RecoverCap, once the body is RecoverYards from
+#        the pin point within RecoverMs: the gradient points at leaving, never at bumping. Stuck needs a held key:
+#        standing still with the keys up is never Stuck or Wall.
 AnimusForge.Curriculum.Seek.Arrive = 3.0
-AnimusForge.Curriculum.Seek.StepCost = 0.0005
+AnimusForge.Curriculum.Seek.StepCost = 0.00025
 AnimusForge.Curriculum.Seek.Death = 6.0
 AnimusForge.Curriculum.Seek.ArriveRise = 2.0
 AnimusForge.Curriculum.Seek.Sighting = 0.5
@@ -6620,14 +6647,30 @@ AnimusForge.Curriculum.Seek.TrapShare = 0.2
 AnimusForge.Curriculum.Seek.Escape = 0.3
 AnimusForge.Curriculum.Seek.TrapEscapeYards = 6.0
 AnimusForge.Curriculum.Seek.TrapEscapeMs = 20000
-AnimusForge.Curriculum.Seek.TrapEscapeTurnDeg = 90.0
+AnimusForge.Curriculum.Seek.TrapEscapeTurnDeg = 0.0
 AnimusForge.Curriculum.Seek.TrapGapNear = 0.45
 AnimusForge.Curriculum.Seek.TrapGapFar = 0.8
 AnimusForge.Curriculum.Seek.TrapFacingSlack = 0.3
 AnimusForge.Curriculum.Seek.WallEscalateSeconds = 4.0
 AnimusForge.Curriculum.Seek.WallEscalateMax = 4.0
-AnimusForge.Curriculum.Seek.ExploreFromRung = 2
+AnimusForge.Curriculum.Seek.ExploreFromRung = 1
 AnimusForge.Curriculum.Seek.HardRoomWeight = 3.0
+AnimusForge.Curriculum.Seek.TableTerms = 1
+AnimusForge.Curriculum.Seek.FrontierClear = 0.1
+AnimusForge.Curriculum.Seek.ClearMinCells = 3
+AnimusForge.Curriculum.Seek.ClearRadius = 36.0
+AnimusForge.Curriculum.Seek.PocketEntry = 0.3
+AnimusForge.Curriculum.Seek.PocketMemoryMs = 10000
+AnimusForge.Curriculum.Seek.PocketMinCells = 6
+AnimusForge.Curriculum.Seek.ClusterMinCells = 2
+AnimusForge.Curriculum.Seek.Revisit = 0.002
+AnimusForge.Curriculum.Seek.RevisitAgeMs = 60000
+AnimusForge.Curriculum.Seek.TrapFromRung = 1
+AnimusForge.Curriculum.Seek.TrapReplayShare = 0.5
+AnimusForge.Curriculum.Seek.RecoverYards = 4.0
+AnimusForge.Curriculum.Seek.RecoverMs = 10000
+AnimusForge.Curriculum.Seek.RecoverShare = 0.5
+AnimusForge.Curriculum.Seek.RecoverCap = 0.3
 
 #
 #    AnimusForge.Curriculum.Interact.*

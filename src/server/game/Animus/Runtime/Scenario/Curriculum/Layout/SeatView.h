@@ -24,6 +24,7 @@
 #include "Block.h"
 #include "CellGrid.h"
 #include "ClassProfile.h"
+#include "Coverage.h"
 #include "ActionTuning.h"
 #include "FreeLook.h"
 #include "ObjectGuid.h"
@@ -274,6 +275,9 @@ namespace Animus::Curriculum
         /// which holds nothing and moves nowhere.
         MoveControls::SeatControls* Controls = nullptr;
         Movement::BodyState* Body = nullptr;
+        /// How long the held keys have got nowhere, ms (SeatState::StuckRunMs: a key held and the body moving under a
+        /// tenth of what it asked): the move block's pinned_age (movement pacing M1). 0 for a view without one.
+        uint32 PinnedMs = 0;
         /// **The seat's camera image**, written by the vision block: Vision::ImageBytes bytes (camera-vision.BYTES.md),
         /// the seat's row of the pool's image (EnvPool::Image, or FinalImage for an ended episode's last look). Null
         /// for a view without one (a stage with no vision block): the block then writes its scalars alone.
@@ -430,6 +434,9 @@ namespace Animus::Curriculum
         /// ended; the plan's next step (the queue's first) and how much of the plan is left (GoalBlock::OBS_PLAN_LEFT);
         /// and the pose of the latest choice, which the seat's own position is read against (OBS_FROM_*).
         CropPose* Crop = nullptr;
+        /// **The coverage analysis of this decision's crop** (general search; SeatState::Coverage), written by
+        /// MapBlock::Observe through this pointer like Crop; null for a view without one.
+        Coverage::Summary* CoverageOut = nullptr;
         std::array<CellPoint, 2> HeldCell{};
         CellPoint NextCell;
         float PlanLeft = 0.0f;

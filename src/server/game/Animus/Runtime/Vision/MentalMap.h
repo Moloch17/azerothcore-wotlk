@@ -259,6 +259,13 @@ namespace Animus::Vision
         /// The 1-yd cells the body first stood on this episode (MAP_VISITED not yet set; a kept map's earlier ground
         /// is not new ground).
         [[nodiscard]] uint32_t GroundTotal() const { return _groundTotal; }
+        /// The 1-yd cells looked at this episode (a look stamped at or after the epoch, counted at its first such
+        /// stamp), over the whole map: the map block's searched_cells scalar (general search, decision 0027).
+        [[nodiscard]] uint32_t SearchedCells() const { return _searchedTotal; }
+        /// The per-tile counters the coverage block samples (CoverageBlock): the cells of tile (tx, ty) ever seen, the
+        /// cells the body stood on, and the cells looked at this episode (0 when the tile's count is an earlier
+        /// episode's). Zeros for a tile not kept (a coarse tile has no counters).
+        void TileCounts(int32_t tx, int32_t ty, uint16_t& known, uint16_t& visited, uint16_t& searched) const;
         /// Seconds since the body last stood on such a cell.
         [[nodiscard]] double SecondsSinceGround() const { return _clock - _lastGroundClock; }
 
@@ -289,6 +296,13 @@ namespace Animus::Vision
         {
             std::array<MapCell, MAP_TILE_CELLS> Cells{};
             uint64_t Touched = 0;
+            /// The coverage counters (general search): cells ever seen (a Seen 0 -> stamp transition), cells the body
+            /// stood on (MAP_VISITED first set), cells looked at this episode (Seen below the epoch -> at or above it)
+            /// with the epoch the count belongs to; a count of another epoch reads as 0 and restarts.
+            uint16_t KnownCells = 0;
+            uint16_t VisitedCells = 0;
+            uint16_t SearchedCells = 0;
+            uint16_t SearchedEpoch = 0;
         };
 
         [[nodiscard]] static int64_t TileKey(int32_t tx, int32_t ty)
@@ -302,6 +316,7 @@ namespace Animus::Vision
         void Fold(int64_t key, Tile const& tile);
         [[nodiscard]] MapCell const* FindCoarse(int32_t cx, int32_t cy) const;
 
+        /// Stamp a look on `cell`, which Touch returned last (its tile is _lastTile, whose counters move).
         void MarkSeen(MapCell& cell, uint16_t stamp);
         void NoteGround(MapCell const& cell);
         void WriteFloor(int32_t cx, int32_t cy, float z, uint16_t stamp, MapWriteStats* stats);
@@ -313,6 +328,7 @@ namespace Animus::Vision
         double _clock = 0.0;
         uint16_t _epoch = 1;            // the first Stamp() of this episode
         uint32_t _groundTotal = 0;
+        uint32_t _searchedTotal = 0;
         double _lastGroundClock = 0.0;
         uint64_t _touch = 0;
         // The last tile Touch found: a frame writes runs of cells in one tile.

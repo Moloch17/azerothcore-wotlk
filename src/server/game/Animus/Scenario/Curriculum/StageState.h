@@ -356,6 +356,47 @@ namespace Animus::Curriculum
         bool CellGoals = false;
         CropPose Crop;
         CropPose ChoicePose;
+        /// The coverage analysis of the last observation's crop (general search, decision 0027; MapBlock::Observe
+        /// through SeatView::CoverageOut): the seek encounter's map-derived terms read it, the same frame as Hits.
+        Coverage::Summary CoverageSummary;
+        /// **Movement pacing** (M7, read from the controller's body every tick in StageScenario::TrackController, never
+        /// the server's position): the straight runs (ticks moving at half a yard a second or more with the course
+        /// within 15 degrees of the run's first leg: their count, seconds, and seconds squared for the p90 estimate),
+        /// the pauses (runs of 750 ms or more with no movement key and the body under a tenth of a yard a second:
+        /// count, seconds, and those in which the camera's yaw offset or the body's yaw swept 30 degrees or more),
+        /// the camera moves (decisions the look head changed a rate or the zoom), the ticks turning in place, the
+        /// pin events (Stuck runs of a second or more) and the ones whose body turned 30 degrees or more in the
+        /// second before, the escapes (a pin ended by 4 yd of net displacement within 20 s) and their seconds.
+        uint32 StraightRuns = 0;
+        float StraightSeconds = 0.0f;
+        float StraightRunMs = 0.0f;         // the run in progress
+        float StraightCourse = 0.0f;        // the run's first leg
+        bool StraightOn = false;
+        std::array<uint16, 64> StraightHistogram{};   // runs by their length in quarter seconds, for the p90
+        uint32 Pauses = 0;
+        float PauseSeconds = 0.0f;
+        uint32 PauseRunMs = 0;              // the pause in progress
+        float PauseYawStart = 0.0f;         // the body's yaw at its start
+        float PauseLookStart = 0.0f;        // the camera's yaw offset at its start
+        float PauseSweep = 0.0f;            // the most either swept during it
+        bool PauseCounted = false;          // it reached 750 ms and was counted
+        bool PauseLooked = false;           // ... and its sweep reached 30 degrees
+        uint32 PausesLooked = 0;
+        uint32 CameraMoves = 0;
+        uint32 TurnInPlaceMs = 0;
+        uint32 MovingTicksMs = 0;           // every tick's ms, the denominator of the in-place share
+        uint32 PinEvents = 0;
+        uint32 PinOnsetTurning = 0;
+        bool PinOpen = false;               // a Stuck run of a second or more is running (or ended, awaiting escape)
+        bool PinCounted = false;
+        float PinX = 0.0f;                  // the pin point
+        float PinY = 0.0f;
+        uint32 PinStartMs = 0;              // the episode clock at the run's start
+        uint32 ContactEscapes = 0;
+        float EscapeSeconds = 0.0f;
+        std::array<float, 8> YawHistory{};  // the body's yaw over the last second (one sample a tick slot), ring
+        std::array<uint32, 8> YawHistoryMs{};
+        uint32 YawHistoryNext = 0;
         std::array<CellPlan, PLAN_POSITIONS> Plan{};
         uint32 CellGoalsChosen = 0;
         uint32 CellGoalsReached = 0;
@@ -607,6 +648,37 @@ namespace Animus::Curriculum
             CellGoals = false;
             Crop = CropPose();
             ChoicePose = CropPose();
+            CoverageSummary = Coverage::Summary();
+            StraightRuns = 0;
+            StraightSeconds = 0.0f;
+            StraightRunMs = 0.0f;
+            StraightCourse = 0.0f;
+            StraightOn = false;
+            StraightHistogram.fill(0);
+            Pauses = 0;
+            PauseSeconds = 0.0f;
+            PauseRunMs = 0;
+            PauseYawStart = 0.0f;
+            PauseLookStart = 0.0f;
+            PauseSweep = 0.0f;
+            PauseCounted = false;
+            PauseLooked = false;
+            PausesLooked = 0;
+            CameraMoves = 0;
+            TurnInPlaceMs = 0;
+            MovingTicksMs = 0;
+            PinEvents = 0;
+            PinOnsetTurning = 0;
+            PinOpen = false;
+            PinCounted = false;
+            PinX = 0.0f;
+            PinY = 0.0f;
+            PinStartMs = 0;
+            ContactEscapes = 0;
+            EscapeSeconds = 0.0f;
+            YawHistory.fill(0.0f);
+            YawHistoryMs.fill(0);
+            YawHistoryNext = 0;
             Plan = {};
             CellGoalsChosen = 0;
             CellGoalsReached = 0;

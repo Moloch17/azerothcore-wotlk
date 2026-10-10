@@ -157,6 +157,9 @@ namespace Animus::Curriculum
 
         // For the encounters.
         [[nodiscard]] StageDefinition const& Stage() const { return _stage; }
+        /// The arenas the stage trains on (not EvalOnly), the T of the seeded round-robin draw: an encounter divides a
+        /// seeded episode's index by it for its own seeded picks.
+        [[nodiscard]] uint32 TrainableArenaCount() const;
         /// The env's current episode's arena.
         [[nodiscard]] ArenaDefinition const& Arena(Env const& env) const;
         /// Whether the env's current episode uses `encounter`.
@@ -282,6 +285,10 @@ namespace Animus::Curriculum
         static void StartMover(SeatState& seat, Player* bot, uint32 nowMs);
         /// The controller's columns, after a tick (wall, stuck, course kinks).
         static void TrackController(SeatState& seat, uint32 diffMs);
+        /// The movement-pacing tallies of one tick (M7, decision 0027): straight runs, pauses, turning in place, pins
+        /// and their escapes, from the controller's body.
+        static void TrackPacing(SeatState& seat, Movement::BodyState const& body, Movement::ControlState const& held,
+            bool keys, bool stuck, uint32 diffMs);
         /// Whether the body's course, its way from the last tick to (x, y) over `diffMs`, turned more than 20 degrees
         /// from the tick before while moving (half a yard a second or more); keeps the course on the seat.
         static bool CourseKink(SeatState& seat, float x, float y, uint32 diffMs);
@@ -351,7 +358,10 @@ namespace Animus::Curriculum
 
         bool Rebuild(Env& env);
         /// The next episode's arena: drawn by weight (no draw for a single arena, so its random numbers are as before).
-        [[nodiscard]] uint32 DrawArena(bool evaluating) const;
+        /// A seeded, unpinned episode (an evaluation's, `seed` its index) goes round the trainable arenas instead --
+        /// `seed` mod TrainableArenaCount(), in definition order -- so every map gets the same number of episodes
+        /// (general search, decision 0027); a pinned one plays its arena, a training one draws.
+        [[nodiscard]] uint32 DrawArena(bool evaluating, uint32 seed) const;
         void SetStageProgress(float progress) override { _stageProgress.store(progress, std::memory_order_relaxed); }
         void SetShapingScale(float scale) override;
         void SetCostScale(float scale) override;

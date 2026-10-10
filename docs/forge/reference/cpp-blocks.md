@@ -96,7 +96,8 @@ here, one case in `BlockName` (`Layout/Layout.cpp:103`).
 | 24 | party_frames | PartyFramesBlock |
 | 25 | combat | CombatBlock |
 | 26 | goal | GoalBlock |
-| 27 | Count (`BLOCK_COUNT`) | not a block |
+| 27 | coverage | CoverageBlock (general search, 2026-10-10) |
+| 28 | Count (`BLOCK_COUNT`) | not a block |
 
 Ids 6-10 and 12-19 are unused gaps (first curriculum's deleted blocks). The comment says they are never reused; nothing
 in code enforces it other than the explicit numbers (`Block.h:83`). `Layout::_blockMask` is a `uint32` so ids must stay
@@ -272,10 +273,19 @@ item each call (3 reads per action per decision). `OBS_GCD` is set inside the lo
 for the rage column says "/ 100" but the code divides by 1000. `KnowsInterrupt` counts knockbacks and stuns/fears as
 interrupts via `IsInterruptingSpell`.
 
-## move (id 1, revision 5)
+## move (id 1, revision 6)
 
-Does: where the seat puts its feet, as the player controller's held keys and mouse. No target needed. Size: 57 obs, 25
-actions, class-independent (`MoveBlock.cpp:103`). Pin hash `a9e15899154cf795`.
+Does: where the seat puts its feet, as the player controller's held keys and mouse. No target needed. Size: 61 obs (57
+up to revision 5), 25 actions, class-independent (`MoveBlock.cpp:103`). Pin hash `a9e15899154cf795` (revision 5).
+
+Revision 6 (movement pacing M1, decision 0027, 2026-10-10) appends four columns after `trail_dwell`: `contact_side`
+(57: which side the controller's last blocked step found clear, +1 left / -1 right / 0 none, `BodyState::ContactSide`,
+set by `SweptMove`'s slide and reset by each `Step`), `blocked_ahead` (58: 1 - the free share of the straight move,
+`BodyState::BlockedShare`, the worst of the step's sub-steps), `hold_age` (59: seconds since any held control changed,
+`SeatControls::ChangedMs` stamped by `Press`, over `HOLD_AGE_SCALE_S` 8, clamped) and `pinned_age` (60: the
+scenario's Stuck run `SeatState::StuckRunMs` through `SeatView::PinnedMs`, over `PINNED_AGE_SCALE_S` 4, clamped). The
+manifest gains `hold_age_scale_s`, `pinned_age_scale_s`. The earlier 57 columns keep their names and indexes, so a
+revision 5 checkpoint seeds by name and the four start at zero.
 
 Columns (named by `MoveBlock::ColumnName`; all in the block):
 
@@ -476,9 +486,32 @@ normalised (kept out of the learner's adapters). `Observe` first advances and wr
 writes. Manifest object "entities" (`features` names the columns). `ReadMarks(row, marks)` reads a row back into `Vision::EntityMark`s (the audit's overlay).
 Reviewer notes: class and type are raw indices (the learner hashes type modulo `TYPE_BUCKETS 4096`).
 
-## map (id 22, revision 2)
+## map (id 22, revision 3)
 
-The mental map: 7 scalars + the 48x48x7 byte crop (`Vision::CROP`; separate STEP section). Scalars: known, frontier,
+Revision 3 (general search, decision 0027, 2026-10-10): 15 scalars, the crop unchanged (7 channels, 16,128 bytes,
+protocol 30). The eight appended scalars come from the coverage analysis of this decision's crop
+(`Blocks/Coverage.{h,cpp}`, `Coverage::Analyse`, run in `Observe` after `Crop`; the summary is written to the seat
+through `SeatView::CoverageOut` for the seek encounter): `frontier_sin`, `frontier_cos`, `frontier_dist` (7-9: the
+nearest frontier cluster's centroid, bearing off `view.Facing` as sin/cos, distance over `Coverage::REACH` 48 yd,
+clamped), `region_sin`, `region_cos`, `region_dist` (10-12: the largest cluster's, by cells), `clusters` (13: the
+cluster count over `CLUSTER_SCALE` 8, clamped) and `searched_cells` (14: `MentalMap::SearchedCells()`, the 1-yd cells
+looked at THIS episode over the whole map, over `SEARCHED_SCALE` 6000, clamped: the episode-local progress record;
+`KnownCells` would count walls and passes and outlive the episode on a kept map). Zeros when there is no cluster.
+Manifest adds `coverage_cell_yards` 2, `coverage_reach_yards` 48, `cluster_scale` 8, `floor_scale` 6000,
+`cluster_min_cells` and `pocket_min_cells` (`Seek.ClusterMinCells` 2 / `Seek.PocketMinCells` 6, set once by the
+scenario: `MapBlock::ConfigureCoverage`). The learner reads the scalar count from the manifest.
+
+**The coverage analysis** (`Coverage.h`): cells Open (floor or door), Shut (wall or hazard), Unknown (0); a frontier
+cell is Open with an Unknown four-neighbour; a FRONTIER CLUSTER an 8-connected component of `ClusterMinCells` or more
+frontier cells (at most 32 kept, largest first: size, centroid in world and in the body's frame, mean floor z, key =
+`CellKey(centroid, 10 yd)`, `AtPocket`); the CHAMBERS the 4-connected components of the Open cells eroded by one cell
+(a 2-yd erosion, which parts a 3-yd doorway), of `PocketMinCells` or more cells, at most 16, each grown back by a cell;
+the one holding one of the four cells under the body is `Own` (-1 in a doorway or passage); a chamber is a POCKET when
+it is not own and a BFS from the body over Open cells reaches it (behind a narrowing, not behind unseen ground). The
+summary carries per cell a chamber index and the Open / Known / Frontier / Eroded / Reached bits (2 x 2,304 bytes),
+`Locate` and `WorldOf` for the frame. Under 0.1 ms a decision; thread-local scratch; a function of the crop bytes.
+
+The mental map: 7 scalars (revision 2) + the 48x48x7 byte crop (`Vision::CROP`; separate STEP section). Scalars: known, frontier,
 visited, kept (share of cells ever seen, frontier, visited, map kept from the previous episode), and since revision 2
 (exploration v3, decision 0026) searched (the crop's `CROP_SEARCHED` bytes summed over 4 x 2304: the share of the
 window's 1-yd cells looked at this episode), new_age (`min(1, SecondsSinceGround / 120)`: seconds since the body last
@@ -489,6 +522,22 @@ new_age_scale_s 120, total_scale 3000, epoch "episode". Revision 1 had 4 scalars
 map clock, writes the frame's rays (`view.Hits`), the listed entities (`view.Seen`) and the body, crops heading-up. Entity sensing: also writes the listed entities' cells (`MentalMap::WriteEntities(*view.Seen)`), since the image no longer carries units or objects. Declared from move2 on.
 Reviewer notes: uses `bot->GetPosition*` for the crop centre before the body override only when no
 body exists; no actions.
+
+## coverage (id 27, revision 1)
+
+`Blocks/CoverageBlock.{h,cpp}` (general search, decision 0027, 2026-10-10). A heading-up, egocentric 12 x 12 grid
+(`COVERAGE_GRID`) of 32-yd cells (`COVERAGE_CELL` = `Vision::MAP_TILE`: one mental-map tile each) round the body, three
+channels a cell: the tile's 1-yd cells ever seen (`known`), stood on (`visited`) and looked at this episode
+(`searched`), each over `COVERAGE_SCALE` 1024 and clamped. 432 floats, `[row][col][channel]`, no actions, no
+`obs_names`. Output cell (r, c) samples the tile holding the world point at forward (5.5 - r) x 32, right (c - 5.5) x
+32 yd of the body (the crop's rotation: right = (sin yaw, -cos yaw)); the body sits on the corner of cells (5,5)..(6,6).
+144 `MentalMap::TileCounts` lookups: the tile counters (`Tile::KnownCells`, `VisitedCells`, `SearchedCells` with
+`SearchedEpoch`) are kept by `MarkSeen` (a first look ever; a first look this episode) and `NoteGround` (a first stand);
+`searched` reads 0 for a tile whose count is an earlier episode's; a tile never looked at reads 0 in every channel,
+whatever is there. `known` and `visited` outlive an episode on a kept map, as the crop's do. Manifest `"coverage": {
+grid 12, cell_yards 32, channels 3, channel_names, heading_up true, scale 1024, layout "row_col_channel" }`. Needs the
+map block (`Problem()`); listed in `move2_seek` only (`{ Core, Move, Vision, Map, Coverage, Goal }`; the entities block
+is inserted after vision), before the goal block, which stays last. M3 and M4 keep their own block lists.
 
 ## sight (id 23, revision 3)
 
