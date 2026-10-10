@@ -45,6 +45,17 @@ copied only if the old checkpoint has it, the vision block revision is equal in 
 otherwise fresh with the join zeroed), `_seed_map` (key by key, join zeroed when fresh), `_seed_sight`
 (sight encoder and pointer queries, the pool zeroed when fresh; fresh too when the sight block revision differs from the checkpoint's, entity sensing's 2 -> 3; a narrower `sight.extra` is widened with zeros),
 `_seed_look` (look head, same rule as the camera). Lines are printed for each.
+**Goal block revision change** (`_reseed_goals`, m2-goals W3b, after `_seed_shared`): when the checkpoint's stage.json and
+this stage's give the `goal` block different revisions (M2's room goals, 2 -> 3), `goal_head.*` (and `slow_memory.*`,
+`slow_value.*`, which `SHARED_PREFIXES` never carries; the slow optimiser always starts fresh) are put back to the new
+networks' own initial values -- the old head chose among the old block's offers and may have collapsed -- while
+`goal_embedding.*` is kept, and the Fight/none rows (kind `fight`, target 0) are copied into kind `travel_to` and the
+place targets `goals.place_slots.first ..+count-1` of the actor's `kind`, `target`, `kind_scale`, `target_scale` tables
+and the critic's `kind`, `target`, wherever the destination row is still all zero (never trained). Printed:
+the revisions, the number of tensors reset, the rows copied. Same revision, an absent revision on either side (no
+stage.json) or an overlay seed: exactly as before. A manifest without `place_slots` resets but copies nothing.
+The new goal-block columns reach the adapter at zero weight (the block's revision change makes `_common_blocks` start it
+fresh, then by name: `_seed_adapter_blocks` zeroes what is not carried), and the pointer's last layer is zero.
 Everything else stays freshly initialised: critic state encoder and value head, the value normaliser, and any module
 not named above (UNVERIFIED which actor modules that includes: foresight and slow-goal modules are not in
 `SHARED_PREFIXES`; check `mappo/networks.py` key names).

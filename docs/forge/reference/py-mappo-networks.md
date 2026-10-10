@@ -94,23 +94,43 @@ Constructor args `(width, kinds, targets, layout_count, lookahead, slots)`. Para
 `block_at [layouts] long` (-1 = layout has no goal block). `has_space` is a host bool copy of `any(block_at >= 0)` so a
 captured graph need not read the device (`:454`); it is recomputed in `_load_from_state_dict` (`:427`).
 
+**The pointer over place slots** (m2-goals W3a, 2026-10-09). `pointer` = `Sequential(Linear(5, 16), Tanh, Linear(16, 1))`
+(`PLACE_FEATURES` 5, `POINTER_HIDDEN` 16; only when `targets > 1`), the first layer orthogonal, **the last layer's weight
+and bias zero**, so a seeded head chooses exactly as before until it trains. Buffer `place_spec [4] long`
+`(first feature column inside the goal block, first place target, slots, features)`, -1 throughout = no pointer, with host
+copies `place_at / place_first / place_count` (`pointer_on`) mirrored in `set_space` and `_load_from_state_dict`, so a
+captured graph never reads the device. `set_space(accepts, block_at, goals)` takes the manifest's `goals` object and reads
+`columns.place_features` and `place_slots {first, count, features}` (`_place_spec_of`; nothing hard-coded; absent keys, a
+goal block before revision 3, turn the pointer off and say so, a `features` other than 5 or a span past
+`columns.width` raises). `place_scores` gathers each slot's 5 values from the goal block (rows without a goal block read
+zeros), `_with_places` adds the MLP's score to each place target's logit for every kind alike, in `logits()` and
+`slot_logits()` (so the primary, the secondary and the queue), before the goal block's target-there mask: an unbound or
+checked slot is never chosen. No data-dependent Python branch, so the rollout graph captures it.
+
 Public methods:
 
 - `logits(features, obs, layout)` (`:560`): masked joint logits `[rows, kinds*targets]`; allowed = `accepts` AND (goal
   block's kinds-there x targets-there, only when `targets > 1`). A layout with no goal block gets all goals masked
-  except index 0 when `has_space`. `allowed[:, 0] = True` always (goal 0 "Fight about no one" is never masked).
+  except index 0 when `has_space`. Goal 0 ("Fight about no one") is allowed **only when nothing else is**
+  (`allowed[:, 0] |= ~allowed.any(-1)`, m2-goals): a no-op in every stage whose goal block always offers it, and in M2
+  the placeholder once a place target is on offer is withdrawn so the head has to pick a place.
   With lookahead the predictions (detached) times `lookahead_weight` are added to the logits (`:566`).
 - `signals(obs, layout)` (`:464`): reads the goal block's columns > 0.5: `ended`, `secondary_ended`, `event`,
   `achieved` (-1 none). With `slots <= 1` only `ended` is real.
 - `slot_logits(features, slot, drawn, obs, layout)` (`:494`): logits `[rows, count+1]` for a slot after the primary,
-  last column = none; masked by the goal block like the primary; a row without a goal block has only none.
-- `draw(features, obs, layout, deterministic, slots=None)`: draws (or, with `slots`,
+  last column = none; masked by the goal block like the primary; a row without a goal block has only none. From
+  `slot >= 2` (the queue) the goals already drawn at this choice (primary, secondary, earlier queue entries) are masked
+  too, so a queue never repeats the primary (which ended lost on promotion).
+- `draw(features, obs, layout, deterministic, slots=None, uniform=False)`: `uniform` (the eval arm `random_goal`,
+  `decide_goals(..., uniform=True)`) draws the primary uniformly over the goals on offer and holds nothing beside it;
+  never set by training. Draws (or, with `slots`,
   scores) primary then secondary/queue slots, each conditioned on the earlier ones. Returns `(slots [rows,S] with -1
   for none, log_prob, entropy)`. The primary's entropy counts fully; later slots are weighted by `slot_entropy_weight`
   (default 0.1, overwritten from `MappoConfig.goal_slot_entropy_weight` by `trainer.py:665`, not by the constructor).
   (The order-given primary path was removed with the goal block's order columns, goal block revision 2.)
 - `predictions(features)` (`:555`): `(success logits, sigmoid(duration))` per candidate goal.
-- `set_space(accepts, block_at)` (`:448`), `block_width` (`:433`), `columns` (`:442`): goal block layout
+- `set_space(accepts, block_at, goals=None)` (`:448`; returns the pointer's log line), `block_width` (`:433`),
+  `columns` (`:442`): goal block layout (the revision-3 columns, 68..107, are read from the manifest, not here)
   (secondary_ended
   = base, event, achieved_kind, achieved_target with base = kinds+targets+2; `block_width` = base + 2 + kinds +
   targets with slots > 1, goal block revision 2).
@@ -226,7 +246,8 @@ Embeds the goal held: `kind` Embedding(kinds,width) + `target` Embedding(targets
 secondary adds its embedding through a learned `gate` (init 0.5). The actor builds it `scaled=True`: extra
 `kind_scale`/`target_scale` tables (zero-init) used as FiLM `features*(1+scale)+shift` (`condition :1918`); the critic
 adds the shift only (`forward :1914`). `_GOAL_SCALE_KEYS` (`:1928`): an actor saved before the scale existed loads with
-the scale at zero (`load_actor_state`).
+the scale at zero (`load_actor_state`). `_GOAL_POINTER_PREFIXES` (`goal_head.pointer.`, `goal_head.place_spec`) likewise:
+an actor saved before the pointer loads with it as initialised (a no-op) and no place slots.
 
 ## `LayoutActor` (`:1971`)
 
@@ -263,9 +284,11 @@ Note the critic has a GRU of its own cleared with the actor's (`ActingState.crit
 ## Loading: what a by-name load tolerates
 
 - `load_actor_state` (`:1943`): `strict=False`, then raises on any missing or unexpected key except (a) the blind-column
-  masks and (b) `goal_embedding.kind_scale.weight` / `target_scale.weight` (zeroed). **Any other missing or extra
-  key is an error**; shape mismatches raise inside torch.
-- The critic: `MappoTrainer.load_state_dict` (`trainer.py:2038`) does the same without the goal-scale exemption.
+  masks, (b) `goal_embedding.kind_scale.weight` / `target_scale.weight` (zeroed) and (c) `goal_head.pointer.*` and
+  `goal_head.place_spec` (left as initialised). **Any other missing or extra key is an error**; shape mismatches raise
+  inside torch.
+- The critic: `MappoTrainer.load_state_dict` (`trainer.py:2038`) does the same without the goal-scale exemption; the
+  pointer is the actor's alone, so the critic has no new key to tolerate.
 - Cross-stage seeding (a new stage from a parent checkpoint) is not this path; it is by block name in
   `bootstrap.py` ([py-learner.md](py-learner.md)).
 - Checkpoint contents (`train.save_checkpoint`, `train.py:170`): `trainer.state_dict()` = `actor`, `critic`,

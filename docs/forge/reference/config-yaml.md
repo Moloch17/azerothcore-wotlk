@@ -136,7 +136,7 @@ Read by `evaluation.py` (`run_evaluation`, line 451), `train.py` (1150-1310, 222
 | `heldout_every` | int | 4 | at least 1 (`config.py:127-129`) |
 | `heldout_on_best` | bool | true | also play on a new `best.pt` |
 | `score` | str | `outcome` | `outcome` or `return` (checked in `score_column`, `config.py:131-134`, not at load) |
-| `arms` | dict | `{}` | arm name to episodes; arms must be in `EVAL_ARMS = (with_human, with_partners, no_flag, no_camera, no_compass, no_map, no_memory)`, counts non-negative ints (`config.py:119-124`) |
+| `arms` | dict | `{}` | arm name to episodes; arms must be in `EVAL_ARMS = (with_human, with_partners, no_flag, no_camera, no_compass, no_map, no_memory, no_goal, random_goal)`, counts non-negative ints (`config.py:119-124`) |
 | `arms_every` | int | 1 | at least 1 |
 | `keep_motion_files` | int | 12 | 0 or more: how many evaluations' route files (`eval_motion_<env_steps>[_heldout_<arena>].npz`) are kept; 0 writes none and the held-out arenas collect no motion |
 
@@ -259,7 +259,7 @@ validation.
 | `recurrent_size`, `chunk_length` | 0, 0 | `train.py:697-699`; `trainer.py:1497, 1570` |
 | `rollout_graphs` | true | `trainer.py:890, 903` |
 | `rank_sync`, `weight_sync_every` | `gradients`, 1 | `parallel.py:117`, `train.py:546, 758`; the sim sets `mappo.rank_sync` for clusters |
-| `goal_count`, `goal_targets`, `goal_every_decisions`, `goal_slots` | 0, 1, 16, 1 | `networks.py:2006`; `trainer.py:649-659` |
+| `goal_count`, `goal_targets`, `goal_every_decisions`, `goal_slots` | 0, 1, 16, 1 | `networks.py:2006`; `trainer.py:649-659`. `move2_seek.yaml` sets `goal_every_decisions: 128` (32 s; M3 and M4 restate 64), `eval.arms` gains `no_goal: 64` and `random_goal: 64`, and `status.headline` gains `plan_share, goal_follow_rate, rooms_checked_per_min, returns, slots_waiting, checked_miss, check_cover_at_find, found_no_goal, found_random_goal`. `configs/overlays/move2_seek_goals.yaml` documents the seeded start (by hand, `--overlay`) |
 | `hindsight_coef` | 0.0 | `trainer.py:1639, 1818` |
 | `goal_entropy_scale`, `goal_entropy_final_fraction`, `goal_slot_entropy_weight` | 1.0, 1.0, 0.1 | `train.py:1736-1737`; `trainer.py:665` |
 | `slow_goal_size`, `slow_goal_gamma`, `slow_goal_lambda`, `slow_goal_lr` | 0, 0.993, 0.95, 3e-4 | `trainer.py:654-659, 746`; `train.py:1712` |
