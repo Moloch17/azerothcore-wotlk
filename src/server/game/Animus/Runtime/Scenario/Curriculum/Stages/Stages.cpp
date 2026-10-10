@@ -49,6 +49,7 @@
 
 #include "StageDefinition.h"
 #include "InstanceBosses.h"
+#include "SeekTables.h"
 #include "Log.h"
 #include "AreaDefines.h"
 #include <algorithm>
@@ -686,19 +687,33 @@ namespace
             .Extends = "move1_controls",
             .Summary = "the same empty Stockades: one object in its hallways or one of its 39 rooms, found by sight "
                 "with no compass and stopped beside, deeper each rung",
-            .Blocks = { Core, Move, Vision, Map, Goal },
+            // **General search** (decision 0027): the Stockades and Ragefire Chasm trained on 1:1 (each env's episode
+            // draws its arena, hence its map; a Seek env that switches maps opens and clears a new instance), the
+            // Deadmines held out (EvalOnly: eval.heldout.deadmines plays its sweep every evaluation; found_heldout_map
+            // is the headline of generalisation). The Stockades arenas keep the table terms (TableTerms); Ragefire and
+            // the Deadmines pay the map-derived ones alone (SeekEncounter: FrontierClear, PocketEntry, the table-free
+            // Stale and the pocket weights of Explore). The coverage block (12 x 12 tiles of 32 yd, known / visited /
+            // searched) is this stage's: M3 and M4 keep their own block lists.
+            .Blocks = { Core, Move, Vision, Map, Coverage, Goal },
             .Arenas = {
                 { .Name = "rooms", .Weight = 1, .Against = Opposition::Seek, .EpisodeSeconds = 420,
                     .SpawnPoints = StockadeHallways(), .MapId = MAP_STORMWIND_STOCKADE,
-                    .Rooms = StockadeRooms(), .Objects = SeekObjects(), .SeekRadius = 3.0f },
+                    .Rooms = StockadeRooms(), .Objects = SeekObjects(), .SeekRadius = 3.0f, .TableTerms = true },
+                { .Name = "ragefire", .Weight = 1, .Against = Opposition::Seek, .EpisodeSeconds = 420,
+                    .SpawnPoints = SeekTables::RagefireHallways(), .MapId = MAP_RAGEFIRE_CHASM,
+                    .Rooms = SeekTables::RagefireRooms(), .Objects = SeekObjects(), .SeekRadius = 3.0f },
                 { .Name = "sweep", .Weight = 1, .Against = Opposition::Seek, .EvalOnly = true, .EpisodeSeconds = 420,
                     .SpawnPoints = StockadeHallways(), .MapId = MAP_STORMWIND_STOCKADE,
-                    .Rooms = StockadeRooms(), .Objects = SeekObjects(), .SeekRadius = 3.0f },
+                    .Rooms = StockadeRooms(), .Objects = SeekObjects(), .SeekRadius = 3.0f, .TableTerms = true },
                 // The same sweep on seeds that move every evaluation (the learner shifts the seed index by a multiple of
                 // the sweep's 195: train.evaluate_heldout, the "_rotating" suffix), so no start owns a pair for good.
                 { .Name = "sweep_rotating", .Weight = 1, .Against = Opposition::Seek, .EvalOnly = true,
                     .EpisodeSeconds = 420, .SpawnPoints = StockadeHallways(), .MapId = MAP_STORMWIND_STOCKADE,
-                    .Rooms = StockadeRooms(), .Objects = SeekObjects(), .SeekRadius = 3.0f },
+                    .Rooms = StockadeRooms(), .Objects = SeekObjects(), .SeekRadius = 3.0f, .TableTerms = true },
+                // Held out: never trained, never drawn; the transfer measure (33 rooms x 5 objects = 165 episodes).
+                { .Name = "deadmines", .Weight = 1, .Against = Opposition::Seek, .EvalOnly = true,
+                    .EpisodeSeconds = 420, .SpawnPoints = SeekTables::DeadminesHallways(), .MapId = MAP_DEADMINES,
+                    .Rooms = SeekTables::DeadminesRooms(), .Objects = SeekObjects(), .SeekRadius = 3.0f },
             },
             .MapId = MAP_STORMWIND_STOCKADE,
             .SpawnPoints = { StockadeEntrance() },
@@ -1159,6 +1174,9 @@ namespace
         // The mental map is written from the camera's frames (perception-goals REDESIGN §3), after them.
         if (stage.Has(BlockId::Map) && !stage.Has(BlockId::Vision))
             return "a mental map is written from the camera's frames: it needs the vision block";
+        // The coverage block samples the mental map's tile counters (general search): it needs the map block.
+        if (stage.Has(BlockId::Coverage) && !stage.Has(BlockId::Map))
+            return "a coverage block samples the mental map's tiles: it needs the map block";
         // Entity memory is written from the camera's entity list, by the entities block before the sight block reads
         // it (dungeon-curriculum I2).
         if (stage.Has(BlockId::Sight))

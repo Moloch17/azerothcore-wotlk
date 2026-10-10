@@ -226,6 +226,10 @@ namespace Animus::Curriculum
         std::vector<SeekRoom> Rooms{};
         std::vector<SeekObject> Objects{};
         float SeekRadius = 3.0f;
+        /// Opposition::Seek: the arena's room table also pays the table terms (RoomEntry, the room-based Stale clock,
+        /// the corridor filter of FrontierPull, the table's Explore bonuses); off, the map-derived terms stand alone
+        /// (general search, decision 0027). Seek.TableTerms 0 turns the table terms off everywhere.
+        bool TableTerms = false;
         /// Opposition::Sight: the evaluation's fixed (spawn, object) pairs, indexes into SpawnPoints, each played with
         /// and without the compass (SightDraw::EvaluationPick). Objects is the pool the object is drawn from.
         std::vector<SightPair> SightPairs{};

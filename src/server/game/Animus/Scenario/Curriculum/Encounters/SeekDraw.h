@@ -301,7 +301,9 @@ namespace Animus::Curriculum::SeekDraw
     }
 
     /// **The rooms that always failed** (placements10/ten.md; exploration v3, decision 0026): a Stockades start
-    /// distribution weighed by Seek.HardRoomWeight in the unseeded training draw, not an observation.
+    /// distribution weighed by Seek.HardRoomWeight in the unseeded training draw, not an observation. Stockades
+    /// rooms only, by name: on Ragefire and the Deadmines (SeekTables, decision 0027) HardRoomWeight is inert by
+    /// construction.
     inline bool IsHardRoom(std::string const& name)
     {
         static char const* const HARD_ROOMS[] = { "east_end_1_back", "hall_west_2", "east_end_2", "hall_east_1_back",
