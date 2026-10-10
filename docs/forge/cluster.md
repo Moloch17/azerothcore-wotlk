@@ -70,6 +70,17 @@ Runs live in `var/animus-forge/shared/runs/<stage>/` on the host (`progress.json
 
 `forgectl cluster move-host <machine> <stage>` (done by hand on 2026-10-07, dev to sarah). It prints the plan and asks.
 
+**Planned: dev becomes the host (owner, 2026-10-10: the biggest card, 20 GB, and the fastest worker).** Do it at the
+next stop between rounds, not under a healthy run: `forgectl cluster move-host dev <stage>` with the stage to carry on.
+It cancels the plan, copies `runs/<stage>` and the seed parents (`_finetune` and every other stage's `latest.pt`,
+`best.pt` and json, about 1.7 GB, so the stages later in a queue still find their seeds) to dev, rewrites every
+machine's `Cluster.Role`/`Cluster.Host` (dev `host`, the others `worker` pointing at `192.168.0.69:7700`), rebuilds
+every machine (dev through the local path: this checkout is the source of the commit and has no ssh key to itself, so
+`forgectl build --cluster` recreates its worldserver from the code on disk instead of pulling), sets `host = "dev"` in
+this file (commit and push it), and resumes the stage. A resume continues one stage: the rest of the queue is typed
+again with `forgectl stage start <stages>` after the stage finishes, or the stage is started in the queue from the
+beginning. Sarah then runs as a worker with the usual 64 envs.
+
 ## Collecting evaluation videos
 
 `forgectl videos <stage>` (`--check` lists without copying).

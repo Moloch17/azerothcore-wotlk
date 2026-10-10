@@ -78,7 +78,9 @@ def wait_ready(config: Config, machine: Machine, sha: str, t0: str, timeout: flo
 def deploy_one(config: Config, machine: Machine, sha: str, timeout: float, local_only: bool = False) -> Outcome:
     started = clock()
     outcome = Outcome(machine)
-    script = local_build_script(config, machine) if local_only else pull_script(config, machine)
+    # This checkout is the source of the commit being deployed and has no ssh key to itself, so a local machine
+    # never pulls: it recreates its worldserver from the code already on disk.
+    script = local_build_script(config, machine) if (local_only or machine.local) else pull_script(config, machine)
     result = remote.on(machine, script, timeout=PULL_TIMEOUT)
     t0 = next((line.split("=", 1)[1] for line in result.out.splitlines() if line.startswith("T0=")), "")
     if not result.ok or not t0:
@@ -209,6 +211,34 @@ def copy_run(config: Config, old: Machine, new: Machine, stage: str) -> None:
         raise Failure(f"copying runs/{stage} failed: {(send_err + recv_err).decode(errors='replace').strip()[:300]}")
 
 
+def copy_run_support(config: Config, old: Machine, new: Machine, stage: str) -> None:
+    """tar everything else a later stage may seed from (the _finetune seeds and each stage's latest.pt, best.pt and
+    json files, not its periodic checkpoints, camera, tb, videos or archives) from the old host to the new one, so a
+    queue that moves host between stages finds its seed parents; the stage's own folder was copied whole before."""
+    runs_old, runs_new = remote.sh_path(config.path_of(old, "runs")), remote.sh_path(config.path_of(new, "runs"))
+    skip = " ".join(f"--exclude={shlex.quote(p)}" for p in (
+        stage, "_archive", "archive", "camera", "tb", "videos", "checkpoint_*.pt", "*.partial", "*.worker-*"))
+    pack = f"cd {runs_old} && tar -cf - {skip} ."
+    unpack = f"mkdir -p {runs_new} && tar -xf - -C {runs_new}"
+
+    def argv(machine: Machine, command: str) -> list[str]:
+        return ["bash", "-c", command] if machine.local else remote.ssh_argv(machine, [command])
+
+    sender = subprocess.Popen(argv(old, pack), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    receiver = subprocess.Popen(argv(new, unpack), stdin=sender.stdout, stderr=subprocess.PIPE)
+    sender.stdout.close()
+    try:
+        _, recv_err = receiver.communicate(timeout=3600)
+        send_err = sender.stderr.read()
+        sender.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        sender.kill()
+        receiver.kill()
+        raise Failure("copying the seed parents took over an hour; stopped") from None
+    if sender.returncode or receiver.returncode:
+        raise Failure(f"copying the seed parents failed: {(send_err + recv_err).decode(errors='replace').strip()[:300]}")
+
+
 def set_host_in_toml(text: str, host: str) -> str:
     """cluster.toml with [cluster] host = "<host>" (only the first `host =` line, which is in [cluster])."""
     return re.sub(r'(?m)^(host\s*=\s*)"[^"]*"', lambda m: f'{m.group(1)}"{host}"', text, count=1)
@@ -292,6 +322,8 @@ def move_host(config: Config, target: str, stage: str | None, yes: bool, timeout
                                f"{remote.sh_path(run_dir(config, new, stage))}.before-move-{aside}\n", timeout=30)
                 say(f"  the existing run on {new.name} was renamed to {stage}.before-move-{aside}")
             copy_run(config, old, new, stage)
+            say(f"  and the seed parents (_finetune and every other stage's latest.pt/best.pt/json)")
+            copy_run_support(config, old, new, stage)
             done.append("copied")
         else:
             say("[2/6] no stage given: no run directory copied")
