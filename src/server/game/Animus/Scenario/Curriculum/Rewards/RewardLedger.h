@@ -169,6 +169,18 @@ namespace Animus::Curriculum
         /// (Seek.Stale).
         RoomEntry,
         Stale,
+        /// General search (decision 0027, map-derived terms from the seat's own map, no room table): a frontier
+        /// cluster of the crop approached and resolved by positive evidence (Seek.FrontierClear, Exploring, in
+        /// FrontierPull's cap) and a pocket -- a chamber behind a narrowing, seen as a separate one before -- entered
+        /// for the first time (Seek.PocketEntry, Exploring, in RoomEntry's cap). Revisit (Cost, fixed price, in the
+        /// score): each second stood on a 2-yd cell of ground the seat stood on earlier this episode, weighed by how
+        /// long ago (Seek.Revisit, RevisitAgeMs). Recovered (Aid, fades at Seek.AidUntil, never in the score): a share
+        /// of what a pin of Stuck and Wall charges cost, paid back once when the seat gets Seek.RecoverYards from the
+        /// pin point within Seek.RecoverMs (movement pacing M5): a rebate, never a bonus, so a pin never pays.
+        FrontierClear,
+        PocketEntry,
+        Revisit,
+        Recovered,
         Count
     };
 
@@ -269,6 +281,8 @@ namespace Animus::Curriculum
             case RewardTerm::Circling:
             // ... and ground gone stale: no newly seen floor for a while (M2 exploration v2).
             case RewardTerm::Stale:
+            // ... and ground stood on again (general search).
+            case RewardTerm::Revisit:
                 return RewardCategory::Cost;
             // The seek stage's room goals: a teaching aid on the progress-linear aid scale.
             case RewardTerm::RoomGoal:
@@ -277,10 +291,14 @@ namespace Animus::Curriculum
             case RewardTerm::CellProgress:
             // The trap drill's way out (M2 explore-unstuck): once, on the aid scale.
             case RewardTerm::Escape:
+            // The pin rebate (movement pacing M5): on the aid scale, outside the score.
+            case RewardTerm::Recovered:
                 return RewardCategory::Aid;
             case RewardTerm::Explore:
             case RewardTerm::FrontierPull:
             case RewardTerm::RoomEntry:
+            case RewardTerm::FrontierClear:
+            case RewardTerm::PocketEntry:
                 return RewardCategory::Exploring;
             case RewardTerm::DamageDealt:
             case RewardTerm::Approach:
@@ -341,9 +359,11 @@ namespace Animus::Curriculum
             case RewardTerm::Fidget:
             case RewardTerm::Stuck:
             case RewardTerm::Wall:
-            // ... going round in circles (Seek.Circling) and ground gone stale (Seek.Stale).
+            // ... going round in circles (Seek.Circling), ground gone stale (Seek.Stale) and ground stood on again
+            // (Seek.Revisit).
             case RewardTerm::Circling:
             case RewardTerm::Stale:
+            case RewardTerm::Revisit:
                 return true;
             default:
                 return false;

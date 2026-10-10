@@ -33,6 +33,7 @@
 #include "Creature.h"
 #include "DBCStores.h"
 #include "DuelBlock.h"
+#include "MapBlock.h"
 #include "MoveBlock.h"
 #include "MovePrice.h"
 #include "Forge.h"
@@ -280,6 +281,8 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         _tuning.Instance.WingRungStart)
 {
     _eventsLog = settings.EventsLog;
+    // The coverage analysis's sizes (MapBlock::Observe, general search) are the seek tuning's: set once here.
+    MapBlock::ConfigureCoverage(_tuning.Seek.ClusterMinCells, _tuning.Seek.PocketMinCells);
 
     if (MapEntry const* mapEntry = sMapStore.LookupEntry(_spawnMapId))
         _continent = !mapEntry->Instanceable();
@@ -635,13 +638,33 @@ std::vector<Animus::Curriculum::Encounter*> const& Animus::Curriculum::StageScen
     return arena < _arenaRewardOrder.size() ? _arenaRewardOrder[arena] : none;
 }
 
-uint32 Animus::Curriculum::StageScenario::DrawArena(bool evaluating) const
+uint32 Animus::Curriculum::StageScenario::TrainableArenaCount() const
+{
+    uint32 count = 0;
+    for (ArenaDefinition const& arena : _stage.Arenas)
+        count += arena.EvalOnly ? 0 : 1;
+    return std::max<uint32>(1, count);
+}
+
+uint32 Animus::Curriculum::StageScenario::DrawArena(bool evaluating, uint32 seed) const
 {
     // An evaluation pinned to one arena (the learner's eval.heldout) plays only it.
     if (uint32 const pinned = _evaluationArena.load(std::memory_order_relaxed); evaluating && pinned)
         return pinned - 1;
     if (_arenaWeights.size() == 1 && !_stage.Arenas.front().EvalOnly)
         return 0;
+    // A seeded episode goes round the trainable arenas (general search): the weights would draw deterministically
+    // per seed but unbalanced, and the seek encounter's per-room cycle (SeekDraw::RungEvaluationPick) wants an even
+    // split: with two maps and 312 episodes, 156 a map.
+    if (seed != NO_EPISODE_SEED)
+    {
+        uint32 const T = TrainableArenaCount();
+        uint32 index = seed % T;
+        for (uint32 arena = 0; arena < _stage.Arenas.size(); ++arena)
+            if (!_stage.Arenas[arena].EvalOnly && index-- == 0)
+                return arena;
+        return 0;
+    }
 
     // Linear from Weight to WeightFinal over the stage's budget; an evaluation draws by the final weights, so it
     // measures what the stage is heading for. A held-out arena never (ArenaDrawWeights).
@@ -1068,6 +1091,77 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
         float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
         return float(seat(env, index).ControlChanges) / minutes;
     });
+    // **Movement pacing** (M7, decision 0027; TrackPacing, from the controller's body): the straight runs' mean and
+    // p90 seconds (runs of ticks moving at half a yard a second or more with the course within 15 degrees of the
+    // run's first leg; p90 from quarter-second bins), the pauses (runs of 750 ms or more with no movement key and
+    // the body still: their count, per minute, mean seconds, and the share in which the camera's yaw offset or the
+    // body's yaw swept 30 degrees or more -- per event over `pauses`), the camera moves per minute (decisions the
+    // look head changed a rate, the zoom or the offset), the share of the episode turning in place (a turn rate
+    // held, no movement key, still), the pin events (Stuck runs of a second or more) and the share whose body had
+    // turned 30 degrees or more in the second before, the escapes (a pin ended by 4 yd of net displacement within
+    // 20 s) and the mean seconds from the onset to the escape (per event over contact_escapes).
+    _info.Add("straight_run_mean_s", [seat](Env const& env, uint32 index)
+    {
+        SeatState const& state = seat(env, index);
+        return state.StraightRuns ? state.StraightSeconds / float(state.StraightRuns) : 0.0f;
+    });
+    _info.Add("straight_run_p90_s", [seat](Env const& env, uint32 index)
+    {
+        SeatState const& state = seat(env, index);
+        if (!state.StraightRuns)
+            return 0.0f;
+        uint32 cumulative = 0;
+        for (std::size_t bin = 0; bin < state.StraightHistogram.size(); ++bin)
+        {
+            cumulative += state.StraightHistogram[bin];
+            if (float(cumulative) >= 0.9f * float(state.StraightRuns))
+                return float(bin + 1) * 0.25f;
+        }
+        return float(state.StraightHistogram.size()) * 0.25f;
+    });
+    _info.Add("pauses", [seat](Env const& env, uint32 index) { return float(seat(env, index).Pauses); });
+    _info.Add("pauses_per_min", [seat](Env const& env, uint32 index)
+    {
+        float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
+        return float(seat(env, index).Pauses) / minutes;
+    });
+    _info.Add("pause_mean_s", [seat](Env const& env, uint32 index)
+    {
+        SeatState const& state = seat(env, index);
+        // A pause still running at the end counts with the seconds it has.
+        float const seconds = state.PauseSeconds + (state.PauseCounted ? float(state.PauseRunMs) / 1000.0f : 0.0f);
+        return state.Pauses ? seconds / float(state.Pauses) : 0.0f;
+    });
+    _info.Add("pause_look_share", [seat](Env const& env, uint32 index)
+    {
+        SeatState const& state = seat(env, index);
+        return state.Pauses ? float(state.PausesLooked) / float(state.Pauses) : 0.0f;
+    });
+    _info.Add("camera_moves_per_min", [seat](Env const& env, uint32 index)
+    {
+        float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
+        return float(seat(env, index).CameraMoves) / minutes;
+    });
+    _info.Add("turn_in_place_share", [seat](Env const& env, uint32 index)
+    {
+        SeatState const& state = seat(env, index);
+        return state.MovingTicksMs ? float(state.TurnInPlaceMs) / float(state.MovingTicksMs) : 0.0f;
+    });
+    _info.Add("pin_events", [seat](Env const& env, uint32 index) { return float(seat(env, index).PinEvents); });
+    _info.Add("pin_onset_turning_share", [seat](Env const& env, uint32 index)
+    {
+        SeatState const& state = seat(env, index);
+        return state.PinEvents ? float(state.PinOnsetTurning) / float(state.PinEvents) : 0.0f;
+    });
+    _info.Add("contact_escapes", [seat](Env const& env, uint32 index)
+    {
+        return float(seat(env, index).ContactEscapes);
+    });
+    _info.Add("time_to_escape_s", [seat](Env const& env, uint32 index)
+    {
+        SeatState const& state = seat(env, index);
+        return state.ContactEscapes ? state.EscapeSeconds / float(state.ContactEscapes) : 0.0f;
+    });
     _info.Add("move_reports_per_minute", [seat](Env const& env, uint32 index)
     {
         SeatState const& state = seat(env, index);
@@ -1250,6 +1344,15 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
         // The seat a drill is about (ArenaDefinition::DrillRole: seat 0), which the learner's co-op partners never
         // play (animus.partners); -1 for an arena that drills no one.
         entry["drill_seat"] = definition.DrillRole ? 0 : -1;
+        // The arena's map (the stage's when it names none): the learner's found_heldout_map reads which held-out
+        // arenas are on a map no trainable arena is on (general search). A seek arena's room table length (the
+        // held-out sweep is rooms x objects episodes) and whether it pays the table terms.
+        entry["map_id"] = definition.MapId ? definition.MapId : _stage.MapId;
+        if (definition.Against == Opposition::Seek)
+        {
+            entry["rooms"] = uint32(definition.Rooms.size());
+            entry["table_terms"] = definition.TableTerms;
+        }
     }
 
     // Agents the sim declares for a frozen checkpoint to play: the owner, where an arena casts it. A party follow's
@@ -1380,19 +1483,33 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
     // Episode info columns that index a list of names (the seek stage's room and object): the learner's evaluation
     // tables split by them (animus.evaluation, EvalResult.categories).
     boost::json::object& categories = stageFile["episode_categories"].emplace_object();
-    for (ArenaDefinition const& arena : _stage.Arenas)
-        if (arena.Against == Opposition::Seek)
+    // The seek arenas' rooms as one list: the union of their distinct room tables in arena order, each table once
+    // (the Stockades arenas share one, so its history keeps its indexes); the seek_room column is the table's offset
+    // plus the room (SeekEncounter::RoomOffsets). The objects are one pool.
+    if (std::vector<uint32> const offsets = SeekEncounter::RoomOffsets(_stage); !offsets.empty())
+    {
+        boost::json::array rooms;
+        for (std::size_t arena = 0; arena < _stage.Arenas.size(); ++arena)
         {
-            boost::json::array rooms;
-            for (std::string const& name : SeekEncounter::RoomNames(arena))
+            ArenaDefinition const& definition = _stage.Arenas[arena];
+            if (definition.Against != Opposition::Seek || offsets[arena] != rooms.size())
+                continue;
+            for (std::string const& name : SeekEncounter::RoomNames(definition))
                 rooms.emplace_back(name);
-            boost::json::array objects;
-            for (std::string const& name : SeekEncounter::ObjectNames(arena))
-                objects.emplace_back(name);
-            categories["seek_room"] = std::move(rooms);
-            categories["seek_object"] = std::move(objects);
         }
-        else if (arena.Against == Opposition::Interact)
+        categories["seek_room"] = std::move(rooms);
+        for (ArenaDefinition const& arena : _stage.Arenas)
+            if (arena.Against == Opposition::Seek)
+            {
+                boost::json::array objects;
+                for (std::string const& name : SeekEncounter::ObjectNames(arena))
+                    objects.emplace_back(name);
+                categories["seek_object"] = std::move(objects);
+                break;
+            }
+    }
+    for (ArenaDefinition const& arena : _stage.Arenas)
+        if (arena.Against == Opposition::Interact)
         {
             // M3's sites and named objects (InteractEncounter): the evaluation's right object by each.
             boost::json::array sites;
@@ -1893,7 +2010,7 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
 
     // The episode's arena, drawn first: an evaluation episode's random numbers decide it like everything else.
     std::vector<Encounter*> const previousEncounters = ActiveEncounters(env);
-    data.Arena = DrawArena(env.Evaluating);
+    data.Arena = DrawArena(env.Evaluating, env.EpisodeSeedIndex);
     // No stand-in until the seats are built and DrawStandIn says so (a build that fails leaves none).
     data.StandInPlay = EnvState::StandInSeat();
     // An arena on a map of its own (ArenaDefinition::MapId) sends the episode there; an encounter that fixes its
@@ -2293,13 +2410,19 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     // so no mob further along the hallway is there to kill a level 1 seat; any other instance, around the spawn.
     // The party follow (M4) moves between dungeons from episode to episode, so each new instance it opens is emptied
     // when it opens, not only the env's first.
+    // The seek stage (general search) mixes maps per env the same way: an env whose episode moved to another map
+    // opened a new, uncleared instance (a level-1 seat in live Ragefire), so it is emptied when it opens too; a seek
+    // arena off the Stockades is a whole dungeon (the Deadmines runs ~450 yd end to end), cleared to the dungeon
+    // radius.
     bool const partyFollow = Arena(env).Against == Opposition::PartyFollow;
+    bool const seek = Arena(env).Against == Opposition::Seek;
     bool const newInstance = env.MapId != map->GetId() || env.InstanceId != map->GetInstanceId();
-    if ((firstBuild || (partyFollow && newInstance)) && map->Instanceable())
+    if ((firstBuild || ((partyFollow || seek) && newInstance)) && map->Instanceable())
     {
-        if (Arena(env).Against == Opposition::Seek || Arena(env).Against == Opposition::Sight || Arena(env).Against == Opposition::Combat
+        bool const wholeDungeon = partyFollow || (seek && map->GetId() != MAP_STORMWIND_STOCKADE);
+        if (seek || Arena(env).Against == Opposition::Sight || Arena(env).Against == Opposition::Combat
             || Arena(env).Against == Opposition::Roles || partyFollow)
-            SpawnArea::ClearMap(lead, partyFollow ? DUNGEON_CLEAR_RADIUS : INSTANCE_CLEAR_RADIUS);
+            SpawnArea::ClearMap(lead, wholeDungeon ? DUNGEON_CLEAR_RADIUS : INSTANCE_CLEAR_RADIUS);
         // M3's Deadmines is wider than the Stockades: from any of its sites to the ship's far end.
         else if (Arena(env).Against == Opposition::Interact)
             SpawnArea::ClearMap(lead, INTERACT_CLEAR_RADIUS);
@@ -2860,10 +2983,16 @@ void Animus::Curriculum::StageScenario::ApplyLook(Env& env, int32 const* look)
         // Turn to camera: the body's turn goes to the player controller as a one-shot control, which snaps the facing
         // at the next tick's start and reports it with one SET_FACING, as a client does. Still free (R1): it is not a
         // press, so nothing prices, repeats or tallies it.
+        Vision::FreeLook::State const before = seat.Look;
         float const turn = Vision::FreeLook::Apply(seat.Look, look + std::size_t(agent) * Vision::FreeLook::HEADS,
             settings);
         if (turn != 0.0f)
             seat.Controls.Held.FaceTurn = turn;
+        // A camera move (movement pacing M7): a rate, the zoom or the offset changed, or a turn to camera asked.
+        if (turn != 0.0f || before.YawRate != seat.Look.YawRate || before.PitchRate != seat.Look.PitchRate
+            || before.ZoomLevel != seat.Look.ZoomLevel || before.YawOffset != seat.Look.YawOffset
+            || before.Pitch != seat.Look.Pitch)
+            ++seat.CameraMoves;
     };
     for (uint32 seat = 0; seat < _seatCount; ++seat)
         take(seat);
@@ -3181,8 +3310,144 @@ void Animus::Curriculum::StageScenario::TrackController(SeatState& seat, uint32 
     // The course turning more than 20 degrees within a tick while moving: a kink a watcher sees. Read from the
     // body's way between ticks, not its velocity, which the ground step zeroes every step (only a fall carries one):
     // read off the velocity, course_kinks was 0 for every seat on the ground (dry check, 2026-10-05).
+    TrackPacing(seat, body, held, keys, stuck, diffMs);
     if (CourseKink(seat, body.X, body.Y, diffMs))
         ++seat.CourseKinks;
+}
+
+void Animus::Curriculum::StageScenario::TrackPacing(SeatState& seat, Movement::BodyState const& body,
+    Movement::ControlState const& held, bool keys, bool stuck, uint32 diffMs)
+{
+    // **Movement pacing** (M7, decision 0027), from the controller's body between ticks (CourseX/Y hold the last
+    // tick's), never the server's position, which is credited only from the client's reports: a straight run reads
+    // 0, 3.5, 0, 3.5 yd a decision there.
+    float const seconds = float(diffMs) / 1000.0f;
+    seat.MovingTicksMs += diffMs;
+    uint32 const clock = seat.MovingTicksMs;
+    float speed = 0.0f;
+    float course = 0.0f;
+    bool moving = false;
+    if (seat.HasCoursePos && seconds > 0.0f)
+    {
+        float const dx = body.X - seat.CourseX;
+        float const dy = body.Y - seat.CourseY;
+        speed = std::sqrt(dx * dx + dy * dy) / seconds;
+        moving = speed >= 0.5f;
+        if (moving)
+            course = std::atan2(dy, dx);
+    }
+    constexpr float STRAIGHT_RAD = 0.2617994f;      // 15 degrees
+    constexpr float SWEEP_RAD = 0.5235988f;         // 30 degrees
+    constexpr uint32 PAUSE_MS = 750;
+    constexpr uint32 PIN_MS = 1000;
+    constexpr float ESCAPE_YARDS = 4.0f;
+    constexpr uint32 ESCAPE_MS = 20000;
+    auto const endStraight = [&seat]()
+    {
+        if (!seat.StraightOn)
+            return;
+        float const run = seat.StraightRunMs / 1000.0f;
+        ++seat.StraightRuns;
+        seat.StraightSeconds += run;
+        ++seat.StraightHistogram[std::min<std::size_t>(seat.StraightHistogram.size() - 1,
+            std::size_t(run * 4.0f))];
+        seat.StraightOn = false;
+        seat.StraightRunMs = 0.0f;
+    };
+    // Straight runs: ticks moving with the course within 15 degrees of the run's first leg.
+    if (moving)
+    {
+        if (seat.StraightOn
+            && std::fabs(std::remainder(course - seat.StraightCourse, 2.0f * float(M_PI))) > STRAIGHT_RAD)
+            endStraight();
+        if (!seat.StraightOn)
+        {
+            seat.StraightOn = true;
+            seat.StraightCourse = course;
+        }
+        seat.StraightRunMs += float(diffMs);
+    }
+    else
+        endStraight();
+
+    // Pauses: 750 ms or more with no movement key and the body still; whether the camera's yaw offset or the body's
+    // yaw swept 30 degrees or more during one.
+    bool const still = !keys && speed < 0.1f;
+    if (still)
+    {
+        if (!seat.PauseRunMs)
+        {
+            seat.PauseYawStart = body.Yaw;
+            seat.PauseLookStart = seat.Look.YawOffset;
+            seat.PauseSweep = 0.0f;
+            seat.PauseCounted = false;
+            seat.PauseLooked = false;
+        }
+        seat.PauseRunMs += diffMs;
+        seat.PauseSweep = std::max({ seat.PauseSweep,
+            std::fabs(std::remainder(body.Yaw - seat.PauseYawStart, 2.0f * float(M_PI))),
+            std::fabs(std::remainder(seat.Look.YawOffset - seat.PauseLookStart, 2.0f * float(M_PI))) });
+        if (!seat.PauseCounted && seat.PauseRunMs >= PAUSE_MS)
+        {
+            seat.PauseCounted = true;
+            ++seat.Pauses;
+        }
+        if (seat.PauseCounted && !seat.PauseLooked && seat.PauseSweep >= SWEEP_RAD)
+        {
+            seat.PauseLooked = true;
+            ++seat.PausesLooked;
+        }
+    }
+    else if (seat.PauseRunMs)
+    {
+        if (seat.PauseCounted)
+            seat.PauseSeconds += float(seat.PauseRunMs) / 1000.0f;
+        seat.PauseRunMs = 0;
+    }
+    // Turning in place: a turn rate held, no movement key, the body still.
+    if (held.TurnRate != 0.0f && still)
+        seat.TurnInPlaceMs += diffMs;
+
+    // The body's yaw over the last second (eight slots of 125 ms), for the pin onset's turning.
+    std::size_t const slot = seat.YawHistoryNext % seat.YawHistory.size();
+    if (!seat.YawHistoryMs[slot] || clock - seat.YawHistoryMs[slot] >= 125)
+    {
+        seat.YawHistory[slot] = body.Yaw;
+        seat.YawHistoryMs[slot] = clock;
+        ++seat.YawHistoryNext;
+    }
+    // Pins: a Stuck run reaching a second; its escape, 4 yd of net displacement from the pin point within 20 s.
+    if (stuck && seat.StuckRunMs >= PIN_MS && seat.StuckRunMs - diffMs < PIN_MS && !seat.PinOpen)
+    {
+        seat.PinOpen = true;
+        ++seat.PinEvents;
+        seat.PinX = body.X;
+        seat.PinY = body.Y;
+        seat.PinStartMs = clock;
+        float turned = 0.0f;
+        for (std::size_t i = 0; i < seat.YawHistory.size(); ++i)
+            if (seat.YawHistoryMs[i] && clock - seat.YawHistoryMs[i] <= 1000)
+                turned = std::max(turned, std::fabs(std::remainder(body.Yaw - seat.YawHistory[i],
+                    2.0f * float(M_PI))));
+        if (turned >= SWEEP_RAD)
+            ++seat.PinOnsetTurning;
+    }
+    if (seat.PinOpen)
+    {
+        float const away = std::hypot(body.X - seat.PinX, body.Y - seat.PinY);
+        uint32 const since = clock - std::min(clock, seat.PinStartMs);
+        if (away >= ESCAPE_YARDS)
+        {
+            if (since <= ESCAPE_MS)
+            {
+                ++seat.ContactEscapes;
+                seat.EscapeSeconds += float(since) / 1000.0f;
+            }
+            seat.PinOpen = false;
+        }
+        else if (since > ESCAPE_MS)
+            seat.PinOpen = false;
+    }
 }
 
 bool Animus::Curriculum::StageScenario::CourseKink(SeatState& seat, float x, float y, uint32 diffMs)
@@ -3302,6 +3567,7 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     }
     // Until this episode's client has taken its body from the server, the seat reads the server's (Client::Stop).
     view.Body = seat.Mover.Started() ? &seat.Mover.Body : nullptr;
+    view.PinnedMs = seat.StuckRunMs;
     view.Facing = seat.Facing;
     view.Trail = &seat.Trail;
     // Whether its legs are getting anywhere, measured for every seat (TrackMotion). The travel encounter's View
@@ -3778,6 +4044,7 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
         view.MapRow = map;
         view.MapKept = seat.MapKept;
         view.Crop = &seat.Crop;
+        view.CoverageOut = &seat.CoverageSummary;
     }
     view.Option = &seat.Option;
     seat.RoomGoals = view.World.RoomGoals;

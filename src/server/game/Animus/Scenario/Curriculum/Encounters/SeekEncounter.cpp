@@ -19,6 +19,7 @@
 #include "SeekEncounter.h"
 #include "BotFactory.h"
 #include "Camera.h"
+#include "Coverage.h"
 #include "EncoderSupport.h"
 #include "GoalBlock.h"
 #include "Env.h"
@@ -36,12 +37,14 @@
 #include "SeatView.h"
 #include "SeekDraw.h"
 #include "SightDraw.h"
+#include "StageDefinition.h"
 #include "StageScenario.h"
 #include "StageState.h"
 #include "UnitBody.h"
 #include "UnitDefines.h"
 #include <algorithm>
 #include <cmath>
+#include <mutex>
 
 namespace
 {
@@ -58,14 +61,9 @@ namespace
     /// The salts of an evaluation's seeded placement draws.
     enum Salt : uint32 { SALT_TRIANGLE = 1, SALT_A, SALT_B, SALT_FACING, SALT_DOOR_U, SALT_DOOR_V, SALT_STRIDE = 8 };
 
-    /// A cell of floor as one key: x and y in `cell`-yard squares, z in storeys of three yards.
-    uint64 CellKey(float x, float y, float z, float cell)
-    {
-        uint64 const cx = uint64(uint32(int32(std::floor(x / cell)))) & 0x1FFFFF;
-        uint64 const cy = uint64(uint32(int32(std::floor(y / cell)))) & 0x1FFFFF;
-        uint64 const cz = uint64(uint32(int32(std::floor(z / 3.0f)))) & 0x3FFFFF;
-        return cx << 43 | cy << 22 | cz;
-    }
+    /// A cell of floor as one key: x and y in `cell`-yard squares, z in storeys of three yards (Coverage's, so the
+    /// summary's keys and the encounter's compare).
+    using Animus::Curriculum::Coverage::CellKey;
 
     /// Explore's cell: the side of a floor cell, yards.
     constexpr float EXPLORE_CELL = 2.0f;
@@ -95,6 +93,21 @@ namespace
     constexpr uint32 WALL_PIN_EVENT_MS = 2000;
     /// `found_300`: found within this of the clock, so the 420 s stage compares with the 300 s history.
     constexpr uint32 FOUND_300_MS = 300000;
+    /// General search: a cluster or chamber key within this of another is the same place (the 3 x 3 bin
+    /// neighbourhood of a 10-yd key), and the bin a cluster is cleared over, yards.
+    constexpr float KEY_NEAR = Animus::Curriculum::Coverage::KEY_YARDS;
+    /// Revisit's cell: the body's own 2-yd cell.
+    constexpr float REVISIT_CELL = 2.0f;
+    /// The pin rebate (movement pacing M5): a run of Stuck- or Wall-charged decisions this long (ms) or longer is a
+    /// pin; the contract names no key for it.
+    constexpr uint32 RECOVER_MIN_MS = 1000;
+    /// The replay table records a Stuck run this long (ms) or longer (movement pacing M3).
+    constexpr uint32 PIN_RECORD_MS = 2000;
+    /// The trap drill's corner and pillar poses: how far a wall is looked for, and the most a wall may be off for an
+    /// inside corner (yards).
+    constexpr float CORNER_REACH = 3.0f;
+    constexpr float PILLAR_REACH = 2.5f;
+    constexpr float PILLAR_CLEAR = 4.0f;
 
     /// A back room or an end room by its name in the room table (`east_south_2_back`, `west_end_1`, `east_end_3_back`):
     /// the rooms the front doors do not show. The hubs and `hall_end` (a front cell) are neither.
@@ -144,7 +157,42 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::SeekEncounter::R
         RewardTerm::Sighting, RewardTerm::NewGround, RewardTerm::RoomSeen, RewardTerm::RoomGoal, RewardTerm::RoomSwitch,
         RewardTerm::Return, RewardTerm::CellGoal, RewardTerm::CellProgress, RewardTerm::CellSwitch,
         RewardTerm::CellLost, RewardTerm::CellStale, RewardTerm::Explore, RewardTerm::FrontierPull,
-        RewardTerm::Circling, RewardTerm::Escape, RewardTerm::RoomEntry, RewardTerm::Stale };
+        RewardTerm::Circling, RewardTerm::Escape, RewardTerm::RoomEntry, RewardTerm::Stale,
+        RewardTerm::FrontierClear, RewardTerm::PocketEntry, RewardTerm::Revisit, RewardTerm::Recovered };
+}
+
+std::vector<uint32> Animus::Curriculum::SeekEncounter::RoomOffsets(StageDefinition const& stage)
+{
+    std::vector<uint32> offsets(stage.Arenas.size(), 0);
+    std::vector<std::pair<std::string, uint32>> tables;      // the first room's name, the table's offset
+    uint32 next = 0;
+    bool any = false;
+    for (std::size_t arena = 0; arena < stage.Arenas.size(); ++arena)
+    {
+        ArenaDefinition const& definition = stage.Arenas[arena];
+        if (definition.Against != Opposition::Seek || definition.Rooms.empty())
+            continue;
+        any = true;
+        std::string const& first = definition.Rooms.front().Name;
+        auto const known = std::find_if(tables.begin(), tables.end(), [&first](auto const& table)
+        {
+            return table.first == first;
+        });
+        if (known != tables.end())
+        {
+            offsets[arena] = known->second;
+            continue;
+        }
+        tables.emplace_back(first, next);
+        offsets[arena] = next;
+        next += uint32(definition.Rooms.size());
+    }
+    return any ? offsets : std::vector<uint32>();
+}
+
+bool Animus::Curriculum::SeekEncounter::TableTerms(ArenaDefinition const& arena) const
+{
+    return arena.TableTerms && _scenario.Tuning().Seek.TableTerms != 0;
 }
 
 std::vector<std::string> Animus::Curriculum::SeekEncounter::RoomNames(ArenaDefinition const& arena)
@@ -237,7 +285,36 @@ void Animus::Curriculum::SeekEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
     // room is the one whose opening is nearest it), the room's depth (its rank by walking distance, 0 the nearest), its
     // tier (thirds: `difficulty`, so the evaluation tables split by it) and whether it is the deepest third
     // (`deep_room`).
-    table.Add("seek_room", [this](Env const& env, uint32) { return float(std::max(0, _envs[env.Index].Room)); });
+    // seek_room indexes the union of the stage's seek room tables (RoomOffsets): the arena's offset plus the room.
+    std::vector<uint32> const offsets = RoomOffsets(_scenario.Stage());
+    table.Add("seek_room", [this, offsets](Env const& env, uint32)
+    {
+        uint32 const arena = _scenario.Data(env).Arena;
+        uint32 const offset = arena < offsets.size() ? offsets[arena] : 0;
+        return float(offset + uint32(std::max(0, _envs[env.Index].Room)));
+    });
+    // The episode's map, and which seek arena it was (arena_<name>, 1 for it) with found on it (found_arena_<name>,
+    // per event over arena_<name>: the learner's per-arena found; the _arena_ infix keeps found_arena_rooms apart
+    // from the rung column found_room). Every seek arena, the held-out ones included.
+    table.Add("seek_map", [this](Env const& env, uint32)
+    {
+        return float(_scenario.Arena(env).MapId ? _scenario.Arena(env).MapId : _scenario.Stage().MapId);
+    });
+    for (std::size_t index = 0; index < _scenario.Stage().Arenas.size(); ++index)
+    {
+        ArenaDefinition const& arena = _scenario.Stage().Arenas[index];
+        if (arena.Against != Opposition::Seek)
+            continue;
+        uint32 const which = uint32(index);
+        table.Add("arena_" + arena.Name, [this, which](Env const& env, uint32)
+        {
+            return _scenario.Data(env).Arena == which ? 1.0f : 0.0f;
+        });
+        table.Add("found_arena_" + arena.Name, [this, which](Env const& env, uint32)
+        {
+            return _scenario.Data(env).Arena == which && _envs[env.Index].Found ? 1.0f : 0.0f;
+        });
+    }
     table.Add("seek_object", [this](Env const& env, uint32) { return float(_envs[env.Index].ObjectIndex); });
     table.Add("room_depth", [this](Env const& env, uint32) { return _envs[env.Index].Depth; });
     table.Add("difficulty", [this](Env const& env, uint32) { return float(_envs[env.Index].Tier); });
@@ -479,6 +556,47 @@ void Animus::Curriculum::SeekEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
     {
         return float(_envs[env.Index].ExploreCapHitMs);
     });
+    // **General search** (decision 0027): the distinct frontier cluster keys seen and the ones cleared (positive
+    // evidence), the nominal FrontierClear sum; the distinct pocket keys seen, the pockets entered, the nominal
+    // PocketEntry sum, the share of decisions the seat stood in a chamber; the cells Explore paid the pocket bonus
+    // for (the 2x ones; explore_inside_cells counts the 3x ones on every arena); Revisit's weighed seconds and the
+    // share of decisions on stood ground. **Movement pacing**: the rebates paid (recoveries, per event over
+    // pin_events) and the trap pose's source (per event over trap_episode: 1 replayed, 0 geometric).
+    table.Add("frontier_clusters_peak", [this](Env const& env, uint32)
+    {
+        return float(_envs[env.Index].ClusterPeak.size());
+    });
+    table.Add("frontier_clusters_cleared", [this](Env const& env, uint32)
+    {
+        return float(_envs[env.Index].ClustersCleared.size());
+    });
+    table.Add("frontier_clear_reward", [this](Env const& env, uint32)
+    {
+        return _envs[env.Index].FrontierClearNominal;
+    });
+    table.Add("pockets_seen", [this](Env const& env, uint32) { return float(_envs[env.Index].PocketSeenMs.size()); });
+    table.Add("pockets_entered", [this](Env const& env, uint32)
+    {
+        return float(_envs[env.Index].PocketsEntered.size());
+    });
+    table.Add("pocket_entry_reward", [this](Env const& env, uint32) { return _envs[env.Index].PocketEntryNominal; });
+    table.Add("seat_in_chamber_share", [this](Env const& env, uint32)
+    {
+        EnvSeek const& seek = _envs[env.Index];
+        return seek.Decisions ? float(seek.ChamberDecisions) / float(seek.Decisions) : 0.0f;
+    });
+    table.Add("explore_pocket_cells", [this](Env const& env, uint32)
+    {
+        return float(_envs[env.Index].ExplorePocketCells);
+    });
+    table.Add("revisit_seconds", [this](Env const& env, uint32) { return _envs[env.Index].RevisitSeconds; });
+    table.Add("revisit_share", [this](Env const& env, uint32)
+    {
+        EnvSeek const& seek = _envs[env.Index];
+        return seek.Decisions ? float(seek.RevisitDecisions) / float(seek.Decisions) : 0.0f;
+    });
+    table.Add("recoveries", [this](Env const& env, uint32) { return float(_envs[env.Index].Recoveries); });
+    table.Add("trap_source", [this](Env const& env, uint32) { return float(_envs[env.Index].TrapSource); });
     // Where the object stood and where the seat's last position was, absolute coordinates in the instance (yards), so
     // the routes can be analysed offline.
     table.Add("object_x", [this](Env const& env, uint32) { return _envs[env.Index].Spot.GetPositionX(); });
@@ -629,14 +747,85 @@ bool Animus::Curriculum::SeekEncounter::TrapPose(Map* map, ArenaDefinition const
     // wall (the body's radius is 0.389 yd, so under that the capsule would start in the wall). The doorway's cells are
     // walkable ones of the offline navmesh scan and the pose lies at least TRAP_MARGIN off the axis, so it is on
     // navmesh the stock walker would also stand on; nothing here asks the navmesh (reset cost: ray casts).
+    // Two more poses (movement pacing M2), drawn as often as the jamb: an INSIDE CORNER -- a point of a random
+    // room's floor with a wall within CORNER_REACH along two perpendicular axes, the seat put the gap from each,
+    // facing the vertex -- and a PILLAR'S EDGE -- a solid within PILLAR_REACH ahead that rays 60 degrees either
+    // side clear for PILLAR_CLEAR, the seat put the gap from it, facing it. Each on the room's floor, with the way
+    // back to the point it was drawn from clear.
     CurriculumTuning::SeekTuning const& tuning = _scenario.Tuning().Seek;
     if (arena.Rooms.empty())
         return false;
     uint32 const phase = bot->GetPhaseMask();
     Vision::MapVisionWorld const world(map, phase);
+    auto const hit = [&world](float x, float y, float z, float dx, float dy, float reach)
+    {
+        Vision::SurfaceHit const surface = world.StaticHit(Vision::Vec3{ x, y, z + KNEE },
+            Vision::Vec3{ x + dx * reach, y + dy * reach, z + KNEE });
+        return surface.Distance < 0.0f ? -1.0f : surface.Distance;
+    };
     for (uint32 attempt = 0; attempt < TRAP_ATTEMPTS; ++attempt)
     {
         SeekRoom const& room = arena.Rooms[urand(0, uint32(arena.Rooms.size()) - 1)];
+        uint32 const kind = urand(0, 2);
+        if (kind)
+        {
+            auto const [px, py] = Draw::PointIn(room.Floor, frand(0.0f, 1.0f), frand(0.0f, 1.0f), frand(0.0f, 1.0f));
+            float const pz = map->GetHeight(px, py, room.FloorZ + PROBE_ABOVE, true, PROBE_DOWN);
+            if (std::fabs(pz - room.FloorZ) > tuning.FloorTolerance)
+                continue;
+            float const gap = frand(tuning.TrapGapNear, std::max(tuning.TrapGapNear, tuning.TrapGapFar));
+            float x = px;
+            float y = py;
+            float facing = 0.0f;
+            if (kind == 1)
+            {
+                // The corner: the first pair of perpendicular axes both walled within reach.
+                static float const AXES[4][2] = { { 1.0f, 0.0f }, { 0.0f, 1.0f }, { -1.0f, 0.0f }, { 0.0f, -1.0f } };
+                bool found = false;
+                for (uint32 first = 0; first < 4 && !found; ++first)
+                {
+                    uint32 const second = (first + 1) % 4;
+                    float const d1 = hit(px, py, pz, AXES[first][0], AXES[first][1], CORNER_REACH);
+                    float const d2 = hit(px, py, pz, AXES[second][0], AXES[second][1], CORNER_REACH);
+                    if (d1 < gap + TRAP_MARGIN || d2 < gap + TRAP_MARGIN)
+                        continue;
+                    x = px + AXES[first][0] * (d1 - gap) + AXES[second][0] * (d2 - gap);
+                    y = py + AXES[first][1] * (d1 - gap) + AXES[second][1] * (d2 - gap);
+                    facing = std::atan2(AXES[first][1] + AXES[second][1], AXES[first][0] + AXES[second][0]);
+                    found = true;
+                }
+                if (!found)
+                    continue;
+            }
+            else
+            {
+                // The pillar: a solid ahead, open either side of it.
+                float const heading = frand(0.0f, TWO_PI);
+                float const ax = std::cos(heading);
+                float const ay = std::sin(heading);
+                float const d = hit(px, py, pz, ax, ay, PILLAR_REACH);
+                if (d < gap + TRAP_MARGIN)
+                    continue;
+                bool open = true;
+                for (float side : { 1.0471976f, -1.0471976f })
+                    if (hit(px, py, pz, std::cos(heading + side), std::sin(heading + side), PILLAR_CLEAR) >= 0.0f)
+                        open = false;
+                if (!open)
+                    continue;
+                x = px + ax * (d - gap);
+                y = py + ay * (d - gap);
+                facing = heading;
+            }
+            float const z = map->GetHeight(x, y, pz + PROBE_ABOVE, true, PROBE_DOWN);
+            if (std::fabs(z - pz) > TRAP_FLAT || std::fabs(z - room.FloorZ) > tuning.FloorTolerance)
+                continue;
+            // The way out: back to the point it was drawn from, in the clear at knee height.
+            if (world.StaticAnyHit(Vision::Vec3{ x, y, z + KNEE }, Vision::Vec3{ px, py, z + KNEE }))
+                continue;
+            facing += frand(-tuning.TrapFacingSlack, tuning.TrapFacingSlack);
+            pose = Position(x, y, z, facing < 0.0f ? facing + TWO_PI : facing);
+            return true;
+        }
         float dx = room.Centre.first - room.Opening.first;
         float dy = room.Centre.second - room.Opening.second;
         float const length = std::sqrt(dx * dx + dy * dy);
@@ -678,6 +867,25 @@ bool Animus::Curriculum::SeekEncounter::TrapPose(Map* map, ArenaDefinition const
     return false;
 }
 
+bool Animus::Curriculum::SeekEncounter::ReplayPose(Position& pose, Movement::ControlState& held)
+{
+    std::lock_guard<std::mutex> const lock(_pinMutex);
+    if (!_pinCount)
+        return false;
+    PinPose const& pin = _pins[urand(0, uint32(_pinCount) - 1)];
+    pose = pin.Pose;
+    held = pin.Held;
+    return true;
+}
+
+void Animus::Curriculum::SeekEncounter::RecordPin(Position const& pose, Movement::ControlState const& held)
+{
+    std::lock_guard<std::mutex> const lock(_pinMutex);
+    _pins[_pinNext] = PinPose{ pose, held };
+    _pinNext = (_pinNext + 1) % PIN_POSES;
+    _pinCount = std::min(_pinCount + 1, PIN_POSES);
+}
+
 bool Animus::Curriculum::SeekEncounter::Build(Env& env, Map* map, uint8 /*level*/)
 {
     Player* bot = _scenario.SeatBot(env, 0);
@@ -713,7 +921,9 @@ bool Animus::Curriculum::SeekEncounter::Build(Env& env, Map* map, uint8 /*level*
     }
     else if (seeded)
     {
-        auto const [room, object] = Draw::RungEvaluationPick(env.EpisodeSeedIndex,
+        // An unpinned seeded episode went round the trainable arenas by its index (StageScenario::DrawArena), so
+        // the rooms cycle on the index divided by their count: every map's rooms are met evenly.
+        auto const [room, object] = Draw::RungEvaluationPick(env.EpisodeSeedIndex / _scenario.TrainableArenaCount(),
             Draw::EvaluationRooms(arena.Rooms, ladder), uint32(arena.Objects.size()));
         seek.Room = int32(room);
         seek.ObjectIndex = object;
@@ -745,13 +955,36 @@ bool Animus::Curriculum::SeekEncounter::Build(Env& env, Map* map, uint8 /*level*
     // The trap drill (Seek.TrapShare): a training episode starts, now and then, with the seat against the jamb of a
     // door of the room table, facing it. Never an evaluation's (it would move `found`, the fade's gate), and the
     // hallway rung's object stays in sight of the spawn, not of the pose: the drill is for the way out.
+    // The drill has its own rung (Seek.TrapFromRung: the doorway rung, where the pins are); TrapReplayShare of its
+    // episodes start where a training seat pinned, with the keys it held (the replay table), the rest at a jamb, an
+    // inside corner or a pillar's edge of the room table.
     Position pose = start;
-    if (!seeded && !seek.Sweep && uint32(placed) >= tuning.ExploreFromRung && tuning.TrapShare > 0.0f
-        && frand(0.0f, 1.0f) < tuning.TrapShare
-        && TrapPose(map, arena, bot, pose))
+    if (!seeded && !seek.Sweep && uint32(placed) >= tuning.TrapFromRung && tuning.TrapShare > 0.0f
+        && frand(0.0f, 1.0f) < tuning.TrapShare)
     {
-        seek.Trap = true;
-        seek.TrapStart = pose;
+        Movement::ControlState held;
+        bool replayed = false;
+        if (frand(0.0f, 1.0f) < tuning.TrapReplayShare && ReplayPose(pose, held))
+        {
+            replayed = true;
+            seek.Trap = true;
+            seek.TrapSource = 1;
+            // The keys the pinned seat held: the controller takes them from the seat's controls at its first tick
+            // (StageScenario::StartMover seeds the body after the encounters build).
+            SeatState& seat = _scenario.Data(env).Seats[0];
+            seat.Controls.Held = held;
+            seat.Controls.Held.FaceTurn = 0.0f;
+            seat.Controls.Held.Jump = false;
+        }
+        if (!replayed && TrapPose(map, arena, bot, pose))
+        {
+            seek.Trap = true;
+            seek.TrapSource = 0;
+        }
+        if (seek.Trap)
+            seek.TrapStart = pose;
+        else
+            pose = start;
     }
     BotFactory::TeleportWithinMap(bot, pose);
 
@@ -905,9 +1138,15 @@ void Animus::Curriculum::SeekEncounter::Explore(Env const& env, EnvSeek& seek, A
     // Exploration v2: a cell of the room the seat stands in (its own position inside that room's polygon) is worth
     // ExploreInsideBonus -- going in; a cell of a room not yet entered seen from anywhere else keeps ExploreRoomBonus
     // -- looking in. The first beats the second, a cell of one room being paid once.
+    // General search: on a table-free arena the weights are the pockets' (the coverage summary of this decision's
+    // crop): a cell in the own chamber once it was entered as a pocket is worth ExploreInsideBonus (seen from
+    // inside), one in a pocket not yet entered ExploreRoomBonus (looking in), any other 1 -- a cell behind a
+    // narrowing is the hidden one; a corridor cell is not.
+    bool const tableTerms = TableTerms(arena);
+    Coverage::Summary const& summary = seat.CoverageSummary;
     float nominal = 0.0f;
     uint64 last = ~uint64(0);
-    int32 const seatRoom = bot ? Draw::RoomAt(arena.Rooms, bot->GetPositionX(), bot->GetPositionY(),
+    int32 const seatRoom = bot && tableTerms ? Draw::RoomAt(arena.Rooms, bot->GetPositionX(), bot->GetPositionY(),
         bot->GetPositionZ()) : -1;
     Draw::FloorRays(seat.Hits, [&](float x, float y, float z)
     {
@@ -919,16 +1158,41 @@ void Animus::Curriculum::SeekEncounter::Explore(Env const& env, EnvSeek& seek, A
             return;
         ++seek.ExploreCells;
         float weight = 1.0f;
-        int32 const room = Draw::RoomAt(arena.Rooms, x, y, z);
-        if (room >= 0 && room == seatRoom)
+        if (tableTerms)
         {
-            weight = tuning.ExploreInsideBonus;
-            ++seek.ExploreInsideCells;
+            int32 const room = Draw::RoomAt(arena.Rooms, x, y, z);
+            if (room >= 0 && room == seatRoom)
+            {
+                weight = tuning.ExploreInsideBonus;
+                ++seek.ExploreInsideCells;
+            }
+            else if (room >= 0 && uint32(room) < seek.Entered.size() && !seek.Entered[uint32(room)])
+            {
+                weight = tuning.ExploreRoomBonus;
+                ++seek.ExploreRoomCells;
+            }
         }
-        else if (room >= 0 && uint32(room) < seek.Entered.size() && !seek.Entered[uint32(room)])
+        else if (summary.Valid)
         {
-            weight = tuning.ExploreRoomBonus;
-            ++seek.ExploreRoomCells;
+            uint32 row = 0;
+            uint32 col = 0;
+            int8 const chamber = Coverage::Locate(summary, x, y, row, col)
+                ? summary.ChamberOf[std::size_t(row) * Coverage::SIDE + col] : int8(-1);
+            if (chamber >= 0)
+            {
+                Coverage::Chamber const& where = summary.Chambers[std::size_t(chamber)];
+                bool const entered = seek.PocketsEntered.count(where.Key) != 0;
+                if (where.Own && entered)
+                {
+                    weight = tuning.ExploreInsideBonus;
+                    ++seek.ExploreInsideCells;
+                }
+                else if (where.Pocket && !entered)
+                {
+                    weight = tuning.ExploreRoomBonus;
+                    ++seek.ExplorePocketCells;
+                }
+            }
         }
         nominal += tuning.ExploreSeen * weight;
     });
@@ -951,7 +1215,34 @@ void Animus::Curriculum::SeekEncounter::Explore(Env const& env, EnvSeek& seek, A
     if (tuning.FrontierPull <= 0.0f || !bot)
         return;
     SeenPlaces::Point const at{ bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ() };
-    if (!seek.FrontierChecked || env.EpisodeElapsedMs < seek.FrontierCheckedMs
+    if (!tableTerms)
+    {
+        // Table-free (general search): the target is the nearest cluster of the summary whose cells touch a pocket's,
+        // else the nearest cluster; the ratchet and the cap are as on a table arena.
+        seek.HasFrontier = false;
+        Coverage::Cluster const* target = nullptr;
+        float best = 0.0f;
+        for (uint32 pass = 0; pass < 2 && !target; ++pass)
+            for (uint32 index = 0; summary.Valid && index < summary.ClusterCount; ++index)
+            {
+                Coverage::Cluster const& cluster = summary.Clusters[index];
+                if (pass == 0 && !cluster.AtPocket)
+                    continue;
+                float const distance = std::hypot(cluster.X - at.X, cluster.Y - at.Y);
+                if (!target || distance < best)
+                {
+                    target = &cluster;
+                    best = distance;
+                }
+            }
+        if (target)
+        {
+            seek.HasFrontier = true;
+            seek.FrontierAt = SeenPlaces::Point{ target->X, target->Y, target->Z };
+            seek.FrontierKey = target->Key;
+        }
+    }
+    else if (!seek.FrontierChecked || env.EpisodeElapsedMs < seek.FrontierCheckedMs
         || env.EpisodeElapsedMs >= seek.FrontierCheckedMs + FRONTIER_PULL_MS)
     {
         Vision::MentalMap const& map = seat.Map;
@@ -1000,7 +1291,7 @@ void Animus::Curriculum::SeekEncounter::Explore(Env const& env, EnvSeek& seek, A
 }
 
 void Animus::Curriculum::SeekEncounter::Circle(Env const& env, EnvSeek& seek, Player* bot, float moved, bool stuck,
-    RewardLedger& ledger)
+    bool keys, RewardLedger& ledger)
 {
     CurriculumTuning::SeekTuning const& tuning = _scenario.Tuning().Seek;
     if (tuning.Circling <= 0.0f || !tuning.CircleWindowMs)
@@ -1034,9 +1325,11 @@ void Animus::Curriculum::SeekEncounter::Circle(Env const& env, EnvSeek& seek, Pl
         path += seek.Circle[index].Step;
         turn += seek.Circle[index].Turn;
     }
+    // The turn clause only while a movement key is held (movement pacing M4, amending decision 0023): a keys-up
+    // spin to look round is free; a spin while pressing into a wall is still Stuck and Wall.
     float const net = std::hypot(sample.X - first.X, sample.Y - first.Y);
     bool const holds = net < tuning.CircleNetYards
-        && (path >= tuning.CircleYards || turn * 180.0f / float(M_PI) >= tuning.CircleTurnDeg);
+        && (path >= tuning.CircleYards || (keys && turn * 180.0f / float(M_PI) >= tuning.CircleTurnDeg));
     if (holds && !seek.CircleOn)
         ++seek.CirclingEvents;
     seek.CircleOn = holds;
@@ -1057,7 +1350,9 @@ void Animus::Curriculum::SeekEncounter::Stale(Env const& env, EnvSeek& seek, boo
     // included; v2 asked for a new floor cell, which ~1,600 an episode never let it fire). Not on a decision that paid
     // Stuck or Wall (that second is priced already, as Circling's). The trap drill's window (TrapEscapeMs) is
     // shorter than the clock, which starts at 0, so it needs no exclusion.
-    bool const holds = env.EpisodeElapsedMs >= seek.LastNewRoomMs + tuning.StaleRoomMs;
+    // LastNewMs: the last new room on a table arena, the last pocket entered or cluster cleared on a table-free one
+    // (general search).
+    bool const holds = env.EpisodeElapsedMs >= seek.LastNewMs + tuning.StaleRoomMs;
     if (holds && !seek.StaleOn)
         ++seek.StaleEvents;
     seek.StaleOn = holds;
@@ -1068,8 +1363,230 @@ void Animus::Curriculum::SeekEncounter::Stale(Env const& env, EnvSeek& seek, boo
     ledger.AddFixed(RewardTerm::Stale, -tuning.Stale * seconds);
 }
 
+void Animus::Curriculum::SeekEncounter::Clusters(Env const& env, EnvSeek& seek, SeatState const& seat, bool paid,
+    bool tableTerms, RewardLedger& ledger)
+{
+    // FrontierClear (general search): every cluster of this decision's summary raises its key's peak; a key whose
+    // peak reached ClearMinCells is CLEARED by positive evidence when (i) the body is within ClearRadius of its bin's
+    // centre (the bin well inside the window, not clipped by its edge), (ii) every crop cell of the 10-yd bin is
+    // known and none is a frontier cell, and (iii) no cluster of the summary has its centroid within 10 yd of the
+    // bin. Absence alone never clears. Paid once a key, never for a key within 10 yd of one cleared; the cap is
+    // FrontierPull's. A cluster that drifts into the next bin as it is approached is cleared when its old bin is
+    // fully known: the "approached and resolved" event.
+    CurriculumTuning::SeekTuning const& tuning = _scenario.Tuning().Seek;
+    Coverage::Summary const& summary = seat.CoverageSummary;
+    if (!summary.Valid)
+        return;
+    uint32 const now = env.EpisodeElapsedMs;
+    for (uint32 index = 0; index < summary.ClusterCount; ++index)
+    {
+        Coverage::Cluster const& cluster = summary.Clusters[index];
+        EnvSeek::Place& peak = seek.ClusterPeak[cluster.Key];
+        if (cluster.Size > peak.Ms)
+            peak = EnvSeek::Place{ cluster.Size, cluster.X, cluster.Y };
+    }
+    auto const near = [](std::unordered_map<uint64, EnvSeek::Place> const& places, float x, float y)
+    {
+        for (auto const& [key, place] : places)
+            if (std::hypot(place.X - x, place.Y - y) <= KEY_NEAR)
+                return true;
+        return false;
+    };
+    for (auto const& [key, peak] : seek.ClusterPeak)
+    {
+        if (peak.Ms < std::max<uint32>(1, tuning.ClearMinCells) || seek.ClustersCleared.count(key))
+            continue;
+        // The bin: the 10-yd square round the key's centroid, as 25 crop cells of 2 yd.
+        float const binX = std::floor(peak.X / KEY_NEAR) * KEY_NEAR + KEY_NEAR * 0.5f;
+        float const binY = std::floor(peak.Y / KEY_NEAR) * KEY_NEAR + KEY_NEAR * 0.5f;
+        if (std::hypot(binX - summary.X, binY - summary.Y) > tuning.ClearRadius)
+            continue;
+        bool known = true;
+        for (int32 dx = -2; dx <= 2 && known; ++dx)
+            for (int32 dy = -2; dy <= 2 && known; ++dy)
+            {
+                uint32 row = 0;
+                uint32 col = 0;
+                if (!Coverage::Locate(summary, binX + float(dx) * Coverage::CELL, binY + float(dy) * Coverage::CELL,
+                    row, col))
+                {
+                    known = false;
+                    break;
+                }
+                uint8 const bits = Coverage::CellAt(summary, row, col);
+                if (!(bits & Coverage::CELL_KNOWN) || (bits & Coverage::CELL_FRONTIER))
+                    known = false;
+            }
+        if (!known)
+            continue;
+        bool clusterNear = false;
+        for (uint32 index = 0; index < summary.ClusterCount && !clusterNear; ++index)
+            clusterNear = std::hypot(summary.Clusters[index].X - binX, summary.Clusters[index].Y - binY) <= KEY_NEAR;
+        if (clusterNear)
+            continue;
+        bool const neighbourCleared = near(seek.ClustersCleared, peak.X, peak.Y);
+        seek.ClustersCleared.emplace(key, peak);
+        if (neighbourCleared)
+            continue;
+        if (!tableTerms)
+            seek.LastNewMs = now;
+        if (!paid)
+            continue;
+        float const pay = std::min(tuning.FrontierClear, std::max(0.0f, tuning.FrontierCap - seek.FrontierNominal));
+        if (pay > 0.0f)
+        {
+            seek.FrontierNominal += pay;
+            seek.FrontierClearNominal += pay;
+            ledger.Add(RewardTerm::FrontierClear, pay);
+        }
+    }
+}
+
+void Animus::Curriculum::SeekEncounter::Pockets(Env const& env, EnvSeek& seek, SeatState const& seat, bool paid,
+    bool tableTerms, RewardLedger& ledger)
+{
+    // PocketEntry (general search): the pay event is crossing a narrowing into a chamber the seat had seen as a
+    // separate one -- never "the own chamber's key changed" (the own chamber grows and its centroid drifts as a
+    // corridor is revealed; keyed naively it would bank the cap on the first hallway). Every pocket of the summary
+    // is stamped; the own chamber accrues dwell; an ENTRY is EnterDwellMs in an own chamber whose key (or one within
+    // 10 yd: a room straddles bins as it is revealed) was stamped a pocket within PocketMemoryMs, not entered before
+    // (nor one within 10 yd), and not the chamber the seat started in. Paid once a pocket, in RoomEntry's cap.
+    CurriculumTuning::SeekTuning const& tuning = _scenario.Tuning().Seek;
+    Coverage::Summary const& summary = seat.CoverageSummary;
+    if (!summary.Valid)
+        return;
+    uint32 const now = env.EpisodeElapsedMs;
+    uint32 const stepMs = _scenario.StepMs(env);
+    for (uint32 index = 0; index < summary.ChamberCount; ++index)
+    {
+        Coverage::Chamber const& chamber = summary.Chambers[index];
+        if (chamber.Pocket)
+            seek.PocketSeenMs[chamber.Key] = EnvSeek::Place{ now, chamber.X, chamber.Y };
+    }
+    Coverage::Chamber const* own = summary.Own >= 0 ? &summary.Chambers[std::size_t(summary.Own)] : nullptr;
+    uint64 const ownKey = own ? own->Key : 0;
+    if (own)
+        ++seek.ChamberDecisions;
+    if (ownKey != seek.OwnKey)
+    {
+        seek.OwnKey = ownKey;
+        seek.OwnDwellMs = 0;
+    }
+    seek.OwnDwellMs += stepMs;
+    if (!own || seek.OwnDwellMs < tuning.EnterDwellMs)
+        return;
+    auto const near = [](std::unordered_map<uint64, EnvSeek::Place> const& places, float x, float y)
+    {
+        for (auto const& [key, place] : places)
+            if (std::hypot(place.X - x, place.Y - y) <= KEY_NEAR)
+                return true;
+        return false;
+    };
+    if (seek.PocketsEntered.count(ownKey) || near(seek.PocketsEntered, own->X, own->Y))
+        return;
+    if (ownKey == seek.StartChamber
+        || (seek.StartChamber && std::hypot(own->X - seek.StartChamberX, own->Y - seek.StartChamberY) <= KEY_NEAR))
+        return;
+    bool seen = false;
+    for (auto const& [key, place] : seek.PocketSeenMs)
+        if (now - std::min(now, place.Ms) <= tuning.PocketMemoryMs
+            && (key == ownKey || std::hypot(place.X - own->X, place.Y - own->Y) <= KEY_NEAR))
+            seen = true;
+    if (!seen)
+        return;
+    seek.PocketsEntered[ownKey] = EnvSeek::Place{ now, own->X, own->Y };
+    if (!tableTerms)
+        seek.LastNewMs = now;
+    if (!paid)
+        return;
+    float const pay = std::min(tuning.PocketEntry, std::max(0.0f, tuning.RoomEntryCap - seek.RoomEntryNominal));
+    if (pay > 0.0f)
+    {
+        seek.RoomEntryNominal += pay;
+        seek.PocketEntryNominal += pay;
+        ledger.Add(RewardTerm::PocketEntry, pay);
+    }
+}
+
+void Animus::Curriculum::SeekEncounter::Revisit(Env const& env, EnvSeek& seek, Player* bot, bool paid,
+    RewardLedger& ledger)
+{
+    // Revisit (general search, Cost at a fixed price): the body's 2-yd cell against when it last stood there this
+    // episode, charged Seek.Revisit a second times min(1, the time since / RevisitAgeMs) -- ground left a minute ago
+    // costs the full price (the hub shuttle), a turn-round at a dead end nearly nothing. Not on a decision that
+    // charged Stuck or Wall. Episode-local: the map's visited flag outlives an episode on a kept map.
+    CurriculumTuning::SeekTuning const& tuning = _scenario.Tuning().Seek;
+    uint32 const now = env.EpisodeElapsedMs;
+    uint64 const key = CellKey(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), REVISIT_CELL);
+    auto const [stood, fresh] = seek.StoodMs.emplace(key, now);
+    if (!fresh)
+    {
+        ++seek.RevisitDecisions;
+        float const seconds = float(_scenario.StepMs(env)) / 1000.0f;
+        float const weight = tuning.RevisitAgeMs
+            ? std::clamp(float(now - std::min(now, stood->second)) / float(tuning.RevisitAgeMs), 0.0f, 1.0f) : 1.0f;
+        seek.RevisitSeconds += weight * seconds;
+        if (!paid && tuning.Revisit > 0.0f && weight > 0.0f)
+            ledger.AddFixed(RewardTerm::Revisit, -tuning.Revisit * weight * seconds);
+        stood->second = now;
+    }
+}
+
+void Animus::Curriculum::SeekEncounter::Recover(Env const& env, EnvSeek& seek, Player* bot, float charge,
+    RewardLedger& ledger)
+{
+    // The pin rebate (movement pacing M5, Aid): a run of Stuck- or Wall-charged decisions of RECOVER_MIN_MS or more
+    // is a pin; once the body is RecoverYards from where it began within RecoverMs of its start, RecoverShare of what
+    // the run charged is paid back, at most RecoverCap, once a run. A pin that recovers nets half price, one that does
+    // not full price plus the escalation, one never entered nothing: the gradient points at leaving, never at bumping.
+    CurriculumTuning::SeekTuning const& tuning = _scenario.Tuning().Seek;
+    uint32 const now = env.EpisodeElapsedMs;
+    uint32 const stepMs = _scenario.StepMs(env);
+    if (charge > 0.0f)
+    {
+        if (!seek.PinOn)
+        {
+            seek.PinOn = true;
+            seek.PinCharge = 0.0f;
+            seek.PinRunMs = 0;
+            seek.PinSpent = false;
+            seek.PinPoint = bot->GetPosition();
+            seek.PinWatchMs = now - std::min(now, stepMs);
+        }
+        seek.PinCharge += charge;
+        seek.PinRunMs += stepMs;
+        if (seek.PinRunMs >= RECOVER_MIN_MS && !seek.PinSpent)
+            seek.PinWatch = true;
+    }
+    else
+        seek.PinOn = false;
+    if (!seek.PinWatch)
+        return;
+    uint32 const since = now - std::min(now, seek.PinWatchMs);
+    if (bot->GetExactDist2d(&seek.PinPoint) >= tuning.RecoverYards)
+    {
+        if (since <= tuning.RecoverMs)
+        {
+            float const pay = std::min(tuning.RecoverShare * seek.PinCharge, tuning.RecoverCap);
+            if (pay > 0.0f)
+            {
+                ++seek.Recoveries;
+                seek.RecoveredNominal += pay;
+                ledger.Add(RewardTerm::Recovered, pay);
+            }
+        }
+        seek.PinWatch = false;
+        seek.PinSpent = true;
+    }
+    else if (since > tuning.RecoverMs)
+    {
+        seek.PinWatch = false;
+        seek.PinSpent = true;
+    }
+}
+
 void Animus::Curriculum::SeekEncounter::TrackRooms(Env const& env, EnvSeek& seek, ArenaDefinition const& arena,
-    Player* bot, int32 room, std::vector<uint32> const& counts, RewardLedger& ledger)
+    Player* bot, int32 room, std::vector<uint32> const& counts, bool tableTerms, RewardLedger& ledger)
 {
     CurriculumTuning::SeekTuning const& tuning = _scenario.Tuning().Seek;
     uint32 const stepMs = _scenario.StepMs(env);
@@ -1119,8 +1636,11 @@ void Animus::Curriculum::SeekEncounter::TrackRooms(Env const& env, EnvSeek& seek
             if (!track.Visited)
             {
                 track.Visited = true;
-                // Every room, the start room too, restarts Stale's clock, whether or not RoomEntry still pays.
+                // Every room, the start room too, restarts Stale's clock, whether or not RoomEntry still pays (on a
+                // table arena: a table-free one's clock is the map-derived events').
                 seek.LastNewRoomMs = now;
+                if (tableTerms)
+                    seek.LastNewMs = now;
                 // The first entry of the room this episode (RoomEntry): once a room, the start room never (the
                 // seat began in it, as the trap drill's pose does).
                 if (int32(index) != seek.StartRoom)
@@ -1131,7 +1651,7 @@ void Animus::Curriculum::SeekEncounter::TrackRooms(Env const& env, EnvSeek& seek
                         ++seek.BackRoomEntries;
                     float const pay = std::min(tuning.RoomEntry * (back ? tuning.RoomEntryBackMult : 1.0f),
                         std::max(0.0f, tuning.RoomEntryCap - seek.RoomEntryNominal));
-                    if (pay > 0.0f && seek.Rung >= tuning.ExploreFromRung)
+                    if (pay > 0.0f && seek.Rung >= tuning.ExploreFromRung && tableTerms)
                     {
                         seek.RoomEntryNominal += pay;
                         ledger.Add(RewardTerm::RoomEntry, pay);
@@ -1249,8 +1769,9 @@ void Animus::Curriculum::SeekEncounter::Reward(Env& env, uint32 seatIndex, Playe
     uint32 const wallMs = seat.WallMs - std::min(seat.WallMs, seek.LastWallMs);
     seek.LastStuckMs = seat.StuckMs;
     seek.LastWallMs = seat.WallMs;
+    float pinCharge = 0.0f;
     if (stuckMs)
-        ledger.AddFixed(RewardTerm::Stuck, -tuning.Stuck * float(stuckMs) / 1000.0f);
+        pinCharge -= ledger.AddFixed(RewardTerm::Stuck, -tuning.Stuck * float(stuckMs) / 1000.0f);
     float charge = 0.0f;
     if (wallMs)
     {
@@ -1277,7 +1798,7 @@ void Animus::Curriculum::SeekEncounter::Reward(Env& env, uint32 seatIndex, Playe
         seek.WallPinMax = std::max(seek.WallPinMax, seek.WallRunMs);
         if (seek.Trap && env.EpisodeElapsedMs <= tuning.TrapEscapeMs)
             seek.TrapPinSeconds += float(wallMs) / 1000.0f;
-        ledger.AddFixed(RewardTerm::Wall, -charge);
+        pinCharge -= ledger.AddFixed(RewardTerm::Wall, -charge);
     }
     else
     {
@@ -1286,12 +1807,21 @@ void Animus::Curriculum::SeekEncounter::Reward(Env& env, uint32 seatIndex, Playe
         seek.WallRunMs = 0;
     }
 
+    // The pin rebate (M5), and the replay table (M3): a training seat's Stuck run reaching PIN_RECORD_MS is
+    // recorded with the keys it holds -- every unseeded training env (the sim is not told which envs the learner
+    // runs greedily), never an evaluation's nor a trap episode's own pin.
+    Recover(env, seek, bot, pinCharge, ledger);
+    if (!env.Evaluating && env.EpisodeSeedIndex == NO_EPISODE_SEED && !seek.Trap
+        && seat.StuckRunMs >= PIN_RECORD_MS && seek.LastStuckRunMs < PIN_RECORD_MS)
+        RecordPin(bot->GetPosition(), seat.Controls.Held);
+    seek.LastStuckRunMs = seat.StuckRunMs;
+
     // Going round in circles (not on a decision that paid Stuck: that second is priced already), and the trap
     // drill's way out: Escape once, TrapEscapeYards from the pose within TrapEscapeMs of the start.
-    Circle(env, seek, bot, moved, stuckMs > 0, ledger);
+    Movement::ControlState const& held = seat.Controls.Held;
+    bool const keys = held.Forward || held.Strafe || held.Vertical;
+    Circle(env, seek, bot, moved, stuckMs > 0, keys, ledger);
     bool const exploring = seek.Rung >= tuning.ExploreFromRung;
-    if (exploring)
-        Stale(env, seek, stuckMs > 0 || wallMs > 0, ledger);
     // Escape is paid once, inside the window, when the seat is TrapEscapeYards away AND its body has turned
     // TrapEscapeTurnDeg from the pose's heading (0: the turn is not asked); the two may come in either order.
     if (seek.Trap && !seek.Escaped && env.EpisodeElapsedMs <= tuning.TrapEscapeMs)
@@ -1344,11 +1874,30 @@ void Animus::Curriculum::SeekEncounter::Reward(Env& env, uint32 seatIndex, Playe
     }
 
     // Explore (before the rooms below are marked entered): the floor the frame landed on for the first time, and the
-    // frontier closed on. The first look is the spawn's view: recorded, not paid.
+    // frontier closed on. The first look is the spawn's view: recorded, not paid. Then the map-derived terms
+    // (general search): the clusters cleared and the pockets entered, Stale's clock behind them, and Revisit.
+    bool const tableTerms = TableTerms(arena);
     if (firstLook)
+    {
         seek.StartRoom = Draw::RoomAt(arena.Rooms, bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+        Coverage::Summary const& summary = seat.CoverageSummary;
+        if (summary.Valid && summary.Own >= 0)
+        {
+            Coverage::Chamber const& own = summary.Chambers[std::size_t(summary.Own)];
+            seek.StartChamber = own.Key;
+            seek.StartChamberX = own.X;
+            seek.StartChamberY = own.Y;
+        }
+    }
     if (exploring)
+    {
         Explore(env, seek, arena, seat, bot, !firstLook, ledger);
+        Clusters(env, seek, seat, !firstLook, tableTerms, ledger);
+        Pockets(env, seek, seat, !firstLook, tableTerms, ledger);
+        Stale(env, seek, stuckMs > 0 || wallMs > 0, ledger);
+        if (!firstLook)
+            Revisit(env, seek, bot, stuckMs > 0 || wallMs > 0, ledger);
+    }
 
     // New ground, as shaping: a cell of floor walked onto for the first time.
     float const x = bot->GetPositionX();
@@ -1372,7 +1921,7 @@ void Animus::Curriculum::SeekEncounter::Reward(Env& env, uint32 seatIndex, Playe
         }
     }
     seek.LastRoom = room;
-    TrackRooms(env, seek, arena, bot, room, counts, ledger);
+    TrackRooms(env, seek, arena, bot, room, counts, tableTerms, ledger);
     if (!seek.FirstGoal)
         for (GoalHold const& hold : seat.Holds)
             if (GoalBlock::IsPlanGoal(hold.Goal))
