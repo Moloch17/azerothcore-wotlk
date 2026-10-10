@@ -90,6 +90,8 @@ std::string_view Animus::Curriculum::RewardTermName(RewardTerm term)
         case RewardTerm::FrontierPull:          return "frontier_pull";
         case RewardTerm::Circling:              return "circling";
         case RewardTerm::Escape:                return "escape";
+        case RewardTerm::RoomEntry:             return "room_entry";
+        case RewardTerm::Stale:                 return "stale";
         case RewardTerm::Count:                 break;
     }
 

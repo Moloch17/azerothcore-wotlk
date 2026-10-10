@@ -6531,6 +6531,16 @@ AnimusForge.Curriculum.PartyFollow.CastShare = 0
 #        charged Stuck). Trap drill: in a training episode (never an evaluation's) with probability TrapShare the seat
 #        starts 0.5 to 1.5 yd from the jamb of a random door of the room table, facing it; Escape (Aid, once) is paid
 #        when it is TrapEscapeYards from the start within TrapEscapeMs. A start distribution, not a teacher.
+#        Exploration v2 (2026-10-10, decision 0025): ExploreCap 5.0 (was 1.0: 96% of episodes reached it within ~13 s).
+#        A cell first seen while the seat stands inside a room of the table, in that room, is worth ExploreInsideBonus
+#        times ExploreSeen (going in); a cell of a room not yet entered seen from elsewhere keeps ExploreRoomBonus
+#        (looking in). RoomEntry (Exploring, paid at the Explore floor too) pays the first entry (EnterDwellMs inside
+#        the polygon) of each room once an episode, the room the seat started in excepted, times RoomEntryBackMult in a
+#        back or end-back room, at most RoomEntryCap an episode (nominal, its own cap beside ExploreCap). FrontierPull
+#        pulls only toward frontier clusters in a room of the table or within 3 yd of a room's opening, never one in the
+#        corridor. Stale (Cost, fixed price per second, in the score, never faded) is charged once StaleMs have passed
+#        with no newly seen floor cell, not in the trap drill's escape window and not on a decision that charged Stuck
+#        or Wall; 0 switches it off.
 AnimusForge.Curriculum.Seek.Arrive = 3.0
 AnimusForge.Curriculum.Seek.StepCost = 0.0005
 AnimusForge.Curriculum.Seek.Death = 6.0
@@ -6581,11 +6591,17 @@ AnimusForge.Curriculum.Seek.CellSwitch = 0.02
 AnimusForge.Curriculum.Seek.CellLost = 0.03
 AnimusForge.Curriculum.Seek.CellStale = 0.01
 AnimusForge.Curriculum.Seek.ExploreSeen = 0.002
-AnimusForge.Curriculum.Seek.ExploreCap = 1.0
+AnimusForge.Curriculum.Seek.ExploreCap = 5.0
 AnimusForge.Curriculum.Seek.ExploreFloor = 0.5
 AnimusForge.Curriculum.Seek.ExploreRoomBonus = 2.0
-AnimusForge.Curriculum.Seek.FrontierPull = 0.004
-AnimusForge.Curriculum.Seek.FrontierCap = 1.0
+AnimusForge.Curriculum.Seek.ExploreInsideBonus = 3.0
+AnimusForge.Curriculum.Seek.RoomEntry = 0.1
+AnimusForge.Curriculum.Seek.RoomEntryCap = 2.0
+AnimusForge.Curriculum.Seek.RoomEntryBackMult = 2.0
+AnimusForge.Curriculum.Seek.FrontierPull = 0.015
+AnimusForge.Curriculum.Seek.FrontierCap = 2.0
+AnimusForge.Curriculum.Seek.Stale = 0.01
+AnimusForge.Curriculum.Seek.StaleMs = 20000
 AnimusForge.Curriculum.Seek.CircleWindowMs = 6000
 AnimusForge.Curriculum.Seek.CircleYards = 12.0
 AnimusForge.Curriculum.Seek.CircleNetYards = 4.0

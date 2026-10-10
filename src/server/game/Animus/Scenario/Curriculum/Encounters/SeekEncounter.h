@@ -72,6 +72,13 @@ namespace Animus::Curriculum
     /// door of the room table, facing it, and pays Escape (Aid) once for getting 6 yd away: a start distribution, no
     /// scripted action.
     ///
+    /// **Exploration v2** (decision 0025): ExploreCap 5.0; a cell first seen from inside its own room is worth
+    /// Seek.ExploreInsideBonus (going in) where the corridor-seen cell of an unentered room keeps ExploreRoomBonus
+    /// (looking in); RoomEntry pays each room's first entry once (back rooms times RoomEntryBackMult) in its own cap;
+    /// FrontierPull pulls only toward a frontier in a room or at a door opening, not in the corridor; Stale (a Cost at
+    /// a fixed price) charges every second after StaleMs with no newly seen floor cell. Both sweeps play the deep
+    /// rung's clock; the evaluation records found_300.
+    ///
     /// Paid: Arrive once, stopped within the arena's SeekRadius of the object (Outcome); StepCost and Death (Cost);
     /// Stuck and Wall (Cost, at their own fixed price from the first step: RewardLedger::AddFixed); Sighting,
     /// NewGround and RoomSeen, the training-only aids (Shaping, faded), each by the episode's own bookkeeping, never
@@ -197,6 +204,20 @@ namespace Animus::Curriculum
             uint32 ExploreCells = 0;
             uint32 ExploreRoomCells = 0;
             uint32 BackRoomVisits = 0;
+            // Exploration v2 (decision 0025): the cells first seen from inside their own room (the Seek.ExploreInsideBonus
+            // ones), the room entries (EnterDwellMs inside the polygon, the start room excepted) and what they paid
+            // (nominal), the back and end-back ones among them, and when the Explore cap was reached (-1: not).
+            uint32 ExploreInsideCells = 0;
+            uint32 RoomEntriesNew = 0;
+            uint32 BackRoomEntries = 0;
+            float RoomEntryNominal = 0.0f;
+            int32 StartRoom = -1;
+            int32 ExploreCapHitMs = -1;
+            // Stale: the clock of the last newly seen floor cell, the seconds charged and the runs begun.
+            uint32 LastNewCellMs = 0;
+            bool StaleOn = false;
+            float StaleSeconds = 0.0f;
+            uint32 StaleEvents = 0;
             // Frontier pull: the nearest frontier cluster (refreshed every few seconds) and the best distance reached
             // to each cluster (a 10-yd grid cell of its point), so that going back and forth pays nothing.
             bool HasFrontier = false;
@@ -236,6 +257,9 @@ namespace Animus::Curriculum
         /// Circling for one decision: the window's path, turning and net displacement; charged unless `stuck` (the
         /// decision already paid Stuck).
         void Circle(Env const& env, EnvSeek& seek, Player* bot, float moved, bool stuck, RewardLedger& ledger);
+        /// Stale for one decision: the cost per second once Seek.StaleMs have passed with no newly seen floor cell,
+        /// unless the decision is in the trap drill's escape window or already paid Stuck or Wall (`paid`).
+        void Stale(Env const& env, EnvSeek& seek, bool paid, RewardLedger& ledger);
         /// The trap drill's pose: a point 0.5-1.5 yd from the jamb of a random door of the arena's room table, facing
         /// it, on the room's floor with the way to the opening clear. False when no pose passed.
         bool TrapPose(Map* map, ArenaDefinition const& arena, Player* bot, Position& pose) const;

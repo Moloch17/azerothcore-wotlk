@@ -163,6 +163,11 @@ namespace Animus::Curriculum
         FrontierPull,
         Circling,
         Escape,
+        /// Exploration v2 (decision 0025): the first entry of each table room an episode (Seek.RoomEntry, back rooms
+        /// times Seek.RoomEntryBackMult, at most Seek.RoomEntryCap), category Exploring as Explore; and the stale
+        /// cost, a Cost at a fixed price per second with no newly seen floor cell for Seek.StaleMs (Seek.Stale).
+        RoomEntry,
+        Stale,
         Count
     };
 
@@ -261,6 +266,8 @@ namespace Animus::Curriculum
             case RewardTerm::CellStale:
             // Standing in circles: moving about without getting anywhere (M2 explore-unstuck).
             case RewardTerm::Circling:
+            // ... and ground gone stale: no newly seen floor for a while (M2 exploration v2).
+            case RewardTerm::Stale:
                 return RewardCategory::Cost;
             // The seek stage's room goals: a teaching aid on the progress-linear aid scale.
             case RewardTerm::RoomGoal:
@@ -272,6 +279,7 @@ namespace Animus::Curriculum
                 return RewardCategory::Aid;
             case RewardTerm::Explore:
             case RewardTerm::FrontierPull:
+            case RewardTerm::RoomEntry:
                 return RewardCategory::Exploring;
             case RewardTerm::DamageDealt:
             case RewardTerm::Approach:
@@ -332,8 +340,9 @@ namespace Animus::Curriculum
             case RewardTerm::Fidget:
             case RewardTerm::Stuck:
             case RewardTerm::Wall:
-            // ... and going round in circles (Seek.Circling).
+            // ... going round in circles (Seek.Circling) and ground gone stale (Seek.Stale).
             case RewardTerm::Circling:
+            case RewardTerm::Stale:
                 return true;
             default:
                 return false;
