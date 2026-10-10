@@ -22,6 +22,8 @@
 #include "Player.h"
 #include "SeatView.h"
 #include <boost/json/array.hpp>
+#include <algorithm>
+#include <cmath>
 #include <string>
 
 Animus::Curriculum::BlockSize Animus::Curriculum::GoalBlock::Size(Layout const& /*layout*/) const
@@ -60,6 +62,13 @@ void Animus::Curriculum::GoalBlock::DescribeColumns(Layout const& /*layout*/, bo
         names.emplace_back("goal_achieved_kind_" + std::string(GoalName(SeatGoal(kind))));
     for (uint32 target = 0; target < GOAL_TARGETS; ++target)
         names.emplace_back("goal_achieved_target_" + TargetName(target));
+    // Revision 3, appended: the held goal's place, then each place slot's features.
+    for (char const* name : { "goal_held_present", "goal_held_sin", "goal_held_cos", "goal_held_dist",
+        "goal_held_near" })
+        names.emplace_back(name);
+    for (uint32 slot = 0; slot < GOAL_PLACE_SLOTS; ++slot)
+        for (char const* feature : { "sin", "cos", "dist", "cover", "age" })
+            names.emplace_back("goal_place_" + std::to_string(slot) + "_" + feature);
 }
 
 void Animus::Curriculum::GoalBlock::Available(SeatView const& view, std::array<bool, GOAL_COUNT>& kinds,
@@ -105,11 +114,22 @@ void Animus::Curriculum::GoalBlock::Available(SeatView const& view, std::array<b
     // movement stages) has a trip's objective, which takes the assignment's slot, so TravelTo has a target there too.
     WorldView const& world = view.World;
     bool places = false;
-    for (uint32 i = 0; i < WorldView::JOURNAL_PLACES && world.HasSeenPlaces; ++i)
-        if (world.Places[i].Present)
-            places = targets[GOAL_TARGET_PLACE_FIRST + i] = true;
-    if (world.HasSeenPlaces && world.HasAssignment)
-        places = targets[GOAL_TARGET_ASSIGNMENT] = true;
+    if (world.RoomGoals)
+    {
+        // The seek stage's room goals: a room not yet checked and the way on, six and one of the places. A room just
+        // checked is not offered (it is the goal just reached, held for one observation). No assignment.
+        for (uint32 i = 0; i <= WorldView::WAY_ON_SLOT; ++i)
+            if (world.Places[i].Present && !world.Places[i].Done)
+                places = targets[GOAL_TARGET_PLACE_FIRST + i] = true;
+    }
+    else
+    {
+        for (uint32 i = 0; i < WorldView::JOURNAL_PLACES && world.HasSeenPlaces; ++i)
+            if (world.Places[i].Present)
+                places = targets[GOAL_TARGET_PLACE_FIRST + i] = true;
+        if (world.HasSeenPlaces && world.HasAssignment)
+            places = targets[GOAL_TARGET_ASSIGNMENT] = true;
+    }
     if (!world.HasSeenPlaces && view.HasObjective)
         places = targets[GOAL_TARGET_ASSIGNMENT] = true;
 
@@ -124,6 +144,13 @@ void Animus::Curriculum::GoalBlock::Available(SeatView const& view, std::array<b
     kinds[uint32(SeatGoal::Prepare)] = !combat;
     kinds[uint32(SeatGoal::TravelTo)] = places;
     kinds[uint32(SeatGoal::Rest)] = !combat && hurt;
+    // Room goals: a place to go to is the one kind that is offered. Fight about no one stays only as the placeholder
+    // for "no plan yet", while there is no place.
+    if (world.RoomGoals)
+    {
+        kinds.fill(false);
+        kinds[uint32(SeatGoal::TravelTo)] = places;
+    }
 
     // A kind with no target it accepts is not on offer after all.
     for (uint32 kind = 0; kind < GOAL_COUNT; ++kind)
@@ -135,7 +162,7 @@ void Animus::Curriculum::GoalBlock::Available(SeatView const& view, std::array<b
             any = targets[target] && GoalAccepts(SeatGoal(kind), target);
         kinds[kind] = any;
     }
-    kinds[uint32(SeatGoal::Fight)] = true;                  // Fight about no one in particular is always accepted
+    kinds[uint32(SeatGoal::Fight)] = !(world.RoomGoals && places);  // about no one in particular: always accepted
 }
 
 bool Animus::Curriculum::GoalBlock::PlaceOf(SeatView const& view, uint32 t, Position& where)
@@ -230,7 +257,16 @@ void Animus::Curriculum::GoalBlock::Status(SeatView const& view, int32 goal, boo
         case SeatGoal::TravelTo:
         {
             Position where;
-            reached = placeOf(target, where) && bot->GetExactDist2d(&where) <= PLACE_REACH;
+            bool const there = placeOf(target, where);
+            if (view.World.RoomGoals && IsRoomTarget(target))
+            {
+                // A room goal is reached when its room is checked (the slot's Done), which the seat may do from the
+                // door or by walking in: not by a distance. Done is held one observation, so it is still possible.
+                reached = there && view.World.Places[target - GOAL_TARGET_PLACE_FIRST].Done;
+                possible = possible || reached;
+            }
+            else
+                reached = there && bot->GetExactDist2d(&where) <= PLACE_REACH;
             break;
         }
         case SeatGoal::Resurrect:
@@ -284,4 +320,64 @@ void Animus::Curriculum::GoalBlock::Observe(SeatView const& view, float* obs, ui
         obs[OBS_ACHIEVED_KIND_FIRST + GoalKindOf(view.Achieved)] = 1.0f;
         obs[OBS_ACHIEVED_TARGET_FIRST + GoalTargetOf(view.Achieved)] = 1.0f;
     }
+    ObservePlaces(view, obs);
+}
+
+namespace
+{
+    /// A place's bearing off the seat's facing and its straight-line distance, as CompassBlock reads its mark.
+    void Bearing(Animus::Curriculum::SeatView const& view, Position const& place, float& sin, float& cos, float& range)
+    {
+        Player* bot = view.Bot;
+        Animus::Movement::BodyState const* body = view.Body;
+        Position const self = body ? Position(body->X, body->Y, body->Z, body->Yaw) : bot->GetPosition();
+        float const angle = self.GetAngle(place.GetPositionX(), place.GetPositionY()) - view.Facing;
+        float const relative = std::atan2(std::sin(angle), std::cos(angle));
+        sin = std::sin(relative);
+        cos = std::cos(relative);
+        range = self.GetExactDist2d(&place);
+    }
+}
+
+void Animus::Curriculum::GoalBlock::ObservePlaces(SeatView const& view, float* obs)
+{
+    WorldView const& world = view.World;
+    if (!world.RoomGoals || !view.Bot)
+        return;
+
+    // Each place slot the episode holds: where it is from the seat, how much of it was seen, how long ago.
+    for (uint32 slot = 0; slot < PLACE_SLOTS; ++slot)
+    {
+        WorldView::JournalPlace const& place = world.Places[slot];
+        if (!place.Present)
+            continue;
+        float sin;
+        float cos;
+        float range;
+        Bearing(view, place.Where, sin, cos, range);
+        float* row = obs + OBS_PLACE_FIRST + slot * PLACE_FEATURES;
+        row[0] = sin;
+        row[1] = cos;
+        row[2] = std::min(1.0f, range / OBJECTIVE_SCALE);
+        row[3] = std::clamp(place.Coverage, 0.0f, 1.0f);
+        row[4] = std::clamp(place.Age, 0.0f, 1.0f);
+    }
+
+    // The primary goal's place, if it is about one of them and is still to be reached.
+    uint32 const target = GoalTargetOf(view.Goal);
+    if (view.Goal < 0 || SeatGoal(GoalKindOf(view.Goal)) != SeatGoal::TravelTo || target < GOAL_TARGET_PLACE_FIRST
+        || target >= GOAL_TARGET_PLACE_FIRST + PLACE_SLOTS)
+        return;
+    WorldView::JournalPlace const& held = world.Places[target - GOAL_TARGET_PLACE_FIRST];
+    if (!held.Present || held.Done)
+        return;
+    float sin;
+    float cos;
+    float range;
+    Bearing(view, held.Where, sin, cos, range);
+    obs[OBS_HELD_PRESENT] = 1.0f;
+    obs[OBS_HELD_SIN] = sin;
+    obs[OBS_HELD_COS] = cos;
+    obs[OBS_HELD_DIST] = std::min(1.0f, range / OBJECTIVE_SCALE);
+    obs[OBS_HELD_NEAR] = std::min(1.0f, range / NEAR_SCALE);
 }
