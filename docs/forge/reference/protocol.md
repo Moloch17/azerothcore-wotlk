@@ -115,6 +115,13 @@ episode info column names as comma-separated ASCII filling the rest of the paylo
 names are truncated to 47 characters. A name containing a comma would corrupt the list (UNVERIFIED that none does; the
 names are C++ literals and generated `reward_<term>` families, see metrics.md).
 
+2026-10-09 (M2 goals, no protocol number change; learner and sim rebuild together): every stage's `obs_dim` grows by 40
+(goal block revision 3, columns zero outside the seek stage's room-goal episodes), `GoalCount` is unchanged, and the
+seek stage's `episode_info_dim` grows by 22: 19 episode info columns (`plan_share`, `goals_room_chosen`,
+`goals_room_reached`, `goals_room_lost`, `goal_follow_rate`, `goal_switches_room`, `rooms_checked`,
+`rooms_checked_per_min`, `returns`, `slots_waiting`, `time_to_first_goal`, `checked_miss`, `check_cover_at_find`,
+`object_x/y/z`, `end_x/y/z`) and the terms' `reward_room_goal`, `reward_room_switch`, `reward_return`.
+
 `protocol.decode_spec` (protocol.py:323) rebuilds `Spec`; `Spec.layouts` and `Spec.episode_info_names` are tuples.
 Note `Spec.image_bytes` comment (protocol.py:133) still says "height x width x 4"; it is 5 since 23.
 

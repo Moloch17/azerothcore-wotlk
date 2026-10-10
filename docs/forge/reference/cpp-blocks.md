@@ -48,7 +48,7 @@ are those of commit `bd32b9dc8`.
 | Blocks/CombatBlock.h | 200 | Player/pet frames, target frame, per-slot combat columns, revision 1. |
 | Blocks/CombatBlock.cpp | 344 | Threat status, visible enemies, ground fire, presses. |
 | Blocks/GoalBlock.h | 95 | Goal availability block (128 columns, no actions). |
-| Blocks/GoalBlock.cpp | 258 | Availability, goal status, "earned" rule. |
+| Blocks/GoalBlock.cpp | 346 | Availability, goal status, "earned" rule, the revision 3 held-goal and place-slot columns. |
 | Layout/Block.h | 305 | `BlockId`, `Block` interface, sizing constants, goal space (documented here). |
 
 `Layout/Block.h` belongs to the Layout directory and is mapped again in cpp-layout-character.md.
@@ -531,9 +531,25 @@ visible units. Also provides `VisibleEnemies` (the encounter enemy list), `ReadH
 `FrameResolve` comment calls it a "party frame's click"; target-frame threat uses server threat lists as the client's
 threat colouring does.
 
-## goal (id 26, revision 2)
+## goal (id 26, revision 3)
 
-68 obs, 0 actions, always last (revision 1 was 101 wide, revision 0 128: 12 kinds x 29 targets). Layout of the 68: 0-8
+108 obs, 0 actions, always last (revision 2 was 68 wide, revision 1 101, revision 0 128: 12 kinds x 29 targets).
+**Revision 3 (2026-10-09, M2 goals)** appends 40 columns after the 68 below, which do not move: 68-72 the held primary
+goal's place as M1's compass shows its mark (`goal_held_present`, `goal_held_sin`, `goal_held_cos`, `goal_held_dist`
+(distance / 500, clamped), `goal_held_near` (distance / 40, clamped); bearing off `SeatView::Facing` from the body's
+position, `CompassBlock`'s formulas), and 73-107 five features per place slot k = 0..6 (slot k starts at 73 + 5k):
+`goal_place_<k>_sin`, `_cos`, `_dist` (/ 500), `_cover` (share of the room's 3 yd floor cells hit by this episode's
+rays; 1 for the way on) and `_age` (seconds since the first glimpse / 120). Slots 0-5 are the rooms (place targets
+14-19), slot 6 the way on (target 20); place target 21 is never offered and the assignment (22) is not offered in M2.
+All 40 columns are written only when `WorldView::RoomGoals` (the seek stage's episodes at a placement rung >=
+`Seek.GoalsFromRung`, `Seek.Goals` 1) and zero otherwise, in every other stage and episode. stage.json `goals.columns`
+gains `held` 68, `place_features` 73 and `width` 108, and `goals.place_slots` is `{first 14, count 7, features 5,
+feature_names [sin, cos, dist, cover, age]}`; the layout manifest publishes the block's `revision` 3. In an episode with
+room goals `Available` offers `travel_to` only (place targets whose slot is `Present` and not `Done`), with Fight about
+no one kept as the "no plan yet" placeholder only while no place exists (a held Fight/none then ends as lost, one
+re-choice), and no Prepare or assignment; `Status` reaches a room goal when its slot is `Done` (the room was checked
+after the choice, held one observation, still possible) and the way on within `PLACE_REACH` as any place. Layout of the
+first 68: 0-8
 kind available, 9-31 target available, 32 ended, 33 reached, 34 secondary_ended, 35 event, 36-44 achieved kind,
 45-67 achieved target. Revision 2 (2026-10-08, same unreleased layout generation, protocol 26) removed the order
 columns (`from_order`, order kind, order target: old columns 36-68, never written since the director was deleted)
@@ -551,7 +567,8 @@ route place or the assignment. `Status` evaluates reached/possible per kind; `Ea
 choice" rule used by the scenario for `Goals.Reached` payment. `PlaceOf` yields the TravelTo target (the assignment
 slot is the trip objective when the stage has no seen places (`WorldView::HasSeenPlaces`, until 2026-10-08
 `RoutePlaces`), only while `ObjectivePlaceKnown`). Constants
-`PROTECT_REACHED_PCT 70`, `PLACE_REACH 20`.
+`PROTECT_REACHED_PCT 70`, `PLACE_REACH 20`, `OBJECTIVE_SCALE 500`, `NEAR_SCALE 40`, `AGE_SCALE_S 120`,
+`GOAL_ROOM_SLOTS 6` / `GOAL_PLACE_SLOTS 7` (`Block.h`).
 
 ## Observed issues
 

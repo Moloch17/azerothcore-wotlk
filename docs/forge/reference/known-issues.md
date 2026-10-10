@@ -244,11 +244,7 @@ Python half (done): every plain evaluation and held-out sweep writes `eval_motio
 
 What a track already holds. The kinematic sample (protocol 20, `Animus/Env/Kinematics.h`, filled by `StageScenario::AgentKinematics`, `StageScenario.cpp` ~3448) is 10 floats: `t` (`EpisodeElapsedMs` / 1000), `x`, `y`, `z` (`Player::GetPositionX/Y/Z`: absolute map coordinates of the instance map, not deltas), `yaw` (`GetOrientation`), `pitch` (the seat's `Mover.Body.Pitch`), `mode`, `mounted`, `speed`, `in_combat`; zeros for a seat with no body. `motion.SAMPLE_DIM` = 10 includes world position. So the spawn (first sample), the route and the end position (last sample, the decision before the done) need no C++ change; the "body-frame only" reading in m2-routes was about `eval_motion.npz`'s windows, not the sample.
 
-Still missing: the object's position and the placed spot. `SeekEncounter::EnvSeek` (`SeekEncounter.h`) holds `Position Spot` (the object's base) and `Position Centre` (the objective point the flag marks); neither is an episode info column (`SeekEncounter::AddEpisodeInfo`, `SeekEncounter.cpp` ~102 has `seek_room`, `seek_object`, `room_depth`, ... only). Minimal change: in `AddEpisodeInfo` add
-
-    table.Add("seek_object_x", [this](Env const& env, uint32) { return _envs[env.Index].Centre.GetPositionX(); });
-
-and `seek_object_y`, `seek_object_z` the same way (and `seek_spot_x/y/z` from `Spot` if the base is wanted), in world coordinates like the samples (float32; the Stockades coordinates are in the hundreds, so exact to well under a yard). No spawn column is needed (first sample); `_scenario.SpawnPointFor(env)` is the same point. Checks before building: that `Centre` is set for every placement path including the hallway and fallback rungs (`Place`, `PlaceHallway`, `Fallback`); that the new names are classed as per-episode values in `animus/episode_means.py` (not per-event means) and listed in `docs/forge/reference/cpp-encounters.md` and the stage's `episode_info` list. `episode_info_dim` grows by 3 (6): the learner reads names and width from the handshake, so no protocol number or layout signature changes, but a rebuilt sim and learner must go together (a new `spec.json`), so it rides the next planned rebuild. Until then a route's target is only known as `seek_room` and `seek_object`; room positions are in `Stages.cpp` (`StockadeRooms()`).
+Done 2026-10-09 (C++ stream of the M2 goals plan): the seek episode info has `object_x`, `object_y`, `object_z` (the object's base, `Spot`, not the flag's `Centre`) and `end_x`, `end_y`, `end_z` (the seat's last position), absolute instance coordinates in yards, for every placement path (0 for an unplaced episode). `episode_info_dim` grew with them (22 columns in all, [protocol.md](protocol.md)), so a rebuilt sim and learner must go together. No spawn column is needed (first sample).
 
 Unverified: nothing here was run on a GPU or against a sim; the Python writers were exercised with a fake environment (var/verify_arms.py in the worktree that wrote this).
 
@@ -312,3 +308,25 @@ Charge and taxis still start splines).
 - Not removed: the `detour` entry of `bootstrap.MOVE_REVISION_4_COLUMNS`. The table is the positional name list of the
   63 columns of a revision 4 move block (checked against the block's width), so deleting one name would shift every
   later column's name. It is unreachable only by M1 runs newer than 2026-10-06; older checkpoints still seed by it.
+
+## M2 room goals, 2026-10-09 (C++ stream; nothing run, syntax check only)
+
+- UNVERIFIED end to end: no sim ran. Compiles (clang `-fsyntax-only`, 90 Animus TUs); the rest is reading.
+- A room glimpsed and checked in the same frame (a seat that walks in with the room in view) never binds a slot: no
+  `room_goal` aid, no hindsight for it. By construction; `rooms_checked` still counts it.
+- Slot ids are reused: a slot freed by a checked room is rebound to the next waiting room. A goal queued on slot k (not
+  yet held) that is promoted after k was rebound points at the new room. A place goal chosen again once it ended is a
+  new hold (`ApplyGoals`), otherwise the sim kept the ended hold (the general rule: a same-id re-choice of an ended
+  goal is not a new goal), which would have stuck `goal_ended` at 1.
+- `goal_switches_room` and `Seek.RoomSwitch` count giving up the way on as well as a room.
+- `Seek.Goals 0` also sets `HasSeenPlaces` false: the dud `travel_to assignment` goal of a trip's objective is back,
+  as before 2026-10-09 (the objective has no compass in M2, so `PlaceOf` is false and it can never be reached).
+- With `Seek.Goals 1` and a placement rung below `Seek.GoalsFromRung` (the carry-over, or a from-scratch ladder's early
+  rungs), `RoomGoals` is false: no place exists and the normal kinds (Fight about no one, Prepare) are offered, without
+  the dud assignment goal.
+- The check rule is a guess (`CheckedShare` 0.6, `EnterDwellMs` 1000, `GlimpseRays` 1): `checked_miss` and
+  `check_cover_at_find` are there to tune it.
+- `revisit_rate` is returns / (rooms visited + returns), PER_EVENT over `room_entries` still (a Python weighting
+  question); `rooms_reentered` is unchanged and still counts flicker.
+- The wall-trap start drill (m2-search proposal 6) is not part of the plan's work breakdown or the contract and is not
+  built.
