@@ -486,10 +486,13 @@ Charge and taxis still start splines).
   outside the chunk (`Place` checks the floor and the clearance, not `Inside`). `IsHardRoom`, `BackRoomName` and
   `RoomEntryBackMult` are inert on 389 and 36 by name.
 - The replay table records Stuck-run onsets from EVERY unseeded training env, not the greedy envs alone: the sim is
-  not told which envs the learner runs greedily (no flag in the protocol; the Python side was finished first). The
-  replayed held keys reach the controller through `SeatState::Controls.Held` set in `Build` (the seat's reset runs
-  before the encounters build; `StartMover` seeds the body after): UNVERIFIED that `FaceTurn`/`Jump` cleared there is
-  all the controller needs.
+  not told which envs the learner runs greedily (no flag in the protocol; the Python side was finished first). Each
+  entry carries its map and is replayed on that map only (the stage mixes maps per episode); the pose is the
+  controller's body. The replayed held keys reach the controller through `SeatState::Controls.Held` set in `Build`
+  (the seat's reset runs before the encounters build; `StartMover` seeds the body after): UNVERIFIED that
+  `FaceTurn`/`Jump` cleared there is all the controller needs.
+- `Recovered`: a new pin run drops a watch inherited from the run before (a long pin whose escape was still pending
+  when the next run began pays nothing for the first).
 - `Recovered`'s 1 s minimum pin run is a constant (`RECOVER_MIN_MS`): the contract names no key. Its window runs from the
   run's start.
 - Pockets are "a chamber behind a narrowing" (reachable over open cells), not the plan's "reachable through one opening";

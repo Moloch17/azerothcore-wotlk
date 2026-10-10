@@ -332,6 +332,7 @@ namespace Animus::Curriculum
         /// held -- the per-stage replay table the trap drill draws from (TrapReplayShare), a ring of PIN_POSES.
         struct PinPose
         {
+            uint32 MapId = 0;           // the map the pose is on: a pose is replayed on its own map only
             Position Pose;
             Movement::ControlState Held;
         };
@@ -364,10 +365,11 @@ namespace Animus::Curriculum
         /// within a few yards at right angles, facing the vertex) or a pillar's edge (a solid ahead that the slides
         /// either side clear) on a random room's floor. False when no pose passed.
         bool TrapPose(Map* map, ArenaDefinition const& arena, Player* bot, Position& pose) const;
-        /// ... one of the recorded pin poses (PinPose), with its held keys; false while the table is empty.
-        bool ReplayPose(Position& pose, Movement::ControlState& held);
+        /// ... one of the recorded pin poses (PinPose) on `mapId`, with its held keys; false while the table holds
+        /// none for that map.
+        bool ReplayPose(uint32 mapId, Position& pose, Movement::ControlState& held);
         /// Record a pin onset into the replay table.
-        void RecordPin(Position const& pose, Movement::ControlState const& held);
+        void RecordPin(uint32 mapId, Position const& pose, Movement::ControlState const& held);
 
         /// FrontierClear for one decision: the clusters of this decision's summary against the episode's record (the
         /// peaks, the keys cleared by positive evidence), paid unless `paid` is false.

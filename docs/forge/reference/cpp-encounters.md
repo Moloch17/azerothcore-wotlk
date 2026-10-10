@@ -588,9 +588,11 @@ seat the gap from each, facing the vertex) or a PILLAR'S EDGE (a solid within `P
 heading that rays 60 degrees either side clear for `PILLAR_CLEAR` 4 yd; the seat the gap from it, facing it); each on
 the room's floor with the way back to the drawn point clear. `Seek.TrapReplayShare` (0.5) of the drill's episodes
 instead take a REPLAYED PIN: `Reward` records, in every unseeded training episode that is not itself a trap, the pose
-and held keys when the controller's Stuck run reaches `PIN_RECORD_MS` (2000) into a per-stage ring of `PIN_POSES` 512
-(`_pins`, a mutex: map threads write, the world thread reads); `Build` sets the seat's `Controls.Held` to the recorded
-keys (`FaceTurn` and `Jump` cleared) and teleports to the pose (`trap_source` 1). A start distribution, never a script.
+(the controller's body) and held keys when the controller's Stuck run reaches `PIN_RECORD_MS` (2000), with its map,
+into a per-stage ring of `PIN_POSES` 512 (`_pins`, a mutex: map threads write, the world thread reads); `Build` draws
+among the entries on this episode's map (`ReplayPose(mapId, ...)`, false when there are none: the geometric poses
+then), sets the seat's `Controls.Held` to the recorded keys (`FaceTurn` and `Jump` cleared) and teleports to the pose
+(`trap_source` 1). A start distribution, never a script.
 `Circle` takes `keys` (a movement key held): the `CircleTurnDeg` clause holds only then; the path clause is unchanged.
 
 **Explore, don't circle, get unstuck** (2026-10-10, decision 0023). `Explore` and `FrontierPull` are in the new

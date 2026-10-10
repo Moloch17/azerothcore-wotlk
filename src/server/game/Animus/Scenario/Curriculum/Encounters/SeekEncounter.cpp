@@ -867,21 +867,35 @@ bool Animus::Curriculum::SeekEncounter::TrapPose(Map* map, ArenaDefinition const
     return false;
 }
 
-bool Animus::Curriculum::SeekEncounter::ReplayPose(Position& pose, Movement::ControlState& held)
+bool Animus::Curriculum::SeekEncounter::ReplayPose(uint32 mapId, Position& pose, Movement::ControlState& held)
 {
+    // The stage mixes maps per episode, so a pose is drawn among the entries recorded on this episode's map alone.
     std::lock_guard<std::mutex> const lock(_pinMutex);
-    if (!_pinCount)
+    uint32 onMap = 0;
+    for (std::size_t index = 0; index < _pinCount; ++index)
+        onMap += _pins[index].MapId == mapId ? 1 : 0;
+    if (!onMap)
         return false;
-    PinPose const& pin = _pins[urand(0, uint32(_pinCount) - 1)];
-    pose = pin.Pose;
-    held = pin.Held;
-    return true;
+    uint32 pick = urand(0, onMap - 1);
+    for (std::size_t index = 0; index < _pinCount; ++index)
+    {
+        if (_pins[index].MapId != mapId)
+            continue;
+        if (pick-- == 0)
+        {
+            pose = _pins[index].Pose;
+            held = _pins[index].Held;
+            return true;
+        }
+    }
+    return false;
 }
 
-void Animus::Curriculum::SeekEncounter::RecordPin(Position const& pose, Movement::ControlState const& held)
+void Animus::Curriculum::SeekEncounter::RecordPin(uint32 mapId, Position const& pose,
+    Movement::ControlState const& held)
 {
     std::lock_guard<std::mutex> const lock(_pinMutex);
-    _pins[_pinNext] = PinPose{ pose, held };
+    _pins[_pinNext] = PinPose{ mapId, pose, held };
     _pinNext = (_pinNext + 1) % PIN_POSES;
     _pinCount = std::min(_pinCount + 1, PIN_POSES);
 }
@@ -964,7 +978,7 @@ bool Animus::Curriculum::SeekEncounter::Build(Env& env, Map* map, uint8 /*level*
     {
         Movement::ControlState held;
         bool replayed = false;
-        if (frand(0.0f, 1.0f) < tuning.TrapReplayShare && ReplayPose(pose, held))
+        if (frand(0.0f, 1.0f) < tuning.TrapReplayShare && ReplayPose(map->GetId(), pose, held))
         {
             replayed = true;
             seek.Trap = true;
@@ -1546,7 +1560,9 @@ void Animus::Curriculum::SeekEncounter::Recover(Env const& env, EnvSeek& seek, P
     {
         if (!seek.PinOn)
         {
+            // A new run: a watch inherited from the run before is dropped with it.
             seek.PinOn = true;
+            seek.PinWatch = false;
             seek.PinCharge = 0.0f;
             seek.PinRunMs = 0;
             seek.PinSpent = false;
@@ -1813,7 +1829,13 @@ void Animus::Curriculum::SeekEncounter::Reward(Env& env, uint32 seatIndex, Playe
     Recover(env, seek, bot, pinCharge, ledger);
     if (!env.Evaluating && env.EpisodeSeedIndex == NO_EPISODE_SEED && !seek.Trap
         && seat.StuckRunMs >= PIN_RECORD_MS && seek.LastStuckRunMs < PIN_RECORD_MS)
-        RecordPin(bot->GetPosition(), seat.Controls.Held);
+    {
+        // The controller's body (the pinned seat's own position), on this episode's map.
+        Movement::BodyState const& body = seat.Mover.Body;
+        Position const pinned = seat.Mover.Started() ? Position(body.X, body.Y, body.Z, body.Yaw)
+            : bot->GetPosition();
+        RecordPin(bot->GetMapId(), pinned, seat.Controls.Held);
+    }
     seek.LastStuckRunMs = seat.StuckRunMs;
 
     // Going round in circles (not on a decision that paid Stuck: that second is priced already), and the trap

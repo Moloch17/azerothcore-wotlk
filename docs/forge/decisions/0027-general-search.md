@@ -56,7 +56,7 @@ the learner docs; this file is the sim half, with the movement-pacing amendments
 `RecoverShare` 0.5, `RecoverCap` 0.3; `StepCost` 0.00025, `TrapEscapeTurnDeg` 0, `ExploreFromRung` 1).
 
 **What it constrains / risks.** (a) The replay table records every unseeded training env's pins, not the greedy
-envs' alone: the sim is not told which envs act greedily. (b) Ragefire's cave rooms are convex flat chunks with wide
+envs' alone: the sim is not told which envs act greedily; a pose is replayed on its own map only. (b) Ragefire's cave rooms are convex flat chunks with wide
 openings: the jamb pose rarely fits there, `DoorwaySpot` may land outside a chunk, and `HardRoomWeight`,
 `BackRoomName` and `RoomEntryBackMult` are inert off the Stockades by name. (c) Pockets are "a chamber behind a
 narrowing", not "reachable through one opening". (d) The `arena` column's numbering moved (`sweep` 2, `sweep_rotating`
