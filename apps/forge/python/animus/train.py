@@ -328,6 +328,14 @@ def heldout_arenas(heldout: dict, stage: dict | None) -> dict[str, tuple[int, in
                              f"out (ArenaDefinition::EvalOnly) measures generalisation")
         if not isinstance(episodes, int) or episodes <= 0:
             raise ValueError(f"eval.heldout.{name}: expected a positive episode count, got {episodes!r}")
+        # A seek arena's full sweep is every (room, object) pair once (SeekDraw::SweepLength): a count that is not
+        # rooms x objects plays some pairs twice or not at all. The manifest carries `rooms` since general search; the
+        # Deadmines' length is only known from the built stage.json, so this is a printed check, never a refusal.
+        rooms = (stage or {})["arenas"][arenas.index(name)].get("rooms")
+        objects = len(((stage or {}).get("episode_categories") or {}).get("seek_object") or ())
+        if rooms and objects and episodes != int(rooms) * objects:
+            print(f"eval.heldout.{name}: {episodes} episodes over {rooms} rooms x {objects} objects "
+                  f"({int(rooms) * objects} plays every pair once)", flush=True)
         out[name] = (arenas.index(name) + 1, episodes)
     return out
 
@@ -945,7 +953,7 @@ class TrainingRun:
         self.best_path = self.run_dir / "best.pt"
 
         self.progress = (ProgressWriter(self.run_dir, config, spec, resumed_update=self.update,
-                                        resumed_env_steps=self.env_steps) if leader else Silent())
+                                        resumed_env_steps=self.env_steps, stage=self.stage) if leader else Silent())
         cached_baseline_score = None
         if self.resume_path and (self.run_dir / "eval_baseline.json").exists():
             cached = json.loads((self.run_dir / "eval_baseline.json").read_text())
@@ -1590,6 +1598,10 @@ class TrainingRun:
             self.save_trace(result)
             summary = result.summary(self.report)
             self.eval_log.write(self.update, self.env_steps, result, summary, self.tracker)
+            # Into progress.json (general search sec 7): eval_<metric>_heldout_<arena> for the headline's
+            # <metric>_heldout_<arena>, and eval_found_heldout_map from the arenas on a map the stage never trains on.
+            self.progress.heldout_evaluated(name, summary)
+            self.progress.write("training", self.update, self.env_steps)
             shown = ", ".join(f"{column} {summary[column]:.3g}" for column in self.report
                               if isinstance(summary.get(column), (int, float)))
             print(f"Held out {name}: score {result.score:.4g} +/- {result.stderr:.2g} over {result.episodes} "

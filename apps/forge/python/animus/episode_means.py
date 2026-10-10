@@ -10,8 +10,16 @@ from __future__ import annotations
 
 import numpy as np
 
+class AnyOf(tuple):
+    """Count columns in order of preference: the FIRST one the log has weights the per-event column (a tuple would sum
+    them). For a reading the sim writes under one of two names (pause_look_share over `pauses`, else the per-minute
+    rate `pauses_per_min` as the stand-in)."""
+
+
 # Per-event column -> the column counting its events in the same episode, or several (their sum): a column whose events
-# come from either of two sources (goal_follow_rate: room goals or cell goals, an episode has one of the two).
+# come from either of two sources (goal_follow_rate: room goals or cell goals, an episode has one of the two); AnyOf
+# names alternatives instead, the first present. Columns the stage names (found_arena_<arena> over arena_<arena>) are
+# matched by per_event_count's prefix rule, not listed here.
 PER_EVENT = {
     "arrive_seconds": "markers",
     "time_ratio": "markers",
@@ -46,6 +54,13 @@ PER_EVENT = {
     "trap_turned": "trap_episode",
     "trap_pin_seconds": "trap_episode",
     "plan_depth": "goals_cell_chosen",
+    # ... and movement pacing (general-search contract M7; the sim reads the controller's body): the seconds from a
+    # pin's onset to 4 yd away and the share of pins the seat ran straight into, over the pin events (Stuck runs of a
+    # second or more); the share of pauses with a look round, over the pauses (`pauses` when the sim writes the count,
+    # else the per-minute rate stands in).
+    "time_to_escape_s": "pin_events",
+    "pin_onset_turning_share": "pin_events",
+    "pause_look_share": AnyOf(("pauses", "pauses_per_min")),
     # ... and exploration v2 (decision 0025): the clock the Explore cap was reached at, over the episodes that reached it
     # (explore_cap_hit_ms is -1 for the others).
     "explore_cap_hit_ms": "explore_cap_hit",
@@ -106,16 +121,47 @@ PER_EVENT = {
 }
 
 
+#: A per-event column named per stage: `found_arena_<arena>` (found, on that arena) is weighted by `arena_<arena>` (1
+#: when the episode's arena is it), for every Seek arena the sim names (general search sec 1.5).
+PER_EVENT_PREFIXES = {"found_arena_": "arena_"}
+
+
+def per_event_count(name: str):
+    """The count column(s) weighting per-event column `name`: PER_EVENT's entry, else the prefix rule's
+    (found_arena_rooms -> arena_rooms), else None (a plain mean)."""
+    count = PER_EVENT.get(name)
+    if count is not None:
+        return count
+    for prefix, counted in PER_EVENT_PREFIXES.items():
+        if name.startswith(prefix) and len(name) > len(prefix):
+            return counted + name[len(prefix):]
+    return None
+
+
+def per_event_names(names) -> dict:
+    """Per-event column -> its count column(s), for the columns in `names` (PER_EVENT and the prefix rule)."""
+    out = {}
+    for name in names:
+        count = per_event_count(name)
+        if count is not None:
+            out[name] = count
+    return out
+
+
 def count_columns(count) -> tuple[str, ...]:
-    """The columns PER_EVENT's value names (one, or several whose sum counts the events)."""
+    """The columns PER_EVENT's value names (one, or several whose sum counts the events, or AnyOf's alternatives)."""
     return (count,) if isinstance(count, str) else tuple(count)
 
 
 def event_weights(count, column) -> np.ndarray | None:
-    """A per-event column's weights: the sum of the count columns that exist. `column(name)` gives a column's values
-    per episode, or None when the log has none; None when none of them exists."""
+    """A per-event column's weights: the sum of the count columns that exist (the first that exists for AnyOf).
+    `column(name)` gives a column's values per episode, or None when the log has none; None when none of them exists."""
     found = [values for values in (column(name) for name in count_columns(count)) if values is not None]
-    return sum(np.asarray(values, dtype=np.float64) for values in found) if found else None
+    if not found:
+        return None
+    if isinstance(count, AnyOf):
+        return np.asarray(found[0], dtype=np.float64)
+    return sum(np.asarray(values, dtype=np.float64) for values in found)
 
 
 def means(values: np.ndarray, names: list[str] | tuple[str, ...]) -> np.ndarray:
@@ -126,9 +172,9 @@ def means(values: np.ndarray, names: list[str] | tuple[str, ...]) -> np.ndarray:
         return np.full(len(names), np.nan)
     out = values.mean(axis=0)
     index = {name: i for i, name in enumerate(names)}
-    for name, count in PER_EVENT.items():
+    for name, count in per_event_names(names).items():
         weights = event_weights(count, lambda c: values[:, index[c]] if c in index else None)
-        if name in index and weights is not None:
+        if weights is not None:
             total = weights.sum()
             out[index[name]] = float((values[:, index[name]] * weights).sum() / total) if total > 0 else np.nan
     return out
@@ -142,8 +188,8 @@ def undefined(values: np.ndarray, names: list[str] | tuple[str, ...]) -> set[str
         return set()
     index = {name: i for i, name in enumerate(names)}
     out = set()
-    for name, count in PER_EVENT.items():
+    for name, count in per_event_names(names).items():
         weights = event_weights(count, lambda c: values[:, index[c]] if c in index else None)
-        if name in index and weights is not None and weights.sum() <= 0:
+        if weights is not None and weights.sum() <= 0:
             out.add(name)
     return out

@@ -26,7 +26,7 @@ import numpy as np
 
 from . import protocol as p
 from .device import host
-from .episode_means import PER_EVENT, event_weights
+from .episode_means import event_weights, per_event_count
 
 LEVEL_BANDS = ((1, 20), (21, 40), (41, 60), (61, 80))
 
@@ -208,7 +208,7 @@ class EvalResult:
                 values = self.column(name)[rows]
                 # A per-event column (episode_means.PER_EVENT: arrive_seconds over the markers reached) is weighted
                 # by its episode's events, so an episode that never arrived does not read as a zero-second arrival.
-                count = PER_EVENT.get(name)
+                count = per_event_count(name)
                 weights = None
                 if count is not None:
                     summed = event_weights(count, lambda c: self.column(c) if c in self.info_names else None)
@@ -479,9 +479,11 @@ def standard_error(values: np.ndarray, groups: np.ndarray | None = None) -> floa
 #:   no_plan     the goal head as it is, but nothing held beside the primary and nothing queued: what the chain of
 #:               cells (the plan) is worth. MappoTrainer.single_goal;
 #:   no_searched (exploration v3) the mental map's searched channel (the crop's seventh byte, every cell) and the map
-#:               block's searched, new_age and total scalars zeroed: what the searched-state input is worth.
+#:               block's searched, new_age and total scalars zeroed: what the searched-state input is worth;
+#:   no_coverage (general search) the coverage block's columns and the map block's coverage scalars (revision 3:
+#:               frontier_*, region_*, clusters, searched_cells, by name) zeroed: what the coverage inputs are worth.
 ABLATIONS = ("no_flag", "no_camera", "no_compass", "no_map", "no_memory", "no_goal", "random_goal", "random_cell",
-             "no_plan", "no_searched")
+             "no_plan", "no_searched", "no_coverage")
 #: The ablations that are a flag on the trainer's goal draw (Run.evaluate_arms sets them), not an edit of the input.
 GOAL_DRAW_ARMS = ("random_goal", "random_cell", "no_plan")
 #: What an ablation arm reports and shows in forge status (<column>_<arm>).
@@ -544,19 +546,39 @@ def ablate_obs(obs: np.ndarray, layout: np.ndarray, spans: list[tuple[int, int]]
 
 #: The map block's scalars that read the searched state (MapBlock revision 2), by the manifest's scalar_names.
 SEARCHED_SCALARS = ("searched", "new_age", "total")
+#: ... and the coverage-shaped scalars of revision 3 (general search sec 3: the nearest frontier cluster's bearing and
+#: distance, the largest's, the cluster count and the cells searched this episode), by name likewise.
+COVERAGE_SCALARS = ("frontier_sin", "frontier_cos", "frontier_dist", "region_sin", "region_cos", "region_dist",
+                    "clusters", "searched_cells")
 
 
-def searched_columns(spec, stage: dict | None) -> list[list[int]]:
-    """Per layout of `spec`, the absolute observation columns of the map block's searched-state scalars (SEARCHED_
-    SCALARS), [] for a layout without a map block. Read from the manifest's `map.scalar_names` by name; a manifest
-    without the names (a stage.json before revision 2) has no such columns, so none are returned."""
+def map_scalar_columns(spec, stage: dict | None, scalars: tuple[str, ...]) -> list[list[int]]:
+    """Per layout of `spec`, the absolute observation columns of the named map block scalars, [] for a layout without a
+    map block. Read from the manifest's `map.scalar_names` by name, taking those that exist; a manifest without the
+    names (a stage.json before revision 2) or without a name (revision 2 asked for revision 3's) has no such columns."""
     out = []
     for layout in spec.layouts:
         entry = ((stage or {}).get("layouts") or {}).get(layout.name) or {}
         block = next((b for b in entry.get("blocks", ()) if b.get("name") == "map"), None)
         names = list(((block or {}).get("map") or {}).get("scalar_names") or ())
         first = int(block["obs"][0]) if block else 0
-        out.append([first + names.index(name) for name in SEARCHED_SCALARS if name in names])
+        out.append([first + names.index(name) for name in scalars if name in names])
+    return out
+
+
+def searched_columns(spec, stage: dict | None) -> list[list[int]]:
+    """The map block's searched-state scalars (SEARCHED_SCALARS) per layout, as map_scalar_columns."""
+    return map_scalar_columns(spec, stage, SEARCHED_SCALARS)
+
+
+def coverage_columns(spec, stage: dict | None) -> list[list[int]]:
+    """Per layout of `spec`, the absolute observation columns the no_coverage arm zeroes: the coverage block's whole
+    span (stage.json block `coverage`, when the layout has one) and the map block's coverage scalars
+    (COVERAGE_SCALARS, by name, those the manifest has)."""
+    out = []
+    spans = compass_spans(spec, stage, "coverage")
+    for (first, count), scalars in zip(spans, map_scalar_columns(spec, stage, COVERAGE_SCALARS)):
+        out.append(list(range(first, first + count)) + scalars)
     return out
 
 
@@ -593,6 +615,10 @@ def ablation_chooser(choose: Callable, arm: str, spec, stage: dict | None) -> Ca
     if arm == "no_searched" and not any(searched):
         raise ValueError("eval.arms.no_searched: the stage has no map block with searched-state scalars (map block "
                          "revision 2) to zero")
+    coverage = coverage_columns(spec, stage) if arm == "no_coverage" else []
+    if arm == "no_coverage" and not any(coverage):
+        raise ValueError("eval.arms.no_coverage: the stage has no coverage block and no map block with coverage "
+                         "scalars (map block revision 3) to zero")
     if arm == "no_memory":
         acting = getattr(choose, "acting", None)
         if acting is None or all(getattr(acting, name) is None for name in ("memory", "goal", "slow_memory", "queue")):
@@ -613,6 +639,9 @@ def ablation_chooser(choose: Callable, arm: str, spec, stage: dict | None) -> Ca
             return choose(step)
         if arm in ("no_compass", "no_goal"):
             return choose(replace(step, obs=ablate_obs(step.obs, step.layout, spans)))
+        if arm == "no_coverage":
+            # Observation columns only (the crop's bytes are no_map's and no_searched's): no image needed.
+            return choose(replace(step, obs=ablate_columns(step.obs, step.layout, coverage)))
         image = getattr(step, "image", None)
         if image is None:
             raise ValueError(f"eval.arms.{arm}: the stage has no camera image to edit")

@@ -1,7 +1,16 @@
-# FRESH RUN (2026-10-10, owner: "make all the changes and then restart stage 2 fresh"): M2 from M1's finished run
-# (seed_from latest = runs/move1_controls/latest.pt), the four-rung ladder [1.0, 0.5, 0.25, 0.0] restored, exploration v3
-# (decision 0026: searched-state input, greedy envs, harder wall and trap) in. BEFORE START: move runs/_finetune/move2_seek/best.pt
-# away (finetune_from outranks the parent in the seed chain) and archive any runs/move2_seek. Cf. configs/overlays/move2_seek_reseed.yaml.
+# GENERAL SEARCH (2026-10-10, owner: "Go ahead and build this plan"; .agents/plans/general-search/CONTRACT.md, lead
+# decisions at its end): M2 trains on TWO maps -- the Stockades (arena `rooms`, map 34, the room table's terms) and
+# Ragefire Chasm (arena `ragefire`, map 389, the map-derived terms: FrontierClear, PocketEntry, the pocket weights,
+# table-free Stale, Revisit) at weights 1:1 (the sim's Arena.move2_seek.<arena>.Weight conf keys, not this file) -- and
+# holds the DEADMINES (arena `deadmines`, map 36) out for the transfer reading `found_heldout_map` (eval.heldout below).
+# New inputs: map block revision 3 (+8 coverage scalars), the coverage block (12 x 12 x 3 tile counters, its own small
+# encoder with a zero join) and the cell head's frontier_7x7 feature. FRESH FROM M1 (the lead: the v3 run was still at
+# the doorway rung; seed_from latest = runs/move1_controls/latest.pt): the coverage encoder starts fresh with its join
+# at zero, the map encoder fresh as it always has from M1. The movement-pacing items (contract M1-M8: contact-side
+# inputs, the trap drill at the live rung, pin-pose replay, StepCost halved, the recovery rebate, Explore from rung 1,
+# the pacing telemetry, look_entropy_coef 0.01) ride in the same rebuild. BEFORE START: move
+# runs/_finetune/move2_seek/best.pt away (finetune_from outranks the parent in the seed chain) and archive any
+# runs/move2_seek. Cf. configs/overlays/move2_seek_reseed.yaml.
 #
 # M2 -- seek (perception-goals plan §4, "M2 in detail"; REDESIGN §2; the user, 2026-10-06: "M2 seek also happens
 # inside the same Stockades instance. It has to find an object in a room, and that object and room is randomized.").
@@ -41,7 +50,11 @@ mappo:
   # by looking into a cell) held at 39% found for 30M steps with 46% of episodes ever sighting it and 85% of those
   # arriving -- a search failure, not a reach one. The camera turned on 1.7% of decisions (5.5% at 30M) and the look
   # entropy fell 1.08 -> 0.72. A prior toward looking around, never a mask.
-  look_entropy_coef: 0.004
+  # 0.01 (movement pacing M8, 2026-10-10): under argmax the camera was frozen (the v3 trace at 10M: the yaw offset
+  # non-zero on 0.1% of decisions, no camera sweep while standing in any argmax set); with Explore paying a stationary
+  # sweep from the doorway rung now (Seek.ExploreFromRung 1) the head gets a stronger prior to use it. M3 and M4 extend
+  # this file and restate 0.004 (their camera is not this stage's lesson); C1 is a root config at 0.004.
+  look_entropy_coef: 0.01
   # 1.5e-4 for the fresh run (2026-10-10, lead): a seed from M1 with fresh Adam moments and fresh heads has no settled
   # policy to raise. The history, for the day to raise it: 1.5e-4 from the cleanup deploy (2026-10-07), the rate M2 was effectively running at: a convergence bug read every
   # harder rung as a plateau and annealed the rate from ~30M steps (fixed by ConvergenceController.rebaseline), so the
@@ -93,9 +106,17 @@ eval:
   # `sweep_rotating` (exploration v2, decision 0025): the same 195 placements on seed indexes shifted every evaluation
   # (train.rotating_shift), read as policy heldout_sweep_rotating beside the frozen heldout_sweep. Both play the deep
   # rung's clock (Seek.RungSeconds3, 420 s); found_300 is the like-for-like of the 300 s history.
+  # `deadmines` (general search, item 7): the held-out MAP -- the Deadmines (36), which the stage never trains on --
+  # every (room, object) pair once, on the deep rung's clock; its `found` is the transfer headline (found_heldout_map,
+  # display target 0.8), played at every evaluation (the lead: it IS the headline). The count is rooms x 5 objects
+  # (SeekDraw::SweepLength); the Deadmines room table is scanned offline by the C++ stream (the contract expects ~12-18
+  # rooms), so 75 (15 rooms) is PROVISIONAL: set it from the built stage.json `arenas[].rooms` x 5 before the start
+  # (the learner prints a line at startup when the count is not rooms x objects). M3 extends this file and nulls it
+  # (the Deadmines is M3's training map); M4 nulls the whole map.
   heldout:
     sweep: 195
     sweep_rotating: 195
+    deadmines: 75
   heldout_every: 1
   heldout_on_best: false
   # The rotating sweep every second evaluation (exploration v3; the 195-episode second sweep doubled the held-out time;
@@ -124,6 +145,9 @@ eval:
   # no_searched zeroes the mental map's searched channel (the crop's seventh byte) and the map block's searched, new_age
   # and total scalars (exploration v3): what the searched-state input is worth. Read it beside random_cell and no_plan
   # before crediting a found-rate rise to the planner.
+  # no_coverage (general search) zeroes the coverage block's 432 columns and the map block's eight coverage scalars
+  # (revision 3: frontier_*, region_*, clusters, searched_cells, by the manifest's names): what the coverage inputs are
+  # worth. The crop's bytes stay (no_map's and no_searched's).
   # Readings, never gates. M3 and M4 extend this file and restate `arms: {}`.
   arms:
     no_compass: null
@@ -136,6 +160,7 @@ eval:
     random_cell: 64
     no_plan: 64
     no_searched: 64
+    no_coverage: 64
   report: [found, found_hallway, found_doorway, found_room, found_deep, seek_rung, rung_carried, find_seconds,
            sighted, sight_seconds, sight_to_arrival, rooms_looked, rooms_entered, rooms_reentered, revisit_rate,
            rooms_before_found, objective_visible, room_depth, difficulty, deep_room, object_fallback,
@@ -151,7 +176,20 @@ eval:
            found_300, room_entries_new, back_room_entries, explore_inside_cells, room_entry_reward, stale_seconds,
            stale_events, explore_cap_hit, explore_cap_hit_ms, reward_room_entry, reward_stale,
            stale_clock_end_seconds, hard_room, wall_pin_max_seconds, wall_pin_events, wall_extra_charge, trap_turned,
-           trap_pin_seconds, rooms_approached]
+           trap_pin_seconds, rooms_approached,
+           # General search (contract secs 1.5, 2, 4, 6): the episode's arena (arena_<name>, 1 when it is) and found on
+           # it (found_arena_<name>, a per-event mean over arena_<name>), the map-derived terms' events and nominal
+           # pay, the pocket-weighted cells, the revisit cost and the three new reward columns.
+           arena_rooms, arena_ragefire, found_arena_rooms, found_arena_ragefire,
+           frontier_clusters_peak, frontier_clusters_cleared, frontier_clear_reward,
+           pockets_seen, pockets_entered, pocket_entry_reward, seat_in_chamber_share, explore_pocket_cells,
+           revisit_seconds, revisit_share, reward_frontier_clear, reward_pocket_entry, reward_revisit,
+           # Movement pacing (contract M3, M5, M7; from the controller's body, not the server position): where a trap
+           # start came from, the recovery rebate, straight runs, pauses and looks, pins and escapes.
+           trap_source, recoveries, reward_recovered,
+           straight_run_mean_s, straight_run_p90_s, pauses_per_min, pause_mean_s, pause_look_share,
+           camera_moves_per_min, turn_in_place_share, pin_events, pin_onset_turning_share, contact_escapes,
+           time_to_escape_s]
 
 # forge status for this stage: did it find the object, by rung (found_<rung>, each over the episodes placed at it) and
 # in the deepest rooms, the rung it is on, how soon it saw it and got there after, and how it searched -- rooms looked
@@ -168,7 +206,18 @@ status:
              found_random_cell, found_no_plan, explore_cells, circling_seconds, back_room_visits, trap_escaped,
              found_300, room_entries_new, back_room_entries, stale_seconds, explore_cap_hit_ms,
              found_no_searched, stale_clock_end_seconds, wall_pin_max_seconds, wall_extra_charge, trap_turned,
-             hard_room, rooms_approached]
+             hard_room, rooms_approached,
+             # General search: found per training map (the sim's columns), the held-out map's found (progress.json
+             # eval_found_heldout_map: the held-out arenas whose map no trainable arena uses -- the Deadmines; the
+             # sweeps are on the Stockades) and the Deadmines' and frozen sweep's own, the coverage arm, the
+             # map-derived terms' events and the revisit cost.
+             found_arena_rooms, found_arena_ragefire, found_heldout_map, found_heldout_deadmines, found_heldout_sweep,
+             found_no_coverage, frontier_clusters_cleared, pockets_entered, revisit_seconds, revisit_share,
+             seat_in_chamber_share,
+             # Movement pacing (M7): escape time over the pin events, the pins and escapes, looking while paused,
+             # straight runs and the recovery rebate's events (control_changes_per_minute, already listed: 40-80 a
+             # minute is the found band).
+             time_to_escape_s, pin_events, contact_escapes, pause_look_share, straight_run_mean_s, recoveries]
   targets:
     # M1's targets are not M2's measures (null drops an inherited key).
     arrived: null
@@ -193,6 +242,15 @@ status:
     wall_seconds: "<= 2"
     timed_out: "<= 0.05"
     died: "<= 0.01"
+    # General search (the lead, decision 7): the held-out map's found rate is THE headline of generalisation and a
+    # display target, never a gate; Ragefire's own found beside it. M3 and M4 null both (they do not report them).
+    found_heldout_map: ">= 0.8"
+    found_arena_ragefire: ">= 0.9"
+    # Movement pacing (analysis C4; readings): an escape within 3 s of a pin's onset, a look round in half the pauses,
+    # straight runs of 2.5 s or more (90% of running time already is; the reading guards the pacing changes).
+    time_to_escape_s: "<= 3"
+    pause_look_share: ">= 0.5"
+    straight_run_mean_s: ">= 2.5"
 
 convergence:
   # Twelve evaluations without a new best (60M steps at 5M an evaluation; was six at 10M) before the score counts as
