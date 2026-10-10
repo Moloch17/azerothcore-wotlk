@@ -42,7 +42,7 @@ Non-overlay (the base): `_seed_shared` copies every key that starts with `trunk.
 (silently skipped otherwise). The same for the critic. Then, each only where the new network has the part:
 `_seed_vision` (camera encoder:
 copied only if the old checkpoint has it, the vision block revision is equal in both stage.jsons and every shape equal;
-otherwise fresh with the join zeroed), `_seed_map` (key by key, join zeroed when fresh), `_seed_sight`
+otherwise fresh with the join zeroed), `_seed_map` (key by key, join zeroed when fresh -- and, since exploration v3, also when any encoder tensor is fresh even though the join's own shape agreed: a six-channel map's `patch`/`embed` shapes differ from the seven-channel one's, and a carried join would read a fresh encoder's output through weights trained on another; the seed from M1, which has no map, is unchanged), `_seed_sight`
 (sight encoder and pointer queries, the pool zeroed when fresh; fresh too when the sight block revision differs from the checkpoint's, entity sensing's 2 -> 3; a narrower `sight.extra` is widened with zeros),
 `_seed_look` (look head, same rule as the camera). Lines are printed for each.
 **Goal block revision change** (`_reseed_goals`, m2-goals W3b, after `_seed_shared`): when the checkpoint's stage.json and

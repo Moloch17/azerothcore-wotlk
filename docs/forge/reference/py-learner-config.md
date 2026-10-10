@@ -60,6 +60,7 @@ index falls back to `cuda:0`, no GPU to `cpu`, each with a line).
 | `torch_threads` | 0 | 0 = torch default |
 | `init_from` | `auto` | `auto`, a path or a list |
 | `seed_from` | `latest` | `best` or `latest`, validated in `__post_init__` (`:670`) |
+| `mappo.greedy_env_fraction` | 0.0 | exploration v3; `0 <= f <= 0.5` (validated in `TrainConfig.__post_init__`); this share of the learner's training envs act with the argmax of the movement heads and the free look (goals sampled), their movement policy-gradient terms masked ([py-mappo-trainer.md](py-mappo-trainer.md)); `round(f x E) == 0` for a nonzero `f` is refused at start. `move2_seek.yaml` 0.12; M3 and M4 restate 0.0 |
 | `mappo.goal_cell_hindsight_lookback` | 0 | validated in `TrainConfig.__post_init__`: a whole number from 0 (off) to `MAX_HINDSIGHT_LOOKBACK` (256) decisions, and more than 0 only with `mappo.goal_cell_hindsight_coef > 0` (a window with no coefficient trains nothing, refused). The rule is in [py-mappo-trainer.md](py-mappo-trainer.md) |
 | `merge_from` | `auto` | |
 | `finetune_from` | `{runs_dir}/_finetune/{run_name}/best.pt` | used if the file exists |
@@ -82,10 +83,12 @@ index falls back to `cuda:0`, no GPU to `cpu`, each with a line).
 | `heldout` | {} | `{arena: episodes}`; arena must be `eval_only` in stage.json |
 | `heldout_every` | 4 | >= 1 |
 | `heldout_on_best` | True | |
+| `heldout_cadence` | {} | exploration v3; `{arena: N}`, the arena is played on every N-th evaluation only (always on the stage's last: `final`, and the ADVANCE re-run plays any it skipped); each key must be in `heldout`, each N a whole number >= 1 (`EvalConfig.__post_init__`); `move2_seek.yaml` `{sweep_rotating: 2}` (the rotation moves on by the evaluation number either way). The evaluation number is the leader's `len(tracker.history)`, broadcast to every rank |
 | `score` | `outcome` | `outcome` -> `score_outcome` column, `return` -> whole return; checked lazily in `score_column()` (`:131`), not in `__post_init__` |
-| `arms` | {} | names in `EVAL_ARMS = (with_human, with_partners, no_flag, no_camera, no_compass, no_map, no_memory, no_goal, random_goal, random_cell, no_plan)`, int episodes >= 0; `no_goal` zeroes the goal block's columns (`ablation_chooser`, block `goal`), `random_goal` draws the goals uniformly over those on offer (`MappoTrainer.uniform_goals`), `random_cell` draws every cell goal's cell uniformly over the choosable blocks (`uniform_cells`), `no_plan` holds nothing beside the primary goal (`single_goal`); the last two are skipped where the stage has no cell goals |
+| `arms` | {} | names in `EVAL_ARMS = (with_human, with_partners, no_flag, no_camera, no_compass, no_map, no_memory, no_goal, random_goal, random_cell, no_plan, no_searched)`, int episodes >= 0; `no_searched` zeroes the crop's seventh channel and the map block's `searched`, `new_age`, `total` scalars (`searched_columns`, by the manifest's `map.scalar_names`); `no_goal` zeroes the goal block's columns (`ablation_chooser`, block `goal`), `random_goal` draws the goals uniformly over those on offer (`MappoTrainer.uniform_goals`), `random_cell` draws every cell goal's cell uniformly over the choosable blocks (`uniform_cells`), `no_plan` holds nothing beside the primary goal (`single_goal`); the last two are skipped where the stage has no cell goals |
 | `arms_every` | 1 | >= 1 |
-| `keep_motion_files` | 12 | >= 0 (int); evaluations whose `eval_motion_<env_steps>*.npz` route files are kept (`realism.prune_routes`), 0 = none written and no held-out motion |
+| `keep_motion_files` | 12 | >= 0 (int); evaluations whose `eval_motion_<env_steps>*.npz` route files and `eval_trace_<env_steps>_*.npz` trace files are kept (`realism.prune_routes`, counted over both kinds), 0 = none written and no held-out motion |
+| `trace_all` | False | exploration v3; every seed of every evaluation set (plain, `learner_sampled`, each held-out arena, each arm) traced into `eval_trace_<env_steps>_<policy>.npz` ([file-formats.md](file-formats.md)), and the sampled and arm sets' routes written beside it (`eval_motion_<env_steps>_learner_sampled.npz`, `_<arm>.npz`); needs `keep_motion_files > 0`; `trace_episodes`' JSONL is independent of it |
 
 ## `ConvergenceConfig` (`:137`), section `convergence`
 

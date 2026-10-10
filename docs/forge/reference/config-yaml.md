@@ -135,10 +135,12 @@ Read by `evaluation.py` (`run_evaluation`, line 451), `train.py` (1150-1310, 222
 | `heldout` | dict | `{}` | arena name to episodes, played apart, never steers (`train.py:301-310`) |
 | `heldout_every` | int | 4 | at least 1 (`config.py:127-129`) |
 | `heldout_on_best` | bool | true | also play on a new `best.pt` |
+| `heldout_cadence` | dict | `{}` | exploration v3: arena name to N, played every N-th evaluation (and always on the last); keys must be held-out arenas; an empty map restated in a child file replaces the inherited one (M3, M4) |
 | `score` | str | `outcome` | `outcome` or `return` (checked in `score_column`, `config.py:131-134`, not at load) |
-| `arms` | dict | `{}` | arm name to episodes; arms must be in `EVAL_ARMS = (with_human, with_partners, no_flag, no_camera, no_compass, no_map, no_memory, no_goal, random_goal, random_cell, no_plan)`, counts non-negative ints (`config.py:119-124`) |
+| `arms` | dict | `{}` | arm name to episodes; arms must be in `EVAL_ARMS = (with_human, with_partners, no_flag, no_camera, no_compass, no_map, no_memory, no_goal, random_goal, random_cell, no_plan, no_searched)`, counts non-negative ints (`config.py:119-124`) |
 | `arms_every` | int | 1 | at least 1 |
-| `keep_motion_files` | int | 12 | 0 or more: how many evaluations' route files (`eval_motion_<env_steps>[_heldout_<arena>].npz`) are kept; 0 writes none and the held-out arenas collect no motion |
+| `keep_motion_files` | int | 12 | 0 or more: how many evaluations' route files (`eval_motion_<env_steps>[_<policy>].npz`) and trace files (`eval_trace_<env_steps>_<policy>.npz`) are kept; 0 writes none and the held-out arenas collect no motion |
+| `trace_all` | bool | false | exploration v3: every seed of every evaluation set, per policy, as compact arrays in `eval_trace_<env_steps>_<policy>.npz`; with it the sampled and arm sets keep routes too. `move2_seek.yaml` true |
 
 ### `convergence:` (`ConvergenceConfig`, `config.py:138`), read by `stage.py` `ConvergenceController` (line 460) and
 `evaluation.py` `ConvergenceTracker` (line 623)
@@ -261,6 +263,7 @@ validation.
 | `rank_sync`, `weight_sync_every` | `gradients`, 1 | `parallel.py:117`, `train.py:546, 758`; the sim sets `mappo.rank_sync` for clusters |
 | `goal_count`, `goal_targets`, `goal_every_decisions`, `goal_slots` | 0, 1, 16, 1 | `networks.py:2006`; `trainer.py:649-659`. `move2_seek.yaml` sets `goal_every_decisions: 128` (32 s; M3 and M4 restate 64), `eval.arms` gains `no_goal: 64` and `random_goal: 64`, and `status.headline` gains `plan_share, goal_follow_rate, rooms_checked_per_min, returns, slots_waiting, checked_miss, check_cover_at_find, found_no_goal, found_random_goal`. `configs/overlays/move2_seek_goals.yaml` documents the seeded start (by hand, `--overlay`). Free-choice-goals (2026-10-09): `move2_seek.yaml` also gains `eval.arms` `random_cell: 64` and `no_plan: 64`, the `eval.report` columns of the cell goals and `status.headline` `goals_cell_reached, goals_cell_lost, cell_goal_seconds, ground_cells, found_random_cell, found_no_plan`; `configs/overlays/move2_seek_cells.yaml` is the seeded start of the cell goals (`seed_from`, `goal_every_decisions: 128`, the two `goal_cell_*` keys, the two arms) |
 | `goal_cell_entropy_weight`, `goal_cell_hindsight_coef` | 0.3, 0.05 | `trainer.py` `MappoConfig`; the cell's entropy in the goal head's (`GoalHead.cell_entropy_weight`) and the planner's hindsight in the slow loss (0 = off) |
+| `greedy_env_fraction` | 0.0 | exploration v3, `trainer.py` `MappoConfig`, checked in `TrainConfig.__post_init__` (0 to 0.5): the share of training envs that act with the argmax (goals sampled, their movement policy gradient masked). `move2_seek.yaml` 0.12; M3 and M4 restate 0.0 |
 | `goal_cell_hindsight_lookback` | 0 | `trainer.py` `MappoConfig`, checked in `TrainConfig.__post_init__`; K decisions of the planner's hindsight window (0 = the block at the next choice only, exactly as before); needs `goal_cell_hindsight_coef > 0`. Off in every shipped config; a commented example (16, coef 0.15) is in `configs/overlays/move2_seek_cells.yaml` |
 | `hindsight_coef` | 0.0 | `trainer.py:1639, 1818` |
 | `goal_entropy_scale`, `goal_entropy_final_fraction`, `goal_slot_entropy_weight` | 1.0, 1.0, 0.1 | `train.py:1736-1737`; `trainer.py:665` |
@@ -334,3 +337,15 @@ the `gate_metric`/`measure`/`headline` names with `apps/forge/tools/sim_metrics.
   both dungeons). Any edit should be checked by loading every yaml and with `resume_check.py --fresh --all`.
 - `null` falling back to the dataclass default, not the parent's value, is easy to misread; `move4_follow`'s
   `costs.gate_metric: null` relies on it.
+
+## `move2_seek.yaml` as the fresh run (exploration v3, 2026-10-10)
+
+The file is the FRESH-RUN state (seed from `runs/move1_controls/latest.pt`): `fade.rungs [1.0, 0.5, 0.25, 0.0]` (the 2026-10-09 reseed's `[0.0]` is
+only for a seed from an M2 checkpoint), `actor_lr`/`critic_lr` 0.00015 and `convergence.patience` 6 (the lead's choices: a fresh seed has no settled
+policy to raise, and three evaluations at +-0.03 would end the stage early), `layout_sampling.replay_fraction` 0.0, `eval.episodes` 312,
+`eval.heldout_cadence {sweep_rotating: 2}`, `eval.trace_all` true, the arms (`no_searched: 64` added), `mappo.greedy_env_fraction` 0.12, and
+the exploration v3 telemetry columns in `eval.report` and `status.headline`. What M3 and M4 (which extend it) restate so none of it leaks:
+`mappo.greedy_env_fraction: 0.0`, `eval.trace_all: false`, `eval.heldout_cadence: {}` (an empty map replaces; M3's `sweep_rotating: null` and M4's
+`heldout: null` would otherwise leave a cadence for an arena they do not have, which the config refuses), M3's `arms` drops `no_searched`, M4's
+`arms: {}` already clears them. Before the start: `runs/_finetune/move2_seek/best.pt` away (`finetune_from` outranks the parent in the seed chain) and
+any `runs/move2_seek` archived.
