@@ -66,6 +66,11 @@ mappo:
   # so a leg of 150 yd met the 64-decision clock once and the clock became a source of churn. A maximum, not a period:
   # a reached or lost primary chooses again at once, and choosing the same goal again is free. M3 and M4 restate 64.
   goal_every_decisions: 128
+  # 2026-10-10: the 30M evaluation of the cell-goals run read normal 0.80 against random_cell 0.81 and no_plan 0.81
+  # (goal_follow_rate 0.16-0.20, found flat at ~0.8): the head does not plan yet. Relabel each choice with the blocks
+  # the seat occupied in the 16 decisions after it (within the choice's frame) and weight that term 3x.
+  goal_cell_hindsight_lookback: 16
+  goal_cell_hindsight_coef: 0.15
 
 # Amendment 9: 78 episodes every 10M, at the training rung (each of its rooms in turn, the object types cycled: at the
 # deep rung every room twice), so `found` is the rung's own found rate, which the fade reads. The full sweep -- every
