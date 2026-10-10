@@ -19,9 +19,12 @@
 #ifndef ANIMUS_LIB_CURRICULUM_SEEK_ENCOUNTER_H
 #define ANIMUS_LIB_CURRICULUM_SEEK_ENCOUNTER_H
 
+#include "Block.h"
 #include "Encounter.h"
 #include "ObjectGuid.h"
 #include "Position.h"
+#include "SeenPlaces.h"
+#include <array>
 #include <unordered_set>
 #include <vector>
 
@@ -49,6 +52,15 @@ namespace Animus::Curriculum
     /// gate reads. The held-out arena (EvalOnly, the stage's "sweep") is every (room, object) pair once a pass
     /// (SeekDraw::EvaluationPick: 195 episodes) at the top rung, 300 s.
     ///
+    /// **Room goals** (M2 goals plan, 2026-10-09; Seek.Goals): the goal head is offered the rooms the seat's own frames
+    /// showed -- a first frame with Seek.GlimpseRays floor rays on a room's polygon, bound to one of six slots in the
+    /// order of the glimpses and held until the room is checked -- and the nearest frontier of its mental map as the
+    /// way on (WorldView::Places, GoalBlock). A room's place is the mean of the floor points its rays hit this
+    /// episode, never the room table's centre or opening. The room is checked when the seat stood in it for
+    /// Seek.EnterDwellMs or Seek.CheckedShare of its floor cells were hit; the slot is Done for one observation (the
+    /// goal reached), then released and rebound to the next waiting room. The table of rooms only says which room a
+    /// ray or a position belongs to: it is reward and bookkeeping geometry, never observed.
+    ///
     /// Paid: Arrive once, stopped within the arena's SeekRadius of the object (Outcome); StepCost and Death (Cost);
     /// Stuck and Wall (Cost, at their own fixed price from the first step: RewardLedger::AddFixed); Sighting,
     /// NewGround and RoomSeen, the training-only aids (Shaping, faded), each by the episode's own bookkeeping, never
@@ -66,6 +78,7 @@ namespace Animus::Curriculum
         bool Build(Env& env, Map* map, uint8 level) override;
         bool SelectTarget(Env const& env, uint32 seat, Unit*& target) override;
         void View(Env const& env, uint32 seat, SeatView& view) const override;
+        [[nodiscard]] int32 AchievedGoal(Env const& env, uint32 seat) const override;
         void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
         void WriteState(Env const& env, float* state) const override;
         [[nodiscard]] bool IsTerminal(Env const& env) const override;
@@ -77,6 +90,28 @@ namespace Animus::Curriculum
         [[nodiscard]] static std::vector<std::string> ObjectNames(ArenaDefinition const& arena);
 
     private:
+        /// What the episode knows of one room (room goals): the floor cells its rays hit, the centroid of the hit
+        /// points, the glimpse, the check and the visits. Kept for every room from the episode's start.
+        struct RoomTrack
+        {
+            std::unordered_set<uint64> Hit;     // cells (SeekDraw::CoverCell) of its floor hit by this episode's rays
+            uint32 Floor = 1;                   // the cells its polygon covers
+            double SumX = 0.0;                  // the hit points, summed: the place the room has in the goal block
+            double SumY = 0.0;
+            double SumZ = 0.0;
+            uint32 Hits = 0;
+            bool Glimpsed = false;
+            uint32 GlimpseMs = 0;
+            uint32 Order = 0;                   // the glimpse's rank this episode
+            int32 Slot = -1;                    // the place slot it is bound to
+            bool Checked = false;
+            uint32 CheckedMs = 0;
+            bool Visited = false;               // stood in it for Seek.EnterDwellMs
+            uint32 DwellMs = 0;
+            uint32 AwayMs = 0;                  // since leaving a visited room: far enough outside it, for how long
+            bool Armed = false;                 // ... for long enough: entering it again is a return
+        };
+
         struct EnvSeek
         {
             bool Placed = false;
@@ -112,6 +147,25 @@ namespace Animus::Curriculum
             float Travelled = 0.0f;
             uint32 LastStuckMs = 0;
             uint32 LastWallMs = 0;
+            float LastZ = 0.0f;
+            // Room goals: offered this episode, the rooms, the slots (a room each, -1 free), and the tallies.
+            bool RoomGoals = false;
+            std::vector<RoomTrack> Track;
+            std::array<int32, GOAL_ROOM_SLOTS> SlotRoom{ -1, -1, -1, -1, -1, -1 };
+            uint32 Glimpses = 0;
+            int32 AchievedSlot = -1;            // the slot of a room checked at this decision
+            uint32 RoomsChecked = 0;
+            uint32 Returns = 0;
+            uint32 MaxWaiting = 0;
+            bool FirstGoal = false;
+            uint32 FirstGoalMs = 0;
+            bool ObjectChecked = false;         // the object's room was checked, and when
+            uint32 ObjectCheckedMs = 0;
+            float CoverAtFind = 0.0f;
+            // The way on: the nearest frontier of the seat's map, refreshed every few seconds (View).
+            mutable std::vector<SeenPlaces::Point> Frontier;
+            mutable uint32 FrontierMs = 0;
+            mutable bool FrontierReady = false;
         };
 
         /// Put the episode's object in `room` of `arena`: a spot on its floor, clear of walls, else its centre; at
@@ -122,6 +176,12 @@ namespace Animus::Curriculum
             Position const& start) const;
         /// Stand the object of `kind` at `spot` (its base), turned `facing`.
         bool Summon(EnvSeek& seek, Map* map, ArenaDefinition const& arena, Position const& spot, uint32 phase) const;
+
+        /// The room goals' bookkeeping for one decision, after the frame's floor hits were added (`counts`: the rays on
+        /// each room): the glimpses, the checks, the visits and returns (charged to `ledger`), and the slots. `room` is
+        /// the room the seat stands in (-1 for none).
+        void TrackRooms(Env const& env, EnvSeek& seek, ArenaDefinition const& arena, Player* bot, int32 room,
+            std::vector<uint32> const& counts, RewardLedger& ledger);
 
         std::vector<EnvSeek> _envs;
     };

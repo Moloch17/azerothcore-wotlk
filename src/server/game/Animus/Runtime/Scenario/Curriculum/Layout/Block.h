@@ -188,6 +188,11 @@ namespace Animus::Curriculum
 
     constexpr uint32 GOAL_JOINT_COUNT = GOAL_COUNT * GOAL_TARGETS;
 
+    /// The seek stage's room goals (M2): place targets 0..GOAL_ROOM_SLOTS-1 are rooms, the next one the way on; the
+    /// last place target is never offered. The goal block publishes GOAL_PLACE_SLOTS slots of features.
+    constexpr uint32 GOAL_ROOM_SLOTS = 6;
+    constexpr uint32 GOAL_PLACE_SLOTS = GOAL_ROOM_SLOTS + 1;
+
     [[nodiscard]] constexpr int32 MakeGoal(SeatGoal kind, uint32 target)
     {
         return int32(uint32(kind) * GOAL_TARGETS + target);

@@ -137,10 +137,11 @@ namespace Animus::Curriculum::SeekDraw
     /// **Looked into a room** (REDESIGN §2): per room, the frame's cast rays whose hit is a floor (the terrain or a
     /// model, normal z at least Vision::FLOOR_NORMAL, within Vision::WRITE_REACH of the camera) inside its floor
     /// polygon, within `rise` of its floor's height. The frame alone: nothing the mental map remembers.
-    inline std::vector<uint32> FloorRays(std::vector<SeekRoom> const& rooms, Vision::FrameHits const& hits,
-        float rise = 4.0f)
+    /// `visit(room, x, y, z)` is called for each such ray with the room it fell in and the floor point it hit (a ray
+    /// falls in the first room that takes it).
+    template <typename Visit>
+    inline void FloorHits(std::vector<SeekRoom> const& rooms, Vision::FrameHits const& hits, float rise, Visit&& visit)
     {
-        std::vector<uint32> counts(rooms.size(), 0);
         // Each room's bounds, so most rays are turned away by four comparisons.
         std::vector<std::array<float, 4>> bounds(rooms.size());
         for (std::size_t index = 0; index < rooms.size(); ++index)
@@ -163,30 +164,86 @@ namespace Animus::Curriculum::SeekDraw
                 if (x < box[0] || x > box[1] || y < box[2] || y > box[3]
                     || std::fabs(ray.Z - rooms[index].FloorZ) > rise || !Inside(rooms[index].Floor, x, y))
                     continue;
-                ++counts[index];
+                visit(uint32(index), x, y, ray.Z);
                 break;
             }
         }
-        return counts;
     }
 
-    /// The rooms this frame looks into for the first time this episode -- RoomSeen's, by the episode's own `looked`
-    /// (amendment 6: never the remembered map, so a map kept from before takes no aid away) -- marked in it: at least
-    /// `minRays` of the frame's floor rays on each.
-    inline std::vector<uint32> NewlyLooked(std::vector<SeekRoom> const& rooms, Vision::FrameHits const& hits,
-        std::vector<bool>& looked, uint32 minRays)
+    /// The rooms a frame looks into for the first time this episode, from the floor rays on each (`counts`, counted
+    /// from FloorHits) -- RoomSeen's, by the episode's own `looked` (amendment 6: never the remembered map, so a map
+    /// kept from before takes no aid away) -- marked in it: at least `minRays` of the frame's floor rays on each.
+    inline std::vector<uint32> NewlyLooked(std::vector<uint32> const& counts, std::vector<bool>& looked,
+        uint32 minRays)
     {
         std::vector<uint32> out;
-        if (looked.size() != rooms.size())
-            looked.assign(rooms.size(), false);
-        std::vector<uint32> const counts = FloorRays(rooms, hits);
-        for (uint32 index = 0; index < rooms.size(); ++index)
+        if (looked.size() != counts.size())
+            looked.assign(counts.size(), false);
+        for (uint32 index = 0; index < counts.size(); ++index)
             if (!looked[index] && counts[index] >= std::max<uint32>(1, minRays))
             {
                 looked[index] = true;
                 out.push_back(index);
             }
         return out;
+    }
+
+    /// The side of a floor cell the room goals count coverage in, yards.
+    constexpr float COVER_CELL = 3.0f;
+
+    /// A floor point's cell, as one key (two signed 32-bit indexes).
+    inline uint64 CoverCell(float x, float y)
+    {
+        return uint64(uint32(int32(std::floor(x / COVER_CELL)))) << 32
+            | uint64(uint32(int32(std::floor(y / COVER_CELL))));
+    }
+
+    /// How many cells of COVER_CELL yards a room's floor polygon covers: the distinct cells of points sampled across it
+    /// every half cell, at least 1. The denominator of a room's coverage.
+    inline uint32 FloorCells(std::vector<std::pair<float, float>> const& floor)
+    {
+        if (floor.size() < 3)
+            return 1;
+        float lowX = 1e9f;
+        float highX = -1e9f;
+        float lowY = 1e9f;
+        float highY = -1e9f;
+        for (auto const& [x, y] : floor)
+        {
+            lowX = std::min(lowX, x);
+            highX = std::max(highX, x);
+            lowY = std::min(lowY, y);
+            highY = std::max(highY, y);
+        }
+        std::vector<uint64> cells;
+        float const step = COVER_CELL * 0.5f;
+        for (float x = lowX; x <= highX; x += step)
+            for (float y = lowY; y <= highY; y += step)
+                if (Inside(floor, x, y))
+                    cells.push_back(CoverCell(x, y));
+        std::sort(cells.begin(), cells.end());
+        cells.erase(std::unique(cells.begin(), cells.end()), cells.end());
+        return std::max<uint32>(1, uint32(cells.size()));
+    }
+
+    /// How far (x, y) is outside a room's floor polygon, yards: 0 inside it, else the distance to its nearest edge.
+    inline float OutsideBy(std::vector<std::pair<float, float>> const& floor, float x, float y)
+    {
+        if (floor.size() < 3 || Inside(floor, x, y))
+            return 0.0f;
+        float nearest = 1e9f;
+        for (std::size_t i = 0; i < floor.size(); ++i)
+        {
+            auto const& [ax, ay] = floor[i];
+            auto const& [bx, by] = floor[(i + 1) % floor.size()];
+            float const ex = bx - ax;
+            float const ey = by - ay;
+            float const length2 = ex * ex + ey * ey;
+            float const along = length2 > 1e-9f
+                ? std::clamp(((x - ax) * ex + (y - ay) * ey) / length2, 0.0f, 1.0f) : 0.0f;
+            nearest = std::min(nearest, std::hypot(x - (ax + ex * along), y - (ay + ey * along)));
+        }
+        return nearest;
     }
 
     /// The episode's length at a placement rung, seconds: `seconds[rung]`.

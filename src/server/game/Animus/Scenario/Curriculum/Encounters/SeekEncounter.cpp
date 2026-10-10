@@ -20,6 +20,7 @@
 #include "BotFactory.h"
 #include "Camera.h"
 #include "EncoderSupport.h"
+#include "GoalBlock.h"
 #include "Env.h"
 #include "EnvPool.h"
 #include "EpisodeInfoTable.h"
@@ -80,7 +81,8 @@ Animus::Curriculum::SeekEncounter::SeekEncounter(StageScenario& scenario, uint32
 std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::SeekEncounter::RewardTerms() const
 {
     return { RewardTerm::Arrive, RewardTerm::StepCost, RewardTerm::Death, RewardTerm::Stuck, RewardTerm::Wall,
-        RewardTerm::Sighting, RewardTerm::NewGround, RewardTerm::RoomSeen };
+        RewardTerm::Sighting, RewardTerm::NewGround, RewardTerm::RoomSeen, RewardTerm::RoomGoal, RewardTerm::RoomSwitch,
+        RewardTerm::Return };
 }
 
 std::vector<std::string> Animus::Curriculum::SeekEncounter::RoomNames(ArenaDefinition const& arena)
@@ -146,11 +148,15 @@ void Animus::Curriculum::SeekEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
         EnvSeek const& seek = _envs[env.Index];
         return float(seek.RoomsEntered + seek.RoomsReentered);
     });
+    // The share of the visits that were returns (Seek.Return's definition: back into a visited room after
+    // ReturnAwayMs outside it by ReturnAwayYards): the door's flicker is not one.
     table.Add("revisit_rate", [this](Env const& env, uint32)
     {
         EnvSeek const& seek = _envs[env.Index];
-        uint32 const entries = seek.RoomsEntered + seek.RoomsReentered;
-        return entries ? float(seek.RoomsReentered) / float(entries) : 0.0f;
+        uint32 visits = 0;
+        for (RoomTrack const& room : seek.Track)
+            visits += room.Visited ? 1 : 0;
+        return visits + seek.Returns ? float(seek.Returns) / float(visits + seek.Returns) : 0.0f;
     });
     table.Add("rooms_before_found", [this](Env const& env, uint32)
     {
@@ -200,6 +206,74 @@ void Animus::Curriculum::SeekEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
     }
     table.Add("object_fallback", [this](Env const& env, uint32) { return _envs[env.Index].Fallback ? 1.0f : 0.0f; });
     table.Add("distance_travelled", [this](Env const& env, uint32) { return _envs[env.Index].Travelled; });
+
+    // **Room goals** (M2 goals plan): the share of decisions under a place goal, the room goals chosen, reached and
+    // lost (a room slot; the way on is not one) and the share reached, the room goals given up for another place goal,
+    // the rooms checked (and per minute of the episode), the returns, the most glimpsed rooms that waited for a slot,
+    // and the seconds to the first place goal chosen (0 when none was).
+    auto const seatOf = [this](Env const& env, uint32 seat) -> SeatState const&
+    {
+        return _scenario.Data(env).Seats[seat];
+    };
+    table.Add("plan_share", [this, seatOf](Env const& env, uint32 seat)
+    {
+        EnvSeek const& seek = _envs[env.Index];
+        return seek.Decisions ? float(seatOf(env, seat).PlanDecisions) / float(seek.Decisions) : 0.0f;
+    });
+    table.Add("goals_room_chosen", [seatOf](Env const& env, uint32 seat)
+    {
+        return float(seatOf(env, seat).RoomGoalsChosen);
+    });
+    table.Add("goals_room_reached", [seatOf](Env const& env, uint32 seat)
+    {
+        return float(seatOf(env, seat).RoomGoalsReached);
+    });
+    table.Add("goals_room_lost", [seatOf](Env const& env, uint32 seat)
+    {
+        return float(seatOf(env, seat).RoomGoalsLost);
+    });
+    table.Add("goal_follow_rate", [seatOf](Env const& env, uint32 seat)
+    {
+        SeatState const& state = seatOf(env, seat);
+        return state.RoomGoalsChosen ? float(state.RoomGoalsReached) / float(state.RoomGoalsChosen) : 0.0f;
+    });
+    table.Add("goal_switches_room", [seatOf](Env const& env, uint32 seat)
+    {
+        return float(seatOf(env, seat).RoomGoalSwitches);
+    });
+    table.Add("rooms_checked", [this](Env const& env, uint32) { return float(_envs[env.Index].RoomsChecked); });
+    table.Add("rooms_checked_per_min", [this](Env const& env, uint32)
+    {
+        return float(_envs[env.Index].RoomsChecked) * 60000.0f / float(std::max<uint32>(1, env.EpisodeElapsedMs));
+    });
+    table.Add("returns", [this](Env const& env, uint32) { return float(_envs[env.Index].Returns); });
+    table.Add("slots_waiting", [this](Env const& env, uint32) { return float(_envs[env.Index].MaxWaiting); });
+    table.Add("time_to_first_goal", [this](Env const& env, uint32)
+    {
+        EnvSeek const& seek = _envs[env.Index];
+        return seek.FirstGoal ? float(seek.FirstGoalMs) / 1000.0f : 0.0f;
+    });
+    // The check rule's calibration, over the episodes that found the object: whether its room was checked before the
+    // arrival (a miss of the rule), and how much of the room's floor the rays had hit at the arrival. Both 0 on an
+    // episode that did not find it.
+    table.Add("checked_miss", [this](Env const& env, uint32)
+    {
+        EnvSeek const& seek = _envs[env.Index];
+        return seek.Found && seek.ObjectChecked && seek.FoundMs > seek.ObjectCheckedMs ? 1.0f : 0.0f;
+    });
+    table.Add("check_cover_at_find", [this](Env const& env, uint32)
+    {
+        EnvSeek const& seek = _envs[env.Index];
+        return seek.Found ? seek.CoverAtFind : 0.0f;
+    });
+    // Where the object stood and where the seat's last position was, absolute coordinates in the instance (yards), so
+    // the routes can be analysed offline.
+    table.Add("object_x", [this](Env const& env, uint32) { return _envs[env.Index].Spot.GetPositionX(); });
+    table.Add("object_y", [this](Env const& env, uint32) { return _envs[env.Index].Spot.GetPositionY(); });
+    table.Add("object_z", [this](Env const& env, uint32) { return _envs[env.Index].Spot.GetPositionZ(); });
+    table.Add("end_x", [this](Env const& env, uint32) { return _envs[env.Index].LastX; });
+    table.Add("end_y", [this](Env const& env, uint32) { return _envs[env.Index].LastY; });
+    table.Add("end_z", [this](Env const& env, uint32) { return _envs[env.Index].LastZ; });
 }
 
 void Animus::Curriculum::SeekEncounter::ResetEpisode(Env& env)
@@ -412,6 +486,11 @@ bool Animus::Curriculum::SeekEncounter::Build(Env& env, Map* map, uint8 /*level*
     }
     seek.Entered.assign(arena.Rooms.size(), false);
     seek.Looked.assign(arena.Rooms.size(), false);
+    // The room goals' bookkeeping: a track per room, the cells of its floor, and whether this episode offers them.
+    seek.Track.assign(arena.Rooms.size(), RoomTrack());
+    for (std::size_t index = 0; index < arena.Rooms.size(); ++index)
+        seek.Track[index].Floor = Draw::FloorCells(arena.Rooms[index].Floor);
+    seek.RoomGoals = tuning.Goals && seek.Rung >= tuning.GoalsFromRung;
     return built;
 }
 
@@ -422,7 +501,7 @@ bool Animus::Curriculum::SeekEncounter::SelectTarget(Env const& /*env*/, uint32 
     return true;
 }
 
-void Animus::Curriculum::SeekEncounter::View(Env const& env, uint32 /*seat*/, SeatView& view) const
+void Animus::Curriculum::SeekEncounter::View(Env const& env, uint32 seatIndex, SeatView& view) const
 {
     // The objective is the camera's to show (its flag, in line of sight) and nothing else's: the stage has no compass,
     // and no other block of it reads the point (the goal block gives it no place: ObjectivePlaceKnown).
@@ -433,6 +512,174 @@ void Animus::Curriculum::SeekEncounter::View(Env const& env, uint32 /*seat*/, Se
     ArenaDefinition const& arena = _scenario.Arena(env);
     if (seek.ObjectIndex < arena.Objects.size())
         view.ObjectiveRadius = Vision::ObjectiveRadiusFor(arena.Objects[seek.ObjectIndex].Radius);
+
+    // Room goals (Seek.Goals): the places are what the seat's own frames showed and its map's frontier -- the stage
+    // has no assignment, so the dud goal about the objective (GoalBlock::Available) goes with the seen places.
+    WorldView& world = view.World;
+    world.Places = {};
+    world.HasAssignment = false;
+    world.HasSeenPlaces = _scenario.Tuning().Seek.Goals != 0;
+    world.RoomGoals = seek.Placed && seek.RoomGoals && view.Bot && view.Bot->IsAlive();
+    if (!world.RoomGoals || seek.Track.size() != arena.Rooms.size())
+        return;
+
+    // The rooms: the mean of the floor the seat's rays hit, never the room table's centre or opening.
+    for (uint32 slot = 0; slot < GOAL_ROOM_SLOTS; ++slot)
+    {
+        int32 const index = seek.SlotRoom[slot];
+        if (index < 0)
+            continue;
+        RoomTrack const& room = seek.Track[uint32(index)];
+        if (!room.Hits)
+            continue;
+        WorldView::JournalPlace& place = world.Places[slot];
+        place.Present = true;
+        place.Where.Relocate(float(room.SumX / room.Hits), float(room.SumY / room.Hits), float(room.SumZ / room.Hits));
+        place.Done = room.Checked;
+        place.Coverage = std::min(1.0f, float(room.Hit.size()) / float(std::max<uint32>(1, room.Floor)));
+        place.Age = std::min(1.0f, float(env.EpisodeElapsedMs - std::min(env.EpisodeElapsedMs, room.GlimpseMs))
+            / (1000.0f * GoalBlock::AGE_SCALE_S));
+    }
+
+    // The way on: the nearest frontier of its own mental map (known open ground beside ground it has not seen), as a
+    // dungeon stage's (InstanceEncounter::SeenWorld), refreshed every FRONTIER_MS.
+    if (!view.Bot || seatIndex >= MAX_SEATS)
+        return;
+    constexpr uint32 FRONTIER_MS = 2000;
+    constexpr float FRONTIER_RADIUS = 40.0f;
+    constexpr float FRONTIER_STEP = 2.0f;
+    Player const* bot = view.Bot;
+    SeenPlaces::Point const at{ bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ() };
+    if (!seek.FrontierReady || env.EpisodeElapsedMs < seek.FrontierMs
+        || env.EpisodeElapsedMs >= seek.FrontierMs + FRONTIER_MS)
+    {
+        Vision::MentalMap const& map = _scenario.Data(env).Seats[seatIndex].Map;
+        seek.Frontier = SeenPlaces::Frontier(at, FRONTIER_RADIUS, FRONTIER_STEP, 1, [&map](float x, float y)
+        {
+            Vision::MapCell const* cell = map.Find(x, y);
+            if (!cell || !Vision::Known(*cell))
+                return SeenPlaces::Ground::Unknown;
+            if (cell->Flags & (Vision::MAP_WALL_LOW | Vision::MAP_WALL_HIGH | Vision::MAP_HAZARD))
+                return SeenPlaces::Ground::Shut;
+            return cell->Floor[0] != Vision::NO_FLOOR || (cell->Flags & (Vision::MAP_FREE | Vision::MAP_VISITED))
+                ? SeenPlaces::Ground::Open : SeenPlaces::Ground::Unknown;
+        });
+        seek.FrontierMs = env.EpisodeElapsedMs;
+        seek.FrontierReady = true;
+    }
+    if (!seek.Frontier.empty())
+    {
+        WorldView::JournalPlace& wayOn = world.Places[WorldView::WAY_ON_SLOT];
+        wayOn.Present = true;
+        wayOn.Where.Relocate(seek.Frontier.front().X, seek.Frontier.front().Y, seek.Frontier.front().Z);
+        wayOn.Coverage = 1.0f;
+    }
+}
+
+int32 Animus::Curriculum::SeekEncounter::AchievedGoal(Env const& env, uint32 /*seat*/) const
+{
+    // The room that was checked at this decision, whatever the seat pursued: the goal it would have been (hindsight).
+    EnvSeek const& seek = _envs[env.Index];
+    return seek.RoomGoals && seek.AchievedSlot >= 0 ? MakeGoal(SeatGoal::TravelTo, GOAL_TARGET_PLACE_FIRST
+        + uint32(seek.AchievedSlot)) : NO_GOAL;
+}
+
+void Animus::Curriculum::SeekEncounter::TrackRooms(Env const& env, EnvSeek& seek, ArenaDefinition const& arena,
+    Player* bot, int32 room, std::vector<uint32> const& counts, RewardLedger& ledger)
+{
+    CurriculumTuning::SeekTuning const& tuning = _scenario.Tuning().Seek;
+    uint32 const stepMs = _scenario.StepMs(env);
+    uint32 const now = env.EpisodeElapsedMs;
+    if (seek.Track.size() != arena.Rooms.size() || counts.size() != arena.Rooms.size())
+        return;
+
+    // A room checked at an earlier decision has been shown as done: its slot is free now.
+    for (int32& index : seek.SlotRoom)
+        if (index >= 0 && seek.Track[uint32(index)].Checked)
+        {
+            seek.Track[uint32(index)].Slot = -1;
+            index = -1;
+        }
+
+    float const x = bot->GetPositionX();
+    float const y = bot->GetPositionY();
+    float const z = bot->GetPositionZ();
+    for (uint32 index = 0; index < seek.Track.size(); ++index)
+    {
+        RoomTrack& track = seek.Track[index];
+        // Glimpsed: a frame with GlimpseRays floor rays on the room.
+        if (!track.Glimpsed && !track.Checked && counts[index] >= std::max<uint32>(1, tuning.GlimpseRays))
+        {
+            track.Glimpsed = true;
+            track.GlimpseMs = now;
+            track.Order = seek.Glimpses++;
+        }
+
+        // The visits: standing in the room for EnterDwellMs makes it visited.
+        bool const inside = int32(index) == room;
+        track.DwellMs = inside ? track.DwellMs + stepMs : 0;
+        if (track.DwellMs >= tuning.EnterDwellMs)
+            track.Visited = true;
+
+        // Checked: visited, or CheckedShare of its floor cells hit by this episode's rays.
+        if (!track.Checked && (track.Visited || (counts[index] && tuning.CheckedShare <= 1.0f
+            && float(track.Hit.size()) >= tuning.CheckedShare * float(track.Floor))))
+        {
+            track.Checked = true;
+            track.CheckedMs = now;
+            ++seek.RoomsChecked;
+            if (int32(index) == seek.Room && !seek.ObjectChecked)
+            {
+                seek.ObjectChecked = true;
+                seek.ObjectCheckedMs = now;
+            }
+            if (track.Slot >= 0 && seek.AchievedSlot < 0)
+                seek.AchievedSlot = track.Slot;
+        }
+
+        // The returns: back into a visited room after ReturnAwayMs outside its polygon by ReturnAwayYards or more.
+        if (!track.Visited)
+            continue;
+        if (inside)
+        {
+            if (track.Armed)
+            {
+                track.Armed = false;
+                ++seek.Returns;
+                ledger.AddFixed(RewardTerm::Return, -tuning.Return);
+            }
+            track.AwayMs = 0;
+            continue;
+        }
+        SeekRoom const& table = arena.Rooms[index];
+        bool const far = std::fabs(z - table.FloorZ) > 4.0f
+            || Draw::OutsideBy(table.Floor, x, y) >= tuning.ReturnAwayYards;
+        if (far)
+        {
+            track.AwayMs += stepMs;
+            track.Armed = track.Armed || track.AwayMs >= tuning.ReturnAwayMs;
+        }
+        else if (!track.Armed)
+            track.AwayMs = 0;
+    }
+
+    // The slots: the rooms glimpsed and not checked, in the order of the glimpses, into the free slots; the rest wait.
+    std::vector<uint32> waiting;
+    for (uint32 index = 0; index < seek.Track.size(); ++index)
+        if (seek.Track[index].Glimpsed && !seek.Track[index].Checked && seek.Track[index].Slot < 0)
+            waiting.push_back(index);
+    std::sort(waiting.begin(), waiting.end(), [&seek](uint32 a, uint32 b)
+    {
+        return seek.Track[a].Order < seek.Track[b].Order;
+    });
+    std::size_t next = 0;
+    for (uint32 slot = 0; slot < GOAL_ROOM_SLOTS && next < waiting.size(); ++slot)
+        if (seek.SlotRoom[slot] < 0)
+        {
+            seek.SlotRoom[slot] = int32(waiting[next]);
+            seek.Track[waiting[next++]].Slot = int32(slot);
+        }
+    seek.MaxWaiting = std::max<uint32>(seek.MaxWaiting, uint32(waiting.size() - next));
 }
 
 void Animus::Curriculum::SeekEncounter::Reward(Env& env, uint32 seatIndex, Player* bot, RewardLedger& ledger)
@@ -442,6 +689,7 @@ void Animus::Curriculum::SeekEncounter::Reward(Env& env, uint32 seatIndex, Playe
 
     EnvSeek& seek = _envs[env.Index];
     SeatState& seat = _scenario.Data(env).Seats[seatIndex];
+    seek.AchievedSlot = -1;
     if (!bot)
         return;
 
@@ -456,6 +704,7 @@ void Animus::Curriculum::SeekEncounter::Reward(Env& env, uint32 seatIndex, Playe
     bool const firstLook = !seek.HasLastPos;
     seek.LastX = bot->GetPositionX();
     seek.LastY = bot->GetPositionY();
+    seek.LastZ = bot->GetPositionZ();
     seek.HasLastPos = true;
 
     CombatTally& tally = seat.Combat;
@@ -505,15 +754,29 @@ void Animus::Curriculum::SeekEncounter::Reward(Env& env, uint32 seatIndex, Playe
 
     // Looked into a room (REDESIGN §2): the first frame this episode whose cast rays show a room's floor, from the
     // frame alone and the episode's own list (amendment 6): a mental map kept from an earlier episode, which already
-    // knows the room, takes nothing away.
+    // knows the room, takes nothing away. The same rays give the room goals their places: the floor cells and the
+    // points each room's rays hit.
     ArenaDefinition const& arena = _scenario.Arena(env);
-    if (!seat.Hits.Rays.empty())
-        for (uint32 room : Draw::NewlyLooked(arena.Rooms, seat.Hits, seek.Looked, tuning.RoomSeenRays))
+    std::vector<uint32> counts(arena.Rooms.size(), 0);
+    if (!seat.Hits.Rays.empty() && seek.Track.size() == arena.Rooms.size())
+    {
+        Draw::FloorHits(arena.Rooms, seat.Hits, 4.0f, [&](uint32 index, float hitX, float hitY, float hitZ)
+        {
+            ++counts[index];
+            RoomTrack& track = seek.Track[index];
+            track.Hit.insert(Draw::CoverCell(hitX, hitY));
+            track.SumX += hitX;
+            track.SumY += hitY;
+            track.SumZ += hitZ;
+            ++track.Hits;
+        });
+        for (uint32 room : Draw::NewlyLooked(counts, seek.Looked, tuning.RoomSeenRays))
         {
             (void)room;
             ++seek.RoomsLooked;
             ledger.Add(RewardTerm::RoomSeen, tuning.RoomSeen);
         }
+    }
 
     // New ground, as shaping: a cell of floor walked onto for the first time.
     float const x = bot->GetPositionX();
@@ -535,6 +798,15 @@ void Animus::Curriculum::SeekEncounter::Reward(Env& env, uint32 seatIndex, Playe
         }
     }
     seek.LastRoom = room;
+    TrackRooms(env, seek, arena, bot, room, counts, ledger);
+    if (!seek.FirstGoal)
+        for (GoalHold const& hold : seat.Holds)
+            if (GoalBlock::IsPlaceGoal(hold.Goal))
+            {
+                seek.FirstGoal = true;
+                seek.FirstGoalMs = env.EpisodeElapsedMs;
+                break;
+            }
 
     // Found: stopped (Standing::Stopped, the server's applied state) beside the object, on its floor.
     float const distance = bot->GetExactDist2d(&seek.Spot);
@@ -546,6 +818,9 @@ void Animus::Curriculum::SeekEncounter::Reward(Env& env, uint32 seatIndex, Playe
 
     seek.Found = true;
     seek.FoundMs = env.EpisodeElapsedMs;
+    if (int32 const found = seek.Room; found >= 0 && uint32(found) < seek.Track.size())
+        seek.CoverAtFind = std::min(1.0f, float(seek.Track[uint32(found)].Hit.size())
+            / float(std::max<uint32>(1, seek.Track[uint32(found)].Floor)));
     seek.RoomsBeforeFound = seek.RoomsEntered;
     ledger.Add(RewardTerm::Arrive, tuning.Arrive);
 }

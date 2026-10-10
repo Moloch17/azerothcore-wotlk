@@ -43,9 +43,16 @@ namespace Animus::Curriculum
     /// since the director was deleted, left the block together with the learner's GoalHead reads of them
     /// (mappo/networks.py); the achieved columns moved up by 1 + GOAL_COUNT + GOAL_TARGETS. Still the unreleased
     /// layout generation (protocol 26): bootstrap seeds by column name.
+    /// Revision 3 (2026-10-09, M2 goals): 40 columns appended (the columns above do not move): the held goal's place as
+    /// M1's compass shows its mark (OBS_HELD_*), and per place slot (six rooms and the way on, the place targets 0..6)
+    /// the bearing, distance, coverage and glimpse age of the place the slot holds (OBS_PLACE_FIRST). Written only in
+    /// an episode that offers room goals (WorldView::RoomGoals); zero everywhere else.
     class GoalBlock final : public Block
     {
     public:
+        /// Features per place slot: bearing sin and cos, distance, coverage, age.
+        static constexpr uint32 PLACE_FEATURES = 5;
+
         enum Obs : uint32
         {
             OBS_KIND_FIRST              = 0,                            // per SeatGoal: something for it is there
@@ -58,15 +65,35 @@ namespace Animus::Curriculum
             // What was achieved this decision, whatever was pursued (hindsight):
             OBS_ACHIEVED_KIND_FIRST,
             OBS_ACHIEVED_TARGET_FIRST   = OBS_ACHIEVED_KIND_FIRST + GOAL_COUNT,
-            OBS_COUNT                   = OBS_ACHIEVED_TARGET_FIRST + GOAL_TARGETS
+            // Revision 3: the held primary goal's place (present, bearing sin and cos off the facing, distance over
+            // OBJECTIVE_SCALE, distance over NEAR_SCALE), as CompassBlock's columns.
+            OBS_HELD_FIRST              = OBS_ACHIEVED_TARGET_FIRST + GOAL_TARGETS,
+            OBS_HELD_PRESENT            = OBS_HELD_FIRST,
+            OBS_HELD_SIN,
+            OBS_HELD_COS,
+            OBS_HELD_DIST,
+            OBS_HELD_NEAR,
+            // ... and per place slot k (PLACE_SLOTS of them, the place targets 0..PLACE_SLOTS-1), PLACE_FEATURES
+            // columns: bearing sin and cos off the facing, distance over OBJECTIVE_SCALE, coverage, age.
+            OBS_PLACE_FIRST,
+            OBS_COUNT                   = OBS_PLACE_FIRST + GOAL_PLACE_SLOTS * PLACE_FEATURES
         };
 
-        /// 1: Loot, Gather, Interact and the journal targets left the goal space. 2: the order columns left the block
-        /// (see the class comment).
-        [[nodiscard]] uint32 Revision() const override { return 2; }
+        /// The place slots (six rooms and the way on); PLACE_FEATURES columns each.
+        static constexpr uint32 PLACE_SLOTS = GOAL_PLACE_SLOTS;
+        static constexpr float OBJECTIVE_SCALE = 500.0f;        // CompassBlock's, so a bearing means the same
+        static constexpr float NEAR_SCALE = 40.0f;
+        static constexpr float AGE_SCALE_S = 120.0f;
+
+        /// 1: Loot, Gather, Interact and the journal targets left the goal space. 2: the order columns left the block.
+        /// 3: the held-goal and place-slot columns (see the class comment).
+        [[nodiscard]] uint32 Revision() const override { return 3; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void DescribeColumns(Layout const& layout, boost::json::array& names) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
+
+        /// Revision 3's columns: the held goal's place and the place slots (WorldView::RoomGoals only).
+        static void ObservePlaces(SeatView const& view, float* obs);
 
         /// Which targets are there, and which kinds have something to be about (at least Fight, always).
         static void Available(SeatView const& view, std::array<bool, GOAL_COUNT>& kinds,
@@ -94,6 +121,26 @@ namespace Animus::Curriculum
         [[nodiscard]] static constexpr bool ObjectivePlaceKnown(bool compassBlock, bool compassWithheld)
         {
             return compassBlock && !compassWithheld;
+        }
+
+        /// Whether a target is a room slot of an episode with room goals (place_0..place_5; place_6 is the way on,
+        /// which is reached by distance as any place).
+        [[nodiscard]] static constexpr bool IsRoomTarget(uint32 target)
+        {
+            return target >= GOAL_TARGET_PLACE_FIRST && target < GOAL_TARGET_PLACE_FIRST + GOAL_ROOM_SLOTS;
+        }
+
+        /// Whether a goal is a travel_to about a room slot (IsRoomGoal) or about a room slot or the way on
+        /// (IsPlaceGoal): what the seek stage's room goals count and price.
+        [[nodiscard]] static constexpr bool IsRoomGoal(int32 goal)
+        {
+            return goal >= 0 && SeatGoal(GoalKindOf(goal)) == SeatGoal::TravelTo && IsRoomTarget(GoalTargetOf(goal));
+        }
+        [[nodiscard]] static constexpr bool IsPlaceGoal(int32 goal)
+        {
+            return goal >= 0 && SeatGoal(GoalKindOf(goal)) == SeatGoal::TravelTo
+                && GoalTargetOf(goal) >= GOAL_TARGET_PLACE_FIRST
+                && GoalTargetOf(goal) < GOAL_TARGET_PLACE_FIRST + GOAL_PLACE_SLOTS;
         }
 
         /// How near a journal place counts as reached (TravelTo).

@@ -311,6 +311,17 @@ namespace Animus::Curriculum
         std::array<uint32, GOAL_COUNT> GoalsChosenBy{};
         std::array<uint32, GOAL_COUNT> GoalsReachedBy{};
         uint32 GoalTargetedDecisions = 0;       // decisions under a goal about a named target
+        /// The seek stage's room goals (M2 goals): whether the last observation offered them (WorldView::RoomGoals),
+        /// and the episode's tally of the room goals (a room slot, not the way on): chosen, reached, lost, given up
+        /// for another place goal, and the decisions held under a place goal of either kind. StepRoomSwitches counts
+        /// the switches since the last reward (Seek.RoomSwitch).
+        bool RoomGoals = false;
+        uint32 RoomGoalsChosen = 0;
+        uint32 RoomGoalsReached = 0;
+        uint32 RoomGoalsLost = 0;
+        uint32 RoomGoalSwitches = 0;
+        uint32 StepRoomSwitches = 0;
+        uint32 PlanDecisions = 0;
         /// The goal block's event (GoalBlock::OBS_EVENT): what was true at the last observation, so only a change
         /// raises it -- health under the escape line, the enemies in the fight, the owner under attack.
         bool EventLow = false;
@@ -536,6 +547,13 @@ namespace Animus::Curriculum
             GoalsReached = 0;
             GoalsLost = 0;
             GoalTargetedDecisions = 0;
+            RoomGoals = false;
+            RoomGoalsChosen = 0;
+            RoomGoalsReached = 0;
+            RoomGoalsLost = 0;
+            RoomGoalSwitches = 0;
+            StepRoomSwitches = 0;
+            PlanDecisions = 0;
             EventLow = false;
             EventEnemies = 0;
             Event = false;

@@ -85,6 +85,11 @@ namespace Animus::Curriculum
         /// Fill the parts of a seat's view this encounter knows.
         virtual void View(Env const& /*env*/, uint32 /*seat*/, SeatView& /*view*/) const { }
 
+        /// A goal this encounter saw the seat achieve at its last reward, whatever the seat pursued (the goal block's
+        /// hindsight columns; NO_GOAL for none). Asked at the observation, after View, for the encounters of the
+        /// episode in order; the first that answers is taken when nothing else was achieved.
+        [[nodiscard]] virtual int32 AchievedGoal(Env const& /*env*/, uint32 /*seat*/) const { return -1; }
+
         /// Each decision: before the seats are rewarded, each seat's reward terms, after every seat was rewarded.
         virtual void BeforeRewards(Env& /*env*/) { }
         virtual void Reward(Env& /*env*/, uint32 /*seat*/, Player* /*bot*/, RewardLedger& /*ledger*/) { }

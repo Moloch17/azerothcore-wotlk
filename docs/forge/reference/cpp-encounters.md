@@ -338,6 +338,9 @@ once with and once without the compass, and rounds 2k and 2k+1 play the same pai
 | `wall` | Cost (noise price) | `AddFixed(-WallCharge(...))` (`:374`) | `Controls.Wall` (0.02), `Controls.WallSlide` (0.5) |
 | `progress` | Shaping | `Markers.Progress * (lastDistance - distance) / max(Straight, Radius)`, from the second look (`:383-387`) | `Markers.Progress` (1.0) |
 | `facing` | Shaping | `Markers.Facing * 0.5 * (cos(bearing) - lastCos)`, bearing = the object's angle off `seat.Facing` (`:388-392`) | `Markers.Facing` (0.25) |
+| `room_goal` | Aid | `+Seek.RoomGoal` x aid scale once per goal, paid by `StageScenario::ObserveSeat` into the row of the decision that sees a held room goal (place targets 14-19, not the way on) reached (`Earned`: its room checked after the choice); a secondary at `Goals.SecondaryShare`. Not in the score. | `Seek.RoomGoal` (0.05), `Seek.AidUntil` (0.4) |
+| `room_switch` | Aid | `-Seek.RoomSwitch` x aid scale per unended place goal (a room or the way on) replaced by another goal (`ApplyGoals`; the same change also costs `Goals.Switch`, Shaping). | `Seek.RoomSwitch` (0.03) |
+| `return` | Cost | `-Seek.Return` per return (above), at its fixed price; in the score. | `Seek.Return` (0.05), `Seek.ReturnAwayYards` (8), `Seek.ReturnAwayMs` (2000) |
 | `arrive` | Outcome | `+Markers.Arrive` once, on the decision when stopped and inside (`:416`) | `Markers.Arrive` (3.0) |
 
 Conditions. The Progress/Facing/Wall/Stuck/arrival code runs only while `Placed && !Reached && alive` (`:355-356`).
@@ -438,7 +441,8 @@ west_south_2, west_north_2, `Stages.cpp:343-348`), `Objects = SeekObjects()`, `S
 
 ```cpp
 SeekEncounter(StageScenario&, uint32 envs);
-std::vector<RewardTerm> RewardTerms() const;  // Arrive, StepCost, Death, Stuck, Wall, Sighting, NewGround, RoomSeen
+std::vector<RewardTerm> RewardTerms() const;  // Arrive, StepCost, Death, Stuck, Wall, Sighting, NewGround, RoomSeen,
+                                              // RoomGoal, RoomSwitch, Return
 static std::vector<std::string> RoomNames(ArenaDefinition const&);    // seek_room categories
 static std::vector<std::string> ObjectNames(ArenaDefinition const&);  // seek_object categories
 ```
@@ -446,7 +450,7 @@ static std::vector<std::string> ObjectNames(ArenaDefinition const&);  // seek_ob
 `SeekDraw` (`SeekDraw.h`): `Rung {Hallway, Doorway, Room, Deep}`, `RUNG_NAMES`; `Depths(rooms)` (rank by `Walk`, 0..1,
 `:42-54`), `Tier(depth)` (thirds, `TIERS = 3`, `:57-60`), `PlacedRung(ladder, u, carry)` (`:80-83`), `RungRooms`
 (`:87-95`), `EvaluationRooms` (`:100-107`), `RungEvaluationPick` (`:111-115`), `DoorwaySpot` (`:119-133`),
-`FloorRays`/`NewlyLooked` (`:140-190`), `RungSeconds` (`:193`), `NearestOpening` (`:199-213`), `Pick`, `SweepLength`,
+`FloorHits` (a template: calls `visit(room, x, y, z)` for each floor ray), `NewlyLooked(counts, looked, minRays)`, `CoverCell`, `FloorCells`, `OutsideBy` (2026-10-09, room goals), `RungSeconds` (`:193`), `NearestOpening` (`:199-213`), `Pick`, `SweepLength`,
 `EvaluationPick` (the sweep, `:239-244`), `SeedUniform` (splitmix64, `:248-255`), `Inside`, `Area`, `PointIn`, `RoomAt`.
 
 ### Episode lifecycle
@@ -481,9 +485,31 @@ static std::vector<std::string> ObjectNames(ArenaDefinition const&);  // seek_ob
    7. **Clock**: `env.EpisodeLengthMs = (Sweep ? max(1, arena.EpisodeSeconds) : Seek.RungSeconds<rung>) * 1000`, where
       the rung is the PLACEMENT's (a carried episode gets the shorter clock of the rung below) (`:406-407`).
    8. Depth and tier of the room; `Entered`/`Looked` bit-vectors sized to the room count (`:408-414`).
-3. **View** (`:425-436`): `HasObjective = Placed && !Found`, `Objective = Centre`, `ObjectiveRadius` from the pool
-   entry. The stage has no compass block, and the goal block is not told a place.
-4. **Reward** (`:438-551`), see below.
+3. **View**: `HasObjective = Placed && !Found`, `Objective = Centre`, `ObjectiveRadius` from the pool
+   entry. The stage has no compass block, and the goal block is not told the object's place. **Room goals** (2026-10-09,
+   M2 goals plan): `WorldView::HasSeenPlaces = Seek.Goals != 0` (so the dud assignment goal of a trip's objective is
+   not offered; `Seek.Goals 0` restores it), `WorldView::RoomGoals = Placed && RoomGoals && alive`
+   (`RoomGoals` is fixed at Build: `Seek.Goals && Rung >= Seek.GoalsFromRung`, the placement rung after the carry-over).
+   Places 0-5 are the slot-bound rooms: `Where` is the **mean of the floor points this episode's rays hit on that room**
+   (never the room table's centre or opening), `Done` the room's `Checked`, `Coverage` hit cells / floor cells, `Age`
+   seconds since the first glimpse / 120. Place 6 is the way on: the nearest frontier of the seat's own mental map
+   (`SeenPlaces::Frontier`, radius 40, step 2, refreshed every 2 s as `InstanceEncounter::SeenWorld`), `Coverage` 1.
+   **AchievedGoal**: the slot of a room checked at this decision, as `travel_to place_k`, for the goal block's hindsight
+   columns (`StageScenario::ObserveGoalSignals`, taken when nothing else was achieved).
+4. **Reward** (`SeekEncounter.cpp:685`), see below. After the existing bookkeeping it runs `TrackRooms` (room goals):
+   - *Hits*: `SeekDraw::FloorHits` (floor rays inside a room's polygon within 4 yd of its `FloorZ`) adds each ray's
+     3 yd cell and point to the room's `RoomTrack`; `RoomSeen` is paid from the same counts.
+   - *Glimpse*: a frame with at least `max(1, Seek.GlimpseRays)` floor rays on an unchecked room; it takes the next
+     glimpse `Order`.
+   - *Slots*: a room checked at an earlier decision frees its slot first (it was shown `Done` at that observation); the
+     glimpsed, unchecked, unbound rooms then take the free slots lowest first, in glimpse order; the rest wait
+     (`slots_waiting` is the episode's most). A room glimpsed and checked in the same frame never binds a slot.
+   - *Checked*: the seat stood in the room (`RoomAt`) for `Seek.EnterDwellMs` ms in a row (`Visited`), or the room's hit
+     cells are at least `Seek.CheckedShare` of its floor cells (the polygon sampled every 1.5 yd into 3 yd cells; a share
+     above 1 disables the coverage rule). A room checked while it holds a slot sets `AchievedSlot`.
+   - *Return*: for a `Visited` room the seat is outside, `AwayMs` counts the time it is at least `Seek.ReturnAwayYards`
+     outside its polygon (or on another storey); at `Seek.ReturnAwayMs` the room is armed, and the next time the seat is
+     inside it, `Seek.Return` is charged (`AddFixed`, Cost) and `returns` counts one. The door's flicker never arms it.
 5. **IsTerminal**: `Found || DeadForGood(env, 0)`. **Teardown**: removes the object.
 
 ### Reward terms
@@ -500,6 +526,14 @@ static std::vector<std::string> ObjectNames(ArenaDefinition const&);  // seek_ob
 
 `Found` is set at arrival; `FoundMs = EpisodeElapsedMs`; `RoomsBeforeFound = RoomsEntered`.
 
+**The aid scale** (`RewardCategory::Aid`, `RewardLedger::SetAid`, set in `StageScenario::Reward`): `max(0, 1 - progress /
+Seek.AidUntil)` where `progress` is the stage's share of `total_env_steps` (`ProgressMsg.Progress`, no protocol change);
+it is set for every stage's ledgers, and only the seek room terms are Aid. Room-goal behaviour in `StageScenario`: a
+seat's `RoomGoals` flag (from the last observation) turns off `GoalGap` and `GoalPotential` for place goals (the straight
+line is not the walk: no `StepAway`, no progress potential), and a place goal chosen again once it ended is a new hold
+(`ApplyGoals`; slot ids are reused). Telemetry counters live on `SeatState`: `RoomGoalsChosen/Reached/Lost`,
+`RoomGoalSwitches`, `PlanDecisions`.
+
 ### Episode-info columns (`AddEpisodeInfo`, `SeekEncounter.cpp:102-203`)
 
 | Column | Value | Notes and readers |
@@ -509,7 +543,7 @@ static std::vector<std::string> ObjectNames(ArenaDefinition const&);  // seek_ob
 | `sighted`, `sight_seconds` | first-flag-pixel frame seen; its clock | `sight_seconds` PER_EVENT over `sighted` |
 | `found_sighted`, `sight_to_arrival` | found and sighted; `FoundMs - SightMs` | PER_EVENT |
 | `objective_visible` | visible decisions / decisions | |
-| `rooms_entered`, `rooms_reentered`, `room_entries`, `revisit_rate`, `rooms_before_found`, `rooms_looked` | room walking and looking counts | `revisit_rate` PER_EVENT over `room_entries`, `rooms_before_found` over `found` |
+| `rooms_entered`, `rooms_reentered`, `room_entries`, `revisit_rate`, `rooms_before_found`, `rooms_looked` | room walking and looking counts; `rooms_reentered` still counts every re-entry (the door's flicker included), while since 2026-10-09 `revisit_rate` = returns / (rooms visited for `EnterDwellMs` + returns), the returns of `Seek.Return`'s definition | `revisit_rate` PER_EVENT over `room_entries` (UNVERIFIED: the weighting is now by entries, not visits), `rooms_before_found` over `found` |
 | `seek_room`, `seek_object` | indexes (`max(0, Room)`; a hallway object's room = nearest opening) | `episode_categories` |
 | `room_depth`, `difficulty`, `deep_room` | depth 0..1, tier 0..2, tier is the deepest | `difficulty` also splits the evaluation tables |
 | `seek_rung`, `room_ladder`, `rung_carried`, `at_top_rung` | placement rung 0..3; ladder rung / 3; carried; ladder is at deep | `at_top_rung` for `convergence.top_rung` |
@@ -517,6 +551,12 @@ static std::vector<std::string> ObjectNames(ArenaDefinition const&);  // seek_ob
 | `found_hallway`, `found_doorway`, `found_room`, `found_deep` | found and placed at that rung | PER_EVENT over `rung_<name>` (`episode_means.py:29-32`) |
 | `object_fallback` | `Fallback` | |
 | `distance_travelled` | sum of per-decision 2D displacement | |
+| `plan_share` | decisions under a place goal (room or way on) / decisions | room goals |
+| `goals_room_chosen`, `goals_room_reached`, `goals_room_lost`, `goal_follow_rate`, `goal_switches_room` | room goals (place targets 14-19) chosen, reached (`Earned`), lost (not counted for a dead seat); reached / chosen; place goals given up (the way on included) | `lost` is not inflated by the terminal observation: `RoomGoals` stays true after the find |
+| `rooms_checked`, `rooms_checked_per_min` | rooms `Checked` this episode; per minute of `EpisodeElapsedMs` | |
+| `returns`, `slots_waiting`, `time_to_first_goal` | returns (above); most glimpsed rooms without a slot; seconds to the first place goal held (0 if none) | |
+| `checked_miss`, `check_cover_at_find` | on an episode that found the object: 1 if its room was `Checked` at a decision strictly before the arrival; the room's hit cells / floor cells at the arrival. Both 0 when not found. | calibrates `Seek.CheckedShare` |
+| `object_x`, `object_y`, `object_z`, `end_x`, `end_y`, `end_z` | the object's base (`Spot`) and the seat's last position, absolute instance coordinates, yards | `Spot` is 0 when not placed |
 
 `found_deepest`, used in the yaml headline and targets, is not written here; it is computed in Python
 (`apps/forge/python/animus/evaluation.py:337`).
@@ -526,7 +566,8 @@ static std::vector<std::string> ObjectNames(ArenaDefinition const&);  // seek_ob
 `Seek.{Arrive 3, StepCost 0.0005, Death 6, ArriveRise 2, Sighting 0.5, NewGround 0.004, NewGroundCell 4, Stuck 0.02,
 Wall 0.02, WallSlide 0.5, Attempts 24, FloorTolerance 2, Clearance 0.8, RoomSeen 0.1, RoomSeenRays 3, CarryShare 0.1,
 RungSeconds0..3 90/120/200/300, HallwayNearest 8, HallwayFurthest 120, DoorwayInside 2, DoorwayDeeper 1.5,
-DoorwaySpread 1}` (`CurriculumTuning.h:588-615`, visited `:1037-1061`) and `Markers.StopMoved`. Arena fields read:
+DoorwaySpread 1, Goals 1, GoalsFromRung 2, RoomGoal 0.05, RoomSwitch 0.03, Return 0.05, AidUntil 0.4, GlimpseRays 1,
+CheckedShare 0.6, EnterDwellMs 1000, ReturnAwayYards 8, ReturnAwayMs 2000}` (`CurriculumTuning.h:588-615`, visited `:1037-1061`) and `Markers.StopMoved`. Arena fields read:
 `Rooms`, `Objects`, `SeekRadius`, `EvalOnly`, `EpisodeSeconds` (sweep only), `SpawnPoints` (via the scenario).
 
 ### Tests
@@ -535,7 +576,7 @@ No tests (removed 2026-10-07); see [tests.md](tests.md).
 
 ### Quirks, debts, dead ends
 
-- `SeekEncounter.cpp:513`: the loop variable `room` of the `NewlyLooked` loop is discarded (`(void)room`).
+- `SeekEncounter.cpp`: the loop variable `room` of the `NewlyLooked` loop is discarded (`(void)room`).
 - The hallway-rung object's yaw and the hallway placement use `frand`, not the episode seed (`:323`, `:329`); the
   comment at `:319-320` says the world thread's random numbers are reseeded before each seeded episode, which would
   make them deterministic (UNVERIFIED: where that reseed happens).

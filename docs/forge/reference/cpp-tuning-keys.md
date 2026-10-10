@@ -159,7 +159,7 @@ Struct line ranges are in `CurriculumTuning.h`. "Per decision" terms are tuned f
 | `Markers` | 480-509 | 8 | `SightEncounter.cpp`, `SeekEncounter.cpp:543`, `InteractEncounter.cpp:649` | M1 marker prices and stop/arrive geometry. |
 | `Respawn` | 511-531 | 2 | `CombatEncounter.cpp:407-412`, `InstanceEncounter.cpp:1004`, `PartyFollowEncounter.cpp:446`, `RolesEncounter.cpp:401` | The entrance-respawn clock (I4): delay and rejoin distance. See the respawn section of [cpp-encounters.md](cpp-encounters.md). |
 | `PartyFollow` | 533-586 | 26 | `PartyFollowEncounter.cpp`, `StageScenario.cpp:3211` | M4 follower prices, band, leader script rungs. Its Stuck/Wall prices are `Seek.*` (`PartyFollowEncounter.cpp:643`). |
-| `Seek` | 588-632 | 25 | `SeekEncounter.cpp`, `PartyFollowEncounter.cpp:643-652` | M2 prices, placement and rung seconds. |
+| `Seek` | 588-650 | 36 | `SeekEncounter.cpp`, `StageScenario.cpp`, `PartyFollowEncounter.cpp:643-652` | M2 prices, placement and rung seconds, and the room goals (`Goals`, `GoalsFromRung`, `RoomGoal`, `RoomSwitch`, `Return`, `AidUntil`, `GlimpseRays`, `CheckedShare`, `EnterDwellMs`, `ReturnAwayYards`, `ReturnAwayMs`; 2026-10-09). |
 | `Interact` | 634-675 | 21 | `InteractEncounter.cpp` | M3 prices, decoys and sweep. |
 | `Controls` | 677-718 | 14 | `SightEncounter.cpp` | M1 object placement, corner share, compass withhold chances, wall/stuck prices. |
 | `Combat` | 720-785 | 30 | `CombatEncounter.cpp`, `CombatDraw.h`, `RolesEncounter.cpp:186, 287, 296` | C1-C3 prices, ladder, placement. |
@@ -407,6 +407,17 @@ through to `StandIn.Share`, so its default 0 is never consulted today (the "defe
 | Seek | `Seek.DoorwayInside` | 2.0f | float | - | `Encounters/SeekEncounter.cpp:271` | move2_seek |
 | Seek | `Seek.DoorwayDeeper` | 1.5f | float | - | `Encounters/SeekEncounter.cpp:271` | move2_seek |
 | Seek | `Seek.DoorwaySpread` | 1.0f | float | - | `Encounters/SeekEncounter.cpp:272` | move2_seek |
+| Seek | `Seek.Goals` | 1 | uint32 | temporary experiment switch: 0 offers no room goals, pays no aid, restores the dud assignment goal | `Encounters/SeekEncounter.cpp:493`, `Encounters/SeekEncounter.cpp:521` | move2_seek |
+| Seek | `Seek.GoalsFromRung` | 2 | uint32 | room goals only at a placement rung >= this (after the carry-over) | `Encounters/SeekEncounter.cpp:493` | move2_seek |
+| Seek | `Seek.RoomGoal` | 0.05f | float | Aid; x `Goals.SecondaryShare` for a secondary | `StageScenario.cpp:3637` | move2_seek |
+| Seek | `Seek.RoomSwitch` | 0.03f | float | Aid; charged per room goal (or the way on) given up | `StageScenario.cpp:5012` | move2_seek |
+| Seek | `Seek.Return` | 0.05f | float | Cost, `AddFixed` | `Encounters/SeekEncounter.cpp:649` | move2_seek |
+| Seek | `Seek.AidUntil` | 0.4f | float | the aid scale is `max(0, 1 - progress / AidUntil)`; 0 or less is no aid | `StageScenario.cpp:4646` | move2_seek |
+| Seek | `Seek.GlimpseRays` | 1 | uint32 | reader: max(1, ..) | `Encounters/SeekEncounter.cpp:611` | move2_seek |
+| Seek | `Seek.CheckedShare` | 0.6f | float | above 1 reduces the check to "stood in it" | `Encounters/SeekEncounter.cpp:625` | move2_seek |
+| Seek | `Seek.EnterDwellMs` | 1000 | uint32 | - | `Encounters/SeekEncounter.cpp:621` | move2_seek |
+| Seek | `Seek.ReturnAwayYards` | 8.0f | float | - | `Encounters/SeekEncounter.cpp:656` | move2_seek |
+| Seek | `Seek.ReturnAwayMs` | 2000 | uint32 | - | `Encounters/SeekEncounter.cpp:660` | move2_seek |
 | Interact | `Interact.Arrive` | 3.0f | float | - | `Encounters/InteractEncounter.cpp:643`, `Encounters/InteractEncounter.cpp:678` | move3_interact |
 | Interact | `Interact.DoorOpened` | 1.0f | float | - | `Encounters/InteractEncounter.cpp:629` | move3_interact |
 | Interact | `Interact.WrongObject` | 0.5f | float | - | `Encounters/InteractEncounter.cpp:634`, `Encounters/InteractEncounter.cpp:685` | move3_interact |

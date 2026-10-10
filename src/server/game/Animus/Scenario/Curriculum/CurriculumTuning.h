@@ -446,6 +446,16 @@ namespace Animus::Curriculum
         /// Placement: up to Attempts points drawn uniformly over the room's floor polygon, each kept when the floor
         /// below it (vmaps) is within FloorTolerance yards of the room's and nothing solid stands within Clearance
         /// yards of it, at knee height, along the four axes (the room's centre otherwise).
+        ///
+        /// **Room goals** (M2 goals plan, 2026-10-09; Goals 1, the temporary experiment switch, 0 for none): the goal
+        /// head is offered the rooms the seat's own frames showed (a first frame with GlimpseRays floor rays on a
+        /// room's polygon) as place targets, six slots bound in the order of the glimpses, and the nearest frontier of
+        /// its mental map as the way on, at placement rungs from GoalsFromRung up. A room is checked when the seat
+        /// stood in it for EnterDwellMs or CheckedShare of its floor cells (3 yd) were hit by this episode's rays.
+        /// RoomGoal and RoomSwitch are Aid (RewardCategory::Aid): a held room goal whose room becomes checked after the
+        /// choice pays RoomGoal, a room goal given up for another costs RoomSwitch, both times the aid scale
+        /// max(0, 1 - progress / AidUntil). Return (Cost, fixed price) prices going back into a visited room after at
+        /// least ReturnAwayMs outside its polygon by ReturnAwayYards.
         struct SeekTuning
         {
             float Arrive = 3.0f;
@@ -473,6 +483,17 @@ namespace Animus::Curriculum
             float DoorwayInside = 2.0f;
             float DoorwayDeeper = 1.5f;
             float DoorwaySpread = 1.0f;
+            uint32 Goals = 1;
+            uint32 GoalsFromRung = 2;
+            float RoomGoal = 0.05f;
+            float RoomSwitch = 0.03f;
+            float Return = 0.05f;
+            float AidUntil = 0.4f;
+            uint32 GlimpseRays = 1;
+            float CheckedShare = 0.6f;
+            uint32 EnterDwellMs = 1000;
+            float ReturnAwayYards = 8.0f;
+            uint32 ReturnAwayMs = 2000;
         } Seek;
 
         /// **M3 interact** (Opposition::Interact, InteractEncounter; dungeon-curriculum M3): in an empty Deadmines, the
@@ -902,6 +923,17 @@ namespace Animus::Curriculum
             f("Seek.DoorwayInside", tuning.Seek.DoorwayInside);
             f("Seek.DoorwayDeeper", tuning.Seek.DoorwayDeeper);
             f("Seek.DoorwaySpread", tuning.Seek.DoorwaySpread);
+            f("Seek.Goals", tuning.Seek.Goals);
+            f("Seek.GoalsFromRung", tuning.Seek.GoalsFromRung);
+            f("Seek.RoomGoal", tuning.Seek.RoomGoal);
+            f("Seek.RoomSwitch", tuning.Seek.RoomSwitch);
+            f("Seek.Return", tuning.Seek.Return);
+            f("Seek.AidUntil", tuning.Seek.AidUntil);
+            f("Seek.GlimpseRays", tuning.Seek.GlimpseRays);
+            f("Seek.CheckedShare", tuning.Seek.CheckedShare);
+            f("Seek.EnterDwellMs", tuning.Seek.EnterDwellMs);
+            f("Seek.ReturnAwayYards", tuning.Seek.ReturnAwayYards);
+            f("Seek.ReturnAwayMs", tuning.Seek.ReturnAwayMs);
             f("Interact.Arrive", tuning.Interact.Arrive);
             f("Interact.DoorOpened", tuning.Interact.DoorOpened);
             f("Interact.WrongObject", tuning.Interact.WrongObject);

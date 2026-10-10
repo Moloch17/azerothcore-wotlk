@@ -63,12 +63,25 @@ namespace Animus::Curriculum
     struct WorldView
     {
         static constexpr uint32 JOURNAL_PLACES = 8;
+        /// The seek stage's room goals (RoomGoals): places 0..ROOM_SLOTS-1 are rooms the seat's own frames showed,
+        /// place WAY_ON_SLOT the nearest frontier of its mental map (the goal block's place slots).
+        static constexpr uint32 ROOM_SLOTS = GOAL_ROOM_SLOTS;
+        static constexpr uint32 WAY_ON_SLOT = ROOM_SLOTS;
         struct JournalPlace
         {
             bool Present = false;
             Position Where;
+            /// A room slot whose room has been checked: held one observation as reached, no longer offered.
+            bool Done = false;
+            /// Share of the room's floor cells this episode's rays hit (0..1; 1 for the way on), and the seconds since
+            /// its first glimpse over 120 (0..1).
+            float Coverage = 0.0f;
+            float Age = 0.0f;
         };
         std::array<JournalPlace, JOURNAL_PLACES> Places{};
+        /// The episode offers room goals: places are the rooms and the way on, travel_to is the only kind offered
+        /// once one exists, and a room goal is reached when its room is checked rather than within a distance.
+        bool RoomGoals = false;
         /// The stage has seen places (SeenPlaces: what the seat saw and remembers, its map's frontier -- not a route)
         /// and an assignment: the goal block reads them. False in a stage without them, where a trip's objective
         /// takes the assignment's slot.
