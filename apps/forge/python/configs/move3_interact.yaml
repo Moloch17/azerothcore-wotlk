@@ -37,6 +37,9 @@ eval:
     sweep: 60
     # M2's rotating sweep is an arena this stage does not have (null drops the inherited key).
     sweep_rotating: null
+    # M2's held-out MAP (general search): the Deadmines is this stage's training map, so it is no hold-out here (null
+    # drops the inherited key; the learner would refuse an arena the stage lacks).
+    deadmines: null
   # M2's per-arena cadence names sweep_rotating, an arena this stage does not have (an empty map replaces); its
   # all-seeds trace files (eval.trace_all) are M2's own too.
   heldout_cadence: {}
@@ -46,8 +49,9 @@ eval:
   # like in forge status and as policy rows in eval.csv. no_camera blanks the image (the entity list stays, so the sight
   # block's presses still work: what the picture is worth beyond the list), no_map zeroes the map block and the mental
   # map's crop, no_memory resets the recurrent state before every decision. Readings, never gates. The rest of M2's arms
-  # are its own: no_flag, no_goal, random_goal, random_cell, no_plan and no_searched (null drops each inherited key; the goal here
-  # names what, never where, and the cell goals are M2's alone).
+  # are its own: no_flag, no_goal, random_goal, random_cell, no_plan, no_searched and no_coverage (null drops each
+  # inherited key; the goal here names what, never where, the cell goals are M2's alone, and the coverage block is
+  # listed in M2's definition only).
   arms:
     no_compass: null
     no_flag: null
@@ -56,6 +60,7 @@ eval:
     random_cell: null
     no_plan: null
     no_searched: null
+    no_coverage: null
     no_camera: 64
     no_map: 64
     no_memory: 64
@@ -78,12 +83,17 @@ status:
              wrong_objects, lever_pressed, act_refused_locked, right_seconds, sight_seconds, sight_to_arrival,
              wall_seconds, timed_out, died, right_object_no_camera, right_object_no_map, right_object_no_memory]
   targets:
-    # M2's targets are not M3's measures (null drops an inherited key).
+    # M2's targets are not M3's measures (null drops an inherited key; a target must be in the headline).
     found: null
     found_deepest: null
     find_seconds: null
     rooms_before_found: null
     revisit_rate: null
+    found_heldout_map: null
+    found_arena_ragefire: null
+    time_to_escape_s: null
+    pause_look_share: null
+    straight_run_mean_s: null
     right_object: ">= 0.9"
     right_distinguish: ">= 0.9"
     right_switch: ">= 0.9"
@@ -122,6 +132,9 @@ mappo:
   # M2's 2.2e-4 (deep rung, 2026-10-09) is M2's own: this stage keeps the 1.5e-4 it inherited before it.
   actor_lr: 0.00015
   critic_lr: 0.00015
+  # M2's 0.01 (movement pacing M8: its frozen search camera) is M2's own: this stage keeps the 0.004 it inherited
+  # before it.
+  look_entropy_coef: 0.004
   # M2's greedy training envs (exploration v3, mappo.greedy_env_fraction 0.12) are its own: restated off, so none of this
   # stage's envs act with the argmax.
   greedy_env_fraction: 0.0

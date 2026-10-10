@@ -203,6 +203,7 @@ Keys, by source:
 | `evals, last_eval_env_steps, last_eval_score, baseline_score, best_score, best_env_steps, evals_since_best, converged_layouts, active_layouts, weakest_layout, weakest_missing, reentries` | `evaluated()` | sim (status table, ETA) |
 | `eval_<metric>` for each `status.headline` metric | `evaluated(summary=...)` | sim (headline table beside `episode_<metric>`) |
 | `eval_<arm>_score, eval_<arm>_episodes, eval_<metric>_<arm>`, and for arm `with_human`: `eval_clear_standin`, `eval_standin_gap` | `arm_evaluated()` | sim via headline names like `clear_rate_with_human` |
+| `eval_<metric>_heldout_<arena>` for each headline metric so named, `eval_heldout_<arena>_episodes`, `eval_found_heldout_map` (the `found` of the held-out arenas whose stage.json `map_id` is no trainable arena's, episode-weighted; absent until one has played, or without `map_id` in the manifest) | `heldout_evaluated()` (general search) | sim via headline names `found_heldout_deadmines`, `found_heldout_map` |
 | `nonfinite` | `write_progress` | sim warning line |
 
 The sim also reads `finished.json` for the stage list (`ForgeCommands.cpp:398`, `AnimusForge.cpp:985` key `advanced`, `reason`).

@@ -29,6 +29,9 @@ mappo:
   # M2's 2.2e-4 (deep rung, 2026-10-09) is M2's own: this stage keeps the 1.5e-4 it inherited before it.
   actor_lr: 0.00015
   critic_lr: 0.00015
+  # M2's 0.01 (movement pacing M8: its frozen search camera) is M2's own: this stage keeps the 0.004 it inherited
+  # before it.
+  look_entropy_coef: 0.004
   # M2's greedy training envs (exploration v3, mappo.greedy_env_fraction 0.12) are its own: restated off, so none of this
   # stage's envs act with the argmax.
   greedy_env_fraction: 0.0
@@ -42,13 +45,15 @@ eval:
   episodes: 64
   # M2 plays the sampled policy at every evaluation since its deep rung (2026-10-09); this stage keeps its own.
   sampled_every: 0
-  # M2's held-out "sweep" is an arena this stage does not have: left inherited, the learner refuses to start
-  # (train.heldout_arenas). Null drops it.
+  # M2's held-out "sweep", "sweep_rotating" and "deadmines" (its held-out MAP; the Deadmines is a training map here) are
+  # arenas this stage does not hold out: left inherited, the learner refuses to start (train.heldout_arenas). Null
+  # drops the whole map.
   heldout: null
   # M2's per-arena cadence and all-seeds trace files (exploration v3) are its own: restated off (an empty map replaces).
   heldout_cadence: {}
   trace_all: false
-  # M2's ablation arms (no_flag, no_camera, no_map, no_memory, no_goal, random_goal, random_cell, no_plan, no_searched) are its own: this stage plays none.
+  # M2's ablation arms (no_flag, no_camera, no_map, no_memory, no_goal, random_goal, random_cell, no_plan, no_searched,
+  # no_coverage) are its own: this stage plays none.
   arms: {}
   report: [follow_kept_share, follow_distance_mean, regroup_share, regroup_seconds, regroups, regroup_stops,
            lost_seconds, blocking_seconds, deaths, rises, rejoins, rejoin_seconds, rejoined, dead_seconds,
@@ -64,7 +69,7 @@ status:
   headline: [follow_kept_share, regroup_share, regroup_seconds, lost_seconds, blocking_seconds, deaths,
              rejoin_seconds, rejoined, leader_route_share, difficulty, wall_seconds, died]
   targets:
-    # M2's targets are not M4's measures (null drops an inherited key).
+    # M2's targets are not M4's measures (null drops an inherited key; a target must be in the headline).
     found: null
     found_deepest: null
     find_seconds: null
@@ -73,6 +78,11 @@ status:
     rooms_before_found: null
     revisit_rate: null
     timed_out: null
+    found_heldout_map: null
+    found_arena_ragefire: null
+    time_to_escape_s: null
+    pause_look_share: null
+    straight_run_mean_s: null
     follow_kept_share: ">= 0.9"
     regroup_share: ">= 0.9"
     regroup_seconds: "<= 5"

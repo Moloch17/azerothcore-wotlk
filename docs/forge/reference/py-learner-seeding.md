@@ -42,9 +42,19 @@ Non-overlay (the base): `_seed_shared` copies every key that starts with `trunk.
 (silently skipped otherwise). The same for the critic. Then, each only where the new network has the part:
 `_seed_vision` (camera encoder:
 copied only if the old checkpoint has it, the vision block revision is equal in both stage.jsons and every shape equal;
-otherwise fresh with the join zeroed), `_seed_map` (key by key, join zeroed when fresh -- and, since exploration v3, also when any encoder tensor is fresh even though the join's own shape agreed: a six-channel map's `patch`/`embed` shapes differ from the seven-channel one's, and a carried join would read a fresh encoder's output through weights trained on another; the seed from M1, which has no map, is unchanged), `_seed_sight`
+otherwise fresh with the join zeroed), `_seed_map` (key by key, join zeroed when fresh -- and, since exploration v3, also when any encoder tensor is fresh even though the join's own shape agreed: a six-channel map's `patch`/`embed` shapes differ from the seven-channel one's, and a carried join would read a fresh encoder's output through weights trained on another; the seed from M1, which has no map, is unchanged), `_seed_coverage` (general search: `vision.coverage.*`, the coverage
+grid's encoder, carried when the checkpoint has it at the same shapes, else fresh with `vision.coverage.join.*` zeroed -- the fresh seed
+from M1, whose layouts have no coverage block; `_seed_vision` leaves these keys out of its all-shapes-equal test, as it does the map's
+and the sight's, so the camera still carries from M1; a stage without the block, M3/M4 seeded from the new M2, builds no coverage encoder
+and leaves the grid behind as the compass is), `_seed_slow_loop` (a seed from a checkpoint of the SAME stage, `stage.json stage` equal on
+both sides and the goal block at the same revision -- `finetune_from` pointing at an archived run of the scenario, the reseed overlay:
+`slow_memory.*` and `slow_value.*` are carried where the shapes agree, which `SHARED_PREFIXES` never does and `_reseed_goals` does only
+across the goal revisions it names; any other pairing is untouched), `_seed_sight`
 (sight encoder and pointer queries, the pool zeroed when fresh; fresh too when the sight block revision differs from the checkpoint's, entity sensing's 2 -> 3; a narrower `sight.extra` is widened with zeros),
-`_seed_look` (look head, same rule as the camera). Lines are printed for each.
+`_seed_look` (look head, same rule as the camera). Lines are printed for each. The three growth functions the general-search contract
+named for a seed from the running v3 M2 (`_grow_map_scalars`, `_grow_cell_features`, the growing `_seed_coverage`) were not built: the
+lead chose a fresh seed from M1, on which `goal_head.cell.local.weight` `[32, 22]` is fresh anyway (M1 has no cell head) and the map
+encoder starts fresh with its join zeroed as it always has.
 **Goal block revision change** (`_reseed_goals`, m2-goals W3b, after `_seed_shared`): when the checkpoint's stage.json and
 this stage's give the `goal` block different revisions (M2's room goals, 2 -> 3), `goal_head.*` (and `slow_memory.*`,
 `slow_value.*`, which `SHARED_PREFIXES` never carries; the slow optimiser always starts fresh) are put back to the new
@@ -109,7 +119,12 @@ and the actor head. With block spans in both stage.jsons (`stages.block_spans`) 
   rank-tier actions named `rank_*` closing the block); a block with a seat set that only gained slots uses
   `_slots_grown`; otherwise the block is seeded from scratch and the rest still carries.
 - `_by_name` then fills still-empty new columns and actions from old columns of the same name in any block
-  (`obs_names`; a revision-4 move block of 63 columns uses `MOVE_REVISION_4_COLUMNS`, the compass split).
+  (`obs_names`; a revision-4 move block of 63 columns uses `MOVE_REVISION_4_COLUMNS`, the compass split). **Move block
+  revision 5 -> 6** (movement pacing M1: `contact_side`, `blocked_ahead`, `hold_age`, `pinned_age` appended, 57 -> 61 columns) takes
+  this path from M1's checkpoint (its stage.json: move revision 5, 57 `obs_names`): `_common_blocks` skips the block (revision
+  differs, printed), `_by_name` carries the 57 named columns to where they now are, the four new names match nothing and stay at zero
+  (`_seed_adapter_blocks` zeroes the uncarried columns; `_seed_norm_blocks` caps the inherited count so they are described within the
+  first rollouts); the block's actions are carried by name too. Verified by reading at general search; no code change was needed.
 
 `CORE_GLOBAL_FEATURES` must equal `CoreBlock::OBS_GLOBAL_COUNT` in C++ (`bootstrap.py:60-66`); nothing
 checks it since the tests were removed 2026-10-07. It was once 67 when the C++ had 94.

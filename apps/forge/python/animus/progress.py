@@ -59,7 +59,8 @@ def write_progress(run_dir: Path, fields: dict, undefined: frozenset[str] | set[
 class ProgressWriter:
     """Keeps the latest training metrics and evaluation between writes, so every write is a complete picture."""
 
-    def __init__(self, run_dir: Path, config, spec, resumed_update: int = 0, resumed_env_steps: int = 0):
+    def __init__(self, run_dir: Path, config, spec, resumed_update: int = 0, resumed_env_steps: int = 0,
+                 stage: dict | None = None):
         self.run_dir = run_dir
         self.static = {
             "run_name": config.run_name,
@@ -85,6 +86,18 @@ class ProgressWriter:
         # The evaluation arms' readings (eval.arms), kept apart: an arm plays every eval.arms_every evaluations, and
         # its last reading stands until the next.
         self.arms: dict = {}
+        # The held-out arenas' readings (eval.heldout; general search sec 7), kept apart likewise: an arena plays on
+        # its cadence, and its last reading stands until the next.
+        self.heldout: dict = {}
+        # Each arena's map (stage.json arenas[].map_id, absent in a manifest before general search) and the maps the
+        # stage trains on (its arenas that are not eval_only): a held-out arena on a map the stage never trains on
+        # measures transfer, and its `found` feeds eval_found_heldout_map.
+        arenas = list((stage or {}).get("arenas", ()))
+        self.arena_maps = {str(arena.get("name")): arena.get("map_id") for arena in arenas}
+        self.trained_maps = {arena.get("map_id") for arena in arenas
+                             if not arena.get("eval_only") and arena.get("map_id") is not None}
+        # arena -> (found, episodes) of the held-out arenas on an untrained map, as last played.
+        self.heldout_found: dict = {}
 
     def arm_columns(self, arm: str) -> tuple[str, ...]:
         """The episode columns an arm's summary needs for the headline: clear_rate for clear_rate_with_human."""
@@ -112,6 +125,32 @@ class ProgressWriter:
             self.arms[f"eval_{gap}"] = (float(base) - float(value)
                                         if isinstance(base, (int, float)) and isinstance(value, (int, float))
                                         else None)
+
+    def heldout_columns(self, name: str) -> tuple[str, ...]:
+        """The episode columns a held-out arena's summary needs for the headline: found for found_heldout_deadmines."""
+        suffix = f"_heldout_{name}"
+        return tuple(metric[:-len(suffix)] for metric in self.headline if metric.endswith(suffix))
+
+    def heldout_evaluated(self, name: str, summary: dict, map_id=None) -> None:
+        """A held-out arena's summary (general search sec 7): each headline metric <metric>_heldout_<name> as
+        eval_<metric>_heldout_<name> (the arm pattern), its episodes as eval_heldout_<name>_episodes, and
+        eval_found_heldout_map: the `found` of the held-out arenas whose map (`map_id`, the manifest's unless given) is
+        not any trainable arena's, averaged over their episodes -- the transfer headline (M2's Deadmines; the Stockades
+        sweeps are on the training map and never count). Absent while no such arena has played, or when the manifest
+        carries no map ids."""
+        self.heldout[f"eval_heldout_{name}_episodes"] = summary.get("episodes")
+        for metric in self.heldout_columns(name):
+            self.heldout[f"eval_{metric}_heldout_{name}"] = summary.get(metric)
+        if map_id is None:
+            map_id = self.arena_maps.get(name)
+        if map_id is not None and map_id not in self.trained_maps:
+            found, episodes = summary.get("found"), summary.get("episodes")
+            if isinstance(found, (int, float)) and isinstance(episodes, (int, float)) and episodes > 0:
+                self.heldout_found[name] = (float(found), float(episodes))
+        if self.heldout_found:
+            total = sum(episodes for _, episodes in self.heldout_found.values())
+            self.heldout["eval_found_heldout_map"] = (
+                sum(found * episodes for found, episodes in self.heldout_found.values()) / total if total > 0 else None)
 
     def note(self, key: str, text: str) -> None:
         """A line of state forge status shows as it is (stand_in: whether the "human" stand-in is fielded, and why
@@ -144,10 +183,22 @@ class ProgressWriter:
             "weakest_layout": weakest[0] if weakest else "",
             "weakest_missing": ",".join(weakest[1]) if weakest else "",
             "reentries": sum(state.reentries for state in controller.layouts.values()) if controller else 0,
-            # The headline measures' evaluation means (eval_<metric>), beside the training means (episode_<metric>).
-            **{f"eval_{metric}": (summary or {}).get(metric) for metric in self.headline
-               if f"eval_{metric}" not in self.arms},
+            # The headline measures' evaluation means (eval_<metric>), beside the training means (episode_<metric>);
+            # the arms' and the held-out arenas' readings are theirs (kept apart, written last).
+            **{f"eval_{metric}": self._headline_value(summary or {}, metric) for metric in self.headline
+               if f"eval_{metric}" not in self.arms and f"eval_{metric}" not in self.heldout},
         }
+
+    @staticmethod
+    def _headline_value(summary: dict, metric: str):
+        """A headline metric's reading: the summary's own column, else -- for a metric named <metric>_arena_<arena>
+        that is not a column of its own (find_seconds_arena_ragefire; the sim's found_arena_<arena> columns are) -- that
+        arena's <metric> from the summary's per-arena split (general search sec 7)."""
+        value = summary.get(metric)
+        if value is None and "_arena_" in metric:
+            base, arena = metric.split("_arena_", 1)
+            value = ((summary.get("arenas") or {}).get(arena) or {}).get(base)
+        return value
 
     def restore_evaluation(self, tracker, baseline_score: float | None, controller=None) -> None:
         """After a resume: the evaluation state the checkpoint carried."""
@@ -167,5 +218,6 @@ class ProgressWriter:
             **{k: v for k, v in self.metrics.items() if k not in ("update", "env_steps")},
             **self.evaluation,
             **self.arms,
+            **self.heldout,
         }
         return write_progress(self.run_dir, fields, self.undefined)

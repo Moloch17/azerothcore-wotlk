@@ -614,6 +614,11 @@ VISION_JOIN = "vision_join."
 #: camera carries from a checkpoint without a map, and the map starts fresh with its join zeroed.
 MAP = "vision.map."
 MAP_ZEROED = "vision.map.join."
+#: The coarse coverage grid's encoder inside the camera's (CoverageEncoder, general search sec 5): seeded on its own,
+#: so a camera carries from a checkpoint without the block (M1's), and the grid starts fresh with its join zeroed --
+#: the seeded policy acts as it did, and the grid comes in as the join learns.
+COVERAGE = "vision.coverage."
+COVERAGE_ZEROED = "vision.coverage.join."
 #: The sight list's encoder inside the camera's (SightEntities, dungeon-curriculum I1 and I2) and the actor's pointer
 #: queries over it (SightPointers): seeded on their own, so a camera carries from a checkpoint without a sight block,
 #: and the list starts fresh with its pool zeroed -- the seeded policy acts as it did.
@@ -645,11 +650,11 @@ def _seed_vision(new: dict, old: dict, new_stage: dict | None, old_stage: dict |
     (a revision re-laid the image, so the encoder starts fresh like the block's columns). Returns what happened, or
     None when this network has no camera. Left fresh, its join is zeroed: the seeded policy starts as it was, and the
     camera comes in as the join learns (a network trained from scratch keeps its join's ordinary initialisation)."""
-    keys = [key for key in new if key.startswith(VISION) and not key.startswith((MAP, SIGHT))]
+    keys = [key for key in new if key.startswith(VISION) and not key.startswith((MAP, SIGHT, COVERAGE))]
     if not keys:
         return None
     fresh = None
-    if not any(key.startswith(VISION) and not key.startswith((MAP, SIGHT)) for key in old):
+    if not any(key.startswith(VISION) and not key.startswith((MAP, SIGHT, COVERAGE)) for key in old):
         fresh = "fresh (the checkpoint has none)"
     elif _vision_revision(new_stage) != _vision_revision(old_stage):
         fresh = f"fresh (vision revision {_vision_revision(old_stage)} -> {_vision_revision(new_stage)})"
@@ -689,6 +694,41 @@ def _seed_map(new: dict, old: dict) -> str | None:
         return f"carried, but for {len(fresh)} new tensors ({', '.join(sorted({k.split('.')[2] for k in fresh}))})" \
                f"{'; the join is zeroed with them' if stale_join else ''}"
     return "carried"
+
+
+def _seed_coverage(new: dict, old: dict) -> str | None:
+    """Carry the coverage grid's encoder from a checkpoint that has one of the same shapes; else it starts fresh with
+    its join zeroed, so the seeded policy acts as it did (the fresh seed from M1, whose layouts have no coverage block).
+    None when this network has no coverage encoder (every stage but M2: a layout without the block builds none, so a
+    seed from the new M2 into M3/M4 leaves the grid behind as the compass is)."""
+    keys = [key for key in new if key.startswith(COVERAGE)]
+    if not keys:
+        return None
+    if all(key in old and old[key].shape == new[key].shape for key in keys):
+        for key in keys:
+            new[key].copy_(old[key])
+        return "carried"
+    for key in keys:
+        if key.startswith(COVERAGE_ZEROED):
+            new[key].zero_()
+    return "fresh (the checkpoint has none), its join at zero" if not any(key.startswith(COVERAGE) for key in old) \
+        else "fresh (its shape changed), its join at zero"
+
+
+def _seed_slow_loop(actor: dict, old_actor: dict, stage: dict | None, old_stage: dict | None) -> str | None:
+    """A seed from a checkpoint of the SAME stage (finetune_from pointing at an archived run of this scenario, the
+    reseed overlay): the slow loop (slow_memory.*, slow_value.*; not in SHARED_PREFIXES, and copied by _reseed_goals
+    only across the goal revisions it names) is carried where the shapes agree, so the planner's slow GRU is not lost
+    on a same-revision seed. Any other pairing (M1 -> M2, M2 -> M3) is untouched. Returns the log line, or None."""
+    if not stage or not old_stage or stage.get("stage") != old_stage.get("stage"):
+        return None
+    if _block_revision(old_stage, GOAL_BLOCK) != _block_revision(stage, GOAL_BLOCK):
+        return None    # _reseed_goals decides for a changed goal block
+    slow = [key for key in actor if key.startswith(("slow_memory.", "slow_value."))]
+    carried = [key for key in slow if key in old_actor and old_actor[key].shape == actor[key].shape]
+    for key in carried:
+        actor[key].copy_(old_actor[key])
+    return f"carried from the same stage's checkpoint ({len(carried)} of {len(slow)} tensors)" if slow else None
 
 
 def _seed_sight(new: dict, old: dict, new_stage: dict | None = None, old_stage: dict | None = None) -> str | None:
@@ -816,10 +856,17 @@ def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, ove
         _seed_vision(critic, old["critic"], stage, old_stage)
         if vision is not None:
             print(f"  vision encoder: {vision}", flush=True)
+        slow = _seed_slow_loop(actor, old["actor"], stage, old_stage)
+        if slow is not None:
+            print(f"  slow loop: {slow}", flush=True)
         crop = _seed_map(actor, old["actor"])
         _seed_map(critic, old["critic"])
         if crop is not None:
             print(f"  map encoder: {crop}", flush=True)
+        grid = _seed_coverage(actor, old["actor"])
+        _seed_coverage(critic, old["critic"])
+        if grid is not None:
+            print(f"  coverage encoder: {grid}", flush=True)
         sight = _seed_sight(actor, old["actor"], stage, old_stage)
         if sight is not None:
             print(f"  sight list: {sight}", flush=True)

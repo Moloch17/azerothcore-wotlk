@@ -137,7 +137,7 @@ Read by `evaluation.py` (`run_evaluation`, line 451), `train.py` (1150-1310, 222
 | `heldout_on_best` | bool | true | also play on a new `best.pt` |
 | `heldout_cadence` | dict | `{}` | exploration v3: arena name to N, played every N-th evaluation (and always on the last); keys must be held-out arenas; an empty map restated in a child file replaces the inherited one (M3, M4) |
 | `score` | str | `outcome` | `outcome` or `return` (checked in `score_column`, `config.py:131-134`, not at load) |
-| `arms` | dict | `{}` | arm name to episodes; arms must be in `EVAL_ARMS = (with_human, with_partners, no_flag, no_camera, no_compass, no_map, no_memory, no_goal, random_goal, random_cell, no_plan, no_searched)`, counts non-negative ints (`config.py:119-124`) |
+| `arms` | dict | `{}` | arm name to episodes; arms must be in `EVAL_ARMS = (with_human, with_partners, no_flag, no_camera, no_compass, no_map, no_memory, no_goal, random_goal, random_cell, no_plan, no_searched, no_coverage)`, counts non-negative ints (`config.py:119-124`) |
 | `arms_every` | int | 1 | at least 1 |
 | `keep_motion_files` | int | 12 | 0 or more: how many evaluations' route files (`eval_motion_<env_steps>[_<policy>].npz`) and trace files (`eval_trace_<env_steps>_<policy>.npz`) are kept; 0 writes none and the held-out arenas collect no motion |
 | `trace_all` | bool | false | exploration v3: every seed of every evaluation set, per policy, as compact arrays in `eval_trace_<env_steps>_<policy>.npz`; with it the sampled and arm sets keep routes too. `move2_seek.yaml` true |
@@ -337,6 +337,24 @@ the `gate_metric`/`measure`/`headline` names with `apps/forge/tools/sim_metrics.
   both dungeons). Any edit should be checked by loading every yaml and with `resume_check.py --fresh --all`.
 - `null` falling back to the dataclass default, not the parent's value, is easy to misread; `move4_follow`'s
   `costs.gate_metric: null` relies on it.
+
+## `move2_seek.yaml` as the general-search run (2026-10-10, after exploration v3)
+
+General search (`.agents/plans/general-search/CONTRACT.md`; the lead: fresh from M1) on top of the v3 state below: the header names the
+two training maps (the Stockades `rooms` and Ragefire `ragefire` at the sim's conf weights 1:1; nothing in the yaml) and the held-out map;
+`eval.heldout.deadmines` (75, PROVISIONAL: the Deadmines room table's length x 5 objects, to be set from the built stage.json
+`arenas[].rooms`; the learner prints a line when a count is not rooms x objects), every evaluation (no cadence entry); `eval.arms`
+`no_coverage: 64`; `eval.report` gains the contract's columns (`arena_<name>`, `found_arena_<name>`, the FrontierClear / PocketEntry /
+Revisit telemetry and rewards, `trap_source`, `recoveries`, `reward_recovered`, the M7 pacing columns); `status.headline` gains
+`found_arena_rooms`, `found_arena_ragefire`, `found_heldout_map`, `found_heldout_deadmines`, `found_heldout_sweep`, `found_no_coverage`,
+`frontier_clusters_cleared`, `pockets_entered`, `revisit_seconds`, `revisit_share`, `seat_in_chamber_share`, `time_to_escape_s`,
+`pin_events`, `contact_escapes`, `pause_look_share`, `straight_run_mean_s`, `recoveries`; `status.targets` (display, never gates)
+`found_heldout_map >= 0.8`, `found_arena_ragefire >= 0.9`, `time_to_escape_s <= 3`, `pause_look_share >= 0.5`, `straight_run_mean_s >= 2.5`;
+`mappo.look_entropy_coef` 0.01 (movement pacing M8; was 0.004); `eval.every_env_steps` 5M, `convergence.patience` 12 and
+`heldout_cadence {sweep_rotating: 4}` as committed just before. What M3 and M4 restate so none of it leaks: M3 `eval.heldout.deadmines: null`
+(the Deadmines is its training map), `eval.arms.no_coverage: null`, both `mappo.look_entropy_coef: 0.004`, and both null the five new
+targets (a target must be in the headline, which they replace); M4's `heldout: null` and `arms: {}` already drop the rest. C1 is a root
+config at `look_entropy_coef` 0.004: untouched.
 
 ## `move2_seek.yaml` as the fresh run (exploration v3, 2026-10-10)
 

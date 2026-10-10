@@ -411,7 +411,7 @@ def _carry_sequence(cell: nn.GRUCell, size: int, encoded: torch.Tensor, memory: 
 #: uses (GoalHead.set_space).
 CELL_GRID = 24
 CELL_POOL = 2
-CELL_FEATURES = 21
+CELL_FEATURES = 22
 CELL_HIDDEN = 32
 CELL_CHAIN_HIDDEN = 16
 #: A block is choosable when it has at least this many floor-like cells, all within CELL_RISE_UNITS (4 yd) of the feet.
@@ -460,7 +460,10 @@ def cell_features(crops: torch.Tensor, grid: int = CELL_GRID, pool: int = CELL_P
     first 18 keep their index) the block's searched share (the share of its 1-yd cells looked at this episode) and that
     share averaged over the 3 x 3 and the 7 x 7 blocks round it (a 28 yd neighbourhood: how much of the region is still
     unlooked-at; an unknown cell reads 0, so unexplored space and unsearched floor both show, and the block's own
-    unknown / floor / frontier features say which). All from the crop, which is the mental map's own (never the
+    unknown / floor / frontier features say which); and (general search sec 3, appended so the first 21 keep their
+    index) the frontier share averaged over the 7 x 7 blocks round it (`frontier_7x7`: the frontier mass of the 28-yd
+    neighbourhood, the graph-safe stand-in for the size of the frontier cluster the block belongs to -- true
+    components are data-dependent and not capturable). All from the crop, which is the mental map's own (never the
     navmesh)."""
     side = grid * pool
     cells = crops.reshape(-1, side, side, MAP_CHANNELS)
@@ -493,9 +496,10 @@ def cell_features(crops: torch.Tensor, grid: int = CELL_GRID, pool: int = CELL_P
     searched_around = torch.cat([
         nn.functional.avg_pool2d(searched[:, None], 3, stride=1, padding=1, count_include_pad=False),
         nn.functional.avg_pool2d(searched[:, None], 7, stride=1, padding=3, count_include_pad=False)], dim=1)
+    frontier_7x7 = nn.functional.avg_pool2d(frontier[:, None], 7, stride=1, padding=3, count_include_pad=False)
     features = torch.cat([torch.stack([floor, door, wall, hazard, unknown, visited, frontier, entity, newest, never,
-                                       mean_height], dim=1), around, geometry, searched[:, None], searched_around],
-                         dim=1)
+                                       mean_height], dim=1), around, geometry, searched[:, None], searched_around,
+                          frontier_7x7], dim=1)
     return features.reshape(n, CELL_FEATURES, grid * grid).transpose(1, 2), cell_valid(crops, grid, pool, rise,
                                                                                                min_floor)
 
@@ -1119,6 +1123,11 @@ SIGHT_BLOCK = "sight"
 #: The mental map's block in stage.json (BlockId::Map, perception-goals REDESIGN §3): its manifest's "map" describes
 #: the crop that travels as bytes after the image (protocol 24).
 MAP_BLOCK = "map"
+#: The coarse coverage block in stage.json (BlockId::Coverage, general search sec 5): a heading-up, egocentric grid of
+#: map-tile counters (known, visited, searched cells of each 32-yd tile, each over the manifest's scale), read raw by
+#: CoverageEncoder; its manifest's "coverage" describes the grid.
+COVERAGE_BLOCK = "coverage"
+COVERAGE_LAYOUT = "row_col_channel"
 #: The crop's byte channels (Vision::CropChannel), and the codes (Vision::MapCode: unknown, floor, wall, door, hazard).
 #: Exploration v3 added the seventh, MAP_SEARCHED: how many of the crop cell's four 1-yd cells were looked at THIS
 #: episode (0..MAP_SEARCHED_MAX), where the other channels outlive an episode on a kept map. Map block revision 2.
@@ -1159,6 +1168,27 @@ def _map_of(entry: dict, name: str) -> dict | None:
     if int(block["obs"][1]) != out["scalars"]:
         raise ValueError(f"{name}: the map block is {block['obs'][1]} columns, its scalars {out['scalars']}")
     return out
+
+
+def coverage_of(entry: dict, name: str) -> dict | None:
+    """A layout's coarse coverage block as stage.json describes it (general search sec 5) -- {"first": its first
+    observation column, "grid", "channels", "width"} -- or None without one. The block's columns are the grid's cells
+    in [row][col][channel] order (the manifest's "layout"), each channel a tile counter over its scale, read raw by
+    CoverageEncoder; the map block's revision 3 scalars are the map's own. Refused: a width that is not
+    grid x grid x channels, or a layout other than row_col_channel; every other manifest key is optional."""
+    block = next((b for b in entry.get("blocks", ()) if b.get("name") == COVERAGE_BLOCK), None)
+    if block is None:
+        return None
+    described = block.get("coverage") or {}
+    width = int(block["obs"][1])
+    grid, channels = int(described.get("grid", 0)), int(described.get("channels", 0))
+    if grid < 1 or channels < 1 or width != grid * grid * channels:
+        raise ValueError(f"{name}: the coverage block is {width} columns, its manifest a {grid} x {grid} grid of "
+                         f"{channels} channels (stage.json coverage.grid / channels)")
+    if described.get("layout", COVERAGE_LAYOUT) != COVERAGE_LAYOUT:
+        raise ValueError(f"{name}: the coverage block's columns are laid out {described['layout']!r}; this learner "
+                         f"reads {COVERAGE_LAYOUT}")
+    return {"first": int(block["obs"][0]), "grid": grid, "channels": channels, "width": width}
 
 
 def _entities_of(entry: dict, name: str) -> dict | None:
@@ -1315,7 +1345,8 @@ def vision_of(stage: dict | None, layout_names: Sequence[str]) -> list[dict | No
         crop = _map_of(entry, name)
         listed = _entities_of(entry, name)
         described_layout = {"first": first, **described, "image_bytes": image_bytes, "entities": listed, "map": crop,
-                            "camera_bytes": image_bytes + (crop["map_bytes"] if crop else 0)}
+                            "camera_bytes": image_bytes + (crop["map_bytes"] if crop else 0),
+                            "coverage": coverage_of(entry, name)}
         sight = _sight_of(entry, name, listed)
         if sight is not None:
             described_layout["sight"] = sight
@@ -1323,6 +1354,12 @@ def vision_of(stage: dict | None, layout_names: Sequence[str]) -> list[dict | No
     maps = [entry["map"] for entry in out if entry is not None]
     if any(crop is None for crop in maps) and any(crop is not None for crop in maps):
         raise ValueError("some layouts with a camera have a mental map and some do not: one encoder reads them all")
+    grids = [entry["coverage"] for entry in out if entry is not None]
+    if any(grid is None for grid in grids) and any(grid is not None for grid in grids):
+        raise ValueError("some layouts with a camera have a coverage block and some do not: one encoder reads them all")
+    if any(grid is not None for grid in grids) and any(crop is None for crop in maps):
+        raise ValueError("a coverage block needs the mental map (the sim's Problem() rule); the manifest has one "
+                         "without")
     return out if any(entry is not None for entry in out) else None
 
 
@@ -1486,6 +1523,45 @@ class MapEncoder(nn.Module):
         grid = features.transpose(1, 2).reshape(features.shape[0], -1, *self.grid)
         pooled = torch.cat([_spatial_softmax(grid, self.grid_x, self.grid_y), features.mean(dim=1), scalars], dim=-1)
         return self.join(silu(self.embed(pooled)))
+
+
+class CoverageEncoder(nn.Module):
+    """**The coarse coverage grid's encoder** (general search sec 5; a module on VisionEncoder as the map's is): the
+    coverage block's columns, read raw by each layout's `first` (the MapEncoder gather pattern), reshaped to
+    [N, channels, grid, grid] from the block's [row][col][channel] order; Conv2d(channels -> 16, 3, padding 1) SiLU,
+    Conv2d(16 -> 16, 3, stride 2, padding 1) SiLU (a 12 x 12 grid becomes 6 x 6), flattened and Linear -> 64 SiLU, then
+    `join` (orthogonal, gain sqrt 2) onto the camera's embedding width, added to it before its SiLU exactly as the
+    map's join is. Seeding from a checkpoint without the block zeroes the join (bootstrap._seed_coverage): the seeded
+    policy starts as it was, and the grid comes in as the join learns. A layout without the block has `first` -1 and
+    contributes nothing (its term is multiplied by 0). Every shape is fixed and nothing branches on data, so a rollout
+    graph captures it."""
+
+    CONV = 16
+    HIDDEN = 64
+
+    def __init__(self, grid: dict, out_width: int, starts: Sequence[int]):
+        super().__init__()
+        self.grid, self.channels, self.width = int(grid["grid"]), int(grid["channels"]), int(grid["width"])
+        self.conv1 = nn.Conv2d(self.channels, self.CONV, 3, padding=1)
+        self.conv2 = nn.Conv2d(self.CONV, self.CONV, 3, stride=2, padding=1)
+        pooled = (self.grid + 1) // 2
+        self.embed = nn.Linear(self.CONV * pooled * pooled, self.HIDDEN)
+        self.join = _linear(self.HIDDEN, out_width, math.sqrt(2))
+        # Each layout's first coverage column, -1 for a layout without the block.
+        self.register_buffer("start", torch.tensor(list(starts), dtype=torch.long), persistent=False)
+        self.register_buffer("offsets", torch.arange(self.width, dtype=torch.long), persistent=False)
+
+    def forward(self, obs: torch.Tensor, layout: torch.Tensor) -> torch.Tensor:
+        """What the coverage grid adds to the camera's embedding (before its SiLU), [N, out_width]."""
+        silu = nn.functional.silu
+        layout = layout.reshape(-1).long()
+        start = self.start[layout]
+        columns = (start.clamp(min=0)[:, None] + self.offsets[None, :]).clamp(max=obs.shape[-1] - 1)
+        cells = obs.gather(1, columns).to(self.embed.weight.dtype)
+        image = cells.reshape(-1, self.grid, self.grid, self.channels).permute(0, 3, 1, 2)
+        features = silu(self.conv2(silu(self.conv1(image)))).flatten(1)
+        out = self.join(silu(self.embed(features)))
+        return out * (start >= 0).to(out.dtype)[:, None]
 
 
 class VisibleEntities(nn.Module):
@@ -1863,6 +1939,15 @@ class VisionEncoder(nn.Module):
             self.map = MapEncoder(crop, self.class_embed, self.EMBED,
                                   [c["first"] if c is not None else -1 for c in crops])
             self.map_bytes = crop["map_bytes"]
+        # The coarse coverage grid (general search sec 5), where the layouts have the block: its columns are read raw
+        # by its own small encoder, whose join adds to the embedding as the map's does.
+        grids = [entry.get("coverage") if entry is not None else None for entry in descriptors]
+        self.coverage = None
+        if any(grid is not None for grid in grids):
+            if self.map is None:
+                raise ValueError("a coverage block needs the mental map's block (the sim's Problem() rule)")
+            grid = next(grid for grid in grids if grid is not None)
+            self.coverage = CoverageEncoder(grid, self.EMBED, [g["first"] if g is not None else -1 for g in grids])
         # The seen and remembered list (dungeon-curriculum I1, I2), where the layouts have a sight block: read with
         # the entity list's encoder, pooled onto the embedding, and pointed at by the actor's presses.
         sights = [entry.get("sight") if entry is not None else None for entry in descriptors]
@@ -1872,8 +1957,8 @@ class VisionEncoder(nn.Module):
                 raise ValueError("a sight block needs the camera's entity list, whose encoder it shares")
             self.sight = SightEntities(sights, self.entities, self.EMBED)
         #: Per layout with the camera, the columns its adapter and normaliser do not read: the block's scalars, which
-        #: the encoder reads raw, its entity list's, which the list's encoder reads, its map's scalars, and its sight
-        #: list's.
+        #: the encoder reads raw, its entity list's, which the list's encoder reads, its map's scalars, its coverage
+        #: grid's, and its sight list's.
         self.blind = {}
         for index, entry in enumerate(descriptors):
             if entry is None:
@@ -1884,6 +1969,8 @@ class VisionEncoder(nn.Module):
                                       lists[index]["first"] + lists[index]["slots"] * lists[index]["width"]))
             if crops[index] is not None:
                 columns += list(range(crops[index]["first"], crops[index]["first"] + crops[index]["scalars"]))
+            if grids[index] is not None:
+                columns += list(range(grids[index]["first"], grids[index]["first"] + grids[index]["width"]))
             if self.sight is not None:
                 columns += self.sight.blind.get(index, [])
             self.blind[index] = columns
@@ -1943,6 +2030,8 @@ class VisionEncoder(nn.Module):
         if self.map is not None:
             crops = image.reshape(-1, self.image_bytes + self.map_bytes)[:, self.image_bytes:]
             out = out + self.map(obs, layout, crops).to(out.dtype)
+        if self.coverage is not None:
+            out = out + self.coverage(obs, layout).to(out.dtype)
         if self.entities is not None:
             encoded = self.entities.encode(obs, layout)
             out = out + self.entities.pooled(obs, layout, encoded).to(out.dtype)
