@@ -6498,6 +6498,15 @@ AnimusForge.Curriculum.PartyFollow.CastShare = 0
 #        episodes last RungSeconds0 to 3. A room's object is placed at one of Attempts uniform points of its floor whose
 #        vmap floor is within FloorTolerance yards of the room's and that has Clearance yards of room along each axis at
 #        knee height, else at the room's centre.
+#        Room goals (M2 goals plan, 2026-10-09): Goals 1 offers the goal head the rooms the seat's own frames showed
+#        (a frame with GlimpseRays floor rays or more on a room) as place targets, six slots bound in the order of the
+#        glimpses, and its mental map's nearest frontier as the way on, at placement rungs from GoalsFromRung up; 0
+#        offers none and pays no aid (the old behaviour; a temporary switch for the experiment, deleted afterwards). A
+#        room is checked when the seat stood in it EnterDwellMs or CheckedShare of its floor cells (3 yd) were hit by
+#        this episode's rays. RoomGoal (paid once when a held room goal's room becomes checked) and RoomSwitch (charged
+#        when a room goal is given up for another) are Aid: paid times max(0, 1 - progress / AidUntil), progress being
+#        the share of the stage's step budget, and not in the score. Return (Cost, fixed price, in the score) is
+#        charged for entering a room visited before after ReturnAwayMs outside its polygon by ReturnAwayYards or more.
 AnimusForge.Curriculum.Seek.Arrive = 3.0
 AnimusForge.Curriculum.Seek.StepCost = 0.0005
 AnimusForge.Curriculum.Seek.Death = 6.0
@@ -6523,6 +6532,17 @@ AnimusForge.Curriculum.Seek.HallwayFurthest = 120.0
 AnimusForge.Curriculum.Seek.DoorwayInside = 2.0
 AnimusForge.Curriculum.Seek.DoorwayDeeper = 1.5
 AnimusForge.Curriculum.Seek.DoorwaySpread = 1.0
+AnimusForge.Curriculum.Seek.Goals = 1
+AnimusForge.Curriculum.Seek.GoalsFromRung = 2
+AnimusForge.Curriculum.Seek.RoomGoal = 0.05
+AnimusForge.Curriculum.Seek.RoomSwitch = 0.03
+AnimusForge.Curriculum.Seek.Return = 0.05
+AnimusForge.Curriculum.Seek.AidUntil = 0.4
+AnimusForge.Curriculum.Seek.GlimpseRays = 1
+AnimusForge.Curriculum.Seek.CheckedShare = 0.6
+AnimusForge.Curriculum.Seek.EnterDwellMs = 1000
+AnimusForge.Curriculum.Seek.ReturnAwayYards = 8.0
+AnimusForge.Curriculum.Seek.ReturnAwayMs = 2000
 
 #
 #    AnimusForge.Curriculum.Interact.*

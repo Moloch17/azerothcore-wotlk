@@ -134,6 +134,13 @@ namespace Animus::Curriculum
         /// Shaping and faded).
         ReadyPull,
         Idle,
+        /// The seek stage's room goals (M2 goals plan, 2026-10-09): a held room goal's room checked after the goal was
+        /// chosen (Seek.RoomGoal) and a room goal given up for another (Seek.RoomSwitch, a charge): Aid, paid times the
+        /// aid scale (RewardLedger::SetAid). And a return to a room already visited after a real absence (Seek.Return,
+        /// Cost at a fixed price).
+        RoomGoal,
+        RoomSwitch,
+        Return,
         Count
     };
 
@@ -154,6 +161,10 @@ namespace Animus::Curriculum
         Outcome,
         Cost,
         Shaping,
+        /// A teaching aid that fades with the stage's progress rather than with its rung (the aid scale,
+        /// RewardLedger::SetAid), so it survives a stage that plays a single rung at shaping 0. Not in the score. The
+        /// lesson it points at is still Outcome's: when the aid is gone, only the Outcome is left to hold it.
+        Aid,
         None
     };
 
@@ -216,7 +227,13 @@ namespace Animus::Curriculum
             case RewardTerm::FireHurt:
             // A dungeon run standing about (2026-10-07).
             case RewardTerm::Idle:
+            // A return to a room already visited, after a real absence (M2 goals).
+            case RewardTerm::Return:
                 return RewardCategory::Cost;
+            // The seek stage's room goals: a teaching aid on the progress-linear aid scale.
+            case RewardTerm::RoomGoal:
+            case RewardTerm::RoomSwitch:
+                return RewardCategory::Aid;
             case RewardTerm::DamageDealt:
             case RewardTerm::Approach:
             case RewardTerm::Threat:
@@ -334,6 +351,10 @@ namespace Animus::Curriculum
         /// times it, Outcome and Cost terms never. 1 until the learner says otherwise; 0 is the outcome alone.
         void SetShaping(float scale) { _shaping = scale; }
 
+        /// The stage's aid scale: every Aid term is paid times it. It follows the stage's progress, not its rung
+        /// (StageScenario::Reward: max(0, 1 - progress / Seek.AidUntil)), and is 1 until the scenario says otherwise.
+        void SetAid(float scale) { _aid = scale; }
+
         /// The stage's cost scale (the learner's cost ladder): every noise price (PricesNoise) is paid times it, so a
         /// fresh policy can find the outcome before it is charged in full for the noise of looking. The score is
         /// always at full price. 1 until the learner says otherwise.
@@ -371,14 +392,18 @@ namespace Animus::Curriculum
         }
         [[nodiscard]] float Shaped(RewardTerm term) const
         {
-            if (RewardTermCategory(term) == RewardCategory::Shaping)
+            RewardCategory const category = RewardTermCategory(term);
+            if (category == RewardCategory::Shaping)
                 return _shaping;
+            if (category == RewardCategory::Aid)
+                return _aid;
             return PricesNoise(term) ? _costs : 1.0f;
         }
 
         float _step = 0.0f;
         float _score = 0.0f;
         float _shaping = 1.0f;
+        float _aid = 1.0f;
         float _costs = 1.0f;
     };
 }

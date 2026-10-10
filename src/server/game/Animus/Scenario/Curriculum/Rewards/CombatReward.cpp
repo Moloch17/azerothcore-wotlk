@@ -78,6 +78,9 @@ std::string_view Animus::Curriculum::RewardTermName(RewardTerm term)
         case RewardTerm::FireHurt:              return "fire_hurt";
         case RewardTerm::ReadyPull:             return "ready_pull";
         case RewardTerm::Idle:                  return "idle";
+        case RewardTerm::RoomGoal:              return "room_goal";
+        case RewardTerm::RoomSwitch:            return "room_switch";
+        case RewardTerm::Return:                return "return";
         case RewardTerm::Count:                 break;
     }
 
