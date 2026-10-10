@@ -507,7 +507,7 @@ namespace Animus::Curriculum
         struct SeekTuning
         {
             float Arrive = 3.0f;
-            float StepCost = 0.00025f;
+            float StepCost = 0.0005f;
             float Death = 6.0f;
             float ArriveRise = 2.0f;
             float Sighting = 0.5f;
@@ -572,7 +572,7 @@ namespace Animus::Curriculum
             float CircleNetYards = 4.0f;
             float CircleTurnDeg = 540.0f;
             float Circling = 0.02f;
-            float TrapShare = 0.2f;
+            float TrapShare = 0.1f;
             float Escape = 0.3f;
             float TrapEscapeYards = 6.0f;
             uint32 TrapEscapeMs = 20000;
@@ -582,7 +582,7 @@ namespace Animus::Curriculum
             float TrapFacingSlack = 0.3f;
             float WallEscalateSeconds = 4.0f;
             float WallEscalateMax = 4.0f;
-            uint32 ExploreFromRung = 1;
+            uint32 ExploreFromRung = 2;
             float HardRoomWeight = 3.0f;
             // General search (decision 0027): the table terms' switch, the map-derived terms and the revisit cost.
             uint32 TableTerms = 1;
@@ -597,7 +597,7 @@ namespace Animus::Curriculum
             uint32 RevisitAgeMs = 60000;
             // Movement pacing (decision 0027's amendments to 0023 and 0026): the trap drill's own rung and its replayed
             // pin poses, and the pin rebate.
-            uint32 TrapFromRung = 1;
+            uint32 TrapFromRung = 2;
             float TrapReplayShare = 0.5f;
             float RecoverYards = 4.0f;
             uint32 RecoverMs = 10000;
