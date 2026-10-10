@@ -405,7 +405,7 @@ stages and the gate's tools depend on; each must be present with the same value 
 |---|---|---|
 | `AnimusForge.Vision.EvalVideos` | 8 | the evaluation videos each machine films (`forgectl videos`, `collect-videos.sh`); a machine without it films the code default, also 8, but a conf that says 0 films none |
 | `AnimusForge.Vision.EvalVideoScale` | 4 | how large those frames are scaled; a different scale makes videos that do not compare |
-| `AnimusForge.Stage.<stage>.TicksPerDecision` for the 10 stages (`move1_controls move2_seek move3_interact move4_follow combat1_fight combat2_packs combat3_survive group1_roles dungeon2_ragefire dungeon3_deadmines`) | 5 each (a 50 ms world tick under 250 ms decisions) | the player controller's facing and heartbeat run once a world tick; **a machine without the key runs the stage at the global `TicksPerDecision`, 1: a 250 ms world tick, different dynamics, silently, in the pooled data** |
+| `AnimusForge.TicksPerDecision` and `AnimusForge.HalfBatch` (no `AnimusForge.Stage.<stage>.TicksPerDecision` line for any of the 10 stages) | 1 and 1 on every machine (decision 0006, update 2026-10-09: M1 and M2 trained that way, and a changed tick mid-curriculum would change the timing already learned) | the world tick the controller's facing and heartbeat run at; **a machine that adds a per-stage key (5 = a 50 ms tick) runs that stage on different dynamics, silently, in the pooled data** |
 | `AnimusForge.Vision.Width`, `Height`, `RenderSizes`, `FovH`, `FovV`, `Range`, `Zoom`, `Pitch` | 128, 64, "32x16, 48x24, 64x32, 128x64:0.4", 120, 60, 100, 6, -15 | the camera of every stage with a vision block; only the image's width and height are checked against the learner (the image byte count), the rest are not |
 | `AnimusForge.Map.MaxTiles`, `CoarseTiles`, `KeepShare`, `AgeOffsetSeconds`, `AnimusForge.Memory.MaxEntities` | 4096, 0, 0.5, 600, 64 | the mental map and the entity memory the observation carries (M2 on) |
 | `AnimusForge.Classes`, `EpisodeSeconds`, `SpawnPoint.MapId/X/Y/Z/O`, `ContinentReplicas`, `HalfBatch` | per the host's conf | what every episode is built from |
@@ -425,7 +425,7 @@ done
 sha256sum var/gate/other-keys.*.txt; diff var/gate/other-keys.sarah@192.168.0.68.txt var/gate/other-keys.<worker>.txt
 ```
 
-Success: the same hash on all four, and `grep -c TicksPerDecision` of the file prints 11 (10 stages and the global key)
+Success: the same hash on all four, and `grep -c TicksPerDecision` of the file prints 1 (the global key; no per-stage line)
 and `grep -c EvalVideo` prints 2 on each machine. A key a conf lacks is set by appending it, **after a backup**, on that
 machine only:
 
@@ -433,11 +433,11 @@ machine only:
 ssh <m> 'cd ~/animus-forge/env/dist/etc/modules && \
    cp -p mod_animus_forge.conf mod_animus_forge.conf.bak-$(date +%Y%m%d-%H%M%S) && \
    printf "%s\n" "AnimusForge.Vision.EvalVideos = 8" "AnimusForge.Vision.EvalVideoScale = 4" \
-   "AnimusForge.Stage.move3_interact.TicksPerDecision = 5" >> mod_animus_forge.conf'
+   >> mod_animus_forge.conf'
 ```
 
-(one `Stage.<stage>.TicksPerDecision = 5` line for each stage that lacks it; the template,
-`src/server/apps/worldserver/worldserver.conf.dist` lines `AnimusForge.Stage.*.TicksPerDecision` and
+(no per-stage tick line is appended: the live stages train at the global 1; the template,
+`src/server/apps/worldserver/worldserver.conf.dist` lines `AnimusForge.TicksPerDecision`, `AnimusForge.HalfBatch` and
 `AnimusForge.Vision.*`, is the reference). The key is read at the worldserver's start, so it takes effect at step 7's
 restart; `forgectl conf-sync` does not do it. **Then, on every machine whose conf was written** (this append, a prune,
 a restore), check the line count before anything restarts: `ssh <m> wc -l '~/animus-forge/env/dist/etc/modules/mod_animus_forge.conf'`
