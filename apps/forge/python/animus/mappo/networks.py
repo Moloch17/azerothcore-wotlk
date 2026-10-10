@@ -77,15 +77,24 @@ def _entropy(logits: torch.Tensor) -> torch.Tensor:
     return -(log_p.exp() * log_p).sum(-1)
 
 
-def sample_logits(logits: torch.Tensor, deterministic: bool = False) -> tuple[torch.Tensor, torch.Tensor]:
+def sample_logits(logits: torch.Tensor, deterministic: bool = False,
+                  greedy: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
     """(choice, its log probability) from unnormalised logits, as Categorical(logits=...).sample() and log_prob draw
     them, in a handful of kernels instead of the ~30 the distribution's normalising, softmax, multinomial and checks
     take: the rollout's inner loop. Gumbel-max: argmax(logits + G), G = -log(-log U), is an exact draw. U is in
-    [0, 1), so U = 0 gives G = -inf, never +inf: a masked action cannot win on a lucky draw."""
+    [0, 1), so U = 0 gives G = -inf, never +inf: a masked action cannot win on a lucky draw.
+
+    `greedy` (bool [N], exploration v3, mappo.greedy_env_fraction): the rows that take the argmax instead of the draw.
+    The draw is computed for every row either way and the rows are selected with a where, so the device generator
+    consumes the same numbers whatever the mask and the sampled rows' draws do not depend on it; the stored log
+    probability of a greedy row is log pi(argmax), which the update does not use as an on-policy sample (it masks
+    those rows out of the policy gradient). Ignored with `deterministic`."""
     if deterministic:
         choice = logits.argmax(dim=-1)
     else:
         choice = (logits - torch.log(-torch.log(torch.rand_like(logits)))).argmax(dim=-1)
+        if greedy is not None:
+            choice = torch.where(greedy.reshape(-1), logits.argmax(dim=-1), choice)
     return choice, log_prob_of(logits, choice)
 
 
@@ -402,7 +411,7 @@ def _carry_sequence(cell: nn.GRUCell, size: int, encoded: torch.Tensor, memory: 
 #: uses (GoalHead.set_space).
 CELL_GRID = 24
 CELL_POOL = 2
-CELL_FEATURES = 18
+CELL_FEATURES = 21
 CELL_HIDDEN = 32
 CELL_CHAIN_HIDDEN = 16
 #: A block is choosable when it has at least this many floor-like cells, all within CELL_RISE_UNITS (4 yd) of the feet.
@@ -424,7 +433,7 @@ def _block_sum(x: torch.Tensor, grid: int, pool: int) -> torch.Tensor:
 def cell_valid(crops: torch.Tensor, grid: int = CELL_GRID, pool: int = CELL_POOL, rise: int = CELL_RISE_UNITS,
                min_floor: int = CELL_MIN_FLOOR) -> torch.Tensor:
     """Which pooled blocks of the mental map's crop a cell goal may name, bool [N, grid * grid] (row-major, block (r, c)
-    at r * grid + c) from the crop bytes [N, side x side x 6] (or [N, side, side, 6]) alone -- the contract's one
+    at r * grid + c) from the crop bytes [N, side x side x 7] (or [N, side, side, 7]) alone -- the contract's one
     definition (free-choice-goals CONTRACT 1.3), which the sim's CellGrid::Choosable implements too: no cell of the block
     is a Wall or a Hazard; at least `min_floor` are floor-like (Floor or Door); and every floor-like cell has a known
     height within `rise` units (4 yd) of the feet's. An unknown cell is not floor. A pure function of the bytes, with no
@@ -442,13 +451,17 @@ def cell_valid(crops: torch.Tensor, grid: int = CELL_GRID, pool: int = CELL_POOL
 
 def cell_features(crops: torch.Tensor, grid: int = CELL_GRID, pool: int = CELL_POOL, rise: int = CELL_RISE_UNITS,
                   min_floor: int = CELL_MIN_FLOOR) -> tuple[torch.Tensor, torch.Tensor]:
-    """The cell pointer's inputs from the crop bytes [N, side x side x 6]: (features [N, grid * grid, CELL_FEATURES],
+    """The cell pointer's inputs from the crop bytes [N, side x side x 7]: (features [N, grid * grid, CELL_FEATURES],
     choosable bool [N, grid * grid]). Per block, over its pool x pool cells: the shares of Floor, Door, Wall, Hazard and
     Unknown; the share visited and the share on the frontier; whether any cell holds an entity; the age of the newest
     look at any seen cell (b / 255) and whether none was seen; the mean floor height over the feet ((b - 128) / 16,
-    clamped to [-1, 1]); the 3 x 3 average over neighbouring blocks of the floor, wall, unknown and frontier shares; and
-    the block's centre as forward, right and distance in the crop's yards over 48. All from the crop, which is the
-    mental map's own (never the navmesh)."""
+    clamped to [-1, 1]); the 3 x 3 average over neighbouring blocks of the floor, wall, unknown and frontier shares;
+    the block's centre as forward, right and distance in the crop's yards over 48; and (exploration v3, appended so the
+    first 18 keep their index) the block's searched share (the share of its 1-yd cells looked at this episode) and that
+    share averaged over the 3 x 3 and the 7 x 7 blocks round it (a 28 yd neighbourhood: how much of the region is still
+    unlooked-at; an unknown cell reads 0, so unexplored space and unsearched floor both show, and the block's own
+    unknown / floor / frontier features say which). All from the crop, which is the mental map's own (never the
+    navmesh)."""
     side = grid * pool
     cells = crops.reshape(-1, side, side, MAP_CHANNELS)
     n = cells.shape[0]
@@ -475,8 +488,14 @@ def cell_features(crops: torch.Tensor, grid: int = CELL_GRID, pool: int = CELL_P
                                       count_include_pad=False)
     forward, right, distance = cell_geometry(grid, pool, cells.device)
     geometry = torch.stack([forward, right, distance], dim=0)[None].expand(n, -1, -1, -1)
+    searched = _block_sum(cells[..., MAP_SEARCHED].to(torch.float32), grid, pool) / float(
+        MAP_SEARCHED_MAX * pool * pool)
+    searched_around = torch.cat([
+        nn.functional.avg_pool2d(searched[:, None], 3, stride=1, padding=1, count_include_pad=False),
+        nn.functional.avg_pool2d(searched[:, None], 7, stride=1, padding=3, count_include_pad=False)], dim=1)
     features = torch.cat([torch.stack([floor, door, wall, hazard, unknown, visited, frontier, entity, newest, never,
-                                       mean_height], dim=1), around, geometry], dim=1)
+                                       mean_height], dim=1), around, geometry, searched[:, None], searched_around],
+                         dim=1)
     return features.reshape(n, CELL_FEATURES, grid * grid).transpose(1, 2), cell_valid(crops, grid, pool, rise,
                                                                                                min_floor)
 
@@ -1101,9 +1120,14 @@ SIGHT_BLOCK = "sight"
 #: the crop that travels as bytes after the image (protocol 24).
 MAP_BLOCK = "map"
 #: The crop's byte channels (Vision::CropChannel), and the codes (Vision::MapCode: unknown, floor, wall, door, hazard).
-MAP_CHANNELS = 6
+#: Exploration v3 added the seventh, MAP_SEARCHED: how many of the crop cell's four 1-yd cells were looked at THIS
+#: episode (0..MAP_SEARCHED_MAX), where the other channels outlive an episode on a kept map. Map block revision 2.
+MAP_CHANNELS = 7
 MAP_CODES = 5
-MAP_CODE, MAP_HEIGHT, MAP_VISITED, MAP_AGE, MAP_CLASS, MAP_FRONTIER = range(MAP_CHANNELS)
+MAP_CODE, MAP_HEIGHT, MAP_VISITED, MAP_AGE, MAP_CLASS, MAP_FRONTIER, MAP_SEARCHED = range(MAP_CHANNELS)
+MAP_SEARCHED_MAX = 4
+#: The planes decode_map adds to the code and class embeddings: height, known, visited, age, frontier, searched.
+MAP_VALUE_PLANES = 6
 MAP_HEIGHT_ZERO = 128
 MAP_FLOOR, MAP_WALL, MAP_DOOR, MAP_HAZARD = 1, 2, 3, 4      # the crop codes (Vision::MapCode; 0 unknown)
 
@@ -1127,6 +1151,11 @@ def _map_of(entry: dict, name: str) -> dict | None:
         raise ValueError(f"{name}: a map crop of {out['height']} x {out['width']} x {out['channels']} channels "
                          f"({out['map_bytes']} bytes, {out['codes']} codes, {out['classes']} classes); this learner "
                          f"decodes {MAP_CHANNELS} channels and {MAP_CODES} codes, height x width x channels bytes")
+    # Exploration v3 (map block revision 2): the manifest names the searched channel; one without the key (a sim of the
+    # six-channel map) is refused above on its channel count, so the key is only cross-checked when it is there.
+    if "searched_channel" in described and int(described["searched_channel"]) != MAP_SEARCHED:
+        raise ValueError(f"{name}: the map's searched channel is {described['searched_channel']}, this learner reads "
+                         f"channel {MAP_SEARCHED} (the manifest and the learner are from different trees)")
     if int(block["obs"][1]) != out["scalars"]:
         raise ValueError(f"{name}: the map block is {block['obs'][1]} columns, its scalars {out['scalars']}")
     return out
@@ -1356,10 +1385,10 @@ def decode_image(image: torch.Tensor, height: int, width: int) -> torch.Tensor:
 
 
 def decode_map(crops: torch.Tensor, height: int, width: int) -> dict[str, torch.Tensor]:
-    """The mental map's crop bytes [N, H x W x 6] uint8 as the encoder reads them (Vision::DecodeCropCell): "code" and
-    "class" [N, H, W] long (indexes it embeds), and "values" [N, H, W, 5] float -- the floor's height over the feet
-    ((b - 128) / 127, 0 with none), whether a floor is known, visited, the newest look's age (b / 255, 1 never seen)
-    and the frontier."""
+    """The mental map's crop bytes [N, H x W x 7] uint8 as the encoder reads them (Vision::DecodeCropCell): "code" and
+    "class" [N, H, W] long (indexes it embeds), and "values" [N, H, W, 6] float -- the floor's height over the feet
+    ((b - 128) / 127, 0 with none), whether a floor is known, visited, the newest look's age (b / 255, 1 never seen),
+    the frontier and (exploration v3) the searched share of the cell's four 1-yd cells this episode (b / 4)."""
     cells = crops.reshape(-1, height, width, MAP_CHANNELS)
     as_float = lambda value: value.to(torch.float32)
     rise = cells[..., MAP_HEIGHT]
@@ -1373,6 +1402,7 @@ def decode_map(crops: torch.Tensor, height: int, width: int) -> dict[str, torch.
             as_float(cells[..., MAP_VISITED] != 0),
             as_float(cells[..., MAP_AGE]) / 255.0,
             as_float(cells[..., MAP_FRONTIER] != 0),
+            as_float(cells[..., MAP_SEARCHED]) / float(MAP_SEARCHED_MAX),
         ], dim=-1),
     }
 
@@ -1389,8 +1419,8 @@ def _spatial_softmax(features: torch.Tensor, grid_x: torch.Tensor, grid_y: torch
 class MapEncoder(nn.Module):
     """**The mental map's encoder** (perception-goals REDESIGN §3, the Change): the one heading-up crop (48 x 48 cells
     of 2 yd, protocol 24's bytes after the camera's image), shared by every layout as the camera is. Per cell, the code
-    embedded (CODE_EMBED wide), the entity's class through the camera's own class embedding, and five values
-    (decode_map): CODE_EMBED + the class embedding + 5 planes (15). **Patches**, as the camera's: PATCH x PATCH cells
+    embedded (CODE_EMBED wide), the entity's class through the camera's own class embedding, and six values
+    (decode_map): CODE_EMBED + the class embedding + 6 planes (16). **Patches**, as the camera's: PATCH x PATCH cells
     (8 yd square at 2 yd; a 12 x 12 grid at 48 x 48) through Linear -> 64 + SiLU and Linear 64 -> 64 + SiLU, each
     channel's spatial-softmax keypoint over the grid, the channels' mean, the block's scalars (its own columns, read
     raw), and Linear -> EMBED. A convolution stack at the crop's own resolution was measured first: 3.6 times the
@@ -1416,7 +1446,7 @@ class MapEncoder(nn.Module):
         self.code_embed = nn.Embedding(MAP_CODES, self.CODE_EMBED)
         # The camera's class embedding, held by reference: one table for the pixels, the list and the map.
         self.__dict__["class_embedding"] = class_embedding
-        self.planes_per_cell = self.CODE_EMBED + class_embedding.embedding_dim + 5
+        self.planes_per_cell = self.CODE_EMBED + class_embedding.embedding_dim + MAP_VALUE_PLANES
         self.grid = (self.height // self.PATCH, self.width // self.PATCH)
         self.patch = nn.Linear(self.PATCH * self.PATCH * self.planes_per_cell, self.WIDTHS[0])
         self.mix = nn.Linear(self.WIDTHS[0], self.WIDTHS[1])
@@ -1431,7 +1461,7 @@ class MapEncoder(nn.Module):
         self.register_buffer("offsets", torch.arange(self.scalars, dtype=torch.long), persistent=False)
 
     def planes(self, crops: torch.Tensor) -> torch.Tensor:
-        """[N, M] bytes -> [N, H, W, P] planes: the code's embedding, the class's, the five values."""
+        """[N, M] bytes -> [N, H, W, P] planes: the code's embedding, the class's, the six values."""
         decoded = decode_map(crops, self.height, self.width)
         dtype = self.embed.weight.dtype
         # The embeddings' backward (a scatter of 2,304 cells a row onto a few rows) is about two thirds of the
@@ -1981,14 +2011,14 @@ class LookHead(nn.Module):
     def _seeing(self, layout: torch.Tensor) -> torch.Tensor:
         return self.has_vision[layout.reshape(-1).long()]
 
-    def sample(self, features: torch.Tensor, layout: torch.Tensor,
-               deterministic: bool) -> tuple[torch.Tensor, torch.Tensor]:
+    def sample(self, features: torch.Tensor, layout: torch.Tensor, deterministic: bool,
+               greedy: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
         """(choice [N, heads] long, its log probability [N], the heads' summed) for flat rows; 0 and 0 for a row
-        without the camera. Deterministic is each head's argmax."""
+        without the camera. Deterministic is each head's argmax; `greedy` [N] bool takes it for those rows alone."""
         seeing = self._seeing(layout)
         choices, log_prob = [], None
         for logits in self.logits(features):
-            choice, chosen = sample_logits(logits.float(), deterministic)
+            choice, chosen = sample_logits(logits.float(), deterministic, greedy)
             choices.append(choice)
             log_prob = chosen if log_prob is None else log_prob + chosen
         choice = torch.where(seeing[:, None], torch.stack(choices, dim=-1), torch.zeros_like(choices[0])[:, None])
@@ -2388,9 +2418,10 @@ class LayoutActor(nn.Module):
         return features
 
     def look(self, features: torch.Tensor, layout: torch.Tensor, goal: torch.Tensor | None = None,
-             deterministic: bool = False) -> tuple[torch.Tensor, torch.Tensor]:
-        """The free look's choice for flat rows (LookHead.sample): (choice [N, heads], log probability [N])."""
-        return self.look_head.sample(self.policy_features(features, goal), layout, deterministic)
+             deterministic: bool = False, greedy: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+        """The free look's choice for flat rows (LookHead.sample): (choice [N, heads], log probability [N]). `greedy`
+        [N] bool: the rows whose camera takes the argmax too (a greedy env's whole decision is the argmax)."""
+        return self.look_head.sample(self.policy_features(features, goal), layout, deterministic, greedy)
 
     def look_terms(self, features: torch.Tensor, layout: torch.Tensor, choice: torch.Tensor,
                    goal: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:

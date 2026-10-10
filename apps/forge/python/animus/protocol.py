@@ -11,7 +11,11 @@ from enum import IntEnum
 
 import numpy as np
 
-PROTOCOL_VERSION = 29
+PROTOCOL_VERSION = 30
+# 30: exploration v3 (.agents/plans/explore-v3): the mental map's crop has a seventh channel, searched (map block
+# revision 2), so a STEP's map section is 48 x 48 x 7 = 16,128 bytes an agent (was 13,824). The learner reads map_bytes
+# from the SPEC and would not misparse; the bump makes a stale pair refuse instead of training on six channels. The
+# messages' layout is protocol 29's.
 # 29: the goal space has a tenth kind, search (goal block revision 5, docs/forge/decisions/0024-search-goal-kind.md):
 # Spec.goal_count is 10 x 23 = 230 joint ids (was 207), an ACT's goal ids run to 229, and a cell goal is the joint
 # search / place_7 = 228 (was travel_to / place_7 = 159; stage.json goals.cells.joint says which). The messages' layout
@@ -104,7 +108,7 @@ DEVICE_FIELDS = ("obs", "state", "mask", "image")
 # (no character, a director, no map) is every pixel NO_FRAME_PIXEL (Vision::FillNoFrame): sky, height 0, class sky
 # with no objective.
 IMAGE_FIELDS = ("image", "final_image")
-# The mental map's crop as bytes (protocol 24, Vision::MentalMap::Crop): 48 x 48 cells of 6 bytes, [row][col][channel].
+# The mental map's crop as bytes (protocol 24, Vision::MentalMap::Crop): 48 x 48 cells of 7 bytes (6 before protocol 30), [row][col][channel].
 # A row without a map (no character, a director) is all zeros: every cell unknown, never seen.
 MAP_FIELDS = ("map", "final_map")
 NO_FRAME_PIXEL = (255, 128, 0, 0)
@@ -151,7 +155,7 @@ class Spec:
     image_bytes: int = 0
     # The look heads each agent's ACT entry carries (protocol 22): 3 in a stage whose vision block has them, else 0.
     look_heads: int = 0
-    # Bytes per agent of each STEP's mental map crop (protocol 24): the map block's 48 x 48 x 6, 0 without one.
+    # Bytes per agent of each STEP's mental map crop (protocol 24): the map block's 48 x 48 x 7, 0 without one.
     map_bytes: int = 0
     # The tick jitter of this run (protocol 27, AnimusForge.Decision.*): decision_ms is the NOMINAL decision. Each one
     # really lasts decision_ms less the overshoot carried from the last decision plus its own (the realm keeps the

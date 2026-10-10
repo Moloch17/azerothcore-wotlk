@@ -676,13 +676,18 @@ def _seed_map(new: dict, old: dict) -> str | None:
     for key in carried:
         new[key].copy_(old[key])
     fresh = [key for key in keys if key not in carried]
-    for key in fresh:
-        if key.startswith(MAP_ZEROED):
+    # A join that was carried over an encoder that was not reads that encoder's fresh output through weights trained on
+    # another one (exploration v3: a map of six channels has a patch and an embed of other shapes), so it is zeroed
+    # too: the map comes in as the join learns, and the seeded policy acts as it did.
+    stale_join = any(not key.startswith(MAP_ZEROED) for key in fresh)
+    for key in keys:
+        if key.startswith(MAP_ZEROED) and (key in fresh or stale_join):
             new[key].zero_()
     if not carried:
         return "fresh (the checkpoint has none), its join at zero"
     if fresh:
-        return f"carried, but for {len(fresh)} new tensors ({', '.join(sorted({k.split('.')[2] for k in fresh}))})"
+        return f"carried, but for {len(fresh)} new tensors ({', '.join(sorted({k.split('.')[2] for k in fresh}))})" \
+               f"{'; the join is zeroed with them' if stale_join else ''}"
     return "carried"
 
 
