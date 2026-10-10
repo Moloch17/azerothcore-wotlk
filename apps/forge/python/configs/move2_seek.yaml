@@ -86,7 +86,9 @@ mappo:
   # only an argmax policy meets occur in training and are priced (Wall, Stuck, Stale). Goals stay sampled; their movement
   # policy-gradient terms are masked out of the update, their value, entropy and goal terms are not. Code default 0: M3
   # and M4 restate it.
-  greedy_env_fraction: 0.12
+  # 0 (was 0.12; doorway-plateau analysis 2026-10-10): the greedy envs pinned 2.8x more than the sampled ones, carried
+  # no movement gradient and fed the pin replay ring; the deterministic evaluation stays, read learner_sampled beside it.
+  greedy_env_fraction: 0.0
 
 # Amendment 9: 78 episodes every 10M, at the training rung (each of its rooms in turn, the object types cycled: at the
 # deep rung every room twice), so `found` is the rung's own found rate, which the fade reads. The full sweep -- every

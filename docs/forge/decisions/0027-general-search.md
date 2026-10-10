@@ -66,3 +66,12 @@ at the floor; the first thing to lower is `RoomEntryCap`. (g) Nothing ran: synta
 
 See also [0019](0019-vision-only-movement.md), [0023](0023-exploration-floor.md),
 [0025](0025-exploration-v2.md), [0026](0026-searched-state.md) and the [index](README.md).
+
+## Amendment 2026-10-10: the doorway-rung plateau
+The fresh run with these changes plateaued on the doorway rung (found 0.19-0.27 from 5M to 25M; the previous run read
+0.45 at 30M). The analysis (var/doorway-plateau/report.md) found the Exploring terms, paid from rung 1, banking 3.5-3.8 per
+FAILED 120 s episode (85% of a failure's income, against Arrive 3.0) with the halved clock at 0.6: a failed episode netted
++2.0. Pins also rose under argmax (0.46 -> 1.15 per episode), the greedy training envs pinning 2.8x more than the sampled
+ones with no movement gradient and feeding the pin replay ring. Reverted: Seek.ExploreFromRung 2, Seek.StepCost 0.0005,
+Seek.TrapFromRung 2, Seek.TrapShare 0.1, mappo.greedy_env_fraction 0 (move2_seek.yaml). The contact inputs, the keys-up
+spin, the Recovered rebate (no measurable effect either way) and the wall escalation stay.
