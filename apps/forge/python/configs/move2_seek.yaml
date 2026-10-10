@@ -84,8 +84,12 @@ eval:
   # held-out reading beside the training rung's.
   episodes: 156
   sampled_every: 1
+  # `sweep_rotating` (exploration v2, decision 0025): the same 195 placements on seed indexes shifted every evaluation
+  # (train.rotating_shift), read as policy heldout_sweep_rotating beside the frozen heldout_sweep. Both play the deep
+  # rung's clock (Seek.RungSeconds3, 420 s); found_300 is the like-for-like of the 300 s history.
   heldout:
     sweep: 195
+    sweep_rotating: 195
   heldout_every: 1
   heldout_on_best: false
   # The ablation arms, each replaying the evaluation's seeds (the training rung's placements, the deterministic policy)
@@ -124,7 +128,9 @@ eval:
            ground_cells, reward_cell_goal, reward_cell_progress, reward_cell_switch, reward_cell_lost,
            reward_cell_stale, explore_cells, explore_reward, explore_room_cells, frontier_pull_reward,
            circling_seconds, circling_events, trap_episode, trap_escaped, trap_escape_seconds, back_room_visits,
-           reward_explore, reward_frontier_pull, reward_circling, reward_escape]
+           reward_explore, reward_frontier_pull, reward_circling, reward_escape,
+           found_300, room_entries_new, back_room_entries, explore_inside_cells, room_entry_reward, stale_seconds,
+           stale_events, explore_cap_hit, explore_cap_hit_ms, reward_room_entry, reward_stale]
 
 # forge status for this stage: did it find the object, by rung (found_<rung>, each over the episodes placed at it) and
 # in the deepest rooms, the rung it is on, how soon it saw it and got there after, and how it searched -- rooms looked
@@ -138,7 +144,8 @@ status:
              plan_share, goal_follow_rate, goals_cell_reached, goals_cell_lost, cell_goal_seconds, ground_cells,
              rooms_checked_per_min, returns, slots_waiting, checked_miss, check_cover_at_find,
              found_no_flag, found_no_camera, found_no_map, found_no_memory, found_no_goal, found_random_goal,
-             found_random_cell, found_no_plan, explore_cells, circling_seconds, back_room_visits, trap_escaped]
+             found_random_cell, found_no_plan, explore_cells, circling_seconds, back_room_visits, trap_escaped,
+             found_300, room_entries_new, back_room_entries, stale_seconds, explore_cap_hit_ms]
   targets:
     # M1's targets are not M2's measures (null drops an inherited key).
     arrived: null

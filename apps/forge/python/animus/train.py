@@ -293,6 +293,21 @@ def init_from_checkpoint(path: str, prefer: str = "latest") -> Path | None:
 HELDOUT_SEED_OFFSET = 7919
 
 
+#: A held-out arena named `<x>_rotating` plays the same placements as `<x>` on seed indexes shifted each evaluation
+#: (exploration v2, decision 0025): the frozen set keeps its history, the rotating one stops any start owning a pair.
+ROTATING_SUFFIX = "_rotating"
+
+
+def rotating_shift(name: str, episodes: int, env_steps: int, every_env_steps: int) -> int:
+    """The seed-index shift of held-out arena `name` at `env_steps`: 0 for a frozen arena; for a `_rotating` one,
+    `episodes` times the evaluation's number (env_steps // every_env_steps), so each evaluation plays the arena's
+    placements again (pair = index mod 195 is unchanged at 195 episodes) with other spots, facings, spawns, classes
+    (index mod 31) and rng streams, deterministically given env_steps."""
+    if not name.endswith(ROTATING_SUFFIX):
+        return 0
+    return episodes * (max(0, env_steps) // max(1, every_env_steps))
+
+
 def heldout_due(evaluations: int, every: int, final: bool, improved: bool, on_best: bool = True) -> bool:
     """Whether the held-out arenas are played after the `evaluations`-th evaluation: every `every`-th, the stage's
     last, and (with `on_best`, eval.heldout_on_best) one that saved a new best.pt."""
@@ -1244,10 +1259,12 @@ class TrainingRun:
         choose.acting = acting
         return choose
 
-    def _evaluate_share(self, choose_actions, episodes: int, seed: int, **options) -> EvalResult | None:
+    def _evaluate_share(self, choose_actions, episodes: int, seed: int, seed_shift: int = 0,
+                        **options) -> EvalResult | None:
         """run_evaluation on this rank's run of the seeds; on the leader, every rank's results merged (None on the
-        others). Alone, the whole evaluation."""
+        others). Alone, the whole evaluation. `seed_shift` moves every seed index on (a rotating held-out set)."""
         first, count = weighted_share(episodes, self.rank_envs, self.ranks.rank)
+        first += seed_shift
         result, self.step = run_evaluation(self.env, self.spec, choose_actions, count, seed, first_seed=first,
                                            any_playing=self.ranks.any if self.ranks.active else None,
                                            training_stand_in=self.field_stand_in(),
@@ -1495,11 +1512,13 @@ class TrainingRun:
 
     def evaluate_heldout(self) -> None:
         """eval.heldout: each held-out arena on its own seeds (eval.seed + HELDOUT_SEED_OFFSET), every rank playing
-        its share, reported as policy heldout_<arena> in eval.csv and eval.jsonl. A reading only: neither the tracker,
+        its share, reported as policy heldout_<arena> in eval.csv and eval.jsonl (an arena named `<x>_rotating` on seed
+        indexes shifted each evaluation: rotating_shift). A reading only: neither the tracker,
         the controller sees it."""
         for name, (pin, episodes) in self.heldout.items():
+            shift = rotating_shift(name, episodes, self.env_steps, self.config.eval.every_env_steps)
             result = self._evaluate_share(self.learner_actions(), episodes, self.config.eval.seed + HELDOUT_SEED_OFFSET,
-                                          arenas=self.arena_names, action_names=self.action_names, arena=pin,
+                                          seed_shift=shift, arenas=self.arena_names, action_names=self.action_names, arena=pin,
                                           collect_motion=(self.config.eval.keep_motion_files > 0
                                                           and self.spec.kinematics_dim == motion.SAMPLE_DIM))
             if self.cast is not None or self.partners is not None:
