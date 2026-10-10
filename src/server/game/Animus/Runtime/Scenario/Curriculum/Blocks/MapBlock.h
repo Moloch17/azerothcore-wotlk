@@ -20,6 +20,7 @@
 #define ANIMUS_LIB_CURRICULUM_MAP_BLOCK_H
 
 #include "Block.h"
+#include "Coverage.h"
 #include "MentalMap.h"
 
 namespace Animus::Curriculum
@@ -53,25 +54,47 @@ namespace Animus::Curriculum
             OBS_SEARCHED,           // the share of the crop's 1-yd cells looked at this episode
             OBS_NEW_AGE,            // seconds since the body last stood on new ground, over GROUND_AGE_SCALE_S, <= 1
             OBS_TOTAL,              // the 1-yd cells the body has stood on this episode, over GROUND_TOTAL_SCALE, <= 1
+            /// **The coverage scalars** (revision 3, general search; Coverage::Analyse over this decision's crop):
+            /// the nearest frontier cluster's bearing off the facing (sin, cos) and distance (over COVERAGE_REACH),
+            /// the largest cluster's the same, the cluster count over CLUSTER_SCALE, and the 1-yd cells looked at
+            /// THIS episode over the whole map (MentalMap::SearchedCells, over SEARCHED_SCALE): the episode-local
+            /// progress record. Zeros where there is none.
+            OBS_FRONTIER_SIN,
+            OBS_FRONTIER_COS,
+            OBS_FRONTIER_DIST,
+            OBS_REGION_SIN,
+            OBS_REGION_COS,
+            OBS_REGION_DIST,
+            OBS_CLUSTERS,
+            OBS_SEARCHED_CELLS,
             OBS_COUNT
         };
+        static constexpr float CLUSTER_SCALE = 8.0f;
+        static constexpr float SEARCHED_SCALE = 6000.0f;
 
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         /// 1: the first map (perception-goals REDESIGN §3, the Change: one 48 x 48 crop at 2 yd, six channels).
         /// 2: the searched channel (a seventh) and the three scalars searched, new_age, total (exploration v3,
-        /// decision 0026).
-        [[nodiscard]] uint32 Revision() const override { return 2; }
+        /// decision 0026). 3: the eight coverage scalars (frontier_sin .. searched_cells; general search, decision
+        /// 0027); the crop is unchanged.
+        [[nodiscard]] uint32 Revision() const override { return 3; }
         /// "map": { transport "bytes", height, width (Vision::CROP), cell (yards), channels (7), channel_names,
         /// map_bytes, codes, code_names, code_channel, height_channel, height_step, height_zero, visited_channel,
         /// age_channel, age_scale, age_never, class_channel, classes (Vision::CLASS_LIMIT), frontier_channel,
-        /// searched_channel, searched_max, new_age_scale_s, total_scale, epoch ("episode"), scalars, scalar_names }
+        /// searched_channel, searched_max, new_age_scale_s, total_scale, epoch ("episode"), scalars, scalar_names,
+        /// coverage_cell_yards, coverage_reach_yards, cluster_scale, floor_scale, cluster_min_cells, pocket_min_cells }
         /// -- the block's columns are the scalars; the crop is the STEP's map section.
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
 
         /// The scalars of a crop that it alone gives (`kept`: the map was kept across the reset); the ground ones are
-        /// the map's (Observe).
+        /// the map's (Observe), the coverage ones the analysis's (CoverageScalars).
         static void Scalars(uint8 const* crop, bool kept, float* obs);
+        /// The coverage scalars of an analysis (`facing` the body's), into obs[OBS_FRONTIER_SIN ..].
+        static void CoverageScalars(Coverage::Summary const& summary, float facing, float* obs);
+        /// The cluster and pocket sizes the analysis uses (Coverage::Analyse), the process's (AnimusForge.Map.* has
+        /// none: they are the seek tuning's, set once at startup by the scenario; the manifest records them).
+        static void ConfigureCoverage(uint32 clusterMinCells, uint32 pocketMinCells);
     };
 }
 

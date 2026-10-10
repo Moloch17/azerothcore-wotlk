@@ -223,6 +223,7 @@ void Animus::Vision::MentalMap::Clear()
     _hasBody = false;
     _epoch = 1;
     _groundTotal = 0;
+    _searchedTotal = 0;
     _lastGroundClock = 0.0;
 }
 
@@ -237,7 +238,21 @@ void Animus::Vision::MentalMap::BeginEpisode()
 {
     _epoch = Stamp();
     _groundTotal = 0;
+    _searchedTotal = 0;
     _lastGroundClock = _clock;
+}
+
+void Animus::Vision::MentalMap::TileCounts(int32_t tx, int32_t ty, uint16_t& known, uint16_t& visited,
+    uint16_t& searched) const
+{
+    known = visited = searched = 0;
+    auto const found = _tiles.find(TileKey(tx, ty));
+    if (found == _tiles.end())
+        return;
+    Tile const& tile = *found->second;
+    known = tile.KnownCells;
+    visited = tile.VisitedCells;
+    searched = tile.SearchedEpoch == _epoch ? tile.SearchedCells : 0;
 }
 
 uint16_t Animus::Vision::MentalMap::Stamp() const
@@ -354,12 +369,29 @@ void Animus::Vision::MentalMap::MarkSeen(MapCell& cell, uint16_t stamp)
         double const time = EntityTime(cell);
         cell.Entity = uint8_t((cell.Entity & CLASS_MASK) | (EntityAgeBucket(float(double(stamp) - 1.0 - time)) << 5));
     }
+    // The tile's coverage counters (general search): the cell is the one Touch returned last, so its tile is
+    // _lastTile. A first look ever counts as known; a first look this episode as searched.
+    if (Tile* tile = _lastTile)
+    {
+        if (!cell.Seen)
+            ++tile->KnownCells;
+        if (cell.Seen < _epoch && stamp >= _epoch)
+        {
+            if (tile->SearchedEpoch != _epoch)
+            {
+                tile->SearchedEpoch = _epoch;
+                tile->SearchedCells = 0;
+            }
+            ++tile->SearchedCells;
+            ++_searchedTotal;
+        }
+    }
     cell.Seen = stamp;
 }
 
 void Animus::Vision::MentalMap::WriteEntity(MapCell& cell, Class what, uint16_t stamp)
 {
-    cell.Seen = stamp;
+    MarkSeen(cell, stamp);
     cell.Entity = uint8_t(uint8_t(what) & CLASS_MASK);
 }
 
@@ -565,6 +597,9 @@ void Animus::Vision::MentalMap::NoteGround(MapCell const& cell)
         return;
     ++_groundTotal;
     _lastGroundClock = _clock;
+    // The cell is the one Touch returned last (WriteBody): its tile's stood-on count.
+    if (_lastTile)
+        ++_lastTile->VisitedCells;
 }
 
 void Animus::Vision::MentalMap::WriteBody(float x, float y, float z, bool grounded)
