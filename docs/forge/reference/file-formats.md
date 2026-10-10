@@ -80,7 +80,7 @@ Top-level keys written by the current code:
 | seats | int | Seat count of the stage (agents beyond seats are cast owners). |
 | blocks | [string] | Block names in layout order (core, move, ...). |
 | arenas | [object] | Per arena, see below. The episode info column `arena` indexes this list. |
-| cast | [object] | `{agent, name}` for a cast owner row ("leader" or "owner"); `[]` for all live stages. |
+| cast | [object] | `{agent, name}` for a cast owner row ("leader" or "owner"); `[]` for all live stages. A party follow declares its "leader" only when `PartyFollow.CastShare > 0` (the learner refuses a declared agent with no `cast.agents` checkpoint); at 0 the scripted leader's row is never present and never trained. |
 | seed_chain | [string] | Stages seeded from, closest first (walk of `Extends`). |
 | merges | [string] | Further parents of a merge stage (group1_roles merges move4_follow). |
 | state | {dim, arena_first, arena_count} | The critic state's width (`dim`, 1927 since 2026-10-08, was 1958; `resume_check.state_dim_of` reads it) and where it holds the arena one-hot (`STATE_ARENA_FIRST`=7, `MAX_ARENAS`=16). |

@@ -831,7 +831,7 @@ failure, 1248-1251) and `stage.json`. Every write goes through `WriteIfChanged`.
 | `seats` | `_seatCount` | 1259 |
 | `blocks` | the stage's block names in layout order | 1261-1263 |
 | `arenas[]` | per arena: `name`, `weight` (the configured initial weight), `seats`, `episode_seconds`, `plan` ("solo" or "party"), `eval_only`, `stand_in_share` (resolved), `drill_seat` (0 if `DrillRole` else -1) | 1266-1286 |
-| `cast[]` | with `_castOwner`: `{agent: OwnerAgent(), name: "leader"}` (or "owner" when `_partyFollow` is null) | 1289-1296 |
+| `cast[]` | with `_castOwner` and, for the party follow, only when `PartyFollow.CastShare > 0`: `{agent: OwnerAgent(), name: "leader"}` (or "owner" when `_partyFollow` is null); `[]` at CastShare 0, so the scripted leader needs no `cast.agents` entry (its row is never present, never trained) | 1289-1296 |
 | `seed_chain` | the `Extends` ancestors, closest first, via `FindStage` | 1299-1301 |
 | `merges` | the stage's `Merges` | 1304-1306 |
 | `state` | `{arena_first, arena_count}` | 1309-1311 |
@@ -857,8 +857,9 @@ learner: [file-formats.md](file-formats.md).
 
 - `stage.json` carries `arenas[].weight` only; `WeightFinal` is not written, so the learner cannot know the arena
   interpolation. UNVERIFIED whether the learner needs it (check `animus/stages.py`).
-- `"name": _partyFollow ? "leader" : "owner"` (1295): inside `if (_castOwner)` `_partyFollow` is always set, so the
-  "owner" branch is unreachable.
+- `"name": _partyFollow ? "leader" : "owner"`: inside `if (_castOwner)` `_partyFollow` is always set, so the
+  "owner" branch is unreachable. (The guard also reads `!_partyFollow || CastShare > 0`; the first half is the same
+  dead case.)
 - `STAGE_FILE_FORMAT` comment (`StageScenario.cpp:132`) says 2 added arenas and 3 the seat plan and cast list; later
   fields (`reward_terms`, `goals`, `state`, `drill_seat`, `stand_in_share`) did not bump it, so `format` does not
   identify the schema. `docs/forge/03-animus-lib.md:405` says "format 2": stale.

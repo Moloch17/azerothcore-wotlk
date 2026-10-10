@@ -130,7 +130,9 @@ ladder withhold that the encounter does by rung. Rename only with a revision pla
 
 **B7.** `PartyFollowEncounter` keeps `CastShare` (conf `PartyFollow.CastShare` = 0) and the owner-slot machinery for a
 learned leader that no config uses (`PartyFollowEncounter.h:40-47`). It is documented as "not dead code" because the
-scripted leader uses the slot; the learned-leader half is unexercised.
+scripted leader uses the slot; the learned-leader half is unexercised. Fixed 2026-10-09: stage.json declares the
+"leader" cast entry only at `CastShare > 0` (before, move4_follow was refused by the learner at CastShare 0, since
+`cast.agents.leader` names no checkpoint).
 
 **B8.** `eval.mask_actions`, `style.*` (the movement-style reward, `enabled: false` in M1 and inherited), `distill.*`
 and `cast.agents` are config surface with no live stage using them (`animus/config.py`). Keep or delete per decision 17

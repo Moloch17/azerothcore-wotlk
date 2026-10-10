@@ -1252,9 +1252,12 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
         entry["drill_seat"] = definition.DrillRole ? 0 : -1;
     }
 
-    // Agents the sim declares for a frozen checkpoint to play: the owner, where an arena casts it.
+    // Agents the sim declares for a frozen checkpoint to play: the owner, where an arena casts it. A party follow's
+    // leader is declared only when PartyFollow.CastShare gives some episodes to a checkpoint: at 0 the leader keeps its
+    // script, its row is never present (AgentPresence) nor trained, and a declaration would make the learner demand a
+    // checkpoint (cast.agents.leader) that nothing plays.
     boost::json::array& cast = stageFile["cast"].emplace_array();
-    if (_castOwner)
+    if (_castOwner && (!_partyFollow || _tuning.PartyFollow.CastShare > 0))
     {
         boost::json::object& entry = cast.emplace_back(boost::json::object()).get_object();
         entry["agent"] = OwnerAgent();
