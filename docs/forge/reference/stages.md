@@ -249,7 +249,7 @@ rung
 **Rewards** (`SeekEncounter.cpp:441` to `550`). Outcome: `Arrive` 3.0 (`Seek.Arrive`). Cost: `StepCost` 0.0005 per 50 ms
 (a 300 s episode costs 3.0), `Death` 6.0, `Stuck` and `Wall` 0.02 fixed. Shaping: `Sighting` 0.5 once, `NewGround` 0.004
 per
-4 yd cell first walked, `RoomSeen` 0.1 once per room whose floor the camera first shows (3 rays).
+4 yd cell first walked, `RoomSeen` 0.1 once per room whose floor the camera first shows (3 rays). Since 2026-10-10 (explore-unstuck, decision 0023): `Explore` 0.002 per newly seen 2-yd floor cell (x2 in a room not yet entered, cap 1.0) and `FrontierPull` 0.004 a yard (cap 1.0), both paid at least at `Seek.ExploreFloor` 0.5 of their price whatever the fade; `Circling` 0.02 a second (Cost); 12% of training episodes start in a trap pose against a door jamb, `Escape` 0.3 (Aid) for getting 6 yd away within 20 s.
 
 **Ladder.** `fade.rungs [1.0, 0.5, 0.25, 0.0]` (hallway, doorway, front room, deep), `gate_metric found`, `gate_value
 0.8`,

@@ -534,9 +534,28 @@ static std::vector<std::string> ObjectNames(ArenaDefinition const&);  // seek_ob
 | `sighting` | Shaping | `+Seek.Sighting` once, on the first decision with `seat.ObjectiveSighted` (the first frame with any flag pixel); `SightMs = seat.ObjectiveSightMs` (`:499-504`) | `Seek.Sighting` (0.5) |
 | `room_seen` | Shaping | `+Seek.RoomSeen` per room newly looked into this episode: `NewlyLooked` counts the frame's cast rays that hit a floor (terrain or model, normal z at least `Vision::FLOOR_NORMAL`, distance at most `Vision::WRITE_REACH`) inside a room's polygon within 4 yd of its `FloorZ`; at least `max(1, RoomSeenRays)` rays (`:510-516`, `SeekDraw.h:140-190`). Bookkeeping is the episode's own (`seek.Looked`), never the mental map's. | `Seek.RoomSeen` (0.1), `Seek.RoomSeenRays` (3) |
 | `new_ground` | Shaping | `+Seek.NewGround` when the seat's cell (`CellKey`: x, y in `NewGroundCell`-yard squares, z in 3-yd storeys) is new this episode and it is not the first look (`:522-523`) | `Seek.NewGround` (0.004), `Seek.NewGroundCell` (4) |
+| `explore` | Exploring | `+Seek.ExploreSeen` per 2-yd cell (`CellKey`, by storey) of floor that a camera ray (`SeekDraw::FloorRays`: terrain or model, normal z >= `FLOOR_NORMAL`, within `WRITE_REACH`) lands on for the first time in the episode (`EnvSeek::Seen`, kept apart from the mental map, which outlives the episode), x `Seek.ExploreRoomBonus` in a table room not yet entered; the first look is recorded, not paid; the nominal sum is capped at `Seek.ExploreCap`; paid x `max(shaping scale, Seek.ExploreFloor)` (`SetShapingFloor`, set at the top of `Reward`). Not in the score. | `Seek.ExploreSeen` (0.002), `Seek.ExploreRoomBonus` (2.0), `Seek.ExploreCap` (1.0), `Seek.ExploreFloor` (0.5) |
+| `frontier_pull` | Exploring | `+Seek.FrontierPull` per yard closed on the nearest frontier point of the seat's mental map (`SeenPlaces::Frontier`, 40 yd, refreshed every 2 s in `Reward`; `View` computes its own only for room slots), by a best distance kept per frontier cluster (the 10-yd cell of its point, `EnvSeek::FrontierBest`): a new cluster starts at the distance it is first met at, so there is no credit for ground already closed and a ping-pong pays nothing; capped at `Seek.FrontierCap` (nominal); same floor; 0 switches it off. | `Seek.FrontierPull` (0.004), `Seek.FrontierCap` (1.0) |
+| `circling` | Cost (noise, `AddFixed`) | `-Seek.Circling * stepSeconds` while the last `Seek.CircleWindowMs` of decisions hold a net displacement under `Seek.CircleNetYards` and (a path of `Seek.CircleYards` or more, or a summed \|yaw change\| of `Seek.CircleTurnDeg` or more); not on a decision that paid `stuck`; in the score. | `Seek.Circling` (0.02), `Seek.CircleWindowMs` (6000), `Seek.CircleYards` (12), `Seek.CircleNetYards` (4), `Seek.CircleTurnDeg` (540) |
+| `escape` | Aid | `+Seek.Escape` x aid scale, once, when a trap-drill seat is `Seek.TrapEscapeYards` (2D) from its start pose within `Seek.TrapEscapeMs`. | `Seek.Escape` (0.3), `Seek.TrapEscapeYards` (6), `Seek.TrapEscapeMs` (20000) |
 | `arrive` | Outcome | `+Seek.Arrive` once: 2D distance to the base `<= arena.SeekRadius`, `|dz| <= Seek.ArriveRise`, and `Standing::Stopped` using `Markers.StopMoved` (not a Seek key) (`:540-550`) | `Seek.Arrive` (3.0), `Seek.ArriveRise` (2.0), `Markers.StopMoved` (0.05) |
 
 `Found` is set at arrival; `FoundMs = EpisodeElapsedMs`; `RoomsBeforeFound = RoomsEntered`.
+
+**Explore, don't circle, get unstuck** (2026-10-10, decision 0023). `Explore` and `FrontierPull` are in the new
+`RewardCategory::Exploring`: `RewardLedger::Shaped` returns `max(shaping, floor)` for it, the floor being set by the
+encounter every decision (`SetShapingFloor(Seek.ExploreFloor)`), so StageScenario's fade is untouched; stage.json lists
+both as `shaping`. Interaction with the other prices: `circling` is not charged on a decision that charged `stuck`
+(that second is priced), is charged beside `wall` (pressing into walls while circling is two faults), and never
+touches `return` (going back into a visited room: a different event). **Trap drill**: `Build`, in an unseeded,
+non-sweep episode, with probability `Seek.TrapShare` (0.12): `TrapPose` draws a door of the room table (uniformly, up
+to 8 tries), takes the point 0.5-1.5 yd from its opening toward the room's centre, casts the camera's static ray
+(`MapVisionWorld::StaticHit`) across the doorway at knee height (4 yd) to find the jamb, and stands the seat 0.5-1.5 yd
+from it, facing it within 0.5 rad. Valid when the vmap floor at the pose is within `Seek.FloorTolerance` of the room's
+and level (0.6 yd) with the doorway, and the line from the pose to the opening is clear (a way out exists, but the seat
+is not facing it). The pose replaces the spawn point in the one teleport (resets cost ray casts, no path query); the
+object is placed as usual, so a hallway-rung object is in sight of the spawn, not of the pose. Evaluations never get it
+(it would move `found`). No action is scripted.
 
 **The aid scale** (`RewardCategory::Aid`, `RewardLedger::SetAid`, set in `StageScenario::Reward`): `max(0, 1 - progress /
 Seek.AidUntil)` where `progress` is the stage's share of `total_env_steps` (`ProgressMsg.Progress`, no protocol change);
@@ -573,6 +592,10 @@ line is not the walk: no `StepAway`, no progress potential), and a place goal ch
 | `rooms_checked`, `rooms_checked_per_min` | rooms `Checked` this episode; per minute of `EpisodeElapsedMs` | |
 | `returns`, `slots_waiting`, `time_to_first_goal` | returns (above); most glimpsed rooms without a slot; seconds to the first place or cell goal held (0 if none) | |
 | `checked_miss`, `check_cover_at_find` | on an episode that found the object: 1 if its room was `Checked` at a decision strictly before the arrival; the room's hit cells / floor cells at the arrival. Both 0 when not found. | calibrates `Seek.CheckedShare` |
+| `explore_cells`, `explore_reward`, `explore_room_cells`, `frontier_pull_reward` | cells newly landed on after the first look (whatever the cap); the nominal `Explore` sum (before the scale and the floor; `reward_explore` is what was paid); of those cells, the ones that paid the room bonus (a room not yet entered); the nominal `FrontierPull` sum | explore-unstuck, 2026-10-10 |
+| `circling_seconds`, `circling_events` | seconds charged as circling; times the window began to hold | status headline `circling_seconds` |
+| `trap_episode`, `trap_escaped`, `trap_escape_seconds` | the episode started in the trap pose (training only); the seat got `Seek.TrapEscapeYards` away within `Seek.TrapEscapeMs`; when | PER_EVENT: `trap_escaped` over `trap_episode`, `trap_escape_seconds` over `trap_escaped` |
+| `back_room_visits` | distinct rooms entered whose name ends `_back` or contains `_end_` (the back and end rooms; not the hubs or `hall_end`) | status headline |
 | `object_x`, `object_y`, `object_z`, `end_x`, `end_y`, `end_z` | the object's base (`Spot`) and the seat's last position, absolute instance coordinates, yards | `Spot` is 0 when not placed |
 
 `found_deepest`, used in the yaml headline and targets, is not written here; it is computed in Python

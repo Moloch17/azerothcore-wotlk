@@ -114,6 +114,10 @@ stage (`Stages.cpp`): Sight m1, Seek m2, Interact m3, PartyFollow m4, Combat c1-
 | Sighting `sighting` | S | Seek (`Seek.Sighting`), Interact (`Interact.Sighting`) | 0.5; 0.5 | m2, m3 |
 | NewGround `new_ground` | S | Seek (`Seek.NewGround`) | 0.004 | m2 |
 | RoomSeen `room_seen` | S | Seek (`Seek.RoomSeen`) | 0.1 | m2 |
+| Explore `explore` | S (category `Exploring`: x `max(shaping, Seek.ExploreFloor)`) | Seek (`Seek.ExploreSeen` per new 2-yd floor cell, room bonus, cap `ExploreCap`) | 0.002; cap 1.0; floor 0.5 | m2 |
+| FrontierPull `frontier_pull` | S (`Exploring`) | Seek (`Seek.FrontierPull` per yard closed on the nearest frontier cluster, cap `FrontierCap`) | 0.004; cap 1.0 | m2 |
+| Circling `circling` | C, N | Seek via `AddFixed` (`Seek.Circling` per second; window `CircleWindowMs`) | 0.02 | m2 |
+| Escape `escape` | A | Seek (`Seek.Escape`, once, trap drill) | 0.3 | m2 |
 | DoorOpened `door_opened` | O | Interact (`Interact.DoorOpened`) | 1.0 | m3 |
 | WrongObject `wrong_object` | C | Interact (`Interact.WrongObject`) | 0.5 | m3 |
 | Regroup `regroup` | O | PartyFollow (`PartyFollow.Regroup`, window `RegroupWindow`) | 0.5 | m4 |

@@ -26,3 +26,4 @@ Decisions with lasting consequences, one file each. Dates are the day the owner 
 | [0020](0020-baked-camera.md) | The camera casts against a baked scene file, not the live collision trees | 2026-10-08 |
 | [0021](0021-decision-time-jitter.md) | Decisions last a jittered game time in training, as they do at the realm | 2026-10-08 |
 | [0022](0022-overall-tracker-judges-the-stage-measure.md) | The overall tracker judges the stage's measure and forgets on an evaluation-format change | 2026-10-09 |
+| [0023](0023-exploration-floor.md) | Exploration of unseen territory is shaping paid at a floor the fade does not take | 2026-10-10 |
