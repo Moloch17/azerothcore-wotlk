@@ -97,6 +97,11 @@ class EvalConfig:
     # Whether a new best.pt also plays them (it does by default, so best.pt always has a held-out reading beside it).
     # Off for a long held-out arena that is a stage's final measure only (move2_seek's 195-episode sweep).
     heldout_on_best: bool = True
+    # How often each held-out arena is played, by name (exploration v3): arena -> N, played on every N-th evaluation
+    # (and always on the stage's last, `final`); an arena not named is played whenever heldout_every says. The second
+    # sweep doubled the held-out time, so move2_seek plays sweep_rotating every second evaluation. {} = no per-arena
+    # cadence.
+    heldout_cadence: dict = field(default_factory=dict)
     # What an evaluation is scored on, and so what best.pt and convergence follow: "outcome",
     # the episode's Outcome and Cost terms before any rung's tier (the sim's score_outcome column), or "return", the
     # whole return with its shaping. Scored on the return, a stage whose shaping is turned down reads as getting
@@ -119,6 +124,8 @@ class EvalConfig:
     #   random_cell, no_plan: the cell goals (free-choice-goals) with the cell drawn uniformly over the choosable
     #     blocks, the goal from the head (random_cell: what the pointer is worth), or with nothing held beside the
     #     primary or queued (no_plan: what the chain of cells is worth). Learner-side, like random_goal.
+    #   no_searched: the mental map's searched channel (the crop's seventh byte) and the map block's searched,
+    #     new_age and total scalars zeroed (exploration v3): what the searched-state input is worth.
     arms: dict = field(default_factory=dict)
     arms_every: int = 1
     # The routes of every evaluation, kept: the learner's scored seats' raw kinematic tracks (x, y, z, yaw, ...) with
@@ -127,6 +134,13 @@ class EvalConfig:
     # none (and the held-out arenas collect no motion). The newest plain evaluation is also eval_motion.npz (windows
     # for the realism report), overwritten each time. A stage without kinematics (spec.kinematics_dim) writes none.
     keep_motion_files: int = 12
+    # Exploration v3: trace EVERY seed of EVERY evaluation set -- the plain one, learner_sampled, each held-out arena,
+    # each arm -- into <run>/eval_trace_<env_steps>_<policy>.npz (compact arrays, one row per decision of the traced
+    # agent: seed, decision, action, goal, reward, pose, camera, flag pixels, wall/moving/held keys, the held goal's
+    # point; docs/forge/reference/file-formats.md), pruned with keep_motion_files. The routes
+    # (eval_motion_<env_steps>_learner_sampled.npz, _<arm>.npz) are saved alongside. False = the old behaviour
+    # (eval.trace_episodes' JSONL for the plain set, routes for the plain set and the held-out arenas only).
+    trace_all: bool = False
 
     def __post_init__(self) -> None:
         if self.baseline not in ("", "random"):
@@ -147,6 +161,16 @@ class EvalConfig:
         if self.heldout_every < 1:
             raise ValueError(f"eval.heldout_every: expected at least 1 (1 = every evaluation), got "
                              f"{self.heldout_every!r}")
+        if not isinstance(self.heldout_cadence, dict):
+            raise ValueError(f"eval.heldout_cadence: expected a mapping of arena -> every N-th evaluation, got "
+                             f"{self.heldout_cadence!r}")
+        for arena, every in self.heldout_cadence.items():
+            if arena not in self.heldout:
+                raise ValueError(f"eval.heldout_cadence.{arena}: not a held-out arena (eval.heldout has "
+                                 f"{sorted(self.heldout)})")
+            if not isinstance(every, int) or isinstance(every, bool) or every < 1:
+                raise ValueError(f"eval.heldout_cadence.{arena}: expected a whole number of evaluations of at least 1, "
+                                 f"got {every!r}")
 
     def score_column(self) -> str:
         if self.score not in ("outcome", "return"):
@@ -376,7 +400,7 @@ MAX_HINDSIGHT_LOOKBACK = 256
 
 #: The evaluation arms beside the plain one ("all bots"): eval.arms names them (dungeon-curriculum I7).
 EVAL_ARMS = ("with_human", "with_partners", "no_flag", "no_camera", "no_compass", "no_map", "no_memory", "no_goal",
-             "random_goal", "random_cell", "no_plan")
+             "random_goal", "random_cell", "no_plan", "no_searched")
 
 
 @dataclass
@@ -679,6 +703,10 @@ class TrainConfig:
         if isinstance(lookback, bool) or not isinstance(lookback, int) or not 0 <= lookback <= MAX_HINDSIGHT_LOOKBACK:
             raise ValueError(f"mappo.goal_cell_hindsight_lookback: expected a whole number of decisions from 0 (off) "
                              f"to {MAX_HINDSIGHT_LOOKBACK}, got {lookback!r}")
+        greedy = self.mappo.greedy_env_fraction
+        if isinstance(greedy, bool) or not isinstance(greedy, (int, float)) or not 0.0 <= greedy <= 0.5:
+            raise ValueError(f"mappo.greedy_env_fraction: expected a share of the training envs from 0 (off) to 0.5, "
+                             f"got {greedy!r}")
         if coef < 0.0:
             raise ValueError(f"mappo.goal_cell_hindsight_coef: expected 0 (off) or more, got {coef!r}")
         if lookback > 0 and coef <= 0.0:
