@@ -2157,13 +2157,21 @@ class MappoTrainer:
         }
 
     def load_state_dict(self, state: dict, load_optimizers: bool = True) -> None:
-        from .networks import BLIND_KEEP_PREFIXES, without_blind_columns
-        load_actor_state(self.actor, state["actor"])
-        missing, unexpected = self.critic.load_state_dict(without_blind_columns(state["critic"]), strict=False)
+        from .networks import BLIND_KEEP_PREFIXES, grow_goal_rows, without_blind_columns
+        grown = load_actor_state(self.actor, state["actor"])
+        critic_state, critic_grown = grow_goal_rows(without_blind_columns(state["critic"]), self.critic.state_dict())
+        missing, unexpected = self.critic.load_state_dict(critic_state, strict=False)
         missing = [key for key in missing if not key.split(".")[-1].startswith(BLIND_KEEP_PREFIXES)]
         if missing or unexpected:
             raise RuntimeError(f"Error(s) in loading state_dict for the critic: missing {missing}, unexpected "
                                f"{list(unexpected)}")
+        if grown or critic_grown:
+            # A checkpoint of a smaller goal space (fewer goal kinds): the new kinds' rows are as initialised, and the
+            # saved optimiser moments have the old shapes, so they start fresh.
+            print(f"Resume: the checkpoint's goal space is smaller than this stage's ({len(grown)} actor and "
+                  f"{len(critic_grown)} critic tensors grown, new rows as initialised); the optimisers start fresh",
+                  flush=True)
+            load_optimizers = False
         if self.value_norm is not None and state.get("value_norm") is not None:
             self.value_norm.load_state_dict(state["value_norm"])
         if load_optimizers:

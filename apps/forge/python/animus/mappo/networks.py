@@ -671,9 +671,11 @@ class GoalHead(nn.Module):
         width = int(columns.get("width", 0))
         if "from" in columns and int(columns["from"]) + 3 <= width:
             self.cell_from = int(columns["from"])
+        kinds = (goals or {}).get("kinds") or ()
+        kind = kinds[joint // self.targets] if 0 <= joint // self.targets < len(kinds) else "?"
         return ([int(image_offset), grid, pool, joint],
                 f"cell head over {grid} x {grid} blocks (pool {pool}) of the map crop at image byte {image_offset}, "
-                f"cell goals are joint {joint}, source {cells.get('source', '?')}"
+                f"cell goals are joint {joint} ({kind} about target {target}), source {cells.get('source', '?')}"
                 + ("" if self.cell_from >= 0 else "; no goals.columns.from: no planner hindsight"))
 
     def _mirror_cell_spec(self) -> None:
@@ -738,8 +740,10 @@ class GoalHead(nn.Module):
         return self.pointer(values.to(weight.dtype)).squeeze(-1).to(dtype)
 
     def _with_places(self, joint: torch.Tensor, obs: torch.Tensor | None, layout: torch.Tensor | None) -> torch.Tensor:
-        """`joint` [rows, kinds, targets] with the pointer's score added to each place target's logit (every kind
-        alike: the target's score is shared across the kinds that accept it)."""
+        """`joint` [rows, kinds, targets] with the pointer's score added to each place target's logit. The score is the
+        target's, so it is added to every kind alike; the kinds that cannot take a place (stage.json goals.accepts) are
+        masked out of the choice, which leaves the pointer on the two that can: search (the seek stage's room and cell
+        goals, goal block revision 5) and travel_to (a dungeon's places)."""
         if obs is None or layout is None:
             return joint
         scores = self.place_scores(obs, layout, joint.dtype)
@@ -2135,10 +2139,47 @@ def without_blind_columns(state: dict) -> dict:
             if not key.split(".")[-1].startswith(BLIND_KEEP_PREFIXES)}
 
 
-def load_actor_state(actor: nn.Module, state: dict) -> None:
-    """actor.load_state_dict(state), except that an actor saved before the goal scale existed loads with it at zero, and
-    one saved before the goal head's pointer existed loads with the pointer as initialised (a no-op)."""
-    missing, unexpected = actor.load_state_dict(without_blind_columns(state), strict=False)
+#: The tensors of a goal head and its embeddings that have a row per goal kind -- or, drawn, per joint goal -- and so
+#: grow when the sim's goal space does. Kinds are only ever appended (search-kind, goal block revision 5: 9 -> 10), so
+#: a joint id kind * targets + target keeps its row and the new kinds' rows follow the old ones (drawn's row 0 is
+#: "none", goal g at g + 1). The critic has goal_embedding.kind.weight alone.
+GOAL_KIND_ROW_KEYS = (
+    "goal_head.kind.weight", "goal_head.kind.bias", "goal_head.pair", "goal_head.drawn.weight", "goal_head.accepts",
+    "goal_head.success.kind.weight", "goal_head.success.kind.bias", "goal_head.success.pair",
+    "goal_head.duration.kind.weight", "goal_head.duration.kind.bias", "goal_head.duration.pair",
+    "goal_embedding.kind.weight", "goal_embedding.kind_scale.weight",
+)
+
+
+def grow_goal_rows(state: dict, current: dict) -> tuple[dict, list[str]]:
+    """`state` (a saved network's) with its goal tensors of fewer kinds (GOAL_KIND_ROW_KEYS) padded to the shapes of
+    `current` (the network's own state): the old rows stay where they were and the new ones are `current`'s, as
+    initialised. Returns (the state, the keys grown); a state of the same goal space is returned as it is. Refused
+    (ValueError): a state with more kinds than `current` -- a newer checkpoint into a sim with fewer goal kinds -- or
+    one whose rows differ in width or targets, which padding cannot fix."""
+    grown, names = dict(state), []
+    for key in GOAL_KIND_ROW_KEYS:
+        if key not in state or key not in current or state[key].shape == current[key].shape:
+            continue
+        saved, now = state[key], current[key]
+        if saved.shape[0] > now.shape[0]:
+            raise ValueError(f"{key}: the checkpoint has {saved.shape[0]} rows, this network {now.shape[0]}: the "
+                             f"checkpoint's goal space has more kinds than this stage's (a newer checkpoint cannot be "
+                             f"loaded into a sim with fewer goal kinds)")
+        if saved.shape[1:] != now.shape[1:]:
+            raise ValueError(f"{key}: {tuple(saved.shape)} in the checkpoint does not grow into {tuple(now.shape)}")
+        grown[key] = torch.cat([saved, now[saved.shape[0]:].to(saved.device, saved.dtype)], dim=0)
+        names.append(key)
+    return grown, names
+
+
+def load_actor_state(actor: nn.Module, state: dict) -> list[str]:
+    """actor.load_state_dict(state), except that an actor saved before the goal scale existed loads with it at zero,
+    one saved before the goal head's pointer existed loads with the pointer as initialised (a no-op), and one saved with
+    fewer goal kinds loads with the new kinds' rows as initialised (grow_goal_rows). Returns the goal tensors grown
+    (empty for a same-shape checkpoint): a caller that restores optimiser moments must not, then."""
+    state, grown = grow_goal_rows(without_blind_columns(state), actor.state_dict())
+    missing, unexpected = actor.load_state_dict(state, strict=False)
     # The blind-column masks are never taken from a checkpoint: an actor built with seat sets has its own already (the
     # stage's), which a resume keeps.
     wrong = [key for key in missing
@@ -2152,6 +2193,7 @@ def load_actor_state(actor: nn.Module, state: dict) -> None:
         for key in missing:
             if key in _GOAL_SCALE_KEYS:
                 parameters[key].zero_()
+    return grown
 
 
 def goal_pair(primary: torch.Tensor, secondary: torch.Tensor, count: int) -> torch.Tensor:
@@ -2438,7 +2480,7 @@ class LayoutActor(nn.Module):
         primary = torch.where(chosen, slots[:, 0], primary)
         secondary = torch.where(chosen, slots[:, 1], secondary)
         queue = torch.where(chosen[:, None], slots[:, 2:], queue)
-        # Two cell goals share a joint id (159) and differ by their cell: only another goal repeated is dropped.
+        # Two cell goals share a joint id (head.cell_joint) and differ by their cell: only another goal repeated is dropped.
         secondary = torch.where((secondary == primary) & (primary != head.cell_joint),
                                 torch.full_like(secondary, -1), secondary)
         out = {"goal": goal_pair(primary, secondary, head.count), "queue": queue, "chosen": chosen,
