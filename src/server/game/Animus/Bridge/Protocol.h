@@ -84,9 +84,12 @@
  *                            A stage without one sends exactly the protocol 20 STEP (SPEC grows by ImageBytes for
  *                            every stage).
  *   client -> server  ACT    { i32 actions[E*A] } or, from a policy with a goal head,
- *                            { i32 actions[E*A], i32 goals[E*A*2] } -- the goals each agent is pursuing, primary
- *                            then secondary (0..GoalCount-1, or -1 for none). Goals are scored and reported by the
- *                            scenario and shown to a party's teammates; they never mask an action.
+ *                            { i32 actions[E*A], i32 goals[E*A*8] } -- per agent (protocol 28) the goals of the four
+ *                            plan positions, primary, secondary and the learner's queue 0 and 1 (0..GoalCount-1, or
+ *                            -1 for none), then the four positions' cell words (0 none, else (ticket << 12) |
+ *                            (cell + 1): a pooled cell of the seat's map crop for the joint goal travel_to place_7,
+ *                            Curriculum::CellWord). Goals are scored and reported by the scenario and shown to a
+ *                            party's teammates; they never mask an action.
  *                            With LookHeads L > 0 (a stage with a vision block; protocol 22) either is followed by
  *                              i32 look[E*A*L]        each agent's look head choice, agent-major in the actions'
  *                                                     order: yaw rate (0..6), pitch rate (0..4), zoom (0..4)
@@ -188,7 +191,11 @@ namespace AnimusForge
     // 27: the tick jitter (AnimusForge.Decision.*, ADR 0021): SPEC ends with the jitter body in ms, the largest spike in
     // ms and the spike probability (a float), all zero without jitter; every SPEC is twelve bytes longer. STEP and ACT
     // are protocol 26's.
-    constexpr uint32 PROTOCOL_VERSION = 27;
+    // 28: free choice goals: ACT's goal section is GOAL_WIRE_INTS (8) ints an agent, not two: the joint goal ids of the
+    // four plan positions (primary, secondary, queue 0, queue 1; GOAL_SLOTS_ON_WIRE 4), then their cell words, so a
+    // goal can be a cell of the seat's own map crop (goal block revision 4; the cell and its ticket are latched by the
+    // sim at the choice). STEP and SPEC are protocol 27's; the manifest names goals.slots_on_wire and goals.wire_ints.
+    constexpr uint32 PROTOCOL_VERSION = 28;
     constexpr uint32 SCENARIO_NAME_SIZE = 32;
     constexpr uint32 POLICY_NAME_SIZE = 32;
     constexpr uint32 LAYOUT_NAME_SIZE = 48;
@@ -344,7 +351,7 @@ namespace AnimusForge
         uint32 EnvCount;
     };
 
-    /// ACT payload: this header, then EnvCount x AgentsPerEnv int32 actions, then GOAL_SLOTS_ON_WIRE as many goals
+    /// ACT payload: this header, then EnvCount x AgentsPerEnv int32 actions, then GOAL_WIRE_INTS as many goals
     /// when the policy has a goal head, then LookHeads as many look choices when the stage has a camera.
     struct ActHeader
     {
@@ -366,7 +373,7 @@ namespace AnimusForge
     [[nodiscard]] inline ActCut CutAct(std::size_t body, std::size_t rows, uint32 lookHeads)
     {
         std::size_t const actionBytes = rows * sizeof(int32);
-        std::size_t const goalBytes = actionBytes * Animus::GOAL_SLOTS_ON_WIRE;
+        std::size_t const goalBytes = actionBytes * Animus::GOAL_WIRE_INTS;
         std::size_t const lookBytes = actionBytes * lookHeads;
         ActCut cut;
         if (body == actionBytes + lookBytes)

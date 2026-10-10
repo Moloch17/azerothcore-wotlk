@@ -34,8 +34,12 @@ enum DamageEffectType : uint8;
 
 namespace Animus
 {
-    /// Goals per agent in ACT (protocol 17): the primary and the secondary (Curriculum::GOAL_SLOTS).
-    constexpr uint32 GOAL_SLOTS_ON_WIRE = 2;
+    /// Plan positions per agent in ACT: the primary, the secondary and the learner's queue (protocol 28; it was the
+    /// primary and the secondary alone from protocol 17). Each travels as a joint goal id and a cell word.
+    constexpr uint32 GOAL_SLOTS_ON_WIRE = 4;
+    /// The ints of ACT's goal section per agent (protocol 28): the four joint goal ids, then the four cell words
+    /// (Curriculum::CellWord) of the same positions.
+    constexpr uint32 GOAL_WIRE_INTS = 2 * GOAL_SLOTS_ON_WIRE;
 
     struct StageSettings;
 
@@ -234,7 +238,8 @@ namespace Animus
         std::vector<int32> Actions;
         /// The goal each agent is pursuing, in agent order, as the learner sent it (Curriculum::NO_GOAL for none).
         /// A host fills it before ApplyActions; a policy without goals leaves it alone.
-        /// The goals ACT sent: GOAL_SLOTS_ON_WIRE per agent (primary, secondary), agent-major.
+        /// The goals ACT sent: GOAL_WIRE_INTS per agent, agent-major: the joint goal ids of the primary, the
+        /// secondary and the queue's two (-1 for none), then their cell words (0 for none).
         std::vector<int32> Goals;
         /// The look head's choices ACT sent (free look, protocol 22): Spec().LookHeads per agent, agent-major, each in
         /// range (ACT refuses any other). Vision::FreeLook::NEUTRAL until one arrives; empty without a camera.

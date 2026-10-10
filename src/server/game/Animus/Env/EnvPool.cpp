@@ -83,9 +83,11 @@ Animus::EnvPool::EnvPool(Scenario& scenario, StageSettings const& settings)
     FinalMapCrop.assign(std::size_t(agents) * _spec.MapBytes, 0);
     _envSeed.assign(envs, NO_EPISODE_SEED);
     Actions.assign(agents, 0);
-    // Two per agent, primary then secondary (Curriculum::GOAL_SLOTS); NO_GOAL until a learner with a goal head
+    // GOAL_WIRE_INTS per agent: four joint ids (NO_GOAL) then four cell words (none), until a learner with a goal head
     // sends them.
-    Goals.assign(std::size_t(agents) * GOAL_SLOTS_ON_WIRE, -1);
+    Goals.assign(std::size_t(agents) * GOAL_WIRE_INTS, -1);
+    for (std::size_t agent = 0; agent < agents; ++agent)
+        std::fill_n(Goals.begin() + std::ptrdiff_t(agent * GOAL_WIRE_INTS + GOAL_SLOTS_ON_WIRE), GOAL_SLOTS_ON_WIRE, 0);
     // The look head's rows (free look, protocol 22), neutral until an ACT sets them: both rates let go, the zoom
     // held -- never zeros, which would hold the fastest turn right. Empty for a stage without a camera.
     Look.clear();
@@ -343,7 +345,7 @@ void Animus::EnvPool::ApplyActionsForMap(Map const& map)
     {
         Env& env = _envs[index];
         if (!Goals.empty())
-            _scenario.ApplyGoals(env, &Goals[std::size_t(index) * _spec.AgentsPerEnv * GOAL_SLOTS_ON_WIRE]);
+            _scenario.ApplyGoals(env, &Goals[std::size_t(index) * _spec.AgentsPerEnv * GOAL_WIRE_INTS]);
         // The camera's turn, with the movement actions, so it shows in the next frame; beside them, never through
         // them (looking is free).
         if (!Look.empty())
