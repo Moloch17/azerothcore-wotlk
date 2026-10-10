@@ -448,32 +448,56 @@ GOAL_EMBEDDINGS = ("goal_embedding.kind.weight", "goal_embedding.target.weight",
 
 def _goal_ids(stage: dict | None) -> tuple[int, int, list[int]] | None:
     """(the kind of travel_to, the kind of fight, the place target ids) from a stage.json's "goals", or None when the
-    manifest does not name the place slots (a goal block before revision 3) or the kinds."""
+    manifest does not name the place slots (a goal block before revision 3) or the kinds. From goal block revision 4 the
+    cell goal's target (goals.cells.target) is listed with the place targets: it conditions the policy as a place does."""
     goals = (stage or {}).get("goals") or {}
     kinds, slots = list(goals.get("kinds") or ()), goals.get("place_slots")
     if "travel_to" not in kinds or "fight" not in kinds or not slots:
         return None
     first, count = int(slots["first"]), int(slots["count"])
-    return kinds.index("travel_to"), kinds.index("fight"), list(range(first, first + count))
+    places = list(range(first, first + count))
+    cells = goals.get("cells")
+    if cells is not None and int(cells["target"]) not in places:
+        places.append(int(cells["target"]))
+    return kinds.index("travel_to"), kinds.index("fight"), places
 
 
-def _reseed_goals(actor: dict, critic: dict, fresh: dict, stage: dict | None, old_stage: dict | None) -> list[str]:
+def _reseed_goals(actor: dict, critic: dict, fresh: dict, stage: dict | None, old_stage: dict | None,
+                  old_actor: dict | None = None) -> list[str]:
     """After _seed_shared, when the goal block's revision differs between the checkpoint's stage and this one (M2's
     room goals, revision 2 -> 3): the goal head and the slow loop start fresh (`fresh`: the new networks' own initial
     values) -- the checkpoint's head chose among the old block's offers and may have collapsed on one of them (the
     reseeded M2 sat on Fight about no one at zero entropy) -- and the embeddings are kept, with the Fight/none entries
     warm-copied into travel_to and the place targets where those are untrained, so a goal that names a place conditions
     the policy as the goal it used to hold did. Returns what happened, for the log; nothing when the revisions agree
-    (every other stage, every same-revision seed), which then behaves exactly as before."""
+    (every other stage, every same-revision seed), which then behaves exactly as before.
+
+    **Revision 3 -> 4** (free-choice-goals, cell goals) is the exception: the goal head and the slow loop are KEPT -- in
+    cell mode the joints on offer are the cell goal and the placeholder, so a head that chose among room slots cannot
+    do harm, and the slow GRU and value carry what M2 learned -- the slow loop copied from the checkpoint (a seed does not
+    carry it otherwise: it is not in SHARED_PREFIXES), the head's cell parameters (goal_head.cell.*, absent from it) left
+    as initialised with the score at zero, and the embeddings warm-copied for the cell goal's target as for a place."""
     old_revision, new_revision = _block_revision(old_stage, GOAL_BLOCK), _block_revision(stage, GOAL_BLOCK)
     if old_revision is None or new_revision is None or old_revision == new_revision:
         return []
-    reset = [key for key in fresh if key.startswith(GOAL_RESET_PREFIXES)]
-    for key in reset:
-        actor[key].copy_(fresh[key])
-    lines = [f"goal block revision {old_revision} -> {new_revision}: the goal head and the slow loop start fresh "
-             f"({len(reset)} tensors: {', '.join(sorted({k.split('.')[0] for k in reset}))}); their optimiser too; "
-             f"the goal embeddings are kept"]
+    if (old_revision, new_revision) == (3, 4):
+        slow = [key for key in actor if key.startswith(("slow_memory.", "slow_value."))]
+        carried = [key for key in slow if old_actor is not None and key in old_actor
+                   and old_actor[key].shape == actor[key].shape]
+        for key in carried:
+            actor[key].copy_(old_actor[key])
+        lines = [f"goal block revision 3 -> 4: the goal head and the slow loop are kept ({len(carried)} of {len(slow)} "
+                 f"slow-loop tensors carried from the checkpoint; the head came with the shared weights)",
+                 "  fresh: goal_head.cell.* (the cell pointer; its score and chain start at zero: a uniform draw over "
+                 "the choosable blocks), the new goal block columns (goal_held2_*, goal_next_*, goal_plan_left, "
+                 "goal_from_*: adapter weights at zero)"]
+    else:
+        reset = [key for key in fresh if key.startswith(GOAL_RESET_PREFIXES)]
+        for key in reset:
+            actor[key].copy_(fresh[key])
+        lines = [f"goal block revision {old_revision} -> {new_revision}: the goal head and the slow loop start fresh "
+                 f"({len(reset)} tensors: {', '.join(sorted({k.split('.')[0] for k in reset}))}); their optimiser too; "
+                 f"the goal embeddings are kept"]
     ids = _goal_ids(stage)
     if ids is None:
         lines.append("  no place slots in this stage's goals: no embedding warm-copied")
@@ -495,8 +519,8 @@ def _reseed_goals(actor: dict, critic: dict, fresh: dict, stage: dict | None, ol
                 if source < table.shape[0] and destination < table.shape[0] and not bool(table[destination].any()):
                     table[destination].copy_(table[source])
                     copied += 1
-    lines.append(f"  goal embeddings: Fight/none warm-copied into travel_to and place targets {places[0]}.."
-                 f"{places[-1]} ({copied} untrained rows, actor and critic)")
+    lines.append(f"  goal embeddings: Fight/none warm-copied into travel_to and the place/cell targets "
+                 f"{', '.join(str(place) for place in places)} ({copied} untrained rows, actor and critic)")
     return lines
 
 
@@ -692,7 +716,7 @@ def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, ove
         fresh_goals = {key: tensor.clone() for key, tensor in actor.items() if key.startswith(GOAL_RESET_PREFIXES)}
         _seed_shared(actor, old["actor"])
         _seed_shared(critic, old["critic"])
-        for line in _reseed_goals(actor, critic, fresh_goals, stage, old_stage):
+        for line in _reseed_goals(actor, critic, fresh_goals, stage, old_stage, old["actor"]):
             print(f"  {line}" if not line.startswith(" ") else line, flush=True)
         vision = _seed_vision(actor, old["actor"], stage, old_stage)
         _seed_vision(critic, old["critic"], stage, old_stage)

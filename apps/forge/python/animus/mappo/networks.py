@@ -396,6 +396,125 @@ def _carry_sequence(cell: nn.GRUCell, size: int, encoded: torch.Tensor, memory: 
     return padded[to_device(piece_of, device), to_device(position_of, device)]
 
 
+#: **The cell pointer** (free-choice-goals, stage.json goals.cells): a goal over the mental map's crop. The crop (48 x 48
+#: cells of 2 yd, heading-up) is pooled CELL_POOL x CELL_POOL into a grid of CELL_GRID x CELL_GRID blocks; the head scores
+#: every block and the draw is a block index. These are the contract's defaults; the manifest's values are what a run
+#: uses (GoalHead.set_space).
+CELL_GRID = 24
+CELL_POOL = 2
+CELL_FEATURES = 18
+CELL_HIDDEN = 32
+CELL_CHAIN_HIDDEN = 16
+#: A block is choosable when it has at least this many floor-like cells, all within CELL_RISE_UNITS (4 yd) of the feet.
+CELL_MIN_FLOOR = 2
+CELL_RISE_UNITS = 16
+#: The block offsets are scaled by this (the grid of the contract's pool 2).
+CELL_OFFSET_SCALE = 24.0
+#: A cell word is (ticket << CELL_BITS) | (cell + 1); tickets are 1..2^TICKET_BITS - 1.
+CELL_BITS = 12
+TICKET_BITS = 11
+TICKET_COUNT = (1 << TICKET_BITS) - 1
+
+
+def _block_sum(x: torch.Tensor, grid: int, pool: int) -> torch.Tensor:
+    """[N, side, side] -> [N, grid, grid]: the sum over each pool x pool block."""
+    return x.reshape(x.shape[0], grid, pool, grid, pool).sum(dim=(2, 4))
+
+
+def cell_valid(crops: torch.Tensor, grid: int = CELL_GRID, pool: int = CELL_POOL, rise: int = CELL_RISE_UNITS,
+               min_floor: int = CELL_MIN_FLOOR) -> torch.Tensor:
+    """Which pooled blocks of the mental map's crop a cell goal may name, bool [N, grid * grid] (row-major, block (r, c)
+    at r * grid + c) from the crop bytes [N, side x side x 6] (or [N, side, side, 6]) alone -- the contract's one
+    definition (free-choice-goals CONTRACT 1.3), which the sim's CellGrid::Choosable implements too: no cell of the block
+    is a Wall or a Hazard; at least `min_floor` are floor-like (Floor or Door); and every floor-like cell has a known
+    height within `rise` units (4 yd) of the feet's. An unknown cell is not floor. A pure function of the bytes, with no
+    branch on data: the rollout graph captures it."""
+    side = grid * pool
+    cells = crops.reshape(-1, side, side, MAP_CHANNELS)
+    code = cells[..., MAP_CODE]
+    height = cells[..., MAP_HEIGHT].to(torch.int16)
+    like = (code == MAP_FLOOR) | (code == MAP_DOOR)
+    barred = (code == MAP_WALL) | (code == MAP_HAZARD)
+    off = like & ((height == 0) | ((height - MAP_HEIGHT_ZERO).abs() > rise))
+    count = lambda mask: _block_sum(mask.to(torch.int32), grid, pool)
+    return (count(barred) == 0) & (count(off) == 0) & (count(like) >= min_floor)
+
+
+def cell_features(crops: torch.Tensor, grid: int = CELL_GRID, pool: int = CELL_POOL, rise: int = CELL_RISE_UNITS,
+                  min_floor: int = CELL_MIN_FLOOR) -> tuple[torch.Tensor, torch.Tensor]:
+    """The cell pointer's inputs from the crop bytes [N, side x side x 6]: (features [N, grid * grid, CELL_FEATURES],
+    choosable bool [N, grid * grid]). Per block, over its pool x pool cells: the shares of Floor, Door, Wall, Hazard and
+    Unknown; the share visited and the share on the frontier; whether any cell holds an entity; the age of the newest
+    look at any seen cell (b / 255) and whether none was seen; the mean floor height over the feet ((b - 128) / 16,
+    clamped to [-1, 1]); the 3 x 3 average over neighbouring blocks of the floor, wall, unknown and frontier shares; and
+    the block's centre as forward, right and distance in the crop's yards over 48. All from the crop, which is the
+    mental map's own (never the navmesh)."""
+    side = grid * pool
+    cells = crops.reshape(-1, side, side, MAP_CHANNELS)
+    n = cells.shape[0]
+    code = cells[..., MAP_CODE]
+    height = cells[..., MAP_HEIGHT].to(torch.int16)
+    area = float(pool * pool)
+    share = lambda mask: _block_sum(mask.to(torch.float32), grid, pool) / area
+    floor, door = share(code == MAP_FLOOR), share(code == MAP_DOOR)
+    wall, hazard = share(code == MAP_WALL), share(code == MAP_HAZARD)
+    unknown = share(code == 0)
+    visited = share(cells[..., MAP_VISITED] != 0)
+    frontier = share(cells[..., MAP_FRONTIER] != 0)
+    entity = (_block_sum(((cells[..., MAP_CLASS] & CLASS_MASK) != 0).to(torch.float32), grid, pool) > 0).to(
+        torch.float32)
+    seen = code != 0
+    age = torch.where(seen, cells[..., MAP_AGE], torch.full_like(cells[..., MAP_AGE], 255)).to(torch.float32)
+    newest = age.reshape(n, grid, pool, grid, pool).amin(dim=(2, 4)) / 255.0
+    never = (_block_sum(seen.to(torch.float32), grid, pool) == 0).to(torch.float32)
+    like = (code == MAP_FLOOR) | (code == MAP_DOOR)
+    rise_over = ((height - MAP_HEIGHT_ZERO).to(torch.float32) / float(rise)) * like.to(torch.float32)
+    like_count = _block_sum(like.to(torch.float32), grid, pool)
+    mean_height = (_block_sum(rise_over, grid, pool) / like_count.clamp(min=1.0)).clamp(-1.0, 1.0)
+    around = nn.functional.avg_pool2d(torch.stack([floor, wall, unknown, frontier], dim=1), 3, stride=1, padding=1,
+                                      count_include_pad=False)
+    forward, right, distance = cell_geometry(grid, pool, cells.device)
+    geometry = torch.stack([forward, right, distance], dim=0)[None].expand(n, -1, -1, -1)
+    features = torch.cat([torch.stack([floor, door, wall, hazard, unknown, visited, frontier, entity, newest, never,
+                                       mean_height], dim=1), around, geometry], dim=1)
+    return features.reshape(n, CELL_FEATURES, grid * grid).transpose(1, 2), cell_valid(crops, grid, pool, rise,
+                                                                                               min_floor)
+
+
+def cell_geometry(grid: int, pool: int, device) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Each block's centre from the body in yards (the crop's cells are 2 yd, heading-up, row 0 furthest ahead),
+    [grid, grid] each: forward = side - pool * (2r + 1) and right = pool * (2c + 1) - side, over 48, and the distance
+    over 48. For pool 2 on a 48-cell crop: forward = 46 - 4r, right = 4c - 46."""
+    side = grid * pool
+    rows = torch.arange(grid, device=device, dtype=torch.float32)
+    forward = (side - pool * (2.0 * rows + 1.0)) / 48.0
+    right = (pool * (2.0 * rows + 1.0) - side) / 48.0
+    forward = forward[:, None].expand(grid, grid)
+    right = right[None, :].expand(grid, grid)
+    return forward, right, torch.sqrt(forward * forward + right * right)
+
+
+class CellPointer(nn.Module):
+    """The cell pointer's parameters (GoalHead.cell, `goal_head.cell.*` in a checkpoint): a block's own features
+    (`local`, CELL_FEATURES -> CELL_HIDDEN, SiLU in the head), the slot's query (`query`, the head's feature width ->
+    CELL_HIDDEN), the score (`score`, CELL_HIDDEN -> 1) and the chain feature (`chain`, the block's offset from the
+    previous plan cell -> a score). The score and the chain's last layer start at zero: a fresh head draws uniformly over
+    the choosable blocks."""
+
+    def __init__(self, width: int):
+        super().__init__()
+        self.local = _linear(CELL_FEATURES, CELL_HIDDEN, math.sqrt(2))
+        self.query = _linear(width, CELL_HIDDEN, 1.0)
+        self.score = nn.Linear(CELL_HIDDEN, 1)
+        nn.init.zeros_(self.score.weight)
+        nn.init.zeros_(self.score.bias)
+        self.chain = nn.Sequential(nn.Linear(3, CELL_CHAIN_HIDDEN), nn.Tanh(), nn.Linear(CELL_CHAIN_HIDDEN, 1))
+        nn.init.orthogonal_(self.chain[0].weight, gain=1.0)
+        nn.init.zeros_(self.chain[0].bias)
+        nn.init.zeros_(self.chain[2].weight)
+        nn.init.zeros_(self.chain[2].bias)
+
+
 class GoalHead(nn.Module):
     """**Goals as a kind and a target** (long-horizon plan, Component C): a goal is kind * targets + target, one
     number on the wire and in the buffers. Its logits are the kind's, plus the target's, plus a learned table of the
@@ -454,6 +573,20 @@ class GoalHead(nn.Module):
         # same way where it is loaded without a stage (evaluate, export); the host copy is for the captured graphs.
         self.register_buffer("place_spec", torch.full((4,), -1, dtype=torch.long))
         self.place_at, self.place_first, self.place_count = -1, -1, 0
+        # **The pointer over the map's cells** (free-choice-goals): a goal that is a block of the mental map's crop, scored
+        # by `cell` (CellPointer) -- parameters of every goal head with targets, unused (and at zero) where the stage has
+        # no cells. Where the crop sits is cell_spec, as four numbers: the byte the crop starts at in a row's image
+        # bytes (after the camera's pixels), the grid, the pool and the joint goal id of a cell goal; -1 throughout for
+        # no cell head (a manifest before goal block revision 4). A buffer, like place_spec; the host copy is for the
+        # captured graphs.
+        self.cell = CellPointer(width) if self.targets > 1 else None
+        self.register_buffer("cell_spec", torch.full((4,), -1, dtype=torch.long))
+        # The weight of the cell's entropy in the head's (MappoConfig.goal_cell_entropy_weight).
+        self.cell_entropy_weight = 0.3
+        self.cell_at, self.cell_grid, self.cell_pool, self.cell_joint = -1, CELL_GRID, CELL_POOL, -1
+        self.cell_rise, self.cell_min_floor = CELL_RISE_UNITS, CELL_MIN_FLOOR
+        # The goal block's column (from the block's start) of goal_from_present, -1 without: the planner's hindsight.
+        self.cell_from = -1
 
     @property
     def count(self) -> int:
@@ -464,6 +597,7 @@ class GoalHead(nn.Module):
         # A loaded goal space (a checkpoint's block positions) says itself whether there is one.
         self.has_space = bool((self.block_at >= 0).any())
         self._mirror_place_spec()
+        self._mirror_cell_spec()
 
     @property
     def block_width(self) -> int:
@@ -480,11 +614,14 @@ class GoalHead(nn.Module):
         return {"secondary_ended": base, "event": base + 1, "achieved_kind": base + 2,
                 "achieved_target": base + 2 + self.kinds}
 
-    def set_space(self, accepts, block_at, goals: dict | None = None) -> str:
+    def set_space(self, accepts, block_at, goals: dict | None = None, image_offset: int = -1,
+                  map_side: int = 0) -> str:
         """The goal space the sim wrote (stage.json "goals"): accepts [kinds][targets], and per layout the goal
         block's first observation column (-1 without one). `goals` is the manifest's "goals" object, which says where
-        the place slots' features sit (columns.place_features, place_slots); without them (goal block revision 2) the
-        pointer is off. Returns a line about the pointer for the log."""
+        the place slots' features sit (columns.place_features, place_slots) and, from goal block revision 4, the cell
+        goals (cells); without them the pointer, or the cell head, is off. `image_offset` is the byte the mental map's
+        crop starts at in a row's image bytes (the camera's pixels before it; -1 without a map) and `map_side` the
+        crop's cells a side. Returns a line about the pointers for the log."""
         self.accepts.copy_(torch.as_tensor(accepts, dtype=torch.bool, device=self.accepts.device))
         self.block_at.copy_(torch.as_tensor(block_at, dtype=torch.long, device=self.block_at.device))
         # Kept on the host: a rollout graph cannot read the device while it is captured.
@@ -492,7 +629,63 @@ class GoalHead(nn.Module):
         spec, note = self._place_spec_of(goals)
         self.place_spec.copy_(torch.as_tensor(spec, dtype=torch.long, device=self.place_spec.device))
         self._mirror_place_spec()
-        return note
+        cell_spec, cell_note = self._cell_spec_of(goals, image_offset, map_side)
+        self.cell_spec.copy_(torch.as_tensor(cell_spec, dtype=torch.long, device=self.cell_spec.device))
+        self._mirror_cell_spec()
+        return f"{note}; {cell_note}"
+
+    def _cell_spec_of(self, goals: dict | None, image_offset: int, map_side: int) -> tuple[list[int], str]:
+        """The cell head's cell_spec from a manifest's "goals" (see __init__) and a line saying what it found. Sets the
+        host constants the block features and the validity rule read (rise, floor cells, the hindsight column). Refused:
+        a manifest whose cell constants this learner does not implement (codes, channels, field widths)."""
+        off = [-1, -1, -1, -1]
+        self.cell_rise, self.cell_min_floor, self.cell_from = CELL_RISE_UNITS, CELL_MIN_FLOOR, -1
+        cells = (goals or {}).get("cells")
+        if cells is None:
+            return off, "no goals.cells in the manifest (goal block before revision 4): no cell head"
+        if self.cell is None or self.slots <= 1:
+            return off, "goals.cells in the manifest, but the goal head has one slot or no targets: no cell head"
+        if image_offset < 0 or map_side <= 0:
+            return off, "goals.cells in the manifest, but the stage's layouts have no mental map: no cell head"
+        grid, pool, crop = int(cells["grid"]), int(cells["pool"]), int(cells["crop"])
+        joint, target = int(cells["joint"]), int(cells["target"])
+        if crop != grid * pool or crop != map_side:
+            raise ValueError(f"goals.cells: a {grid} x {grid} grid of pool {pool} is not the {crop}-cell crop, or the "
+                             f"map's crop is {map_side} cells a side")
+        if int(cells.get("channels", MAP_CHANNELS)) != MAP_CHANNELS or \
+                (int(cells["code_channel"]), int(cells["height_channel"])) != (MAP_CODE, MAP_HEIGHT) or \
+                (int(cells["floor_code"]), int(cells["wall_code"]), int(cells["door_code"]),
+                 int(cells["hazard_code"])) != (MAP_FLOOR, MAP_WALL, MAP_DOOR, MAP_HAZARD) or \
+                int(cells["height_zero"]) != MAP_HEIGHT_ZERO:
+            raise ValueError(f"goals.cells describes a crop this learner does not decode: {cells}")
+        if int(cells["ticket_bits"]) != TICKET_BITS or int(cells["cell_bits"]) != CELL_BITS \
+                or int(cells["positions"]) != 4 or grid * grid >= (1 << CELL_BITS):
+            raise ValueError(f"goals.cells: cell words of {cells['ticket_bits']} + {cells['cell_bits']} bits over "
+                             f"{cells['positions']} positions, this learner writes {TICKET_BITS} + {CELL_BITS} over 4")
+        if not 0 <= joint < self.count or joint % self.targets != target or not 0 <= target < self.targets:
+            raise ValueError(f"goals.cells: joint {joint} / target {target} is not in the {self.kinds} x "
+                             f"{self.targets} goal space")
+        self.cell_rise = int(cells.get("rise_units", CELL_RISE_UNITS))
+        self.cell_min_floor = int(cells.get("min_floor_cells", CELL_MIN_FLOOR))
+        columns = (goals or {}).get("columns") or {}
+        width = int(columns.get("width", 0))
+        if "from" in columns and int(columns["from"]) + 3 <= width:
+            self.cell_from = int(columns["from"])
+        return ([int(image_offset), grid, pool, joint],
+                f"cell head over {grid} x {grid} blocks (pool {pool}) of the map crop at image byte {image_offset}, "
+                f"cell goals are joint {joint}, source {cells.get('source', '?')}"
+                + ("" if self.cell_from >= 0 else "; no goals.columns.from: no planner hindsight"))
+
+    def _mirror_cell_spec(self) -> None:
+        """The host copy of cell_spec (a rollout graph cannot read the device while it is captured)."""
+        at, grid, pool, joint = (int(v) for v in self.cell_spec.tolist())
+        on = self.cell is not None and at >= 0 and joint >= 0 and grid > 0 and pool > 0
+        self.cell_at, self.cell_grid, self.cell_pool, self.cell_joint = (at, grid, pool, joint) if on \
+            else (-1, CELL_GRID, CELL_POOL, -1)
+
+    @property
+    def cell_on(self) -> bool:
+        return self.cell_joint >= 0 and self.slots > 1
 
     def _place_spec_of(self, goals: dict | None) -> tuple[list[int], str]:
         """The pointer's place_spec from a manifest's "goals" (see __init__) and a line saying what it found."""
@@ -587,16 +780,25 @@ class GoalHead(nn.Module):
                                       torch.full_like(achieved_target, -1))
         return out
 
+    def _shifted(self, features: torch.Tensor, slot: int, drawn: list[torch.Tensor]) -> torch.Tensor:
+        """The vector a slot after the primary scores from: the features plus the slot's bias and the embedding of
+        each goal drawn before it."""
+        shifted = features + self.slot_bias[slot - 1].to(features.dtype)
+        for goal in drawn:
+            shifted = shifted + self.drawn(goal.long() + 1).to(features.dtype)
+        return shifted
+
     def slot_logits(self, features: torch.Tensor, slot: int, drawn: list[torch.Tensor],
-                    obs: torch.Tensor | None = None, layout: torch.Tensor | None = None) -> torch.Tensor:
+                    obs: torch.Tensor | None = None, layout: torch.Tensor | None = None,
+                    cell_ok: torch.Tensor | None = None) -> torch.Tensor:
         """Masked logits [rows, count + 1] of a slot after the primary, the last column being none: the shared
         parameters over the features plus the slot's bias and the embedding of what was drawn before it. The
         secondary and the queue are masked by what the goal block says is there, as the primary is: a queued goal
         about something absent was a draw from hundreds of goals that could never be pursued, and its entropy kept
-        the whole head near uniform (next-run trial, 2026-09-30)."""
-        shifted = features + self.slot_bias[slot - 1].to(features.dtype)
-        for goal in drawn:
-            shifted = shifted + self.drawn(goal.long() + 1).to(features.dtype)
+        the whole head near uniform (next-run trial, 2026-09-30). `cell_ok` [rows] (with a cell head): whether a block
+        is left for a cell goal after the cells drawn before this slot (the draw's own de-duplication); the cell goal
+        is withdrawn where none is, so a plan never holds a cell the sim would find invalid."""
+        shifted = self._shifted(features, slot, drawn)
         joint = self.kind(shifted)[:, :, None] + self.pair[None].to(features.dtype)
         if self.target is not None:
             joint = joint + self.target(shifted)[:, None, :]
@@ -607,12 +809,18 @@ class GoalHead(nn.Module):
             present = block[:, : self.kinds, None] & block[:, self.kinds : self.kinds + self.targets][:, None, :]
             allowed = torch.where(has[:, None, None], allowed & present, allowed)
         allowed = allowed.reshape(features.shape[0], -1)
+        goals = torch.arange(allowed.shape[-1], device=allowed.device)[None, :]
         if slot >= 2:
             # A queued goal is not one already drawn at this choice (the primary, the secondary, the queue so far): a
-            # repeat of the primary ended lost on promotion, and a repeat in the queue was a wasted place.
-            goals = torch.arange(allowed.shape[-1], device=allowed.device)[None, :]
+            # repeat of the primary ended lost on promotion, and a repeat in the queue was a wasted place. Not the cell
+            # goal, which every cell shares (the cells' own de-duplication is the draw's, by block).
             for goal in drawn:
-                allowed = allowed & ~((goal.long()[:, None] == goals) & (goal[:, None] >= 0))
+                repeat = (goal.long()[:, None] == goals) & (goal[:, None] >= 0)
+                if self.cell_joint >= 0:
+                    repeat = repeat & (goals != self.cell_joint)
+                allowed = allowed & ~repeat
+        if cell_ok is not None and self.cell_joint >= 0:
+            allowed = allowed & ~((goals == self.cell_joint) & ~cell_ok[:, None])
         none = self.none_bias[slot - 1].to(features.dtype).expand(features.shape[0], 1)
         logits = torch.cat([masked_logits(joint.reshape(features.shape[0], -1), allowed), none], dim=-1)
         # A row whose layout has no goal block has only none.
@@ -623,11 +831,61 @@ class GoalHead(nn.Module):
             logits = torch.where(has[:, None], logits, logits.masked_fill(~only_none, MASKED_LOGIT))
         return logits
 
+    def cell_inputs(self, image: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """What every slot's cell scores share, once per row, from the image bytes [rows, I] (the camera's pixels, then
+        the mental map's crop): (the blocks' hidden features [rows, B, CELL_HIDDEN], the choosable mask [rows, B]),
+        B = grid x grid."""
+        side = self.cell_grid * self.cell_pool
+        crops = image.reshape(image.shape[0], -1)[:, self.cell_at:self.cell_at + side * side * MAP_CHANNELS]
+        x, valid = cell_features(crops, self.cell_grid, self.cell_pool, self.cell_rise, self.cell_min_floor)
+        weight = self.cell.local.weight
+        return nn.functional.silu(self.cell.local(x.to(weight.dtype))), valid
+
+    def cell_scores(self, hidden: torch.Tensor, shifted: torch.Tensor, prev_row: torch.Tensor,
+                    prev_col: torch.Tensor) -> torch.Tensor:
+        """A slot's score per block [rows, B]: the score of tanh(the block's hidden features + the slot's query), plus
+        the chain feature -- the block's offset (rows, columns, distance, over CELL_OFFSET_SCALE blocks) from the
+        previous cell of the plan, `prev_row`, `prev_col` [rows] floats (the seat's own block at the start)."""
+        weight = self.cell.query.weight
+        query = self.cell.query(shifted.to(weight.dtype))
+        score = self.cell.score(torch.tanh(hidden + query[:, None, :])).squeeze(-1)
+        grid = self.cell_grid
+        index = torch.arange(grid * grid, device=hidden.device)
+        rows = torch.div(index, grid, rounding_mode="floor").to(hidden.dtype)
+        columns = (index % grid).to(hidden.dtype)
+        d_row = (rows[None, :] - prev_row[:, None].to(hidden.dtype)) / CELL_OFFSET_SCALE
+        d_col = (columns[None, :] - prev_col[:, None].to(hidden.dtype)) / CELL_OFFSET_SCALE
+        offset = torch.stack([d_row, d_col, torch.sqrt(d_row * d_row + d_col * d_col)], dim=-1)
+        return score + self.cell.chain(offset).squeeze(-1)
+
+    def cell_primary(self, features: torch.Tensor, image: torch.Tensor, block: torch.Tensor):
+        """The primary slot's cell distribution scored again (the planner's hindsight and the update's statistics):
+        (log probability of `block` [rows], whether that block is choosable, the distribution's entropy, whether any
+        block is choosable). The slot is the first, so it scores from `features` as it was drawn, from the seat's own
+        block, with every choosable block allowed."""
+        hidden, valid = self.cell_inputs(image)
+        seat = torch.full((features.shape[0],), (self.cell_grid - 1) / 2.0, dtype=hidden.dtype, device=hidden.device)
+        logits = masked_logits(self.cell_scores(hidden, features, seat, seat).to(features.dtype), valid)
+        block = block.long().clamp(0, valid.shape[-1] - 1)
+        return (log_prob_of(logits, block), valid.gather(1, block[:, None])[:, 0], _entropy(logits),
+                valid.any(dim=-1))
+
     def draw(self, features: torch.Tensor, obs: torch.Tensor, layout: torch.Tensor, deterministic: bool,
-             slots: torch.Tensor | None = None, uniform: bool = False):
-        """The slots drawn at a choice, or scored when `slots` [rows, S] is given: (slots [rows, S] with -1 for
-        none, log probability, entropy). `uniform` (the eval arm random_goal): the primary is drawn uniformly over
-        the goals on offer and nothing is held beside it or queued."""
+             slots: torch.Tensor | None = None, uniform: bool = False, cells: torch.Tensor | None = None,
+             image: torch.Tensor | None = None, uniform_cells: bool = False, single: bool = False):
+        """The slots drawn at a choice, or scored when `slots` [rows, S] (and `cells`) is given: (slots [rows, S] with -1
+        for none, log probability, entropy, cells [rows, S] -- the block each slot named, -1 where its goal is not the
+        cell goal). `uniform` (the eval arm random_goal): the primary is drawn uniformly over the goals on offer and the
+        cell uniformly over the choosable blocks, and nothing is held beside it or queued. `uniform_cells`
+        (random_cell): the cells are drawn uniformly, the goals from the head. `single` (no_plan): nothing is held
+        beside the primary or queued, the primary from the head.
+
+        With a cell head (and the image bytes): a slot whose goal is the cell goal also draws a block, from the blocks
+        the crop says are choosable (cell_valid) less every block within one of a cell drawn before it in this choice,
+        scored by the slot's query and by the offset from the previous cell of the plan (CellPointer); the joint and the
+        block both count in the log probability, and the block in the entropy as `cell_entropy_weight` times its
+        entropy where the cell goal is drawn."""
+        cell_on = self.cell_on and image is not None
         primary_logits = self.logits(features, obs, layout)
         if uniform:
             primary_logits = uniform_logits(primary_logits)
@@ -640,9 +898,60 @@ class GoalHead(nn.Module):
         entropy = _entropy(primary_logits)
         drawn, out = [primary], [primary]
         none = self.count
+        rows = features.shape[0]
+        out_cells = [torch.full_like(primary, -1)]
+
+        if cell_on:
+            hidden, valid = self.cell_inputs(image)
+            grid = self.cell_grid
+            index = torch.arange(grid * grid, device=features.device)
+            block_row, block_col = torch.div(index, grid, rounding_mode="floor"), index % grid
+            seat = (grid - 1) / 2.0
+            previous = [torch.full((rows,), seat, dtype=features.dtype, device=features.device),
+                        torch.full((rows,), seat, dtype=features.dtype, device=features.device)]
+            earlier: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
+
+            def allowed_blocks() -> torch.Tensor:
+                allowed = valid
+                for row, column, is_cell in earlier:
+                    near = ((block_row[None, :] - row[:, None]).abs() <= 1) \
+                        & ((block_col[None, :] - column[:, None]).abs() <= 1) & is_cell[:, None]
+                    allowed = allowed & ~near
+                return allowed
+
+            def draw_cell(shifted: torch.Tensor, allowed: torch.Tensor, goal: torch.Tensor, slot: int):
+                """(the block a cell goal names, -1 for another goal; its log probability; its entropy)."""
+                logits = masked_logits(self.cell_scores(hidden, shifted, previous[0], previous[1]).to(features.dtype),
+                                       allowed)
+                if uniform or uniform_cells:
+                    logits = uniform_logits(logits)
+                if cells is None:
+                    block, lp = sample_logits(logits, deterministic)
+                else:
+                    block = cells[:, slot].clamp(min=0)
+                    lp = log_prob_of(logits, block)
+                is_cell = goal == self.cell_joint
+                row = torch.div(block, grid, rounding_mode="floor")
+                column = block - row * grid
+                earlier.append((row, column, is_cell))
+                previous[0] = torch.where(is_cell, row.to(features.dtype), previous[0])
+                previous[1] = torch.where(is_cell, column.to(features.dtype), previous[1])
+                return (torch.where(is_cell, block, torch.full_like(block, -1)),
+                        torch.where(is_cell, lp, torch.zeros_like(lp)), _entropy(logits))
+
+            block, lp, cell_entropy = draw_cell(features, allowed_blocks(), primary, 0)
+            out_cells[0] = block
+            log_prob = log_prob + lp
+            share = torch.softmax(primary_logits, dim=-1)[:, self.cell_joint]
+            entropy = entropy + share * self.cell_entropy_weight * cell_entropy
+
         for slot in range(1, self.slots):
-            logits = self.slot_logits(features, slot, drawn, obs, layout)
-            if uniform:
+            if cell_on:
+                allowed = allowed_blocks()
+                logits = self.slot_logits(features, slot, drawn, obs, layout, allowed.any(dim=-1))
+            else:
+                logits = self.slot_logits(features, slot, drawn, obs, layout)
+            if uniform or single:
                 logits = none_only_logits(logits)
             if slots is None:
                 choice, lp = sample_logits(logits, deterministic)
@@ -652,11 +961,20 @@ class GoalHead(nn.Module):
             log_prob = log_prob + lp
             # The primary is the plan; the rest beside it are weighed at slot_entropy_weight, so the entropy bonus
             # does not grow with the number of slots and keep the primary near uniform.
-            entropy = entropy + self.slot_entropy_weight * _entropy(logits)
+            slot_entropy = _entropy(logits)
             goal = torch.where(choice == none, torch.full_like(choice, -1), choice)
+            if cell_on:
+                block, lp_cell, cell_entropy = draw_cell(self._shifted(features, slot, drawn), allowed, goal, slot)
+                out_cells.append(block)
+                log_prob = log_prob + lp_cell
+                slot_entropy = slot_entropy + torch.softmax(logits, dim=-1)[:, self.cell_joint] \
+                    * self.cell_entropy_weight * cell_entropy
+            else:
+                out_cells.append(torch.full_like(goal, -1))
+            entropy = entropy + self.slot_entropy_weight * slot_entropy
             drawn.append(goal)
             out.append(goal)
-        return torch.stack(out, dim=-1), log_prob, entropy
+        return torch.stack(out, dim=-1), log_prob, entropy, torch.stack(out_cells, dim=-1)
 
     def predictions(self, features: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """The lookahead: per candidate goal [rows, kinds * targets], the logit of reaching it and the share of a
@@ -772,6 +1090,7 @@ MAP_CHANNELS = 6
 MAP_CODES = 5
 MAP_CODE, MAP_HEIGHT, MAP_VISITED, MAP_AGE, MAP_CLASS, MAP_FRONTIER = range(MAP_CHANNELS)
 MAP_HEIGHT_ZERO = 128
+MAP_FLOOR, MAP_WALL, MAP_DOOR, MAP_HAZARD = 1, 2, 3, 4      # the crop codes (Vision::MapCode; 0 unknown)
 
 
 def _map_of(entry: dict, name: str) -> dict | None:
@@ -1787,7 +2106,10 @@ _GOAL_SCALE_KEYS = ("goal_embedding.kind_scale.weight", "goal_embedding.target_s
 #: The goal head's pointer over place slots (GoalHead.pointer, m2-goals W3a) and where its features sit
 #: (GoalHead.place_spec): an actor saved before them loads with the pointer as initialised -- its last layer at zero, so
 #: it adds nothing -- and no place slots until the stage's manifest says (MappoTrainer.set_goal_space).
-_GOAL_POINTER_PREFIXES = ("goal_head.pointer.", "goal_head.place_spec")
+#: The same for the cell head (GoalHead.cell, free-choice-goals): an actor or critic saved before it loads with
+#: goal_head.cell.* as initialised (the score at zero: a uniform draw over the choosable blocks) and no cells until the
+#: manifest says (cell_spec).
+_GOAL_POINTER_PREFIXES = ("goal_head.pointer.", "goal_head.place_spec", "goal_head.cell.", "goal_head.cell_spec")
 
 
 #: The blind-column masks' buffer names (attach_blind_columns' tags): "blind_keep_" (a checkpoint from before the hint
@@ -2055,7 +2377,9 @@ class LayoutActor(nn.Module):
 
     def decide_goals(self, features: torch.Tensor, obs: torch.Tensor, layout: torch.Tensor, held: torch.Tensor,
                      queue: torch.Tensor, clock: torch.Tensor, deterministic: bool,
-                     uniform: bool = False) -> dict[str, torch.Tensor]:
+                     uniform: bool = False, image: torch.Tensor | None = None, plan: torch.Tensor | None = None,
+                     serial: torch.Tensor | None = None, uniform_cells: bool = False,
+                     single: bool = False) -> dict[str, torch.Tensor]:
         """**The goal decision of one step** (next-run plan, Wave 4), the same in the rollout, its captured graph,
         the teachers and the module's runtime. Flat rows; `held` the goal (pair) held, `queue` [rows, S - 2] the goals
         waiting (-1 none), `clock` the goal clock's choices. In order:
@@ -2068,7 +2392,14 @@ class LayoutActor(nn.Module):
         Returns the pair held now (`goal`), the queue, which rows chose (`chosen`), their log probability (0 where
         none), the slots drawn [rows, S] (what the slow update scores) and the observed signals. `uniform`: draw the
         primary uniformly over the goals on offer (the eval arm random_goal), a host flag the training graph never
-        sets."""
+        sets; `uniform_cells` and `single` the eval arms random_cell and no_plan (GoalHead.draw).
+
+        **The plan of cells** (free-choice-goals, with the cell head and `image`, the rows' image bytes): `plan` [rows, 4]
+        are the cell words the seat holds at the four positions (0 none; ticket << CELL_BITS | block + 1) and `serial`
+        [rows] the choices it has made this episode. The words follow the goals as the goals move -- an ended secondary
+        loses its word, a promotion shifts the queue's up -- and a choice writes the words of the cells it drew, each
+        with a ticket of its own (the sim latches a cell once, at the ticket's first sight, in the frame of the
+        observation it was drawn from). Returned as `cells` [rows, S] (the blocks drawn, -1 none) and `plan`."""
         head = self.goal_head
         rows = features.shape[0]
         signals = head.signals(obs, layout)
@@ -2091,13 +2422,40 @@ class LayoutActor(nn.Module):
         queue = torch.where(promote[:, None], shifted, queue)
         chosen = clock | (signals["ended"] & ~promote) | signals["event"]
 
-        slots, log_prob, _ = head.draw(features, obs, layout, deterministic, uniform=uniform)
+        slots, log_prob, _, cells = head.draw(features, obs, layout, deterministic, uniform=uniform, image=image,
+                                              uniform_cells=uniform_cells, single=single)
         primary = torch.where(chosen, slots[:, 0], primary)
         secondary = torch.where(chosen, slots[:, 1], secondary)
         queue = torch.where(chosen[:, None], slots[:, 2:], queue)
-        secondary = torch.where(secondary == primary, torch.full_like(secondary, -1), secondary)
-        return {"goal": goal_pair(primary, secondary, head.count), "queue": queue, "chosen": chosen,
-                "log_prob": torch.where(chosen, log_prob, torch.zeros_like(log_prob)), "slots": slots, **signals}
+        # Two cell goals share a joint id (159) and differ by their cell: only another goal repeated is dropped.
+        secondary = torch.where((secondary == primary) & (primary != head.cell_joint),
+                                torch.full_like(secondary, -1), secondary)
+        out = {"goal": goal_pair(primary, secondary, head.count), "queue": queue, "chosen": chosen,
+               "log_prob": torch.where(chosen, log_prob, torch.zeros_like(log_prob)), "slots": slots, "cells": cells,
+               **signals}
+        if plan is not None and serial is not None and head.cell_on and image is not None:
+            out["plan"] = self._plan_words(plan, serial, cells, signals["secondary_ended"], promote, chosen)
+        return out
+
+    def _plan_words(self, plan: torch.Tensor, serial: torch.Tensor, cells: torch.Tensor,
+                    secondary_ended: torch.Tensor, promote: torch.Tensor, chosen: torch.Tensor) -> torch.Tensor:
+        """The cell words held at the four plan positions [rows, 4] after a decision (see decide_goals)."""
+        first, second, third, fourth = plan.unbind(dim=-1)
+        none = torch.zeros_like(first)
+        second = torch.where(secondary_ended, none, second)
+        first, third, fourth = (torch.where(promote, third, first), torch.where(promote, fourth, third),
+                                torch.where(promote, none, fourth))
+        held = torch.stack([first, second, third, fourth], dim=-1)
+        positions = min(cells.shape[-1], plan.shape[-1])
+        fresh = []
+        for position in range(plan.shape[-1]):
+            if position >= positions:
+                fresh.append(none)
+                continue
+            ticket = ((serial + 1) * plan.shape[-1] + position) % TICKET_COUNT + 1
+            block = cells[:, position]
+            fresh.append(torch.where(block >= 0, (ticket << CELL_BITS) | (block + 1), none))
+        return torch.where(chosen[:, None], torch.stack(fresh, dim=-1), held)
 
     def _forward(self, obs: torch.Tensor, layout: torch.Tensor, mask: torch.Tensor, groups=None,
                  memory: torch.Tensor | None = None, goal: torch.Tensor | None = None,

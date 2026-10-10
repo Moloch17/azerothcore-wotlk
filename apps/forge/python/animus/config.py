@@ -116,6 +116,9 @@ class EvalConfig:
     #     map block's columns and the mental map's crop zeroed, or the recurrent state (GRU memory, slow memory, held
     #     goal and queue) reset before every decision, the goal block's columns zeroed (no_goal), or the goals drawn
     #     uniformly over those on offer instead of by the head (random_goal). They change nothing in the sim.
+    #   random_cell, no_plan: the cell goals (free-choice-goals) with the cell drawn uniformly over the choosable
+    #     blocks, the goal from the head (random_cell: what the pointer is worth), or with nothing held beside the
+    #     primary or queued (no_plan: what the chain of cells is worth). Learner-side, like random_goal.
     arms: dict = field(default_factory=dict)
     arms_every: int = 1
     # The routes of every evaluation, kept: the learner's scored seats' raw kinematic tracks (x, y, z, yaw, ...) with
@@ -370,7 +373,7 @@ class DistillConfig:
 
 #: The evaluation arms beside the plain one ("all bots"): eval.arms names them (dungeon-curriculum I7).
 EVAL_ARMS = ("with_human", "with_partners", "no_flag", "no_camera", "no_compass", "no_map", "no_memory", "no_goal",
-             "random_goal")
+             "random_goal", "random_cell", "no_plan")
 
 
 @dataclass

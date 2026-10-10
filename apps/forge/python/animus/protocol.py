@@ -78,9 +78,6 @@ ACT_HEADER = struct.Struct("<II")
 #: section takes (protocol 28): the four joint goal ids, then the four cell words ((ticket << 12) | (cell + 1), 0 none).
 GOAL_SLOTS_ON_WIRE = 4
 GOAL_WIRE_INTS = 2 * GOAL_SLOTS_ON_WIRE
-#: A cell word's fields (stage.json goals.cells: ticket_bits, cell_bits).
-CELL_BITS = 12
-TICKET_BITS = 11
 # mode, seed base, episodes, flags, first seed, held-out arena (index + 1, 0 = the stage's own; 18), baseline policy
 MODE = struct.Struct(f"<IIIIII{POLICY_NAME_SIZE}s")
 # Flag value 1 (bit 0) is unused and reserved (it was SCRIPTED_OPPONENTS): STAND_IN keeps its wire value 2 (Protocol.h).
