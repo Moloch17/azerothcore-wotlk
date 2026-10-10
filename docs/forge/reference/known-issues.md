@@ -383,3 +383,9 @@ Charge and taxis still start splines).
   `found`-independent score comparisons with runs before 2026-10-10 shift by the seconds charged.
 - The reward audit (`rewards.py`) sees `explore` and `frontier_pull` as shaping; each is capped at 1.0 nominal, under
   its 0.5-of-`Arrive` limit of 1.5 only while `ExploreFloor` and the caps stay as they are.
+- `frontier_pull_reward` near 0 in an open corridor is expected, not a bug: the nearest frontier point recedes as the
+  seat walks (newly seen floor pushes it ahead), so each refresh lands in a fresh 10-yd cluster key (starting at the
+  current distance, paying nothing) or in the same key at a larger distance. `FrontierPull` pays where the frontier is
+  pinned (behind a door or a corner), which is the failure the evidence names; `Explore` pays the corridor.
+- `TrapPose` casts against the static tree (WMOs and M2s: `SurfaceHit::Distance` is yards along the segment, as the
+  camera's own use shows); the Stockades is all WMO, so the jamb is found; on a terrain map it would not be.
