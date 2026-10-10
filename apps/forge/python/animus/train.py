@@ -42,7 +42,7 @@ from .config import TrainConfig
 from .distill import Distiller, auto_teachers, build_teacher
 from .env import ClusterEnv, ForgeEnv
 from .evaluation import (ABLATIONS, ConvergenceTracker, EvalResult, ablation_chooser, action_mask_table,
-                         casting_weights, format_summary, run_evaluation)
+                         casting_weights, format_summary, run_evaluation, trace_columns, write_trace)
 from .mappo.buffer import RolloutBuffer
 from .mappo.trainer import (LOOK_COMMANDS, VISION_CHUNK_AUTO, VISION_CHUNK_FALLBACK, MappoTrainer, horizon_seconds,
                             per_decision, schedule)
@@ -429,13 +429,20 @@ def seed_everything(seed: int) -> None:
     torch.manual_seed(seed)
 
 
+#: The episode columns log_update reports apart for the greedy and the sampled training envs (train_greedy_<c>,
+#: train_sampled_<c>), where the stage has them; wall_pin_max_seconds also as the share of episodes over 10 s.
+GREEDY_SPLIT_COLUMNS = ("found", "timed_out", "wall_seconds", "stuck_seconds", "circling_seconds", "stale_seconds",
+                        "trap_escaped", "score_outcome")
+GREEDY_WALL_PIN_SECONDS = 10.0
+
+
 class DecisionRows:
     """One decision's inputs and choices, filled group by group (a half-batch half at a time) and handed to the
     rollout buffer whole."""
 
     FIELDS = ("obs", "state", "mask", "layout", "actions", "log_probs", "values", "present", "foresight", "memory",
               "goal", "goal_log_prob", "goal_chosen", "slow_before", "slow_value", "critic_memory",
-              "goal_slots", "goal_cells", "image", "look", "look_log_prob")
+              "goal_slots", "goal_cells", "image", "look", "look_log_prob", "greedy")
 
     #: A field store_inputs wrote into the rollout buffer itself.
     IN_BUFFER = object()
@@ -503,7 +510,7 @@ class DecisionRows:
                   a.get("goal_slots"), a.get("goal_cells")) if a.get("goal") is not None else None)
         return (a["obs"], a["state"], a["mask"], a["layout"], a["actions"], a["log_probs"], a["values"], a["present"],
                 a.get("foresight"), a.get("memory"), goals, a.get("critic_memory"), a.get("image"),
-                a.get("look"), a.get("look_log_prob"))
+                a.get("look"), a.get("look_log_prob"), a.get("greedy"))
 
 
 class RolloutOutcome:
@@ -713,6 +720,10 @@ class TrainingRun:
         self.arena_names = tuple(arena["name"] for arena in (self.stage or {}).get("arenas", ()))
         self.heldout = heldout_arenas(config.eval.heldout, self.stage) if self.stage is not None else {}
         self.heldout_current = False   # whether the latest evaluation played them
+        # Exploration v3: the arenas the latest evaluation skipped under eval.heldout_cadence (the stage's last
+        # evaluation plays them), and that evaluation's number (the leader's count, broadcast to every rank).
+        self.heldout_skipped: list[str] = []
+        self.eval_number = 0
         # Each layout's action names, so the evaluations' per-episode logs say which actions were taken.
         self.action_names = {name: layout.get("action_names", [])
                              for name, layout in (self.stage or {}).get("layouts", {}).items()}
@@ -853,6 +864,13 @@ class TrainingRun:
 
         # What the policy carries between decisions (its memory and the goal it pursues), cleared with an episode.
         self.acting = self.trainer.acting_state(spec.num_envs, spec.agents_per_env)
+        # Greedy training envs (mappo.greedy_env_fraction, exploration v3): only this acting state has them; an
+        # evaluation's never does (its argmax set is the deterministic graph).
+        self.acting.greedy = self.trainer.greedy_envs(spec.num_envs, spec.agents_per_env)
+        if self.acting.greedy is not None:
+            print(f"greedy envs {int(self.acting.greedy[:, 0].sum())} of {spec.num_envs}: they act with the argmax of "
+                  f"the movement heads and the free look (goals stay sampled); their movement policy-gradient "
+                  f"terms are masked out of the update", flush=True)
 
         self.buffer = new_buffer()
         # Overlapped updates fill this one while the update reads the other; they swap after every rollout.
@@ -861,6 +879,7 @@ class TrainingRun:
         self.carried_stats: dict[str, float] | None = None  # an update drained outside a rollout, still to log
         self.rollout_reward = 0.0
         self.rollout_allowed_actions = 0.0
+        self.rollout_greedy_share = 0.0
         self.started_at = time.perf_counter()
         self.updater = ThreadPoolExecutor(max_workers=1, thread_name_prefix="update") \
             if config.overlap_updates else None
@@ -876,6 +895,12 @@ class TrainingRun:
             "elapsed_seconds", "update_compute_seconds", "distill_coef", "distill_kl", "distill_rows",
             "wall_steps_per_sec", "rollout_seconds", "wait_seconds", "update_bound",
         ]
+        if config.mappo.greedy_env_fraction > 0.0:
+            # Greedy training envs (exploration v3): how many, their share of the samples, and the ended training
+            # episodes split by arm. Readings; the gate and the controller do not see them.
+            columns += ["greedy_envs", "greedy_rows_share",
+                        *(f"train_{arm}_{name}" for name in GREEDY_SPLIT_COLUMNS for arm in ("greedy", "sampled")),
+                        "train_greedy_wall_pin_over10", "train_sampled_wall_pin_over10"]
         if self.style is not None:
             # The style reward (animus.style): what it paid a decision, the scale it was paid at, and the
             # discriminator's view of both sides; per context the players have.
@@ -935,6 +960,9 @@ class TrainingRun:
         # The class each of those episodes was played by, so an update can say what each one is doing rather
         # than only what all eighteen did on average.
         self.finished_layouts: list[int] = []
+        # And, with greedy envs, this learner's own ended episodes split by arm (greedy_split in log_update).
+        self.finished_greedy: list[np.ndarray] = []
+        self.finished_sampled: list[np.ndarray] = []
         # A party seat left empty for an episode reports present = 0; its row is not an episode.
         names = spec.episode_info_names
         self.present_column = names.index("present") if "present" in names else None
@@ -1265,6 +1293,9 @@ class TrainingRun:
         others). Alone, the whole evaluation. `seed_shift` moves every seed index on (a rotating held-out set)."""
         first, count = weighted_share(episodes, self.rank_envs, self.ranks.rank)
         first += seed_shift
+        if self.config.eval.trace_all and self.config.eval.keep_motion_files > 0 and not options.get("baseline"):
+            # Every decision of every scored seat (eval.trace_all), written by save_trace.
+            options["trace_all"] = trace_columns(self.spec, self.stage)
         result, self.step = run_evaluation(self.env, self.spec, choose_actions, count, seed, first_seed=first,
                                            any_playing=self.ranks.any if self.ranks.active else None,
                                            training_stand_in=self.field_stand_in(),
@@ -1356,6 +1387,7 @@ class TrainingRun:
             improved = controller.observe(summary, self.env_steps)
             self.score_motion(result, summary)
             self.save_routes(result, f"eval_motion_{self.env_steps}.npz")
+            self.save_trace(result)
             self.eval_log.write(self.update, self.env_steps, result, summary, tracker)
             self.progress.evaluated(self.env_steps, result.score,
                                     baseline_summary["score"] if baseline_summary else None, tracker, controller,
@@ -1406,7 +1438,8 @@ class TrainingRun:
         arms = leader and bool(config.eval.arms) and (final or len(tracker.history) % config.eval.arms_every == 0)
 
         # What the leader decided, carried out on every rank.
-        sampled, heldout, arms, improved_best = self.ranks.broadcast((sampled, heldout, arms, leader and improved))
+        sampled, heldout, arms, improved_best, self.eval_number = self.ranks.broadcast(
+            (sampled, heldout, arms, leader and improved, len(tracker.history) if leader else 0))
         # An improved best.pt joins the co-op partners.
         if improved_best:
             self.maybe_partner_snapshot(self.best_path, f"best_{self.env_steps}")
@@ -1414,7 +1447,7 @@ class TrainingRun:
             self.evaluate_sampled(summary)
         self.heldout_current = heldout
         if heldout:
-            self.evaluate_heldout()
+            self.evaluate_heldout(final)
         if arms:
             self.evaluate_arms(summary)
 
@@ -1437,6 +1470,24 @@ class TrainingRun:
         dropped = realism.prune_routes(self.run_dir, keep)
         if dropped:
             print(f"Routes: kept the last {keep} evaluations' files, deleted {len(dropped)}", flush=True)
+
+    @property
+    def collects_motion(self) -> bool:
+        """Whether an evaluation keeps the scored seats' kinematic tracks (eval.keep_motion_files, a stage with them)."""
+        return self.config.eval.keep_motion_files > 0 and self.spec.kinematics_dim == motion.SAMPLE_DIM
+
+    def save_trace(self, result: EvalResult) -> None:
+        """eval.trace_all: the evaluation's per-decision trace to <run>/eval_trace_<env_steps>_<policy>.npz
+        (evaluation.write_trace), pruned with the routes (eval.keep_motion_files evaluations kept)."""
+        keep = self.config.eval.keep_motion_files
+        if not self.config.eval.trace_all or keep <= 0 or not result.trace_blocks:
+            return
+        write_trace(self.run_dir / f"eval_trace_{self.env_steps}_{result.policy}.npz", result.trace_blocks,
+                    self.action_names, [layout.name for layout in self.spec.layouts], {
+                        "policy": result.policy, "run": self.config.run_name, "scenario": self.spec.scenario,
+                        "update": self.update, "env_steps": self.env_steps, "seed": self.config.eval.seed,
+                        "episodes": result.episodes, "step_seconds": self.spec.decision_ms / 1000.0})
+        realism.prune_routes(self.run_dir, keep)
 
     def score_motion(self, result: EvalResult, summary: dict) -> None:
         """The evaluation's motion (protocol 20 kinematics of the scored seats): its windows to eval_motion.npz for the
@@ -1493,12 +1544,14 @@ class TrainingRun:
         config = self.config
         result = self._evaluate_share(self._acting(False), config.eval.episodes, config.eval.seed,
                                       arenas=self.arena_names,
-                                      action_names=self.action_names)
+                                      action_names=self.action_names, collect_motion=self.collects_motion)
         if self.cast is not None or self.partners is not None:
             self._reset_far_side()
         if not self.ranks.leader:
             return
         result.policy = "learner_sampled"
+        self.save_routes(result, f"eval_motion_{self.env_steps}_learner_sampled.npz")
+        self.save_trace(result)
         summary = result.summary(self.report)
         fields = [name for name in ("score", "died", "timed_out", "arrived")
                   if name in summary]
@@ -1510,23 +1563,31 @@ class TrainingRun:
         print("Sampled vs argmax actions on the evaluation seeds: " + ", ".join(
             f"{name} {summary[name]:.4g} / {argmax.get(name, float('nan')):.4g}" for name in fields), flush=True)
 
-    def evaluate_heldout(self) -> None:
+    def evaluate_heldout(self, final: bool = False, only: set[str] | None = None) -> None:
         """eval.heldout: each held-out arena on its own seeds (eval.seed + HELDOUT_SEED_OFFSET), every rank playing
         its share, reported as policy heldout_<arena> in eval.csv and eval.jsonl (an arena named `<x>_rotating` on seed
         indexes shifted each evaluation: rotating_shift). A reading only: neither the tracker,
-        the controller sees it."""
+        the controller sees it. An arena with an eval.heldout_cadence of N is played on every N-th evaluation only
+        (always when `final`); `only` plays just those arenas."""
+        self.heldout_skipped = []
         for name, (pin, episodes) in self.heldout.items():
+            cadence = int(self.config.eval.heldout_cadence.get(name, 1))
+            if only is not None and name not in only:
+                continue
+            if only is None and cadence > 1 and not final and self.eval_number % cadence != 0:
+                self.heldout_skipped.append(name)
+                continue
             shift = rotating_shift(name, episodes, self.env_steps, self.config.eval.every_env_steps)
             result = self._evaluate_share(self.learner_actions(), episodes, self.config.eval.seed + HELDOUT_SEED_OFFSET,
                                           seed_shift=shift, arenas=self.arena_names, action_names=self.action_names, arena=pin,
-                                          collect_motion=(self.config.eval.keep_motion_files > 0
-                                                          and self.spec.kinematics_dim == motion.SAMPLE_DIM))
+                                          collect_motion=self.collects_motion)
             if self.cast is not None or self.partners is not None:
                 self._reset_far_side()
             if not self.ranks.leader:
                 continue
             result.policy = f"heldout_{name}"
             self.save_routes(result, f"eval_motion_{self.env_steps}_heldout_{name}.npz")
+            self.save_trace(result)
             summary = result.summary(self.report)
             self.eval_log.write(self.update, self.env_steps, result, summary, self.tracker)
             shown = ", ".join(f"{column} {summary[column]:.3g}" for column in self.report
@@ -1576,7 +1637,8 @@ class TrainingRun:
             self.trainer.single_goal = arm == "no_plan"
             try:
                 result = self._evaluate_share(choose, episodes, config.eval.seed, arenas=self.arena_names,
-                                              action_names=self.action_names, **options)
+                                              action_names=self.action_names,
+                                              collect_motion=self.collects_motion, **options)
             finally:
                 self.trainer.uniform_goals = False
                 self.trainer.uniform_cells = False
@@ -1586,6 +1648,8 @@ class TrainingRun:
             if not self.ranks.leader:
                 continue
             result.policy = arm
+            self.save_routes(result, f"eval_motion_{self.env_steps}_{arm}.npz")
+            self.save_trace(result)
             columns = tuple(dict.fromkeys((*self.report, *self.progress.arm_columns(arm))))
             summary = result.summary(columns)
             self.eval_log.write(self.update, self.env_steps, result, summary, self.tracker)
@@ -1856,6 +1920,8 @@ class TrainingRun:
         # Read before the buffers swap below: log_update runs on the rollout that has just been collected.
         self.rollout_reward = buffer.mean_reward()
         self.rollout_allowed_actions, self.layout_allowed = self.allowed_actions(buffer)
+        self.rollout_greedy_share = (float(buffer.greedy[buffer.valid].mean())
+                                     if self.acting.greedy is not None and buffer.valid.any() else 0.0)
         # The leader's controller decides, for every rank.
         entropy_coef = self.controller.entropy_coef(self.env_steps)
         lr_scale = self.controller.lr_scale(self.env_steps)
@@ -2026,7 +2092,7 @@ class TrainingRun:
                      foresight=foresight, memory=memory, goal=goal, goal_log_prob=goal_log_prob,
                      goal_chosen=goal_chosen, slow_before=slow_before, slow_value=slow_value,
                      critic_memory=critic_memory, goal_slots=goal_slots, goal_cells=goal_cells, look=look,
-                     look_log_prob=look_log_prob)
+                     look_log_prob=look_log_prob, greedy=acting.greedy)
         send(rows.start, rows.stop - rows.start, actions,
              trainer.wire_goals(goals[0], acting.queue, acting.plan) if goals is not None else None, look)
 
@@ -2076,6 +2142,11 @@ class TrainingRun:
         keep &= ~partnered.reshape(-1)
         self.finished_episodes.extend(ended[keep])
         self.finished_layouts.extend(int(index) for index in ended_layouts[keep])
+        if self.acting.greedy is not None:
+            # This learner's own ended episodes by arm (greedy or sampled envs), for log_update's split: readings only.
+            greedy_rows = self.acting.greedy[rows][done].reshape(-1)
+            self.finished_greedy.extend(ended[keep & greedy_rows])
+            self.finished_sampled.extend(ended[keep & ~greedy_rows])
         if self.link is not None:
             self.link.observe(ended[keep], ended_layouts[keep])
 
@@ -2135,6 +2206,8 @@ class TrainingRun:
             else:
                 self.finished_episodes.clear()
                 self.finished_layouts.clear()
+                self.finished_greedy.clear()
+                self.finished_sampled.clear()
         self.last_layout_stats = self.named_layout_stats()
         self.controller.observe_update(self.last_layout_stats, self.lr_scale_now)
         if self.difficulty_column is not None and self.finished_episodes:
@@ -2192,6 +2265,10 @@ class TrainingRun:
                 row[f"episode_{name}"] = float(value)
             self.log_layout_rows(spec)
         row.update(stats)
+        if self.acting.greedy is not None:
+            row["greedy_envs"] = float(self.acting.greedy[:, 0].sum())
+            row["greedy_rows_share"] = self.rollout_greedy_share
+            row.update(self.greedy_split(spec.episode_info_names))
 
         # The floor reads the entropy this update reached against how many actions were legal for it.
         if "entropy" in row:
@@ -2216,6 +2293,27 @@ class TrainingRun:
               flush=True)
         self.finished_episodes.clear()
         self.finished_layouts.clear()
+        self.finished_greedy.clear()
+        self.finished_sampled.clear()
+
+    def greedy_split(self, names) -> dict[str, float]:
+        """This update's ended training episodes of the greedy envs and of the sampled ones (this learner's own),
+        as train_greedy_<c> and train_sampled_<c> means of GREEDY_SPLIT_COLUMNS (the stage's own columns only, a
+        per-event one weighted as everywhere: episode_means), and the share of each arm's episodes that ended with
+        wall_pin_max_seconds over GREEDY_WALL_PIN_SECONDS. NaN where an arm ended none. Readings: the gate and the
+        controller do not see them."""
+        out: dict[str, float] = {}
+        names = list(names)
+        for arm, episodes in (("greedy", self.finished_greedy), ("sampled", self.finished_sampled)):
+            values = np.asarray(episodes, dtype=np.float64)
+            have = values.ndim == 2 and len(values) > 0
+            means = episode_means.means(values, names) if have else None
+            for name in GREEDY_SPLIT_COLUMNS:
+                out[f"train_{arm}_{name}"] = float(means[names.index(name)]) if have and name in names else float("nan")
+            pinned = names.index("wall_pin_max_seconds") if "wall_pin_max_seconds" in names else None
+            out[f"train_{arm}_wall_pin_over10"] = (float((values[:, pinned] > GREEDY_WALL_PIN_SECONDS).mean())
+                                                   if have and pinned is not None else float("nan"))
+        return out
 
     def audit_progress(self, row: dict[str, float]) -> None:
         """Say so when the updates have stopped moving the policy.
@@ -2327,8 +2425,10 @@ class TrainingRun:
                 self.evaluate()
                 decision = self.ranks.broadcast(controller.after_eval(self.env_steps) if self.ranks.leader else None)
                 # Converged: that evaluation was the stage's last, so it gets its held-out reading if it had none.
-                if decision is not None and decision.action == ADVANCE and self.heldout and not self.heldout_current:
-                    self.evaluate_heldout()
+                if decision is not None and decision.action == ADVANCE and self.heldout \
+                        and (not self.heldout_current or self.heldout_skipped):
+                    # ... and any arena its cadence skipped (eval.heldout_cadence) is played now.
+                    self.evaluate_heldout(True, only=set(self.heldout_skipped) if self.heldout_current else None)
                 if self.handle(decision):
                     return decision
 

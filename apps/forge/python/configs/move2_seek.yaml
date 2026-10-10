@@ -1,11 +1,7 @@
-# >>> RESEED STATE (2026-10-09, owner: 'use this run to reseed stage 2 at the last rung') <<<
-# This file is edited in place for a run that is a FRESH start of move2_seek seeded from the previous M2 run's
-# checkpoint (runs/_finetune/move2_seek/best.pt on the host): the ladder is the single deep rung (fade.rungs [0.0];
-# the four-rung ladder was [1.0, 0.5, 0.25, 0.0]), the learning rate is 1.5e-4, and the overall plateau waits 6
-# evaluations (convergence.patience 6; M1's 3 is restated in M3 and M4). RESTORE THE FOUR-RUNG LADDER BEFORE ANY
-# FROM-SCRATCH M2 (M1 -> M2): a start at fade rungs [0.0] from an M1 seed skips the easy rungs (the lesson of
-# move1_controls, whose yaml was left at its end state). The same state as a hand-applied overlay:
-# configs/overlays/move2_seek_reseed.yaml.
+# FRESH RUN (2026-10-10, owner: "make all the changes and then restart stage 2 fresh"): M2 from M1's finished run
+# (seed_from latest = runs/move1_controls/latest.pt), the four-rung ladder [1.0, 0.5, 0.25, 0.0] restored, exploration v3
+# (decision 0026: searched-state input, greedy envs, harder wall and trap) in. BEFORE START: move runs/_finetune/move2_seek/best.pt
+# away (finetune_from outranks the parent in the seed chain) and archive any runs/move2_seek. Cf. configs/overlays/move2_seek_reseed.yaml.
 #
 # M2 -- seek (perception-goals plan §4, "M2 in detail"; REDESIGN §2; the user, 2026-10-06: "M2 seek also happens
 # inside the same Stockades instance. It has to find an object in a room, and that object and room is randomized.").
@@ -46,15 +42,16 @@ mappo:
   # arriving -- a search failure, not a reach one. The camera turned on 1.7% of decisions (5.5% at 30M) and the look
   # entropy fell 1.08 -> 0.72. A prior toward looking around, never a mask.
   look_entropy_coef: 0.004
-  # 1.5e-4 from the cleanup deploy (2026-10-07), the rate M2 was effectively running at: a convergence bug read every
+  # 1.5e-4 for the fresh run (2026-10-10, lead): a seed from M1 with fresh Adam moments and fresh heads has no settled
+  # policy to raise. The history, for the day to raise it: 1.5e-4 from the cleanup deploy (2026-10-07), the rate M2 was effectively running at: a convergence bug read every
   # harder rung as a plateau and annealed the rate from ~30M steps (fixed by ConvergenceController.rebaseline), so the
   # 3e-4 configured here was really about 3e-4 x 0.41. kl_move read 0.0136 at that reduced rate; at the full 3e-4 expect
   # ~0.03, over the 0.02 target. The (now correct) anneal lowers it further at the last rung. Revisit if the first
   # reads show kl_move well under 0.01 and found rising slowly.
-  # 2.2e-4 from the deep rung (owner, 2026-10-09; analysis .agents/plans/m2-search): move KL read ~0.006, under the
-  # 0.01 line this comment names, and found was still rising slowly. Free in throughput. Roll back if approx_kl_move
-  # passes 0.03, explained_variance falls under 0.7 or found_deep drops by 0.08. M3 and M4 extend this file and keep
-  # 1.5e-4 (restated there).
+  # 2.2e-4 was the deep-rung raise (owner, 2026-10-09; analysis .agents/plans/m2-search): move KL read ~0.006, under the
+  # 0.01 line this comment names, and found was still rising slowly. Raise to it again at the deep rung if
+  # approx_kl_move reads under 0.01 there; roll back if it passes 0.03, explained_variance falls under 0.7 or found_deep
+  # drops by 0.08. M3 and M4 extend this file and keep 1.5e-4 (restated there).
   actor_lr: 0.00015
   critic_lr: 0.00015
   # The camera's update in chunks (overseer, P2 review): the cluster's 8 GB and 16 GB cards need it, and the bench
@@ -71,6 +68,12 @@ mappo:
   # the seat occupied in the 16 decisions after it (within the choice's frame) and weight that term 3x.
   goal_cell_hindsight_lookback: 16
   goal_cell_hindsight_coef: 0.15
+  # Greedy training envs (exploration v3, decision 0026): 12% of the learner's envs (64 -> 8, spread evenly) act with the
+  # argmax of the movement heads and the free look, as the shipped bot does, so the doorway pins and frozen starts that
+  # only an argmax policy meets occur in training and are priced (Wall, Stuck, Stale). Goals stay sampled; their movement
+  # policy-gradient terms are masked out of the update, their value, entropy and goal terms are not. Code default 0: M3
+  # and M4 restate it.
+  greedy_env_fraction: 0.12
 
 # Amendment 9: 78 episodes every 10M, at the training rung (each of its rooms in turn, the object types cycled: at the
 # deep rung every room twice), so `found` is the rung's own found rate, which the fade reads. The full sweep -- every
@@ -78,11 +81,11 @@ mappo:
 # last evaluation only (heldout_every past any stage's evaluations, and not on every new best).
 eval:
   every_env_steps: 10000000
-  # 156 (was 78) since the deep rung (2026-10-09): 78 episodes carry +-0.05, and a score swing of 0.5 between two
-  # evaluations (60M to 70M) came from 8 frozen episodes. The sampled policy is played at every evaluation and the
-  # held-out sweep too (fresh seeds, every room and object once at the top rung): the shipped bot's policy and a
-  # held-out reading beside the training rung's.
-  episodes: 156
+  # 312 (was 156, 78 before the deep rung of 2026-10-09: 78 episodes carry +-0.05, and a score swing of 0.5 between two
+  # evaluations came from 8 frozen episodes): 8 per room at the deep rung, a +-0.02 reading. The sampled policy is
+  # played at every evaluation and the held-out sweep too (fresh seeds, every room and object once at the top rung):
+  # the shipped bot's policy and a held-out reading beside the training rung's.
+  episodes: 312
   sampled_every: 1
   # `sweep_rotating` (exploration v2, decision 0025): the same 195 placements on seed indexes shifted every evaluation
   # (train.rotating_shift), read as policy heldout_sweep_rotating beside the frozen heldout_sweep. Both play the deep
@@ -92,6 +95,15 @@ eval:
     sweep_rotating: 195
   heldout_every: 1
   heldout_on_best: false
+  # The rotating sweep every second evaluation (exploration v3; the 195-episode second sweep doubled the held-out time;
+  # the stage's last evaluation plays both). The rotation moves on by the evaluation number either way.
+  heldout_cadence:
+    sweep_rotating: 2
+  # Every decision of every seed of every evaluation set, per policy, as compact arrays in
+  # eval_trace_<env_steps>_<policy>.npz (learner, learner_sampled, heldout_<arena>, each arm), with the routes of the
+  # sampled and arm sets beside them (eval_motion_<env_steps>_<policy>.npz): pose, camera yaw and pitch, flag pixels,
+  # wall, moving and held keys, speed, the held goal's point.
+  trace_all: true
   # The ablation arms, each replaying the evaluation's seeds (the training rung's placements, the deterministic policy)
   # with one input taken away; 64 episodes each, after every evaluation (arms_every 1), read as found_no_flag and the
   # like in forge status and as policy rows in eval.csv. no_flag and no_camera exist from M1 (the objective flag
@@ -106,6 +118,9 @@ eval:
   # the choosable blocks of the map crop (what the cell pointer is worth); no_plan holds nothing beside the primary goal
   # and queues nothing (what the chain of cells is worth). Both are skipped where the stage has no cell goals
   # (Seek.GoalSource 0).
+  # no_searched zeroes the mental map's searched channel (the crop's seventh byte) and the map block's searched, new_age
+  # and total scalars (exploration v3): what the searched-state input is worth. Read it beside random_cell and no_plan
+  # before crediting a found-rate rise to the planner.
   # Readings, never gates. M3 and M4 extend this file and restate `arms: {}`.
   arms:
     no_compass: null
@@ -117,6 +132,7 @@ eval:
     random_goal: 64
     random_cell: 64
     no_plan: 64
+    no_searched: 64
   report: [found, found_hallway, found_doorway, found_room, found_deep, seek_rung, rung_carried, find_seconds,
            sighted, sight_seconds, sight_to_arrival, rooms_looked, rooms_entered, rooms_reentered, revisit_rate,
            rooms_before_found, objective_visible, room_depth, difficulty, deep_room, object_fallback,
@@ -130,7 +146,9 @@ eval:
            circling_seconds, circling_events, trap_episode, trap_escaped, trap_escape_seconds, back_room_visits,
            reward_explore, reward_frontier_pull, reward_circling, reward_escape,
            found_300, room_entries_new, back_room_entries, explore_inside_cells, room_entry_reward, stale_seconds,
-           stale_events, explore_cap_hit, explore_cap_hit_ms, reward_room_entry, reward_stale]
+           stale_events, explore_cap_hit, explore_cap_hit_ms, reward_room_entry, reward_stale,
+           stale_clock_end_seconds, hard_room, wall_pin_max_seconds, wall_pin_events, wall_extra_charge, trap_turned,
+           trap_pin_seconds, rooms_approached]
 
 # forge status for this stage: did it find the object, by rung (found_<rung>, each over the episodes placed at it) and
 # in the deepest rooms, the rung it is on, how soon it saw it and got there after, and how it searched -- rooms looked
@@ -145,7 +163,9 @@ status:
              rooms_checked_per_min, returns, slots_waiting, checked_miss, check_cover_at_find,
              found_no_flag, found_no_camera, found_no_map, found_no_memory, found_no_goal, found_random_goal,
              found_random_cell, found_no_plan, explore_cells, circling_seconds, back_room_visits, trap_escaped,
-             found_300, room_entries_new, back_room_entries, stale_seconds, explore_cap_hit_ms]
+             found_300, room_entries_new, back_room_entries, stale_seconds, explore_cap_hit_ms,
+             found_no_searched, stale_clock_end_seconds, wall_pin_max_seconds, wall_extra_charge, trap_turned,
+             hard_room, rooms_approached]
   targets:
     # M1's targets are not M2's measures (null drops an inherited key).
     arrived: null
@@ -172,8 +192,8 @@ status:
     died: "<= 0.01"
 
 convergence:
-  # Six evaluations without a new best (60M steps) before the score counts as plateaued (M1's 3, which the
-  # reseeded run, starting near 0.77 found with a margin of ~0.1, would reach at once and start the anneal early).
+  # Six evaluations without a new best (60M steps) before the score counts as plateaued (M1's 3, restated in M3 and
+  # M4): with found near 0.9 and +-0.03 between evaluations on the deep rung, three would end the stage early.
   patience: 6
   # Converged on the stage's own measure, the share of objects found; at the top of its ladder (at_top_rung: the
   # ladder at the deep rung, which is the fade's end).
@@ -184,8 +204,10 @@ convergence:
 # fade's window and regress rules -- a curriculum ladder, not a pass gate: the stage still ends on convergence.
 fade:
   # Its own rungs (hallway, doorway, front room, deep), restated: they are M2's placements, not M1's shaping fade,
-  # and this stage's gate and plateau rule are its own below.
-  rungs: [0.0]
+  # and this stage's gate and plateau rule are its own below. Each rung keeps a tenth of the one below. A start at the
+  # deep rung alone ([0.0], the 2026-10-09 reseed) is only for a seed from an M2 checkpoint, never from M1's: it skips
+  # the easy rungs. The Exploring family, Stale and the trap drill are off below rung 2 (Seek.ExploreFromRung).
+  rungs: [1.0, 0.5, 0.25, 0.0]
   gate_metric: found
   gate_value: 0.8
   # Steps on the gate alone (the dungeon plan's rule; M1 waited ~20M steps on a plateau with the gate long met).

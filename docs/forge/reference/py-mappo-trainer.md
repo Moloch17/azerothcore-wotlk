@@ -93,7 +93,8 @@ rung 0-1 and in rooms mode).
 
 Per-env, per-agent numpy arrays carried between decisions: `memory`, `critic_memory` `[E,A,R]`, `goal`, `age` `[E,A]`,
 `slow_memory` `[E,A,S]`, `queue` `[E,A,goal_slots-2]`, `plan` `[E,A,4]` (the cell words held at the four plan positions,
-0 none) and `serial` `[E,A]` (the choices made this episode; tickets come from it), `look` `[E,A,heads]` (int8), `look_log_prob`. `take/put` slice
+0 none) and `serial` `[E,A]` (the choices made this episode; tickets come from it), `look` `[E,A,heads]` (int8), `look_log_prob`, and (exploration v3) `greedy` `[E,A]` bool: which seats act with the argmax, set once by the training
+`Run.acting` from `MappoTrainer.greedy_envs`, never by an evaluation's acting state; `clear` leaves it alone. `take/put` slice
 envs for half-batch acting; `clear(done)` zeroes memories, goal and age, sets queue to -1 for finished envs.
 Built by `acting_state(envs, agents)` (`:1150`). `wire_goals(goal, queue, plan)` (`:1141`) converts held goals to the `[E,A,8]` int32 the ACT carries (protocol
 28): the joint ids of the primary, secondary and the two queued goals (-1 none), then the four cell words
@@ -202,6 +203,18 @@ parameters every `weight_sync_every` updates (`:1479-1490`) and syncs the rollou
 7. After the epoch, `target_kl` early stop on the mean of the ranks' KL.
 8. Post-loop: layout stats (`_finish_layout_stats`), goal stats, look stats; and only now are the observation
    normalisers updated (`update_norms`, `state_norm.update`) so the epoch-0 ratio is 1 (`:2013`); then the rollout sync.
+
+**Greedy envs (exploration v3, `mappo.greedy_env_fraction`, code default 0).** `greedy_envs(envs, agents)` fixes `count = round(f x E)` envs of the
+learner's own `E`, evenly spread (`floor((e + 1) x count / E) != floor(e x count / E)`; 64 x 0.12 -> 8), and raises when a nonzero `f` rounds to
+none. `greedy` is a fixed `[E, A]` bool input of EVERY `_RolloutGraph` shape (all False where the acting state has none, so graph reuse and the
+graph key do not change; `deterministic` stays a Python bool); `_body` makes the Gumbel draw and the argmax for every row and selects with
+`torch.where` (`sample_logits(..., greedy)`), the free look included; the non-graph `_decide` does the same `where` on `dist.logits.argmax`.
+Goals stay sampled. `RolloutBuffer.greedy` `[T,E,A]` stores it (`DecisionRows` field `greedy`). In `_update_recurrent` `counted` still
+weights entropy, value, foresight, hindsight and the goal terms; the movement policy gradient and the ratio statistics use
+`pg = counted * ~greedy` with `pg_weight = pg.sum().clamp(min=1)` (a greedy row's stored log probability is log pi(argmax): not an on-policy
+sample; the ratio is the joint action + look probability, so one mask covers both heads). `clip_frac`, `approx_kl`, `approx_kl_move` and the
+per-layout KL (`_layout_totals(..., weight=counted, kl_weight=pg)`) are over `pg`; the per-layout entropy over `counted`. With
+`slow_goal_size` 0 the goal's log probability joins the joint ratio, so a greedy row's goal term is masked with it (M2 runs the slow loop).
 
 Reported statistics (`stats`): `policy_loss, value_loss, entropy` (actions only), `clip_frac, approx_kl, approx_kl_move`
 (the movement action alone, stored joint log-prob less the look's part), `actor_grad_norm, critic_grad_norm`,

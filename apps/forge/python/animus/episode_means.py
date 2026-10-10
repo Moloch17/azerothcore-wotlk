@@ -41,6 +41,10 @@ PER_EVENT = {
     # those that got out.
     "trap_escaped": "trap_episode",
     "trap_escape_seconds": "trap_escaped",
+    # ... and exploration v3: whether the seat turned >= Seek.TrapEscapeTurnDeg and the charged wall seconds inside the
+    # escape window, over the trap episodes only (the other episodes log 0).
+    "trap_turned": "trap_episode",
+    "trap_pin_seconds": "trap_episode",
     "plan_depth": "goals_cell_chosen",
     # ... and exploration v2 (decision 0025): the clock the Explore cap was reached at, over the episodes that reached it
     # (explore_cap_hit_ms is -1 for the others).

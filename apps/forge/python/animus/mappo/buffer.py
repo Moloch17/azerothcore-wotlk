@@ -194,6 +194,9 @@ class RolloutBuffer:
         # The look's part of `log_probs` (the policy's own, as log_probs is), for the movement-only KL.
         self.look_log_probs = np.zeros(shape, dtype=np.float32)
         self.log_probs = np.zeros(shape, dtype=np.float32)
+        # Which seats acted with the argmax (mappo.greedy_env_fraction, exploration v3): their log probabilities are not
+        # draws from the policy, so the update's policy gradient skips them.
+        self.greedy = np.zeros(shape, dtype=bool)
         self.values = np.zeros(shape, dtype=np.float32)  # denormalised
         self.rewards = np.zeros(shape, dtype=np.float32)
         self.dones = np.zeros((steps, envs), dtype=bool)
@@ -216,7 +219,7 @@ class RolloutBuffer:
 
     def add_decision(self, obs, state, mask, layout, actions, log_probs, values, present=None,
                      foresight=None, memory=None, goals=None, critic_memory=None, image=None,
-                     look=None, look_log_prob=None) -> None:
+                     look=None, look_log_prob=None, greedy=None) -> None:
         """Record what the policy saw and did at step `cursor`; `present` [E, A] marks the agents with a character
         (default: all); `image` [E, A, I] uint8 the camera's bytes, with a camera; `look` [E, A, H] the free look's
         choices, with look heads."""
@@ -232,6 +235,8 @@ class RolloutBuffer:
         if self.look_heads and look_log_prob is not None:
             self.look_log_probs[t] = look_log_prob
         self.log_probs[t] = log_probs
+        if greedy is not None:
+            self.greedy[t] = greedy
         self.values[t] = values
         if self.foresight and foresight is not None:
             self.foresight_preds[t] = foresight
@@ -383,6 +388,7 @@ class RolloutBuffer:
             "actions": self.actions,
             **({"look": self.look, "look_log_probs": self.look_log_probs} if self.look_heads else {}),
             "log_probs": self.log_probs,
+            "greedy": self.greedy,
             "values": self.values,
             "advantages": self.advantages,
             "returns": self.returns,

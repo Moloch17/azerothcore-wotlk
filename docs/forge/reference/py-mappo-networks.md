@@ -34,8 +34,10 @@ Unit index (line of the definition):
   network applies ("nothing is masked except the physically impossible", [principles](../principles.md) 5; the mask
   itself comes from the sim).
 - `log_prob_of`, `_entropy`: log-softmax gather and entropy computed directly.
-- `sample_logits(logits, deterministic)` (`:63`): Gumbel-max draw `argmax(logits - log(-log U))`; `U` in [0,1) so a
-  masked logit cannot win. Returns `(choice, log_prob)`. Used by the graph path and the goal head; the eager path
+- `sample_logits(logits, deterministic, greedy=None)` (`:63`): Gumbel-max draw `argmax(logits - log(-log U))`; `U` in [0,1) so a
+  masked logit cannot win. Returns `(choice, log_prob)`. `greedy` (bool `[N]`, exploration v3): those rows take `logits.argmax` through a
+  `torch.where` AFTER the draw is made for every row, so the device generator consumes the same numbers whatever the mask; ignored with
+  `deterministic`. `LookHead.sample(..., greedy)` and `LayoutActor.look(..., greedy)` pass it on, so a greedy seat's camera is argmax too. Used by the graph path and the goal head; the eager path
   uses `Categorical.sample()` (`trainer.py:1066`), a different random stream.
 - `skip_distribution_checks()` (`:248`) disables torch's distribution validation globally; called in
   `MappoTrainer.__init__` (`trainer.py:614`).
@@ -110,7 +112,7 @@ checked slot is never chosen. No data-dependent Python branch, so the rollout gr
 **The cell pointer** (free-choice-goals, 2026-10-09; the plan in `.agents/plans/free-choice-goals/`). A cell goal is the joint goal `search / target 21`
 (joint 228 since goal block revision 5, 159 as `travel_to / 21` before and at `Seek.SearchGoals` 0; always `goals.cells.joint`)
 plus a block of the mental map's crop: the 48 x 48 heading-up crop pooled `pool` 2 into 24 x 24 blocks of 4 yd, the
-index row-major, 576 candidates. `CellPointer` (`goal_head.cell.*`): `local` Linear(18, 32) (SiLU in the head), `query`
+index row-major, 576 candidates. `CellPointer` (`goal_head.cell.*`): `local` Linear(21, 32) (SiLU in the head), `query`
 Linear(width, 32), `score` Linear(32, 1) **zero weight and bias**, `chain` Sequential(Linear(3, 16), Tanh, Linear(16, 1))
 with a zero last layer. Buffer `cell_spec [4] long` `(byte the crop starts at in a row's image bytes, grid, pool, joint)`, -1
 throughout = no cell head, with host mirrors `cell_at / cell_grid / cell_pool / cell_joint` (`cell_on`), set by
@@ -119,9 +121,12 @@ manifest; a manifest whose crop, codes, channels or field widths this learner do
 `cell_rise`, `cell_min_floor` and `cell_from` (`goals.columns.from`, for the hindsight) as host numbers. Module functions:
 `cell_valid(crops, grid, pool, rise, min_floor)` -- the contract's one definition of a choosable block (no Wall or Hazard
 cell; at least 2 floor-like cells (Floor or Door); every floor-like cell with a known height within 16 units = 4 yd of the
-feet; Unknown is never floor), a pure function of the crop bytes -- `cell_features` (18 per block: shares of
+feet; Unknown is never floor), a pure function of the crop bytes -- `cell_features` (21 per block: shares of
 Floor/Door/Wall/Hazard/Unknown, visited, frontier, any entity, newest look age, never seen, mean height; the 3 x 3 average
-of the floor, wall, unknown and frontier shares; forward, right and distance over 48) and `cell_geometry`. A slot's score
+of the floor, wall, unknown and frontier shares; forward, right and distance over 48; and, appended in exploration v3 so the first 18 keep
+their index, the block's `searched` share (`MAP_SEARCHED` byte sum over 4 x pool x pool: the share of its 1-yd cells looked at this
+episode) and that share averaged over the 3 x 3 and the 7 x 7 blocks round it, `avg_pool2d` with `count_include_pad=False`: fixed
+shapes, graph-safe) and `cell_geometry`. A slot's score
 per block is `score(tanh(local(x_j) + query(shifted_s))) + chain([dr, dc, dist] / 24 from the previous drawn cell of this
 choice, the seat's own block for the first)`, `shifted_s` the same vector `slot_logits` builds (`_shifted`). Masked by
 `cell_valid` and, for a slot after the first, by every block within Chebyshev distance 1 of a cell drawn before it in the
@@ -193,7 +198,17 @@ irrelevant for the rollout copies, which never backpropagate.
 
 Constants: `VISION_BLOCK="vision"`, `ENTITIES_BLOCK="entities"`, `SIGHT_BLOCK="sight"`, `MAP_BLOCK="map"`,
 `IMAGE_BYTES_PER_PIXEL=4`, `IMAGE_CHANNELS=5`, `IMAGE_CLASS_CHANNEL=3`, `CLASS_MASK=0x1F`,
-`CLASS_LIMIT=32`, `DEFAULT_PATCH=4`, `MAP_CHANNELS=6`, `MAP_CODES=5`, `MAP_HEIGHT_ZERO=128`.
+`CLASS_LIMIT=32`, `DEFAULT_PATCH=4`, `MAP_CHANNELS=7` (6 before exploration v3; `MAP_SEARCHED=6`, `MAP_SEARCHED_MAX=4`, `MAP_VALUE_PLANES=6`), `MAP_CODES=5`, `MAP_HEIGHT_ZERO=128`.
+**Searched state (exploration v3, map block revision 2, protocol 30).** The crop has a seventh channel, `searched` (0..4: how many of a crop
+cell's four 1-yd cells were looked at THIS episode, unlike `known`/`age`/`visited`, which a kept map carries across episodes). `decode_map`
+returns `values` `[N, H, W, 6]`: height, known, visited, age, frontier, then `searched / 4`; `MapEncoder.planes_per_cell` =
+`CODE_EMBED + class embedding + 6`, the new plane last, so the patch weight is `[64, 16 x (P + 1)]`. The block's three new scalars
+(`searched`, `new_age`, `total`) arrive through `MapEncoder.scalars` (the manifest's 7), read at `obs[0] + index`, never by constant. `_map_of`
+refuses a crop that is not 7 channels / `map_bytes == h x w x 7` and cross-checks `map.searched_channel` when the manifest has it (a
+manifest without the new keys is judged on its channel count alone). `_cell_spec_of` checks `goals.cells.channels == MAP_CHANNELS`. A
+stage.json or checkpoint of the six-channel map does not load into this learner (resume refuses on `layout_changes`; a seed carries the
+encoder tensors whose shapes still agree and leaves the rest fresh, see [py-learner-seeding.md](py-learner-seeding.md)).
+
 `vision_of(stage, layout_names)` (`:968`) returns per layout `{first, height, width, channels, classes, class_channel,
 scalars, bytes_per_pixel, pixel_classes, patch, class_limit, render_sizes, look, look_names, image_bytes, entities, map,
 camera_bytes, [sight]}` or None; None altogether if no layout has a camera. Revisions older than 6 (no `pixel_classes`; 4

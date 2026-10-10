@@ -16,6 +16,7 @@ networks differ, and the convergence test only counts an improvement that stands
 
 from __future__ import annotations
 
+import json
 import math
 import time
 from dataclasses import dataclass, field, replace
@@ -82,6 +83,9 @@ class EvalResult:
     # One (seed index, agent, layout name, episode info row [K]) per motion track, in the tracks' order: the seed is
     # the "seed" of eval_episodes.jsonl, so a route can be matched to its episode (Trainer.save_routes).
     motion_ids: list = field(default_factory=list)
+    # With eval.trace_all (exploration v3): one (seed index, agent, layout index, [T, len(TRACE_FIELDS)] float32 rows)
+    # per scored seat and episode, every decision of it, from TraceCollector (Trainer.save_trace writes them).
+    trace_blocks: list = field(default_factory=list)
 
     @property
     def episodes(self) -> int:
@@ -174,7 +178,8 @@ class EvalResult:
             action_names=first.action_names, spec_names=first.spec_names, categories=first.categories,
             trace=[row for part in parts for row in part.trace], score_column=first.score_column,
             motion_tracks=[track for part in parts for track in part.motion_tracks],
-            motion_ids=[ident for part in parts for ident in part.motion_ids])
+            motion_ids=[ident for part in parts for ident in part.motion_ids],
+            trace_blocks=[block for part in parts for block in part.trace_blocks])
 
     def failed_seeds(self, metric: str) -> list[int]:
         """Seed indexes of the episodes where some scored row fell short on `metric` (a 0/1 episode info column), for
@@ -472,9 +477,11 @@ def standard_error(values: np.ndarray, groups: np.ndarray | None = None) -> floa
 #:   random_cell the goal head as it is, but every cell goal's cell drawn uniformly over the choosable blocks of the
 #:               map crop (free-choice-goals): what the cell pointer is worth. MappoTrainer.uniform_cells;
 #:   no_plan     the goal head as it is, but nothing held beside the primary and nothing queued: what the chain of
-#:               cells (the plan) is worth. MappoTrainer.single_goal.
+#:               cells (the plan) is worth. MappoTrainer.single_goal;
+#:   no_searched (exploration v3) the mental map's searched channel (the crop's seventh byte, every cell) and the map
+#:               block's searched, new_age and total scalars zeroed: what the searched-state input is worth.
 ABLATIONS = ("no_flag", "no_camera", "no_compass", "no_map", "no_memory", "no_goal", "random_goal", "random_cell",
-             "no_plan")
+             "no_plan", "no_searched")
 #: The ablations that are a flag on the trainer's goal draw (Run.evaluate_arms sets them), not an edit of the input.
 GOAL_DRAW_ARMS = ("random_goal", "random_cell", "no_plan")
 #: What an ablation arm reports and shows in forge status (<column>_<arm>).
@@ -495,6 +502,14 @@ def ablate_image(image: np.ndarray, arm: str, image_bytes: int | None = None) ->
     seen = whole if image_bytes is None else min(int(image_bytes), whole)
     if arm == "no_map":
         image[..., seen:] = 0
+        return image
+    if arm == "no_searched":
+        from .mappo.networks import MAP_CHANNELS, MAP_SEARCHED     # torch: not at import, for the tools that only read
+        crop = image[..., seen:]
+        if crop.shape[-1] % MAP_CHANNELS == 0 and crop.shape[-1]:
+            cells = crop.reshape(*image.shape[:-1], -1, MAP_CHANNELS).copy()
+            cells[..., MAP_SEARCHED] = 0
+            image[..., seen:] = cells.reshape(*image.shape[:-1], -1)
         return image
     if arm == "no_camera":
         image[..., :seen] = p.no_frame((*image.shape[:-1], seen))
@@ -527,6 +542,36 @@ def ablate_obs(obs: np.ndarray, layout: np.ndarray, spans: list[tuple[int, int]]
     return obs
 
 
+#: The map block's scalars that read the searched state (MapBlock revision 2), by the manifest's scalar_names.
+SEARCHED_SCALARS = ("searched", "new_age", "total")
+
+
+def searched_columns(spec, stage: dict | None) -> list[list[int]]:
+    """Per layout of `spec`, the absolute observation columns of the map block's searched-state scalars (SEARCHED_
+    SCALARS), [] for a layout without a map block. Read from the manifest's `map.scalar_names` by name; a manifest
+    without the names (a stage.json before revision 2) has no such columns, so none are returned."""
+    out = []
+    for layout in spec.layouts:
+        entry = ((stage or {}).get("layouts") or {}).get(layout.name) or {}
+        block = next((b for b in entry.get("blocks", ()) if b.get("name") == "map"), None)
+        names = list(((block or {}).get("map") or {}).get("scalar_names") or ())
+        first = int(block["obs"][0]) if block else 0
+        out.append([first + names.index(name) for name in SEARCHED_SCALARS if name in names])
+    return out
+
+
+def ablate_columns(obs: np.ndarray, layout: np.ndarray, columns: list[list[int]]) -> np.ndarray:
+    """A copy of `obs` [E, A, O] with each row's `columns` (per layout index: absolute observation columns) zeroed."""
+    obs = np.array(host(obs), copy=True)
+    layout = np.asarray(host(layout))
+    for index, cols in enumerate(columns):
+        if cols:
+            rows = layout == index
+            for column in cols:
+                obs[rows, column] = 0.0
+    return obs
+
+
 def forget(acting, envs: int) -> None:
     """Reset what `acting` (trainer.ActingState) carries to its episode-start value in every env: the actor's and the
     critic's memory, the held goal and its age, the goal queue and the slow memory (ActingState.clear on all)."""
@@ -544,6 +589,10 @@ def ablation_chooser(choose: Callable, arm: str, spec, stage: dict | None) -> Ca
     spans = compass_spans(spec, stage, block) if block else []
     if block and not any(count for _, count in spans):
         raise ValueError(f"eval.arms.{arm}: the stage has no {block} block to zero")
+    searched = searched_columns(spec, stage) if arm == "no_searched" else []
+    if arm == "no_searched" and not any(searched):
+        raise ValueError("eval.arms.no_searched: the stage has no map block with searched-state scalars (map block "
+                         "revision 2) to zero")
     if arm == "no_memory":
         acting = getattr(choose, "acting", None)
         if acting is None or all(getattr(acting, name) is None for name in ("memory", "goal", "slow_memory", "queue")):
@@ -570,9 +619,168 @@ def ablation_chooser(choose: Callable, arm: str, spec, stage: dict | None) -> Ca
         edited = replace(step, image=ablate_image(image, arm, getattr(spec, "image_bytes", None)))
         if arm == "no_map":
             edited = replace(edited, obs=ablate_obs(step.obs, step.layout, spans))
+        elif arm == "no_searched":
+            edited = replace(edited, obs=ablate_columns(step.obs, step.layout, searched))
         return choose(edited)
 
     return chooser
+
+
+#: eval.trace_all (exploration v3): the compact per-decision trace of every scored seat of an evaluation set. One row per
+#: decision of a seat, in this order (name, npz dtype); `seed`, `agent` and `decision` are added when it is written.
+#: Everything is derived on the learner's side from what the STEP carries (the kinematic sample, the observation and the
+#: camera's bytes): the sim writes nothing extra, and the human-capture sample format is untouched.
+TRACE_FIELDS = (
+    ("layout", np.int16), ("action", np.int16), ("goal", np.int16), ("reward", np.float32),
+    ("x", np.float32), ("y", np.float32), ("z", np.float32), ("yaw", np.float32),
+    ("cam_yaw", np.float32), ("cam_pitch", np.float32), ("flag_pixels", np.int16),
+    ("against_wall", np.int8), ("moving", np.int8), ("speed", np.float32),
+    ("held_forward", np.int8), ("held_strafe", np.int8), ("goal_x", np.float32), ("goal_y", np.float32))
+TRACE_FIELD_NAMES = tuple(name for name, _ in TRACE_FIELDS)
+#: Where each trace field that reads an observation column finds it: (block, column name or scalar index).
+TRACE_COLUMNS = {
+    "cam_sin": ("vision", 0), "cam_cos": ("vision", 1), "cam_pitch": ("vision", 2),
+    "against_wall": ("move", "against_wall"), "moving": ("move", "moving"), "speed": ("move", "speed"),
+    "held_forward": ("move", "held_forward"), "held_strafe": ("move", "held_strafe"),
+    "goal_present": ("goal", "goal_held_present"), "goal_sin": ("goal", "goal_held_sin"),
+    "goal_cos": ("goal", "goal_held_cos"), "goal_dist": ("goal", "goal_held_dist")}
+#: The held goal's distance is carried as yards / this (GoalBlock goal_held_dist).
+GOAL_HELD_DIST_SCALE = 500.0
+#: The sample columns of the protocol-20 kinematics (human.motion: t x y z yaw pitch ...).
+KIN_X, KIN_Y, KIN_Z, KIN_YAW = 1, 2, 3, 4
+
+
+def trace_columns(spec, stage: dict | None) -> dict[str, np.ndarray]:
+    """TRACE_COLUMNS resolved per layout of `spec` against stage.json: name -> [layouts] int64 absolute observation
+    column, -1 where the layout lacks the block or the column. Block offsets come from `blocks[name].obs[0]` and a
+    block's columns by name from its `obs_names` (the vision block has none: its scalars are indexes)."""
+    out = {name: np.full(len(spec.layouts), -1, dtype=np.int64) for name in TRACE_COLUMNS}
+    for index, layout in enumerate(spec.layouts):
+        entry = ((stage or {}).get("layouts") or {}).get(layout.name) or {}
+        blocks = {b.get("name"): b for b in entry.get("blocks", ())}
+        for name, (block_name, column) in TRACE_COLUMNS.items():
+            block = blocks.get(block_name)
+            if block is None:
+                continue
+            if isinstance(column, str):
+                names = list(block.get("obs_names") or ())
+                if column not in names:
+                    continue
+                column = names.index(column)
+            out[name][index] = int(block["obs"][0]) + int(column)
+    return out
+
+
+class TraceCollector:
+    """The per-decision trace of an evaluation's scored seats (eval.trace_all): record() every decision before the
+    actions go, reward() right after the step, and finish() for each env whose episode just ended. A seat's rows are
+    kept as one [T, len(TRACE_FIELDS)] float32 block per seed and agent (EvalResult.trace_blocks), counted only for the
+    seeds the evaluation scores. One vectorised pass over the pool per decision (a few numpy gathers)."""
+
+    #: Decisions kept before the oldest that no env still needs are dropped.
+    TRIM = 256
+
+    def __init__(self, spec, columns: dict[str, np.ndarray]):
+        self.envs, self.agents = spec.num_envs, spec.agents_per_env
+        self.image_bytes = int(getattr(spec, "image_bytes", 0) or 0)
+        self.columns = columns
+        self.pending: list[np.ndarray] = []      # per decision, [E, A, F]
+        self.base = 0                            # the decision index pending[0] is
+        self.start = np.zeros(self.envs, dtype=np.int64)   # per env, the decision its current episode began at
+        self.blocks: list[tuple[int, int, int, np.ndarray]] = []
+
+    def _read(self, obs: np.ndarray, layout: np.ndarray, name: str) -> np.ndarray:
+        """Observation column `name` of every row [E, A] (NaN where the row's layout lacks it)."""
+        column = self.columns[name][layout]
+        values = np.take_along_axis(obs, np.maximum(column, 0)[..., None], axis=-1)[..., 0].astype(np.float32)
+        return np.where(column >= 0, values, np.float32("nan"))
+
+    def record(self, step, actions, goals) -> None:
+        """One decision: the STEP the policy chose from and what it chose."""
+        layout = np.asarray(host(step.layout)).astype(np.int64)
+        obs = np.asarray(host(step.obs))
+        block = np.full((self.envs, self.agents, len(TRACE_FIELDS)), np.nan, dtype=np.float32)
+        at = {name: index for index, name in enumerate(TRACE_FIELD_NAMES)}
+        block[..., at["layout"]] = layout
+        block[..., at["action"]] = np.asarray(actions)
+        if goals is not None:
+            goals = np.asarray(goals)
+            block[..., at["goal"]] = goals[..., 0] if goals.ndim == 3 else goals
+        else:
+            block[..., at["goal"]] = -1
+        kinematics = getattr(step, "kinematics", None)
+        if kinematics is not None and np.shape(kinematics)[-1] > KIN_YAW:
+            kin = np.asarray(host(kinematics))
+            for name, column in (("x", KIN_X), ("y", KIN_Y), ("z", KIN_Z), ("yaw", KIN_YAW)):
+                block[..., field[name]] = kin[..., column]
+        sin, cos = self._read(obs, layout, "cam_sin"), self._read(obs, layout, "cam_cos")
+        block[..., at["cam_yaw"]] = np.arctan2(sin, cos)
+        block[..., at["cam_pitch"]] = self._read(obs, layout, "cam_pitch") * (np.pi / 2.0)
+        for name in ("against_wall", "moving", "speed", "held_forward", "held_strafe"):
+            block[..., field[name]] = self._read(obs, layout, name)
+        image = getattr(step, "image", None)
+        if image is not None and self.image_bytes:
+            pixels = np.asarray(host(image))[..., 3:self.image_bytes:4]
+            block[..., at["flag_pixels"]] = ((pixels & OBJECTIVE_FLAG_BIT) != 0).sum(axis=-1)
+        # The held goal's point: yards = dist x 500 along (the body's yaw + the goal's bearing); NaN with none held.
+        present = self._read(obs, layout, "goal_present")
+        reach = self._read(obs, layout, "goal_dist") * GOAL_HELD_DIST_SCALE
+        heading = block[..., at["yaw"]] + np.arctan2(self._read(obs, layout, "goal_sin"),
+                                                         self._read(obs, layout, "goal_cos"))
+        held = present > 0.5
+        block[..., at["goal_x"]] = np.where(held, block[..., at["x"]] + reach * np.cos(heading), np.nan)
+        block[..., at["goal_y"]] = np.where(held, block[..., at["y"]] + reach * np.sin(heading), np.nan)
+        block[..., at["reward"]] = 0.0
+        self.pending.append(block)
+
+    def reward(self, reward) -> None:
+        """What the decision just recorded earned (the STEP after it)."""
+        self.pending[-1][..., TRACE_FIELD_NAMES.index("reward")] = np.asarray(host(reward))
+
+    def finish(self, env: int, seed: int, counted: bool, present: np.ndarray) -> None:
+        """Env `env`'s episode just ended: keep its rows (the agents in `present` [A] bool) when its seed is scored,
+        and start its next episode at the next decision."""
+        if counted:
+            rows = np.stack(self.pending[self.start[env] - self.base:], axis=0)[:, env]     # [T, A, F]
+            for agent in range(self.agents):
+                if present[agent] and len(rows):
+                    first = rows[0, agent, 0]
+                    self.blocks.append((int(seed), agent, int(first) if np.isfinite(first) else -1,
+                                        rows[:, agent].copy()))
+        self.start[env] = self.base + len(self.pending)
+        low = int(self.start.min())
+        if low - self.base >= self.TRIM:
+            del self.pending[:low - self.base]
+            self.base = low
+
+
+def write_trace(path, blocks: list, names: dict[str, list[str]], layouts: list[str], meta: dict) -> None:
+    """eval_trace_<env_steps>_<policy>.npz: one row per decision of a seat, flat over the seats in `blocks` order.
+    Arrays: the TRACE_FIELDS (layout i2, action i2 -- the index into the layout's action names, `meta.action_names`
+    --, goal i2, reward f4, x y z yaw f4, cam_yaw cam_pitch f4, flag_pixels i2, against_wall moving i1, speed f4,
+    held_forward held_strafe i1, goal_x goal_y f4), then `seed` i4, `agent` i1 and `decision` i4 (the index in the
+    episode) per row, `starts` i8 [S + 1] (seat i is rows starts[i]:starts[i + 1]) and `meta` (JSON text: the
+    policy, steps, the layouts' names and each layout's action names). Written beside and renamed over."""
+    from pathlib import Path
+    path = Path(path)
+    partial = path.with_name(path.name + ".partial.npz")
+    lengths = np.array([len(block[3]) for block in blocks], dtype=np.int64)
+    rows = np.concatenate([block[3] for block in blocks], axis=0) if blocks else np.zeros(
+        (0, len(TRACE_FIELDS)), np.float32)
+    arrays = {}
+    for index, (name, dtype) in enumerate(TRACE_FIELDS):
+        column = rows[:, index]
+        # A missing reading (NaN) is -1 in the integer fields and stays NaN in the float ones.
+        arrays[name] = (np.nan_to_num(column, nan=-1.0).astype(dtype) if np.issubdtype(dtype, np.integer)
+                        else column.astype(dtype))
+    arrays["seed"] = np.repeat([block[0] for block in blocks], lengths).astype(np.int32)
+    arrays["agent"] = np.repeat([block[1] for block in blocks], lengths).astype(np.int8)
+    arrays["decision"] = (np.concatenate([np.arange(n) for n in lengths]) if len(lengths) else np.zeros(0)).astype(
+        np.int32)
+    np.savez_compressed(partial, starts=np.concatenate([[0], np.cumsum(lengths)]).astype(np.int64),
+                        meta=np.asarray(json.dumps({**meta, "layouts": layouts, "action_names": names,
+                                                    "fields": list(arrays), "seats": len(blocks)})), **arrays)
+    partial.replace(path)
 
 
 def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline: str = "",
@@ -585,7 +793,8 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
                    any_playing: Callable[[bool], bool] | None = None,
                    score_column: str = SCORE_COLUMN, arena: int = 0,
                    collect_motion: bool = False, stand_in: bool = False, training_stand_in: bool = False,
-                   excluded: Callable[[int], np.ndarray] | None = None) -> tuple[EvalResult, p.Step]:
+                   excluded: Callable[[int], np.ndarray] | None = None,
+                   trace_all: dict[str, np.ndarray] | None = None) -> tuple[EvalResult, p.Step]:
     """Run seeded episodes first_seed..first_seed+episodes-1 (a data-parallel learner's share of an evaluation; 0..
     episodes-1 alone) and return their results and the fresh training STEP after them.
 
@@ -600,6 +809,9 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
 
     `collect_motion` keeps the scored seats' kinematic samples, a track per seat and episode (EvalResult.motion_tracks;
     the sample the episode ended on is the next episode's, so a track stops one decision short of the end).
+
+    `trace_all` (eval.trace_all, exploration v3): trace_columns(spec, stage); every decision of every scored seat goes
+    into EvalResult.trace_blocks (TraceCollector), from the real STEP (an arm's edits are on copies the chooser makes).
 
     `stand_in` puts the "human" stand-in in one seat of every party (the eval arm "with_human": its row is present 2,
     which the chooser plays with a frozen partner, and its episode info's present column is 0, so it is never scored);
@@ -645,6 +857,7 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
     moving: list[list[np.ndarray]] = [[np.array(step.kinematics[e])] for e in range(envs)] if collect_motion else []
     motion_tracks: list[np.ndarray] = []
     motion_ids: list[tuple] = []
+    tracer = TraceCollector(spec, trace_all) if trace_all is not None and not baseline else None
 
     def playing() -> bool:
         mine = len(finished) < episodes and decisions < max_decisions
@@ -674,8 +887,12 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
                         "goal": int(goals[e, a, 0] if goals.ndim == 3 else goals[e, a]) if goals is not None else -1,
                     })
 
+        if tracer is not None:
+            tracer.record(step, actions, goals)
         step = env.step(actions, goals, look) if look is not None else env.step(actions, goals)
         decisions += 1
+        if tracer is not None:
+            tracer.reward(step.reward)
 
         running += step.reward
         if collect_motion:
@@ -702,6 +919,12 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
                     if (present is None or step.episode_info[e, a, present] > 0.0)
                     and not dropped[a]
                 ]
+                if tracer is not None:
+                    tracer.finish(int(e), index, True, np.array(
+                        [(present is None or step.episode_info[e, a, present] > 0.0) and not dropped[a]
+                         for a in range(agents)], dtype=bool))
+            elif tracer is not None:
+                tracer.finish(int(e), index, False, np.zeros(agents, dtype=bool))
             if tracing:
                 # The episode's seed is only known now, so its decisions are kept until it ends and then either
                 # written out (the first trace_episodes seeds) or dropped.
@@ -742,6 +965,7 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
         score_column=score_column,
         motion_tracks=motion_tracks,
         motion_ids=motion_ids,
+        trace_blocks=tracer.blocks if tracer is not None else [],
     )
 
     training_step = env.set_mode(False, stand_in=training_stand_in)

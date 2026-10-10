@@ -152,12 +152,13 @@ def write_routes(path: str | Path, tracks: list, ids: list, info_names: tuple[st
 
 
 def prune_routes(run_dir: str | Path, keep: int) -> list[str]:
-    """Delete the per-evaluation route files (eval_motion_<env_steps>[_heldout_<arena>].npz) of all but the `keep`
-    newest evaluations (distinct env_steps); returns the deleted names. eval_motion.npz is never touched."""
+    """Delete the per-evaluation route and trace files (eval_motion_<env_steps>[_<policy>].npz, and exploration v3's
+    eval_trace_<env_steps>_<policy>.npz) of all but the `keep` newest evaluations (distinct env_steps, counted over
+    both kinds); returns the deleted names. eval_motion.npz is never touched."""
     run_dir = Path(run_dir)
     found = {}
-    for path in run_dir.glob("eval_motion_*.npz"):
-        match = re.fullmatch(r"eval_motion_(\d+)(?:_heldout_.+)?\.npz", path.name)
+    for path in [*run_dir.glob("eval_motion_*.npz"), *run_dir.glob("eval_trace_*.npz")]:
+        match = re.fullmatch(r"eval_(?:motion|trace)_(\d+)(?:_.+)?\.npz", path.name)
         if match:
             found.setdefault(int(match.group(1)), []).append(path)
     dropped = []

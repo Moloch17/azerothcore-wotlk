@@ -37,12 +37,16 @@ eval:
     sweep: 60
     # M2's rotating sweep is an arena this stage does not have (null drops the inherited key).
     sweep_rotating: null
+  # M2's per-arena cadence names sweep_rotating, an arena this stage does not have (an empty map replaces); its
+  # all-seeds trace files (eval.trace_all) are M2's own too.
+  heldout_cadence: {}
+  trace_all: false
   # M2's ablation arms with a meaning here, as M2 plays them (move2_seek.yaml): the evaluation's seeds again with one
   # input taken away, 64 episodes each after every evaluation (arms_every 1), read as right_object_no_camera and the
   # like in forge status and as policy rows in eval.csv. no_camera blanks the image (the entity list stays, so the sight
   # block's presses still work: what the picture is worth beyond the list), no_map zeroes the map block and the mental
   # map's crop, no_memory resets the recurrent state before every decision. Readings, never gates. The rest of M2's arms
-  # are its own: no_flag, no_goal, random_goal, random_cell and no_plan (null drops each inherited key; the goal here
+  # are its own: no_flag, no_goal, random_goal, random_cell, no_plan and no_searched (null drops each inherited key; the goal here
   # names what, never where, and the cell goals are M2's alone).
   arms:
     no_compass: null
@@ -51,6 +55,7 @@ eval:
     random_goal: null
     random_cell: null
     no_plan: null
+    no_searched: null
     no_camera: 64
     no_map: 64
     no_memory: 64
@@ -91,7 +96,7 @@ status:
     died: "<= 0.01"
 
 convergence:
-  # M1's patience, restated: M2's reseed state raises its own to 6 (2026-10-09).
+  # M1's patience, restated: M2 raises its own to 6 (2026-10-09).
   patience: 3
   # Converged on the stage's own measure, at the top of its ladder (at_top_rung: the ladder at the key rung).
   measure: right_object
@@ -117,6 +122,9 @@ mappo:
   # M2's 2.2e-4 (deep rung, 2026-10-09) is M2's own: this stage keeps the 1.5e-4 it inherited before it.
   actor_lr: 0.00015
   critic_lr: 0.00015
+  # M2's greedy training envs (exploration v3, mappo.greedy_env_fraction 0.12) are its own: restated off, so none of this
+  # stage's envs act with the argmax.
+  greedy_env_fraction: 0.0
   # M2 holds a goal at most 32 s (128 decisions: room goals); this stage keeps M1's 16 s (64).
   goal_every_decisions: 64
 
