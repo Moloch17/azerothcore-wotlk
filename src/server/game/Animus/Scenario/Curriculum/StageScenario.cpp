@@ -3740,10 +3740,13 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
         seat.MapPending = false;
         bool const same = seat.MapMapId == bot->GetMapId() && seat.MapInstanceId == bot->GetInstanceId();
         seat.MapKept = seat.MapKeep && same && seat.Map.Tiles() > 0;
+        // A kept map moves on by at least a second, so no look of the episode before shares a stamp with this one's
+        // first (a stamp is a map second); BeginEpisode then makes the searched channel this episode's alone.
         if (seat.MapKept)
-            seat.Map.Advance(seat.MapAgeOffset);
+            seat.Map.Advance(std::max(seat.MapAgeOffset, 1.0f));
         else
             seat.Map.Clear();
+        seat.Map.BeginEpisode();
         seat.Map.Configure(Vision::MapCurrent().Caps);
         // Entity memory by the same roll and offset (I2): every sighting in it ages as the map's looks do.
         seat.Recall.Configure(Vision::MemoryCurrent());

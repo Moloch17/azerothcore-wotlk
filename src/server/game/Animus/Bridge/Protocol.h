@@ -198,7 +198,10 @@ namespace AnimusForge
     // 29: the goal space has a tenth kind, search (goal block revision 5, docs/forge/decisions/0024): SPEC's GoalCount is
     // 10 x 23 = 230 joint ids (was 207) and ACT's goal ids run to 229; a cell goal is the joint search / place_7 = 228
     // (was travel_to / place_7 = 159). The messages' layout is protocol 28's.
-    constexpr uint32 PROTOCOL_VERSION = 29;
+    // 30: the mental map's crop has a seventh channel, searched (map block revision 2, three more scalars, exploration
+    // v3, docs/forge/decisions/0026): CROP_BYTES is 16,128 (was 13,824), so the STEP's map section is 2,304 bytes
+    // longer a seat. The learner reads map_bytes from HELLO, so the bump refuses a stale pair; it is not a layout.
+    constexpr uint32 PROTOCOL_VERSION = 30;
     constexpr uint32 SCENARIO_NAME_SIZE = 32;
     constexpr uint32 POLICY_NAME_SIZE = 32;
     constexpr uint32 LAYOUT_NAME_SIZE = 48;

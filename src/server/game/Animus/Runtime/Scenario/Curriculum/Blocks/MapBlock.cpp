@@ -35,7 +35,7 @@ namespace Vi = Animus::Vision;
 namespace
 {
     constexpr char const* SCALAR_NAMES[Animus::Curriculum::MapBlock::OBS_COUNT] = { "known", "frontier", "visited",
-        "kept" };
+        "kept", "searched", "new_age", "total" };
 }
 
 Animus::Curriculum::BlockSize Animus::Curriculum::MapBlock::Size(Layout const& /*layout*/) const
@@ -73,6 +73,11 @@ void Animus::Curriculum::MapBlock::DescribeManifest(Layout const& /*layout*/, bo
     map["class_channel"] = uint32(Vi::CROP_CLASS);
     map["classes"] = Vi::CLASS_LIMIT;
     map["frontier_channel"] = uint32(Vi::CROP_FRONTIER);
+    map["searched_channel"] = uint32(Vi::CROP_SEARCHED);
+    map["searched_max"] = Vi::SEARCHED_MAX;
+    map["new_age_scale_s"] = double(Vi::GROUND_AGE_SCALE_S);
+    map["total_scale"] = double(Vi::GROUND_TOTAL_SCALE);
+    map["epoch"] = "episode";
     map["scalars"] = uint32(OBS_COUNT);
     boost::json::array scalars;
     for (char const* name : SCALAR_NAMES)
@@ -86,18 +91,24 @@ void Animus::Curriculum::MapBlock::Scalars(uint8 const* crop, bool kept, float* 
     uint32 known = 0;
     uint32 frontier = 0;
     uint32 visited = 0;
+    uint32 searched = 0;
     for (uint32 cell = 0; cell < Vi::CROP * Vi::CROP; ++cell)
     {
         uint8 const* bytes = crop + std::size_t(cell) * Vi::CROP_CHANNELS;
         known += bytes[Vi::CROP_AGE] != Vi::CROP_AGE_NEVER ? 1 : 0;
         frontier += bytes[Vi::CROP_FRONTIER] ? 1 : 0;
         visited += bytes[Vi::CROP_VISITED] ? 1 : 0;
+        searched += std::min<uint32>(bytes[Vi::CROP_SEARCHED], Vi::SEARCHED_MAX);
     }
     float const cells = float(Vi::CROP * Vi::CROP);
     obs[OBS_KNOWN] = float(known) / cells;
     obs[OBS_FRONTIER] = float(frontier) / cells;
     obs[OBS_VISITED] = float(visited) / cells;
     obs[OBS_KEPT] = kept ? 1.0f : 0.0f;
+    obs[OBS_SEARCHED] = float(searched) / (float(Vi::SEARCHED_MAX) * cells);
+    // The ground ones are the map's own (Observe).
+    obs[OBS_NEW_AGE] = 0.0f;
+    obs[OBS_TOTAL] = 0.0f;
 }
 
 void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uint8* /*mask*/) const
@@ -141,6 +152,8 @@ void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uin
     uint8* crop = view.MapRow ? view.MapRow : scratch.data();
     map->Crop(x, y, z, view.Facing, crop);
     Scalars(crop, view.MapKept, obs);
+    obs[OBS_NEW_AGE] = std::min(1.0f, float(map->SecondsSinceGround()) / Vi::GROUND_AGE_SCALE_S);
+    obs[OBS_TOTAL] = std::min(1.0f, float(map->GroundTotal()) / Vi::GROUND_TOTAL_SCALE);
     // Where this crop was taken from and how many of its blocks a cell goal can name (free choice goals): the ACT that
     // answers this observation is decoded against exactly this pose (StageScenario::ApplyGoals).
     if (view.Crop)

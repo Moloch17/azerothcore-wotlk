@@ -29,12 +29,13 @@ namespace Animus::Curriculum
     /// vision block leaves its rays on the seat, Vision::FrameHits), from the entities the sensor listed (the
     /// entities block's list, Vision::SeenList: where each stood, as its class) and from the seat's own body, then
     /// read as one
-    /// egocentric, heading-up crop of Vision::CROP x CROP cells of Vision::CROP_CELL yards, six bytes a cell
+    /// egocentric, heading-up crop of Vision::CROP x CROP cells of Vision::CROP_CELL yards, seven bytes a cell
     /// (Vision::CropChannel: the code, the floor's height over the feet, visited, the newest look's age, the most
-    /// recent entity's class, the frontier). After the vision block (its frame is this decision's). No actions.
+    /// recent entity's class, the frontier, how many of its four 1-yd cells were looked at this episode). After the
+    /// vision block (its frame is this decision's). No actions.
     ///
     /// The crop travels as bytes beside the observation -- the seat's map row (SeatView::MapRow), the STEP's map
-    /// section (protocol 24), like the camera's image -- and the block's float columns are its four scalars. Nothing
+    /// section (protocol 24), like the camera's image -- and the block's float columns are its seven scalars. Nothing
     /// in it comes from the navmesh or the map's data: an unseen cell is unknown, whatever is there. The frontier is
     /// worked out from the seat's own map, as a player reads a minimap's edge.
     ///
@@ -49,20 +50,27 @@ namespace Animus::Curriculum
             OBS_FRONTIER,           // ... that are frontier
             OBS_VISITED,            // ... that the body stood on
             OBS_KEPT,               // 1 when this episode's map was kept from the one before (amendment 1)
+            OBS_SEARCHED,           // the share of the crop's 1-yd cells looked at this episode
+            OBS_NEW_AGE,            // seconds since the body last stood on new ground, over GROUND_AGE_SCALE_S, <= 1
+            OBS_TOTAL,              // the 1-yd cells the body has stood on this episode, over GROUND_TOTAL_SCALE, <= 1
             OBS_COUNT
         };
 
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         /// 1: the first map (perception-goals REDESIGN §3, the Change: one 48 x 48 crop at 2 yd, six channels).
-        [[nodiscard]] uint32 Revision() const override { return 1; }
-        /// "map": { transport "bytes", height, width (Vision::CROP), cell (yards), channels (6), channel_names,
+        /// 2: the searched channel (a seventh) and the three scalars searched, new_age, total (exploration v3,
+        /// decision 0026).
+        [[nodiscard]] uint32 Revision() const override { return 2; }
+        /// "map": { transport "bytes", height, width (Vision::CROP), cell (yards), channels (7), channel_names,
         /// map_bytes, codes, code_names, code_channel, height_channel, height_step, height_zero, visited_channel,
         /// age_channel, age_scale, age_never, class_channel, classes (Vision::CLASS_LIMIT), frontier_channel,
-        /// scalars, scalar_names } -- the block's columns are the scalars; the crop is the STEP's map section.
+        /// searched_channel, searched_max, new_age_scale_s, total_scale, epoch ("episode"), scalars, scalar_names }
+        /// -- the block's columns are the scalars; the crop is the STEP's map section.
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
 
-        /// The scalars of a crop (`kept`: the map was kept across the reset).
+        /// The scalars of a crop that it alone gives (`kept`: the map was kept across the reset); the ground ones are
+        /// the map's (Observe).
         static void Scalars(uint8 const* crop, bool kept, float* obs);
     };
 }
