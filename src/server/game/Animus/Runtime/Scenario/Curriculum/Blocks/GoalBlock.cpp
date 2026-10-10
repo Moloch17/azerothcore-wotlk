@@ -69,6 +69,12 @@ void Animus::Curriculum::GoalBlock::DescribeColumns(Layout const& /*layout*/, bo
     for (uint32 slot = 0; slot < GOAL_PLACE_SLOTS; ++slot)
         for (char const* feature : { "sin", "cos", "dist", "cover", "age" })
             names.emplace_back("goal_place_" + std::to_string(slot) + "_" + feature);
+    // Revision 4, appended: the secondary hold's point, the plan's next step, the plan left, the choice frame.
+    for (char const* group : { "goal_held2_", "goal_next_" })
+        for (char const* feature : { "present", "sin", "cos", "dist", "near" })
+            names.emplace_back(std::string(group) + feature);
+    for (char const* name : { "goal_plan_left", "goal_from_present", "goal_from_row", "goal_from_col" })
+        names.emplace_back(name);
 }
 
 void Animus::Curriculum::GoalBlock::Available(SeatView const& view, std::array<bool, GOAL_COUNT>& kinds,
@@ -114,7 +120,13 @@ void Animus::Curriculum::GoalBlock::Available(SeatView const& view, std::array<b
     // movement stages) has a trip's objective, which takes the assignment's slot, so TravelTo has a target there too.
     WorldView const& world = view.World;
     bool places = false;
-    if (world.RoomGoals)
+    if (world.CellGoals)
+    {
+        // Free choice goals: one place target, about a block of the seat's own crop, offered while the crop has one a
+        // goal can name (MapBlock::Observe counted them this decision, or the last, before the goal loop).
+        places = targets[GOAL_CELL_TARGET] = view.Crop && view.Crop->Choosable > 0;
+    }
+    else if (world.RoomGoals)
     {
         // The seek stage's room goals: a room not yet checked and the way on, six and one of the places. A room just
         // checked is not offered (it is the goal just reached, held for one observation). No assignment.
@@ -165,9 +177,11 @@ void Animus::Curriculum::GoalBlock::Available(SeatView const& view, std::array<b
     kinds[uint32(SeatGoal::Fight)] = !(world.RoomGoals && places);  // about no one in particular: always accepted
 }
 
-bool Animus::Curriculum::GoalBlock::PlaceOf(SeatView const& view, uint32 t, Position& where)
+bool Animus::Curriculum::GoalBlock::PlaceOf(SeatView const& view, uint32 t, Position& where, uint32 slot)
 {
     WorldView const& world = view.World;
+    if (world.CellGoals && t == GOAL_CELL_TARGET)
+        return slot < view.HeldCell.size() && view.HeldCell[slot].Valid && (where = view.HeldCell[slot].Where, true);
     if (!world.HasSeenPlaces)
     {
         // A trip's objective, where there is no dungeon's route (Available) -- and only where the seat is told where it is
@@ -190,7 +204,8 @@ bool Animus::Curriculum::GoalBlock::PlaceOf(SeatView const& view, uint32 t, Posi
     return false;
 }
 
-void Animus::Curriculum::GoalBlock::Status(SeatView const& view, int32 goal, bool& reached, bool& possible)
+void Animus::Curriculum::GoalBlock::Status(SeatView const& view, int32 goal, bool& reached, bool& possible,
+    CellPoint const* cell)
 {
     reached = false;
     possible = false;
@@ -256,6 +271,16 @@ void Animus::Curriculum::GoalBlock::Status(SeatView const& view, int32 goal, boo
             break;
         case SeatGoal::TravelTo:
         {
+            if (view.World.CellGoals && target == GOAL_CELL_TARGET)
+            {
+                // A cell goal: possible while the point the choice latched is valid (the scenario ends it when it is
+                // not, or when the seat makes no headway), reached within CellReach of it on its own storey.
+                possible = cell && cell->Valid;
+                if (possible)
+                    reached = bot->GetExactDist2d(&cell->Where) <= view.World.CellReach
+                        && std::fabs(bot->GetPositionZ() - cell->Where.GetPositionZ()) <= view.World.CellRise;
+                break;
+            }
             Position where;
             bool const there = placeOf(target, where);
             if (view.World.RoomGoals && IsRoomTarget(target))
@@ -339,11 +364,65 @@ namespace
     }
 }
 
+namespace
+{
+    /// A point as the goal block's held-place columns say it (present, bearing sin and cos, distance over
+    /// OBJECTIVE_SCALE, distance over NEAR_SCALE), into `row`.
+    void EncodePoint(Animus::Curriculum::SeatView const& view, Position const& point, float* row)
+    {
+        float sin;
+        float cos;
+        float range;
+        Bearing(view, point, sin, cos, range);
+        using Animus::Curriculum::GoalBlock;
+        row[0] = 1.0f;
+        row[1] = sin;
+        row[2] = cos;
+        row[3] = std::min(1.0f, range / GoalBlock::OBJECTIVE_SCALE);
+        row[4] = std::min(1.0f, range / GoalBlock::NEAR_SCALE);
+    }
+
+    /// Revision 4's columns, for an episode that offers cell goals.
+    void ObserveCells(Animus::Curriculum::SeatView const& view, float* obs)
+    {
+        using namespace Animus::Curriculum;
+        using Animus::Curriculum::GoalBlock;
+        if (GoalBlock::IsCellGoal(view.Goal) && view.HeldCell[0].Valid)
+            EncodePoint(view, view.HeldCell[0].Where, obs + GoalBlock::OBS_HELD_PRESENT);
+        if (GoalBlock::IsCellGoal(view.Goal2) && view.HeldCell[1].Valid)
+            EncodePoint(view, view.HeldCell[1].Where, obs + GoalBlock::OBS_HELD2_FIRST);
+        if (view.NextCell.Valid)
+            EncodePoint(view, view.NextCell.Where, obs + GoalBlock::OBS_NEXT_FIRST);
+        obs[GoalBlock::OBS_PLAN_LEFT] = view.PlanLeft;
+        // Where the seat stands in the frame of the crop its latest choice was drawn from (the planner's hindsight
+        // label: the block it reached).
+        if (view.ChoicePose.Valid)
+        {
+            Animus::Movement::BodyState const* body = view.Body;
+            float const x = body ? body->X : view.Bot->GetPositionX();
+            float const y = body ? body->Y : view.Bot->GetPositionY();
+            uint32 row;
+            uint32 col;
+            if (CellGrid::Locate(view.ChoicePose, x, y, row, col))
+            {
+                obs[GoalBlock::OBS_FROM_PRESENT] = 1.0f;
+                obs[GoalBlock::OBS_FROM_ROW] = (float(row) + 0.5f) / float(CellGrid::GRID);
+                obs[GoalBlock::OBS_FROM_COL] = (float(col) + 0.5f) / float(CellGrid::GRID);
+            }
+        }
+    }
+}
+
 void Animus::Curriculum::GoalBlock::ObservePlaces(SeatView const& view, float* obs)
 {
     WorldView const& world = view.World;
     if (!world.RoomGoals || !view.Bot)
         return;
+    if (world.CellGoals)
+    {
+        ObserveCells(view, obs);
+        return;
+    }
 
     // Each place slot the episode holds: where it is from the seat, how much of it was seen, how long ago.
     for (uint32 slot = 0; slot < PLACE_SLOTS; ++slot)
