@@ -10,8 +10,8 @@ which forgectl reads.
 
 | Name | Address | Role now | CPU | Threads | RAM | Disk free | GPU |
 |---|---|---|---|---|---|---|---|
-| dev (this machine) | 192.168.0.69 | development; holds the `lan` git repo; **in the cluster** as a worker (owner, 2026-10-09; the biggest card, 20 GB) | Ryzen 9 9950X3D | 32 | 30 GB | 1.3 TB | gfx1100 (two device lines in docker-compose.override.yml) |
-| sarah | 192.168.0.68 | **cluster host** | Ryzen 9 7900X | 24 | 30 GB | 221 GB | to confirm |
+| dev (this machine) | 192.168.0.69 | development; holds the `lan` git repo; **the cluster HOST since 2026-10-10** (owner: the biggest card, 20 GB; the fastest machine) | Ryzen 9 9950X3D | 32 | 30 GB | 1.3 TB | gfx1100 (two device lines in docker-compose.override.yml) |
+| sarah | 192.168.0.68 | worker (the host until 2026-10-10) | Ryzen 9 7900X | 24 | 30 GB | 221 GB | to confirm |
 | spencer | 192.168.0.66 | worker | i7-6700K | 8 | 15 GB | 228 GB | to confirm |
 | thomas | 192.168.0.67 | worker | Ryzen 7 3800X | 16 | 31 GB | 948 GB | about 8 GB |
 | (moloch) | 192.168.0.117 | worker | Xeon E5-2640 | 24 | 62 GB | 1.1 TB | about 5 GB |

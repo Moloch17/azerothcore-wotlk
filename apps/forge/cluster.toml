@@ -3,7 +3,7 @@
 # a leading ~/ means the login user's home. Add a worker by adding a [[machine]] block with in_cluster = true.
 
 [cluster]
-host = "sarah"          # the machine that holds the run and decides (AnimusForge.Cluster.Role = "host")
+host = "dev"            # the machine that holds the run and decides (AnimusForge.Cluster.Role = "host")
 lan_remote = "lan"      # the remote the workers pull from (a bare repository on the dev machine)
 branch = "forge"        # the branch that is deployed
 control_port = 7700     # worker -> host control; also the port in each worker's Cluster.Host
@@ -30,7 +30,7 @@ build_dir_name = "forgectl-build"
 name = "dev"
 user = "moloch"
 address = "192.168.0.69"
-role = "worker"         # always in the cluster (owner, 2026-10-09): the biggest card (20 GB); builds also run here
+role = "host"           # the host since 2026-10-10 (owner: the biggest card, 20 GB; the fastest machine); builds also run here
 path = "~/mlac/azerothcore"
 in_cluster = true
 local = true            # forgectl is run here: no ssh
@@ -39,7 +39,7 @@ local = true            # forgectl is run here: no ssh
 name = "sarah"
 user = "sarah"
 address = "192.168.0.68"
-role = "host"
+role = "worker"        # the host until 2026-10-10
 path = "~/animus-forge"
 in_cluster = true
 
