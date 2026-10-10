@@ -30,9 +30,9 @@ build_dir_name = "forgectl-build"
 name = "dev"
 user = "moloch"
 address = "192.168.0.69"
-role = "dev"
+role = "worker"         # always in the cluster (owner, 2026-10-09): the biggest card (20 GB); builds also run here
 path = "~/mlac/azerothcore"
-in_cluster = false
+in_cluster = true
 local = true            # forgectl is run here: no ssh
 
 [[machine]]
@@ -68,12 +68,12 @@ path = "~/animus-forge"
 in_cluster = true
 
 [[machine]]
-name = "eli"            # out of the cluster until the owner says otherwise (4 cores, the slowest)
+name = "eli"            # in the cluster since 2026-10-10 (owner: all 6 machines train); 4 cores, the slowest
 user = "eli"
 address = "192.168.0.65"
 role = "worker"
 path = "~/animus-forge"
-in_cluster = false
+in_cluster = true
 
 [doctor]                # thresholds for `forgectl doctor` (a key left out takes the default shown)
 disk_min_gb = 30                 # free space under a checkout below this is a FAIL (the deploy gate's number)

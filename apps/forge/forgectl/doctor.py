@@ -204,9 +204,10 @@ def checks(config: Config, facts: list[Facts], dev_rev: str | None, confs: dict,
         out.append(Check("dev disk free", WARN, f"{dev_disk_gb:.0f} GB on this machine (need >= {floor:g})",
                          "free space before a local build"))
 
-    out.append(Check("dev card idle", dev[0], dev[1],
-                     "something is using the dev GPU; check `ps`, the desktop and the dev containers before a "
-                     "run that wants it" if dev[0] != PASS else ""))
+    if not any(m.local and m.in_cluster for m in config.machines):   # a local worker trains on the dev card by design
+        out.append(Check("dev card idle", dev[0], dev[1],
+                         "something is using the dev GPU; check `ps`, the desktop and the dev containers before a "
+                         "run that wants it" if dev[0] != PASS else ""))
 
     host_text = confs.get(config.host_name)
     if not isinstance(host_text, str):
