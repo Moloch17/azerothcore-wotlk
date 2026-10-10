@@ -90,9 +90,9 @@ class ForgeEnv:
         expected = (self.spec.num_envs, self.spec.agents_per_env)
         if np.shape(actions) != expected:
             raise ValueError(f"actions must have shape {expected}, got {np.shape(actions)}")
-        # Primary then secondary per agent (protocol 17, MappoTrainer.wire_goals).
-        if goals is not None and np.shape(goals) != (*expected, 2):
-            raise ValueError(f"goals must have shape {(*expected, 2)}, got {np.shape(goals)}")
+        # Four joint ids then four cell words per agent (protocol 28, MappoTrainer.wire_goals).
+        if goals is not None and np.shape(goals) != (*expected, p.GOAL_WIRE_INTS):
+            raise ValueError(f"goals must have shape {(*expected, p.GOAL_WIRE_INTS)}, got {np.shape(goals)}")
 
         # In half-batch both halves are answered before either STEP is read: the sim has what it needs for both
         # ticks, so this works exactly as a whole-pool step, only without the overlap the pipelined rollout gets.
