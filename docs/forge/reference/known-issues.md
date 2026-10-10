@@ -447,3 +447,27 @@ Charge and taxis still start splines).
 - Stages.cpp's comment that 300 s is the episode clock feature's scale (`EPISODE_TIME_SCALE_MS`) predates the 420 s
   deep rung: the clock feature saturates in the last 120 s of a deep episode (not changed here).
 - `FrontierPull` looks through the 16 nearest frontier clusters (`FRONTIER_PULL_POINTS`) for one at a door or beyond.
+
+## Exploration v3, 2026-10-10 (C++ stream; nothing run, syntax check only; decision 0026)
+
+- UNVERIFIED end to end: no sim ran. 90 Animus TUs compile (`-fsyntax-only`, no warnings) and `codestyle-cpp.py` passes.
+  Sim and learner rebuild together (protocol 30, map block revision 2, new episode columns).
+- The first 4 map-block scalars and the channels 0-5 keep their meaning and offsets; the three new scalars are
+  appended (`searched`, `new_age`, `total`), so the learner reads them by `obs[0] + index` from the manifest.
+- Kept maps (50% of training episodes): `searched` is episode-local but `known`, `age`, `visited` are not, and the
+  ground counters under-count (the cells stood on in earlier episodes of the kept map are not new ground). An
+  evaluation has no kept map and is exact.
+- `Seek.StaleMs` is gone: an explicit `Seek.StaleMs` in a worker's `mod_animus_forge.conf` is an unknown key (the dev
+  host's has none; the cluster workers' were not read). The same goes for explicit `Seek.RoomEntry`, `Seek.TrapShare`.
+- The Exploring family, Stale and the trap drill are off below the placed rung `Seek.ExploreFromRung` (2); the
+  sweeps (deep rung always) are unaffected, so at rungs 0-1 they read a policy that has not learned deep search.
+- `Seek.TrapEscapeTurnDeg` rewards turning, not strafing out of a jamb. Watch `trap_turned` against `trap_escaped`; if most
+  escapes are strafes, set it to 0. Tighter poses fail more `TrapPose` attempts (`TRAP_ATTEMPTS` 8): watch `trap_episode`
+  against 0.2 of the unseeded episodes at rung >= 2 and raise the attempts to 16 if it falls under 0.15.
+- The wall escalation is uncapped per episode (so is Stuck): a seat pinned the whole episode pays up to ~0.1 a second
+  x 400 s. `wall_pin_events` counts a pin still running at the episode's end (the other runs count when they end).
+- `hard_room` is logged for every episode, including seeded ones; the 0.474 hard share applies to unseeded rung 2 and 3
+  training episodes only.
+- `rooms_approached` is a reading (6 yd of a room's opening, 2D, |dz| <= 4); it resets nothing.
+- The far-frontier vector (bearing and distance of the nearest frontier) was left out of the map block on purpose; it
+  would be a second revision and a second rebuild.
