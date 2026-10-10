@@ -141,6 +141,16 @@ namespace Animus::Curriculum
         RoomGoal,
         RoomSwitch,
         Return,
+        /// The seek stage's cell goals (free choice goals, 2026-10-09; Seek.GoalSource 1): a cell goal reached
+        /// (CellGoal, once) and a yard of new best closeness to a held one (CellProgress), only for a goal chosen far
+        /// enough away on a block the seat had not stood on: Aid, as RoomGoal. And what wasted plans cost, at fixed
+        /// prices (Cost): a cell goal given up for another (CellSwitch), one lost for want of headway or an invalid
+        /// choice (CellLost), and a block chosen that the seat had stood on (CellStale).
+        CellGoal,
+        CellProgress,
+        CellSwitch,
+        CellLost,
+        CellStale,
         Count
     };
 
@@ -229,10 +239,16 @@ namespace Animus::Curriculum
             case RewardTerm::Idle:
             // A return to a room already visited, after a real absence (M2 goals).
             case RewardTerm::Return:
+            // A cell goal given up, lost, or chosen on ground already walked (free choice goals).
+            case RewardTerm::CellSwitch:
+            case RewardTerm::CellLost:
+            case RewardTerm::CellStale:
                 return RewardCategory::Cost;
             // The seek stage's room goals: a teaching aid on the progress-linear aid scale.
             case RewardTerm::RoomGoal:
             case RewardTerm::RoomSwitch:
+            case RewardTerm::CellGoal:
+            case RewardTerm::CellProgress:
                 return RewardCategory::Aid;
             case RewardTerm::DamageDealt:
             case RewardTerm::Approach:

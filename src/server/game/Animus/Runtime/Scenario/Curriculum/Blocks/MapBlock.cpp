@@ -17,6 +17,7 @@
  */
 
 #include "MapBlock.h"
+#include "CellGrid.h"
 #include "Player.h"
 #include "SeatView.h"
 #include "UnitBody.h"
@@ -105,6 +106,8 @@ void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uin
     // No map until this decision's says otherwise: every cell unknown (the zero row).
     if (view.MapRow)
         std::memset(view.MapRow, 0, Vi::CROP_BYTES);
+    if (view.Crop)
+        *view.Crop = CropPose();
     Vi::MentalMap* map = view.Map;
     Player* bot = view.Bot;
     if (!map || !bot || !bot->IsInWorld())
@@ -138,6 +141,10 @@ void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uin
     uint8* crop = view.MapRow ? view.MapRow : scratch.data();
     map->Crop(x, y, z, view.Facing, crop);
     Scalars(crop, view.MapKept, obs);
+    // Where this crop was taken from and how many of its blocks a cell goal can name (free choice goals): the ACT that
+    // answers this observation is decoded against exactly this pose (StageScenario::ApplyGoals).
+    if (view.Crop)
+        *view.Crop = CropPose{ true, x, y, z, view.Facing, CellGrid::Count(crop) };
     Vi::Cost::AddMap(uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()
         - start).count()), map->Tiles());
 }

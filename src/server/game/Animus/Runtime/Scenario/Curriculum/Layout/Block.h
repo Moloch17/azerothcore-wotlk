@@ -197,6 +197,12 @@ namespace Animus::Curriculum
     {
         return int32(uint32(kind) * GOAL_TARGETS + target);
     }
+
+    /// **A cell goal** (free choice goals, 2026-10-09; goal block revision 4): the joint goal travel_to / place_7 --
+    /// the last place target, which the room goals never offer -- plus a cell of the seat's own mental-map crop, chosen by
+    /// the learner's pointer head and sent beside it (CellGrid, ACT's cell words).
+    constexpr uint32 GOAL_CELL_TARGET = GOAL_TARGET_PLACE_FIRST + GOAL_PLACE_SLOTS;
+    constexpr int32 GOAL_CELL_JOINT = MakeGoal(SeatGoal::TravelTo, GOAL_CELL_TARGET);
     /// The kind of a goal (NO_GOAL stays NO_GOAL as -1 compares), and its target.
     [[nodiscard]] constexpr int32 GoalKindOf(int32 goal) { return goal < 0 ? NO_GOAL : goal / int32(GOAL_TARGETS); }
     [[nodiscard]] constexpr uint32 GoalTargetOf(int32 goal) { return goal < 0 ? 0 : uint32(goal) % GOAL_TARGETS; }

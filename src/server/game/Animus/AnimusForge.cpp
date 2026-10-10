@@ -2577,7 +2577,7 @@ void AnimusForge::Forge::RemoteDecision(uint32 group)
         std::vector<char> payload;
         auto const waitFrom = std::chrono::steady_clock::now();
         bool const received = _server.ReceiveAny(type, payload,
-            std::max({ sizeof(ActHeader) + (1 + Animus::GOAL_SLOTS_ON_WIRE + lookHeads) * actionBytes,
+            std::max({ sizeof(ActHeader) + (1 + Animus::GOAL_WIRE_INTS + lookHeads) * actionBytes,
                 sizeof(ModeMsg), weightBytes, replayBytes }),
             onIdle);
         WaitedForLearner(waitFrom);
@@ -2597,7 +2597,7 @@ void AnimusForge::Forge::RemoteDecision(uint32 group)
         std::size_t const groupRows = std::size_t(rows.Count) * agents;
         std::size_t const groupBytes = groupRows * sizeof(int32);
         std::size_t const body = payload.size() - std::min(payload.size(), sizeof(act));
-        std::size_t const goalBytes = groupBytes * Animus::GOAL_SLOTS_ON_WIRE;
+        std::size_t const goalBytes = groupBytes * Animus::GOAL_WIRE_INTS;
         ActCut const cut = CutAct(body, groupRows, lookHeads);
         if (type == MsgType::Act && modes.empty() && act.EnvBegin == rows.Local && act.EnvCount == rows.Count
             && cut.Valid)
@@ -2627,12 +2627,18 @@ void AnimusForge::Forge::RemoteDecision(uint32 group)
                 std::copy(look.begin(), look.end(), _pool->Look.begin() + first * lookHeads);
             }
             std::memcpy(_pool->Actions.data() + first, actions, groupBytes);
-            // The goals, when the policy has a goal head: primary and secondary per agent (protocol 17).
-            std::size_t const goalFirst = first * Animus::GOAL_SLOTS_ON_WIRE;
+            // The goals, when the policy has a goal head: per agent the four plan positions' joint ids, then their
+            // cell words (protocol 28). Without one: no goal (-1) and no cell word (0).
+            std::size_t const goalFirst = first * Animus::GOAL_WIRE_INTS;
             if (cut.Goals)
                 std::memcpy(_pool->Goals.data() + goalFirst, actions + groupBytes, goalBytes);
             else
-                std::fill_n(_pool->Goals.begin() + goalFirst, goalBytes / sizeof(int32), -1);
+                for (std::size_t row = 0; row < groupRows; ++row)
+                {
+                    auto const at = _pool->Goals.begin() + std::ptrdiff_t(goalFirst + row * Animus::GOAL_WIRE_INTS);
+                    std::fill_n(at, Animus::GOAL_SLOTS_ON_WIRE, -1);
+                    std::fill_n(at + Animus::GOAL_SLOTS_ON_WIRE, Animus::GOAL_SLOTS_ON_WIRE, 0);
+                }
 
             _lastAct = std::chrono::steady_clock::now();
             ++rank;

@@ -22,6 +22,7 @@
 #include "MoveControls.h"
 #include "Aptitude.h"
 #include "Block.h"
+#include "CellGrid.h"
 #include "ClassProfile.h"
 #include "ActionTuning.h"
 #include "FreeLook.h"
@@ -82,6 +83,13 @@ namespace Animus::Curriculum
         /// The episode offers room goals: places are the rooms and the way on, travel_to is the only kind offered
         /// once one exists, and a room goal is reached when its room is checked rather than within a distance.
         bool RoomGoals = false;
+        /// The episode offers cell goals (free choice goals, Seek.GoalSource 1): travel_to / place_7 is the one kind
+        /// offered, about a block of the seat's own mental-map crop (CellGrid), not a room. RoomGoals is true beside
+        /// it (the gates that exempt place goals from a straight-line gap hold), but Places stays empty.
+        bool CellGoals = false;
+        /// How near (2D) and how far above or below a cell goal's point counts as reached (Seek.CellReach, CellRise).
+        float CellReach = 4.0f;
+        float CellRise = 3.0f;
         /// The stage has seen places (SeenPlaces: what the seat saw and remembers, its map's frontier -- not a route)
         /// and an assignment: the goal block reads them. False in a stage without them, where a trip's objective
         /// takes the assignment's slot.
@@ -411,6 +419,17 @@ namespace Animus::Curriculum
 
         /// A dungeon's way on (WorldView), as the goal head names it.
         WorldView World;
+
+        /// **Cell goals** (WorldView::CellGoals): where the map block took this decision's crop from and how many of
+        /// its blocks are choosable (written by MapBlock::Observe through this pointer, like MapRow; null for a view
+        /// without one); the point the primary and the secondary hold, valid while the goal is a cell goal not yet
+        /// ended; the plan's next step (the queue's first) and how much of the plan is left (GoalBlock::OBS_PLAN_LEFT);
+        /// and the pose of the latest choice, which the seat's own position is read against (OBS_FROM_*).
+        CropPose* Crop = nullptr;
+        std::array<CellPoint, 2> HeldCell{};
+        CellPoint NextCell;
+        float PlanLeft = 0.0f;
+        CropPose ChoicePose;
 
     };
 

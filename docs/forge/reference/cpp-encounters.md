@@ -341,6 +341,11 @@ once with and once without the compass, and rounds 2k and 2k+1 play the same pai
 | `room_goal` | Aid | `+Seek.RoomGoal` x aid scale once per goal, paid by `StageScenario::ObserveSeat` into the row of the decision that sees a held room goal (place targets 14-19, not the way on) reached (`Earned`: its room checked after the choice); a secondary at `Goals.SecondaryShare`. Not in the score. | `Seek.RoomGoal` (0.05), `Seek.AidUntil` (0.4) |
 | `room_switch` | Aid | `-Seek.RoomSwitch` x aid scale per unended place goal (a room or the way on) replaced by another goal (`ApplyGoals`; the same change also costs `Goals.Switch`, Shaping). | `Seek.RoomSwitch` (0.03) |
 | `return` | Cost | `-Seek.Return` per return (above), at its fixed price; in the score. | `Seek.Return` (0.05), `Seek.ReturnAwayYards` (8), `Seek.ReturnAwayMs` (2000) |
+| `cell_goal` | Aid | `+Seek.CellGoal` x aid scale once per cell goal reached (`GoalSource` 1), only if it was chosen at least `Seek.CellMinYards` from the seat and its block had not been stood on at the choice; `AddTaken` in `ObserveSeat` into the decision that sees it reached; a secondary at `Goals.SecondaryShare`. Not in the score. | `Seek.CellGoal` (0.05), `Seek.CellMinYards` (8) |
+| `cell_progress` | Aid | `+Seek.CellProgress * max(0, CellBestYards - distance)` per decision for the held primary cell goal (a ratchet: `CellBestYards` only falls), not stale; `SeatReward`. Not in the score. | `Seek.CellProgress` (0.004 per yard) |
+| `cell_switch` | Cost | `-Seek.CellSwitch` per unended cell goal replaced by another goal (`ApplyGoals`, `StepCellSwitches`), `AddFixed`; in the score. | `Seek.CellSwitch` (0.02) |
+| `cell_lost` | Cost | `-Seek.CellLost` per cell goal ended without being reached while the seat lives (the patience rule, an invalid latch), `AddTaken` in `ObserveSeat`; in the score. | `Seek.CellLost` (0.03) |
+| `cell_stale` | Cost | `-Seek.CellStale` per block latched that the seat had stood on (`CROP_VISITED` in any of its crop cells) and that was not a free re-choice; `AddFixed` in `ApplyGoals`; in the score. | `Seek.CellStale` (0.01) |
 | `arrive` | Outcome | `+Markers.Arrive` once, on the decision when stopped and inside (`:416`) | `Markers.Arrive` (3.0) |
 
 Conditions. The Progress/Facing/Wall/Stuck/arrival code runs only while `Placed && !Reached && alive` (`:355-356`).
@@ -495,7 +500,14 @@ static std::vector<std::string> ObjectNames(ArenaDefinition const&);  // seek_ob
    seconds since the first glimpse / 120. Place 6 is the way on: the nearest frontier of the seat's own mental map
    (`SeenPlaces::Frontier`, radius 40, step 2, refreshed every 2 s as `InstanceEncounter::SeenWorld`), `Coverage` 1.
    **AchievedGoal**: the slot of a room checked at this decision, as `travel_to place_k`, for the goal block's hindsight
-   columns (`StageScenario::ObserveGoalSignals`, taken when nothing else was achieved).
+   columns (`StageScenario::ObserveGoalSignals`, taken when nothing else was achieved); `NO_GOAL` at `GoalSource` 1.
+   **Cell goals** (free choice goals, 2026-10-09; `Seek.GoalSource` 1, the default): `WorldView::CellGoals = RoomGoals &&
+   GoalSource == 1`, with `CellReach`/`CellRise` copied in, and the places (rooms and the way on) are NOT filled: the
+   goal head names a pooled 4 yd block of the seat's own mental-map crop (goal block revision 4, `CellGrid.h`). The room
+   bookkeeping (`TrackRooms`: checks, visits, `Return`, `rooms_checked`) still runs at both sources; `RoomGoal` and
+   `RoomSwitch` can only be paid at `GoalSource` 0 (place targets 14-19 are never offered at 1). The scenario owns the
+   cell machinery (`StageScenario::ApplyGoals`, see cpp-stagescenario.md S2.2): the encounter supplies the flags, the
+   keys and the telemetry.
 4. **Reward** (`SeekEncounter.cpp:685`), see below. After the existing bookkeeping it runs `TrackRooms` (room goals):
    - *Hits*: `SeekDraw::FloorHits` (floor rays inside a room's polygon within 4 yd of its `FloorZ`) adds each ray's
      3 yd cell and point to the room's `RoomTrack`; `RoomSeen` is paid from the same counts.
@@ -528,7 +540,8 @@ static std::vector<std::string> ObjectNames(ArenaDefinition const&);  // seek_ob
 
 **The aid scale** (`RewardCategory::Aid`, `RewardLedger::SetAid`, set in `StageScenario::Reward`): `max(0, 1 - progress /
 Seek.AidUntil)` where `progress` is the stage's share of `total_env_steps` (`ProgressMsg.Progress`, no protocol change);
-it is set for every stage's ledgers, and only the seek room terms are Aid. Room-goal behaviour in `StageScenario`: a
+it is set for every stage's ledgers, and only the seek room and cell terms (`room_goal`, `room_switch`, `cell_goal`,
+`cell_progress`) are Aid. Room-goal behaviour in `StageScenario`: a
 seat's `RoomGoals` flag (from the last observation) turns off `GoalGap` and `GoalPotential` for place goals (the straight
 line is not the walk: no `StepAway`, no progress potential), and a place goal chosen again once it ended is a new hold
 (`ApplyGoals`; slot ids are reused). Telemetry counters live on `SeatState`: `RoomGoalsChosen/Reached/Lost`,
@@ -551,10 +564,14 @@ line is not the walk: no `StepAway`, no progress potential), and a place goal ch
 | `found_hallway`, `found_doorway`, `found_room`, `found_deep` | found and placed at that rung | PER_EVENT over `rung_<name>` (`episode_means.py:29-32`) |
 | `object_fallback` | `Fallback` | |
 | `distance_travelled` | sum of per-decision 2D displacement | |
-| `plan_share` | decisions under a place goal (room or way on) / decisions | room goals |
-| `goals_room_chosen`, `goals_room_reached`, `goals_room_lost`, `goal_follow_rate`, `goal_switches_room` | room goals (place targets 14-19) chosen, reached (`Earned`), lost (not counted for a dead seat); reached / chosen; place goals given up (the way on included) | `lost` is not inflated by the terminal observation: `RoomGoals` stays true after the find |
+| `plan_share` | decisions under a place goal (room, way on, or since 2026-10-09 a cell goal) / decisions | room and cell goals |
+| `goals_room_chosen`, `goals_room_reached`, `goals_room_lost`, `goal_follow_rate`, `goal_switches_room` | room goals (place targets 14-19) chosen, reached (`Earned`), lost (not counted for a dead seat); `goal_follow_rate` is (room + cell goals reached) / (room + cell goals chosen) since 2026-10-09; place goals given up (the way on included) | `lost` is not inflated by the terminal observation: `RoomGoals` stays true after the find |
+| `goals_cell_chosen`, `goals_cell_reached`, `goals_cell_lost` | cell goals started (a hold made: also a promotion from the queue), reached, lost (not counted for a dead seat) | cell goals |
+| `goals_cell_invalid`, `goals_cell_same`, `goal_switches_cell` | choices the sim could not decode (not choosable in the crop it was drawn from, or no pose: a learner/sim desync, must stay 0); free re-choices of the held goal (within `Seek.CellSame`); unended cell goals replaced | |
+| `cell_goal_seconds`, `cell_goal_yards` | mean seconds a cell goal ran before it ended, was replaced or the episode did; mean 2D yards to the point when the goal was made | PER_EVENT candidates (Python) |
+| `cell_stale_share`, `plan_depth`, `plan_advances`, `ground_cells` | blocks latched that were stood on / blocks latched; mean number of valid cell tickets in the plan at a step that latched one; promotions that took a reached goal's place; `Cells.size()`, the 4 yd cells of ground walked (exploration, comparable across `GoalSource`) | |
 | `rooms_checked`, `rooms_checked_per_min` | rooms `Checked` this episode; per minute of `EpisodeElapsedMs` | |
-| `returns`, `slots_waiting`, `time_to_first_goal` | returns (above); most glimpsed rooms without a slot; seconds to the first place goal held (0 if none) | |
+| `returns`, `slots_waiting`, `time_to_first_goal` | returns (above); most glimpsed rooms without a slot; seconds to the first place or cell goal held (0 if none) | |
 | `checked_miss`, `check_cover_at_find` | on an episode that found the object: 1 if its room was `Checked` at a decision strictly before the arrival; the room's hit cells / floor cells at the arrival. Both 0 when not found. | calibrates `Seek.CheckedShare` |
 | `object_x`, `object_y`, `object_z`, `end_x`, `end_y`, `end_z` | the object's base (`Spot`) and the seat's last position, absolute instance coordinates, yards | `Spot` is 0 when not placed |
 

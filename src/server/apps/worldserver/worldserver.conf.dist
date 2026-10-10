@@ -6507,6 +6507,17 @@ AnimusForge.Curriculum.PartyFollow.CastShare = 0
 #        when a room goal is given up for another) are Aid: paid times max(0, 1 - progress / AidUntil), progress being
 #        the share of the stage's step budget, and not in the score. Return (Cost, fixed price, in the score) is
 #        charged for entering a room visited before after ReturnAwayMs outside its polygon by ReturnAwayYards or more.
+#        Cell goals (free choice goals, 2026-10-09): GoalSource 1 (the default) makes the goal a block (4 yd) of the
+#        seat's own mental-map crop, chosen by the learner's pointer head, instead of a room; a plan is up to four of
+#        them in order, and the sim latches each block's point at the choice. GoalSource 0 keeps the room slots (a
+#        temporary switch for the A/B, deleted with the loser); it only matters with Goals 1. A cell goal is reached
+#        within CellReach yards (2D) of its point and CellRise yards of its height; a choice within CellSame yards of
+#        the goal held and not ended is that goal chosen again, free; a goal whose best distance gains less than
+#        CellPatienceYards in CellPatienceMs is lost. CellGoal (once per goal reached, only for one chosen at least
+#        CellMinYards away on a block the seat had not stood on) and CellProgress (per yard of new best closeness, the
+#        same blocks) are Aid, times the aid scale; CellSwitch (a cell goal given up for another), CellLost (a cell goal
+#        lost) and CellStale (a block chosen that the seat had stood on) are Cost at fixed prices, in the score.
+#        RoomGoal and RoomSwitch are paid at GoalSource 0 only.
 AnimusForge.Curriculum.Seek.Arrive = 3.0
 AnimusForge.Curriculum.Seek.StepCost = 0.0005
 AnimusForge.Curriculum.Seek.Death = 6.0
@@ -6543,6 +6554,18 @@ AnimusForge.Curriculum.Seek.CheckedShare = 0.6
 AnimusForge.Curriculum.Seek.EnterDwellMs = 1000
 AnimusForge.Curriculum.Seek.ReturnAwayYards = 8.0
 AnimusForge.Curriculum.Seek.ReturnAwayMs = 2000
+AnimusForge.Curriculum.Seek.GoalSource = 1
+AnimusForge.Curriculum.Seek.CellReach = 4.0
+AnimusForge.Curriculum.Seek.CellRise = 3.0
+AnimusForge.Curriculum.Seek.CellSame = 6.0
+AnimusForge.Curriculum.Seek.CellMinYards = 8.0
+AnimusForge.Curriculum.Seek.CellPatienceMs = 20000
+AnimusForge.Curriculum.Seek.CellPatienceYards = 2.0
+AnimusForge.Curriculum.Seek.CellGoal = 0.05
+AnimusForge.Curriculum.Seek.CellProgress = 0.004
+AnimusForge.Curriculum.Seek.CellSwitch = 0.02
+AnimusForge.Curriculum.Seek.CellLost = 0.03
+AnimusForge.Curriculum.Seek.CellStale = 0.01
 
 #
 #    AnimusForge.Curriculum.Interact.*

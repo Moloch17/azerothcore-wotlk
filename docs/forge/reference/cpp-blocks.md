@@ -40,7 +40,8 @@ are those of commit `bd32b9dc8`.
 | Blocks/EntitiesBlock.h | 94 | Visible-entity set, revision 1. |
 | Blocks/EntitiesBlock.cpp | 124 | Writes entity memory and the 32 x 20 columns. |
 | Blocks/MapBlock.h | 65 | Mental-map scalars, revision 1. |
-| Blocks/MapBlock.cpp | 140 | Writes the map from the frame, crops, four scalars. |
+| Blocks/MapBlock.cpp | 148 | Writes the map from the frame, crops, four scalars, and the crop pose + choosable count (`SeatView::Crop`). |
+| Blocks/CellGrid.h | 168 | Header-only: the cell goal's pooled-block geometry, `Choosable`/`Count`/`Stood`, `WorldPoint`/`Locate`, cell words, `CropPose`, `CellPoint`. |
 | Blocks/SightBlock.h | 146 | Seen+remembered list and pointer presses, revision 2. |
 | Blocks/SightBlock.cpp | 311 | List writer, named row, masks, press dispatch. |
 | Blocks/PartyFramesBlock.h | 138 | Party frames, revision 2. |
@@ -48,7 +49,7 @@ are those of commit `bd32b9dc8`.
 | Blocks/CombatBlock.h | 200 | Player/pet frames, target frame, per-slot combat columns, revision 1. |
 | Blocks/CombatBlock.cpp | 344 | Threat status, visible enemies, ground fire, presses. |
 | Blocks/GoalBlock.h | 95 | Goal availability block (128 columns, no actions). |
-| Blocks/GoalBlock.cpp | 346 | Availability, goal status, "earned" rule, the revision 3 held-goal and place-slot columns. |
+| Blocks/GoalBlock.cpp | 430 | Availability, goal status, "earned" rule, the revision 3 held-goal and place-slot columns, the revision 4 cell-goal columns. |
 | Layout/Block.h | 305 | `BlockId`, `Block` interface, sizing constants, goal space (documented here). |
 
 `Layout/Block.h` belongs to the Layout directory and is mapped again in cpp-layout-character.md.
@@ -531,9 +532,36 @@ visible units. Also provides `VisibleEnemies` (the encounter enemy list), `ReadH
 `FrameResolve` comment calls it a "party frame's click"; target-frame threat uses server threat lists as the client's
 threat colouring does.
 
-## goal (id 26, revision 3)
+## goal (id 26, revision 4)
 
-108 obs, 0 actions, always last (revision 2 was 68 wide, revision 1 101, revision 0 128: 12 kinds x 29 targets).
+122 obs, 0 actions, always last (revision 3 was 108 wide, revision 2 68, revision 1 101, revision 0 128: 12 kinds x 29
+targets).
+**Revision 4 (2026-10-09, free choice goals)** appends 14 columns after the 108 below, which do not move (names exact,
+the learner reads the offsets from stage.json `goals.columns`): 108-112 `goal_held2_present/sin/cos/dist/near` (the
+secondary hold's latched point, encoded as 68-72), 113-117 `goal_next_present/sin/cos/dist/near` (the plan's next step:
+the queue's first cell goal, `Plan[2]`), 118 `goal_plan_left` (cell goals left among the held primary, not ended, and
+the two queued, over 3), 119 `goal_from_present` (the seat's body falls inside the 24 x 24 grid of the crop of the
+latest choice, `SeatView::ChoicePose`), 120 `goal_from_row` and 121 `goal_from_col` (`(r + 0.5) / 24`, the seat's
+pooled block in that frame; `CellGrid::Locate`; 0 when not present). In a cell-goal episode (`WorldView::CellGoals`:
+`Seek.GoalSource` 1) columns 68-72 are also the PRIMARY hold's latched point while it is a cell goal not ended; the 14
+are written only then and zero elsewhere. `Available` offers `travel_to` only, with place target 21 (`GOAL_CELL_TARGET`,
+joint 159 = `GOAL_CELL_JOINT`; the room goals never offered it) set iff the current crop has a choosable block
+(`SeatView::Crop->Choosable`, written by `MapBlock::Observe` just before); targets 14-20 and 22 are not offered, and
+Fight/none stays only as the "no plan yet" placeholder while nothing is choosable. `Status` of a cell goal: possible
+while the hold's point was latched (`HeldCell`), reached within `WorldView::CellReach` (2D) and `CellRise` (height) of
+it; no `Earned` hold-unpaid rule for cells. `PlaceOf` for target 21 is the hold's latched point (slot argument).
+`IsCellGoal` (159) and `IsPlanGoal` (place or cell) gate the seek stage's plan counters. The pose of every crop, and
+the choosable-block count, are recorded by `MapBlock::Observe` through `SeatView::Crop` (`CropPose`).
+
+**`CellGrid.h`** (the contract of the cell goal, mirrored by `mappo/networks.py cell_valid`): the 48 x 48 crop is pooled
+`POOL` 2 into a 24 x 24 grid of 4 yd blocks (576); `cell = r * 24 + c`, row 0 furthest ahead, column 0 leftmost. A
+block is `Choosable` iff none of its four crop cells is Wall or Hazard, at least two are floor-like (Floor or Door), and
+every floor-like one has a height byte within 16 units (4 yd) of 128 and not 0. Its centre is `forward = 46 - 4r`,
+`right = 4c - 46` yards from the body, rotated by the pose's yaw as `MentalMap::Crop` does, at the mean height of its
+floor-like cells over the feet. A cell word is `(ticket << 12) | (cell + 1)`, ticket 1..2047, 0 none. (`Locate` is the
+inverse of the centre: `r = floor(12 - forward / 4)`, `c = floor(12 + right / 4)`; the contract text had
+`floor(row / 2)` of the cell-centre coordinate, half a crop cell off.)
+
 **Revision 3 (2026-10-09, M2 goals)** appends 40 columns after the 68 below, which do not move: 68-72 the held primary
 goal's place as M1's compass shows its mark (`goal_held_present`, `goal_held_sin`, `goal_held_cos`, `goal_held_dist`
 (distance / 500, clamped), `goal_held_near` (distance / 40, clamped); bearing off `SeatView::Facing` from the body's
@@ -568,7 +596,7 @@ choice" rule used by the scenario for `Goals.Reached` payment. `PlaceOf` yields 
 slot is the trip objective when the stage has no seen places (`WorldView::HasSeenPlaces`, until 2026-10-08
 `RoutePlaces`), only while `ObjectivePlaceKnown`). Constants
 `PROTECT_REACHED_PCT 70`, `PLACE_REACH 20`, `OBJECTIVE_SCALE 500`, `NEAR_SCALE 40`, `AGE_SCALE_S 120`,
-`GOAL_ROOM_SLOTS 6` / `GOAL_PLACE_SLOTS 7` (`Block.h`).
+`GOAL_ROOM_SLOTS 6` / `GOAL_PLACE_SLOTS 7`, `GOAL_CELL_TARGET 21` / `GOAL_CELL_JOINT 159` (`Block.h`).
 
 ## Observed issues
 

@@ -37,6 +37,9 @@ namespace Animus::Curriculum
     /// section (protocol 24), like the camera's image -- and the block's float columns are its four scalars. Nothing
     /// in it comes from the navmesh or the map's data: an unseen cell is unknown, whatever is there. The frontier is
     /// worked out from the seat's own map, as a player reads a minimap's edge.
+    ///
+    /// The block also records where each crop was taken from (SeatView::Crop: the pose, and how many of its pooled
+    /// blocks a cell goal can name, CellGrid::Count), which the scenario decodes the learner's cell choice against.
     class MapBlock final : public Block
     {
     public:

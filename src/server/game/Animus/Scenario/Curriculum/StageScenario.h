@@ -134,6 +134,11 @@ namespace Animus::Curriculum
         void ApplyActions(Env& env, int32 const* actions) override;
         void SubTick(Env& env, uint32 diffMs, bool decided) override;
         void ApplyGoals(Env& env, int32 const* goals) override;
+        /// Latch the cell goal `cell` (a pooled block of the crop the seat last observed) into `out`: decoded against
+        /// the crop at the pose it was taken from, valid only while the block is choosable (CellGrid::Choosable).
+        /// False when the choice cannot be decoded at all (no pose, or a block that was not choosable): a desync
+        /// between the learner and the sim, counted as goals_cell_invalid.
+        bool LatchCell(Env const& env, uint32 seatIndex, SeatState& seat, uint32 cell, CellPlan& out) const;
         /// The look head's choices (free look, camera-vision.FREELOOK.md), taken by the seats -- and the cast owner,
         /// when it is played -- of a stage with a vision block, straight into their cameras (SeatState::Look). Never
         /// through ApplySeatAction: looking is free, and nothing that prices or tallies an action sees it (R1).

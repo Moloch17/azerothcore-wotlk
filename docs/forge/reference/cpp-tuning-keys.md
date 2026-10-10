@@ -159,7 +159,7 @@ Struct line ranges are in `CurriculumTuning.h`. "Per decision" terms are tuned f
 | `Markers` | 480-509 | 8 | `SightEncounter.cpp`, `SeekEncounter.cpp:543`, `InteractEncounter.cpp:649` | M1 marker prices and stop/arrive geometry. |
 | `Respawn` | 511-531 | 2 | `CombatEncounter.cpp:407-412`, `InstanceEncounter.cpp:1004`, `PartyFollowEncounter.cpp:446`, `RolesEncounter.cpp:401` | The entrance-respawn clock (I4): delay and rejoin distance. See the respawn section of [cpp-encounters.md](cpp-encounters.md). |
 | `PartyFollow` | 533-586 | 26 | `PartyFollowEncounter.cpp`, `StageScenario.cpp:3211` | M4 follower prices, band, leader script rungs. Its Stuck/Wall prices are `Seek.*` (`PartyFollowEncounter.cpp:643`). |
-| `Seek` | 588-650 | 36 | `SeekEncounter.cpp`, `StageScenario.cpp`, `PartyFollowEncounter.cpp:643-652` | M2 prices, placement and rung seconds, and the room goals (`Goals`, `GoalsFromRung`, `RoomGoal`, `RoomSwitch`, `Return`, `AidUntil`, `GlimpseRays`, `CheckedShare`, `EnterDwellMs`, `ReturnAwayYards`, `ReturnAwayMs`; 2026-10-09). |
+| `Seek` | 470-520 | 48 | `SeekEncounter.cpp`, `StageScenario.cpp`, `PartyFollowEncounter.cpp:643-652` | M2 prices, placement and rung seconds, and the room goals (`Goals`, `GoalsFromRung`, `RoomGoal`, `RoomSwitch`, `Return`, `AidUntil`, `GlimpseRays`, `CheckedShare`, `EnterDwellMs`, `ReturnAwayYards`, `ReturnAwayMs`; 2026-10-09) and the cell goals (`GoalSource`, `CellReach`, `CellRise`, `CellSame`, `CellMinYards`, `CellPatienceMs`, `CellPatienceYards`, `CellGoal`, `CellProgress`, `CellSwitch`, `CellLost`, `CellStale`; 2026-10-09, free choice goals). |
 | `Interact` | 634-675 | 21 | `InteractEncounter.cpp` | M3 prices, decoys and sweep. |
 | `Controls` | 677-718 | 14 | `SightEncounter.cpp` | M1 object placement, corner share, compass withhold chances, wall/stuck prices. |
 | `Combat` | 720-785 | 30 | `CombatEncounter.cpp`, `CombatDraw.h`, `RolesEncounter.cpp:186, 287, 296` | C1-C3 prices, ladder, placement. |
@@ -418,6 +418,18 @@ through to `StandIn.Share`, so its default 0 is never consulted today (the "defe
 | Seek | `Seek.EnterDwellMs` | 1000 | uint32 | - | `Encounters/SeekEncounter.cpp:621` | move2_seek |
 | Seek | `Seek.ReturnAwayYards` | 8.0f | float | - | `Encounters/SeekEncounter.cpp:656` | move2_seek |
 | Seek | `Seek.ReturnAwayMs` | 2000 | uint32 | - | `Encounters/SeekEncounter.cpp:660` | move2_seek |
+| Seek | `Seek.GoalSource` | 1 | uint32 | temporary A/B switch (free choice goals): 1 = cell goals (a block of the seat's crop), 0 = the room slots and the way on; only with `Goals` 1; deleted with the loser. Echoed in stage.json `goals.cells.source` | `Encounters/SeekEncounter.cpp:593`, `Encounters/SeekEncounter.cpp:658`, `StageScenario.cpp:1499` | move2_seek |
+| Seek | `Seek.CellReach` | 4.0f | float | yards, 2D: a cell goal is reached within this of its latched point; also `GoalHeld`'s reach for a cell hold | `Encounters/SeekEncounter.cpp:594`, `StageScenario.cpp:2941` | move2_seek |
+| Seek | `Seek.CellRise` | 3.0f | float | yards of height for reaching (the choosable window is fixed at 4 yd: `rise_units` 16) | `Encounters/SeekEncounter.cpp:595` | move2_seek |
+| Seek | `Seek.CellSame` | 6.0f | float | a new draw within this of the held, unended cell goal's point is that goal chosen again (free) | `StageScenario.cpp:2736` | move2_seek |
+| Seek | `Seek.CellMinYards` | 8.0f | float | `CellGoal` is paid only for a goal chosen at least this far away | `StageScenario.cpp:3836` | move2_seek |
+| Seek | `Seek.CellPatienceMs` | 20000 | uint32 | no best-distance gain of `CellPatienceYards` for this long ends the cell goal as lost | `StageScenario.cpp:3819` | move2_seek |
+| Seek | `Seek.CellPatienceYards` | 2.0f | float | - | `StageScenario.cpp:3814` | move2_seek |
+| Seek | `Seek.CellGoal` | 0.05f | float | Aid, once per cell goal reached (not stale, chosen >= `CellMinYards` away); x `Goals.SecondaryShare` for a secondary; `AddTaken` | `StageScenario.cpp:3839` | move2_seek |
+| Seek | `Seek.CellProgress` | 0.004f | float | Aid, per yard of new best closeness to the held primary's point (a ratchet), not stale | `StageScenario.cpp:5271` | move2_seek |
+| Seek | `Seek.CellSwitch` | 0.02f | float | Cost, `AddFixed`; a cell goal given up for another before it ended | `StageScenario.cpp:5261` | move2_seek |
+| Seek | `Seek.CellLost` | 0.03f | float | Cost, `AddTaken`; a cell goal ended by the patience rule or an invalid latch (seat alive) | `StageScenario.cpp:3868` | move2_seek |
+| Seek | `Seek.CellStale` | 0.01f | float | Cost, `AddFixed`; a block chosen that the seat had stood on (not a free re-choice) | `StageScenario.cpp:2827` | move2_seek |
 | Interact | `Interact.Arrive` | 3.0f | float | - | `Encounters/InteractEncounter.cpp:643`, `Encounters/InteractEncounter.cpp:678` | move3_interact |
 | Interact | `Interact.DoorOpened` | 1.0f | float | - | `Encounters/InteractEncounter.cpp:629` | move3_interact |
 | Interact | `Interact.WrongObject` | 0.5f | float | - | `Encounters/InteractEncounter.cpp:634`, `Encounters/InteractEncounter.cpp:685` | move3_interact |
