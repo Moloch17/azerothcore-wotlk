@@ -554,7 +554,7 @@ namespace Animus::Curriculum
             float RoomEntryBackMult = 2.0f;
             float FrontierPull = 0.015f;
             float FrontierCap = 2.0f;
-            float Stale = 0.01f;
+            float Stale = 0.005f;
             uint32 StaleMs = 20000;
             uint32 CircleWindowMs = 6000;
             float CircleYards = 12.0f;

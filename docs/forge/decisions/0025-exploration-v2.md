@@ -16,7 +16,7 @@
 3. `Seek.FrontierPull` 0.004 -> 0.015 a yard, `Seek.FrontierCap` 1.0 -> 2.0, and only toward a frontier that lies in a
    room polygon of the table or within 3 yd of a room's opening: a frontier in the corridor does not pull. The nearest
    eligible one of the seat's mental map is the target.
-4. `Seek.Stale` (Cost, `AddFixed`, never faded, in the score), 0.01 a second once `Seek.StaleMs` (20000) pass with no
+4. `Seek.Stale` (Cost, `AddFixed`, never faded, in the score), 0.005 a second (halved from 0.01 at the merge: a fully stale 400 s would otherwise cost 4.0, more than Arrive) once `Seek.StaleMs` (20000) pass with no
    newly seen floor cell of the episode's record; not in the trap drill's escape window, not on a decision that paid
    `Stuck` or `Wall`.
 5. Both sweeps play the deep rung's clock (`Seek.RungSeconds3`, 420 s); `found_300` keeps the old numbers comparable.
@@ -38,7 +38,7 @@ frozen sweep gives the same start the same pair at every evaluation.
 `Stale` joins `Circling` as a fixed-price Cost the fade does not take. Principle 9's exception stays the one owner-ordered
 exception. Not touched: the observation, the action set, the trap drill.
 
-**Prices against `Arrive` 3.0.** Per term: `Explore` 2.5 paid at most, `RoomEntry` 1.0, `FrontierPull` 1.0, `Stale` 0.01 a
+**Prices against `Arrive` 3.0.** Per term: `Explore` 2.5 paid at most, `RoomEntry` 1.0, `FrontierPull` 1.0, `Stale` 0.005 a
 second. Together 4.5 is the ceiling at the floor, reachable only by a near-complete tour of the map; the reward audit
 (`rewards.py`) will warn on `Explore` alone (it is over 0.5 of `Arrive` by design). If a policy tours past the object,
 the caps are the first thing to lower.
