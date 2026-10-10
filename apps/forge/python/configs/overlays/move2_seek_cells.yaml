@@ -37,6 +37,13 @@ mappo:
   # taught as -coef * log p(block) in the slow loss (0 turns it off).
   goal_cell_entropy_weight: 0.3
   goal_cell_hindsight_coef: 0.05
+  # The hindsight lookback (off, 0): each unreached cell choice is also taught the blocks the seat stood in at each of
+  # the K decisions after it, as far as the next choice (distinct blocks, averaged per choice; see py-mappo-trainer.md).
+  # A stage that wants the planner's credit sharper than "where I was at the next choice" turns it on here; it needs the
+  # coefficient to be more than 0. To try it, replace the coefficient line above with these two. Not enabled in
+  # move2_seek.yaml.
+  # goal_cell_hindsight_lookback: 16
+  # goal_cell_hindsight_coef: 0.15
 
 eval:
   # The cell arms beside the inherited ones (64 episodes each, the deterministic policy, the evaluation's seeds).

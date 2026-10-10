@@ -5165,30 +5165,26 @@ AnimusForge.TicksPerDecision = 1
 #                     worldserver takes the stage's tick while it runs and the configured one again after, so
 #                     no restart is needed. It must divide AnimusForge.DecisionMs; one that does not is dropped
 #                     with an error. Under AnimusForge.HalfBatch such a stage runs as one group.
-#                     Every movement stage (move1_controls, and those after it) runs 50 ms world ticks:
-#                     DecisionMs / 50, so 5 at the default 250 ms decisions (4 does not divide 250 ms). Not
-#                     smoothness this time but correctness: the player controller's mouse-look facing rule (a
-#                     facing report once the yaw has moved 0.1 rad) and its heartbeat are checked once a world
-#                     tick, so a coarser tick leaves the server's view of a seat's facing staler than a real
-#                     client's. The decision cadence is a separate, open question (movement-curriculum plan 8.5:
-#                     decisions at 250, 125 or 100 ms are compared with the world tick held at 50 ms); a change
-#                     of AnimusForge.DecisionMs changes these to DecisionMs / 50. A test refuses a movement
-#                     stage whose world tick is over 50 ms (test_stage_ticks.py).
+#                     The live curriculum sets none: M1 and M2 were trained at 1 tick per decision with
+#                     AnimusForge.HalfBatch = 1 on every machine, and changing the tick between stages would
+#                     change the timing a seeded policy has learned (decision 0006, update 2026-10-09). A
+#                     machine that sets one for a stage runs it at DecisionMs / that many ticks (50 ms ticks
+#                     are 5 at the default 250 ms decisions), and the pooled data must agree on every machine.
 #        Default:     (none: every stage uses AnimusForge.TicksPerDecision)
 
-AnimusForge.Stage.move1_controls.TicksPerDecision = 5
-AnimusForge.Stage.move2_seek.TicksPerDecision = 5
-AnimusForge.Stage.move3_interact.TicksPerDecision = 5
-AnimusForge.Stage.move4_follow.TicksPerDecision = 5
+#AnimusForge.Stage.move1_controls.TicksPerDecision = 5
+#AnimusForge.Stage.move2_seek.TicksPerDecision = 5
+#AnimusForge.Stage.move3_interact.TicksPerDecision = 5
+#AnimusForge.Stage.move4_follow.TicksPerDecision = 5
 # The combat stages move on the player controller too.
-AnimusForge.Stage.combat1_fight.TicksPerDecision = 5
-AnimusForge.Stage.combat2_packs.TicksPerDecision = 5
-AnimusForge.Stage.combat3_survive.TicksPerDecision = 5
+#AnimusForge.Stage.combat1_fight.TicksPerDecision = 5
+#AnimusForge.Stage.combat2_packs.TicksPerDecision = 5
+#AnimusForge.Stage.combat3_survive.TicksPerDecision = 5
 # ... and the party stages.
-AnimusForge.Stage.group1_roles.TicksPerDecision = 5
+#AnimusForge.Stage.group1_roles.TicksPerDecision = 5
 #   ... and the dungeons (D2, D3), on the player controller too
-AnimusForge.Stage.dungeon2_ragefire.TicksPerDecision = 5
-AnimusForge.Stage.dungeon3_deadmines.TicksPerDecision = 5
+#AnimusForge.Stage.dungeon2_ragefire.TicksPerDecision = 5
+#AnimusForge.Stage.dungeon3_deadmines.TicksPerDecision = 5
 
 #
 #    AnimusForge.HalfBatch
@@ -5200,6 +5196,7 @@ AnimusForge.Stage.dungeon3_deadmines.TicksPerDecision = 5
 #                     halves on separate maps: a continent stage's AnimusForge.ContinentReplicas even and
 #                     dividing the envs (otherwise it runs as one group and says so). Pays when the
 #                     learner's update fits inside the faster rollout (see the forge-parallel-core plan).
+#                     The live curriculum trains with it at 1 on every machine (decision 0006).
 #                     Read once at startup by the module and the worldserver: a change needs a restart.
 #        Default:     0
 

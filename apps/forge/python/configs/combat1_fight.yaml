@@ -100,6 +100,15 @@ eval:
   deterministic: true
   sampled_every: 3
   trace_episodes: 32
+  # The ablation arms (move2_seek.yaml): the evaluation's seeds again with one input taken away, 64 episodes each after
+  # every evaluation (arms_every 1), read as won_no_camera and the like in forge status and as policy rows in eval.csv.
+  # no_camera blanks the image (the entity list stays), no_map zeroes the map block and the mental map's crop,
+  # no_memory resets the recurrent state before every decision. Readings, never gates. The goal arms are M2's own.
+  arms:
+    no_camera: 64
+    no_map: 64
+    no_memory: 64
+  arms_every: 1
   report: [won, survived, kills, kill_seconds, hurt_share, deaths, rejoins, rejoin_seconds,
            difficulty, at_top_rung, target_in_view, selected_share, ally_deaths, pulls, caster_pulls, start_walk,
            died, reward_kill, reward_survived, reward_hurt, reward_death, reward_step_cost, reward_teammate_death,
@@ -110,7 +119,7 @@ eval:
 # Targets are a readout, never a gate.
 status:
   headline: [won, survived, kills, kill_seconds, hurt_share, deaths, rejoin_seconds, difficulty, target_in_view,
-             selected_share, ally_deaths]
+             selected_share, ally_deaths, won_no_camera, won_no_map, won_no_memory]
   targets:
     won: ">= 0.9"
     survived: ">= 0.9"
@@ -160,13 +169,15 @@ entropy_floor:
   max_boost: 4.0
   rate: 0.05
 
-# More episodes for the classes winning least, and a fifth of training resets replay an evaluation episode that lost.
+# More episodes for the classes winning least, no replay of lost evaluation episodes (below).
 layout_sampling:
   enabled: true
   strength: 1.0
   max_ratio: 4.0
   metric: won
-  replay_fraction: 0.2
+  # No replay of lost evaluation episodes, as M1 and M2 (2026-10-09): the evaluation seeds are held out. M2's fresh-seed
+  # sweep read 0.52 against 0.81 in the replayed evaluation, and this stage's gate and convergence read that evaluation.
+  replay_fraction: 0.0
 
 style:
   enabled: false

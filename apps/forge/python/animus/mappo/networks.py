@@ -870,6 +870,17 @@ class GoalHead(nn.Module):
         return (log_prob_of(logits, block), valid.gather(1, block[:, None])[:, 0], _entropy(logits),
                 valid.any(dim=-1))
 
+    def cell_primary_many(self, features: torch.Tensor, image: torch.Tensor, blocks: torch.Tensor):
+        """cell_primary for several blocks per row (the planner's lookback hindsight): `blocks` [rows, M] scored
+        against ONE pass of each row's cell distribution. (log probabilities [rows, M], whether each is choosable
+        [rows, M], the entropy [rows], whether any block is choosable [rows])."""
+        hidden, valid = self.cell_inputs(image)
+        seat = torch.full((features.shape[0],), (self.cell_grid - 1) / 2.0, dtype=hidden.dtype, device=hidden.device)
+        logits = masked_logits(self.cell_scores(hidden, features, seat, seat).to(features.dtype), valid)
+        blocks = blocks.long().clamp(0, valid.shape[-1] - 1)
+        log_probs = logits.gather(1, blocks) - torch.logsumexp(logits, dim=-1, keepdim=True)
+        return log_probs, valid.gather(1, blocks), _entropy(logits), valid.any(dim=-1)
+
     def draw(self, features: torch.Tensor, obs: torch.Tensor, layout: torch.Tensor, deterministic: bool,
              slots: torch.Tensor | None = None, uniform: bool = False, cells: torch.Tensor | None = None,
              image: torch.Tensor | None = None, uniform_cells: bool = False, single: bool = False):

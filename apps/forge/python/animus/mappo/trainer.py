@@ -161,6 +161,12 @@ class MappoConfig:
     # actually stood in (goal block columns goal_from_*, read at the next choice). 0 turns the hindsight off.
     goal_cell_entropy_weight: float = 0.3
     goal_cell_hindsight_coef: float = 0.05
+    # The planner's hindsight lookback (a plan 3D / W3d, free-choice-goals): 0 = the hindsight above exactly (the block at
+    # the next choice). K > 0 relabels each unreached cell choice with the blocks the seat stood in at each of the K
+    # decisions after it too, as far as the next choice (the frame of goal_from_* is the latest choice's, so a window
+    # never crosses one); see MappoTrainer._cell_lookback. Needs goal_cell_hindsight_coef > 0 (TrainConfig refuses a
+    # lookback with none).
+    goal_cell_hindsight_lookback: int = 0
     foresight_coef: float = 0.0
     foresight_horizons_seconds: tuple[float, ...] = (5.0, 30.0)
     foresight_time_scale_seconds: float = 60.0
@@ -1442,6 +1448,10 @@ class MappoTrainer:
             pad = torch.zeros((1, columns), dtype=torch.long, device=device)
             hindsight = (torch.cat([block_of, pad]).reshape(-1),
                          torch.cat([inside, pad.bool()]).reshape(-1))
+        # The lookback's blocks: the seat's block at each of the K decisions after a choice, up to the next choice.
+        window = None
+        if hindsight is not None and cfg.goal_cell_hindsight_lookback > 0:
+            window = self._cell_lookback(buffer, step_of, env_of, agent_of, safe, known, block_at, device)
         known_t = torch.as_tensor(known.reshape(-1), device=device) & valid
         reached_t = torch.as_tensor(reached.reshape(-1), device=device)
         duration_t = torch.as_tensor(duration.reshape(-1), device=device)
@@ -1485,8 +1495,33 @@ class MappoTrainer:
                 taken = torch.where(is_cell, cells[:, 0], torch.zeros_like(cells[:, 0]))
                 if hindsight is not None:
                     taken = torch.where(is_cell & (known_t & (reached_t == 0) & hindsight[1]), hindsight[0], taken)
-                cell_lp, cell_valid_at, cell_entropy, any_valid = head.cell_primary(states, image, taken)
-                if hindsight is not None:
+                if window is None:
+                    cell_lp, cell_valid_at, cell_entropy, any_valid = head.cell_primary(states, image, taken)
+                else:
+                    # Lookback: the block at the next choice (the label above, when the window does not reach it) and
+                    # the window's, each scored against the one cell distribution of the choice's row.
+                    labels = torch.cat([hindsight[0][:, None], window[0]], dim=1)
+                    offered = torch.cat([hindsight[1][:, None], window[1]], dim=1)
+                    many_lp, many_valid, cell_entropy, any_valid = head.cell_primary_many(states, image, labels)
+                if window is not None:
+                    use = offered & many_valid & (is_cell & known_t & (reached_t == 0))[:, None]
+                    # A block named twice by one choice counts once (the first naming): standing still in a block for
+                    # K decisions is one label, not K.
+                    span = labels.shape[1]
+                    earlier = torch.tril(torch.ones(span, span, dtype=torch.bool, device=device), diagonal=-1)
+                    same = (labels[:, :, None] == labels[:, None, :]) & use[:, None, :] & earlier[None]
+                    use = use & ~same.any(dim=-1)
+                    # Each relabelled choice weighs one: the mean over its distinct blocks, then the mean over choices.
+                    distinct = use.sum(dim=1)
+                    has = distinct > 0
+                    per_choice = (many_lp * use).sum(dim=1) / distinct.clamp(min=1)
+                    hindsight_loss = -(per_choice * has).sum() / has.sum().clamp(min=1)
+                    loss = loss + cfg.goal_cell_hindsight_coef * hindsight_loss
+                    totals["goal_cell_hindsight_loss"] = totals.get("goal_cell_hindsight_loss", 0.0) + float(
+                        hindsight_loss.detach()) / cfg.epochs
+                    totals["goal_cell_hindsight_rows"] = float(has.sum())
+                    totals["goal_cell_hindsight_blocks"] = float(use.sum())
+                elif hindsight is not None:
                     relabel = is_cell & known_t & (reached_t == 0) & hindsight[1] & cell_valid_at
                     hindsight_loss = -(cell_lp * relabel).sum() / relabel.sum().clamp(min=1)
                     loss = loss + cfg.goal_cell_hindsight_coef * hindsight_loss
@@ -1551,6 +1586,53 @@ class MappoTrainer:
                 totals["lookahead_loss"] += float(lookahead_loss) / cfg.epochs
         totals["goal_reached_share"] = float(reached_t[known_t].mean()) if bool(known_t.any()) else 0.0
         return totals
+
+    def _cell_lookback(self, buffer: RolloutBuffer, step_of: np.ndarray, env_of: np.ndarray, agent_of: np.ndarray,
+                       safe: np.ndarray, known: np.ndarray, block_at: np.ndarray, device) -> tuple:
+        """The planner's lookback hindsight labels (mappo.goal_cell_hindsight_lookback K > 0): for each choice row
+        (`step_of` [length, columns]: the rollout step of the seat's k-th choice), the block of the cell grid the seat
+        stood in at each of the K steps after the choice -- (blocks [length * columns, K] long, inside [length *
+        columns, K] bool) on `device`, in the rows' flat order.
+
+        The rule. goal_from_present / _row / _col are the seat's position in the frame (the crop) of the latest choice,
+        and the observation of the step the next choice is made on is still in the frame of this one (the next draw is
+        applied after it). So the window of a choice made on step t is the steps t+1 .. min(t+K, t_next), never past
+        the next choice, whose frame is another. A choice with no next choice in the rollout, or with an episode
+        ending before it, has no window (`known`, as the hindsight at the next choice has none). A step counts when
+        the seat was inside the 24 x 24 grid (goal_from_present). Whether a block is choosable on the choice's own
+        crop, and the choice having been a cell goal that was not reached, are the loss's to apply. Host numpy and one
+        gather per column: this is the slow update, which is not a captured graph."""
+        head = self.actor.goal_head
+        lookback = self.config.goal_cell_hindsight_lookback
+        length, columns = step_of.shape
+        at = block_at[buffer.layout[safe, env_of, agent_of]]
+        gap = np.zeros((length, columns), dtype=np.int64)
+        if length > 1:
+            gap[:-1] = np.where(known[:-1], step_of[1:] - step_of[:-1], 0)
+        offset = np.arange(1, lookback + 1, dtype=np.int64)[:, None, None]
+        usable = (offset <= gap[None]) & (at >= 0)[None]
+        steps = np.where(usable, step_of[None] + offset, 0)
+        env = np.broadcast_to(env_of[None], steps.shape)
+        agent = np.broadcast_to(agent_of[None], steps.shape)
+        base = np.where(at >= 0, at + head.cell_from, 0).astype(np.int64)
+        width = buffer.obs.shape[-1]
+
+        def read(part: int) -> np.ndarray:
+            column = np.broadcast_to(np.minimum(base + part, width - 1)[None], steps.shape)
+            if isinstance(buffer.obs, np.ndarray):
+                return buffer.obs[steps, env, agent, column]
+            index = tuple(torch.as_tensor(np.ascontiguousarray(i), device=buffer.obs.device)
+                          for i in (steps, env, agent, column))
+            return buffer.obs[index].float().cpu().numpy()
+
+        grid = head.cell_grid
+        row = np.floor(read(1) * grid)
+        col = np.floor(read(2) * grid)
+        inside = usable & (read(0) > 0.5) & (row >= 0) & (row < grid) & (col >= 0) & (col < grid)
+        block = np.clip(row, 0, grid - 1).astype(np.int64) * grid + np.clip(col, 0, grid - 1).astype(np.int64)
+        flat = (length * columns, lookback)
+        return (torch.as_tensor(np.moveaxis(block, 0, -1).reshape(flat), device=device),
+                torch.as_tensor(np.moveaxis(inside, 0, -1).reshape(flat), device=device))
 
     def _foresight_quality(self, predicted, targets, known, horizons: int, out: dict) -> None:
         """Accumulate how good the observation forecasts are (FORESIGHT_OBS_TARGETS), in `out` as sums with a count

@@ -72,8 +72,20 @@ rollout graph carries `plan` and `serial` as inputs and `goal_cells` and `plan` 
 by one on the rows that chose. `_update_goals` scores the cells again (`head.draw(..., cells=, image=)`), and with
 `goal_cell_hindsight_coef > 0` adds `-coef * log p(block the seat stood in at the next choice)` over the choices whose
 cell primary was not reached (the block read from the next observation's `goal_from_*` columns, in the frame of the choice's
-own crop, only if it is choosable there). Statistics: `goal_cell_entropy`, `goal_cell_share`, `goal_cell_hindsight_loss` /
-`_rows`, and `goal_cell_mask_mismatch` (the share of rows where the sim offers the cell goal -- the goal block's target-there
+own crop, only if it is choosable there). `goal_cell_hindsight_lookback` K (0, the default, is exactly that; checked in
+`TrainConfig.__post_init__`) widens the label set. The exact rule (`MappoTrainer._cell_lookback`, `GoalHead.cell_primary_many`):
+a choice made on step t that was a cell goal, whose outcome is known and which was not reached, is relabelled with the
+blocks of `goal_from_*` read on steps t+1 .. min(t+K, t_next), t_next being the step of the seat's next choice (the
+observation on it is still in this choice's frame; the frame of `goal_from_*` is the latest choice's, so the window never
+crosses one) PLUS the block at the next choice (the K=0 label, which is one of the window's when the next choice is within
+K). A step counts only when the seat was inside the 24 x 24 grid (`goal_from_present`) and its block is choosable on the
+choice's own crop (`cell_valid`); a block named twice by one choice counts once (the first naming), so dwelling is one
+label; a choice with no next choice in the rollout, an episode ending before it, or no valid block has no label. The loss is
+`-coef * mean over relabelled choices of (mean over the choice's distinct blocks of log p(block | the choice's cell
+logits))`: every choice weighs one whatever the length of its path. No joint term. The update is the eager slow update, not
+a captured graph (only the rollout decision is captured), and the lookup is host numpy plus one gather per column, so
+no data-dependent Python branching sits in a captured path. Statistics: `goal_cell_entropy`, `goal_cell_share`,
+`goal_cell_hindsight_loss` / `_rows` (choices with a label) / `_blocks` (distinct labels, K > 0 only), and `goal_cell_mask_mismatch` (the share of rows where the sim offers the cell goal -- the goal block's target-there
 bit -- and the learner finds no choosable block; one-sided, because a block with no cell on offer reads the same in
 rung 0-1 and in rooms mode).
 
