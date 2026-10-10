@@ -420,7 +420,7 @@ class DecisionRows:
 
     FIELDS = ("obs", "state", "mask", "layout", "actions", "log_probs", "values", "present", "foresight", "memory",
               "goal", "goal_log_prob", "goal_chosen", "slow_before", "slow_value", "critic_memory",
-              "goal_slots", "image", "look", "look_log_prob")
+              "goal_slots", "goal_cells", "image", "look", "look_log_prob")
 
     #: A field store_inputs wrote into the rollout buffer itself.
     IN_BUFFER = object()
@@ -485,7 +485,7 @@ class DecisionRows:
         """RolloutBuffer.add_decision's arguments."""
         a = {name: (None if value is DecisionRows.IN_BUFFER else value) for name, value in self.arrays.items()}
         goals = ((a["goal"], a["goal_log_prob"], a["goal_chosen"], a.get("slow_before"), a.get("slow_value"),
-                  a.get("goal_slots")) if a.get("goal") is not None else None)
+                  a.get("goal_slots"), a.get("goal_cells")) if a.get("goal") is not None else None)
         return (a["obs"], a["state"], a["mask"], a["layout"], a["actions"], a["log_probs"], a["values"], a["present"],
                 a.get("foresight"), a.get("memory"), goals, a.get("critic_memory"), a.get("image"),
                 a.get("look"), a.get("look_log_prob"))
@@ -1232,7 +1232,8 @@ class TrainingRun:
             mask = host(step.mask) if forbidden is None else np.logical_and(host(step.mask), ~forbidden[step.layout])
             image = getattr(step, "image", None)
             actions = self.trainer.act(step.obs, mask, step.layout, deterministic, acting, image)[0]
-            goals = self.trainer.wire_goals(acting.goal) if acting.goal is not None else None
+            goals = (self.trainer.wire_goals(acting.goal, acting.queue, acting.plan)
+                     if acting.goal is not None else None)
             # The free look (protocol 22), deterministic with the actions when the evaluation is.
             look = self.trainer.wire_look(acting.look)
             if look is not None:
@@ -1518,8 +1519,9 @@ class TrainingRun:
         """eval.arms: the evaluation's own seeds played again beside the plain "all bots" one -- "with_human", the
         sim's human stand-in in one seat of every party, "with_partners", the fixed co-op partner set in some, and the
         ablations "no_flag", "no_camera", "no_compass", "no_map", "no_goal" (the learner's input edited),
-        "no_memory" (its recurrent state reset every decision) and "random_goal" (its goals drawn uniformly over
-        those on offer), all evaluation.ablation_chooser -- and
+        "no_memory" (its recurrent state reset every decision), "random_goal" (its goals drawn uniformly over
+        those on offer), "random_cell" (its cells drawn uniformly over the choosable blocks) and "no_plan" (nothing held
+        beside its primary goal or queued), all evaluation.ablation_chooser -- and
         reported apart as policy <arm> in eval.csv and eval.jsonl, with the gap to the plain one. A reading only:
         neither the tracker, the controller nor the partners' pool sees it."""
         config = self.config
@@ -1544,13 +1546,22 @@ class TrainingRun:
                 # The learner's own input edited (flag, image, compass, map, goal block) or its memory reset: the same
                 # seeds, the sim untouched, so the plain evaluation's episode columns read the arm's own result.
                 choose = ablation_chooser(choose, arm, self.spec, self.stage)
-            # random_goal: the goal head's draws are uniform for the length of the arm (MappoTrainer.uniform_goals).
+            # random_goal, random_cell, no_plan: the goal head's draws are edited for the length of the arm
+            # (MappoTrainer.uniform_goals, uniform_cells, single_goal).
+            if arm in ("random_cell", "no_plan") and not (
+                    self.trainer.actor.goal_head is not None and self.trainer.actor.goal_head.cell_on):
+                print(f"Arm {arm}: the stage has no cell goals (stage.json goals.cells); skipped", flush=True)
+                continue
             self.trainer.uniform_goals = arm == "random_goal"
+            self.trainer.uniform_cells = arm == "random_cell"
+            self.trainer.single_goal = arm == "no_plan"
             try:
                 result = self._evaluate_share(choose, episodes, config.eval.seed, arenas=self.arena_names,
                                               action_names=self.action_names, **options)
             finally:
                 self.trainer.uniform_goals = False
+                self.trainer.uniform_cells = False
+                self.trainer.single_goal = False
             if self.cast is not None or self.partners is not None:
                 self._reset_far_side()
             if not self.ranks.leader:
@@ -1966,8 +1977,8 @@ class TrainingRun:
         stand_in = getattr(part, "stand_in", None)
         if stand_in is not None:
             present = present & ~np.asarray(stand_in, dtype=bool)
-        goal, goal_log_prob, goal_chosen, slow_before, slow_value, goal_slots = (
-            goals if goals is not None else (None, None, None, None, None, None))
+        goal, goal_log_prob, goal_chosen, slow_before, slow_value, goal_slots, goal_cells = (
+            goals if goals is not None else (None,) * 7)
         # The obs, state and mask may be views of the sim's device buffers (protocol 15), which the sim overwrites
         # with this group's next STEP as soon as it has these actions. Copied from there into the decision on the
         # current stream, the copies queued behind an overlapped update's kernels (whose first half runs on the
@@ -1995,10 +2006,10 @@ class TrainingRun:
         decision.set(rows, layout=part.layout, actions=actions, log_probs=log_probs, values=values, present=present,
                      foresight=foresight, memory=memory, goal=goal, goal_log_prob=goal_log_prob,
                      goal_chosen=goal_chosen, slow_before=slow_before, slow_value=slow_value,
-                     critic_memory=critic_memory, goal_slots=goal_slots, look=look,
+                     critic_memory=critic_memory, goal_slots=goal_slots, goal_cells=goal_cells, look=look,
                      look_log_prob=look_log_prob)
-        send(rows.start, rows.stop - rows.start, actions, trainer.wire_goals(goals[0]) if goals is not None else None,
-             look)
+        send(rows.start, rows.stop - rows.start, actions,
+             trainer.wire_goals(goals[0], acting.queue, acting.plan) if goals is not None else None, look)
 
     def _take_outcome_of(self, part: protocol.Step, rows: slice, decision: DecisionRows,
                          outcome: RolloutOutcome):

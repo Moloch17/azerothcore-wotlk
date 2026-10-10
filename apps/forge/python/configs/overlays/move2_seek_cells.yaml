@@ -1,0 +1,45 @@
+# Overlay for the SEEDED START of move2_seek with FREE-CHOICE CELL GOALS (free-choice-goals plan section 8 and CONTRACT
+# section 9; owner, 2026-10-09). Not a stage config: it extends nothing, nothing lists it as a stage (it lives under
+# configs/overlays/), and it is applied only by hand, `--overlay` on the learner command line, over move2_seek.yaml
+# with its whole extends chain, before any --set. Together with move2_seek_reseed.yaml (the single deep rung and the
+# learning rate) it is the whole of the start; this one says where the networks come from and what the cell machinery
+# does on the way in.
+#
+# What the start is: a NEW M2 run seeded from the cancelled M2 run's checkpoint (finetune_from, the default path
+# runs/_finetune/move2_seek/{best,latest}.pt, so the cancelled run's file is put there first), NOT a resume. Protocol 28
+# (four plan positions and their cell words on the ACT) and the goal block's revision 4 (122 columns) change the wire and
+# the layouts, so `resume` refuses it. The seed is by name; because the goal block's revision is 3 in the checkpoint
+# and 4 here the seeder (bootstrap._reseed_goals) takes its 3 -> 4 branch:
+#   - KEEPS goal_head.* and the slow loop (slow_memory, slow_value are copied from the checkpoint: a seed does not
+#     carry them otherwise): in cell mode the joints on offer are the cell goal (joint 159) and the placeholder, so a
+#     head that chose among room slots cannot do harm, and the slow GRU and value carry what M2 learned;
+#   - leaves goal_head.cell.* as initialised (the score and the chain's last layer at zero: a uniform draw over the
+#     choosable blocks, the pointer learning from there);
+#   - keeps goal_embedding.* and warm-copies the Fight/none entries into travel_to and the cell target (21) where those
+#     rows are untrained (the place targets 14..20 are trained already and are left);
+#   - gives the new goal-block columns (goal_held2_*, goal_next_*, goal_plan_left, goal_from_*) zero adapter weight, so
+#     the seeded fast policy acts as it did until they are used.
+# Any other revision pair resets the head as before (m2-goals).
+#
+# Expect found to dip while the cell draws are uniform and the aids (CellGoal, CellProgress, RoomGoal: the sim's Aid
+# category, fading to 0 at Seek.AidUntil of the budget) are at full scale. Read found_random_cell, found_no_plan,
+# found_random_goal and found_no_goal beside found: the head earns its place only if it beats them.
+
+# The cancelled run's last checkpoint (the lead's call after reading its 30M evaluation: `best` is the other choice).
+seed_from: latest
+
+mappo:
+  # A goal is held at most 32 s (128 decisions); a reached or lost primary chooses at once and a queued cell is promoted
+  # without a choice (M3 and M4 restate 64).
+  goal_every_decisions: 128
+  # The cell's entropy in the goal head's, where the cell goal is drawn (GoalHead.cell_entropy_weight), and the
+  # planner's hindsight: of a choice whose cell goal was not reached, the block the seat stood in at the next choice is
+  # taught as -coef * log p(block) in the slow loss (0 turns it off).
+  goal_cell_entropy_weight: 0.3
+  goal_cell_hindsight_coef: 0.05
+
+eval:
+  # The cell arms beside the inherited ones (64 episodes each, the deterministic policy, the evaluation's seeds).
+  arms:
+    random_cell: 64
+    no_plan: 64

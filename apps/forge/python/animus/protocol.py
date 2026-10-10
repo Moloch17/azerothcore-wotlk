@@ -11,7 +11,10 @@ from enum import IntEnum
 
 import numpy as np
 
-PROTOCOL_VERSION = 27
+PROTOCOL_VERSION = 28
+# 28: free choice goals (docs/forge/decisions/0024): the goal section of an ACT carries the four plan positions, not
+# two: GOAL_WIRE_INTS = 8 int32 an agent -- the joint goal ids of the primary, secondary and the two queued goals
+# (-1 none), then each position's cell word, (ticket << 12) | (cell + 1), 0 for none. STEP and SPEC are protocol 27's.
 # 27: the tick jitter (AnimusForge.Decision.*, docs/forge/decisions/0021-decision-time-jitter.md): SPEC ends with the
 # jitter body in ms, the largest spike in ms and the spike probability (a float), all zero without jitter. STEP and ACT
 # are protocol 26's.
@@ -71,6 +74,10 @@ LAYOUT = struct.Struct(f"<II{LAYOUT_NAME_SIZE}s")  # obs dim, actions, name
 STEP_HEADER = struct.Struct("<QII")  # decision counter, first env, env count
 # first env, env count; then that many envs' actions, their goals (with a goal head) and their look (protocol 22)
 ACT_HEADER = struct.Struct("<II")
+#: The plan positions an ACT carries goals for (primary, secondary, queue 0, queue 1) and the int32 an agent's goal
+#: section takes (protocol 28): the four joint goal ids, then the four cell words ((ticket << 12) | (cell + 1), 0 none).
+GOAL_SLOTS_ON_WIRE = 4
+GOAL_WIRE_INTS = 2 * GOAL_SLOTS_ON_WIRE
 # mode, seed base, episodes, flags, first seed, held-out arena (index + 1, 0 = the stage's own; 18), baseline policy
 MODE = struct.Struct(f"<IIIIII{POLICY_NAME_SIZE}s")
 # Flag value 1 (bit 0) is unused and reserved (it was SCRIPTED_OPPONENTS): STAND_IN keeps its wire value 2 (Protocol.h).
@@ -477,7 +484,8 @@ def look_hold(count: int, agents: int, look_heads: int) -> np.ndarray:
 def encode_act(env_begin: int, actions: np.ndarray, goals: np.ndarray | None = None,
                look: np.ndarray | None = None) -> bytes:
     """ACT payload for envs [env_begin, env_begin + len(actions)): [E, A] actions, then the goals when the policy has a
-    goal head: [E, A, 2], primary then secondary (-1 none; MappoTrainer.wire_goals) -- protocol 17; then, in a stage
+    goal head: [E, A, GOAL_WIRE_INTS] int32, the four plan positions' joint goal ids (-1 none) then their cell words
+    (0 none; MappoTrainer.wire_goals) -- protocol 28 (17: two goals); then, in a stage
     with look heads (protocol 22), the look [E, A, LookHeads], agent-major in the actions' order."""
     actions = np.ascontiguousarray(actions, dtype="<i4")
     payload = ACT_HEADER.pack(env_begin, actions.shape[0]) + actions.tobytes()
@@ -493,10 +501,11 @@ def encode_act(env_begin: int, actions: np.ndarray, goals: np.ndarray | None = N
 
 def decode_act(payload: bytes | bytearray | memoryview, agents: int, goals: bool = False,
                look_heads: int = 0) -> tuple[int, np.ndarray, np.ndarray | None, np.ndarray | None]:
-    """An ACT as the sim reads it: (first env, actions [E, A], goals [E, A, 2] or None, look [E, A, H] or None).
+    """An ACT as the sim reads it: (first env, actions [E, A], goals [E, A, GOAL_WIRE_INTS] or None, look [E, A, H] or
+    None).
     Raises ValueError when the payload is not the size those make."""
     env_begin, envs = ACT_HEADER.unpack_from(payload)
-    sizes = [("actions", envs * agents), ("goals", envs * agents * 2 if goals else 0),
+    sizes = [("actions", envs * agents), ("goals", envs * agents * GOAL_WIRE_INTS if goals else 0),
              ("look", envs * agents * look_heads)]
     expected = ACT_HEADER.size + 4 * sum(size for _, size in sizes)
     if len(payload) != expected:
@@ -507,7 +516,7 @@ def decode_act(payload: bytes | bytearray | memoryview, agents: int, goals: bool
         out[name] = np.frombuffer(payload, dtype="<i4", count=size, offset=offset).copy() if size else None
         offset += 4 * size
     return (env_begin, out["actions"].reshape(envs, agents),
-            None if out["goals"] is None else out["goals"].reshape(envs, agents, 2),
+            None if out["goals"] is None else out["goals"].reshape(envs, agents, GOAL_WIRE_INTS),
             None if out["look"] is None else out["look"].reshape(envs, agents, look_heads))
 
 

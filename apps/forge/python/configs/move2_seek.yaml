@@ -93,6 +93,10 @@ eval:
   # slots empty: the policy as it was before room goals); random_goal draws the goals uniformly over those on offer
   # (the follower without the planner). Read no_goal before no_memory, which also drops the held goal and queue
   # (m2-goals plan 5.2).
+  # The cell goals (free-choice-goals): random_cell keeps the goal head but draws every cell goal's cell uniformly over
+  # the choosable blocks of the map crop (what the cell pointer is worth); no_plan holds nothing beside the primary goal
+  # and queues nothing (what the chain of cells is worth). Both are skipped where the stage has no cell goals
+  # (Seek.GoalSource 0).
   # Readings, never gates. M3 and M4 extend this file and restate `arms: {}`.
   arms:
     no_compass: null
@@ -102,12 +106,18 @@ eval:
     no_memory: 64
     no_goal: 64
     random_goal: 64
+    random_cell: 64
+    no_plan: 64
   report: [found, found_hallway, found_doorway, found_room, found_deep, seek_rung, rung_carried, find_seconds,
            sighted, sight_seconds, sight_to_arrival, rooms_looked, rooms_entered, rooms_reentered, revisit_rate,
            rooms_before_found, objective_visible, room_depth, difficulty, deep_room, object_fallback,
            distance_travelled, course_kinks, control_changes_per_minute, wall_seconds, stuck_seconds, died,
            timed_out, reward_arrive, reward_step_cost, reward_sighting, reward_new_ground, reward_room_seen,
-           reward_stuck, reward_wall, reward_jitter, reward_effort, reward_repeat]
+           reward_stuck, reward_wall, reward_jitter, reward_effort, reward_repeat,
+           goals_cell_chosen, goals_cell_reached, goals_cell_lost, goals_cell_invalid, goals_cell_same,
+           goal_switches_cell, cell_goal_seconds, cell_goal_yards, cell_stale_share, plan_depth, plan_advances,
+           ground_cells, reward_cell_goal, reward_cell_progress, reward_cell_switch, reward_cell_lost,
+           reward_cell_stale]
 
 # forge status for this stage: did it find the object, by rung (found_<rung>, each over the episodes placed at it) and
 # in the deepest rooms, the rung it is on, how soon it saw it and got there after, and how it searched -- rooms looked
@@ -118,9 +128,10 @@ status:
   headline: [found, found_hallway, found_doorway, found_room, found_deep, seek_rung, found_deepest, find_seconds,
              sight_seconds, sight_to_arrival, rooms_looked, rooms_before_found, revisit_rate, objective_visible,
              wall_seconds, timed_out, died,
-             plan_share, goal_follow_rate, rooms_checked_per_min, returns, slots_waiting, checked_miss,
-             check_cover_at_find,
-             found_no_flag, found_no_camera, found_no_map, found_no_memory, found_no_goal, found_random_goal]
+             plan_share, goal_follow_rate, goals_cell_reached, goals_cell_lost, cell_goal_seconds, ground_cells,
+             rooms_checked_per_min, returns, slots_waiting, checked_miss, check_cover_at_find,
+             found_no_flag, found_no_camera, found_no_map, found_no_memory, found_no_goal, found_random_goal,
+             found_random_cell, found_no_plan]
   targets:
     # M1's targets are not M2's measures (null drops an inherited key).
     arrived: null

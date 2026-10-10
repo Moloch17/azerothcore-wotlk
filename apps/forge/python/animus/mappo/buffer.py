@@ -168,6 +168,9 @@ class RolloutBuffer:
         # With two goals and a queue (goal_slots > 1): the slots a choice drew, -1 for none (what the slow update
         # scores again; `goal` holds the pair the seat then held).
         self.goal_slots = np.full((*shape, goal_slots), -1, dtype=np.int64)
+        # And the block of the mental map's crop each cell goal named (free-choice-goals), -1 where the slot's goal is
+        # not a cell goal (and everywhere without a cell head): the slow update scores them again beside the slots.
+        self.goal_cells = np.full((*shape, goal_slots), -1, dtype=np.int16)
         # Hindsight (MappoTrainer._achieved_of): the goal each decision turned out to achieve, read off the next
         # observation's goal block, -1 for none.
         self.achieved = np.full(shape, -1, dtype=np.int64)
@@ -242,6 +245,8 @@ class RolloutBuffer:
                 self.slow_memory[t], self.slow_values[t] = goals[3], goals[4]
             if len(goals) > 5 and goals[5] is not None:
                 self.goal_slots[t] = goals[5]
+            if len(goals) > 6 and goals[6] is not None:
+                self.goal_cells[t] = goals[6]
 
     def store_rows(self, name: str, t: int, rows: slice, value, stream) -> None:
         """Envs `rows` of step `t` of obs, state, mask or image, from a device tensor, copied on `stream` (queued: the

@@ -62,13 +62,30 @@ update (`_update_goals`) is unchanged: the pointer's parameters are in `actor.go
 `slow_parameters()` and the slow optimiser; `head.draw`/`head.logits` receive the raw observations, from which the pointer
 reads its features.
 
+**Cell goals** (free-choice-goals). `MappoConfig.goal_cell_entropy_weight` (0.3, onto `GoalHead.cell_entropy_weight`) and
+`goal_cell_hindsight_coef` (0.05; 0 = off). `set_goal_space` refuses a manifest whose `goals.slots_on_wire` is not 4,
+passes `GoalHead.set_space` the byte the map crop starts at (the camera's `image_bytes` of the vision descriptor) and the
+crop's side, and the log line gains the cell head's. `MappoTrainer.uniform_cells` / `single_goal` (host bools set by
+`Run.evaluate_arms` for the `random_cell` / `no_plan` arms, like `uniform_goals`). `decide_goals` takes the rows' image
+bytes and the plan words and the choices made (`ActingState.plan`, `.serial`) and returns `cells` and `plan`; the
+rollout graph carries `plan` and `serial` as inputs and `goal_cells` and `plan` as outputs, the host advancing `serial`
+by one on the rows that chose. `_update_goals` scores the cells again (`head.draw(..., cells=, image=)`), and with
+`goal_cell_hindsight_coef > 0` adds `-coef * log p(block the seat stood in at the next choice)` over the choices whose
+cell primary was not reached (the block read from the next observation's `goal_from_*` columns, in the frame of the choice's
+own crop, only if it is choosable there). Statistics: `goal_cell_entropy`, `goal_cell_share`, `goal_cell_hindsight_loss` /
+`_rows`, and `goal_cell_mask_mismatch` (the share of rows where the sim offers the cell goal -- the goal block's target-there
+bit -- and the learner finds no choosable block; one-sided, because a block with no cell on offer reads the same in
+rung 0-1 and in rooms mode).
+
 ## `ActingState` (`:209`)
 
 Per-env, per-agent numpy arrays carried between decisions: `memory`, `critic_memory` `[E,A,R]`, `goal`, `age` `[E,A]`,
-`slow_memory` `[E,A,S]`, `queue` `[E,A,goal_slots-2]`, `look` `[E,A,heads]` (int8), `look_log_prob`. `take/put` slice
+`slow_memory` `[E,A,S]`, `queue` `[E,A,goal_slots-2]`, `plan` `[E,A,4]` (the cell words held at the four plan positions,
+0 none) and `serial` `[E,A]` (the choices made this episode; tickets come from it), `look` `[E,A,heads]` (int8), `look_log_prob`. `take/put` slice
 envs for half-batch acting; `clear(done)` zeroes memories, goal and age, sets queue to -1 for finished envs.
-Built by `acting_state(envs, agents)` (`:1150`). `wire_goals` (`:1141`) converts held goals to the `[E,A,2]` int32
-(primary, secondary) the ACT carries; `wire_look` (`:1168`) the look choices.
+Built by `acting_state(envs, agents)` (`:1150`). `wire_goals(goal, queue, plan)` (`:1141`) converts held goals to the `[E,A,8]` int32 the ACT carries (protocol
+28): the joint ids of the primary, secondary and the two queued goals (-1 none), then the four cell words
+`(ticket << 12) | (block + 1)` (0 none); `wire_look` (`:1168`) the look choices.
 
 ## Rollout path
 
@@ -80,7 +97,7 @@ then `fold_normalisation()` on the copies, and on CUDA `densify` + `SharedInputD
 the end; with `overlap_updates` the caller passes `sync=False` and calls `sync_rollout()` when it joins the update.
 
 `act_and_value` returns `(actions, log_probs, values, foresight or None, goals or None)` where goals is
-`(goal, goal_log_prob, chosen, slow_before, slow_value, goal_slots)`. Two implementations:
+`(goal, goal_log_prob, chosen, slow_before, slow_value, goal_slots, goal_cells)`. Two implementations:
 
 1. **Graph path**: `_rollout_graph` (`:900`) returns a `_RolloutGraph` or None. `graph.run` (`:526`) fills pinned host
    buffers (or copies device-fed inputs), replays, synchronises the rollout stream once and copies the pinned outputs.

@@ -54,6 +54,7 @@ that array to its device for good (`setattr`). Fields (shape `[T,E,A,...]` unles
 | `dones`, `terminated` `[T,E]` | bool | episode ended / ended by termination (not truncation) |
 | `memory`, `critic_memory` `[..., recurrent]` | | the GRU states each decision was taken with |
 | `goal`, `goal_log_probs`, `goal_chosen`, `goal_slots [..., goal_slots]`, `achieved` | | goal pair held, the log-prob of choosing it, whether this decision chose it, slots drawn, what the next observation says was achieved |
+| `goal_cells [..., goal_slots]` | int16 | the block of the map crop each slot's cell goal named, -1 where the slot is not one (free-choice-goals; the slow update scores them again) |
 | `slow_memory`, `slow_values`, `slow_advantages`, `slow_returns`, `slow_valid` | | the slow loop's |
 | `foresight_preds`, `final_foresight`, `foresight_targets`, `foresight_valid` | `[..., foresight]` | |
 

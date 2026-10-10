@@ -25,7 +25,7 @@ import numpy as np
 
 from . import protocol as p
 from .device import host
-from .episode_means import PER_EVENT
+from .episode_means import PER_EVENT, event_weights
 
 LEVEL_BANDS = ((1, 20), (21, 40), (41, 60), (61, 80))
 
@@ -204,7 +204,10 @@ class EvalResult:
                 # A per-event column (episode_means.PER_EVENT: arrive_seconds over the markers reached) is weighted
                 # by its episode's events, so an episode that never arrived does not read as a zero-second arrival.
                 count = PER_EVENT.get(name)
-                weights = self.column(count)[rows] if count in self.info_names else None
+                weights = None
+                if count is not None:
+                    summed = event_weights(count, lambda c: self.column(c) if c in self.info_names else None)
+                    weights = summed[rows] if summed is not None else None
                 if weights is not None:
                     total = float(weights.sum())
                     out[name] = float((values * weights).sum() / total) if total > 0 else None
@@ -465,8 +468,15 @@ def standard_error(values: np.ndarray, groups: np.ndarray | None = None) -> floa
 #:               about no one), the held-goal compass reads 0 and the place slots are empty, which is the policy as it
 #:               was before room goals;
 #:   random_goal the goal head replaced by a uniform draw over the goals on offer (the primary only; nothing held beside
-#:               it or queued): the follower without the planner. A learner-side flag, MappoTrainer.uniform_goals.
-ABLATIONS = ("no_flag", "no_camera", "no_compass", "no_map", "no_memory", "no_goal", "random_goal")
+#:               it or queued): the follower without the planner. A learner-side flag, MappoTrainer.uniform_goals;
+#:   random_cell the goal head as it is, but every cell goal's cell drawn uniformly over the choosable blocks of the
+#:               map crop (free-choice-goals): what the cell pointer is worth. MappoTrainer.uniform_cells;
+#:   no_plan     the goal head as it is, but nothing held beside the primary and nothing queued: what the chain of
+#:               cells (the plan) is worth. MappoTrainer.single_goal.
+ABLATIONS = ("no_flag", "no_camera", "no_compass", "no_map", "no_memory", "no_goal", "random_goal", "random_cell",
+             "no_plan")
+#: The ablations that are a flag on the trainer's goal draw (Run.evaluate_arms sets them), not an edit of the input.
+GOAL_DRAW_ARMS = ("random_goal", "random_cell", "no_plan")
 #: What an ablation arm reports and shows in forge status (<column>_<arm>).
 ABLATION_COLUMNS = ("arrived", "arrived_no_compass", "arrived_with_compass", "objective_visible")
 #: Bit 5 of the class byte (byte 3) of every pixel: the objective flag (Vision EncodePixel, cpp-vision.md).
@@ -539,17 +549,18 @@ def ablation_chooser(choose: Callable, arm: str, spec, stage: dict | None) -> Ca
         if acting is None or all(getattr(acting, name) is None for name in ("memory", "goal", "slow_memory", "queue")):
             raise ValueError("eval.arms.no_memory: the policy carries no memory, goal or queue to reset")
 
-    if arm == "random_goal":
+    if arm in GOAL_DRAW_ARMS:
         acting = getattr(choose, "acting", None)
         if acting is None or acting.goal is None:
-            raise ValueError("eval.arms.random_goal: the policy chooses no goals")
+            raise ValueError(f"eval.arms.{arm}: the policy chooses no goals")
 
     def chooser(step):
         if arm == "no_memory":
             forget(choose.acting, len(step.done))
             return choose(step)
-        if arm == "random_goal":
-            # The draw itself is the trainer's (uniform_goals, set around the arm by Run.evaluate_arms).
+        if arm in GOAL_DRAW_ARMS:
+            # The draw itself is the trainer's (uniform_goals, uniform_cells, single_goal: set around the arm by
+            # Run.evaluate_arms).
             return choose(step)
         if arm in ("no_compass", "no_goal"):
             return choose(replace(step, obs=ablate_obs(step.obs, step.layout, spans)))

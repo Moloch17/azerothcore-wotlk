@@ -107,6 +107,29 @@ zeros), `_with_places` adds the MLP's score to each place target's logit for eve
 `slot_logits()` (so the primary, the secondary and the queue), before the goal block's target-there mask: an unbound or
 checked slot is never chosen. No data-dependent Python branch, so the rollout graph captures it.
 
+**The cell pointer** (free-choice-goals, 2026-10-09; `docs/forge/decisions/0024` and the plan in
+`.agents/plans/free-choice-goals/`). A cell goal is the joint goal `travel_to / target 21` (joint 159, `goals.cells.joint`)
+plus a block of the mental map's crop: the 48 x 48 heading-up crop pooled `pool` 2 into 24 x 24 blocks of 4 yd, the
+index row-major, 576 candidates. `CellPointer` (`goal_head.cell.*`): `local` Linear(18, 32) (SiLU in the head), `query`
+Linear(width, 32), `score` Linear(32, 1) **zero weight and bias**, `chain` Sequential(Linear(3, 16), Tanh, Linear(16, 1))
+with a zero last layer. Buffer `cell_spec [4] long` `(byte the crop starts at in a row's image bytes, grid, pool, joint)`, -1
+throughout = no cell head, with host mirrors `cell_at / cell_grid / cell_pool / cell_joint` (`cell_on`), set by
+`set_space(accepts, block_at, goals, image_offset, map_side)` from `goals.cells` (absent = no cell head, a revision-3
+manifest; a manifest whose crop, codes, channels or field widths this learner does not implement raises) plus
+`cell_rise`, `cell_min_floor` and `cell_from` (`goals.columns.from`, for the hindsight) as host numbers. Module functions:
+`cell_valid(crops, grid, pool, rise, min_floor)` -- the contract's one definition of a choosable block (no Wall or Hazard
+cell; at least 2 floor-like cells (Floor or Door); every floor-like cell with a known height within 16 units = 4 yd of the
+feet; Unknown is never floor), a pure function of the crop bytes -- `cell_features` (18 per block: shares of
+Floor/Door/Wall/Hazard/Unknown, visited, frontier, any entity, newest look age, never seen, mean height; the 3 x 3 average
+of the floor, wall, unknown and frontier shares; forward, right and distance over 48) and `cell_geometry`. A slot's score
+per block is `score(tanh(local(x_j) + query(shifted_s))) + chain([dr, dc, dist] / 24 from the previous drawn cell of this
+choice, the seat's own block for the first)`, `shifted_s` the same vector `slot_logits` builds (`_shifted`). Masked by
+`cell_valid` and, for a slot after the first, by every block within Chebyshev distance 1 of a cell drawn before it in the
+choice (queue de-dup by cell); `masked_logits` falls back to block 0 on an empty row. The cell goal is also withdrawn from a
+later slot's joint logits (`slot_logits(cell_ok=)`) where no block is left, so a plan never holds a cell the sim would find
+invalid (an addition to the contract). Graph-safe: every slot's cell logits are computed every decision and selected with
+`where`.
+
 Public methods:
 
 - `logits(features, obs, layout)` (`:560`): masked joint logits `[rows, kinds*targets]`; allowed = `accepts` AND (goal
@@ -117,15 +140,22 @@ Public methods:
   With lookahead the predictions (detached) times `lookahead_weight` are added to the logits (`:566`).
 - `signals(obs, layout)` (`:464`): reads the goal block's columns > 0.5: `ended`, `secondary_ended`, `event`,
   `achieved` (-1 none). With `slots <= 1` only `ended` is real.
-- `slot_logits(features, slot, drawn, obs, layout)` (`:494`): logits `[rows, count+1]` for a slot after the primary,
+- `cell_primary(features, image, block)`: the primary slot's cell distribution again -- `(log p(block), block choosable,
+  entropy, any block choosable)` -- for the planner's hindsight and the update's statistics.
+- `slot_logits(features, slot, drawn, obs, layout, cell_ok=None)` (`:494`): logits `[rows, count+1]` for a slot after the primary,
   last column = none; masked by the goal block like the primary; a row without a goal block has only none. From
   `slot >= 2` (the queue) the goals already drawn at this choice (primary, secondary, earlier queue entries) are masked
-  too, so a queue never repeats the primary (which ended lost on promotion).
-- `draw(features, obs, layout, deterministic, slots=None, uniform=False)`: `uniform` (the eval arm `random_goal`,
-  `decide_goals(..., uniform=True)`) draws the primary uniformly over the goals on offer and holds nothing beside it;
-  never set by training. Draws (or, with `slots`,
-  scores) primary then secondary/queue slots, each conditioned on the earlier ones. Returns `(slots [rows,S] with -1
-  for none, log_prob, entropy)`. The primary's entropy counts fully; later slots are weighted by `slot_entropy_weight`
+  too, so a queue never repeats the primary (which ended lost on promotion) -- except the cell joint, which every cell
+  goal shares (the draw de-duplicates the cells by block instead; the sim's `secondary == primary` drop and
+  `decide_goals`' likewise skip it).
+- `draw(features, obs, layout, deterministic, slots=None, uniform=False, cells=None, image=None, uniform_cells=False,
+  single=False)`: `uniform` (the eval arm `random_goal`, `decide_goals(..., uniform=True)`) draws the primary uniformly
+  over the goals on offer, the cell uniformly over the choosable blocks, and holds nothing beside it; `uniform_cells`
+  (`random_cell`) only the cells uniform; `single` (`no_plan`) nothing held beside the primary or queued; never set by
+  training. Draws (or, with `slots` and `cells`, scores) primary then secondary/queue slots, each conditioned on the earlier
+  ones; with the cell head and `image` a slot whose joint is the cell joint also draws a block (log probability: the joint
+  plus the block; entropy: plus `p(cell joint) * cell_entropy_weight * H(block)` inside the slot's weight). Returns `(slots
+  [rows,S] with -1 for none, log_prob, entropy, cells [rows,S] with -1 where the slot is not a cell goal)`. The primary's entropy counts fully; later slots are weighted by `slot_entropy_weight`
   (default 0.1, overwritten from `MappoConfig.goal_slot_entropy_weight` by `trainer.py:665`, not by the constructor).
   (The order-given primary path was removed with the goal block's order columns, goal block revision 2.)
 - `predictions(features)` (`:555`): `(success logits, sigmoid(duration))` per candidate goal.

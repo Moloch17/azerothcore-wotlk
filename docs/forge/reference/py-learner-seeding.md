@@ -56,6 +56,14 @@ the revisions, the number of tensors reset, the rows copied. Same revision, an a
 stage.json) or an overlay seed: exactly as before. A manifest without `place_slots` resets but copies nothing.
 The new goal-block columns reach the adapter at zero weight (the block's revision change makes `_common_blocks` start it
 fresh, then by name: `_seed_adapter_blocks` zeroes what is not carried), and the pointer's last layer is zero.
+**Revision 3 -> 4** (free-choice-goals, cell goals) is the one pair that **keeps** the head: `goal_head.*` comes with the
+shared weights, `slow_memory.*` and `slow_value.*` are copied from the checkpoint (`_reseed_goals(..., old_actor)`; they
+are not in `SHARED_PREFIXES`), `goal_head.cell.*` is absent from the checkpoint and stays as initialised (score and chain
+at zero: uniform over the choosable blocks), and the embeddings are warm-copied for the cell goal's target
+(`goals.cells.target`, 21, appended to `_goal_ids`' place targets) wherever the row is still zero. Printed: what was kept
+and what is fresh. Any other revision pair, including 2 -> 4, resets as above. The new columns (108..121) are new names and
+reach the adapter at zero. A new M2 run is a seeded start, not a resume (protocol 28 and the wider block): `forge` overlay
+`configs/overlays/move2_seek_cells.yaml`.
 Everything else stays freshly initialised: critic state encoder and value head, the value normaliser, and any module
 not named above (UNVERIFIED which actor modules that includes: foresight and slow-goal modules are not in
 `SHARED_PREFIXES`; check `mappo/networks.py` key names).

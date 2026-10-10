@@ -13,6 +13,7 @@ from torch import nn
 
 from ..device import host
 from ..parallel import Ranks
+from ..protocol import GOAL_SLOTS_ON_WIRE
 from .buffer import RolloutBuffer
 from .networks import (LayoutActor, LayoutCritic, SharedInputDense, _carry_sequence, _per_layout, load_actor_state,
                        per_layout, per_layout_host, sample_logits, skip_distribution_checks, goal_pair,
@@ -154,6 +155,12 @@ class MappoConfig:
     # primary's. Summed at full weight over four slots of 12 kinds x 29 targets, the bonus held the head near uniform
     # (goal entropy 10.4-12.2 nats through the next-run trial, 2026-09-30) and actions stopped depending on goals.
     goal_slot_entropy_weight: float = 0.1
+    # **Cell goals** (free-choice-goals; the head is on where stage.json has goals.cells): the weight of the cell's entropy
+    # in the goal head's, where the cell goal is drawn (GoalHead.cell_entropy_weight), and the planner's hindsight
+    # coefficient -- the pull, in the slow loss, of a choice whose cell goal was not reached towards the block the seat
+    # actually stood in (goal block columns goal_from_*, read at the next choice). 0 turns the hindsight off.
+    goal_cell_entropy_weight: float = 0.3
+    goal_cell_hindsight_coef: float = 0.05
     foresight_coef: float = 0.0
     foresight_horizons_seconds: tuple[float, ...] = (5.0, 30.0)
     foresight_time_scale_seconds: float = 60.0
@@ -203,6 +210,10 @@ class ActingState:
     slow_memory: np.ndarray | None = None
     # The goals queued behind the two held [E, A, goal_slots - 2] (-1 none): the learner's own (decide_goals).
     queue: np.ndarray | None = None
+    # The cell words held at the four plan positions [E, A, 4] (0 none; ticket << 12 | block + 1) and the choices made
+    # this episode [E, A] (tickets are drawn from it): the cell goals' wire state (free-choice-goals, decide_goals).
+    plan: np.ndarray | None = None
+    serial: np.ndarray | None = None
     # The free look's last choices [E, A, heads] (LookHead, protocol 22): what the decision just taken sends with its
     # actions (MappoTrainer.wire_look). The sim holds the rates; nothing here is carried into the next decision.
     look: np.ndarray | None = None
@@ -232,6 +243,9 @@ class ActingState:
             self.age[done] = 0
         if self.queue is not None:
             self.queue[done] = -1
+        if self.plan is not None:
+            self.plan[done] = 0
+            self.serial[done] = 0
         if self.slow_memory is not None:
             self.slow_memory[done] = 0.0
 
@@ -290,6 +304,7 @@ class _Decided:
         self.slow_before_at = self.slow_after_at = self.slow_value_at = None
         self.goal_at = self.goal_log_prob_at = self.foresight_at = self.memory_at = None
         self.goal_slots_at = self.queue_at = None
+        self.goal_cells_at = self.plan_at = None
         self.actions_at = self.log_probs_at = None
         self.look_at = self.look_log_prob_at = None
 
@@ -308,10 +323,14 @@ class _Decided:
                 slow_before, slow_value = fetched[self.slow_before_at], fetched[self.slow_value_at]
                 self.state.slow_memory = fetched[self.slow_after_at]
             goals = (goal, fetched[self.goal_log_prob_at], chosen, slow_before, slow_value,
-                     fetched[self.goal_slots_at])
+                     fetched[self.goal_slots_at],
+                     fetched[self.goal_cells_at] if self.goal_cells_at is not None else None)
             self.state.goal = goal
             if self.state.queue is not None:
                 self.state.queue = fetched[self.queue_at]
+            if self.plan_at is not None and self.state.plan is not None:
+                self.state.serial = np.where(chosen, self.state.serial + 1, self.state.serial)
+                self.state.plan = fetched[self.plan_at]
         if self.memory_at is not None:
             self.state.memory = fetched[self.memory_at]
         taken = fetched[self.actions_at]
@@ -396,6 +415,11 @@ class _RolloutGraph:
         if goals:
             specs += [("goal", (envs, agents), torch.long), ("chosen", (envs, agents), torch.bool),
                       ("queue", (envs, agents, max(1, trainer.goal_slots - 2)), torch.long)]
+            if trainer.goal_slots > 1:
+                # The cell goals' wire state (decide_goals): the words held at the four plan positions and the choices
+                # made this episode.
+                specs += [("plan", (envs, agents, GOAL_SLOTS_ON_WIRE), torch.long),
+                          ("serial", (envs, agents), torch.long)]
         if trainer.slow_goal_size:
             specs += [("slow_memory", (envs, agents, trainer.slow_goal_size), torch.float32)]
         self.inputs = _Packed(specs, device)
@@ -458,9 +482,13 @@ class _RolloutGraph:
                 # The slow loop steps where a goal is chosen, and the goals are drawn from where it stepped to.
                 slow_before = inputs["slow_memory"].reshape(rows, trainer.slow_goal_size)
                 goal_features = actor.slow_step(features, slow_before)
+            cell = trainer.goal_slots > 1
             decided = actor.decide_goals(goal_features, obs_t, layout_t, inputs["goal"].reshape(rows),
                                          inputs["queue"].reshape(rows, -1), inputs["chosen"].reshape(rows),
-                                         self.deterministic)
+                                         self.deterministic,
+                                         image=inputs["image"].reshape(rows, -1) if trainer.image_bytes else None,
+                                         plan=inputs["plan"].reshape(rows, -1) if cell else None,
+                                         serial=inputs["serial"].reshape(rows) if cell else None)
             chosen_t = decided["chosen"]
             if slow_before is not None:
                 out["slow_memory"] = torch.where(chosen_t[:, None], goal_features, slow_before).reshape(
@@ -473,6 +501,10 @@ class _RolloutGraph:
             out["goal_chosen"] = chosen_t.reshape(envs, agents)
             out["goal_slots"] = decided["slots"].reshape(envs, agents, -1)
             out["queue"] = decided["queue"].reshape(envs, agents, -1)
+            if "cells" in decided:
+                out["goal_cells"] = decided["cells"].reshape(envs, agents, -1).to(torch.int16)
+            if "plan" in decided:
+                out["plan"] = decided["plan"].reshape(envs, agents, -1)
 
         critic_memory = inputs["critic_memory"].reshape(rows, -1) if "critic_memory" in inputs else None
         values, carried = critic.step_encoded(critic.encode_goal(critic_hidden, critic_own, goal_t), (rows,),
@@ -537,6 +569,9 @@ class _RolloutGraph:
                 np.copyto(host["queue"].numpy(), state.queue, casting="unsafe")
             else:
                 host["queue"].numpy().fill(-1)
+            if "plan" in host:
+                np.copyto(host["plan"].numpy(), state.plan, casting="unsafe")
+                np.copyto(host["serial"].numpy(), state.serial, casting="unsafe")
         if trainer.slow_goal_size:
             np.copyto(host["slow_memory"].numpy(), state.slow_memory)
 
@@ -553,12 +588,15 @@ class _RolloutGraph:
             state.goal = fetched["goal"]
             if state.queue is not None:
                 state.queue = fetched["queue"]
+            if "plan" in fetched:
+                state.serial = np.where(chosen, state.serial + 1, state.serial)
+                state.plan = fetched["plan"].astype(np.int64)
             slow_before = slow_value = None
             if trainer.slow_goal_size:
                 slow_before, slow_value = fetched["slow_before"], fetched["slow_value"]
                 state.slow_memory = fetched["slow_memory"]
             goals = (fetched["goal"], fetched["goal_log_prob"], chosen, slow_before, slow_value,
-                     fetched["goal_slots"])
+                     fetched["goal_slots"], fetched.get("goal_cells"))
         if trainer.recurrent_size:
             state.memory = fetched["memory"]
             state.critic_memory = fetched["critic_memory"]
@@ -637,6 +675,11 @@ class MappoTrainer:
         # over the goals on offer instead of from the head. A host flag read by the eager decision (_decide) only; the
         # rollout graph, which training uses, never sees it set.
         self.uniform_goals = False
+        # The eval arms random_cell and no_plan, the same way (Run.evaluate_arms): the cells drawn uniformly over the
+        # choosable blocks, the goals from the head; and nothing held beside the primary or queued, the primary from
+        # the head. Host flags of the eager decision.
+        self.uniform_cells = False
+        self.single_goal = False
         self.goal_slots = max(1, config.goal_slots) if self.goal_count else 1
         # The slots are drawn and scored by the slow loop's own update (_update_goals); a queue needs two slots behind
         # the pair held.
@@ -648,6 +691,7 @@ class MappoTrainer:
                                  self.vision).to(self.train_device)
         if self.actor.goal_head is not None:
             self.actor.goal_head.slot_entropy_weight = config.goal_slot_entropy_weight
+            self.actor.goal_head.cell_entropy_weight = config.goal_cell_entropy_weight
         # One camera encoder for both networks: the actor's, which the critic reads by reference (VisionEncoder).
         self.critic = LayoutCritic(state_dim, self.layouts, hidden, self.goal_kinds,
                                    self.recurrent_size, self.goal_targets,
@@ -806,11 +850,22 @@ class MappoTrainer:
             blocks = ((stage.get("layouts") or {}).get(layout) or {}).get("blocks") or []
             at = next((int(b["obs"][0]) for b in blocks if b.get("name") == goals.get("block", "goal")), -1)
             block_at.append(at)
+        # The goals travel as GOAL_SLOTS_ON_WIRE plan positions (protocol 28): a sim that wires another count is not
+        # this learner's.
+        if int(goals.get("slots_on_wire", 0)) != GOAL_SLOTS_ON_WIRE:
+            raise ValueError(f"stage.json goals.slots_on_wire is {goals.get('slots_on_wire')}, this learner wires "
+                             f"{GOAL_SLOTS_ON_WIRE} plan positions (protocol 28)")
+        # Where the mental map's crop starts in a row's image bytes (after the camera's pixels), for the cell head.
+        mapped = next((entry for entry in self.vision or () if entry is not None and entry.get("map")), None)
+        image_offset = int(mapped["image_bytes"]) if mapped is not None else -1
+        map_side = int(mapped["map"]["height"]) if mapped is not None and \
+            mapped["map"]["height"] == mapped["map"]["width"] else 0
         notes = []
         for actor in (self.actor, self._rollout_actor):
             if actor is not None and actor.goal_head is not None:
-                # The manifest's offsets for the place slots' features (goal block revision 3), read, not assumed.
-                notes.append(actor.goal_head.set_space(goals["accepts"], block_at, goals))
+                # The manifest's offsets for the place slots' features (goal block revision 3) and the cell goals (4),
+                # read, not assumed.
+                notes.append(actor.goal_head.set_space(goals["accepts"], block_at, goals, image_offset, map_side))
         if notes:
             print(f"Goal head: {notes[0]}", flush=True)
 
@@ -1037,9 +1092,13 @@ class MappoTrainer:
                 goal_features = self._rollout_actor.slow_step(features, slow_before)
             queue = (self._tensor(state.queue, torch.long).reshape(rows, -1) if state.queue is not None
                      else torch.full((rows, 1), -1, dtype=torch.long, device=self.rollout_device))
-            goals = self._rollout_actor.decide_goals(goal_features, obs_t, layout_t,
-                                                     self._tensor(state.goal, torch.long).reshape(rows), queue,
-                                                     clock, deterministic, self.uniform_goals)
+            cell = state.plan is not None
+            goals = self._rollout_actor.decide_goals(
+                goal_features, obs_t, layout_t, self._tensor(state.goal, torch.long).reshape(rows), queue, clock,
+                deterministic, self.uniform_goals, image=image_t,
+                plan=self._tensor(state.plan, torch.long).reshape(rows, -1) if cell else None,
+                serial=self._tensor(state.serial, torch.long).reshape(rows) if cell else None,
+                uniform_cells=self.uniform_cells, single=self.single_goal)
             chosen_t = goals["chosen"]
             if slow_before is not None:
                 slow_after = torch.where(chosen_t[:, None], goal_features, slow_before)
@@ -1053,6 +1112,10 @@ class MappoTrainer:
             decided.goal_chosen_at = downloads.add(chosen_t.reshape(envs, agents))
             decided.goal_slots_at = downloads.add(goals["slots"].reshape(envs, agents, -1))
             decided.queue_at = downloads.add(goals["queue"].reshape(envs, agents, -1))
+            if "cells" in goals:
+                decided.goal_cells_at = downloads.add(goals["cells"].reshape(envs, agents, -1).to(torch.int16))
+            if "plan" in goals:
+                decided.plan_at = downloads.add(goals["plan"].reshape(envs, agents, -1))
 
         dist = self._rollout_actor.action_distribution(features, layout_t, mask_t, decided.goal_t, groups, obs_t)
         actions = dist.logits.argmax(dim=-1) if deterministic else dist.sample()
@@ -1125,14 +1188,26 @@ class MappoTrainer:
         achieved[:-1] = torch.where(ended, torch.full_like(following, -1), following)
         return achieved
 
-    def wire_goals(self, goal: np.ndarray) -> np.ndarray:
-        """The goals ACT carries for held goals `goal` [E, A]: [E, A, 2], primary then secondary (-1 none)."""
+    def wire_goals(self, goal: np.ndarray, queue: np.ndarray | None = None,
+                   plan: np.ndarray | None = None) -> np.ndarray:
+        """The goals ACT carries (protocol 28) for held goals `goal` [E, A], the queue behind them and the cell words
+        `plan` the seat holds: [E, A, GOAL_WIRE_INTS] int32 -- the joint ids of the primary, the secondary and the two
+        queued goals (-1 none; positions the policy has no slot for are -1), then the four positions' cell words (0
+        none)."""
         goal = np.asarray(goal, dtype=np.int64)
         if self.goal_slots > 1:
             primary, secondary = goal // (self.goal_count + 1), goal % (self.goal_count + 1) - 1
         else:
             primary, secondary = goal, np.full_like(goal, -1)
-        return np.stack([primary, secondary], axis=-1).astype(np.int32)
+        joints = np.full((*goal.shape, GOAL_SLOTS_ON_WIRE), -1, dtype=np.int64)
+        joints[..., 0], joints[..., 1] = primary, secondary
+        if queue is not None and self.goal_slots > 2:
+            behind = np.asarray(queue, dtype=np.int64)[..., :GOAL_SLOTS_ON_WIRE - 2]
+            joints[..., 2:2 + behind.shape[-1]] = behind
+        words = np.zeros((*goal.shape, GOAL_SLOTS_ON_WIRE), dtype=np.int64)
+        if plan is not None:
+            words[...] = np.asarray(plan, dtype=np.int64)[..., :GOAL_SLOTS_ON_WIRE]
+        return np.concatenate([joints, words], axis=-1).astype(np.int32)
 
     def acting_state(self, envs: int, agents: int) -> "ActingState":
         """What the policy carries from decision to decision: its memory and the goal it is pursuing. Whoever acts
@@ -1148,6 +1223,9 @@ class MappoTrainer:
                          else None),
             queue=(np.full((envs, agents, self.goal_slots - 2), -1, dtype=np.int64) if self.goal_slots > 2
                    else None),
+            plan=(np.zeros((envs, agents, GOAL_SLOTS_ON_WIRE), dtype=np.int64) if self.goal_slots > 1 and self.goal_count
+                  else None),
+            serial=np.zeros((envs, agents), dtype=np.int64) if self.goal_slots > 1 and self.goal_count else None,
             look=np.zeros((envs, agents, len(self.look_heads)), dtype=np.int8) if self.look_heads else None,
             look_log_prob=np.zeros((envs, agents), dtype=np.float32) if self.look_heads else None,
         )
@@ -1324,6 +1402,9 @@ class MappoTrainer:
         # With two goals and a queue: the slots each choice drew (scored again below) and the primary as held for the
         # lookahead's outcome.
         slots = rows(buffer.goal_slots).long().reshape(length * columns, -1) if head.slots > 1 else None
+        # And the blocks of the mental map's crop its cell goals named (free-choice-goals), with a cell head.
+        cell_on = head.cell_on and slots is not None and image is not None
+        cells = rows(buffer.goal_cells).long().reshape(length * columns, -1) if cell_on else None
         if slots is not None:
             goal = split_goal_pair(goal, head.count)[0]
         old_log_prob = rows(buffer.goal_log_probs).float().reshape(-1)
@@ -1344,6 +1425,23 @@ class MappoTrainer:
             known[:-1] &= column_np >= 0
             column = torch.as_tensor(np.clip(column_np, 0, next_obs.shape[-1] - 1), device=device)
             reached[:-1] = (next_obs.gather(-1, column[..., None])[..., 0] > 0.5).cpu().numpy()
+        # The planner's hindsight (free-choice-goals): of a choice whose primary was a cell goal and was not reached before
+        # the next choice, the block the seat was in at that next choice (goal block columns goal_from_*, in the frame of
+        # the choice's own crop), if it was inside the crop.
+        hindsight = None
+        if cell_on and head.cell_from >= 0 and cfg.goal_cell_hindsight_coef > 0.0 and length > 1:
+            at = torch.as_tensor(block_at[next_layout], device=device)
+            base = (at + head.cell_from).clamp(min=0)
+            top = next_obs.shape[-1] - 1
+            seen_from = (next_obs.gather(-1, base.clamp(max=top)[..., None])[..., 0] > 0.5) & (at >= 0)
+            grid = head.cell_grid
+            row_of = torch.floor(next_obs.gather(-1, (base + 1).clamp(max=top)[..., None])[..., 0] * grid)
+            col_of = torch.floor(next_obs.gather(-1, (base + 2).clamp(max=top)[..., None])[..., 0] * grid)
+            inside = seen_from & (row_of >= 0) & (row_of < grid) & (col_of >= 0) & (col_of < grid)
+            block_of = row_of.clamp(0, grid - 1).long() * grid + col_of.clamp(0, grid - 1).long()
+            pad = torch.zeros((1, columns), dtype=torch.long, device=device)
+            hindsight = (torch.cat([block_of, pad]).reshape(-1),
+                         torch.cat([inside, pad.bool()]).reshape(-1))
         known_t = torch.as_tensor(known.reshape(-1), device=device) & valid
         reached_t = torch.as_tensor(reached.reshape(-1), device=device)
         duration_t = torch.as_tensor(duration.reshape(-1), device=device)
@@ -1365,7 +1463,7 @@ class MappoTrainer:
             states = _carry_sequence(self.actor.slow_memory, self.slow_goal_size, inputs, first, dones_seq)
             states = states.reshape(length * columns, -1)
             if slots is not None:
-                _, log_prob, entropy_rows = head.draw(states, obs, layout, False, slots)
+                _, log_prob, entropy_rows, _ = head.draw(states, obs, layout, False, slots, cells=cells, image=image)
             else:
                 logits = head.logits(states, obs, layout)
                 dist = torch.distributions.Categorical(logits=logits)
@@ -1380,6 +1478,34 @@ class MappoTrainer:
             value = self.actor.slow_value(states).squeeze(-1)
             value_loss = (((value - returns) ** 2) * counted).sum() / weight
             loss = policy_loss - self.entropy_coef * self.goal_entropy_factor * entropy + cfg.value_coef * value_loss
+            if cell_on:
+                # The primary's cell distribution again: its entropy where the primary is a cell goal, whether the sim's
+                # offer of the cell goal agrees with the learner's choosable blocks, and the hindsight term.
+                is_cell = (slots[:, 0] == head.cell_joint) & (counted > 0)
+                taken = torch.where(is_cell, cells[:, 0], torch.zeros_like(cells[:, 0]))
+                if hindsight is not None:
+                    taken = torch.where(is_cell & (known_t & (reached_t == 0) & hindsight[1]), hindsight[0], taken)
+                cell_lp, cell_valid_at, cell_entropy, any_valid = head.cell_primary(states, image, taken)
+                if hindsight is not None:
+                    relabel = is_cell & known_t & (reached_t == 0) & hindsight[1] & cell_valid_at
+                    hindsight_loss = -(cell_lp * relabel).sum() / relabel.sum().clamp(min=1)
+                    loss = loss + cfg.goal_cell_hindsight_coef * hindsight_loss
+                    totals["goal_cell_hindsight_loss"] = totals.get("goal_cell_hindsight_loss", 0.0) + float(
+                        hindsight_loss) / cfg.epochs
+                    totals["goal_cell_hindsight_rows"] = float(relabel.sum())
+                with torch.no_grad():
+                    cell_rows = is_cell.sum().clamp(min=1)
+                    totals["goal_cell_entropy"] = totals.get("goal_cell_entropy", 0.0) + float(
+                        (cell_entropy * is_cell).sum() / cell_rows) / cfg.epochs
+                    totals["goal_cell_share"] = float(is_cell.sum() / weight)
+                    # The sim offers the cell goal (the goal block's target-there bit for the cell target) on a decision
+                    # whose crop the learner finds no choosable block in: the two definitions have drifted apart.
+                    block_start = head.block_at[layout.long()]
+                    bit = obs.gather(1, (block_start.clamp(min=0) + head.kinds + head.cell_joint % head.targets)
+                                     .clamp(max=obs.shape[-1] - 1)[:, None])[:, 0] > 0.5
+                    offered = bit & (block_start >= 0) & (counted > 0)
+                    totals["goal_cell_mask_mismatch"] = float((offered & ~any_valid).sum()
+                                                              / offered.sum().clamp(min=1))
             lookahead_loss = torch.zeros((), device=device)
             if head.lookahead:
                 success, expected = head.predictions(states)
