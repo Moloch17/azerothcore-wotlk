@@ -1,4 +1,4 @@
-# The sim-learner protocol (version 26) and the cluster messages
+# The sim-learner protocol (version 28) and the cluster messages
 
 Purpose and scope: a byte-exact description of what the C++ sim and the Python learner say to each other, and of the
 text lines the cluster machines exchange. Written from the code at `forge` bd32b9dc8. "Wire" means the lock-step
@@ -85,7 +85,7 @@ learner with "sent message type N with M bytes where ACT, MODE, WEIGHTS or REPLA
 
 | Field | Type | Meaning |
 |---|---|---|
-| Version | u32 | `PROTOCOL_VERSION` (27). The learner refuses a mismatch (env.py:41). |
+| Version | u32 | `PROTOCOL_VERSION` (28). The learner refuses a mismatch (env.py:41). |
 | NumEnvs | u32 | This rank's envs (`RankEnvs(rank)`), not the pool's. |
 | AgentsPerEnv | u32 | Agent rows per env (seats plus any cast owner row). |
 | ObsDim | u32 | The largest layout's observation width; all rows padded to it. |
@@ -190,8 +190,11 @@ The first STEP after SPEC/MODE carries freshly reset envs: reward and done are z
 `ActHeader { u32 EnvBegin; u32 EnvCount; }` (`"<II"`) then, agent-major (env-major, agent within env), the group's rows:
 
 1. `i32 actions[E*A]`.
-2. Optionally `i32 goals[E*A*2]`: primary then secondary per agent; 0..GoalCount-1 or -1 for none (`GOAL_SLOTS_ON_WIRE = 2`,
-   EnvPool.h:38). Present iff the policy has a goal head. Goals never mask an action.
+2. Optionally `i32 goals[E*A*8]` (`GOAL_WIRE_INTS`, protocol 28; it was `E*A*2` up to 27): per agent the joint goal ids of
+   the four plan positions, primary, secondary, queue 0, queue 1 (`GOAL_SLOTS_ON_WIRE = 4`; 0..GoalCount-1 or -1 for none),
+   then their four cell words (0 none, else `(ticket << 12) | (cell + 1)`, ticket 1..2047: a pooled block of the seat's
+   crop for the joint goal `travel_to place_7` = 159; the sim ignores a word whose joint is not 159). Present iff the
+   policy has a goal head; without it the sim fills joints -1 and cell words 0. Goals never mask an action.
 3. If `LookHeads` L > 0 (a camera stage): `i32 look[E*A*L]`: yaw rate 0..6, pitch rate 0..4, zoom 0..4 (head sizes
    `FreeLook::HEAD_SIZES`). Required; every value must be in range or the learner is dropped. Rows without a camera send
    0s (index 0, "fastest turn right") but are range-checked. The Python "no opinion" choice is `LOOK_HOLD = (3, 2, 0)`.
@@ -283,9 +286,10 @@ into the core (`359b303c4`); their content is UNVERIFIED (no comment survives; c
 | 26 | Entity sensing (vision block 6): pixel = 4 bytes again (no entity slot), the static world only, so ImageBytes is height x width x 4; entities block 2 (columns 16-18 los, ang_width, ang_height), sight block 3. Message layout otherwise protocol 25's, less message type 12. The layout cleanup of 2026-10-08 folds in with no change of structure: SPEC `GoalCount` 348 -> 207 (goal block revision 1), `StateDim` 1958 -> 1927, and stage.json gains `state.dim`. | entity-sensing (this change) |
 
 | 27 | SPEC gains the tick jitter (`JitterMs`, `SpikeMaxMs`, `SpikeProb`; 12 bytes); STEP and ACT are 26's. | decision 0021 (this change) |
+| 28 | ACT's goal section is `GOAL_WIRE_INTS` (8) ints an agent: four plan positions' joint ids then their cell words (`GOAL_SLOTS_ON_WIRE` 2 -> 4); free choice goals. STEP and SPEC are 27's. | free-choice-goals CONTRACT sec 1 |
 
 Message type 12 (added at 18) is unused since 2026-10-08 (decision 0019, vision-only movement). It was folded into the 26 bump
-(`PROTOCOL_VERSION` is 27 in Protocol.h and protocol.py).
+(`PROTOCOL_VERSION` is 28 in Protocol.h and protocol.py).
 
 Commit-date mapping for 15-25 was taken from `git log` subjects and is approximate: the commit that sets the constant
 (`git log -S"PROTOCOL_VERSION = N;"`) was checked only for 24 and 25 (both 641cf015c on 2026-10-07; 24 first at 8452ff458,
@@ -366,3 +370,10 @@ its interface (check `ForgeConfig` / `LearnerProcess` for `DistIface`).
 * Half-batch and ranks multiply the cases: `EnvBegin` is *local* per rank, `RankGroup` splits each group evenly across ranks.
 * Question: should `present = 2` stay a magic number shared by `StandIn::Presence` (C++) and `PRESENT_STAND_IN` (Python)?
 * Question: the bit-1 gap in `Flags` is waiting for a protocol change; fold it into the next bump.
+
+2026-10-09 (free choice goals, protocol 28; learner and sim rebuild together): ACT's goal section is eight ints an agent
+(above); every stage's `obs_dim` grows by 14 (goal block revision 4, zero outside the seek stage's cell-goal episodes);
+`GoalCount` is unchanged. The seek stage's `episode_info_dim` grows by 12 columns (`goals_cell_chosen`,
+`goals_cell_reached`, `goals_cell_lost`, `goals_cell_invalid`, `goals_cell_same`, `goal_switches_cell`,
+`cell_goal_seconds`, `cell_goal_yards`, `cell_stale_share`, `plan_depth`, `plan_advances`, `ground_cells`) and by the
+terms' `reward_cell_goal`, `reward_cell_progress`, `reward_cell_switch`, `reward_cell_lost`, `reward_cell_stale`.

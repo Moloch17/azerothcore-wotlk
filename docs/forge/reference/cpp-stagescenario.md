@@ -840,7 +840,7 @@ failure, 1248-1251) and `stage.json`. Every write goes through `WriteIfChanged`.
 | `episode_info` | the column names in order | 1405-1407 |
 | `episode_categories` | name lists for categorical columns: `seek_room`, `seek_object`, `interact_site`, `interact_object`, `sight_object`, `objective_corner` (`["in_sight","corner"]`) | 1411-1453 |
 | `reward_terms` | every `RewardTerm` name -> "outcome", "cost" or "shaping" | 1457-1466 |
-| `goals` | `kinds`, `accepts` (kind by target 0/1 matrix), `targets`, `block` = "goal", `columns` (the goal block's column offsets), `slots_on_wire` | 1471-1503 |
+| `goals` | `kinds`, `accepts` (kind by target 0/1 matrix), `targets`, `block` = "goal", `columns` (the goal block's column offsets, revision 4: `held2`, `next`, `plan_left`, `from`, `width` 122), `place_slots`, `slots_on_wire` (4), `wire_ints` (8), `cells` (the cell goal's constants and `source`) | 1471-1530 |
 | `tuning` | `_tuning.Json()`, the effective tuning | 1504 |
 
 Per block entry in `layouts[].blocks[]` (1349-1402): `name`, `obs` and `actions` spans, `revision` when nonzero,
@@ -1267,8 +1267,9 @@ curriculum.
 
 ## S2.2 Goals: `ApplyGoals`, `GoalHeld` and the goal bookkeeping in `ObserveSeat`
 
-**Wire shape.** The learner sends `GOAL_SLOTS_ON_WIRE` ints a seat (primary, secondary, 2653-2656). `GoalHold` is
-`StageState.h:72-92`; `GOAL_SLOTS = 2`. A goal id packs kind and target (`GoalKindOf`, `GoalTargetOf`, `MakeGoal`; see
+**Wire shape.** The learner sends `GOAL_WIRE_INTS` (8) ints a seat since protocol 28: the joint ids of the four plan
+positions (primary, secondary, queue 0, queue 1; `GOAL_SLOTS_ON_WIRE` 4) then their cell words. `GoalHold` is
+`StageState.h:72-92`; `GOAL_SLOTS = 2` (the holds are the first two positions; `PLAN_POSITIONS` 4 is the plan table). A goal id packs kind and target (`GoalKindOf`, `GoalTargetOf`, `MakeGoal`; see
 cpp-blocks.md).
 
 **`ApplyGoals`** (2646-2687). Out-of-range ids become `NO_GOAL`; a secondary equal to the primary is dropped
@@ -1277,6 +1278,26 @@ cpp-blocks.md).
 (2670-2672); a goal that ended (reached, or no longer possible) is replaced free. Any change resets the hold to a fresh
 `GoalHold` with `Fresh = true` and counts `GoalsChosenBy[kind]` (2679-2683). Only seats `< _seatCount` are touched; the
 cast owner has no goals.
+
+**Cell goals** (free choice goals, 2026-10-09; the joint `travel_to place_7` = 159, `GoalBlock::IsCellGoal`; only in an
+episode whose last observation set `SeatState::CellGoals`). `ApplyGoals` reads each position's cell word
+(`CellGrid::ParseWord`): a ticket seen in the previous table (`SeatState::Plan[4]`, `CellPlan{Ticket, Valid, Stale,
+Where}`) keeps the point it latched, at whatever position the learner moved it to (a promotion from the queue); a new
+ticket is a new latch (`LatchCell`): the crop is worked out again at the pose `MapBlock::Observe` stored
+(`SeatState::Crop`) and the block is validated (`CellGrid::Choosable`) and turned into a world point; invalid (or no
+pose) counts `goals_cell_invalid` (a desync signal, not a price). `secondary == primary` is dropped only for a goal
+without a cell word. A cell hold is the same goal iff its ticket matches, or it is not ended and the new point is within
+`Seek.CellSame` of the held one (the hold is retagged and keeps its old point; `goals_cell_same`; the new latch is not
+charged `CellStale`). Otherwise a new hold: `Fresh = false` (no `Earned` unpaid hold), `Place` = the latched point,
+`CellStartYards` from the seat, `CellStale` from the latch, best/mark distances and clocks. A new goal over an unended
+hold is a switch (`StepGoalSwitches`, plus `StepCellSwitches` -> `Seek.CellSwitch`). `ObserveSeat` fills
+`SeatView::HeldCell` from the holds (the `Place` of a cell hold is never recomputed by `PlaceOf`), calls
+`GoalBlock::Status` with it, applies the patience rule (best 2D distance not improved by `Seek.CellPatienceYards` for
+`Seek.CellPatienceMs` makes the goal impossible, i.e. lost), pays `cell_goal` on a reach and `cell_lost` on a loss, and
+afterwards fills the next step, the plan left and the choice frame for the goal block. `SeatReward` pays
+`cell_progress` and `cell_switch`. `GoalGap`/`GoalPotential` are exempt through `SeatState::RoomGoals` (true beside
+`CellGoals`); `GoalHeld` uses `Seek.CellReach` for a cell hold; `PlanDecisions` and the first-goal clock count cell
+goals through `GoalBlock::IsPlanGoal`.
 
 **`GoalHeld`** (2728-2796): per kind of the primary (`Holds[0]`), did this decision's play match? Fight: damage dealt
 this step; Control: some other living enemy is crowd-controlled; Recover and Rest: self healing this step or a regen

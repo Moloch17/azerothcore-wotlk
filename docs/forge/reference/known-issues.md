@@ -330,3 +330,27 @@ Charge and taxis still start splines).
   question); `rooms_reentered` is unchanged and still counts flicker.
 - The wall-trap start drill (m2-search proposal 6) is not part of the plan's work breakdown or the contract and is not
   built.
+
+## Free choice goals (cell goals), 2026-10-09 (C++ stream; nothing run, syntax check only)
+
+- UNVERIFIED end to end: no sim ran. Compiles (clang `-fsyntax-only`, 90 Animus TUs, no warnings); the rest is reading.
+- The contract text for `goal_from_row/col` (`r = floor(row / 2)` with `row = 23.5 - f / 2`) is half a crop cell (1 yd)
+  off the block centres it defines; `CellGrid::Locate` implements the exact inverse of the centre (`r = floor(12 -
+  forward / 4)`, `c = floor(12 + right / 4)`). The learner reads the sim's `r`, `c`, so nothing else depends on it.
+- `LatchCell` re-runs `MentalMap::Crop` at the stored pose for each NEW ticket (about ten a hundred seconds a seat),
+  trusting that nothing wrote the map between that observation and the ACT. A dead or absent seat latches nothing and
+  counts no `goals_cell_invalid`.
+- `CellStale` is charged at the latch, `cell_goal_yards` and the start distance are measured when the HOLD is made (a
+  queue entry's distance at promotion), `CellGoal` needs the stale bit from the LATCH. A queued cell goal never promoted
+  is latched (and may be charged `CellStale`) but never "chosen" (`goals_cell_chosen` counts holds).
+- A cell goal is not held unpaid when true on choice (no `Earned`): a block within `CellReach` of the seat is reached and
+  ends at once, paying only `GoalReached` (Shaping); the aid needs `CellMinYards`, so it cannot be farmed; the head can
+  still pick one (priced by the entropy bonus and the planner's step, not masked).
+- The patience rule counts from the start of the goal (or the last gain of `CellPatienceYards`), also while the seat
+  walks away on purpose; `CellLost` is charged for it and for an invalid latch, to the row of the decision that sees it.
+- `Seek.GoalSource` 1 with `Goals` 1 below `GoalsFromRung` is a plain episode (no `RoomGoals`, no `CellGoals`); the
+  learner's mask then offers the normal kinds.
+- Fast-loop hindsight is off at `GoalSource` 1 (`AchievedGoal` is `NO_GOAL`); the planner's hindsight uses the
+  `goal_from_*` columns.
+- Ticket wrap: tickets are 11 bits (1..2047) and the learner counts choices from the episode's start, so a table entry
+  could only collide after 2047 plan positions in one episode.
