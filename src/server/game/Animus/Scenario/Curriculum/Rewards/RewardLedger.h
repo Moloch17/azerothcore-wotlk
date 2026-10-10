@@ -165,7 +165,8 @@ namespace Animus::Curriculum
         Escape,
         /// Exploration v2 (decision 0025): the first entry of each table room an episode (Seek.RoomEntry, back rooms
         /// times Seek.RoomEntryBackMult, at most Seek.RoomEntryCap), category Exploring as Explore; and the stale
-        /// cost, a Cost at a fixed price per second with no newly seen floor cell for Seek.StaleMs (Seek.Stale).
+        /// cost, a Cost at a fixed price per second with no new room of the table entered for Seek.StaleRoomMs
+        /// (Seek.Stale).
         RoomEntry,
         Stale,
         Count

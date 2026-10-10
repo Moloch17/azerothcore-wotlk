@@ -24,7 +24,9 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <iterator>
 #include <numeric>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -296,6 +298,28 @@ namespace Animus::Curriculum::SeekDraw
             at -= weights[index];
         }
         return weights.empty() ? 0 : uint32(weights.size() - 1);
+    }
+
+    /// **The rooms that always failed** (placements10/ten.md; exploration v3, decision 0026): a Stockades start
+    /// distribution weighed by Seek.HardRoomWeight in the unseeded training draw, not an observation.
+    inline bool IsHardRoom(std::string const& name)
+    {
+        static char const* const HARD_ROOMS[] = { "east_end_1_back", "hall_west_2", "east_end_2", "hall_east_1_back",
+            "west_end_3", "west_end_1", "west_end_1_back", "hall_east_2", "east_north_1" };
+        return std::any_of(std::begin(HARD_ROOMS), std::end(HARD_ROOMS),
+            [&name](char const* hard) { return name == hard; });
+    }
+
+    /// The weight of each of `indices` (into `rooms`): 1, or `hardWeight` for a room of IsHardRoom.
+    inline std::vector<float> RoomWeights(std::vector<SeekRoom> const& rooms, std::vector<uint32> const& indices,
+        float hardWeight)
+    {
+        std::vector<float> weights;
+        weights.reserve(indices.size());
+        for (uint32 index : indices)
+            weights.push_back(index < rooms.size() && IsHardRoom(rooms[index].Name)
+                ? std::max(0.0f, hardWeight) : 1.0f);
+        return weights;
     }
 
     /// How many episodes one pass of the evaluation sweep is: every (room, object) pair once (39 x 5 = 195).
