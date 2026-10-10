@@ -1612,8 +1612,9 @@ class TrainingRun:
         sim's human stand-in in one seat of every party, "with_partners", the fixed co-op partner set in some, and the
         ablations "no_flag", "no_camera", "no_compass", "no_map", "no_goal" (the learner's input edited),
         "no_memory" (its recurrent state reset every decision), "random_goal" (its goals drawn uniformly over
-        those on offer), "random_cell" (its cells drawn uniformly over the choosable blocks) and "no_plan" (nothing held
-        beside its primary goal or queued), all evaluation.ablation_chooser -- and
+        those on offer), "random_cell" (its cells drawn uniformly over the choosable blocks), "no_plan" (nothing held
+        beside its primary goal or queued), "no_searched" and "no_coverage" (the searched-state and the coverage inputs
+        zeroed), all evaluation.ablation_chooser -- and
         reported apart as policy <arm> in eval.csv and eval.jsonl, with the gap to the plain one. A reading only:
         neither the tracker, the controller nor the partners' pool sees it."""
         config = self.config
