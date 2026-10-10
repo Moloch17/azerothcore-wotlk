@@ -712,12 +712,12 @@ class TraceCollector:
         if kinematics is not None and np.shape(kinematics)[-1] > KIN_YAW:
             kin = np.asarray(host(kinematics))
             for name, column in (("x", KIN_X), ("y", KIN_Y), ("z", KIN_Z), ("yaw", KIN_YAW)):
-                block[..., field[name]] = kin[..., column]
+                block[..., at[name]] = kin[..., column]
         sin, cos = self._read(obs, layout, "cam_sin"), self._read(obs, layout, "cam_cos")
         block[..., at["cam_yaw"]] = np.arctan2(sin, cos)
         block[..., at["cam_pitch"]] = self._read(obs, layout, "cam_pitch") * (np.pi / 2.0)
         for name in ("against_wall", "moving", "speed", "held_forward", "held_strafe"):
-            block[..., field[name]] = self._read(obs, layout, name)
+            block[..., at[name]] = self._read(obs, layout, name)
         image = getattr(step, "image", None)
         if image is not None and self.image_bytes:
             pixels = np.asarray(host(image))[..., 3:self.image_bytes:4]
