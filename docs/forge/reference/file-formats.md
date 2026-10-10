@@ -105,8 +105,8 @@ and `blocks` [ {name, obs [first,count], actions [first,count], revision? , acti
 obs_names? (named columns, e.g. move: 57 names), plus per block manifests: vision: `image` {height 64, width 128, channels 5, bytes_per_pixel 4,
 class_byte 3, classes 24 with `class_names`, `class_kinds`, `pixel_classes` [0,1,2,3,4,5,23] (revision 6; `slot_byte` and `entity_slots` are gone), `patch` 8, `render_sizes` [[32,16],[48,24],[64,32],[128,64]],
 `render_weights`}, `camera` {mode "free, never adjust", yaw_rates, pitch_rates, ...}, `look`; entities: `entities`; map: `map` {height 48, width 48, cell 2.0,
-heading_up, channels 6, channel_names, map_bytes 13824, code_names [unknown, floor, wall, door, hazard], ...}; sight: `sight` } ].
-Block revision numbers in the backup: core 1, move 5, vision 5, entities 1, map 1.
+heading_up, channels 7 (revision 2; 6 in revision 1), channel_names (+ searched), map_bytes 16128, code_names [unknown, floor, wall, door, hazard], searched_channel 6, searched_max 4, scalars 7, scalar_names [known, frontier, visited, kept, searched, new_age, total], new_age_scale_s 120, total_scale 3000, epoch "episode", ...}; sight: `sight` } ].
+Block revision numbers in the backup: core 1, move 5, vision 5, entities 1, map 1 (map is 2 since exploration v3, decision 0026).
 
 Compatibility rule: `layout_changes` (stages.py:84) compares per-layout signatures (sha1 of block names, spans, revisions); a resume
 whose stage.json differs in any block span or revision is refused (train.py:_load_or_seed), and `resume_mismatch` checks the spec keys.

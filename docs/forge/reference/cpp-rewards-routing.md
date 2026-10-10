@@ -108,7 +108,7 @@ stage (`Stages.cpp`): Sight m1, Seek m2, Interact m3, PartyFollow m4, Combat c1-
 | PullExtra `pull_extra` | C | Combat (`Combat.ExtraPull`), Roles (`Roles.PullExtra`) | 1; 1.5 | c2, c3, g1, d2, d3 |
 | Facing `facing` | S | Sight (`Markers.Facing`) | 0.25 | m1 |
 | Stuck `stuck` | C, N | Seek, Sight, Interact, PartyFollow via `AddFixed` (`Seek.Stuck`, `Controls.Stuck`, `Interact.Stuck`) per second | 0.02 | m1-m4 |
-| Wall `wall` | C, N | same encounters via `AddFixed` (`Seek.Wall`, `Controls.Wall`, `Interact.Wall`; slide thresholds `*.WallSlide` 0.5) | 0.02 | m1-m4 |
+| Wall `wall` | C, N | same encounters via `AddFixed` (`Seek.Wall`, `Controls.Wall`, `Interact.Wall`; slide thresholds `*.WallSlide` 0.5) | 0.02 (Seek escalates it: x(1 + t/4 s), cap x4, decision 0026) | m1-m4 |
 | FollowKept `follow_kept` | O | PartyFollow (`PartyFollow.Kept` per second in band) | 0.02 | m4 |
 | Lost `lost` | C | PartyFollow (`PartyFollow.Lost`), Instance (`Instance.WingStray`) | 0.02; 0.02 | m4, d2, d3 |
 | Sighting `sighting` | S | Seek (`Seek.Sighting`), Interact (`Interact.Sighting`) | 0.5; 0.5 | m2, m3 |
@@ -116,10 +116,10 @@ stage (`Stages.cpp`): Sight m1, Seek m2, Interact m3, PartyFollow m4, Combat c1-
 | RoomSeen `room_seen` | S | Seek (`Seek.RoomSeen`) | 0.1 | m2 |
 | Explore `explore` | S (category `Exploring`: x `max(shaping, Seek.ExploreFloor)`) | Seek (`Seek.ExploreSeen` per new 2-yd floor cell, room bonus, cap `ExploreCap`) | 0.002; cap 5.0 (was 1.0); inside bonus 3.0; floor 0.5 | m2 |
 | FrontierPull `frontier_pull` | S (`Exploring`) | Seek (`Seek.FrontierPull` per yard closed on the nearest frontier cluster, cap `FrontierCap`) | 0.015; cap 2.0 (was 0.004; 1.0) | m2 |
-| RoomEntry `room_entry` | S (`Exploring`) | Seek (`Seek.RoomEntry` once per table room entered, x `RoomEntryBackMult` for back rooms, cap `RoomEntryCap`) | 0.1; x2; cap 2.0 | m2 |
+| RoomEntry `room_entry` | S (`Exploring`) | Seek (`Seek.RoomEntry` once per table room entered, x `RoomEntryBackMult` for back rooms, cap `RoomEntryCap`) | 0.3 (was 0.1); x2; cap 2.0; rung >= `ExploreFromRung` | m2 |
 | Circling `circling` | C, N | Seek via `AddFixed` (`Seek.Circling` per second; window `CircleWindowMs`) | 0.02 | m2 |
-| Stale `stale` | C, N | Seek via `AddFixed` (`Seek.Stale` per second after `StaleMs` with no newly seen floor cell) | 0.01; 20000 ms | m2 |
-| Escape `escape` | A | Seek (`Seek.Escape`, once, trap drill) | 0.3 | m2 |
+| Stale `stale` | C, N | Seek via `AddFixed` (`Seek.Stale` per second after `StaleRoomMs` with no new table room entered; rung >= `ExploreFromRung`) | 0.005; 60000 ms | m2 |
+| Escape `escape` | A | Seek (`Seek.Escape`, once, trap drill; needs a body turn of `TrapEscapeTurnDeg` 90 as well as `TrapEscapeYards`) | 0.3 | m2 |
 | DoorOpened `door_opened` | O | Interact (`Interact.DoorOpened`) | 1.0 | m3 |
 | WrongObject `wrong_object` | C | Interact (`Interact.WrongObject`) | 0.5 | m3 |
 | Regroup `regroup` | O | PartyFollow (`PartyFollow.Regroup`, window `RegroupWindow`) | 0.5 | m4 |

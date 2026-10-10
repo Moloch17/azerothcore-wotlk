@@ -175,6 +175,7 @@ Animus::Vision::CropCell Animus::Vision::DecodeCropCell(uint8_t const* bytes)
     cell.Age = cell.Seen ? std::exp2(float(bytes[CROP_AGE]) / CROP_AGE_SCALE) - 1.0f : 0.0f;
     cell.Entity = uint8_t(bytes[CROP_CLASS] & CLASS_MASK);
     cell.Frontier = bytes[CROP_FRONTIER] != 0;
+    cell.Searched = uint8_t(std::min<uint32_t>(bytes[CROP_SEARCHED], SEARCHED_MAX));
     return cell;
 }
 
@@ -220,6 +221,9 @@ void Animus::Vision::MentalMap::Clear()
     _touch = 0;
     _lastTile = nullptr;
     _hasBody = false;
+    _epoch = 1;
+    _groundTotal = 0;
+    _lastGroundClock = 0.0;
 }
 
 void Animus::Vision::MentalMap::Advance(float seconds)
@@ -227,6 +231,13 @@ void Animus::Vision::MentalMap::Advance(float seconds)
     _clock += std::max(0.0f, seconds);
     if (_clock >= CLOCK_LIMIT)
         Clear();
+}
+
+void Animus::Vision::MentalMap::BeginEpisode()
+{
+    _epoch = Stamp();
+    _groundTotal = 0;
+    _lastGroundClock = _clock;
 }
 
 uint16_t Animus::Vision::MentalMap::Stamp() const
@@ -548,6 +559,14 @@ void Animus::Vision::MentalMap::WriteEntities(SeenList const& seen, MapWriteStat
     }
 }
 
+void Animus::Vision::MentalMap::NoteGround(MapCell const& cell)
+{
+    if (cell.Flags & MAP_VISITED)
+        return;
+    ++_groundTotal;
+    _lastGroundClock = _clock;
+}
+
 void Animus::Vision::MentalMap::WriteBody(float x, float y, float z, bool grounded)
 {
     uint16_t const stamp = Stamp();
@@ -564,12 +583,14 @@ void Animus::Vision::MentalMap::WriteBody(float x, float y, float z, bool ground
             {
                 float const t = float(step) / float(steps);
                 MapCell& cell = Touch(CellOf(_bodyX + dx * t), CellOf(_bodyY + dy * t));
+                NoteGround(cell);
                 cell.Flags |= MAP_VISITED;
                 MarkSeen(cell, stamp);
             }
         }
     }
     MapCell& cell = Touch(CellOf(x), CellOf(y));
+    NoteGround(cell);
     cell.Flags |= MAP_VISITED;
     if (grounded)
         InsertFloor(cell, z);
@@ -646,6 +667,7 @@ void Animus::Vision::MentalMap::Crop(float x, float y, float z, float yaw, uint8
             double entityAge = -1.0;
             uint8_t entity = 0;
             bool frontier = false;
+            uint8_t searched = 0;
             for (auto const& sub : SUB)
             {
                 float const f = forward + sub[0] * (CROP_CELL * 0.5f);
@@ -663,6 +685,8 @@ void Animus::Vision::MentalMap::Crop(float x, float y, float z, float yaw, uint8
                     hasHeight = true;
                 }
                 visited = visited || (cell.Flags & MAP_VISITED);
+                if (cell.Seen >= _epoch)
+                    ++searched;
                 if (cell.Seen)
                 {
                     double const age = std::max(0.0, _clock - (double(cell.Seen) - 1.0));
@@ -691,5 +715,6 @@ void Animus::Vision::MentalMap::Crop(float x, float y, float z, float yaw, uint8
             cell[CROP_AGE] = newest < 0.0 ? CROP_AGE_NEVER : AgeByte(float(newest));
             cell[CROP_CLASS] = entity;
             cell[CROP_FRONTIER] = frontier ? 1 : 0;
+            cell[CROP_SEARCHED] = searched;
         }
 }

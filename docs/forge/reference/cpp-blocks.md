@@ -39,7 +39,7 @@ are those of commit `bd32b9dc8`.
 | Blocks/VisionBlock.cpp | 219 | Free-look advance, frame render, seen list; manifest. |
 | Blocks/EntitiesBlock.h | 94 | Visible-entity set, revision 1. |
 | Blocks/EntitiesBlock.cpp | 124 | Writes entity memory and the 32 x 20 columns. |
-| Blocks/MapBlock.h | 65 | Mental-map scalars, revision 1. |
+| Blocks/MapBlock.h | 70 | Mental-map scalars, revision 2. |
 | Blocks/MapBlock.cpp | 148 | Writes the map from the frame, crops, four scalars, and the crop pose + choosable count (`SeatView::Crop`). |
 | Blocks/CellGrid.h | 168 | Header-only: the cell goal's pooled-block geometry, `Choosable`/`Count`/`Stood`, `WorldPoint`/`Locate`, cell words, `CropPose`, `CellPoint`. |
 | Blocks/SightBlock.h | 146 | Seen+remembered list and pointer presses, revision 2. |
@@ -476,10 +476,16 @@ normalised (kept out of the learner's adapters). `Observe` first advances and wr
 writes. Manifest object "entities" (`features` names the columns). `ReadMarks(row, marks)` reads a row back into `Vision::EntityMark`s (the audit's overlay).
 Reviewer notes: class and type are raw indices (the learner hashes type modulo `TYPE_BUCKETS 4096`).
 
-## map (id 22, revision 1)
+## map (id 22, revision 2)
 
-The mental map: 4 scalars + the 48x48x6 byte crop (`Vision::CROP`; separate STEP section). Scalars: known, frontier,
-visited, kept (share of cells ever seen, frontier, visited, map kept from the previous episode). `Observe` advances the
+The mental map: 7 scalars + the 48x48x7 byte crop (`Vision::CROP`; separate STEP section). Scalars: known, frontier,
+visited, kept (share of cells ever seen, frontier, visited, map kept from the previous episode), and since revision 2
+(exploration v3, decision 0026) searched (the crop's `CROP_SEARCHED` bytes summed over 4 x 2304: the share of the
+window's 1-yd cells looked at this episode), new_age (`min(1, SecondsSinceGround / 120)`: seconds since the body last
+stood on a cell it had never stood on) and total (`min(1, GroundTotal / 3000)`: the window-independent record of how
+much ground it has covered); the last two come from `MentalMap` in `Observe`, after `Crop`. Manifest "map": channels 7,
+channel_names +"searched", map_bytes 16128, scalars 7, scalar_names, and searched_channel 6, searched_max 4,
+new_age_scale_s 120, total_scale 3000, epoch "episode". Revision 1 had 4 scalars and 6 channels. `Observe` advances the
 map clock, writes the frame's rays (`view.Hits`), the listed entities (`view.Seen`) and the body, crops heading-up. Entity sensing: also writes the listed entities' cells (`MentalMap::WriteEntities(*view.Seen)`), since the image no longer carries units or objects. Declared from move2 on.
 Reviewer notes: uses `bot->GetPosition*` for the crop centre before the body override only when no
 body exists; no actions.

@@ -1475,7 +1475,10 @@ mounts and flight were deleted, yet `Mounted` (3521) and `MOVE_FLIGHT` (3524) ar
 2. Action memory: re-size if `NumActions` differs; `Memory.Observe(bot, target, now)`.
 3. **Mental map and entity memory at the episode's first look** (`MapPending`, 3572-3591), in stages with `Map` or
    `Sight`: kept (aged by `MapAgeOffset`) only if `MapKeep` (the reset's roll), the same map and instance, and a
-   non-empty map (3576-3577); else cleared. `Recall` follows the same roll and offset.
+   non-empty map (3576-3577); else cleared. A kept map advances by `max(MapAgeOffset, 1.0f)` (a stamp is a map second, so an
+   offset under one would leave the last look of the episode before sharing the new epoch's stamp), and both paths then call
+   `Map.BeginEpisode()` (exploration v3, decision 0026): the searched channel and the ground scalars count from here.
+   `Recall` follows the same roll and the unmodified offset.
 4. `ViewSeat`; in a sight stage the camera-read hazards; with the map block `Hits`, `Map`, `MapRow`, `MapKept` (3610).
 5. **Goals** (about 3615-3690), for each hold that has not ended: `GoalBlock::Status(view, goal, reached, possible)`;
    `reached = GoalBlock::Earned(reached, Fresh, SatisfiedAtChoice)` (a goal already true when chosen is held unpaid

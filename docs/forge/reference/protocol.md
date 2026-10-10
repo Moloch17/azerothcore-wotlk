@@ -1,4 +1,4 @@
-# The sim-learner protocol (version 29) and the cluster messages
+# The sim-learner protocol (version 30) and the cluster messages
 
 Purpose and scope: a byte-exact description of what the C++ sim and the Python learner say to each other, and of the
 text lines the cluster machines exchange. Written from the code at `forge` bd32b9dc8. "Wire" means the lock-step
@@ -85,7 +85,7 @@ learner with "sent message type N with M bytes where ACT, MODE, WEIGHTS or REPLA
 
 | Field | Type | Meaning |
 |---|---|---|
-| Version | u32 | `PROTOCOL_VERSION` (28). The learner refuses a mismatch (env.py:41). |
+| Version | u32 | `PROTOCOL_VERSION` (30). The learner refuses a mismatch (env.py:41). |
 | NumEnvs | u32 | This rank's envs (`RankEnvs(rank)`), not the pool's. |
 | AgentsPerEnv | u32 | Agent rows per env (seats plus any cast owner row). |
 | ObsDim | u32 | The largest layout's observation width; all rows padded to it. |
@@ -101,7 +101,7 @@ learner with "sent message type N with M bytes where ACT, MODE, WEIGHTS or REPLA
 | KinematicsDim | u32 | `Kinematics::SAMPLE_DIM` = 10 (protocol 20). |
 | ImageBytes | u32 | Bytes per agent of the camera image: height x width x 4 (x 5 at 23-25); 0 without a vision block (21, 26). |
 | LookHeads | u32 | `FreeLook::HEADS` (3) with a vision block, else 0 (22). |
-| MapBytes | u32 | 13,824 (48 x 48 x 6) with a map block, else 0 (24). |
+| MapBytes | u32 | 16,128 (48 x 48 x 7; 13,824 = x 6 until 30) with a map block, else 0 (24). |
 | JitterMs | u32 | The run's tick jitter body (`AnimusForge.Decision.JitterMs`), 0 without jitter (27). |
 | SpikeMaxMs | u32 | The largest load spike, ms (`AnimusForge.Decision.SpikeMaxMs`), 0 without jitter (27). |
 | SpikeProb | f32 | A decision's chance of a spike (`AnimusForge.Decision.SpikeProb`), 0 without jitter (27). |
@@ -165,7 +165,7 @@ among those E (the code is `Spec.step_layout`, protocol.py:157, and the chunk li
 | 13 | kinematics | f32 | [E,A,10] | `[t, x, y, z, yaw, pitch, mode, mounted, speed, in_combat]` after the transition; the new episode's first sample where done; zeros for an agent without a body. Kinematics.h. |
 | 14 | image | u8 | [E,A,I] | Only if I > 0 and not in device buffers. `[row][col][byte]`, row 0 top, 4 bytes a pixel (distance, height, normal, class + objective; the static world only). Rows without a frame are `Vision::FillNoFrame` = pixel `(255,128,0,0)` (`NO_FRAME_PIXEL`, protocol.py). |
 | 15 | final_image | u8 | [D,A,I] | Whenever the stage has a vision block (sent even with device buffers). |
-| 16 | map | u8 | [E,A,M] | Only if M > 0; always on the socket. 48 x 48 cells of 2 yd, heading-up, `[row][col][channel]`, 6 channels (code, height, visited, age, class, frontier); zeros for no map. |
+| 16 | map | u8 | [E,A,M] | Only if M > 0; always on the socket. 48 x 48 cells of 2 yd, heading-up, `[row][col][channel]`, 7 channels (code, height, visited, age, class, frontier, searched); zeros for no map. |
 | 17 | final_map | u8 | [D,A,M] | Likewise for ended envs. |
 
 How each side builds it: the sim keeps flat vectors in `EnvPool` (`Obs, State, Mask, Rewards, Done, Terminated, FinalObs,
@@ -289,9 +289,10 @@ into the core (`359b303c4`); their content is UNVERIFIED (no comment survives; c
 | 27 | SPEC gains the tick jitter (`JitterMs`, `SpikeMaxMs`, `SpikeProb`; 12 bytes); STEP and ACT are 26's. | decision 0021 (this change) |
 | 28 | ACT's goal section is `GOAL_WIRE_INTS` (8) ints an agent: four plan positions' joint ids then their cell words (`GOAL_SLOTS_ON_WIRE` 2 -> 4); free choice goals. STEP and SPEC are 27's. | free-choice-goals CONTRACT sec 1 |
 | 29 | The goal space has a tenth kind, `search` (goal block revision 5): SPEC's `GoalCount` is 10 x 23 = 230 (was 207), ACT's goal ids run to 229, the cell goal is the joint 228 (was 159). The messages' layout is 28's. | decision 0024 |
+| 30 | The map crop has a seventh channel, `searched` (map block revision 2, three more scalars): `MapBytes` 16,128 (was 13,824), so the STEP's map and final_map sections are 2,304 bytes longer a seat. No other wire change; the learner reads `map_bytes` from HELLO, so the bump refuses a stale pair rather than misparsing it. | decision 0026 |
 
 Message type 12 (added at 18) is unused since 2026-10-08 (decision 0019, vision-only movement). It was folded into the 26 bump
-(`PROTOCOL_VERSION` is 28 in Protocol.h and protocol.py).
+(`PROTOCOL_VERSION` is 30 in Protocol.h and protocol.py).
 
 Commit-date mapping for 15-25 was taken from `git log` subjects and is approximate: the commit that sets the constant
 (`git log -S"PROTOCOL_VERSION = N;"`) was checked only for 24 and 25 (both 641cf015c on 2026-10-07; 24 first at 8452ff458,
@@ -384,3 +385,9 @@ new space (py-learner-seeding.md); it cannot resume (the layouts changed).
 `goals_cell_reached`, `goals_cell_lost`, `goals_cell_invalid`, `goals_cell_same`, `goal_switches_cell`,
 `cell_goal_seconds`, `cell_goal_yards`, `cell_stale_share`, `plan_depth`, `plan_advances`, `ground_cells`) and by the
 terms' `reward_cell_goal`, `reward_cell_progress`, `reward_cell_switch`, `reward_cell_lost`, `reward_cell_stale`.
+
+2026-10-10 (exploration v3, protocol 30; learner and sim rebuild together): the map block is revision 2 (7 scalars:
+known, frontier, visited, kept, searched, new_age, total) and the crop has 7 channels (`searched` is channel 6, 0..4),
+so a stage with a map block has `obs_dim` +3 and `MapBytes` 16,128; the episode info gains `stale_clock_end_seconds`,
+`hard_room`, `rooms_approached`, `wall_pin_max_seconds`, `wall_pin_events`, `wall_extra_charge`, `trap_turned` and
+`trap_pin_seconds` (Seek stages). A checkpoint of protocol 29 has no map block in M1 and seeds M2 by name as before.

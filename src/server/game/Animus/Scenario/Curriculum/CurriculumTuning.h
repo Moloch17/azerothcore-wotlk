@@ -491,8 +491,19 @@ namespace Animus::Curriculum
         /// the first entry (EnterDwellMs inside the polygon) of each room once an episode, times RoomEntryBackMult in
         /// a back or end-back room, in its own RoomEntryCap (nominal; paid at the Explore floor too). FrontierPull
         /// pulls only toward frontier clusters in a room or within 3 yd of a door opening, never one in the corridor.
-        /// Stale (Cost, fixed price per second, in the score) is charged once StaleMs have passed with no newly seen
-        /// floor cell; not inside the trap drill's escape window and not on a decision that charged Stuck or Wall.
+        /// Stale (Cost, fixed price per second, in the score) is charged once StaleRoomMs have passed with no new room
+        /// of the table entered (v3: was no newly seen floor cell); not on a decision that charged Stuck or Wall.
+        ///
+        /// **Exploration v3** (2026-10-10, decision 0026). RoomEntry is 0.3. The Exploring family (Explore,
+        /// FrontierPull, RoomEntry), Stale and the trap drill apply from the placed rung ExploreFromRung up (2; 0 is
+        /// v2's every-rung behaviour): below it the object is in sight of the spawn and the family would pay
+        /// lingering. The unseeded training draw of a room at a room or deep rung weighs the rooms of SeekDraw's
+        /// HARD_ROOMS (the placements that always failed) HardRoomWeight times the rest (1 = uniform). The trap drill
+        /// puts the seat TrapGapNear to TrapGapFar yd (centre to wall) from the jamb, facing it within TrapFacingSlack
+        /// rad; Escape also needs the body to have turned TrapEscapeTurnDeg from its start heading in the window (0:
+        /// not needed). The Wall charge of a decision grows with the run of charged decisions before it, by (1 + t /
+        /// WallEscalateSeconds) up to WallEscalateMax (WallEscalateSeconds 0: flat); the run ends on a decision that
+        /// charged no Wall.
         struct SeekTuning
         {
             float Arrive = 3.0f;
@@ -549,22 +560,30 @@ namespace Animus::Curriculum
             float ExploreFloor = 0.5f;
             float ExploreRoomBonus = 2.0f;
             float ExploreInsideBonus = 3.0f;
-            float RoomEntry = 0.1f;
+            float RoomEntry = 0.3f;
             float RoomEntryCap = 2.0f;
             float RoomEntryBackMult = 2.0f;
             float FrontierPull = 0.015f;
             float FrontierCap = 2.0f;
             float Stale = 0.005f;
-            uint32 StaleMs = 20000;
+            uint32 StaleRoomMs = 60000;
             uint32 CircleWindowMs = 6000;
             float CircleYards = 12.0f;
             float CircleNetYards = 4.0f;
             float CircleTurnDeg = 540.0f;
             float Circling = 0.02f;
-            float TrapShare = 0.12f;
+            float TrapShare = 0.2f;
             float Escape = 0.3f;
             float TrapEscapeYards = 6.0f;
             uint32 TrapEscapeMs = 20000;
+            float TrapEscapeTurnDeg = 90.0f;
+            float TrapGapNear = 0.45f;
+            float TrapGapFar = 0.8f;
+            float TrapFacingSlack = 0.3f;
+            float WallEscalateSeconds = 4.0f;
+            float WallEscalateMax = 4.0f;
+            uint32 ExploreFromRung = 2;
+            float HardRoomWeight = 3.0f;
         } Seek;
 
         /// **M3 interact** (Opposition::Interact, InteractEncounter; dungeon-curriculum M3): in an empty Deadmines, the
@@ -1029,7 +1048,7 @@ namespace Animus::Curriculum
             f("Seek.FrontierPull", tuning.Seek.FrontierPull);
             f("Seek.FrontierCap", tuning.Seek.FrontierCap);
             f("Seek.Stale", tuning.Seek.Stale);
-            f("Seek.StaleMs", tuning.Seek.StaleMs);
+            f("Seek.StaleRoomMs", tuning.Seek.StaleRoomMs);
             f("Seek.CircleWindowMs", tuning.Seek.CircleWindowMs);
             f("Seek.CircleYards", tuning.Seek.CircleYards);
             f("Seek.CircleNetYards", tuning.Seek.CircleNetYards);
@@ -1039,6 +1058,14 @@ namespace Animus::Curriculum
             f("Seek.Escape", tuning.Seek.Escape);
             f("Seek.TrapEscapeYards", tuning.Seek.TrapEscapeYards);
             f("Seek.TrapEscapeMs", tuning.Seek.TrapEscapeMs);
+            f("Seek.TrapEscapeTurnDeg", tuning.Seek.TrapEscapeTurnDeg);
+            f("Seek.TrapGapNear", tuning.Seek.TrapGapNear);
+            f("Seek.TrapGapFar", tuning.Seek.TrapGapFar);
+            f("Seek.TrapFacingSlack", tuning.Seek.TrapFacingSlack);
+            f("Seek.WallEscalateSeconds", tuning.Seek.WallEscalateSeconds);
+            f("Seek.WallEscalateMax", tuning.Seek.WallEscalateMax);
+            f("Seek.ExploreFromRung", tuning.Seek.ExploreFromRung);
+            f("Seek.HardRoomWeight", tuning.Seek.HardRoomWeight);
             f("Interact.Arrive", tuning.Interact.Arrive);
             f("Interact.DoorOpened", tuning.Interact.DoorOpened);
             f("Interact.WrongObject", tuning.Interact.WrongObject);

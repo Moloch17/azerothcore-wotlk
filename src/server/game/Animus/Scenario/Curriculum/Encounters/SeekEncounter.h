@@ -76,8 +76,13 @@ namespace Animus::Curriculum
     /// Seek.ExploreInsideBonus (going in) where the corridor-seen cell of an unentered room keeps ExploreRoomBonus
     /// (looking in); RoomEntry pays each room's first entry once (back rooms times RoomEntryBackMult) in its own cap;
     /// FrontierPull pulls only toward a frontier in a room or at a door opening, not in the corridor; Stale (a Cost at
-    /// a fixed price) charges every second after StaleMs with no newly seen floor cell. Both sweeps play the deep
+    /// a fixed price) charges every second after StaleRoomMs with no new room entered (v3). Both sweeps play the deep
     /// rung's clock; the evaluation records found_300.
+    ///
+    /// **Exploration v3** (decision 0026): the Exploring family, Stale and the trap drill apply from the placed rung
+    /// Seek.ExploreFromRung up; the unseeded room draw weighs SeekDraw::HARD_ROOMS by Seek.HardRoomWeight; the trap
+    /// pose is tighter and its Escape needs a turn of Seek.TrapEscapeTurnDeg too; the Wall charge grows with the
+    /// contiguous pin (Seek.WallEscalateSeconds, WallEscalateMax).
     ///
     /// Paid: Arrive once, stopped within the arena's SeekRadius of the object (Outcome); StepCost and Death (Cost);
     /// Stuck and Wall (Cost, at their own fixed price from the first step: RewardLedger::AddFixed); Sighting,
@@ -128,6 +133,7 @@ namespace Animus::Curriculum
             uint32 DwellMs = 0;
             uint32 AwayMs = 0;                  // since leaving a visited room: far enough outside it, for how long
             bool Armed = false;                 // ... for long enough: entering it again is a return
+            bool Approached = false;            // came within APPROACH_YARDS of its opening (a reading only)
         };
 
         /// One decision of the circling window: the clock, where the seat stood and faced, and the ground and the turn
@@ -213,8 +219,11 @@ namespace Animus::Curriculum
             float RoomEntryNominal = 0.0f;
             int32 StartRoom = -1;
             int32 ExploreCapHitMs = -1;
-            // Stale: the clock of the last newly seen floor cell, the seconds charged and the runs begun.
-            uint32 LastNewCellMs = 0;
+            // Stale (v3): the clock of the last new room of the table visited (the start room's first dwell counts),
+            // the seconds charged and the runs begun; the rooms whose opening the seat came near (a reading).
+            uint32 LastNewRoomMs = 0;
+            uint32 RoomsApproached = 0;
+            bool HardRoom = false;              // the drawn room is one of SeekDraw::HARD_ROOMS
             bool StaleOn = false;
             float StaleSeconds = 0.0f;
             uint32 StaleEvents = 0;
@@ -238,6 +247,14 @@ namespace Animus::Curriculum
             Position TrapStart;
             bool Escaped = false;
             uint32 EscapeMs = 0;
+            float TrapMaxTurn = 0.0f;           // the most the body's yaw differed from the pose's inside the window
+            float TrapPinSeconds = 0.0f;        // Wall-charged seconds inside the window
+            // The escalating Wall charge (v3): the run of contiguous Wall-charged milliseconds, the longest run, the
+            // runs of 2 s or more that ended, and the nominal surplus the escalation charged.
+            uint32 WallRunMs = 0;
+            uint32 WallPinMax = 0;
+            uint32 WallPinEvents = 0;
+            float WallExtra = 0.0f;
         };
 
         /// Put the episode's object in `room` of `arena`: a spot on its floor, clear of walls, else its centre; at
@@ -257,11 +274,11 @@ namespace Animus::Curriculum
         /// Circling for one decision: the window's path, turning and net displacement; charged unless `stuck` (the
         /// decision already paid Stuck).
         void Circle(Env const& env, EnvSeek& seek, Player* bot, float moved, bool stuck, RewardLedger& ledger);
-        /// Stale for one decision: the cost per second once Seek.StaleMs have passed with no newly seen floor cell,
-        /// unless the decision is in the trap drill's escape window or already paid Stuck or Wall (`paid`).
+        /// Stale for one decision: the cost per second once Seek.StaleRoomMs have passed with no new room of the table
+        /// entered, unless the decision already paid Stuck or Wall (`paid`).
         void Stale(Env const& env, EnvSeek& seek, bool paid, RewardLedger& ledger);
-        /// The trap drill's pose: a point 0.5-1.5 yd from the jamb of a random door of the arena's room table, facing
-        /// it, on the room's floor with the way to the opening clear. False when no pose passed.
+        /// The trap drill's pose: a point Seek.TrapGapNear-Far yd from the jamb of a random door of the arena's room
+        /// table, facing it, on the room's floor with the way to the opening clear. False when no pose passed.
         bool TrapPose(Map* map, ArenaDefinition const& arena, Player* bot, Position& pose) const;
 
         /// The room goals' bookkeeping for one decision, after the frame's floor hits were added (`counts`: the rays on

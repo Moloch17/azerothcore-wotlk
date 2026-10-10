@@ -6538,9 +6538,18 @@ AnimusForge.Curriculum.PartyFollow.CastShare = 0
 #        the polygon) of each room once an episode, the room the seat started in excepted, times RoomEntryBackMult in a
 #        back or end-back room, at most RoomEntryCap an episode (nominal, its own cap beside ExploreCap). FrontierPull
 #        pulls only toward frontier clusters in a room of the table or within 3 yd of a room's opening, never one in the
-#        corridor. Stale (Cost, fixed price per second, in the score, never faded) is charged once StaleMs have passed
-#        with no newly seen floor cell, not in the trap drill's escape window and not on a decision that charged Stuck
-#        or Wall; 0 switches it off.
+#        corridor. Stale (Cost, fixed price per second, in the score, never faded) is charged once StaleRoomMs have
+#        passed with no new room of the table entered (v3; v2 asked for a newly seen floor cell), not on a decision that
+#        charged Stuck or Wall; 0 switches it off.
+#        Exploration v3 (2026-10-10, decision 0026): RoomEntry 0.3. ExploreFromRung (2; 0 is v2's every-rung behaviour):
+#        Explore, FrontierPull, RoomEntry, Stale and the trap drill apply from that placed rung up, because below it the
+#        object is in sight of the spawn. HardRoomWeight (3.0; 1 = uniform): the unseeded training draw of a room at a
+#        room or deep rung weighs the rooms that always failed that many times the rest; seeded evaluations never do.
+#        The trap drill places the seat TrapGapNear to TrapGapFar yd (centre to wall) from the jamb, facing it within
+#        TrapFacingSlack rad; Escape also needs the body to have turned TrapEscapeTurnDeg from its start heading inside
+#        the window (0 drops that). The Wall charge of a decision is multiplied by 1 + t / WallEscalateSeconds, t the
+#        run of seconds of Wall-charged decisions before it, up to WallEscalateMax; the run ends on a decision that
+#        charged no Wall; WallEscalateSeconds 0 switches it off.
 AnimusForge.Curriculum.Seek.Arrive = 3.0
 AnimusForge.Curriculum.Seek.StepCost = 0.0005
 AnimusForge.Curriculum.Seek.Death = 6.0
@@ -6595,22 +6604,30 @@ AnimusForge.Curriculum.Seek.ExploreCap = 5.0
 AnimusForge.Curriculum.Seek.ExploreFloor = 0.5
 AnimusForge.Curriculum.Seek.ExploreRoomBonus = 2.0
 AnimusForge.Curriculum.Seek.ExploreInsideBonus = 3.0
-AnimusForge.Curriculum.Seek.RoomEntry = 0.1
+AnimusForge.Curriculum.Seek.RoomEntry = 0.3
 AnimusForge.Curriculum.Seek.RoomEntryCap = 2.0
 AnimusForge.Curriculum.Seek.RoomEntryBackMult = 2.0
 AnimusForge.Curriculum.Seek.FrontierPull = 0.015
 AnimusForge.Curriculum.Seek.FrontierCap = 2.0
 AnimusForge.Curriculum.Seek.Stale = 0.005
-AnimusForge.Curriculum.Seek.StaleMs = 20000
+AnimusForge.Curriculum.Seek.StaleRoomMs = 60000
 AnimusForge.Curriculum.Seek.CircleWindowMs = 6000
 AnimusForge.Curriculum.Seek.CircleYards = 12.0
 AnimusForge.Curriculum.Seek.CircleNetYards = 4.0
 AnimusForge.Curriculum.Seek.CircleTurnDeg = 540.0
 AnimusForge.Curriculum.Seek.Circling = 0.02
-AnimusForge.Curriculum.Seek.TrapShare = 0.12
+AnimusForge.Curriculum.Seek.TrapShare = 0.2
 AnimusForge.Curriculum.Seek.Escape = 0.3
 AnimusForge.Curriculum.Seek.TrapEscapeYards = 6.0
 AnimusForge.Curriculum.Seek.TrapEscapeMs = 20000
+AnimusForge.Curriculum.Seek.TrapEscapeTurnDeg = 90.0
+AnimusForge.Curriculum.Seek.TrapGapNear = 0.45
+AnimusForge.Curriculum.Seek.TrapGapFar = 0.8
+AnimusForge.Curriculum.Seek.TrapFacingSlack = 0.3
+AnimusForge.Curriculum.Seek.WallEscalateSeconds = 4.0
+AnimusForge.Curriculum.Seek.WallEscalateMax = 4.0
+AnimusForge.Curriculum.Seek.ExploreFromRung = 2
+AnimusForge.Curriculum.Seek.HardRoomWeight = 3.0
 
 #
 #    AnimusForge.Curriculum.Interact.*

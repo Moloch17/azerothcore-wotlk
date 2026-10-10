@@ -62,7 +62,7 @@ coarse 8-yd tiles when `CoarseTiles > 0` (`Fold`, :275: floors as layers, flags 
 ### The crop (read) - byte-exact
 
 `Crop(x, y, z, yaw, out)` (:565) writes `CROP x CROP = 48 x 48` cells of 2 yd, heading-up: row 0 is the furthest ahead, column 0 the furthest left, the body at the centre. Cell `(row, col)` centre: `forward = (23.5 - row) * 2` yd, `right = (col + 0.5 - 24) * 2` yd (so row 0 is 47 yd ahead,
-col 0 is 47 yd left; the crop spans 96 yd). Each crop cell summarises four 1-yd map cells sampled at `+-0.5` yd round its centre, turned by yaw (forward = (cos, sin), right = (sin, -cos)). `CROP_BYTES = 48 * 48 * 6 = 13824`. Layout `[row][col][channel]`, 6 bytes a cell:
+col 0 is 47 yd left; the crop spans 96 yd). Each crop cell summarises four 1-yd map cells sampled at `+-0.5` yd round its centre, turned by yaw (forward = (cos, sin), right = (sin, -cos)). `CROP_BYTES = 48 * 48 * 7 = 16128` (was 6 channels, 13824, until decision 0026). Layout `[row][col][channel]`, 7 bytes a cell:
 
 | channel | byte | value |
 |---|---|---|
@@ -72,8 +72,11 @@ col 0 is 47 yd left; the crop spans 96 yd). Each crop cell summarises four 1-yd 
 | 3 AGE | 255 never; else `min(254, round(20 * log2(1 + s)))` | the newest look among the four, s = `clock - (Seen - 1)` seconds |
 | 4 CLASS | 0 none, else class 1..23 | the most recent entity among the four (by `EntityAge`) |
 | 5 FRONTIER | 0/1 | any of the four cells is a floor with a 4-neighbour never seen (`Seen == 0`) |
+| 6 SEARCHED | 0..4 (`SEARCHED_MAX`) | how many of the four cells have `Seen >= _epoch`: looked at THIS episode (any `MarkSeen` / `WriteEntity`: a ray hit or crossed it, or the body stood on it) |
 
-`DecodeCropCell` (:166) reads them back as the learner does (height `(b-128)*0.25`, age `2^(b/20) - 1`). The crop first copies a window of `(2 * 70 + 1)^2 = 141 x 141` map cells (radius `ceil(48 * 2 * 0.5 * 1.41422) + 2 = 70`) into a thread-local buffer (19881 cells, about 159 KB), reading coarse cells where no fine tile exists, then samples it; per decision per seat this is the
+**Episode epoch and ground counters** (exploration v3, decision 0026). `MentalMap` holds `_epoch` (the first `Stamp()` of the episode; 1 after `Clear()`), `_groundTotal` and `_lastGroundClock`. `BeginEpisode()` (after `Advance` / `Clear`, `StageScenario::ObserveSeat`'s map reset) sets `_epoch = Stamp()` and zeroes the ground counters. The kept-map path advances by `max(MapAgeOffset, 1.0f)` first, because `Stamp()` is `floor(clock) + 1` (1 s resolution): an offset under a second would leave the last stamp of the episode before equal to the new epoch. Every look of an earlier episode then has `Seen < _epoch` strictly. The writers are unchanged; `Crop` compares the stored stamps with the epoch (one compare and add per sub-cell visited). The only counters are in `WriteBody`, via `NoteGround`: a cell the body first stands on (`MAP_VISITED` not yet set, in the interpolated cells of a fast step and the body's own cell) adds one to `GroundTotal()` and resets `SecondsSinceGround()`; exact in an evaluation, an under-count in the 50% kept-map training episodes (`MAP_VISITED` outlives the episode, as the `visited` channel does). Looks are not counted for the scalars on purpose: they accrue at 1,600+ cells an episode and never go quiet; first stands go quiet when the seat re-walks its own ground (the hub shuttle). Constants `GROUND_AGE_SCALE_S` 120 and `GROUND_TOTAL_SCALE` 3000 normalise the two map-block scalars.
+
+`DecodeCropCell` (:166) reads them back as the learner does (height `(b-128)*0.25`, age `2^(b/20) - 1`, `Searched` clamped to 4). The crop first copies a window of `(2 * 70 + 1)^2 = 141 x 141` map cells (radius `ceil(48 * 2 * 0.5 * 1.41422) + 2 = 70`) into a thread-local buffer (19881 cells, about 159 KB), reading coarse cells where no fine tile exists, then samples it; per decision per seat this is the
 crop's cost besides `WriteFrame` (up to 64 grid steps per ray, about 2056 rays) and the linear `Evict` scan when full. The Python decode (`mappo/networks.py:1137`) uses height `(b-128)/127`, age `b/255`, "known" = height byte != 0 (differs from the C++ scalar, see issues).
 
 `MapColour` / `MapPanel` (FrameImage.cpp) draw the crop for the audit; see cpp-vision-video.md.

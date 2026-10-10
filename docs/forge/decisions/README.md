@@ -29,3 +29,4 @@ Decisions with lasting consequences, one file each. Dates are the day the owner 
 | [0023](0023-exploration-floor.md) | Exploration of unseen territory is shaping paid at a floor the fade does not take | 2026-10-10 |
 | [0024](0024-search-goal-kind.md) | Looking for an object is its own goal kind, search | 2026-10-10 |
 | [0025](0025-exploration-v2.md) | Exploration v2 pays for going in, lasts the whole search, and charges stale ground | 2026-10-10 |
+| [0026](0026-searched-state.md) | The seat sees what it has searched this episode; stale means no new room; the trap and the wall pin cost more | 2026-10-10 |

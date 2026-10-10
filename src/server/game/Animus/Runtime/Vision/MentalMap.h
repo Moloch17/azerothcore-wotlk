@@ -172,7 +172,7 @@ namespace Animus::Vision
     /// 0 the furthest left -- the body at its centre; CROP_CHANNELS bytes a cell, [row][col][channel].
     constexpr uint32_t CROP = 48;
     constexpr float CROP_CELL = 2.0f;
-    constexpr uint32_t CROP_CHANNELS = 6;
+    constexpr uint32_t CROP_CHANNELS = 7;
     constexpr uint32_t CROP_BYTES = CROP * CROP * CROP_CHANNELS;
 
     enum CropChannel : uint32_t
@@ -183,7 +183,15 @@ namespace Animus::Vision
         CROP_AGE,               // the newest look: CROP_AGE_NEVER never, else round(CROP_AGE_SCALE x log2(1 + s))
         CROP_CLASS,             // the most recent entity's class (Class), 0 none
         CROP_FRONTIER,          // 1 any of the four is known floor beside a cell never seen
+        CROP_SEARCHED,          // 0..SEARCHED_MAX how many of the four were looked at THIS episode (Seen >= epoch)
     };
+
+    /// The most CROP_SEARCHED reads (a crop cell is four 1-yd cells).
+    constexpr uint32_t SEARCHED_MAX = 4;
+    /// The map block's two journal scalars: seconds since the body last stood on ground it had never stood on, and
+    /// the 1-yd cells it has stood on, each over its scale and clamped to 1.
+    constexpr float GROUND_AGE_SCALE_S = 120.0f;
+    constexpr float GROUND_TOTAL_SCALE = 3000.0f;
 
     /// What a crop cell is (CROP_CODE): MAP_CODES values.
     enum class MapCode : uint8_t
@@ -203,7 +211,7 @@ namespace Animus::Vision
     constexpr uint8_t CROP_AGE_NEVER = 255;
     constexpr float CROP_AGE_SCALE = 20.0f;
     constexpr char const* CROP_CHANNEL_NAMES[CROP_CHANNELS] = { "code", "height", "visited", "age", "class",
-        "frontier" };
+        "frontier", "searched" };
 
     [[nodiscard]] uint8_t AgeByte(float seconds);
 
@@ -220,6 +228,7 @@ namespace Animus::Vision
         float Age = 0.0f;
         uint8_t Entity = 0;
         bool Frontier = false;
+        uint8_t Searched = 0;   // of the four 1-yd cells, how many were looked at this episode
     };
     [[nodiscard]] CropCell DecodeCropCell(uint8_t const* bytes);
 
@@ -242,6 +251,16 @@ namespace Animus::Vision
         [[nodiscard]] double Clock() const { return _clock; }
         /// The clock as a cell's Seen stamps it (0 is "never").
         [[nodiscard]] uint16_t Stamp() const;
+
+        /// Start an episode on this map (kept or cleared): every look stamped before now is an earlier episode's, so
+        /// CROP_SEARCHED counts only the looks from here on, and the ground counters restart. Call after Advance() /
+        /// Clear(); a kept map must have advanced by at least a second so no earlier stamp equals the new epoch.
+        void BeginEpisode();
+        /// The 1-yd cells the body first stood on this episode (MAP_VISITED not yet set; a kept map's earlier ground
+        /// is not new ground).
+        [[nodiscard]] uint32_t GroundTotal() const { return _groundTotal; }
+        /// Seconds since the body last stood on such a cell.
+        [[nodiscard]] double SecondsSinceGround() const { return _clock - _lastGroundClock; }
 
         /// Write a frame's rays (amendment 2): `feetZ` and `bodyHeight` are the seat's, for the band "seen free" and a
         /// wall are judged in.
@@ -284,6 +303,7 @@ namespace Animus::Vision
         [[nodiscard]] MapCell const* FindCoarse(int32_t cx, int32_t cy) const;
 
         void MarkSeen(MapCell& cell, uint16_t stamp);
+        void NoteGround(MapCell const& cell);
         void WriteFloor(int32_t cx, int32_t cy, float z, uint16_t stamp, MapWriteStats* stats);
         void WriteEntity(MapCell& cell, Class what, uint16_t stamp);
 
@@ -291,6 +311,9 @@ namespace Animus::Vision
         std::unordered_map<int64_t, std::unique_ptr<Tile>> _tiles;
         std::unordered_map<int64_t, std::unique_ptr<Tile>> _coarse;
         double _clock = 0.0;
+        uint16_t _epoch = 1;            // the first Stamp() of this episode
+        uint32_t _groundTotal = 0;
+        double _lastGroundClock = 0.0;
         uint64_t _touch = 0;
         // The last tile Touch found: a frame writes runs of cells in one tile.
         int64_t _lastKey = 0;
