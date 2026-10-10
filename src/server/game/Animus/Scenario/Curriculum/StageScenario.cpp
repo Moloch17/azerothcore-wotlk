@@ -1481,7 +1481,9 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
         // every stage: the sim knows only the constants. The learner tolerates its absence (a revision 3 file).
         boost::json::object cells;
         cells["target"] = uint32(GOAL_CELL_TARGET);
-        cells["joint"] = uint32(GOAL_CELL_JOINT);
+        // The place kind the seek stage offers its goals as (Seek.SearchGoals): search, else travel_to.
+        cells["joint"] = uint32(MakeGoal(_tuning.Seek.SearchGoals != 0 ? SeatGoal::Search : SeatGoal::TravelTo,
+            GOAL_CELL_TARGET));
         cells["grid"] = CellGrid::GRID;
         cells["pool"] = CellGrid::POOL;
         cells["crop"] = Vision::CROP;
@@ -2685,7 +2687,7 @@ void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
         for (uint32 position = 0; position < PLAN_POSITIONS; ++position)
         {
             joints[position] = valid(row[position]);
-            hasCell[position] = state.CellGoals && joints[position] == GOAL_CELL_JOINT
+            hasCell[position] = state.CellGoals && GoalBlock::IsCellGoal(joints[position])
                 && CellGrid::ParseWord(row[PLAN_POSITIONS + position], tickets[position], cells[position]);
         }
         // The secondary is the seat's own, and none when it would repeat the primary -- two cell goals are two
@@ -2729,13 +2731,13 @@ void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
             GoalHold& hold = state.Holds[slot];
             int32 const goal = next[slot];
             CellPlan& plan = state.Plan[slot];
-            bool const cellGoal = hasCell[slot] && goal == GOAL_CELL_JOINT;
+            bool const cellGoal = hasCell[slot] && GoalBlock::IsCellGoal(goal);
 
             // The same goal: the one held, for a cell goal the same choice (its ticket, which follows it from the
             // queue to the primary), or a new one for ground already being closed on -- within Seek.CellSame of the
             // point of a cell goal held and not ended -- which is that goal chosen again, free, and keeps its point.
             bool same = goal == hold.Goal;
-            if (cellGoal && hold.Goal == GOAL_CELL_JOINT)
+            if (cellGoal && GoalBlock::IsCellGoal(hold.Goal))
             {
                 same = hold.Ticket == plan.Ticket;
                 if (!same && !hold.Ended && hold.CellValid && plan.Valid

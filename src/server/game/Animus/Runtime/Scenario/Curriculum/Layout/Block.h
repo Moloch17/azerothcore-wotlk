@@ -207,7 +207,8 @@ namespace Animus::Curriculum
     /// / place_7 before goal block revision 5) -- the last place target, which the room goals never offer -- plus a cell
     /// of the seat's own mental-map crop, chosen by the learner's pointer head and sent beside it (CellGrid, ACT's cell
     /// words). Derived: Search * GOAL_TARGETS + GOAL_CELL_TARGET = 9 * 23 + 21 = 228; stage.json goals.cells.joint
-    /// carries it to the learner.
+    /// carries it to the learner. At Seek.SearchGoals 0 the cell goal is travel_to / place_7 instead (159) and the
+    /// manifest says so; GoalBlock::IsCellGoal accepts either.
     constexpr uint32 GOAL_CELL_TARGET = GOAL_TARGET_PLACE_FIRST + GOAL_PLACE_SLOTS;
     constexpr int32 GOAL_CELL_JOINT = MakeGoal(SeatGoal::Search, GOAL_CELL_TARGET);
     /// The kind of a goal (NO_GOAL stays NO_GOAL as -1 compares), and its target.

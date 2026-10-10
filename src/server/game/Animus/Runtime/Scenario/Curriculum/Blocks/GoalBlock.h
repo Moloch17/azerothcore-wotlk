@@ -178,9 +178,14 @@ namespace Animus::Curriculum
                 && GoalTargetOf(goal) < GOAL_TARGET_PLACE_FIRST + GOAL_PLACE_SLOTS;
         }
 
-        /// Whether a goal is the cell goal (GOAL_CELL_JOINT), and whether it is a plan's goal of either kind: a place
+        /// Whether a goal is the cell goal (a place kind about GOAL_CELL_TARGET), and whether it is a plan's goal of either kind: a place
         /// (IsPlaceGoal) or a cell. What the seek stage's plan counts (the share of decisions under one, the first).
-        [[nodiscard]] static constexpr bool IsCellGoal(int32 goal) { return goal == GOAL_CELL_JOINT; }
+        /// A cell goal is the cell target of either place kind: search (GOAL_CELL_JOINT, Seek.SearchGoals 1) or, at
+        /// SearchGoals 0, travel_to -- the joint the manifest publishes as goals.cells.joint.
+        [[nodiscard]] static constexpr bool IsCellGoal(int32 goal)
+        {
+            return goal >= 0 && IsPlaceKind(GoalKindOf(goal)) && GoalTargetOf(goal) == GOAL_CELL_TARGET;
+        }
         [[nodiscard]] static constexpr bool IsPlanGoal(int32 goal) { return IsPlaceGoal(goal) || IsCellGoal(goal); }
 
         /// How near a journal place counts as reached (TravelTo).
