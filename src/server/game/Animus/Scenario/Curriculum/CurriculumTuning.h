@@ -467,6 +467,19 @@ namespace Animus::Curriculum
         /// not stood on) and CellProgress (per yard of new best closeness to the point, the same blocks) are Aid,
         /// times the aid scale; CellSwitch (a cell goal given up for another), CellLost (a cell goal lost) and
         /// CellStale (a block chosen that the seat had stood on) are Cost at fixed prices, in the score.
+        ///
+        /// **Explore, don't circle, get unstuck** (2026-10-10, decision 0023). Explore (category Exploring) pays
+        /// ExploreSeen for each 2-yd cell of floor a ray of the seat's camera lands on for the first time this episode
+        /// (the first look, from the spawn, is not paid), times ExploreRoomBonus in a room of the table not yet
+        /// entered, until ExploreCap (the nominal sum, before the scale) is reached. FrontierPull (Exploring) pays
+        /// FrontierPull per yard closed on the nearest frontier of the seat's own mental map, by a best-distance
+        /// ratchet kept per frontier cluster (a ping-pong between two farms nothing), until FrontierCap. Both are paid
+        /// times max(the shaping scale, ExploreFloor), so the fade leaves ExploreFloor of them. Circling (Cost, fixed price,
+        /// per second, in the score) is charged while the last CircleWindowMs of decisions hold CircleYards of path or
+        /// CircleTurnDeg of turning with less than CircleNetYards of net displacement; not on a decision that charged
+        /// Stuck. The trap drill: in a training episode (never an evaluation's) with probability TrapShare the seat
+        /// starts 0.5-1.5 yd from the jamb of a random door of the room table, facing it; Escape (Aid) is paid once
+        /// when it is TrapEscapeYards from there within TrapEscapeMs.
         struct SeekTuning
         {
             float Arrive = 3.0f;
@@ -517,6 +530,21 @@ namespace Animus::Curriculum
             float CellSwitch = 0.02f;
             float CellLost = 0.03f;
             float CellStale = 0.01f;
+            float ExploreSeen = 0.002f;
+            float ExploreCap = 1.0f;
+            float ExploreFloor = 0.5f;
+            float ExploreRoomBonus = 2.0f;
+            float FrontierPull = 0.004f;
+            float FrontierCap = 1.0f;
+            uint32 CircleWindowMs = 6000;
+            float CircleYards = 12.0f;
+            float CircleNetYards = 4.0f;
+            float CircleTurnDeg = 540.0f;
+            float Circling = 0.02f;
+            float TrapShare = 0.12f;
+            float Escape = 0.3f;
+            float TrapEscapeYards = 6.0f;
+            uint32 TrapEscapeMs = 20000;
         } Seek;
 
         /// **M3 interact** (Opposition::Interact, InteractEncounter; dungeon-curriculum M3): in an empty Deadmines, the
@@ -969,6 +997,21 @@ namespace Animus::Curriculum
             f("Seek.CellSwitch", tuning.Seek.CellSwitch);
             f("Seek.CellLost", tuning.Seek.CellLost);
             f("Seek.CellStale", tuning.Seek.CellStale);
+            f("Seek.ExploreSeen", tuning.Seek.ExploreSeen);
+            f("Seek.ExploreCap", tuning.Seek.ExploreCap);
+            f("Seek.ExploreFloor", tuning.Seek.ExploreFloor);
+            f("Seek.ExploreRoomBonus", tuning.Seek.ExploreRoomBonus);
+            f("Seek.FrontierPull", tuning.Seek.FrontierPull);
+            f("Seek.FrontierCap", tuning.Seek.FrontierCap);
+            f("Seek.CircleWindowMs", tuning.Seek.CircleWindowMs);
+            f("Seek.CircleYards", tuning.Seek.CircleYards);
+            f("Seek.CircleNetYards", tuning.Seek.CircleNetYards);
+            f("Seek.CircleTurnDeg", tuning.Seek.CircleTurnDeg);
+            f("Seek.Circling", tuning.Seek.Circling);
+            f("Seek.TrapShare", tuning.Seek.TrapShare);
+            f("Seek.Escape", tuning.Seek.Escape);
+            f("Seek.TrapEscapeYards", tuning.Seek.TrapEscapeYards);
+            f("Seek.TrapEscapeMs", tuning.Seek.TrapEscapeMs);
             f("Interact.Arrive", tuning.Interact.Arrive);
             f("Interact.DoorOpened", tuning.Interact.DoorOpened);
             f("Interact.WrongObject", tuning.Interact.WrongObject);
