@@ -35,7 +35,7 @@ eval:
   sampled_every: 0
   heldout:
     sweep: 60
-  # M2's ablation arms (no_flag, no_camera, no_map, no_memory) are its own: this stage plays none.
+  # M2's ablation arms (no_flag, no_camera, no_map, no_memory, no_goal, random_goal, random_cell, no_plan) are its own: this stage plays none.
   arms: {}
   heldout_every: 1000
   heldout_on_best: false

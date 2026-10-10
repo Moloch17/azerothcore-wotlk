@@ -41,7 +41,7 @@ eval:
   # M2's held-out "sweep" is an arena this stage does not have: left inherited, the learner refuses to start
   # (train.heldout_arenas). Null drops it.
   heldout: null
-  # M2's ablation arms (no_flag, no_camera, no_map, no_memory) are its own: this stage plays none.
+  # M2's ablation arms (no_flag, no_camera, no_map, no_memory, no_goal, random_goal, random_cell, no_plan) are its own: this stage plays none.
   arms: {}
   report: [follow_kept_share, follow_distance_mean, regroup_share, regroup_seconds, regroups, regroup_stops,
            lost_seconds, blocking_seconds, deaths, rises, rejoins, rejoin_seconds, rejoined, dead_seconds,

@@ -25,7 +25,7 @@ import numpy as np
 
 from . import protocol as p
 from .device import host
-from .episode_means import PER_EVENT
+from .episode_means import PER_EVENT, event_weights
 
 LEVEL_BANDS = ((1, 20), (21, 40), (41, 60), (61, 80))
 
@@ -204,7 +204,10 @@ class EvalResult:
                 # A per-event column (episode_means.PER_EVENT: arrive_seconds over the markers reached) is weighted
                 # by its episode's events, so an episode that never arrived does not read as a zero-second arrival.
                 count = PER_EVENT.get(name)
-                weights = self.column(count)[rows] if count in self.info_names else None
+                weights = None
+                if count is not None:
+                    summed = event_weights(count, lambda c: self.column(c) if c in self.info_names else None)
+                    weights = summed[rows] if summed is not None else None
                 if weights is not None:
                     total = float(weights.sum())
                     out[name] = float((values * weights).sum() / total) if total > 0 else None

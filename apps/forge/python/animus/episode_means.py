@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import numpy as np
 
-# Per-event column -> the column counting its events in the same episode.
+# Per-event column -> the column counting its events in the same episode, or several (their sum): a column whose events
+# come from either of two sources (goal_follow_rate: room goals or cell goals, an episode has one of the two).
 PER_EVENT = {
     "arrive_seconds": "markers",
     "time_ratio": "markers",
@@ -27,9 +28,16 @@ PER_EVENT = {
     # ... and the room goals (m2-goals): the share of chosen room goals that were reached over the goals chosen, and the
     # object room's coverage when the object was found, and whether that room had been Checked before it was, over the
     # episodes that found it.
-    "goal_follow_rate": "goals_room_chosen",
+    # ... and, from free-choice-goals, over either source's chosen goals (an episode has the one it played).
+    "goal_follow_rate": ("goals_room_chosen", "goals_cell_chosen"),
     "check_cover_at_find": "found",
     "checked_miss": "found",
+    # ... and the cell goals (free-choice-goals): how long a cell goal ran, how far off it was chosen, the share chosen on
+    # ground already stood on, and the plan's depth at a new choice, over the cell goals chosen.
+    "cell_goal_seconds": "goals_cell_chosen",
+    "cell_goal_yards": "goals_cell_chosen",
+    "cell_stale_share": "goals_cell_chosen",
+    "plan_depth": "goals_cell_chosen",
     # ... and its found rate by the placement's rung (REDESIGN §2: the status headline per rung), over the episodes
     # placed at each.
     "found_hallway": "rung_hallway",
@@ -87,6 +95,18 @@ PER_EVENT = {
 }
 
 
+def count_columns(count) -> tuple[str, ...]:
+    """The columns PER_EVENT's value names (one, or several whose sum counts the events)."""
+    return (count,) if isinstance(count, str) else tuple(count)
+
+
+def event_weights(count, column) -> np.ndarray | None:
+    """A per-event column's weights: the sum of the count columns that exist. `column(name)` gives a column's values
+    per episode, or None when the log has none; None when none of them exists."""
+    found = [values for values in (column(name) for name in count_columns(count)) if values is not None]
+    return sum(np.asarray(values, dtype=np.float64) for values in found) if found else None
+
+
 def means(values: np.ndarray, names: list[str] | tuple[str, ...]) -> np.ndarray:
     """Column means of `values` (episodes x columns, in `names` order); a per-event column whose count column is
     present is weighted by it, and is NaN when no episode had the event."""
@@ -96,8 +116,8 @@ def means(values: np.ndarray, names: list[str] | tuple[str, ...]) -> np.ndarray:
     out = values.mean(axis=0)
     index = {name: i for i, name in enumerate(names)}
     for name, count in PER_EVENT.items():
-        if name in index and count in index:
-            weights = values[:, index[count]]
+        weights = event_weights(count, lambda c: values[:, index[c]] if c in index else None)
+        if name in index and weights is not None:
             total = weights.sum()
             out[index[name]] = float((values[:, index[name]] * weights).sum() / total) if total > 0 else np.nan
     return out
@@ -110,5 +130,9 @@ def undefined(values: np.ndarray, names: list[str] | tuple[str, ...]) -> set[str
     if values.ndim != 2 or len(values) == 0:
         return set()
     index = {name: i for i, name in enumerate(names)}
-    return {name for name, count in PER_EVENT.items()
-            if name in index and count in index and values[:, index[count]].sum() <= 0}
+    out = set()
+    for name, count in PER_EVENT.items():
+        weights = event_weights(count, lambda c: values[:, index[c]] if c in index else None)
+        if name in index and weights is not None and weights.sum() <= 0:
+            out.add(name)
+    return out
