@@ -437,7 +437,7 @@ def cell_valid(crops: torch.Tensor, grid: int = CELL_GRID, pool: int = CELL_POOL
     barred = (code == MAP_WALL) | (code == MAP_HAZARD)
     off = like & ((height == 0) | ((height - MAP_HEIGHT_ZERO).abs() > rise))
     count = lambda mask: _block_sum(mask.to(torch.int32), grid, pool)
-    return (count(barred) == 0) & (count(off) == 0) & (count(like) >= min_floor)
+    return ((count(barred) == 0) & (count(off) == 0) & (count(like) >= min_floor)).reshape(cells.shape[0], -1)
 
 
 def cell_features(crops: torch.Tensor, grid: int = CELL_GRID, pool: int = CELL_POOL, rise: int = CELL_RISE_UNITS,

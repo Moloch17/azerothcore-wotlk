@@ -1491,7 +1491,7 @@ class MappoTrainer:
                     hindsight_loss = -(cell_lp * relabel).sum() / relabel.sum().clamp(min=1)
                     loss = loss + cfg.goal_cell_hindsight_coef * hindsight_loss
                     totals["goal_cell_hindsight_loss"] = totals.get("goal_cell_hindsight_loss", 0.0) + float(
-                        hindsight_loss) / cfg.epochs
+                        hindsight_loss.detach()) / cfg.epochs
                     totals["goal_cell_hindsight_rows"] = float(relabel.sum())
                 with torch.no_grad():
                     cell_rows = is_cell.sum().clamp(min=1)
