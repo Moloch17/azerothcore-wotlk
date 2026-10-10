@@ -167,6 +167,14 @@ class MappoConfig:
     # never crosses one); see MappoTrainer._cell_lookback. Needs goal_cell_hindsight_coef > 0 (TrainConfig refuses a
     # lookback with none).
     goal_cell_hindsight_lookback: int = 0
+    # **Greedy training envs** (exploration v3): this share of the learner's training envs act with the argmax of the
+    # movement heads (and the free look), spread evenly over the env indexes, so the deployment-time dead-locks (a
+    # doorway pin, a frozen start) happen in training and are priced. Goals stay sampled. Their movement-head
+    # policy-gradient terms are masked out of the update (a greedy choice is not a draw from the policy: its stored
+    # log probability is log pi(argmax) and the policy-gradient identity does not hold); their states and rewards
+    # still train the critic, and every other term. 0 = off (the code default: only a stage that asks has them).
+    # 0 <= f <= 0.5; a nonzero f that rounds to no env of the learner's is refused.
+    greedy_env_fraction: float = 0.0
     foresight_coef: float = 0.0
     foresight_horizons_seconds: tuple[float, ...] = (5.0, 30.0)
     foresight_time_scale_seconds: float = 60.0
@@ -226,6 +234,9 @@ class ActingState:
     # And the look's own log probability [E, A] (its part of the joint one), which the update takes out again for the
     # movement-only KL (approx_kl_move).
     look_log_prob: np.ndarray | None = None
+    # Which seats act with the argmax [E, A] bool (MappoConfig.greedy_env_fraction): set once by the training Run's
+    # acting state, never by an evaluation's; clear() leaves it alone (it is a property of the env, not the episode).
+    greedy: np.ndarray | None = None
 
     def take(self, rows: slice) -> "ActingState":
         """A copy of these envs' state, for acting on them alone (a half-batch group); put() writes it back."""
@@ -414,7 +425,9 @@ class _RolloutGraph:
             # The camera's bytes (protocol 21), decoded inside the graph.
             large.append(("image", (envs, agents, trainer.image_bytes), torch.uint8))
         self.large = _Packed(large, device)
-        specs = [("layout", (envs, agents), torch.long)]
+        # greedy (exploration v3): which seats act with the argmax, an input of every graph shape (all False where the
+        # acting state has none), so the graph key and the captured kernels do not depend on the setting.
+        specs = [("layout", (envs, agents), torch.long), ("greedy", (envs, agents), torch.bool)]
         if recurrent:
             specs += [("memory", (envs, agents, recurrent), torch.float32),
                       ("critic_memory", (envs, agents, recurrent), torch.float32)]
@@ -522,10 +535,11 @@ class _RolloutGraph:
             out["critic_memory"] = carried.reshape(envs, agents, trainer.recurrent_size)
 
         logits = actor.action_logits(features, layout_t, mask_t, goal_t, None, obs_t)
-        actions, log_probs = sample_logits(logits, self.deterministic)
+        greedy_t = inputs["greedy"].reshape(rows)
+        actions, log_probs = sample_logits(logits, self.deterministic, greedy_t)
         if actor.look_head is not None:
             # The free look, inside the captured decision: the joint log probability is the action's and the look's.
-            look, look_log_prob = actor.look(features, layout_t, goal_t, self.deterministic)
+            look, look_log_prob = actor.look(features, layout_t, goal_t, self.deterministic, greedy_t)
             log_probs = log_probs + look_log_prob.to(log_probs.dtype)
             out["look"] = look.reshape(envs, agents, -1).to(torch.int8)
             out["look_log_prob"] = look_log_prob.reshape(envs, agents).to(torch.float32)
@@ -563,6 +577,10 @@ class _RolloutGraph:
             if trainer.image_bytes:
                 np.copyto(host["image"].numpy(), image)
         np.copyto(host["layout"].numpy(), layout, casting="unsafe")
+        if state.greedy is not None:
+            np.copyto(host["greedy"].numpy(), state.greedy)
+        else:
+            host["greedy"].numpy().fill(False)
         if trainer.recurrent_size:
             np.copyto(host["memory"].numpy(), state.memory)
             np.copyto(host["critic_memory"].numpy(), state.critic_memory)
@@ -1124,11 +1142,17 @@ class MappoTrainer:
                 decided.plan_at = downloads.add(goals["plan"].reshape(envs, agents, -1))
 
         dist = self._rollout_actor.action_distribution(features, layout_t, mask_t, decided.goal_t, groups, obs_t)
+        # Greedy seats (exploration v3) take the argmax of the same logits the others sample from: the draw is made for
+        # every row and selected with a where, as the captured graph does (sample_logits).
+        greedy_t = (self._tensor(state.greedy).reshape(rows).bool()
+                    if state is not None and state.greedy is not None and not deterministic else None)
         actions = dist.logits.argmax(dim=-1) if deterministic else dist.sample()
+        if greedy_t is not None:
+            actions = torch.where(greedy_t, dist.logits.argmax(dim=-1), actions)
         log_probs = dist.log_prob(actions)
         if self._rollout_actor.look_head is not None:
             # The free look (LookHead): drawn beside the action, deterministic with it; the log probability is joint.
-            look, look_log_prob = self._rollout_actor.look(features, layout_t, decided.goal_t, deterministic)
+            look, look_log_prob = self._rollout_actor.look(features, layout_t, decided.goal_t, deterministic, greedy_t)
             log_probs = log_probs + look_log_prob.to(log_probs.dtype)
             decided.look_at = downloads.add(look.reshape(envs, agents, -1).to(torch.int8))
             decided.look_log_prob_at = downloads.add(look_log_prob.reshape(envs, agents).to(torch.float32))
@@ -1235,6 +1259,22 @@ class MappoTrainer:
             look=np.zeros((envs, agents, len(self.look_heads)), dtype=np.int8) if self.look_heads else None,
             look_log_prob=np.zeros((envs, agents), dtype=np.float32) if self.look_heads else None,
         )
+
+    def greedy_envs(self, envs: int, agents: int) -> np.ndarray | None:
+        """The seats that act with the argmax (mappo.greedy_env_fraction), [E, A] bool, or None when the share is 0:
+        round(f x E) envs of this learner's E, fixed by absolute env index and spread evenly, so both pipelined env
+        groups get their share: env e is greedy when floor((e + 1) x count / E) != floor(e x count / E). 64 envs at
+        0.12 give 8. Refused: a nonzero share that rounds to no env (a setting is never silently off)."""
+        fraction = self.config.greedy_env_fraction
+        if fraction <= 0.0:
+            return None
+        count = int(round(fraction * envs))
+        if count == 0:
+            raise ValueError(f"mappo.greedy_env_fraction {fraction} of this learner's {envs} envs rounds to no env; "
+                             f"raise it, or set it to 0")
+        index = np.arange(envs, dtype=np.int64)
+        greedy = ((index + 1) * count) // envs != (index * count) // envs
+        return np.repeat(greedy[:, None], agents, axis=1)
 
     def wire_look(self, look: np.ndarray | None) -> np.ndarray | None:
         """The look ACT carries (protocol 22) for the choices `look` [E, A, heads] a decision took: int32, 0 for a row
@@ -1847,6 +1887,16 @@ class MappoTrainer:
                 dones_host = torch.from_numpy(np.repeat(host["dones"][:, picked], agents, axis=1))
                 counted = valid[:, chunk].to(torch.float32)
                 weight = counted.sum().clamp(min=1.0)
+                # The rows whose action was a draw from the policy (exploration v3): a greedy env's was the argmax, its
+                # stored log probability is log pi(argmax) and the policy-gradient identity does not hold for it, so
+                # the movement policy gradient and the ratio's statistics skip those rows and renormalise over the
+                # rest. The ratio is the joint action + look log probability, so one mask covers both heads. Entropy,
+                # value, foresight, hindsight and the goal terms keep `counted`.
+                if "greedy" in data:
+                    pg = counted * (~data["greedy"][:, chunk]).to(torch.float32)
+                    pg_weight = pg.sum().clamp(min=1.0)
+                else:
+                    pg, pg_weight = counted, weight
 
                 # The actor's half of the minibatch on one stream, the critic's on another: they share only these
                 # inputs, and each replays its GRU through every step, a chain of small kernels the GPU cannot
@@ -1921,7 +1971,7 @@ class MappoTrainer:
                 ratio = (log_probs - taken).exp()
                 advantage = data["advantages"][:, chunk]
                 clipped_ratio = ratio.clamp(1 - cfg.clip, 1 + cfg.clip)
-                policy_loss = -(torch.min(ratio * advantage, clipped_ratio * advantage) * counted).sum() / weight
+                policy_loss = -(torch.min(ratio * advantage, clipped_ratio * advantage) * pg).sum() / pg_weight
                 entropy = (entropies * counted).sum() / weight
                 action_entropy = (action_entropies * counted).sum() / weight
 
@@ -2059,9 +2109,8 @@ class MappoTrainer:
                 self._switch_stream(main, wait_for=self._update_streams)
                 with torch.no_grad():
                     log_ratio = log_probs - taken
-                    self._layout_totals(layout_totals, layout_all, action_entropies, (ratio - 1) - log_ratio,
-                                        counted)
-                    kl = (((ratio - 1) - log_ratio) * counted).sum() / weight
+                    self._layout_totals(layout_totals, layout_all, action_entropies, (ratio - 1) - log_ratio, pg)
+                    kl = (((ratio - 1) - log_ratio) * pg).sum() / pg_weight
                     totals["policy_loss"] += policy_loss.detach()
                     totals["value_loss"] += value_loss.detach()
                     totals["entropy"] += action_entropy.detach()
@@ -2073,7 +2122,7 @@ class MappoTrainer:
                         seeing = self.actor.look_head.has_vision[layout_all].reshape(lead).to(torch.float32) * counted
                         totals["look_entropy"] += (look_entropies * seeing).sum().detach() / seeing.sum().clamp(min=1.0)
                     totals["clip_frac"] += ((((ratio - 1).abs() > cfg.clip).to(torch.float32)
-                                             * counted).sum() / weight)
+                                             * pg).sum() / pg_weight)
                     totals["approx_kl"] += kl
                     # The movement action's KL alone: the stored joint log probability less the look's part (the
                     # goal's is stored apart). The joint KL above stays the early stop's signal.
@@ -2081,8 +2130,8 @@ class MappoTrainer:
                     if "look_log_probs" in data:
                         taken_move = taken_move - data["look_log_probs"][:, chunk]
                     move_log_ratio = move_log_probs - taken_move
-                    totals["approx_kl_move"] += ((((move_log_ratio.exp() - 1) - move_log_ratio) * counted).sum()
-                                                 / weight)
+                    totals["approx_kl_move"] += ((((move_log_ratio.exp() - 1) - move_log_ratio) * pg).sum()
+                                                 / pg_weight)
                     totals["actor_grad_norm"] += actor_grad
                     totals["critic_grad_norm"] += critic_grad
                     epoch_kl += kl
