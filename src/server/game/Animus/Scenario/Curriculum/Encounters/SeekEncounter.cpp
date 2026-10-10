@@ -74,6 +74,8 @@ namespace
     constexpr float FRONTIER_PULL_RADIUS = 40.0f;
     constexpr float FRONTIER_PULL_STEP = 2.0f;
     constexpr uint32 FRONTIER_PULL_MS = 2000;
+    /// ... the nearest this many clusters (SAME_PLACE apart) are looked through for one at a door or beyond.
+    constexpr uint32 FRONTIER_PULL_POINTS = 16;
     /// The trap drill: how far from the door's middle the jamb is looked for, and the least left between the seat and
     /// the jamb it stands at; the seat's pose may face the wall within this much of straight on, radians.
     constexpr float TRAP_REACH = 4.0f;
@@ -82,6 +84,11 @@ namespace
     constexpr float TRAP_FACING_SLACK = 0.5f;
     constexpr float TRAP_FLAT = 0.6f;
     constexpr uint32 TRAP_ATTEMPTS = 8;
+    /// FrontierPull's frontier must lie in a room of the table or within this of a room's opening (the doorway), not in
+    /// the corridor (exploration v2, decision 0025).
+    constexpr float FRONTIER_DOOR_YARDS = 3.0f;
+    /// `found_300`: found within this of the clock, so the 420 s stage compares with the 300 s history.
+    constexpr uint32 FOUND_300_MS = 300000;
 
     /// A back room or an end room by its name in the room table (`east_south_2_back`, `west_end_1`, `east_end_3_back`):
     /// the rooms the front doors do not show. The hubs and `hall_end` (a front cell) are neither.
@@ -131,7 +138,7 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::SeekEncounter::R
         RewardTerm::Sighting, RewardTerm::NewGround, RewardTerm::RoomSeen, RewardTerm::RoomGoal, RewardTerm::RoomSwitch,
         RewardTerm::Return, RewardTerm::CellGoal, RewardTerm::CellProgress, RewardTerm::CellSwitch,
         RewardTerm::CellLost, RewardTerm::CellStale, RewardTerm::Explore, RewardTerm::FrontierPull,
-        RewardTerm::Circling, RewardTerm::Escape };
+        RewardTerm::Circling, RewardTerm::Escape, RewardTerm::RoomEntry, RewardTerm::Stale };
 }
 
 std::vector<std::string> Animus::Curriculum::SeekEncounter::RoomNames(ArenaDefinition const& arena)
@@ -156,6 +163,13 @@ void Animus::Curriculum::SeekEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
     // shaping fade (whose rungs are the placement ladder's) are gated on it (configs/move2_seek.yaml).
     table.Add("found", [this](Env const& env, uint32) { return _envs[env.Index].Found ? 1.0f : 0.0f; });
     // Per event (animus.episode_means.PER_EVENT): the clock at the arrival, over the episodes that found it.
+    // Found within 300 s of the clock (the stage's deep rung lasts Seek.RungSeconds3, 420 s): the like-for-like of the
+    // 300 s history.
+    table.Add("found_300", [this](Env const& env, uint32)
+    {
+        EnvSeek const& seek = _envs[env.Index];
+        return seek.Found && seek.FoundMs <= FOUND_300_MS ? 1.0f : 0.0f;
+    });
     table.Add("find_seconds", [this](Env const& env, uint32)
     {
         EnvSeek const& seek = _envs[env.Index];
@@ -404,6 +418,27 @@ void Animus::Curriculum::SeekEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
         return seek.Escaped ? float(seek.EscapeMs) / 1000.0f : 0.0f;
     });
     table.Add("back_room_visits", [this](Env const& env, uint32) { return float(_envs[env.Index].BackRoomVisits); });
+    // **Exploration v2** (decision 0025): the distinct table rooms entered (EnterDwellMs inside the polygon, the room
+    // the seat started in excepted) and the back and end-back ones among them; the cells first seen from inside their
+    // own room (the Seek.ExploreInsideBonus ones); the room-entry sum (nominal, before the floor); the seconds charged as
+    // stale and the runs begun; and when the Explore cap was reached (ms, -1 never; per event over explore_cap_hit).
+    table.Add("room_entries_new", [this](Env const& env, uint32) { return float(_envs[env.Index].RoomEntriesNew); });
+    table.Add("back_room_entries", [this](Env const& env, uint32) { return float(_envs[env.Index].BackRoomEntries); });
+    table.Add("explore_inside_cells", [this](Env const& env, uint32)
+    {
+        return float(_envs[env.Index].ExploreInsideCells);
+    });
+    table.Add("room_entry_reward", [this](Env const& env, uint32) { return _envs[env.Index].RoomEntryNominal; });
+    table.Add("stale_seconds", [this](Env const& env, uint32) { return _envs[env.Index].StaleSeconds; });
+    table.Add("stale_events", [this](Env const& env, uint32) { return float(_envs[env.Index].StaleEvents); });
+    table.Add("explore_cap_hit", [this](Env const& env, uint32)
+    {
+        return _envs[env.Index].ExploreCapHitMs >= 0 ? 1.0f : 0.0f;
+    });
+    table.Add("explore_cap_hit_ms", [this](Env const& env, uint32)
+    {
+        return float(_envs[env.Index].ExploreCapHitMs);
+    });
     // Where the object stood and where the seat's last position was, absolute coordinates in the instance (yards), so
     // the routes can be analysed offline.
     table.Add("object_x", [this](Env const& env, uint32) { return _envs[env.Index].Spot.GetPositionX(); });
@@ -685,7 +720,9 @@ bool Animus::Curriculum::SeekEncounter::Build(Env& env, Map* map, uint8 /*level*
     }
     // The episode's clock is its placement rung's (as placed: a hallway with nothing in sight is a doorway's): short
     // early episodes make the reward come often.
-    env.EpisodeLengthMs = (seek.Sweep ? std::max<uint32>(1, arena.EpisodeSeconds)
+    // A sweep plays the top rung, so it lasts that rung's Seek.RungSeconds3 as the learner's deep episodes do (it kept
+    // the arena's own 300 s while the learner moved to 420 s: the sets were not on the same clock).
+    env.EpisodeLengthMs = (seek.Sweep ? Draw::RungSeconds(Draw::Rung::Deep, RungSeconds(tuning))
         : Draw::RungSeconds(Draw::Rung(seek.Rung), RungSeconds(tuning))) * IN_MILLISECONDS;
     if (seek.Room >= 0 && uint32(seek.Room) < arena.Rooms.size())
     {
@@ -813,20 +850,31 @@ void Animus::Curriculum::SeekEncounter::Explore(Env const& env, EnvSeek& seek, A
     // reached, beside the mental map, which outlives the episode (a map kept from before would show everything seen
     // already: amendment 6). A cell new to the record pays ExploreSeen, times ExploreRoomBonus when it lies in a room
     // of the table the seat has not entered.
+    // Exploration v2: a cell of the room the seat stands in (its own position inside that room's polygon) is worth
+    // ExploreInsideBonus -- going in; a cell of a room not yet entered seen from anywhere else keeps ExploreRoomBonus
+    // -- looking in. The first beats the second, a cell of one room being paid once.
     float nominal = 0.0f;
     uint64 last = ~uint64(0);
+    int32 const seatRoom = bot ? Draw::RoomAt(arena.Rooms, bot->GetPositionX(), bot->GetPositionY(),
+        bot->GetPositionZ()) : -1;
     Draw::FloorRays(seat.Hits, [&](float x, float y, float z)
     {
         uint64 const key = CellKey(x, y, z, EXPLORE_CELL);
         if (key == last || !seek.Seen.insert(key).second)
             return;
         last = key;
+        seek.LastNewCellMs = env.EpisodeElapsedMs;
         if (!paid)
             return;
         ++seek.ExploreCells;
         float weight = 1.0f;
         int32 const room = Draw::RoomAt(arena.Rooms, x, y, z);
-        if (room >= 0 && uint32(room) < seek.Entered.size() && !seek.Entered[uint32(room)])
+        if (room >= 0 && room == seatRoom)
+        {
+            weight = tuning.ExploreInsideBonus;
+            ++seek.ExploreInsideCells;
+        }
+        else if (room >= 0 && uint32(room) < seek.Entered.size() && !seek.Entered[uint32(room)])
         {
             weight = tuning.ExploreRoomBonus;
             ++seek.ExploreRoomCells;
@@ -840,6 +888,8 @@ void Animus::Curriculum::SeekEncounter::Explore(Env const& env, EnvSeek& seek, A
         {
             seek.ExploreNominal += pay;
             ledger.Add(RewardTerm::Explore, pay);
+            if (seek.ExploreCapHitMs < 0 && seek.ExploreNominal >= tuning.ExploreCap - 1e-6f)
+                seek.ExploreCapHitMs = int32(env.EpisodeElapsedMs);
         }
     }
 
@@ -855,13 +905,26 @@ void Animus::Curriculum::SeekEncounter::Explore(Env const& env, EnvSeek& seek, A
     {
         Vision::MentalMap const& map = seat.Map;
         std::vector<SeenPlaces::Point> const frontier = SeenPlaces::Frontier(at, FRONTIER_PULL_RADIUS,
-            FRONTIER_PULL_STEP, 1, [&map](float x, float y) { return MapGround(map, x, y); });
+            FRONTIER_PULL_STEP, FRONTIER_PULL_POINTS, [&map](float x, float y) { return MapGround(map, x, y); });
         seek.FrontierChecked = true;
         seek.FrontierCheckedMs = env.EpisodeElapsedMs;
-        seek.HasFrontier = !frontier.empty();
+        // The nearest one at a door or beyond: in a room of the table or within FRONTIER_DOOR_YARDS of a room's opening.
+        // A frontier in the corridor (the hall's unseen stretches) does not pull: the rooms are what is unseen.
+        auto const beyondDoor = [&arena](SeenPlaces::Point const& point)
+        {
+            if (Draw::RoomAt(arena.Rooms, point.X, point.Y, point.Z) >= 0)
+                return true;
+            for (SeekRoom const& room : arena.Rooms)
+                if (std::fabs(point.Z - room.FloorZ) <= 4.0f
+                    && std::hypot(point.X - room.Opening.first, point.Y - room.Opening.second) <= FRONTIER_DOOR_YARDS)
+                    return true;
+            return false;
+        };
+        auto const door = std::find_if(frontier.begin(), frontier.end(), beyondDoor);
+        seek.HasFrontier = door != frontier.end();
         if (seek.HasFrontier)
         {
-            seek.FrontierAt = frontier.front();
+            seek.FrontierAt = *door;
             seek.FrontierKey = CellKey(seek.FrontierAt.X, seek.FrontierAt.Y, seek.FrontierAt.Z,
                 SeenPlaces::SAME_PLACE);
         }
@@ -933,6 +996,27 @@ void Animus::Curriculum::SeekEncounter::Circle(Env const& env, EnvSeek& seek, Pl
     ledger.AddFixed(RewardTerm::Circling, -tuning.Circling * seconds);
 }
 
+void Animus::Curriculum::SeekEncounter::Stale(Env const& env, EnvSeek& seek, bool paid, RewardLedger& ledger)
+{
+    CurriculumTuning::SeekTuning const& tuning = _scenario.Tuning().Seek;
+    if (tuning.Stale <= 0.0f || !tuning.StaleMs)
+        return;
+
+    // Stale: the last StaleMs without a newly seen floor cell (Explore's record, the first look counted). Not while the
+    // trap drill's escape window is open (the way out of a jamb is Escape's), and not on a decision that paid Stuck or
+    // Wall (that second is priced already, as Circling's).
+    bool const trapWindow = seek.Trap && !seek.Escaped && env.EpisodeElapsedMs <= tuning.TrapEscapeMs;
+    bool const holds = env.EpisodeElapsedMs >= seek.LastNewCellMs + tuning.StaleMs && !trapWindow;
+    if (holds && !seek.StaleOn)
+        ++seek.StaleEvents;
+    seek.StaleOn = holds;
+    if (!holds || paid)
+        return;
+    float const seconds = float(_scenario.StepMs(env)) / 1000.0f;
+    seek.StaleSeconds += seconds;
+    ledger.AddFixed(RewardTerm::Stale, -tuning.Stale * seconds);
+}
+
 void Animus::Curriculum::SeekEncounter::TrackRooms(Env const& env, EnvSeek& seek, ArenaDefinition const& arena,
     Player* bot, int32 room, std::vector<uint32> const& counts, RewardLedger& ledger)
 {
@@ -968,7 +1052,28 @@ void Animus::Curriculum::SeekEncounter::TrackRooms(Env const& env, EnvSeek& seek
         bool const inside = int32(index) == room;
         track.DwellMs = inside ? track.DwellMs + stepMs : 0;
         if (track.DwellMs >= tuning.EnterDwellMs)
-            track.Visited = true;
+        {
+            if (!track.Visited)
+            {
+                track.Visited = true;
+                // The first entry of the room this episode (RoomEntry): once a room, the start room never (the
+                // seat began in it, as the trap drill's pose does).
+                if (int32(index) != seek.StartRoom)
+                {
+                    ++seek.RoomEntriesNew;
+                    bool const back = BackRoomName(arena.Rooms[index].Name);
+                    if (back)
+                        ++seek.BackRoomEntries;
+                    float const pay = std::min(tuning.RoomEntry * (back ? tuning.RoomEntryBackMult : 1.0f),
+                        std::max(0.0f, tuning.RoomEntryCap - seek.RoomEntryNominal));
+                    if (pay > 0.0f)
+                    {
+                        seek.RoomEntryNominal += pay;
+                        ledger.Add(RewardTerm::RoomEntry, pay);
+                    }
+                }
+            }
+        }
 
         // Checked: visited, or CheckedShare of its floor cells hit by this episode's rays.
         if (!track.Checked && (track.Visited || (counts[index] && tuning.CheckedShare <= 1.0f
@@ -1095,6 +1200,7 @@ void Animus::Curriculum::SeekEncounter::Reward(Env& env, uint32 seatIndex, Playe
     // Going round in circles (not on a decision that paid Stuck: that second is priced already), and the trap
     // drill's way out: Escape once, TrapEscapeYards from the pose within TrapEscapeMs of the start.
     Circle(env, seek, bot, moved, stuckMs > 0, ledger);
+    Stale(env, seek, stuckMs > 0 || wallMs > 0, ledger);
     if (seek.Trap && !seek.Escaped && env.EpisodeElapsedMs <= tuning.TrapEscapeMs
         && bot->GetExactDist2d(&seek.TrapStart) >= tuning.TrapEscapeYards)
     {
@@ -1142,6 +1248,8 @@ void Animus::Curriculum::SeekEncounter::Reward(Env& env, uint32 seatIndex, Playe
 
     // Explore (before the rooms below are marked entered): the floor the frame landed on for the first time, and the
     // frontier closed on. The first look is the spawn's view: recorded, not paid.
+    if (firstLook)
+        seek.StartRoom = Draw::RoomAt(arena.Rooms, bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
     Explore(env, seek, arena, seat, bot, !firstLook, ledger);
 
     // New ground, as shaping: a cell of floor walked onto for the first time.

@@ -671,13 +671,13 @@ namespace
         //
         // **The ladder** (SeekDraw::Rung, the shaping fade's rungs): in the hallway in sight of the spawn, just inside
         // a front cell's opening, anywhere in a front cell, then deep (the back rooms, hubs and end rooms), each rung
-        // keeping a tenth of the one below; episodes of 90, 120, 200 and 300 s by rung (Seek.RungSeconds*). An
+        // keeping a tenth of the one below; episodes of 90, 120, 200 and 420 s by rung (Seek.RungSeconds*). An
         // evaluation plays 78 episodes at the training rung (each of its rooms in turn, the objects cycled); the held
         // out "sweep" arena is every (room, object) pair once, 39 x 5 = 195 episodes at the top rung, for the stage's
         // end (eval.heldout).
         //
-        // **The deep rung's clock, 300 s**: a greedy sweep from the entrance through every room's centre walks 1,595
-        // yd, 228 s at run speed (the scan's Dijkstra distances, nearest unvisited room next); a seat that sees into a
+        // **The deep rung's clock** (300 s here; 420 s since 2026-10-10, Seek.RungSeconds3, which the sweeps play
+        // too): a greedy sweep from the entrance through every room's centre walks 1,595 yd, 228 s at run speed (the scan's Dijkstra distances, nearest unvisited room next); a seat that sees into a
         // room from its door needs less, one that backtracks more. 300 s is 1.3 times the sweep, and is the episode
         // clock's own scale (EPISODE_TIME_SCALE_MS), so the clock feature never saturates.
         stages.push_back({
@@ -688,11 +688,16 @@ namespace
                 "with no compass and stopped beside, deeper each rung",
             .Blocks = { Core, Move, Vision, Map, Goal },
             .Arenas = {
-                { .Name = "rooms", .Weight = 1, .Against = Opposition::Seek, .EpisodeSeconds = 300,
+                { .Name = "rooms", .Weight = 1, .Against = Opposition::Seek, .EpisodeSeconds = 420,
                     .SpawnPoints = StockadeHallways(), .MapId = MAP_STORMWIND_STOCKADE,
                     .Rooms = StockadeRooms(), .Objects = SeekObjects(), .SeekRadius = 3.0f },
-                { .Name = "sweep", .Weight = 1, .Against = Opposition::Seek, .EvalOnly = true, .EpisodeSeconds = 300,
+                { .Name = "sweep", .Weight = 1, .Against = Opposition::Seek, .EvalOnly = true, .EpisodeSeconds = 420,
                     .SpawnPoints = StockadeHallways(), .MapId = MAP_STORMWIND_STOCKADE,
+                    .Rooms = StockadeRooms(), .Objects = SeekObjects(), .SeekRadius = 3.0f },
+                // The same sweep on seeds that move every evaluation (the learner shifts the seed index by a multiple of
+                // the sweep's 195: train.evaluate_heldout, the "_rotating" suffix), so no start owns a pair for good.
+                { .Name = "sweep_rotating", .Weight = 1, .Against = Opposition::Seek, .EvalOnly = true,
+                    .EpisodeSeconds = 420, .SpawnPoints = StockadeHallways(), .MapId = MAP_STORMWIND_STOCKADE,
                     .Rooms = StockadeRooms(), .Objects = SeekObjects(), .SeekRadius = 3.0f },
             },
             .MapId = MAP_STORMWIND_STOCKADE,

@@ -484,6 +484,15 @@ namespace Animus::Curriculum
         /// charged Stuck. The trap drill: in a training episode (never an evaluation's) with probability TrapShare
         /// the seat starts 0.5-1.5 yd from the jamb of a random door of the room table, facing it; Escape (Aid) is
         /// paid once when it is TrapEscapeYards from there within TrapEscapeMs.
+        ///
+        /// **Exploration v2** (2026-10-10, decision 0025). ExploreCap is 5.0 (was 1.0: reached by 96% of episodes
+        /// within ~13 s). A cell first seen while the seat stands inside a room of the table, in that same room, is
+        /// worth ExploreInsideBonus times ExploreSeen (instead of ExploreRoomBonus's corridor-seen 2x). RoomEntry pays
+        /// the first entry (EnterDwellMs inside the polygon) of each room once an episode, times RoomEntryBackMult in
+        /// a back or end-back room, in its own RoomEntryCap (nominal; paid at the Explore floor too). FrontierPull
+        /// pulls only toward frontier clusters in a room or within 3 yd of a door opening, never one in the corridor.
+        /// Stale (Cost, fixed price per second, in the score) is charged once StaleMs have passed with no newly seen
+        /// floor cell; not inside the trap drill's escape window and not on a decision that charged Stuck or Wall.
         struct SeekTuning
         {
             float Arrive = 3.0f;
@@ -536,11 +545,17 @@ namespace Animus::Curriculum
             float CellLost = 0.03f;
             float CellStale = 0.01f;
             float ExploreSeen = 0.002f;
-            float ExploreCap = 1.0f;
+            float ExploreCap = 5.0f;
             float ExploreFloor = 0.5f;
             float ExploreRoomBonus = 2.0f;
-            float FrontierPull = 0.004f;
-            float FrontierCap = 1.0f;
+            float ExploreInsideBonus = 3.0f;
+            float RoomEntry = 0.1f;
+            float RoomEntryCap = 2.0f;
+            float RoomEntryBackMult = 2.0f;
+            float FrontierPull = 0.015f;
+            float FrontierCap = 2.0f;
+            float Stale = 0.01f;
+            uint32 StaleMs = 20000;
             uint32 CircleWindowMs = 6000;
             float CircleYards = 12.0f;
             float CircleNetYards = 4.0f;
@@ -1007,8 +1022,14 @@ namespace Animus::Curriculum
             f("Seek.ExploreCap", tuning.Seek.ExploreCap);
             f("Seek.ExploreFloor", tuning.Seek.ExploreFloor);
             f("Seek.ExploreRoomBonus", tuning.Seek.ExploreRoomBonus);
+            f("Seek.ExploreInsideBonus", tuning.Seek.ExploreInsideBonus);
+            f("Seek.RoomEntry", tuning.Seek.RoomEntry);
+            f("Seek.RoomEntryCap", tuning.Seek.RoomEntryCap);
+            f("Seek.RoomEntryBackMult", tuning.Seek.RoomEntryBackMult);
             f("Seek.FrontierPull", tuning.Seek.FrontierPull);
             f("Seek.FrontierCap", tuning.Seek.FrontierCap);
+            f("Seek.Stale", tuning.Seek.Stale);
+            f("Seek.StaleMs", tuning.Seek.StaleMs);
             f("Seek.CircleWindowMs", tuning.Seek.CircleWindowMs);
             f("Seek.CircleYards", tuning.Seek.CircleYards);
             f("Seek.CircleNetYards", tuning.Seek.CircleNetYards);

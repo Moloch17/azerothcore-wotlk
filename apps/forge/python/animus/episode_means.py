@@ -42,6 +42,9 @@ PER_EVENT = {
     "trap_escaped": "trap_episode",
     "trap_escape_seconds": "trap_escaped",
     "plan_depth": "goals_cell_chosen",
+    # ... and exploration v2 (decision 0025): the clock the Explore cap was reached at, over the episodes that reached it
+    # (explore_cap_hit_ms is -1 for the others).
+    "explore_cap_hit_ms": "explore_cap_hit",
     # ... and its found rate by the placement's rung (REDESIGN §2: the status headline per rung), over the episodes
     # placed at each.
     "found_hallway": "rung_hallway",

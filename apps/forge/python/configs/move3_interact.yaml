@@ -35,6 +35,8 @@ eval:
   sampled_every: 0
   heldout:
     sweep: 60
+    # M2's rotating sweep is an arena this stage does not have (null drops the inherited key).
+    sweep_rotating: null
   # M2's ablation arms with a meaning here, as M2 plays them (move2_seek.yaml): the evaluation's seeds again with one
   # input taken away, 64 episodes each after every evaluation (arms_every 1), read as right_object_no_camera and the
   # like in forge status and as policy rows in eval.csv. no_camera blanks the image (the entity list stays, so the sight
