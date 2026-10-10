@@ -505,7 +505,7 @@ namespace Animus::Curriculum
             uint32 RungSeconds0 = 90;
             uint32 RungSeconds1 = 120;
             uint32 RungSeconds2 = 200;
-            uint32 RungSeconds3 = 300;
+            uint32 RungSeconds3 = 420;
             float HallwayNearest = 8.0f;
             float HallwayFurthest = 120.0f;
             float DoorwayInside = 2.0f;

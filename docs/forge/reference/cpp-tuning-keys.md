@@ -402,7 +402,7 @@ through to `StandIn.Share`, so its default 0 is never consulted today (the "defe
 | Seek | `Seek.RungSeconds0` | 90 | uint32 | - | `Encounters/SeekEncounter.cpp:71` | move2_seek |
 | Seek | `Seek.RungSeconds1` | 120 | uint32 | - | `Encounters/SeekEncounter.cpp:71` | move2_seek |
 | Seek | `Seek.RungSeconds2` | 200 | uint32 | - | `Encounters/SeekEncounter.cpp:71` | move2_seek |
-| Seek | `Seek.RungSeconds3` | 300 | uint32 | - | `Encounters/SeekEncounter.cpp:71` | move2_seek |
+| Seek | `Seek.RungSeconds3` | 420 | uint32 | - | `Encounters/SeekEncounter.cpp:71` | move2_seek |
 | Seek | `Seek.HallwayNearest` | 8.0f | float | - | `Encounters/SeekEncounter.cpp:315` | move2_seek |
 | Seek | `Seek.HallwayFurthest` | 120.0f | float | - | `Encounters/SeekEncounter.cpp:316` | move2_seek |
 | Seek | `Seek.DoorwayInside` | 2.0f | float | - | `Encounters/SeekEncounter.cpp:271` | move2_seek |

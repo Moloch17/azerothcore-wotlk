@@ -152,8 +152,11 @@ status:
     course_kinks: null
     found: ">= 0.95"
     found_deepest: ">= 0.9"
-    find_seconds: "<= 90"
-    sight_seconds: "<= 60"
+    # 2026-10-10: the deep rung lasts 420 s now (Seek.RungSeconds3, was 300: a systematic sweep of the 39 rooms at the
+    # best observed 6.4 rooms/min takes ~6 min), so the mean over finds includes later ones: find_seconds 90 -> 150,
+    # sight_seconds 60 -> 100. `found` at 420 s is not comparable with the 300 s history. These are display targets, not gates.
+    find_seconds: "<= 150"
+    sight_seconds: "<= 100"
     sight_to_arrival: "<= 15"
     rooms_before_found: "<= 12"
     revisit_rate: "<= 0.2"
