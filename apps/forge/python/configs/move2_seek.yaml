@@ -116,7 +116,7 @@ eval:
   heldout:
     sweep: 195
     sweep_rotating: 195
-    deadmines: 75
+    deadmines: 165
   heldout_every: 1
   heldout_on_best: false
   # The rotating sweep every second evaluation (exploration v3; the 195-episode second sweep doubled the held-out time;
