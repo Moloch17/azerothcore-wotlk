@@ -37,6 +37,10 @@ PER_EVENT = {
     "cell_goal_seconds": "goals_cell_chosen",
     "cell_goal_yards": "goals_cell_chosen",
     "cell_stale_share": "goals_cell_chosen",
+    # ... and the trap drill (explore-unstuck): got out over the episodes that started in the trap pose, the clock over
+    # those that got out.
+    "trap_escaped": "trap_episode",
+    "trap_escape_seconds": "trap_escaped",
     "plan_depth": "goals_cell_chosen",
     # ... and its found rate by the placement's rung (REDESIGN §2: the status headline per rung), over the episodes
     # placed at each.

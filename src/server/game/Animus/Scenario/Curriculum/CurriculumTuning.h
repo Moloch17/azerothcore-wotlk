@@ -474,10 +474,10 @@ namespace Animus::Curriculum
         /// entered, until ExploreCap (the nominal sum, before the scale) is reached. FrontierPull (Exploring) pays
         /// FrontierPull per yard closed on the nearest frontier of the seat's own mental map, by a best-distance
         /// ratchet kept per frontier cluster (a ping-pong between two farms nothing), until FrontierCap. Both are paid
-        /// times max(the shaping scale, ExploreFloor), so the fade leaves ExploreFloor of them. Circling (Cost, fixed price,
-        /// per second, in the score) is charged while the last CircleWindowMs of decisions hold CircleYards of path or
-        /// CircleTurnDeg of turning with less than CircleNetYards of net displacement; not on a decision that charged
-        /// Stuck. The trap drill: in a training episode (never an evaluation's) with probability TrapShare the seat
+        /// times max(the shaping scale, ExploreFloor), so the fade leaves ExploreFloor of them. Circling (Cost, fixed
+        /// price, per second, in the score) is charged while the last CircleWindowMs of decisions hold CircleYards of
+        /// path or CircleTurnDeg of turning with less than CircleNetYards of net displacement; not on a decision that
+        /// charged Stuck. The trap drill: in a training episode (never an evaluation's) with probability TrapShare the seat
         /// starts 0.5-1.5 yd from the jamb of a random door of the room table, facing it; Escape (Aid) is paid once
         /// when it is TrapEscapeYards from there within TrapEscapeMs.
         struct SeekTuning
