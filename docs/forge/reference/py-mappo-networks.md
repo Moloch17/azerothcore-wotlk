@@ -121,12 +121,14 @@ manifest; a manifest whose crop, codes, channels or field widths this learner do
 `cell_rise`, `cell_min_floor` and `cell_from` (`goals.columns.from`, for the hindsight) as host numbers. Module functions:
 `cell_valid(crops, grid, pool, rise, min_floor)` -- the contract's one definition of a choosable block (no Wall or Hazard
 cell; at least 2 floor-like cells (Floor or Door); every floor-like cell with a known height within 16 units = 4 yd of the
-feet; Unknown is never floor), a pure function of the crop bytes -- `cell_features` (21 per block: shares of
+feet; Unknown is never floor), a pure function of the crop bytes -- `cell_features` (22 per block: shares of
 Floor/Door/Wall/Hazard/Unknown, visited, frontier, any entity, newest look age, never seen, mean height; the 3 x 3 average
 of the floor, wall, unknown and frontier shares; forward, right and distance over 48; and, appended in exploration v3 so the first 18 keep
 their index, the block's `searched` share (`MAP_SEARCHED` byte sum over 4 x pool x pool: the share of its 1-yd cells looked at this
 episode) and that share averaged over the 3 x 3 and the 7 x 7 blocks round it, `avg_pool2d` with `count_include_pad=False`: fixed
-shapes, graph-safe) and `cell_geometry`. A slot's score
+shapes, graph-safe), and, appended in general search so the first 21 keep their index, `frontier_7x7`: the frontier share
+averaged over the 7 x 7 blocks round it (the frontier mass of the 28-yd neighbourhood, the graph-safe stand-in for the size
+of the frontier cluster a block belongs to; true components are data-dependent and not capturable) and `cell_geometry`. A slot's score
 per block is `score(tanh(local(x_j) + query(shifted_s))) + chain([dr, dc, dist] / 24 from the previous drawn cell of this
 choice, the seat's own block for the first)`, `shifted_s` the same vector `slot_logits` builds (`_shifted`). Masked by
 `cell_valid` and, for a slot after the first, by every block within Chebyshev distance 1 of a cell drawn before it in the
@@ -196,7 +198,8 @@ irrelevant for the rollout copies, which never backpropagate.
 
 ## stage.json readers (`:843-1107`)
 
-Constants: `VISION_BLOCK="vision"`, `ENTITIES_BLOCK="entities"`, `SIGHT_BLOCK="sight"`, `MAP_BLOCK="map"`,
+Constants: `VISION_BLOCK="vision"`, `ENTITIES_BLOCK="entities"`, `SIGHT_BLOCK="sight"`, `MAP_BLOCK="map"`, `COVERAGE_BLOCK="coverage"`
+(`COVERAGE_LAYOUT="row_col_channel"`),
 `IMAGE_BYTES_PER_PIXEL=4`, `IMAGE_CHANNELS=5`, `IMAGE_CLASS_CHANNEL=3`, `CLASS_MASK=0x1F`,
 `CLASS_LIMIT=32`, `DEFAULT_PATCH=4`, `MAP_CHANNELS=7` (6 before exploration v3; `MAP_SEARCHED=6`, `MAP_SEARCHED_MAX=4`, `MAP_VALUE_PLANES=6`), `MAP_CODES=5`, `MAP_HEIGHT_ZERO=128`.
 **Searched state (exploration v3, map block revision 2, protocol 30).** The crop has a seventh channel, `searched` (0..4: how many of a crop
@@ -208,10 +211,27 @@ refuses a crop that is not 7 channels / `map_bytes == h x w x 7` and cross-check
 manifest without the new keys is judged on its channel count alone). `_cell_spec_of` checks `goals.cells.channels == MAP_CHANNELS`. A
 stage.json or checkpoint of the six-channel map does not load into this learner (resume refuses on `layout_changes`; a seed carries the
 encoder tensors whose shapes still agree and leaves the rest fresh, see [py-learner-seeding.md](py-learner-seeding.md)).
+**Map block revision 3 (general search sec 3).** Eight coverage scalars appended after `total` (`frontier_sin/cos/dist`, the nearest
+frontier cluster's bearing off the facing and distance over 48; `region_sin/cos/dist`, the largest cluster's; `clusters` over 8;
+`searched_cells`, the 1-yd cells looked at this episode over 6000): `MapEncoder.scalars` is the manifest's count (15), so no learner
+constant changed; the manifest keys `coverage_cell_yards`, `coverage_reach_yards`, `cluster_scale`, `floor_scale`, `cluster_min_cells`,
+`pocket_min_cells` are not read. The `no_coverage` arm zeroes them by `scalar_names` (`evaluation.COVERAGE_SCALARS`, those the manifest has:
+a revision 2 manifest has none and the arm is refused without a coverage block either).
+**The coverage block (general search sec 5, `BlockId::Coverage` 27, revision 1).** `coverage_of(entry, name)` reads stage.json block
+`coverage` -- `{"first": obs[0], "grid" (12), "channels" (3: known, visited, searched tile counters over the manifest's scale 1024),
+"width" (432)}` -- refusing a width that is not grid x grid x channels or a `layout` other than `row_col_channel`; every other manifest key
+(`cell_yards` 32, `heading_up`, `scale`, `channel_names`) is optional. `vision_of` carries it as `"coverage"` (None without the block) and
+refuses a mix of layouts with and without it, or a coverage block without the map (the sim's `Problem()` rule). `CoverageEncoder` (a
+module on `VisionEncoder`, `vision.coverage.*`, as `vision.map.*` is): the 432 columns gathered raw per layout by `first` (the
+`MapEncoder` gather pattern), reshaped `[N, 3, 12, 12]` from the block's `[row][col][channel]` order, `Conv2d(3, 16, 3, padding 1)` SiLU,
+`Conv2d(16, 16, 3, stride 2, padding 1)` SiLU (6 x 6), flatten 576 -> `Linear(576, 64)` SiLU -> `join = _linear(64, 256, sqrt 2)` added to
+the camera's embedding before its SiLU exactly as the map's join is; a layout without the block (`first` -1) contributes 0. The span is
+blinded from the adapters and normalisers (`VisionEncoder.blind`). Seeding: `bootstrap._seed_coverage` (fresh with the join zeroed from a
+checkpoint without it, M1's). `update_bytes_per_row` is unchanged: the grid is observation columns, not camera bytes.
 
 `vision_of(stage, layout_names)` (`:968`) returns per layout `{first, height, width, channels, classes, class_channel,
 scalars, bytes_per_pixel, pixel_classes, patch, class_limit, render_sizes, look, look_names, image_bytes, entities, map,
-camera_bytes, [sight]}` or None; None altogether if no layout has a camera. Revisions older than 6 (no `pixel_classes`; 4
+camera_bytes, coverage, [sight]}` or None; None altogether if no layout has a camera. Revisions older than 6 (no `pixel_classes`; 4
 bytes/pixel with kinds, or 5 with an entity slot) are refused by name (`bytes_per_pixel` must be 4). `vision_image_bytes` returns `camera_bytes` (image + map crop) (`:1068`); `vision_look_heads` the
 `(7,5,5)` tuple. Duplicate knowledge hazard: the byte layout (4 bytes/pixel, class in the low 5 bits of byte 3, the
 objective in bit 5; map channels order) is re-implemented here and in C++ `Vision::DecodePixel` /

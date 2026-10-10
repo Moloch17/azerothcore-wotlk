@@ -27,7 +27,7 @@ The yaml section is `mappo:` (`TrainConfig.mappo`, `config.py:657`); unknown key
 | `gamma`, `gae_lambda`, `reference_decision_ms` | 0.99, 0.95, 100 | `per_decision` (`:265`) compounds both by `decision_ms / reference_decision_ms`; `train.py:680` |
 | `clip`, `value_clip` | 0.2, 0.2 | PPO ratio clip; value clip (in normalised units) |
 | `entropy_coef` | 0.01 | initial `trainer.entropy_coef`, then set each update from the controller (`train.py:1733`, `stage.py:526`) |
-| `look_entropy_coef` | None | `look_entropy_coef()` (`:1175`): None = follows `entropy_coef`; else `entropy_coef_now * look / entropy_coef` |
+| `look_entropy_coef` | None | `look_entropy_coef()` (`:1175`): None = follows `entropy_coef`; else `entropy_coef_now * look / entropy_coef`; `move2_seek.yaml` 0.01 since movement pacing M8 (the camera was frozen under argmax; was 0.004, which M3/M4 restate and C1 keeps) |
 | `entropy_final_fraction` | 1.0 | `stage.py:526` (schedule over `total_env_steps`) |
 | `goal_entropy_scale`, `goal_entropy_final_fraction` | 1.0, 1.0 | `train.py:1736` sets `goal_entropy_factor` each update |
 | `goal_slot_entropy_weight` | 0.1 | assigned onto `GoalHead.slot_entropy_weight` (`:665`) |
