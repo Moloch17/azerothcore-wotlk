@@ -89,6 +89,30 @@ namespace Animus::Curriculum
         Position Place;
         ObjectGuid Friend;                  // the goal names a friend (Protect): who
         uint32 ProtectSafeMs = 0;           // ... and how long it has been kept above half health while attacked
+        /// A cell goal (GOAL_CELL_JOINT; free choice goals): the ticket of the choice that made it, whether its point
+        /// was latched (Place, HasPlace), whether the block had been stood on at the choice, and how it is going:
+        /// the yards to the point at the start, the best so far (Seek.CellProgress's ratchet), the distance at the
+        /// last real gain (Seek.CellPatienceYards) with the clock then, and the clock at the start.
+        uint32 Ticket = 0;
+        bool CellValid = false;
+        bool CellStale = false;
+        float CellStartYards = 0.0f;
+        float CellBestYards = 0.0f;
+        float CellMarkYards = 0.0f;
+        uint32 CellStartMs = 0;
+        uint32 CellMarkMs = 0;
+    };
+
+    /// The plan positions an ACT carries a seat (EnvPool.h GOAL_SLOTS_ON_WIRE): the primary, the secondary and the
+    /// learner's queue. A cell goal's point is latched in its position's entry when the choice first arrives, and
+    /// follows its ticket when the learner promotes it to another position.
+    constexpr uint32 PLAN_POSITIONS = 4;
+    struct CellPlan
+    {
+        uint32 Ticket = 0;                  // 0: no cell goal at this position
+        bool Valid = false;                 // latched: the cell was choosable in the crop it was drawn from
+        bool Stale = false;                 // the seat had stood on its block at the choice
+        Position Where;
     };
 
     /// Why a press was aimless (StageScenario::JudgePress, SettleIntent): each is counted and priced on its own
@@ -322,6 +346,32 @@ namespace Animus::Curriculum
         uint32 RoomGoalSwitches = 0;
         uint32 StepRoomSwitches = 0;
         uint32 PlanDecisions = 0;
+        /// Cell goals (free choice goals): whether the last observation offered them (WorldView::CellGoals), where the
+        /// last crop and the latest choice's were taken (the plan table is decoded against the first, the goal block's
+        /// from-columns read the second), the plan table (one entry per ACT position), and the episode's tally: goals
+        /// started (a hold made), reached, lost, a choice that could not be latched (a learner/sim desync), choices
+        /// that were the held goal again, switches (StepCellSwitches since the last reward), blocks latched and those the
+        /// seat had stood on, the yards chosen at and the seconds held (over the goals that ended or were replaced:
+        /// CellGoalsRun), the plan depth when a block was latched, and promotions that carried a reached goal on.
+        bool CellGoals = false;
+        CropPose Crop;
+        CropPose ChoicePose;
+        std::array<CellPlan, PLAN_POSITIONS> Plan{};
+        uint32 CellGoalsChosen = 0;
+        uint32 CellGoalsReached = 0;
+        uint32 CellGoalsLost = 0;
+        uint32 CellGoalsInvalid = 0;
+        uint32 CellGoalsSame = 0;
+        uint32 CellSwitches = 0;
+        uint32 StepCellSwitches = 0;
+        uint32 CellLatches = 0;
+        uint32 CellLatchesStale = 0;
+        uint32 CellGoalsRun = 0;
+        float CellYardsSum = 0.0f;
+        float CellSecondsSum = 0.0f;
+        uint32 PlanDepthSum = 0;
+        uint32 PlanDepthSteps = 0;
+        uint32 PlanAdvances = 0;
         /// The goal block's event (GoalBlock::OBS_EVENT): what was true at the last observation, so only a change
         /// raises it -- health under the escape line, the enemies in the fight, the owner under attack.
         bool EventLow = false;
@@ -554,6 +604,25 @@ namespace Animus::Curriculum
             RoomGoalSwitches = 0;
             StepRoomSwitches = 0;
             PlanDecisions = 0;
+            CellGoals = false;
+            Crop = CropPose();
+            ChoicePose = CropPose();
+            Plan = {};
+            CellGoalsChosen = 0;
+            CellGoalsReached = 0;
+            CellGoalsLost = 0;
+            CellGoalsInvalid = 0;
+            CellGoalsSame = 0;
+            CellSwitches = 0;
+            StepCellSwitches = 0;
+            CellLatches = 0;
+            CellLatchesStale = 0;
+            CellGoalsRun = 0;
+            CellYardsSum = 0.0f;
+            CellSecondsSum = 0.0f;
+            PlanDepthSum = 0;
+            PlanDepthSteps = 0;
+            PlanAdvances = 0;
             EventLow = false;
             EventEnemies = 0;
             Event = false;

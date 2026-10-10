@@ -456,6 +456,17 @@ namespace Animus::Curriculum
         /// choice pays RoomGoal, a room goal given up for another costs RoomSwitch, both times the aid scale
         /// max(0, 1 - progress / AidUntil). Return (Cost, fixed price) prices going back into a visited room after at
         /// least ReturnAwayMs outside its polygon by ReturnAwayYards.
+        ///
+        /// **Cell goals** (free choice goals, 2026-10-09; GoalSource 1, the default, the temporary A/B switch against
+        /// the room slots of GoalSource 0, deleted with the loser): the goal head names a block (4 yd) of the seat's
+        /// own mental-map crop instead of a room, and a plan is up to four of them in order. The sim latches the
+        /// block's point at the choice. A cell goal is reached within CellReach yards of its point (2D) and CellRise
+        /// yards of its height; a choice within CellSame yards of the goal held and not ended is that goal chosen
+        /// again, free; and a goal whose best distance gains less than CellPatienceYards in CellPatienceMs is lost.
+        /// CellGoal (once per goal reached, only for one chosen at least CellMinYards away, on a block the seat had
+        /// not stood on) and CellProgress (per yard of new best closeness to the point, the same blocks) are Aid,
+        /// times the aid scale; CellSwitch (a cell goal given up for another), CellLost (a cell goal lost) and
+        /// CellStale (a block chosen that the seat had stood on) are Cost at fixed prices, in the score.
         struct SeekTuning
         {
             float Arrive = 3.0f;
@@ -494,6 +505,18 @@ namespace Animus::Curriculum
             uint32 EnterDwellMs = 1000;
             float ReturnAwayYards = 8.0f;
             uint32 ReturnAwayMs = 2000;
+            uint32 GoalSource = 1;
+            float CellReach = 4.0f;
+            float CellRise = 3.0f;
+            float CellSame = 6.0f;
+            float CellMinYards = 8.0f;
+            uint32 CellPatienceMs = 20000;
+            float CellPatienceYards = 2.0f;
+            float CellGoal = 0.05f;
+            float CellProgress = 0.004f;
+            float CellSwitch = 0.02f;
+            float CellLost = 0.03f;
+            float CellStale = 0.01f;
         } Seek;
 
         /// **M3 interact** (Opposition::Interact, InteractEncounter; dungeon-curriculum M3): in an empty Deadmines, the
@@ -934,6 +957,18 @@ namespace Animus::Curriculum
             f("Seek.EnterDwellMs", tuning.Seek.EnterDwellMs);
             f("Seek.ReturnAwayYards", tuning.Seek.ReturnAwayYards);
             f("Seek.ReturnAwayMs", tuning.Seek.ReturnAwayMs);
+            f("Seek.GoalSource", tuning.Seek.GoalSource);
+            f("Seek.CellReach", tuning.Seek.CellReach);
+            f("Seek.CellRise", tuning.Seek.CellRise);
+            f("Seek.CellSame", tuning.Seek.CellSame);
+            f("Seek.CellMinYards", tuning.Seek.CellMinYards);
+            f("Seek.CellPatienceMs", tuning.Seek.CellPatienceMs);
+            f("Seek.CellPatienceYards", tuning.Seek.CellPatienceYards);
+            f("Seek.CellGoal", tuning.Seek.CellGoal);
+            f("Seek.CellProgress", tuning.Seek.CellProgress);
+            f("Seek.CellSwitch", tuning.Seek.CellSwitch);
+            f("Seek.CellLost", tuning.Seek.CellLost);
+            f("Seek.CellStale", tuning.Seek.CellStale);
             f("Interact.Arrive", tuning.Interact.Arrive);
             f("Interact.DoorOpened", tuning.Interact.DoorOpened);
             f("Interact.WrongObject", tuning.Interact.WrongObject);

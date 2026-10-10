@@ -1457,6 +1457,12 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
         // from here and tolerates their absence (a revision 2 stage.json has no pointer features).
         columns["held"] = uint32(GoalBlock::OBS_HELD_FIRST);
         columns["place_features"] = uint32(GoalBlock::OBS_PLACE_FIRST);
+        // Revision 4 (free choice goals): the secondary hold's point, the plan's next step, the plan left (one
+        // column) and the choice frame (present, row, column).
+        columns["held2"] = uint32(GoalBlock::OBS_HELD2_FIRST);
+        columns["next"] = uint32(GoalBlock::OBS_NEXT_FIRST);
+        columns["plan_left"] = uint32(GoalBlock::OBS_PLAN_LEFT);
+        columns["from"] = uint32(GoalBlock::OBS_FROM_PRESENT);
         columns["width"] = uint32(GoalBlock::OBS_COUNT);
         goals["columns"] = std::move(columns);
         boost::json::object slots;
@@ -1466,6 +1472,32 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
         slots["feature_names"] = boost::json::array{ "sin", "cos", "dist", "cover", "age" };
         goals["place_slots"] = std::move(slots);
         goals["slots_on_wire"] = GOAL_SLOTS_ON_WIRE;
+        goals["wire_ints"] = GOAL_WIRE_INTS;
+        // The cell goal (free choice goals): the joint goal and target it travels as, the crop it points into and
+        // the validity rule both sides implement (CellGrid), and which source this run's seek stage uses. Written in
+        // every stage: the sim knows only the constants. The learner tolerates its absence (a revision 3 file).
+        boost::json::object cells;
+        cells["target"] = uint32(GOAL_CELL_TARGET);
+        cells["joint"] = uint32(GOAL_CELL_JOINT);
+        cells["grid"] = CellGrid::GRID;
+        cells["pool"] = CellGrid::POOL;
+        cells["crop"] = Vision::CROP;
+        cells["crop_cell_yards"] = double(Vision::CROP_CELL);
+        cells["channels"] = Vision::CROP_CHANNELS;
+        cells["code_channel"] = uint32(Vision::CROP_CODE);
+        cells["height_channel"] = uint32(Vision::CROP_HEIGHT);
+        cells["floor_code"] = uint32(Vision::MapCode::Floor);
+        cells["door_code"] = uint32(Vision::MapCode::Door);
+        cells["wall_code"] = uint32(Vision::MapCode::Wall);
+        cells["hazard_code"] = uint32(Vision::MapCode::Hazard);
+        cells["height_zero"] = uint32(Vision::CROP_HEIGHT_ZERO);
+        cells["rise_units"] = uint32(CellGrid::RISE_UNITS);
+        cells["min_floor_cells"] = CellGrid::MIN_FLOOR;
+        cells["positions"] = PLAN_POSITIONS;
+        cells["ticket_bits"] = CellGrid::TICKET_BITS;
+        cells["cell_bits"] = CellGrid::CELL_BITS;
+        cells["source"] = _tuning.Seek.GoalSource == 1 ? "cells" : "rooms";
+        goals["cells"] = std::move(cells);
     }
     stageFile["tuning"] = _tuning.Json();
 
@@ -2606,29 +2638,113 @@ bool Animus::Curriculum::StageScenario::DeadForGood(Env const& env, uint32 seatI
     return !canResurrect || env.EpisodeElapsedMs >= tally.DeathMs + _tuning.Resurrection.GraceMs;
 }
 
+bool Animus::Curriculum::StageScenario::LatchCell(Env const& env, uint32 seatIndex, SeatState& seat, uint32 cell,
+    CellPlan& out) const
+{
+    out.Valid = false;
+    Player* bot = env.FindBot(seatIndex);
+    if (!bot || !bot->IsAlive())
+        return true;                    // nothing to latch for a dead seat: not a desync
+    if (!seat.Crop.Valid)
+        return false;
+
+    // The crop the learner chose from, worked out again at the pose it was taken from: the map has not been written
+    // since that observation, so these are its bytes (and the pool's buffer is not relied on to still hold them).
+    thread_local std::vector<uint8> crop(Vision::CROP_BYTES);
+    CropPose const& pose = seat.Crop;
+    seat.Map.Crop(pose.X, pose.Y, pose.Z, pose.Yaw, crop.data());
+    uint32 const row = cell / CellGrid::GRID;
+    uint32 const col = cell % CellGrid::GRID;
+    if (!CellGrid::Choosable(crop.data(), row, col))
+        return false;
+    out.Valid = true;
+    out.Where = CellGrid::WorldPoint(crop.data(), pose, row, col);
+    out.Stale = CellGrid::Stood(crop.data(), row, col);
+    return true;
+}
+
 void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
 {
+    static_assert(PLAN_POSITIONS == GOAL_SLOTS_ON_WIRE, "the plan table has an entry per ACT position");
     EnvState& data = Data(env);
+    CurriculumTuning::SeekTuning const& seek = _tuning.Seek;
     auto const valid = [](int32 goal) { return goal >= 0 && goal < int32(GOAL_JOINT_COUNT) ? goal : NO_GOAL; };
-    for (uint32 seat = 0; seat < _seatCount; ++seat)
+    for (uint32 seatIndex = 0; seatIndex < _seatCount; ++seatIndex)
     {
-        SeatState& state = data.Seats[seat];
-        // Primary then secondary (GOAL_SLOTS_ON_WIRE a seat). The secondary is the seat's own, and none when it
-        // would repeat the primary.
-        int32 const primary = valid(goals[seat * GOAL_SLOTS_ON_WIRE]);
-        int32 secondary = valid(goals[seat * GOAL_SLOTS_ON_WIRE + 1]);
-        if (secondary == primary)
-            secondary = NO_GOAL;
+        SeatState& state = data.Seats[seatIndex];
+        // The four plan positions (GOAL_SLOTS_ON_WIRE a seat): primary, secondary, the learner's queue; then their
+        // cell words (protocol 28). A position has a cell when its goal is the cell goal and its word is one.
+        int32 const* row = goals + std::size_t(seatIndex) * GOAL_WIRE_INTS;
+        std::array<int32, PLAN_POSITIONS> joints;
+        std::array<uint32, PLAN_POSITIONS> tickets{};
+        std::array<uint32, PLAN_POSITIONS> cells{};
+        std::array<bool, PLAN_POSITIONS> hasCell{};
+        for (uint32 position = 0; position < PLAN_POSITIONS; ++position)
+        {
+            joints[position] = valid(row[position]);
+            hasCell[position] = state.CellGoals && joints[position] == GOAL_CELL_JOINT
+                && CellGrid::ParseWord(row[PLAN_POSITIONS + position], tickets[position], cells[position]);
+        }
+        // The secondary is the seat's own, and none when it would repeat the primary -- two cell goals are two
+        // goals, whatever their joint: their tickets tell them apart.
+        if (joints[1] == joints[0] && !hasCell[1])
+            joints[1] = NO_GOAL;
 
-        std::array<int32, GOAL_SLOTS> const next = { primary, secondary };
+        // The plan table: a ticket seen before keeps the point it latched (wherever the learner has moved it to); a
+        // new one is decoded against the crop of the observation it was drawn from, once. Tickets that are gone drop.
+        std::array<CellPlan, PLAN_POSITIONS> const before = state.Plan;
+        std::array<int32, PLAN_POSITIONS> from;
+        std::array<bool, PLAN_POSITIONS> fresh{};
+        from.fill(-1);
+        state.Plan = {};
+        for (uint32 position = 0; position < PLAN_POSITIONS; ++position)
+        {
+            if (!hasCell[position])
+                continue;
+            for (uint32 old = 0; old < PLAN_POSITIONS && from[position] < 0; ++old)
+                if (before[old].Ticket == tickets[position])
+                    from[position] = int32(old);
+            CellPlan& entry = state.Plan[position];
+            if (from[position] >= 0)
+            {
+                entry = before[uint32(from[position])];
+                continue;
+            }
+            fresh[position] = true;
+            entry.Ticket = tickets[position];
+            if (!LatchCell(env, seatIndex, state, cells[position], entry))
+                ++state.CellGoalsInvalid;
+        }
+
+        std::array<bool, PLAN_POSITIONS> retagged{};
+        std::array<int32, GOAL_SLOTS> const next = { joints[0], joints[1] };
         for (uint32 slot = 0; slot < GOAL_SLOTS; ++slot)
         {
             GoalHold& hold = state.Holds[slot];
             int32 const goal = next[slot];
-            // Any change of a goal still in progress -- its kind or its target -- is a plan abandoned, charged
-            // (Goals.Switch); a goal that ended (reached, or no longer possible: the next enemy after this one died)
-            // is replaced free.
-            if (goal != hold.Goal && hold.Goal != NO_GOAL && goal != NO_GOAL)
+            CellPlan& plan = state.Plan[slot];
+            bool const cellGoal = hasCell[slot] && goal == GOAL_CELL_JOINT;
+
+            // The same goal: the one held, for a cell goal the same choice (its ticket, which follows it from the
+            // queue to the primary), or a new one for ground already being closed on -- within Seek.CellSame of the
+            // point of a cell goal held and not ended -- which is that goal chosen again, free, and keeps its point.
+            bool same = goal == hold.Goal;
+            if (cellGoal && hold.Goal == GOAL_CELL_JOINT)
+            {
+                same = hold.Ticket == plan.Ticket;
+                if (!same && !hold.Ended && hold.CellValid && plan.Valid
+                    && hold.Place.GetExactDist2d(&plan.Where) <= seek.CellSame)
+                {
+                    same = retagged[slot] = true;
+                    hold.Ticket = plan.Ticket;
+                    plan.Where = hold.Place;
+                    ++state.CellGoalsSame;
+                }
+            }
+            // Any change of a goal still in progress -- its kind or its target, or a cell goal for another -- is a
+            // plan abandoned, charged (Goals.Switch); a goal that ended (reached, or no longer possible: the next
+            // enemy after this one died) is replaced free.
+            if (!same && hold.Goal != NO_GOAL && goal != NO_GOAL)
             {
                 ++state.GoalChanges;
                 if (!hold.Ended)
@@ -2640,24 +2756,82 @@ void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
                         ++state.StepRoomSwitches;
                         ++state.RoomGoalSwitches;
                     }
+                    // ... and a cell goal given up for another is Seek.CellSwitch, a fixed Cost.
+                    if (GoalBlock::IsCellGoal(hold.Goal))
+                    {
+                        ++state.StepCellSwitches;
+                        ++state.CellSwitches;
+                    }
                 }
+            }
+            // A cell goal replaced before it ended has run its course too (its seconds count in the mean).
+            if (!same && GoalBlock::IsCellGoal(hold.Goal) && !hold.Ended)
+            {
+                state.CellSecondsSum += float(env.EpisodeElapsedMs - std::min(env.EpisodeElapsedMs, hold.CellStartMs))
+                    / 1000.0f;
+                ++state.CellGoalsRun;
             }
 
             // A new goal is a new thing to reach, and is paid for again when it is. Its progress is measured from
             // its first observation, which knows where its place is (PotentialReady). A place goal of the seek
             // stage's (a room slot or the way on) chosen again once it ended is a new goal too: its slot has been
             // bound to another room, or the frontier has moved on, since.
-            bool const again = state.RoomGoals && goal == hold.Goal && hold.Ended && GoalBlock::IsPlaceGoal(goal);
-            if (goal != hold.Goal || again)
+            bool const again = state.RoomGoals && !cellGoal && goal == hold.Goal && hold.Ended
+                && GoalBlock::IsPlaceGoal(goal);
+            if (!same || again)
             {
+                bool const advance = cellGoal && slot == 0 && from[0] > 0 && hold.Ended && hold.WasReached;
                 hold = GoalHold();
                 hold.Goal = goal;
-                hold.Fresh = true;
+                // A cell goal is not held unpaid when it is true on choice (a cell at the seat's feet is reached and
+                // ends at once; the next choice costs the planner a step): Earned is for goals that can be true
+                // without anything done.
+                hold.Fresh = !cellGoal;
                 if (goal != NO_GOAL)
                     ++state.GoalsChosenBy[GoalKindOf(goal)];
                 if (state.RoomGoals && goal != NO_GOAL && GoalBlock::IsRoomGoal(goal))
                     ++state.RoomGoalsChosen;
+                if (cellGoal)
+                {
+                    Player* bot = env.FindBot(seatIndex);
+                    hold.Ticket = plan.Ticket;
+                    hold.CellValid = plan.Valid;
+                    hold.HasPlace = plan.Valid;
+                    hold.Place = plan.Where;
+                    hold.CellStale = plan.Stale;
+                    hold.CellStartYards = plan.Valid && bot ? bot->GetExactDist2d(&plan.Where) : 0.0f;
+                    hold.CellBestYards = hold.CellMarkYards = hold.CellStartYards;
+                    hold.CellStartMs = hold.CellMarkMs = env.EpisodeElapsedMs;
+                    ++state.CellGoalsChosen;
+                    state.CellYardsSum += hold.CellStartYards;
+                    state.PlanAdvances += advance ? 1 : 0;
+                }
             }
+        }
+
+        // The choices of this step: what they cost (a block already stood on, Seek.CellStale; not one that was a free
+        // re-choice of ground already pursued), and how deep the plan then was. The frame of the latest choice is the
+        // crop they were drawn from.
+        bool latched = false;
+        uint32 depth = 0;
+        for (uint32 position = 0; position < PLAN_POSITIONS; ++position)
+        {
+            depth += state.Plan[position].Valid ? 1 : 0;
+            if (!fresh[position] || retagged[position])
+                continue;
+            latched = true;
+            ++state.CellLatches;
+            if (state.Plan[position].Valid && state.Plan[position].Stale)
+            {
+                ++state.CellLatchesStale;
+                state.Rewards.AddFixed(RewardTerm::CellStale, -seek.CellStale);
+            }
+        }
+        if (latched)
+        {
+            state.PlanDepthSum += depth;
+            ++state.PlanDepthSteps;
+            state.ChoicePose = state.Crop;
         }
     }
 }
@@ -2763,7 +2937,8 @@ bool Animus::Curriculum::StageScenario::GoalHeld(Env const& env, uint32 seatInde
                 || bot->HasAuraType(SPELL_AURA_MOD_POWER_REGEN);
         case SeatGoal::TravelTo:
             // On the way, or there and doing it (a cast).
-            return (seat.Holds[0].HasPlace && bot->GetExactDist2d(&seat.Holds[0].Place) <= GoalBlock::PLACE_REACH)
+            return (seat.Holds[0].HasPlace && bot->GetExactDist2d(&seat.Holds[0].Place)
+                    <= (GoalBlock::IsCellGoal(seat.Holds[0].Goal) ? _tuning.Seek.CellReach : GoalBlock::PLACE_REACH))
                 || !bot->movespline->Finalized() || bot->IsNonMeleeSpellCast(false);
         case SeatGoal::Resurrect:
             return seat.StepRevivedAlly || bot->IsNonMeleeSpellCast(false);
@@ -3590,9 +3765,19 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
         view.Map = &seat.Map;
         view.MapRow = map;
         view.MapKept = seat.MapKept;
+        view.Crop = &seat.Crop;
     }
     view.Option = &seat.Option;
     seat.RoomGoals = view.World.RoomGoals;
+    seat.CellGoals = view.World.CellGoals;
+    view.ChoicePose = seat.ChoicePose;
+    // The point each hold latched, for GoalBlock::Status (a hold that ended is not asked).
+    for (uint32 slot = 0; slot < GOAL_SLOTS; ++slot)
+    {
+        GoalHold const& held = seat.Holds[slot];
+        view.HeldCell[slot] = CellPoint{ seat.CellGoals && GoalBlock::IsCellGoal(held.Goal) && held.CellValid,
+            held.Place };
+    }
 
     // Each goal held, read off the world as it now is: reached (paid now, into this decision's reward) or no longer
     // possible -- either way it has ended. A primary that ended makes the learner promote its queue or choose again
@@ -3605,7 +3790,7 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
             continue;
         bool reached = false;
         bool possible = false;
-        GoalBlock::Status(view, hold.Goal, reached, possible);
+        GoalBlock::Status(view, hold.Goal, reached, possible, &view.HeldCell[slot]);
         // True already when chosen: nothing was done to reach it, so it is held unpaid (ending on its clock) until
         // it stops being true. Without this a goal that is true on choice -- Fight about no one where there is
         // nothing to fight -- was paid at every choice: the first fast pass of stage1_move earned ~14 an episode.
@@ -3620,6 +3805,20 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
                 hold.ProtectSafeMs += StepMs(env);
                 reached = hold.ProtectSafeMs >= _tuning.Goals.ProtectHoldMs;
             }
+        // A cell goal that the seat makes no headway on is lost: its best distance to the point has to gain
+        // Seek.CellPatienceYards within Seek.CellPatienceMs (a cell behind a wall, seen through a gap).
+        bool const cellHold = seat.CellGoals && GoalBlock::IsCellGoal(hold.Goal);
+        if (cellHold && possible && !reached && bot)
+        {
+            float const range = bot->GetExactDist2d(&hold.Place);
+            if (range <= hold.CellMarkYards - _tuning.Seek.CellPatienceYards)
+            {
+                hold.CellMarkYards = range;
+                hold.CellMarkMs = env.EpisodeElapsedMs;
+            }
+            else if (env.EpisodeElapsedMs >= hold.CellMarkMs + _tuning.Seek.CellPatienceMs)
+                possible = false;
+        }
         if (reached && !hold.Rewarded)
         {
             // Paid by what it achieved (GoalValue; a secondary at Goals.SecondaryShare), into the reward of the
@@ -3629,6 +3828,19 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
             hold.Rewarded = true;
             ++seat.GoalsReached;
             ++seat.GoalsReachedBy[GoalKindOf(hold.Goal)];
+            // A cell goal reached: its aid, once, for one chosen far enough away on a block not yet walked, into the
+            // same row.
+            if (cellHold)
+            {
+                ++seat.CellGoalsReached;
+                if (hold.CellStartYards >= _tuning.Seek.CellMinYards && !hold.CellStale)
+                {
+                    float const aid = seat.Rewards.AddTaken(RewardTerm::CellGoal,
+                        _tuning.Seek.CellGoal * (slot ? _tuning.Goals.SecondaryShare : 1.0f));
+                    if (float* reward = Data(env).StepReward)
+                        reward[seatIndex] += aid;
+                }
+            }
             // A room goal's room checked after the choice: the room goal's aid, once, into the same row.
             if (seat.RoomGoals && GoalBlock::IsRoomGoal(hold.Goal))
             {
@@ -3649,6 +3861,20 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
             ++seat.GoalsLost;
             if (seat.RoomGoals && GoalBlock::IsRoomGoal(hold.Goal) && bot && bot->IsAlive())
                 ++seat.RoomGoalsLost;
+            // A cell goal lost (no headway, an invalid latch) while the seat lives: a fixed Cost, into the same row.
+            if (cellHold && bot && bot->IsAlive())
+            {
+                ++seat.CellGoalsLost;
+                float const cost = seat.Rewards.AddTaken(RewardTerm::CellLost, -_tuning.Seek.CellLost);
+                if (float* reward = Data(env).StepReward)
+                    reward[seatIndex] += cost;
+            }
+        }
+        if (cellHold && (reached || !possible))
+        {
+            seat.CellSecondsSum += float(env.EpisodeElapsedMs - std::min(env.EpisodeElapsedMs, hold.CellStartMs))
+                / 1000.0f;
+            ++seat.CellGoalsRun;
         }
         hold.Ended = reached || !possible;
         hold.WasReached = reached;
@@ -3659,7 +3885,9 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
     view.GoalReached = seat.Holds[0].Ended && seat.Holds[0].WasReached;
     for (GoalHold& hold : seat.Holds)
     {
-        hold.HasPlace = hold.Goal != NO_GOAL && GoalBlock::PlaceOf(view, GoalTargetOf(hold.Goal), hold.Place);
+        // A cell goal's place is the point it latched at the choice, never read again off the world.
+        if (!GoalBlock::IsCellGoal(hold.Goal))
+            hold.HasPlace = hold.Goal != NO_GOAL && GoalBlock::PlaceOf(view, GoalTargetOf(hold.Goal), hold.Place);
         hold.Friend.Clear();
         if (uint32 const goalTarget = GoalTargetOf(hold.Goal); hold.Goal != NO_GOAL
             && goalTarget >= GOAL_TARGET_FRIEND_FIRST && goalTarget < GOAL_TARGET_PLACE_FIRST)
@@ -3682,6 +3910,24 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
     // A secondary that ended is gone: the learner drops it on seeing OBS_SECONDARY_ENDED, and so does the sim.
     if (seat.Holds[1].Ended)
         seat.Holds[1] = GoalHold();
+
+    // The plan the goal block shows (OBS_HELD*, OBS_NEXT_*, OBS_PLAN_LEFT): the cell goals held and not ended, the
+    // queue's first, and how many of the three that can still be walked are left.
+    if (seat.CellGoals)
+    {
+        uint32 left = 0;
+        for (uint32 slot = 0; slot < GOAL_SLOTS; ++slot)
+        {
+            GoalHold const& held = seat.Holds[slot];
+            bool const live = GoalBlock::IsCellGoal(held.Goal) && held.CellValid && !held.Ended;
+            view.HeldCell[slot] = CellPoint{ live, held.Place };
+            left += live && slot == 0 ? 1 : 0;
+        }
+        view.NextCell = CellPoint{ seat.Plan[2].Valid, seat.Plan[2].Where };
+        left += seat.Plan[2].Valid ? 1 : 0;
+        left += seat.Plan[3].Valid ? 1 : 0;
+        view.PlanLeft = float(left) / 3.0f;
+    }
 
     // The event (choose again now) and what the seat achieved this decision (the hindsight columns).
     ObserveGoalSignals(env, seatIndex, seat, bot);
@@ -4977,7 +5223,7 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
         ++seat.GoalDecisions[kind];
         if (GoalTargetOf(seat.Holds[0].Goal) != GOAL_TARGET_NONE)
             ++seat.GoalTargetedDecisions;
-        if (seat.RoomGoals && GoalBlock::IsPlaceGoal(seat.Holds[0].Goal))
+        if (seat.RoomGoals && GoalBlock::IsPlanGoal(seat.Holds[0].Goal))
             ++seat.PlanDecisions;
         if (GoalHeld(env, seatIndex, bot, target))
             ++seat.GoalMatches[kind];
@@ -5011,6 +5257,20 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
     if (seat.StepRoomSwitches)
         seat.Rewards.Add(RewardTerm::RoomSwitch, -_tuning.Seek.RoomSwitch * float(seat.StepRoomSwitches));
     seat.StepRoomSwitches = 0;
+    if (seat.StepCellSwitches)
+        seat.Rewards.AddFixed(RewardTerm::CellSwitch, -_tuning.Seek.CellSwitch * float(seat.StepCellSwitches));
+    seat.StepCellSwitches = 0;
+    // A cell goal closed on is paid for the yards of new best closeness to its point (an aid, Seek.CellProgress): a
+    // ratchet, so opening the gap is never charged and closing it again is not paid twice, and only for a block the
+    // seat had not stood on, so two far cells cannot be hopped between for it.
+    if (GoalHold& held = seat.Holds[0]; seat.CellGoals && GoalBlock::IsCellGoal(held.Goal) && held.CellValid
+        && !held.Ended && !held.CellStale && bot && bot->IsAlive())
+    {
+        float const range = bot->GetExactDist2d(&held.Place);
+        seat.Rewards.Add(RewardTerm::CellProgress,
+            _tuning.Seek.CellProgress * std::max(0.0f, held.CellBestYards - range));
+        held.CellBestYards = std::min(held.CellBestYards, range);
+    }
 
     seat.StepPreparationMs = 0;
 

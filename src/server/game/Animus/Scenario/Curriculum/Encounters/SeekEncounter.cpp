@@ -82,7 +82,8 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::SeekEncounter::R
 {
     return { RewardTerm::Arrive, RewardTerm::StepCost, RewardTerm::Death, RewardTerm::Stuck, RewardTerm::Wall,
         RewardTerm::Sighting, RewardTerm::NewGround, RewardTerm::RoomSeen, RewardTerm::RoomGoal, RewardTerm::RoomSwitch,
-        RewardTerm::Return };
+        RewardTerm::Return, RewardTerm::CellGoal, RewardTerm::CellProgress, RewardTerm::CellSwitch,
+        RewardTerm::CellLost, RewardTerm::CellStale };
 }
 
 std::vector<std::string> Animus::Curriculum::SeekEncounter::RoomNames(ArenaDefinition const& arena)
@@ -232,15 +233,81 @@ void Animus::Curriculum::SeekEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
     {
         return float(seatOf(env, seat).RoomGoalsLost);
     });
+    // Reached over chosen, of whichever goals the episode offers (rooms or cells).
     table.Add("goal_follow_rate", [seatOf](Env const& env, uint32 seat)
     {
         SeatState const& state = seatOf(env, seat);
-        return state.RoomGoalsChosen ? float(state.RoomGoalsReached) / float(state.RoomGoalsChosen) : 0.0f;
+        uint32 const chosen = state.RoomGoalsChosen + state.CellGoalsChosen;
+        return chosen ? float(state.RoomGoalsReached + state.CellGoalsReached) / float(chosen) : 0.0f;
     });
     table.Add("goal_switches_room", [seatOf](Env const& env, uint32 seat)
     {
         return float(seatOf(env, seat).RoomGoalSwitches);
     });
+    // **Cell goals** (free choice goals): the goals started (a hold made), reached and lost, the choices the sim could
+    // not decode (a learner/sim desync: must stay 0) and the ones that were the goal held, chosen again (free), the
+    // cell goals given up for another, the seconds a cell goal ran and the yards it was chosen at (means over the
+    // goals), the share of blocks chosen that the seat had stood on, the plan's mean depth when a block was chosen,
+    // the promotions that carried a reached goal on, and the cells of ground walked (the NewGround cells: exploration,
+    // comparable across Seek.GoalSource).
+    table.Add("goals_cell_chosen", [seatOf](Env const& env, uint32 seat)
+    {
+        return float(seatOf(env, seat).CellGoalsChosen);
+    });
+    table.Add("goals_cell_reached", [seatOf](Env const& env, uint32 seat)
+    {
+        return float(seatOf(env, seat).CellGoalsReached);
+    });
+    table.Add("goals_cell_lost", [seatOf](Env const& env, uint32 seat)
+    {
+        return float(seatOf(env, seat).CellGoalsLost);
+    });
+    table.Add("goals_cell_invalid", [seatOf](Env const& env, uint32 seat)
+    {
+        return float(seatOf(env, seat).CellGoalsInvalid);
+    });
+    table.Add("goals_cell_same", [seatOf](Env const& env, uint32 seat)
+    {
+        return float(seatOf(env, seat).CellGoalsSame);
+    });
+    table.Add("goal_switches_cell", [seatOf](Env const& env, uint32 seat)
+    {
+        return float(seatOf(env, seat).CellSwitches);
+    });
+    table.Add("cell_goal_seconds", [seatOf](Env const& env, uint32 seat)
+    {
+        // The goals that ended or were replaced, and the cell goals still running when the episode did.
+        SeatState const& state = seatOf(env, seat);
+        float seconds = state.CellSecondsSum;
+        uint32 goals = state.CellGoalsRun;
+        for (GoalHold const& hold : state.Holds)
+            if (GoalBlock::IsCellGoal(hold.Goal) && !hold.Ended)
+            {
+                seconds += float(env.EpisodeElapsedMs - std::min(env.EpisodeElapsedMs, hold.CellStartMs)) / 1000.0f;
+                ++goals;
+            }
+        return goals ? seconds / float(goals) : 0.0f;
+    });
+    table.Add("cell_goal_yards", [seatOf](Env const& env, uint32 seat)
+    {
+        SeatState const& state = seatOf(env, seat);
+        return state.CellGoalsChosen ? state.CellYardsSum / float(state.CellGoalsChosen) : 0.0f;
+    });
+    table.Add("cell_stale_share", [seatOf](Env const& env, uint32 seat)
+    {
+        SeatState const& state = seatOf(env, seat);
+        return state.CellLatches ? float(state.CellLatchesStale) / float(state.CellLatches) : 0.0f;
+    });
+    table.Add("plan_depth", [seatOf](Env const& env, uint32 seat)
+    {
+        SeatState const& state = seatOf(env, seat);
+        return state.PlanDepthSteps ? float(state.PlanDepthSum) / float(state.PlanDepthSteps) : 0.0f;
+    });
+    table.Add("plan_advances", [seatOf](Env const& env, uint32 seat)
+    {
+        return float(seatOf(env, seat).PlanAdvances);
+    });
+    table.Add("ground_cells", [this](Env const& env, uint32) { return float(_envs[env.Index].Cells.size()); });
     table.Add("rooms_checked", [this](Env const& env, uint32) { return float(_envs[env.Index].RoomsChecked); });
     table.Add("rooms_checked_per_min", [this](Env const& env, uint32)
     {
@@ -520,7 +587,13 @@ void Animus::Curriculum::SeekEncounter::View(Env const& env, uint32 seatIndex, S
     world.HasAssignment = false;
     world.HasSeenPlaces = _scenario.Tuning().Seek.Goals != 0;
     world.RoomGoals = seek.Placed && seek.RoomGoals && view.Bot && view.Bot->IsAlive();
-    if (!world.RoomGoals || seek.Track.size() != arena.Rooms.size())
+    // Cell goals (Seek.GoalSource 1): the goal is a block of the seat's own crop, so there are no room slots and no
+    // way on to fill; RoomGoals stays true beside it (the gates that exempt a place goal from the straight-line gap).
+    CurriculumTuning::SeekTuning const& tuning = _scenario.Tuning().Seek;
+    world.CellGoals = world.RoomGoals && tuning.GoalSource == 1;
+    world.CellReach = tuning.CellReach;
+    world.CellRise = tuning.CellRise;
+    if (!world.RoomGoals || world.CellGoals || seek.Track.size() != arena.Rooms.size())
         return;
 
     // The rooms: the mean of the floor the seat's rays hit, never the room table's centre or opening.
@@ -579,8 +652,11 @@ void Animus::Curriculum::SeekEncounter::View(Env const& env, uint32 seatIndex, S
 int32 Animus::Curriculum::SeekEncounter::AchievedGoal(Env const& env, uint32 /*seat*/) const
 {
     // The room that was checked at this decision, whatever the seat pursued: the goal it would have been (hindsight).
+    // Not in cell mode: a room slot's id would be a lie there, and the planner's hindsight reads the goal block's
+    // choice-frame columns instead.
     EnvSeek const& seek = _envs[env.Index];
-    return seek.RoomGoals && seek.AchievedSlot >= 0 ? MakeGoal(SeatGoal::TravelTo, GOAL_TARGET_PLACE_FIRST
+    bool const rooms = seek.RoomGoals && _scenario.Tuning().Seek.GoalSource == 0;
+    return rooms && seek.AchievedSlot >= 0 ? MakeGoal(SeatGoal::TravelTo, GOAL_TARGET_PLACE_FIRST
         + uint32(seek.AchievedSlot)) : NO_GOAL;
 }
 
@@ -801,7 +877,7 @@ void Animus::Curriculum::SeekEncounter::Reward(Env& env, uint32 seatIndex, Playe
     TrackRooms(env, seek, arena, bot, room, counts, ledger);
     if (!seek.FirstGoal)
         for (GoalHold const& hold : seat.Holds)
-            if (GoalBlock::IsPlaceGoal(hold.Goal))
+            if (GoalBlock::IsPlanGoal(hold.Goal))
             {
                 seek.FirstGoal = true;
                 seek.FirstGoalMs = env.EpisodeElapsedMs;
