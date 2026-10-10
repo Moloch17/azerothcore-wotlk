@@ -6504,6 +6504,10 @@ AnimusForge.Curriculum.PartyFollow.CastShare = 0
 #        when a room goal is given up for another) are Aid: paid times max(0, 1 - progress / AidUntil), progress being
 #        the share of the stage's step budget, and not in the score. Return (Cost, fixed price, in the score) is
 #        charged for entering a room visited before after ReturnAwayMs outside its polygon by ReturnAwayYards or more.
+#        Search goals (search-kind, 2026-10-10): SearchGoals 1 (the default) offers the room and cell goals as the goal
+#        kind search (looking for an object in or at a place), where the goal head told it apart from fight (an enemy)
+#        and travel_to (a place for its own sake); 0 offers them as travel_to, as before. Reached and lost by the same
+#        rules; nothing else changes. Only with Goals 1.
 #        Cell goals (free choice goals, 2026-10-09): GoalSource 1 (the default) makes the goal a block (4 yd) of the
 #        seat's own mental-map crop, chosen by the learner's pointer head, instead of a room; a plan is up to four of
 #        them in order, and the sim latches each block's point at the choice. GoalSource 0 keeps the room slots (a
@@ -6542,6 +6546,7 @@ AnimusForge.Curriculum.Seek.DoorwayDeeper = 1.5
 AnimusForge.Curriculum.Seek.DoorwaySpread = 1.0
 AnimusForge.Curriculum.Seek.Goals = 1
 AnimusForge.Curriculum.Seek.GoalsFromRung = 2
+AnimusForge.Curriculum.Seek.SearchGoals = 1
 AnimusForge.Curriculum.Seek.RoomGoal = 0.05
 AnimusForge.Curriculum.Seek.RoomSwitch = 0.03
 AnimusForge.Curriculum.Seek.Return = 0.05

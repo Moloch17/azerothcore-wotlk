@@ -1481,7 +1481,9 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
         // every stage: the sim knows only the constants. The learner tolerates its absence (a revision 3 file).
         boost::json::object cells;
         cells["target"] = uint32(GOAL_CELL_TARGET);
-        cells["joint"] = uint32(GOAL_CELL_JOINT);
+        // The place kind the seek stage offers its goals as (Seek.SearchGoals): search, else travel_to.
+        cells["joint"] = uint32(MakeGoal(_tuning.Seek.SearchGoals != 0 ? SeatGoal::Search : SeatGoal::TravelTo,
+            GOAL_CELL_TARGET));
         cells["grid"] = CellGrid::GRID;
         cells["pool"] = CellGrid::POOL;
         cells["crop"] = Vision::CROP;
@@ -2685,7 +2687,7 @@ void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
         for (uint32 position = 0; position < PLAN_POSITIONS; ++position)
         {
             joints[position] = valid(row[position]);
-            hasCell[position] = state.CellGoals && joints[position] == GOAL_CELL_JOINT
+            hasCell[position] = state.CellGoals && GoalBlock::IsCellGoal(joints[position])
                 && CellGrid::ParseWord(row[PLAN_POSITIONS + position], tickets[position], cells[position]);
         }
         // The secondary is the seat's own, and none when it would repeat the primary -- two cell goals are two
@@ -2729,13 +2731,13 @@ void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
             GoalHold& hold = state.Holds[slot];
             int32 const goal = next[slot];
             CellPlan& plan = state.Plan[slot];
-            bool const cellGoal = hasCell[slot] && goal == GOAL_CELL_JOINT;
+            bool const cellGoal = hasCell[slot] && GoalBlock::IsCellGoal(goal);
 
             // The same goal: the one held, for a cell goal the same choice (its ticket, which follows it from the
             // queue to the primary), or a new one for ground already being closed on -- within Seek.CellSame of the
             // point of a cell goal held and not ended -- which is that goal chosen again, free, and keeps its point.
             bool same = goal == hold.Goal;
-            if (cellGoal && hold.Goal == GOAL_CELL_JOINT)
+            if (cellGoal && GoalBlock::IsCellGoal(hold.Goal))
             {
                 same = hold.Ticket == plan.Ticket;
                 if (!same && !hold.Ended && hold.CellValid && plan.Valid
@@ -2942,6 +2944,7 @@ bool Animus::Curriculum::StageScenario::GoalHeld(Env const& env, uint32 seatInde
             return step.SelfHealing > 0 || bot->HasAuraType(SPELL_AURA_MOD_REGEN)
                 || bot->HasAuraType(SPELL_AURA_MOD_POWER_REGEN);
         case SeatGoal::TravelTo:
+        case SeatGoal::Search:
             // On the way, or there and doing it (a cast).
             return (seat.Holds[0].HasPlace && bot->GetExactDist2d(&seat.Holds[0].Place)
                     <= (GoalBlock::IsCellGoal(seat.Holds[0].Goal) ? _tuning.Seek.CellReach : GoalBlock::PLACE_REACH))
@@ -4029,7 +4032,7 @@ float Animus::Curriculum::StageScenario::GoalGap(SeatState const& seat, GoalHold
     // A goal about a place: the yards still to go to it.
     // ... except a room goal's: the straight line to a room is not the walk (rooms are behind walls), so a gap that
     // opens on the way would read as walking away.
-    if (goal == SeatGoal::TravelTo && hold.HasPlace)
+    if (GoalBlock::IsPlaceKind(int32(goal)) && hold.HasPlace)
         return seat.RoomGoals ? -1.0f : std::max(0.0f, bot->GetExactDist2d(&hold.Place) - GoalBlock::PLACE_REACH);
     if ((goal != SeatGoal::Fight && goal != SeatGoal::Position) || !target || !target->IsAlive())
         return -1.0f;
@@ -4109,6 +4112,7 @@ float Animus::Curriculum::StageScenario::GoalPotential(Env const& env, SeatState
             return gap > 0.0f ? far(gap) : 0.0f;
         }
         case SeatGoal::TravelTo:
+        case SeatGoal::Search:
             return hold.HasPlace && !seat.RoomGoals ? far(bot->GetExactDist(&hold.Place)) : 0.0f;
         case SeatGoal::Resurrect:
         {
@@ -4129,7 +4133,8 @@ float Animus::Curriculum::StageScenario::GoalValue(GoalHold const& hold, Player*
         case SeatGoal::Fight:    return tuning.FightValue;
         case SeatGoal::Control:  return tuning.ControlValue;
         case SeatGoal::Protect:  return tuning.ProtectValue;
-        case SeatGoal::TravelTo: return tuning.TravelValue;
+        case SeatGoal::TravelTo:
+        case SeatGoal::Search:   return tuning.TravelValue;
         case SeatGoal::Recover:
         case SeatGoal::Rest:
         {
@@ -4487,6 +4492,7 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
                     case SeatGoal::Recover:
                     case SeatGoal::Rest:
                     case SeatGoal::TravelTo:
+                    case SeatGoal::Search:
                     case SeatGoal::Resurrect:
                         // Starting a fight while resting or travelling: unless something started it first
                         // (the mask's escape already let it through), it served nothing the seat said it wanted.
@@ -4527,6 +4533,7 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
                         break;
                     case SeatGoal::Position:
                     case SeatGoal::TravelTo:
+                    case SeatGoal::Search:
                     case SeatGoal::Count:
                         break;
                 }

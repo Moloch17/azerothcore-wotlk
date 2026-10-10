@@ -137,8 +137,8 @@ Written by `AddCoreEpisodeInfo` (StageScenario.cpp:710-1240) unless noted. `seat
 |---|---|
 | goals_reached, goals_lost, goal_changes | Goals reached / lost / changed. All zero without a goal head. |
 | goal_targeted_share | Share of goal decisions with a target. |
-| goal_<kind>_share | Share of decisions spent on each of the 9 goal kinds: fight, control, recover, protect, position, prepare, travel_to, rest, resurrect (loot, gather and interact left the goal space with goal block revision 1, 2026-10-08, and their always-zero `goal_<kind>_share` and `goal_success_<kind>` columns with them). |
-| goal_success_<kind> | Of goals chosen of that kind, the share reached. |
+| goal_<kind>_share | Share of decisions spent on each of the 10 goal kinds (`search` since goal block revision 5, 2026-10-10: looking for an object in or at a place, M2's room and cell goals): fight, control, recover, protect, position, prepare, travel_to, rest, resurrect, search (loot, gather and interact left the goal space with goal block revision 1, 2026-10-08, and their always-zero `goal_<kind>_share` and `goal_success_<kind>` columns with them). |
+| goal_success_<kind> | Of goals chosen of that kind, the share reached (`goal_success_search` since 2026-10-10). |
 | goal_match_share | Share of decisions whose action matched the goal. |
 (Extractor artefacts `goal_success_unknown` and `goal_unknown_share` are not columns.)
 

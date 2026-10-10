@@ -80,10 +80,14 @@ namespace Animus::Curriculum
             float Age = 0.0f;
         };
         std::array<JournalPlace, JOURNAL_PLACES> Places{};
-        /// The episode offers room goals: places are the rooms and the way on, travel_to is the only kind offered
-        /// once one exists, and a room goal is reached when its room is checked rather than within a distance.
+        /// The episode offers room goals: places are the rooms and the way on, one place kind (SearchGoals) is the only
+        /// kind offered once one exists, and a room goal is reached when its room is checked rather than within a
+        /// distance.
         bool RoomGoals = false;
-        /// The episode offers cell goals (free choice goals, Seek.GoalSource 1): travel_to / place_7 is the one kind
+        /// The place kind of the room and cell goals is Search (looking for an object), not TravelTo (Seek.SearchGoals);
+        /// meaningful with RoomGoals. Every other episode offers neither, and its goal block carries the kind unused.
+        bool SearchGoals = false;
+        /// The episode offers cell goals (free choice goals, Seek.GoalSource 1): search / place_7 is the one kind
         /// offered, about a block of the seat's own mental-map crop (CellGrid), not a room. RoomGoals is true beside
         /// it (the gates that exempt place goals from a straight-line gap hold), but Places stays empty.
         bool CellGoals = false;

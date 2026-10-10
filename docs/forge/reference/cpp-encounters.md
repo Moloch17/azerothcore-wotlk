@@ -338,7 +338,7 @@ once with and once without the compass, and rounds 2k and 2k+1 play the same pai
 | `wall` | Cost (noise price) | `AddFixed(-WallCharge(...))` (`:374`) | `Controls.Wall` (0.02), `Controls.WallSlide` (0.5) |
 | `progress` | Shaping | `Markers.Progress * (lastDistance - distance) / max(Straight, Radius)`, from the second look (`:383-387`) | `Markers.Progress` (1.0) |
 | `facing` | Shaping | `Markers.Facing * 0.5 * (cos(bearing) - lastCos)`, bearing = the object's angle off `seat.Facing` (`:388-392`) | `Markers.Facing` (0.25) |
-| `room_goal` | Aid | `+Seek.RoomGoal` x aid scale once per goal, paid by `StageScenario::ObserveSeat` into the row of the decision that sees a held room goal (place targets 14-19, not the way on) reached (`Earned`: its room checked after the choice); a secondary at `Goals.SecondaryShare`. Not in the score. | `Seek.RoomGoal` (0.05), `Seek.AidUntil` (0.4) |
+| `room_goal` | Aid | `+Seek.RoomGoal` x aid scale once per goal, paid by `StageScenario::ObserveSeat` into the row of the decision that sees a held room goal (a `search` goal, or `travel_to` at `Seek.SearchGoals` 0, about place targets 14-19, not the way on) reached (`Earned`: its room checked after the choice); a secondary at `Goals.SecondaryShare`. Not in the score. | `Seek.RoomGoal` (0.05), `Seek.AidUntil` (0.4) |
 | `room_switch` | Aid | `-Seek.RoomSwitch` x aid scale per unended place goal (a room or the way on) replaced by another goal (`ApplyGoals`; the same change also costs `Goals.Switch`, Shaping). | `Seek.RoomSwitch` (0.03) |
 | `return` | Cost | `-Seek.Return` per return (above), at its fixed price; in the score. | `Seek.Return` (0.05), `Seek.ReturnAwayYards` (8), `Seek.ReturnAwayMs` (2000) |
 | `cell_goal` | Aid | `+Seek.CellGoal` x aid scale once per cell goal reached (`GoalSource` 1), only if it was chosen at least `Seek.CellMinYards` from the seat and its block had not been stood on at the choice; `AddTaken` in `ObserveSeat` into the decision that sees it reached; a secondary at `Goals.SecondaryShare`. Not in the score. | `Seek.CellGoal` (0.05), `Seek.CellMinYards` (8) |
@@ -499,8 +499,15 @@ static std::vector<std::string> ObjectNames(ArenaDefinition const&);  // seek_ob
    (never the room table's centre or opening), `Done` the room's `Checked`, `Coverage` hit cells / floor cells, `Age`
    seconds since the first glimpse / 120. Place 6 is the way on: the nearest frontier of the seat's own mental map
    (`SeenPlaces::Frontier`, radius 40, step 2, refreshed every 2 s as `InstanceEncounter::SeenWorld`), `Coverage` 1.
-   **AchievedGoal**: the slot of a room checked at this decision, as `travel_to place_k`, for the goal block's hindsight
-   columns (`StageScenario::ObserveGoalSignals`, taken when nothing else was achieved); `NO_GOAL` at `GoalSource` 1.
+   **AchievedGoal**: the slot of a room checked at this decision, as `search place_k` (`travel_to place_k` at
+   `Seek.SearchGoals` 0), for the goal block's hindsight columns (`StageScenario::ObserveGoalSignals`, taken when
+   nothing else was achieved); `NO_GOAL` at `GoalSource` 1.
+   **Search goals** (search-kind, 2026-10-10; `Seek.SearchGoals` 1, the default): `WorldView::SearchGoals = RoomGoals &&
+   Seek.SearchGoals`, set in `View` beside `RoomGoals`. The goal block then offers the room and cell goals as the kind
+   `search` (looking for an object in or at a place), where it offered `travel_to` before (`GoalBlock::Available`;
+   `Fight`/none stays only as the placeholder while no place exists). Reached, lost, counted and paid exactly as the
+   `travel_to` goals were (`GoalBlock::IsPlaceKind`): no reward term or price changed. At 0 the old `travel_to` is
+   offered. Decision 0024.
    **Cell goals** (free choice goals, 2026-10-09; `Seek.GoalSource` 1, the default): `WorldView::CellGoals = RoomGoals &&
    GoalSource == 1`, with `CellReach`/`CellRise` copied in, and the places (rooms and the way on) are NOT filled: the
    goal head names a pooled 4 yd block of the seat's own mental-map crop (goal block revision 4, `CellGrid.h`). The room

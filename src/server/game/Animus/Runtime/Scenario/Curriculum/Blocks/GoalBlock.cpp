@@ -156,12 +156,13 @@ void Animus::Curriculum::GoalBlock::Available(SeatView const& view, std::array<b
     kinds[uint32(SeatGoal::Prepare)] = !combat;
     kinds[uint32(SeatGoal::TravelTo)] = places;
     kinds[uint32(SeatGoal::Rest)] = !combat && hurt;
-    // Room goals: a place to go to is the one kind that is offered. Fight about no one stays only as the placeholder
-    // for "no plan yet", while there is no place.
+    // Room goals: a place to look in or go to is the one kind that is offered -- Search (Seek.SearchGoals, the
+    // default), else TravelTo as before. Fight about no one stays only as the placeholder for "no plan yet", while
+    // there is no place.
     if (world.RoomGoals)
     {
         kinds.fill(false);
-        kinds[uint32(SeatGoal::TravelTo)] = places;
+        kinds[uint32(world.SearchGoals ? SeatGoal::Search : SeatGoal::TravelTo)] = places;
     }
 
     // A kind with no target it accepts is not on offer after all.
@@ -270,6 +271,7 @@ void Animus::Curriculum::GoalBlock::Status(SeatView const& view, int32 goal, boo
                 reached = friendUnit->IsAlive() && friendUnit->GetHealthPct() >= PROTECT_REACHED_PCT;
             break;
         case SeatGoal::TravelTo:
+        case SeatGoal::Search:
         {
             if (view.World.CellGoals && target == GOAL_CELL_TARGET)
             {
@@ -444,8 +446,7 @@ void Animus::Curriculum::GoalBlock::ObservePlaces(SeatView const& view, float* o
 
     // The primary goal's place, if it is about one of them and is still to be reached.
     uint32 const target = GoalTargetOf(view.Goal);
-    if (view.Goal < 0 || SeatGoal(GoalKindOf(view.Goal)) != SeatGoal::TravelTo || target < GOAL_TARGET_PLACE_FIRST
-        || target >= GOAL_TARGET_PLACE_FIRST + PLACE_SLOTS)
+    if (!IsPlaceGoal(view.Goal))
         return;
     WorldView::JournalPlace const& held = world.Places[target - GOAL_TARGET_PLACE_FIRST];
     if (!held.Present || held.Done)

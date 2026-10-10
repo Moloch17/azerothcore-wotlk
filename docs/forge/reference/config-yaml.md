@@ -272,7 +272,7 @@ validation.
 Each row lists what a yaml sets that differs from its parent's effective value (parent in brackets), derived by reading
 the
 files. "Restated" means the key is present with the parent's value (no effect). Every live stage has `mappo.hidden =
-[256, 512, 512]`, `recurrent_size 128`, `goal_count 12`, `goal_slots 4`, `goal_targets 29`, `slow_goal_size 128`,
+[256, 512, 512]`, `recurrent_size 128`, `goal_count 10`, `goal_slots 4`, `goal_targets 23`, `slow_goal_size 128`,
 `target_kl 0.02`, `hindsight_coef 0.1`, `style.enabled false`, `layout_sampling.enabled true`
 (from the roots) unless stated.
 

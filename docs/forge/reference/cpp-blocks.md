@@ -143,7 +143,7 @@ instead of `Has` (`SightBlock.cpp:109`).
 Revisions at removal: core 1, move 5, compass 2, duel 0, pack 0, gauntlet 0, pet 0, vision 5, entities 1, map 1,
 sight 2, party_frames 2, combat 1, goal 0. Class list: `warrior:1 paladin:2 hunter:3 rogue:4 priest:5 deathknight:6
 shaman:7 mage:8 warlock:9 druid:11`. Sizing constants included `PACK_SLOTS=24`, `SIGHT_SLOTS=64`,
-`GOAL_JOINT_COUNT=207`, `BLOCK_COUNT=27` and `core.OBS_GLOBAL_COUNT=91`.
+`GOAL_JOINT_COUNT=207` (230 since goal revision 5), `BLOCK_COUNT=27` and `core.OBS_GLOBAL_COUNT=91`.
 
 ## The by-name seeding contract
 
@@ -178,9 +178,10 @@ block would restart. UNVERIFIED: check `bootstrap.py` / stage.json `vision`/`sig
 `RAID_GROUPS 8`, `GROUP_SEATS 5`, `MAX_SEATS 40`, `TEAM_SEATS 10`, `TEAM_COUNT 2`, `GROUP_MEMBERS 4`,
 `SPOTLIGHT_SLOTS 3`, `PARTY_MEMBERS 7`, `PACK_SLOTS 24`, `NAMED_ENEMY_SLOTS 4`, `ENEMY_COUNT_SCALE 4`, `CROWD_SLOTS 4`,
 `SIGHT_VISIBLE_SLOTS 32`, `SIGHT_RECALLED_SLOTS 32`, `SIGHT_SLOTS 64`, `TRAIL_SAMPLES 8`, `STABLE_SLOTS 4`,
-`FRIEND_SLOTS 2 + PARTY_MEMBERS = 9`, `RANK_TIERS 3`. Goal space (since goal revision 1): `GOAL_COUNT 9`
-(fight, control, recover, protect, position, prepare, travel_to, rest, resurrect), `GOAL_TARGETS 23`
-(none 0, enemy 1-4, friend 5-13, place 14-21, assignment 22), `GOAL_JOINT_COUNT 207` (was 12 x 29 = 348). Several comments in `Block.h` name deleted blocks (PartyBlock, CompanionBlock, CrowdBlock, HostilesBlock,
+`FRIEND_SLOTS 2 + PARTY_MEMBERS = 9`, `RANK_TIERS 3`. Goal space (since goal revision 5, 2026-10-10): `GOAL_COUNT 10`
+(fight, control, recover, protect, position, prepare, travel_to, rest, resurrect, search), `GOAL_TARGETS 23`
+(none 0, enemy 1-4, friend 5-13, place 14-21, assignment 22), `GOAL_JOINT_COUNT 230` = 10 x 23 (207 = 9 x 23 at revisions 1-4;
+12 x 29 = 348 before). A joint id is `kind * 23 + target`; kinds are only appended, so the ids of the first nine do not move. Several comments in `Block.h` name deleted blocks (PartyBlock, CompanionBlock, CrowdBlock, HostilesBlock,
 SupportBlock).
 
 ## core (id 0, revision 1)
@@ -532,11 +533,28 @@ visible units. Also provides `VisibleEnemies` (the encounter enemy list), `ReadH
 `FrameResolve` comment calls it a "party frame's click"; target-frame threat uses server threat lists as the client's
 threat colouring does.
 
-## goal (id 26, revision 4)
+## goal (id 26, revision 5)
 
-122 obs, 0 actions, always last (revision 3 was 108 wide, revision 2 68, revision 1 101, revision 0 128: 12 kinds x 29
+124 obs, 0 actions, always last (revision 4 was 122 wide, revision 3 108, revision 2 68, revision 1 101, revision 0 128: 12 kinds x 29
 targets).
-**Revision 4 (2026-10-09, free choice goals)** appends 14 columns after the 108 below, which do not move (names exact,
+**Revision 5 (2026-10-10, search-kind)** adds the tenth goal kind, `search` (looking for an object in or at a place),
+appended after `resurrect` (`SeatGoal::Search`, `GoalName` "search"; stage.json `goals.kinds` lists ten names). The kind
+one-hots and the achieved-kind one-hots each grow by one column, so every column after the kinds moved (names exact,
+`DescribeColumns`; the learner carries them by name and reads the offsets from `goals.columns`): 0-9 `goal_kind_*`,
+10-32 `goal_target_*`, 33 ended, 34 reached, 35 secondary_ended, 36 event, 37-46 `goal_achieved_kind_*`, 47-69
+`goal_achieved_target_*`, 70-74 held, 75-109 place slots (5 x 7), 110-114 held2, 115-119 next, 120 plan_left, 121-123
+from, width 124 (`columns.achieved_kind` 37, `achieved_target` 47, `held` 70, `place_features` 75, `held2` 110,
+`next` 115, `plan_left` 120, `from` 121). `GoalAccepts(Search, t)` is a place target 14-21 (never the assignment).
+`Available` offers `search` only in an episode with room or cell goals (`WorldView::RoomGoals`) and only while
+`WorldView::SearchGoals` (`Seek.SearchGoals` 1, the default): it takes the place of `travel_to` there (at 0 the old
+`travel_to` is offered instead); every other stage and episode offers it never (its column is 0). `Status` of a search
+goal is `travel_to`'s, branch for branch: a room slot is reached when `Done`, the way on within `PLACE_REACH`, a cell
+within `CellReach`/`CellRise` of its latched point. `GoalBlock::IsPlaceKind` (travel_to or search) gates `IsRoomGoal`,
+`IsPlaceGoal` and `IsCellGoal`, so the seek stage's counters, aids and cell bookkeeping follow the kind. The cell goal
+is the joint `GOAL_CELL_JOINT` = `Search * 23 + GOAL_CELL_TARGET` = 9 * 23 + 21 = **228**
+(was `travel_to / 21` = 159); at `SearchGoals` 0 it is 159 and `goals.cells.joint` says which. `Fight`/none stays only as
+the placeholder while no place exists. The layout manifest's `format` is 10 (was 9) and the protocol 29.
+**Revision 4 (2026-10-09, free choice goals)** appends 14 columns after the 108 below, which do not move (positions as of revision 4, +2 at revision 5; names exact,
 the learner reads the offsets from stage.json `goals.columns`): 108-112 `goal_held2_present/sin/cos/dist/near` (the
 secondary hold's latched point, encoded as 68-72), 113-117 `goal_next_present/sin/cos/dist/near` (the plan's next step:
 the queue's first cell goal, `Plan[2]`), 118 `goal_plan_left` (cell goals left among the held primary, not ended, and
@@ -544,13 +562,13 @@ the two queued, over 3), 119 `goal_from_present` (the seat's body falls inside t
 latest choice, `SeatView::ChoicePose`), 120 `goal_from_row` and 121 `goal_from_col` (`(r + 0.5) / 24`, the seat's
 pooled block in that frame; `CellGrid::Locate`; 0 when not present). In a cell-goal episode (`WorldView::CellGoals`:
 `Seek.GoalSource` 1) columns 68-72 are also the PRIMARY hold's latched point while it is a cell goal not ended; the 14
-are written only then and zero elsewhere. `Available` offers `travel_to` only, with place target 21 (`GOAL_CELL_TARGET`,
-joint 159 = `GOAL_CELL_JOINT`; the room goals never offered it) set iff the current crop has a choosable block
+are written only then and zero elsewhere. `Available` offers `search` only (`travel_to` before revision 5), with place target 21 (`GOAL_CELL_TARGET`,
+joint 228 = `GOAL_CELL_JOINT`, 159 before revision 5; the room goals never offered it) set iff the current crop has a choosable block
 (`SeatView::Crop->Choosable`, written by `MapBlock::Observe` just before); targets 14-20 and 22 are not offered, and
 Fight/none stays only as the "no plan yet" placeholder while nothing is choosable. `Status` of a cell goal: possible
 while the hold's point was latched (`HeldCell`), reached within `WorldView::CellReach` (2D) and `CellRise` (height) of
 it; no `Earned` hold-unpaid rule for cells. `PlaceOf` for target 21 is the hold's latched point (slot argument).
-`IsCellGoal` (159) and `IsPlanGoal` (place or cell) gate the seek stage's plan counters. The pose of every crop, and
+`IsCellGoal` (a place kind about target 21: 228, or 159 at `Seek.SearchGoals` 0) and `IsPlanGoal` (place or cell) gate the seek stage's plan counters. The pose of every crop, and
 the choosable-block count, are recorded by `MapBlock::Observe` through `SeatView::Crop` (`CropPose`).
 
 **`CellGrid.h`** (the contract of the cell goal, mirrored by `mappo/networks.py cell_valid`): the 48 x 48 crop is pooled
@@ -577,7 +595,7 @@ room goals `Available` offers `travel_to` only (place targets whose slot is `Pre
 no one kept as the "no plan yet" placeholder only while no place exists (a held Fight/none then ends as lost, one
 re-choice), and no Prepare or assignment; `Status` reaches a room goal when its slot is `Done` (the room was checked
 after the choice, held one observation, still possible) and the way on within `PLACE_REACH` as any place. Layout of the
-first 68: 0-8
+first 68 (revisions 2-4; revision 5 moved them, see above): 0-8
 kind available, 9-31 target available, 32 ended, 33 reached, 34 secondary_ended, 35 event, 36-44 achieved kind,
 45-67 achieved target. Revision 2 (2026-10-08, same unreleased layout generation, protocol 26) removed the order
 columns (`from_order`, order kind, order target: old columns 36-68, never written since the director was deleted)
@@ -596,7 +614,7 @@ choice" rule used by the scenario for `Goals.Reached` payment. `PlaceOf` yields 
 slot is the trip objective when the stage has no seen places (`WorldView::HasSeenPlaces`, until 2026-10-08
 `RoutePlaces`), only while `ObjectivePlaceKnown`). Constants
 `PROTECT_REACHED_PCT 70`, `PLACE_REACH 20`, `OBJECTIVE_SCALE 500`, `NEAR_SCALE 40`, `AGE_SCALE_S 120`,
-`GOAL_ROOM_SLOTS 6` / `GOAL_PLACE_SLOTS 7`, `GOAL_CELL_TARGET 21` / `GOAL_CELL_JOINT 159` (`Block.h`).
+`GOAL_ROOM_SLOTS 6` / `GOAL_PLACE_SLOTS 7`, `GOAL_CELL_TARGET 21` / `GOAL_CELL_JOINT 228` (`Block.h`; 159 before revision 5).
 
 ## Observed issues
 

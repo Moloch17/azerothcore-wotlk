@@ -48,7 +48,9 @@ namespace
     /// 9: the seats' engine moves are gone (player-controller C9): the crowd block's advance and approach, the party
     /// block's follow-the-tank, the companion block's follow and its clock, the death block's corpse run (each block at
     /// revision 1). Layouts with any of those blocks changed shape.
-    constexpr uint32 MANIFEST_FORMAT = 9;
+    /// 10: the goal space has a tenth kind (search; goal block revision 5): the goal block is two columns wider in
+    /// every layout, and an exported goal head has ten kinds.
+    constexpr uint32 MANIFEST_FORMAT = 10;
 }
 
 std::string_view Animus::Curriculum::GoalName(SeatGoal goal)
@@ -64,6 +66,7 @@ std::string_view Animus::Curriculum::GoalName(SeatGoal goal)
         case SeatGoal::TravelTo: return "travel_to";
         case SeatGoal::Rest:     return "rest";
         case SeatGoal::Resurrect: return "resurrect";
+        case SeatGoal::Search:   return "search";
         case SeatGoal::Count:    break;
     }
 
@@ -83,6 +86,7 @@ bool Animus::Curriculum::GoalAccepts(SeatGoal kind, uint32 target)
         case SeatGoal::Control:  return enemy;
         case SeatGoal::Protect:  return friendly;
         case SeatGoal::TravelTo: return place || target == GOAL_TARGET_ASSIGNMENT;
+        case SeatGoal::Search:   return place;
         case SeatGoal::Recover:
         case SeatGoal::Prepare:
         case SeatGoal::Rest:     return none;

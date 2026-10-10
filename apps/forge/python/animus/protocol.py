@@ -11,8 +11,12 @@ from enum import IntEnum
 
 import numpy as np
 
-PROTOCOL_VERSION = 28
-# 28: free choice goals (docs/forge/decisions/0024): the goal section of an ACT carries the four plan positions, not
+PROTOCOL_VERSION = 29
+# 29: the goal space has a tenth kind, search (goal block revision 5, docs/forge/decisions/0024-search-goal-kind.md):
+# Spec.goal_count is 10 x 23 = 230 joint ids (was 207), an ACT's goal ids run to 229, and a cell goal is the joint
+# search / place_7 = 228 (was travel_to / place_7 = 159; stage.json goals.cells.joint says which). The messages' layout
+# is protocol 28's.
+# 28: free choice goals (.agents/plans/free-choice-goals): the goal section of an ACT carries the four plan positions, not
 # two: GOAL_WIRE_INTS = 8 int32 an agent -- the joint goal ids of the primary, secondary and the two queued goals
 # (-1 none), then each position's cell word, (ticket << 12) | (cell + 1), 0 for none. STEP and SPEC are protocol 27's.
 # 27: the tick jitter (AnimusForge.Decision.*, docs/forge/decisions/0021-decision-time-jitter.md): SPEC ends with the

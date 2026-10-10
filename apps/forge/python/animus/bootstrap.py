@@ -34,6 +34,7 @@ import io
 
 import torch
 
+from .mappo.networks import grow_goal_rows
 from .stages import Span, block_revisions, block_spans
 
 
@@ -462,6 +463,77 @@ def _goal_ids(stage: dict | None) -> tuple[int, int, list[int]] | None:
     return kinds.index("travel_to"), kinds.index("fight"), places
 
 
+#: A goal kind the sim appended to the goal space (search-kind, goal block revision 5) starts as another kind it
+#: refines: its rows -- kind embedding and scale, kind logit, the pair row, the drawn embeddings, the lookahead's -- are
+#: copied from that kind's, so a checkpoint's head that chose travel_to about a place chooses search about it, and the
+#: policy it conditioned reads the goal as it did.
+GOAL_KIND_WARM = {"search": "travel_to"}
+#: The goal tensors with a row per kind, and with a row per kind of `targets` columns (pair), by network.
+_KIND_ROW_KEYS = ("goal_head.kind.weight", "goal_head.kind.bias", "goal_head.success.kind.weight",
+                  "goal_head.success.kind.bias", "goal_head.duration.kind.weight", "goal_head.duration.kind.bias",
+                  "goal_embedding.kind.weight", "goal_embedding.kind_scale.weight")
+_PAIR_ROW_KEYS = ("goal_head.pair", "goal_head.success.pair", "goal_head.duration.pair")
+
+
+def _goal_kind_names(stage: dict | None) -> list[str]:
+    return list((((stage or {}).get("goals") or {}).get("kinds")) or ())
+
+
+def _grow_goal_kinds(actor: dict, critic: dict, old_actor: dict, old_critic: dict, stage: dict | None,
+                     old_stage: dict | None) -> tuple[dict, dict, list[str]]:
+    """The checkpoint's actor and critic with their goal tensors grown to the goal space the networks now have, and
+    the lines to log. The kinds are only ever appended, so the old rows stay and the new kinds' rows are the new
+    networks' own, except that a kind named in GOAL_KIND_WARM takes the rows of the kind it refines. Nothing is done
+    for a same-sized goal space (every other seed). Refused (ValueError): a checkpoint with MORE kinds than the stage
+    (a newer checkpoint cannot seed an older sim: its rows would be dropped and its head left fresh without a word),
+    or one whose kinds are not a prefix of the stage's (the rows would not mean the same kinds)."""
+    key = "goal_head.kind.weight"
+    if key not in actor or key not in old_actor:
+        return old_actor, old_critic, []
+    old_count, new_count = int(old_actor[key].shape[0]), int(actor[key].shape[0])
+    if old_count == new_count:
+        return old_actor, old_critic, []
+    old_names, new_names = _goal_kind_names(old_stage), _goal_kind_names(stage)
+    if old_count > new_count:
+        raise ValueError(f"the checkpoint's goal space has {old_count} kinds"
+                         f"{' (' + ', '.join(old_names) + ')' if old_names else ''}, this stage's {new_count}"
+                         f"{' (' + ', '.join(new_names) + ')' if new_names else ''}: a checkpoint of a newer goal "
+                         f"space cannot seed a sim with fewer goal kinds (its goal head would be dropped); seed from "
+                         f"an older checkpoint, or rebuild the sim at this checkpoint's revision")
+    if old_names and new_names and new_names[:len(old_names)] != old_names:
+        raise ValueError(f"the checkpoint's goal kinds {old_names} are not the first of this stage's {new_names}: "
+                         f"kinds are only appended, so their rows would not mean the same goals")
+    grown_actor, actor_keys = grow_goal_rows(old_actor, actor)
+    grown_critic, critic_keys = grow_goal_rows(old_critic, critic)
+    lines = [f"goal kinds {old_count} -> {new_count}: the goal head and the goal embeddings grew "
+             f"({len(actor_keys)} actor and {len(critic_keys)} critic tensors; the old rows, ids and logits are "
+             f"unchanged)"]
+    targets = int(actor["goal_head.pair"].shape[1]) if "goal_head.pair" in actor else 0
+    for kind in range(old_count, new_count):
+        name = new_names[kind] if kind < len(new_names) else None
+        source = new_names.index(GOAL_KIND_WARM[name]) if name in GOAL_KIND_WARM \
+            and GOAL_KIND_WARM[name] in new_names else None
+        if source is None or source >= old_count:
+            lines.append(f"  new kind {kind} ({name or '?'}): its rows start as initialised")
+            continue
+        copied = []
+        for network, keys, pair_keys in ((grown_actor, _KIND_ROW_KEYS, _PAIR_ROW_KEYS),
+                                         (grown_critic, ("goal_embedding.kind.weight",), ())):
+            for tensor_key in (*keys, *pair_keys):
+                if tensor_key in network:
+                    network[tensor_key][kind] = network[tensor_key][source]
+                    copied.append(tensor_key)
+            drawn = network.get("goal_head.drawn.weight")
+            if drawn is not None and targets:
+                drawn[kind * targets + 1:(kind + 1) * targets + 1] = drawn[source * targets + 1:
+                                                                            (source + 1) * targets + 1]
+                copied.append("goal_head.drawn.weight")
+        lines.append(f"  new kind {kind} ({name}): warm-copied from {GOAL_KIND_WARM[name]} (kind {source}) in "
+                     f"{len(copied)} rows: kind embedding and scale, kind logit, pair row, drawn embeddings, "
+                     f"lookahead (actor), kind embedding (critic)")
+    return grown_actor, grown_critic, lines
+
+
 def _reseed_goals(actor: dict, critic: dict, fresh: dict, stage: dict | None, old_stage: dict | None,
                   old_actor: dict | None = None) -> list[str]:
     """After _seed_shared, when the goal block's revision differs between the checkpoint's stage and this one (M2's
@@ -476,21 +548,31 @@ def _reseed_goals(actor: dict, critic: dict, fresh: dict, stage: dict | None, ol
     cell mode the joints on offer are the cell goal and the placeholder, so a head that chose among room slots cannot
     do harm, and the slow GRU and value carry what M2 learned -- the slow loop copied from the checkpoint (a seed does not
     carry it otherwise: it is not in SHARED_PREFIXES), the head's cell parameters (goal_head.cell.*, absent from it) left
-    as initialised with the score at zero, and the embeddings warm-copied for the cell goal's target as for a place."""
+    as initialised with the score at zero, and the embeddings warm-copied for the cell goal's target as for a place.
+
+    **Revision 4 -> 5** (search-kind, the tenth goal kind) keeps them too: the goal head, the slow loop and the cell head
+    all stay (the cell goal is now search / place_7, and the search rows were warm-copied from travel_to's by
+    _grow_goal_kinds before this runs), and the goal block's columns that moved are carried by name."""
     old_revision, new_revision = _block_revision(old_stage, GOAL_BLOCK), _block_revision(stage, GOAL_BLOCK)
     if old_revision is None or new_revision is None or old_revision == new_revision:
         return []
-    if (old_revision, new_revision) == (3, 4):
+    if (old_revision, new_revision) in ((3, 4), (4, 5)):
         slow = [key for key in actor if key.startswith(("slow_memory.", "slow_value."))]
         carried = [key for key in slow if old_actor is not None and key in old_actor
                    and old_actor[key].shape == actor[key].shape]
         for key in carried:
             actor[key].copy_(old_actor[key])
-        lines = [f"goal block revision 3 -> 4: the goal head and the slow loop are kept ({len(carried)} of {len(slow)} "
-                 f"slow-loop tensors carried from the checkpoint; the head came with the shared weights)",
-                 "  fresh: goal_head.cell.* (the cell pointer; its score and chain start at zero: a uniform draw over "
-                 "the choosable blocks), the new goal block columns (goal_held2_*, goal_next_*, goal_plan_left, "
-                 "goal_from_*: adapter weights at zero)"]
+        lines = [f"goal block revision {old_revision} -> {new_revision}: the goal head and the slow loop are kept "
+                 f"({len(carried)} of {len(slow)} slow-loop tensors carried from the checkpoint; the head came with "
+                 f"the shared weights)"]
+        if new_revision == 4:
+            lines.append("  fresh: goal_head.cell.* (the cell pointer; its score and chain start at zero: a uniform "
+                         "draw over the choosable blocks), the new goal block columns (goal_held2_*, goal_next_*, "
+                         "goal_plan_left, goal_from_*: adapter weights at zero)")
+        else:
+            lines.append("  kept: goal_head.cell.* (the cell pointer and its chain); fresh: the goal block's new "
+                         "columns (goal_kind_search, goal_achieved_kind_search: adapter weights at zero; every other "
+                         "goal column is carried by name to where it moved)")
     else:
         reset = [key for key in fresh if key.startswith(GOAL_RESET_PREFIXES)]
         for key in reset:
@@ -714,6 +796,13 @@ def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, ove
 
     if not overlay:
         fresh_goals = {key: tensor.clone() for key, tensor in actor.items() if key.startswith(GOAL_RESET_PREFIXES)}
+        # A goal space that grew since the checkpoint (a kind appended): its goal tensors are grown to the new shapes
+        # first, so the shared copy below carries them like any other; a larger one is refused.
+        grown_actor, grown_critic, grown_lines = _grow_goal_kinds(actor, critic, old["actor"], old["critic"], stage,
+                                                                 old_stage)
+        old = {**old, "actor": grown_actor, "critic": grown_critic}
+        for line in grown_lines:
+            print(f"  {line}" if not line.startswith(" ") else line, flush=True)
         _seed_shared(actor, old["actor"])
         _seed_shared(critic, old["critic"])
         for line in _reseed_goals(actor, critic, fresh_goals, stage, old_stage, old["actor"]):
