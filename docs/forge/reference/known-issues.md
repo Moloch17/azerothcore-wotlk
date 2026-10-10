@@ -374,3 +374,35 @@ Charge and taxis still start splines).
   refuse it.
 - `Seek.SearchGoals` and the cell joint: the manifest is written in every stage from the conf, so a stage that never offers
   cell goals still publishes `goals.cells.joint` 228.
+## M2 explore, don't circle, get unstuck, 2026-10-10 (C++ stream; nothing run, syntax check only; decision 0023)
+
+- UNVERIFIED end to end: no sim ran. Compiles (clang `-fsyntax-only`, 90 Animus TUs, no warnings); the rest is reading.
+- `Explore` pays for turning the camera: a seat that stands and sweeps its view reveals new cells without moving. It is
+  bounded by `Seek.ExploreCap` (1.0, a third of `Arrive`) and by `Circling` (a spin of 540 degrees in 6 s with under
+  4 yd of net displacement is charged 0.02 a second), but a slow look-around is paid. Watch `explore_cells` against
+  `distance_travelled` in the first evaluation; if cells per yard collapse, price the turning or pay only on moved cells.
+- The record of seen cells is the episode's own (`EnvSeek::Seen`, 2-yd cells by storey), not the mental map, which is
+  kept across episodes (so it could not say "new this episode"). Memory: a set of 64-bit keys per env, a few thousand
+  entries on the Stockades.
+- `FrontierPull` reads the straight line to the nearest frontier point of the seat's map within 40 yd, refreshed every
+  2 s, so it can pay for walking into a wall toward a frontier on the far side of it (bounded by `FrontierCap`, and the
+  cluster's best distance only falls). The frontier point is on the seat's storey (`Frontier` takes the seat's z), so a
+  storey change makes a new cluster key. `View` still builds the way-on frontier only for room slots
+  (`GoalSource` 0); the two caches are separate.
+- Trap drill: `TrapPose` validates the floor (vmaps) and a clear line to the opening, not the offline navmesh; the
+  doorway cells are walkable ones of the scan and the pose is at least 0.5 yd from the wall, but a pose could in
+  principle sit just off the navmesh. Resets add up to eight pose tries (a few ray casts each) in 12% of training
+  episodes; the placement p95 was not measured. A trap episode keeps its drawn rung and object (a hallway-rung object
+  is in sight of the spawn, not of the pose) and its episode clock.
+- The trap is training-only, so `trap_escaped` exists in training rows only; evaluations (seeded) report
+  `trap_episode` 0, and the per-event weight leaves `trap_escaped` NaN there.
+- `Circling` is charged beside `Wall` and not on a decision that paid `Stuck`. It is in the score (Cost), so
+  `found`-independent score comparisons with runs before 2026-10-10 shift by the seconds charged.
+- The reward audit (`rewards.py`) sees `explore` and `frontier_pull` as shaping; each is capped at 1.0 nominal, under
+  its 0.5-of-`Arrive` limit of 1.5 only while `ExploreFloor` and the caps stay as they are.
+- `frontier_pull_reward` near 0 in an open corridor is expected, not a bug: the nearest frontier point recedes as the
+  seat walks (newly seen floor pushes it ahead), so each refresh lands in a fresh 10-yd cluster key (starting at the
+  current distance, paying nothing) or in the same key at a larger distance. `FrontierPull` pays where the frontier is
+  pinned (behind a door or a corner), which is the failure the evidence names; `Explore` pays the corridor.
+- `TrapPose` casts against the static tree (WMOs and M2s: `SurfaceHit::Distance` is yards along the segment, as the
+  camera's own use shows); the Stockades is all WMO, so the jamb is found; on a terrain map it would not be.

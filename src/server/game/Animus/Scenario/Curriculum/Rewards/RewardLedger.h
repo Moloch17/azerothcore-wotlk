@@ -20,6 +20,7 @@
 #define ANIMUS_LIB_CURRICULUM_REWARD_LEDGER_H
 
 #include "Define.h"
+#include <algorithm>
 #include <array>
 #include <string_view>
 
@@ -151,6 +152,17 @@ namespace Animus::Curriculum
         CellSwitch,
         CellLost,
         CellStale,
+        /// The seek stage's exploration (explore-unstuck, 2026-10-10): each 2-yd cell of floor a ray of the seat's
+        /// camera lands on for the first time this episode (Seek.ExploreSeen, rooms not yet entered times
+        /// Seek.ExploreRoomBonus, at most Seek.ExploreCap an episode) and each yard closed on the nearest frontier of
+        /// its own map (Seek.FrontierPull, a best-distance ratchet per frontier cluster, at most Seek.FrontierCap).
+        /// Category Exploring: paid at max(the stage's shaping scale, Seek.ExploreFloor), so the fade never takes
+        /// all of it (decision 0023). A Cost besides: standing in circles (Seek.Circling, fixed price) -- and an Aid:
+        /// leaving the trap pose a drill starts an episode in (Seek.Escape, once).
+        Explore,
+        FrontierPull,
+        Circling,
+        Escape,
         Count
     };
 
@@ -175,6 +187,10 @@ namespace Animus::Curriculum
         /// RewardLedger::SetAid), so it survives a stage that plays a single rung at shaping 0. Not in the score. The
         /// lesson it points at is still Outcome's: when the aid is gone, only the Outcome is left to hold it.
         Aid,
+        /// Exploration of unseen ground (RewardTerm::Explore, FrontierPull): shaping that the fade only takes down to
+        /// a floor -- paid times max(the shaping scale, the floor set with RewardLedger::SetShapingFloor). Not in the
+        /// score. The owner's exception to "a stage's purpose is paid as Outcome" (decision 0023).
+        Exploring,
         None
     };
 
@@ -243,13 +259,20 @@ namespace Animus::Curriculum
             case RewardTerm::CellSwitch:
             case RewardTerm::CellLost:
             case RewardTerm::CellStale:
+            // Standing in circles: moving about without getting anywhere (M2 explore-unstuck).
+            case RewardTerm::Circling:
                 return RewardCategory::Cost;
             // The seek stage's room goals: a teaching aid on the progress-linear aid scale.
             case RewardTerm::RoomGoal:
             case RewardTerm::RoomSwitch:
             case RewardTerm::CellGoal:
             case RewardTerm::CellProgress:
+            // The trap drill's way out (M2 explore-unstuck): once, on the aid scale.
+            case RewardTerm::Escape:
                 return RewardCategory::Aid;
+            case RewardTerm::Explore:
+            case RewardTerm::FrontierPull:
+                return RewardCategory::Exploring;
             case RewardTerm::DamageDealt:
             case RewardTerm::Approach:
             case RewardTerm::Threat:
@@ -309,6 +332,8 @@ namespace Animus::Curriculum
             case RewardTerm::Fidget:
             case RewardTerm::Stuck:
             case RewardTerm::Wall:
+            // ... and going round in circles (Seek.Circling).
+            case RewardTerm::Circling:
                 return true;
             default:
                 return false;
@@ -367,6 +392,10 @@ namespace Animus::Curriculum
         /// times it, Outcome and Cost terms never. 1 until the learner says otherwise; 0 is the outcome alone.
         void SetShaping(float scale) { _shaping = scale; }
 
+        /// The least the Exploring category (Explore, FrontierPull) is paid at, whatever the shaping scale: it is paid
+        /// times max(the shaping scale, this). 0 unless the encounter says otherwise (Seek.ExploreFloor).
+        void SetShapingFloor(float floor) { _floor = floor; }
+
         /// The stage's aid scale: every Aid term is paid times it. It follows the stage's progress, not its rung
         /// (StageScenario::Reward: max(0, 1 - progress / Seek.AidUntil)), and is 1 until the scenario says otherwise.
         void SetAid(float scale) { _aid = scale; }
@@ -413,12 +442,15 @@ namespace Animus::Curriculum
                 return _shaping;
             if (category == RewardCategory::Aid)
                 return _aid;
+            if (category == RewardCategory::Exploring)
+                return std::max(_shaping, _floor);
             return PricesNoise(term) ? _costs : 1.0f;
         }
 
         float _step = 0.0f;
         float _score = 0.0f;
         float _shaping = 1.0f;
+        float _floor = 0.0f;
         float _aid = 1.0f;
         float _costs = 1.0f;
     };

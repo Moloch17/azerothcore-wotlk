@@ -86,6 +86,10 @@ std::string_view Animus::Curriculum::RewardTermName(RewardTerm term)
         case RewardTerm::CellSwitch:            return "cell_switch";
         case RewardTerm::CellLost:              return "cell_lost";
         case RewardTerm::CellStale:             return "cell_stale";
+        case RewardTerm::Explore:               return "explore";
+        case RewardTerm::FrontierPull:          return "frontier_pull";
+        case RewardTerm::Circling:              return "circling";
+        case RewardTerm::Escape:                return "escape";
         case RewardTerm::Count:                 break;
     }
 

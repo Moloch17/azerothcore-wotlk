@@ -122,7 +122,9 @@ eval:
            goals_cell_chosen, goals_cell_reached, goals_cell_lost, goals_cell_invalid, goals_cell_same,
            goal_switches_cell, cell_goal_seconds, cell_goal_yards, cell_stale_share, plan_depth, plan_advances,
            ground_cells, reward_cell_goal, reward_cell_progress, reward_cell_switch, reward_cell_lost,
-           reward_cell_stale]
+           reward_cell_stale, explore_cells, explore_reward, explore_room_cells, frontier_pull_reward,
+           circling_seconds, circling_events, trap_episode, trap_escaped, trap_escape_seconds, back_room_visits,
+           reward_explore, reward_frontier_pull, reward_circling, reward_escape]
 
 # forge status for this stage: did it find the object, by rung (found_<rung>, each over the episodes placed at it) and
 # in the deepest rooms, the rung it is on, how soon it saw it and got there after, and how it searched -- rooms looked
@@ -136,7 +138,7 @@ status:
              plan_share, goal_follow_rate, goals_cell_reached, goals_cell_lost, cell_goal_seconds, ground_cells,
              rooms_checked_per_min, returns, slots_waiting, checked_miss, check_cover_at_find,
              found_no_flag, found_no_camera, found_no_map, found_no_memory, found_no_goal, found_random_goal,
-             found_random_cell, found_no_plan]
+             found_random_cell, found_no_plan, explore_cells, circling_seconds, back_room_visits, trap_escaped]
   targets:
     # M1's targets are not M2's measures (null drops an inherited key).
     arrived: null

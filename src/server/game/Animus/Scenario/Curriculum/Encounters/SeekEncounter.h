@@ -25,12 +25,14 @@
 #include "Position.h"
 #include "SeenPlaces.h"
 #include <array>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 namespace Animus::Curriculum
 {
     struct ArenaDefinition;
+    struct SeatState;
 
     /// **M2 seek** (Opposition::Seek; perception-goals plan §4, "M2 in detail"): one real object hidden in one of a
     /// dungeon's rooms, found by sight and stopped beside. The seat has no compass: the object is shown only by the
@@ -60,6 +62,15 @@ namespace Animus::Curriculum
     /// Seek.EnterDwellMs or Seek.CheckedShare of its floor cells were hit; the slot is Done for one observation (the
     /// goal reached), then released and rebound to the next waiting room. The table of rooms only says which room a
     /// ray or a position belongs to: it is reward and bookkeeping geometry, never observed.
+    ///
+    /// **Explore, don't circle, get unstuck** (2026-10-10, decision 0023): Explore pays each 2-yd cell of floor a ray
+    /// of the seat's camera lands on for the first time this episode (the room bonus in a room not yet entered; an
+    /// episode-local record beside the mental map, which outlives the episode) and FrontierPull each yard closed on the
+    /// nearest frontier of the seat's own map (a best-distance ratchet per frontier cluster); both are paid at
+    /// max(the shaping scale, Seek.ExploreFloor) and capped. Circling (a Cost at a fixed price) charges going round in
+    /// circles. The trap drill starts Seek.TrapShare of the training episodes with the seat against the jamb of a
+    /// door of the room table, facing it, and pays Escape (Aid) once for getting 6 yd away: a start distribution, no
+    /// scripted action.
     ///
     /// Paid: Arrive once, stopped within the arena's SeekRadius of the object (Outcome); StepCost and Death (Cost);
     /// Stuck and Wall (Cost, at their own fixed price from the first step: RewardLedger::AddFixed); Sighting,
@@ -110,6 +121,18 @@ namespace Animus::Curriculum
             uint32 DwellMs = 0;
             uint32 AwayMs = 0;                  // since leaving a visited room: far enough outside it, for how long
             bool Armed = false;                 // ... for long enough: entering it again is a return
+        };
+
+        /// One decision of the circling window: the clock, where the seat stood and faced, and the ground and the turn
+        /// since the decision before.
+        struct CircleSample
+        {
+            uint32 Ms = 0;
+            float X = 0.0f;
+            float Y = 0.0f;
+            float Yaw = 0.0f;
+            float Step = 0.0f;
+            float Turn = 0.0f;
         };
 
         struct EnvSeek
@@ -166,6 +189,34 @@ namespace Animus::Curriculum
             mutable std::vector<SeenPlaces::Point> Frontier;
             mutable uint32 FrontierMs = 0;
             mutable bool FrontierReady = false;
+
+            // Explore: the 2-yd cells of floor a ray landed on this episode, what was paid (nominal, before the
+            // scale) and the tallies.
+            std::unordered_set<uint64> Seen;
+            float ExploreNominal = 0.0f;
+            uint32 ExploreCells = 0;
+            uint32 ExploreRoomCells = 0;
+            uint32 BackRoomVisits = 0;
+            // Frontier pull: the nearest frontier cluster (refreshed every few seconds) and the best distance reached
+            // to each cluster (a 10-yd grid cell of its point), so that going back and forth pays nothing.
+            bool HasFrontier = false;
+            SeenPlaces::Point FrontierAt;
+            uint64 FrontierKey = 0;
+            uint32 FrontierCheckedMs = 0;
+            bool FrontierChecked = false;
+            std::unordered_map<uint64, float> FrontierBest;
+            float FrontierNominal = 0.0f;
+            // Circling: the window of decisions, whether it held at the last one, and the tallies.
+            std::vector<CircleSample> Circle;
+            std::size_t CircleHead = 0;
+            bool CircleOn = false;
+            float CirclingSeconds = 0.0f;
+            uint32 CirclingEvents = 0;
+            // The trap drill: whether the episode started in a pose, where, and the way out.
+            bool Trap = false;
+            Position TrapStart;
+            bool Escaped = false;
+            uint32 EscapeMs = 0;
         };
 
         /// Put the episode's object in `room` of `arena`: a spot on its floor, clear of walls, else its centre; at
@@ -176,6 +227,18 @@ namespace Animus::Curriculum
             Position const& start) const;
         /// Stand the object of `kind` at `spot` (its base), turned `facing`.
         bool Summon(EnvSeek& seek, Map* map, ArenaDefinition const& arena, Position const& spot, uint32 phase) const;
+
+        /// Explore for one decision: the cells this frame's floor rays landed on for the first time (paid unless `paid`
+        /// is false: the first look is the spawn's view, not a search) and, in the same pass, the nearest frontier's
+        /// closing distance (FrontierPull).
+        void Explore(Env const& env, EnvSeek& seek, ArenaDefinition const& arena, SeatState const& seat, Player* bot,
+            bool paid, RewardLedger& ledger);
+        /// Circling for one decision: the window's path, turning and net displacement; charged unless `stuck` (the
+        /// decision already paid Stuck).
+        void Circle(Env const& env, EnvSeek& seek, Player* bot, float moved, bool stuck, RewardLedger& ledger);
+        /// The trap drill's pose: a point 0.5-1.5 yd from the jamb of a random door of the arena's room table, facing
+        /// it, on the room's floor with the way to the opening clear. False when no pose passed.
+        bool TrapPose(Map* map, ArenaDefinition const& arena, Player* bot, Position& pose) const;
 
         /// The room goals' bookkeeping for one decision, after the frame's floor hits were added (`counts`: the rays on
         /// each room): the glimpses, the checks, the visits and returns (charged to `ledger`), and the slots. `room` is

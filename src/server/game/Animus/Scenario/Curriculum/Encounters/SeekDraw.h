@@ -170,6 +170,21 @@ namespace Animus::Curriculum::SeekDraw
         }
     }
 
+    /// **The floor a frame landed on** (Explore): every cast ray whose hit is a floor (the terrain or a model, normal z
+    /// at least Vision::FLOOR_NORMAL, within Vision::WRITE_REACH of the camera), room or not.
+    /// `visit(x, y, z)` is called with the point it hit.
+    template <typename Visit>
+    inline void FloorRays(Vision::FrameHits const& hits, Visit&& visit)
+    {
+        for (Vision::RayHit const& ray : hits.Rays)
+        {
+            if ((ray.What != Vision::Class::Terrain && ray.What != Vision::Class::Model)
+                || ray.NormalZ < Vision::FLOOR_NORMAL || ray.Distance > Vision::WRITE_REACH)
+                continue;
+            visit(hits.Camera.X + ray.Dir.X * ray.Distance, hits.Camera.Y + ray.Dir.Y * ray.Distance, ray.Z);
+        }
+    }
+
     /// The rooms a frame looks into for the first time this episode, from the floor rays on each (`counts`, counted
     /// from FloorHits) -- RoomSeen's, by the episode's own `looked` (amendment 6: never the remembered map, so a map
     /// kept from before takes no aid away) -- marked in it: at least `minRays` of the frame's floor rays on each.
