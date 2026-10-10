@@ -60,6 +60,7 @@ index falls back to `cuda:0`, no GPU to `cpu`, each with a line).
 | `torch_threads` | 0 | 0 = torch default |
 | `init_from` | `auto` | `auto`, a path or a list |
 | `seed_from` | `latest` | `best` or `latest`, validated in `__post_init__` (`:670`) |
+| `mappo.goal_cell_hindsight_lookback` | 0 | validated in `TrainConfig.__post_init__`: a whole number from 0 (off) to `MAX_HINDSIGHT_LOOKBACK` (256) decisions, and more than 0 only with `mappo.goal_cell_hindsight_coef > 0` (a window with no coefficient trains nothing, refused). The rule is in [py-mappo-trainer.md](py-mappo-trainer.md) |
 | `merge_from` | `auto` | |
 | `finetune_from` | `{runs_dir}/_finetune/{run_name}/best.pt` | used if the file exists |
 | sections | | `mappo, distill, eval, convergence, layout_sampling, entropy_floor, cast, fade, costs, style, status` |

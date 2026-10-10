@@ -371,6 +371,9 @@ class DistillConfig:
         return max(self.min_coef, self.coef * decay)
 
 
+#: The longest planner hindsight lookback (mappo.goal_cell_hindsight_lookback), in decisions: a goal is held 16-128.
+MAX_HINDSIGHT_LOOKBACK = 256
+
 #: The evaluation arms beside the plain one ("all bots"): eval.arms names them (dungeon-curriculum I7).
 EVAL_ARMS = ("with_human", "with_partners", "no_flag", "no_camera", "no_compass", "no_map", "no_memory", "no_goal",
              "random_goal", "random_cell", "no_plan")
@@ -670,6 +673,17 @@ class TrainConfig:
         # Anything else would read as "best" (animus.train.init_from_checkpoint), which a typo must not do quietly.
         if self.seed_from not in ("best", "latest"):
             raise ValueError(f"seed_from: expected \"best\" or \"latest\", got {self.seed_from!r}")
+        # The planner's hindsight (mappo.goal_cell_hindsight_*): a window of decisions is a count, and a window with no
+        # coefficient behind it would train nothing and say nothing.
+        lookback, coef = self.mappo.goal_cell_hindsight_lookback, self.mappo.goal_cell_hindsight_coef
+        if isinstance(lookback, bool) or not isinstance(lookback, int) or not 0 <= lookback <= MAX_HINDSIGHT_LOOKBACK:
+            raise ValueError(f"mappo.goal_cell_hindsight_lookback: expected a whole number of decisions from 0 (off) "
+                             f"to {MAX_HINDSIGHT_LOOKBACK}, got {lookback!r}")
+        if coef < 0.0:
+            raise ValueError(f"mappo.goal_cell_hindsight_coef: expected 0 (off) or more, got {coef!r}")
+        if lookback > 0 and coef <= 0.0:
+            raise ValueError(f"mappo.goal_cell_hindsight_lookback {lookback} needs mappo.goal_cell_hindsight_coef > 0 "
+                             f"(it is {coef!r}: the lookback would train nothing)")
 
     @property
     def shared_runs(self) -> str:
