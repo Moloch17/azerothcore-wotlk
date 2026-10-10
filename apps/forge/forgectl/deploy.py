@@ -259,7 +259,8 @@ def move_plan(config: Config, new: Machine, stage: str | None) -> list[str]:
         f"edit host = \"{new.name}\" in {config.file}; commit and push that file afterwards",
     ]
     if stage:
-        lines.append(f"resume {stage} on {new.name} and look for 'worker learners join this run'")
+        lines.append(f"resume {stage} on {new.name} (any further stages named follow from scratch) and look for "
+                     "'worker learners join this run'")
     return lines
 
 
@@ -283,14 +284,16 @@ def mixed_state_report(config: Config, new: Machine, attempted: list[Machine], s
     return lines
 
 
-def move_host(config: Config, target: str, stage: str | None, yes: bool, timeout_minutes: float) -> int:
+def move_host(config: Config, target: str, stage: "str | list[str] | None", yes: bool, timeout_minutes: float) -> int:
+    stages = [stage] if isinstance(stage, str) else list(stage or [])   # the first is resumed, the rest follow
+    stage = stages[0] if stages else None
     new, old = config.machine(target), config.host
     if new.name == old.name:
         raise Failure(f"{target} is already the host")
     if not new.in_cluster:
         raise Failure(f"{target} is not in the cluster: set in_cluster = true for it in {config.file} first")
-    if stage:
-        stage_commands.check_names([stage])
+    if stages:
+        stage_commands.check_names(stages)
     branch, sha = deploy_state(config)
     try:
         confirm(move_plan(config, new, stage), yes, what=f"Move the host from {old.name} to {new.name}")
@@ -360,7 +363,7 @@ def move_host(config: Config, target: str, stage: str | None, yes: bool, timeout
         say(f"[6/6] no stage given: resume with `forgectl stage resume <stage>` (the host is now {new.name}).")
         return 0
     say(f"[6/6] resume {stage} on {new.name}")
-    if stage_commands.run(moved, "resume", [stage], yes=True) != 0:
+    if stage_commands.run(moved, "resume", stages, yes=True) != 0:
         say("The resume was not accepted. The move itself is done.")
         return 1
     joined = wait_for_log(moved, new, r"worker learners join", 180)

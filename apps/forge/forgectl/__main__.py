@@ -45,7 +45,7 @@ def parser() -> argparse.ArgumentParser:
                                        "pull and rebuild everything, resume. Prints the plan first and asks.",
                            epilog="example:\n  forgectl cluster move-host thomas move2_seek")
     mv.add_argument("machine", help="the new host (must be in the cluster)")
-    mv.add_argument("stage", nargs="?", help="the stage whose run directory is copied and then resumed")
+    mv.add_argument("stage", nargs="*", help="the stage(s) to carry on: the first one's run directory is copied and resumed, the others follow from scratch as a queue")
     mv.add_argument("--yes", action="store_true", help="do not ask")
     mv.add_argument("--timeout", type=float, default=60, help="minutes to wait for each machine's build (default 60)")
 
@@ -114,7 +114,7 @@ def parser() -> argparse.ArgumentParser:
 def dispatch(args, config) -> int:
     if args.command == "cluster":
         if getattr(args, "cluster_command", None) == "move-host":
-            return deploy.move_host(config, args.machine, args.stage, args.yes, args.timeout)
+            return deploy.move_host(config, args.machine, args.stage or None, args.yes, args.timeout)
         if args.json:
             return snapshot.cluster_json(config, include_out=args.all)
         return cluster.run(config, include_out=args.all)
