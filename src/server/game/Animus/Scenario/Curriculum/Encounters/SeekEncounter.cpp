@@ -74,6 +74,8 @@ namespace
     constexpr float FRONTIER_PULL_RADIUS = 40.0f;
     constexpr float FRONTIER_PULL_STEP = 2.0f;
     constexpr uint32 FRONTIER_PULL_MS = 2000;
+    /// ... the nearest this many clusters (SAME_PLACE apart) are looked through for one at a door or beyond.
+    constexpr uint32 FRONTIER_PULL_POINTS = 16;
     /// The trap drill: how far from the door's middle the jamb is looked for, and the least left between the seat and
     /// the jamb it stands at; the seat's pose may face the wall within this much of straight on, radians.
     constexpr float TRAP_REACH = 4.0f;
@@ -903,7 +905,7 @@ void Animus::Curriculum::SeekEncounter::Explore(Env const& env, EnvSeek& seek, A
     {
         Vision::MentalMap const& map = seat.Map;
         std::vector<SeenPlaces::Point> const frontier = SeenPlaces::Frontier(at, FRONTIER_PULL_RADIUS,
-            FRONTIER_PULL_STEP, 1, [&map](float x, float y) { return MapGround(map, x, y); });
+            FRONTIER_PULL_STEP, FRONTIER_PULL_POINTS, [&map](float x, float y) { return MapGround(map, x, y); });
         seek.FrontierChecked = true;
         seek.FrontierCheckedMs = env.EpisodeElapsedMs;
         // The nearest one at a door or beyond: in a room of the table or within FRONTIER_DOOR_YARDS of a room's opening.

@@ -438,3 +438,12 @@ Charge and taxis still start splines).
 - `sweep_rotating`: seed index = `first + 195 x (env_steps // eval.every_env_steps) + i`. At an episode count other
   than 195 the (room, object) pairs rotate too. Two evaluations inside one `every_env_steps` bucket (the advance-time
   one, `train.py` ADVANCE) reuse a shift. The frozen `sweep` is unchanged.
+- `heldout_every` is 1 in M2, so `sweep_rotating` adds 195 more 420-s episodes to every evaluation (roughly double the
+  held-out time). Raise `eval.heldout_every` or drop `sweep_rotating` from the yaml if that costs too much.
+- New episode-info columns change the evaluation format: the overall tracker forgets on that (decision 0022).
+- `found_300` is a plain mean over episodes (not a `PER_EVENT` column: there is no event count to weight by).
+- The arenas' `EpisodeSeconds` 300 -> 420 only feeds `LongestEpisodeSeconds` (the evaluation's decision budget); a
+  training episode's clock is still its rung's `Seek.RungSeconds*`.
+- Stages.cpp's comment that 300 s is the episode clock feature's scale (`EPISODE_TIME_SCALE_MS`) predates the 420 s
+  deep rung: the clock feature saturates in the last 120 s of a deep episode (not changed here).
+- `FrontierPull` looks through the 16 nearest frontier clusters (`FRONTIER_PULL_POINTS`) for one at a door or beyond.
