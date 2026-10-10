@@ -2644,8 +2644,11 @@ void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
             }
 
             // A new goal is a new thing to reach, and is paid for again when it is. Its progress is measured from
-            // its first observation, which knows where its place is (PotentialReady).
-            if (goal != hold.Goal)
+            // its first observation, which knows where its place is (PotentialReady). A place goal of the seek
+            // stage's (a room slot or the way on) chosen again once it ended is a new goal too: its slot has been
+            // bound to another room, or the frontier has moved on, since.
+            bool const again = state.RoomGoals && goal == hold.Goal && hold.Ended && GoalBlock::IsPlaceGoal(goal);
+            if (goal != hold.Goal || again)
             {
                 hold = GoalHold();
                 hold.Goal = goal;

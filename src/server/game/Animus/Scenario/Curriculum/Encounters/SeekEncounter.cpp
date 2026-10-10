@@ -543,7 +543,7 @@ void Animus::Curriculum::SeekEncounter::View(Env const& env, uint32 seatIndex, S
 
     // The way on: the nearest frontier of its own mental map (known open ground beside ground it has not seen), as a
     // dungeon stage's (InstanceEncounter::SeenWorld), refreshed every FRONTIER_MS.
-    if (seatIndex >= MAX_SEATS)
+    if (!view.Bot || seatIndex >= MAX_SEATS)
         return;
     constexpr uint32 FRONTIER_MS = 2000;
     constexpr float FRONTIER_RADIUS = 40.0f;
@@ -770,7 +770,7 @@ void Animus::Curriculum::SeekEncounter::Reward(Env& env, uint32 seatIndex, Playe
             track.SumZ += hitZ;
             ++track.Hits;
         });
-        for (uint32 room : Draw::NewlyLookedFrom(counts, seek.Looked, tuning.RoomSeenRays))
+        for (uint32 room : Draw::NewlyLooked(counts, seek.Looked, tuning.RoomSeenRays))
         {
             (void)room;
             ++seek.RoomsLooked;

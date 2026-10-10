@@ -79,8 +79,7 @@ namespace Animus::Curriculum
             OBS_COUNT                   = OBS_PLACE_FIRST + GOAL_PLACE_SLOTS * PLACE_FEATURES
         };
 
-        /// The held-goal columns, the place slots (six rooms and the way on) and the features of each.
-        static constexpr uint32 HELD_COLUMNS = OBS_PLACE_FIRST - OBS_HELD_FIRST;
+        /// The place slots (six rooms and the way on); PLACE_FEATURES columns each.
         static constexpr uint32 PLACE_SLOTS = GOAL_PLACE_SLOTS;
         static constexpr float OBJECTIVE_SCALE = 500.0f;        // CompassBlock's, so a bearing means the same
         static constexpr float NEAR_SCALE = 40.0f;

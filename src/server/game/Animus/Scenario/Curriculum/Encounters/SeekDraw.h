@@ -170,18 +170,10 @@ namespace Animus::Curriculum::SeekDraw
         }
     }
 
-    inline std::vector<uint32> FloorRays(std::vector<SeekRoom> const& rooms, Vision::FrameHits const& hits,
-        float rise = 4.0f)
-    {
-        std::vector<uint32> counts(rooms.size(), 0);
-        FloorHits(rooms, hits, rise, [&counts](uint32 room, float, float, float) { ++counts[room]; });
-        return counts;
-    }
-
-    /// The rooms a frame looks into for the first time this episode, from its floor rays per room (FloorRays) --
-    /// RoomSeen's, by the episode's own `looked` (amendment 6: never the remembered map, so a map kept from before
-    /// takes no aid away) -- marked in it: at least `minRays` of the frame's floor rays on each.
-    inline std::vector<uint32> NewlyLookedFrom(std::vector<uint32> const& counts, std::vector<bool>& looked,
+    /// The rooms a frame looks into for the first time this episode, from the floor rays on each (`counts`, counted
+    /// from FloorHits) -- RoomSeen's, by the episode's own `looked` (amendment 6: never the remembered map, so a map
+    /// kept from before takes no aid away) -- marked in it: at least `minRays` of the frame's floor rays on each.
+    inline std::vector<uint32> NewlyLooked(std::vector<uint32> const& counts, std::vector<bool>& looked,
         uint32 minRays)
     {
         std::vector<uint32> out;
@@ -194,12 +186,6 @@ namespace Animus::Curriculum::SeekDraw
                 out.push_back(index);
             }
         return out;
-    }
-
-    inline std::vector<uint32> NewlyLooked(std::vector<SeekRoom> const& rooms, Vision::FrameHits const& hits,
-        std::vector<bool>& looked, uint32 minRays)
-    {
-        return NewlyLookedFrom(FloorRays(rooms, hits), looked, minRays);
     }
 
     /// The side of a floor cell the room goals count coverage in, yards.
