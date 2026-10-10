@@ -30,6 +30,11 @@ from torch.distributions import Categorical
 
 MASKED_LOGIT = -1e9
 
+#: The goal block's place slots (m2-goals; stage.json goals.place_slots): the values a slot has (sin and cos of the
+#: bearing, distance, coverage, glimpse age) and the pointer's hidden width.
+PLACE_FEATURES = 5
+POINTER_HIDDEN = 16
+
 
 def _linear(in_dim: int, out_dim: int, gain: float) -> nn.Linear:
     linear = nn.Linear(in_dim, out_dim)
@@ -47,6 +52,18 @@ def masked_logits(logits: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     fallback[..., 0] = True
     mask = torch.where(empty, fallback, mask)
     return logits.masked_fill(~mask, MASKED_LOGIT)
+
+
+def uniform_logits(logits: torch.Tensor) -> torch.Tensor:
+    """Equal logits for every goal that is allowed, the masked ones still masked."""
+    return torch.where(logits > MASKED_LOGIT / 2, torch.zeros_like(logits), logits)
+
+
+def none_only_logits(logits: torch.Tensor) -> torch.Tensor:
+    """Only the last column (none) allowed: a slot that holds nothing."""
+    out = torch.full_like(logits, MASKED_LOGIT)
+    out[:, -1] = 0.0
+    return out
 
 
 def log_prob_of(logits: torch.Tensor, choice: torch.Tensor) -> torch.Tensor:
@@ -419,6 +436,24 @@ class GoalHead(nn.Module):
         # Per layout, where its goal block starts in the observation; -1 for a layout without one.
         self.register_buffer("block_at", torch.full((max(1, layout_count),), -1, dtype=torch.long))
         self.has_space = False
+        # **The pointer over place slots** (m2-goals W3a): the goal block (revision 3) carries per place slot k its
+        # bearing, distance, coverage and glimpse age (PLACE_FEATURES values), and the target logit of place k is
+        # raised by pointer(slot k's features) -- an MLP shared by the slots, so the head chooses over rooms by what it
+        # knows of each, not by a slot id (slots are bound in discovery order, so an id means nothing across episodes).
+        # The last layer starts at zero: a seeded head chooses exactly as it did.
+        self.pointer = nn.Sequential(nn.Linear(PLACE_FEATURES, POINTER_HIDDEN), nn.Tanh(),
+                                     nn.Linear(POINTER_HIDDEN, 1)) if self.targets > 1 else None
+        if self.pointer is not None:
+            nn.init.orthogonal_(self.pointer[0].weight, gain=1.0)
+            nn.init.zeros_(self.pointer[0].bias)
+            nn.init.zeros_(self.pointer[2].weight)
+            nn.init.zeros_(self.pointer[2].bias)
+        # Where the features are (stage.json "goals": columns.place_features and place_slots), as four numbers: the
+        # first feature column inside the goal block, the first place target, how many slots and how many features a
+        # slot; -1 throughout for no pointer (a manifest of goal block revision 2). A buffer, so a checkpoint plays the
+        # same way where it is loaded without a stage (evaluate, export); the host copy is for the captured graphs.
+        self.register_buffer("place_spec", torch.full((4,), -1, dtype=torch.long))
+        self.place_at, self.place_first, self.place_count = -1, -1, 0
 
     @property
     def count(self) -> int:
@@ -428,6 +463,7 @@ class GoalHead(nn.Module):
         super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
         # A loaded goal space (a checkpoint's block positions) says itself whether there is one.
         self.has_space = bool((self.block_at >= 0).any())
+        self._mirror_place_spec()
 
     @property
     def block_width(self) -> int:
@@ -444,13 +480,80 @@ class GoalHead(nn.Module):
         return {"secondary_ended": base, "event": base + 1, "achieved_kind": base + 2,
                 "achieved_target": base + 2 + self.kinds}
 
-    def set_space(self, accepts, block_at) -> None:
+    def set_space(self, accepts, block_at, goals: dict | None = None) -> str:
         """The goal space the sim wrote (stage.json "goals"): accepts [kinds][targets], and per layout the goal
-        block's first observation column (-1 without one)."""
+        block's first observation column (-1 without one). `goals` is the manifest's "goals" object, which says where
+        the place slots' features sit (columns.place_features, place_slots); without them (goal block revision 2) the
+        pointer is off. Returns a line about the pointer for the log."""
         self.accepts.copy_(torch.as_tensor(accepts, dtype=torch.bool, device=self.accepts.device))
         self.block_at.copy_(torch.as_tensor(block_at, dtype=torch.long, device=self.block_at.device))
         # Kept on the host: a rollout graph cannot read the device while it is captured.
         self.has_space = bool(np.any(np.asarray(block_at) >= 0))
+        spec, note = self._place_spec_of(goals)
+        self.place_spec.copy_(torch.as_tensor(spec, dtype=torch.long, device=self.place_spec.device))
+        self._mirror_place_spec()
+        return note
+
+    def _place_spec_of(self, goals: dict | None) -> tuple[list[int], str]:
+        """The pointer's place_spec from a manifest's "goals" (see __init__) and a line saying what it found."""
+        off = [-1, -1, -1, -1]
+        columns = (goals or {}).get("columns") or {}
+        slots = (goals or {}).get("place_slots")
+        if self.pointer is None or not slots or "place_features" not in columns:
+            return off, "no place slots in the manifest (goal block before revision 3): no pointer term"
+        first, count, features = int(slots["first"]), int(slots["count"]), int(slots["features"])
+        at = int(columns["place_features"])
+        if features != PLACE_FEATURES:
+            raise ValueError(f"goals.place_slots.features is {features}, the pointer reads {PLACE_FEATURES} "
+                             f"({', '.join(slots.get('feature_names') or ())})")
+        if first < 0 or count < 1 or first + count > self.targets:
+            raise ValueError(f"goals.place_slots {first}..{first + count - 1} is not inside the {self.targets} goal "
+                             f"targets")
+        width = int(columns.get("width", at + count * features))
+        if at + count * features > width:
+            raise ValueError(f"goals.columns.place_features {at} + {count} x {features} reaches past the goal "
+                             f"block's width {width}")
+        return ([at, first, count, features],
+                f"pointer over {count} place slots (targets {first}..{first + count - 1}) x {features} features "
+                f"at goal block column {at}")
+
+    def _mirror_place_spec(self) -> None:
+        """The host copy of place_spec (a rollout graph cannot read the device while it is captured)."""
+        at, first, count, features = (int(v) for v in self.place_spec.tolist())
+        on = self.pointer is not None and at >= 0 and count > 0 and features == PLACE_FEATURES
+        self.place_at, self.place_first, self.place_count = (at, first, count) if on else (-1, -1, 0)
+
+    @property
+    def pointer_on(self) -> bool:
+        return self.place_count > 0
+
+    def place_scores(self, obs: torch.Tensor, layout: torch.Tensor, dtype: torch.dtype) -> torch.Tensor | None:
+        """The pointer's score per place slot, [rows, slots]: the slot's features read off the goal block, zero for a
+        row whose layout has no goal block. None without a pointer. No branch on data: the row is a mask, so the
+        rollout graph captures it."""
+        if not self.pointer_on:
+            return None
+        obs = obs.reshape(-1, obs.shape[-1])
+        at = self.block_at[layout.reshape(-1).long()]
+        has = at >= 0
+        span = self.place_count * PLACE_FEATURES
+        columns = (at.clamp(min=0) + self.place_at)[:, None] + torch.arange(span, device=obs.device)[None, :]
+        columns = columns.clamp(max=obs.shape[-1] - 1)
+        values = obs.gather(1, columns).reshape(-1, self.place_count, PLACE_FEATURES)
+        values = values * has[:, None, None].to(values.dtype)
+        weight = self.pointer[0].weight
+        return self.pointer(values.to(weight.dtype)).squeeze(-1).to(dtype)
+
+    def _with_places(self, joint: torch.Tensor, obs: torch.Tensor | None, layout: torch.Tensor | None) -> torch.Tensor:
+        """`joint` [rows, kinds, targets] with the pointer's score added to each place target's logit (every kind
+        alike: the target's score is shared across the kinds that accept it)."""
+        if obs is None or layout is None:
+            return joint
+        scores = self.place_scores(obs, layout, joint.dtype)
+        if scores is None:
+            return joint
+        padded = nn.functional.pad(scores, (self.place_first, self.targets - self.place_first - self.place_count))
+        return joint + padded[:, None, :]
 
     def _block(self, obs: torch.Tensor, layout: torch.Tensor):
         """The goal block's columns of flat rows, and which rows have one."""
@@ -497,12 +600,19 @@ class GoalHead(nn.Module):
         joint = self.kind(shifted)[:, :, None] + self.pair[None].to(features.dtype)
         if self.target is not None:
             joint = joint + self.target(shifted)[:, None, :]
+        joint = self._with_places(joint, obs, layout)
         allowed = self.accepts[None].expand(features.shape[0], -1, -1)
         if obs is not None and layout is not None:
             block, has = self._block(obs.reshape(-1, obs.shape[-1]), layout.reshape(-1))
             present = block[:, : self.kinds, None] & block[:, self.kinds : self.kinds + self.targets][:, None, :]
             allowed = torch.where(has[:, None, None], allowed & present, allowed)
         allowed = allowed.reshape(features.shape[0], -1)
+        if slot >= 2:
+            # A queued goal is not one already drawn at this choice (the primary, the secondary, the queue so far): a
+            # repeat of the primary ended lost on promotion, and a repeat in the queue was a wasted place.
+            goals = torch.arange(allowed.shape[-1], device=allowed.device)[None, :]
+            for goal in drawn:
+                allowed = allowed & ~((goal.long()[:, None] == goals) & (goal[:, None] >= 0))
         none = self.none_bias[slot - 1].to(features.dtype).expand(features.shape[0], 1)
         logits = torch.cat([masked_logits(joint.reshape(features.shape[0], -1), allowed), none], dim=-1)
         # A row whose layout has no goal block has only none.
@@ -514,10 +624,13 @@ class GoalHead(nn.Module):
         return logits
 
     def draw(self, features: torch.Tensor, obs: torch.Tensor, layout: torch.Tensor, deterministic: bool,
-             slots: torch.Tensor | None = None):
+             slots: torch.Tensor | None = None, uniform: bool = False):
         """The slots drawn at a choice, or scored when `slots` [rows, S] is given: (slots [rows, S] with -1 for
-        none, log probability, entropy)."""
+        none, log probability, entropy). `uniform` (the eval arm random_goal): the primary is drawn uniformly over
+        the goals on offer and nothing is held beside it or queued."""
         primary_logits = self.logits(features, obs, layout)
+        if uniform:
+            primary_logits = uniform_logits(primary_logits)
         if slots is None:
             primary, primary_lp = sample_logits(primary_logits, deterministic)
         else:
@@ -529,6 +642,8 @@ class GoalHead(nn.Module):
         none = self.count
         for slot in range(1, self.slots):
             logits = self.slot_logits(features, slot, drawn, obs, layout)
+            if uniform:
+                logits = none_only_logits(logits)
             if slots is None:
                 choice, lp = sample_logits(logits, deterministic)
             else:
@@ -554,6 +669,7 @@ class GoalHead(nn.Module):
         joint = self.kind(features)[:, :, None] + self.pair[None].to(features.dtype)
         if self.target is not None:
             joint = joint + self.target(features)[:, None, :]
+        joint = self._with_places(joint, obs, layout)
         if self.lookahead:
             # What each goal is expected to do, as the policy weighs it; the predictions learn from outcomes only.
             success, duration = self.predictions(features.detach())
@@ -567,8 +683,10 @@ class GoalHead(nn.Module):
             nothing = torch.zeros_like(allowed)
             allowed = torch.where(has[:, None, None], allowed & present, nothing if self.has_space else allowed)
         allowed = allowed.reshape(features.shape[0], -1).clone()
-        # Always something to choose: the first goal (Fight about no one in particular) is never masked out.
-        allowed[:, 0] = True
+        # Always something to choose: the first goal (Fight about no one in particular) is allowed when nothing else
+        # is on offer. A stage whose goal block always offers it (every stage but M2's room goals) is unchanged; M2
+        # withdraws it once a place exists, so the head has to choose a place.
+        allowed[:, 0] = allowed[:, 0] | ~allowed.any(dim=-1)
         return masked_logits(joint.reshape(features.shape[0], -1), allowed)
 
 
@@ -1666,6 +1784,10 @@ class GoalEmbedding(nn.Module):
 # The goal's scale on the actor's features (GoalEmbedding.condition, .amdl 7) starts at zero; an actor saved before it
 # had none, and loads as exactly the actor it was.
 _GOAL_SCALE_KEYS = ("goal_embedding.kind_scale.weight", "goal_embedding.target_scale.weight")
+#: The goal head's pointer over place slots (GoalHead.pointer, m2-goals W3a) and where its features sit
+#: (GoalHead.place_spec): an actor saved before them loads with the pointer as initialised -- its last layer at zero, so
+#: it adds nothing -- and no place slots until the stage's manifest says (MappoTrainer.set_goal_space).
+_GOAL_POINTER_PREFIXES = ("goal_head.pointer.", "goal_head.place_spec")
 
 
 #: The blind-column masks' buffer names (attach_blind_columns' tags): "blind_keep_" (a checkpoint from before the hint
@@ -1681,12 +1803,14 @@ def without_blind_columns(state: dict) -> dict:
 
 
 def load_actor_state(actor: nn.Module, state: dict) -> None:
-    """actor.load_state_dict(state), except that an actor saved before the goal scale existed loads with it at zero."""
+    """actor.load_state_dict(state), except that an actor saved before the goal scale existed loads with it at zero, and
+    one saved before the goal head's pointer existed loads with the pointer as initialised (a no-op)."""
     missing, unexpected = actor.load_state_dict(without_blind_columns(state), strict=False)
     # The blind-column masks are never taken from a checkpoint: an actor built with seat sets has its own already (the
     # stage's), which a resume keeps.
     wrong = [key for key in missing
-             if key not in _GOAL_SCALE_KEYS and not key.split(".")[-1].startswith(BLIND_KEEP_PREFIXES)]
+             if key not in _GOAL_SCALE_KEYS and not key.startswith(_GOAL_POINTER_PREFIXES)
+             and not key.split(".")[-1].startswith(BLIND_KEEP_PREFIXES)]
     if wrong or unexpected:
         raise RuntimeError(f"Error(s) in loading state_dict for {type(actor).__name__}: missing {wrong}, "
                            f"unexpected {list(unexpected)}")
@@ -1930,7 +2054,8 @@ class LayoutActor(nn.Module):
         return Categorical(logits=self.goal_head.logits(features, obs, layout))
 
     def decide_goals(self, features: torch.Tensor, obs: torch.Tensor, layout: torch.Tensor, held: torch.Tensor,
-                     queue: torch.Tensor, clock: torch.Tensor, deterministic: bool) -> dict[str, torch.Tensor]:
+                     queue: torch.Tensor, clock: torch.Tensor, deterministic: bool,
+                     uniform: bool = False) -> dict[str, torch.Tensor]:
         """**The goal decision of one step** (next-run plan, Wave 4), the same in the rollout, its captured graph,
         the teachers and the module's runtime. Flat rows; `held` the goal (pair) held, `queue` [rows, S - 2] the goals
         waiting (-1 none), `clock` the goal clock's choices. In order:
@@ -1941,13 +2066,17 @@ class LayoutActor(nn.Module):
         - a choice is made on the clock, where the primary ended with nothing queued, or on the block's event.
 
         Returns the pair held now (`goal`), the queue, which rows chose (`chosen`), their log probability (0 where
-        none), the slots drawn [rows, S] (what the slow update scores) and the observed signals."""
+        none), the slots drawn [rows, S] (what the slow update scores) and the observed signals. `uniform`: draw the
+        primary uniformly over the goals on offer (the eval arm random_goal), a host flag the training graph never
+        sets."""
         head = self.goal_head
         rows = features.shape[0]
         signals = head.signals(obs, layout)
         if head.slots <= 1:
             chosen = clock | signals["ended"]
             logits = head.logits(features, obs, layout)
+            if uniform:
+                logits = uniform_logits(logits)
             drawn, _ = sample_logits(logits, deterministic)
             goal = torch.where(chosen, drawn, held.long())
             return {"goal": goal, "queue": queue, "chosen": chosen,
@@ -1962,7 +2091,7 @@ class LayoutActor(nn.Module):
         queue = torch.where(promote[:, None], shifted, queue)
         chosen = clock | (signals["ended"] & ~promote) | signals["event"]
 
-        slots, log_prob, _ = head.draw(features, obs, layout, deterministic)
+        slots, log_prob, _ = head.draw(features, obs, layout, deterministic, uniform=uniform)
         primary = torch.where(chosen, slots[:, 0], primary)
         secondary = torch.where(chosen, slots[:, 1], secondary)
         queue = torch.where(chosen[:, None], slots[:, 2:], queue)

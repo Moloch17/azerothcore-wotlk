@@ -1517,8 +1517,9 @@ class TrainingRun:
     def evaluate_arms(self, plain: dict | None) -> None:
         """eval.arms: the evaluation's own seeds played again beside the plain "all bots" one -- "with_human", the
         sim's human stand-in in one seat of every party, "with_partners", the fixed co-op partner set in some, and the
-        ablations "no_flag", "no_camera", "no_compass", "no_map" (the learner's input edited) and
-        "no_memory" (its recurrent state reset every decision), all evaluation.ablation_chooser -- and
+        ablations "no_flag", "no_camera", "no_compass", "no_map", "no_goal" (the learner's input edited),
+        "no_memory" (its recurrent state reset every decision) and "random_goal" (its goals drawn uniformly over
+        those on offer), all evaluation.ablation_chooser -- and
         reported apart as policy <arm> in eval.csv and eval.jsonl, with the gap to the plain one. A reading only:
         neither the tracker, the controller nor the partners' pool sees it."""
         config = self.config
@@ -1540,11 +1541,16 @@ class TrainingRun:
                     continue
                 choose, options["excluded"] = with_partners_chooser(choose, arm_partners)
             elif arm in ABLATIONS:
-                # The learner's own input edited (flag, image, compass, map) or its memory reset: the same
+                # The learner's own input edited (flag, image, compass, map, goal block) or its memory reset: the same
                 # seeds, the sim untouched, so the plain evaluation's episode columns read the arm's own result.
                 choose = ablation_chooser(choose, arm, self.spec, self.stage)
-            result = self._evaluate_share(choose, episodes, config.eval.seed, arenas=self.arena_names,
-                                          action_names=self.action_names, **options)
+            # random_goal: the goal head's draws are uniform for the length of the arm (MappoTrainer.uniform_goals).
+            self.trainer.uniform_goals = arm == "random_goal"
+            try:
+                result = self._evaluate_share(choose, episodes, config.eval.seed, arenas=self.arena_names,
+                                              action_names=self.action_names, **options)
+            finally:
+                self.trainer.uniform_goals = False
             if self.cast is not None or self.partners is not None:
                 self._reset_far_side()
             if not self.ranks.leader:

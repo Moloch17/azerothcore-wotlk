@@ -24,6 +24,12 @@ PER_EVENT = {
     "sight_seconds": "sighted",
     "sight_to_arrival": "found_sighted",
     "revisit_rate": "room_entries",
+    # ... and the room goals (m2-goals): the share of chosen room goals that were reached over the goals chosen, and the
+    # object room's coverage when the object was found, and whether that room had been Checked before it was, over the
+    # episodes that found it.
+    "goal_follow_rate": "goals_room_chosen",
+    "check_cover_at_find": "found",
+    "checked_miss": "found",
     # ... and its found rate by the placement's rung (REDESIGN §2: the status headline per rung), over the episodes
     # placed at each.
     "found_hallway": "rung_hallway",

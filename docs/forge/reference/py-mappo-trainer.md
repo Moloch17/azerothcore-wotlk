@@ -44,7 +44,7 @@ The yaml section is `mappo:` (`TrainConfig.mappo`, `config.py:657`); unknown key
 | `rollout_graphs` | True | `_graphs_off_reason` |
 | `vision_chunk_rows` | 0 | `_encode_vision` chunking. `"auto"` (`VISION_CHUNK_AUTO`; M2's yaml and so M3 to D3) is replaced by a number in `train.make_trainer`: `choose_vision_chunk_rows` takes the whole minibatch (0) where `VisionEncoder.update_bytes_per_row` x 2 (the peak factor) x the minibatch's rows fits in 80% of `torch.cuda.mem_get_info` free memory less the rollout tensors on the device and 2 GiB, else the largest of 4096, 3072, 2048, 1536, 1024, 768, 512, 256 that does; no GPU or a failed query gives 2048 (`VISION_CHUNK_FALLBACK`). It logs one line with the free memory and the choice, and the config the checkpoint saves holds the number. An explicit integer is used as it is. A chunk smaller than the minibatch still encodes twice, so the 1.7x cost (audit U3) goes only where the whole minibatch fits. |
 | `rank_sync`, `weight_sync_every` | "gradients", 1 | `update()` (`:1469`); also `train.py:549` (async), `async_sync.Link` |
-| `goal_count`, `goal_targets`, `goal_every_decisions`, `goal_slots` | 0, 1, 16, 1 | goal head; the goal clock `age % goal_every_decisions == 0` |
+| `goal_count`, `goal_targets`, `goal_every_decisions`, `goal_slots` | 0, 1, 16, 1 | goal head; the goal clock `age % goal_every_decisions == 0` (M1 64, M2 128, M3/M4 restate 64) |
 | `hindsight_coef` | 0.0 | hindsight imitation term (needs `goal_slots > 1`) |
 | `foresight_coef`, `foresight_horizons_seconds`, `foresight_time_scale_seconds` | 0, (5,30), 60 | foresight head and loss |
 | `foresight_obs_targets`, `foresight_feedback` | False, False | extra targets (`FORESIGHT_OBS_TARGETS`, `:203`); feedback of detached predictions |
@@ -52,6 +52,15 @@ The yaml section is `mappo:` (`TrainConfig.mappo`, `config.py:657`); unknown key
 | `slow_goal_size`, `slow_goal_gamma`, `slow_goal_lambda`, `slow_goal_lr` | 0, 0.993, 0.95, 3e-4 | the slow goal loop; gamma/lambda go to `RolloutBuffer.finish(slow_goal=...)` (`train.py:1710`) |
 
 Removed by the learner trim (`632754d80`): `slow_layout`, `slow_every_decisions`, `slow_gamma`, `slow_gae_lambda`.
+
+`set_goal_space(stage, layouts)` now passes the manifest's whole `goals` object to `GoalHead.set_space`, so the pointer's
+columns (goal block revision 3: `goals.columns.place_features`, `goals.place_slots`) are read from it, and prints one
+line (`Goal head: pointer over 7 place slots ...` or `no place slots in the manifest ...`). `MappoTrainer.uniform_goals`
+(host bool, default False, set by `Run.evaluate_arms` for the length of the `random_goal` arm and reset in a `finally`) is
+passed to `decide_goals` by the eager `_decide`; the captured rollout graph and the update never set it. The slow goal
+update (`_update_goals`) is unchanged: the pointer's parameters are in `actor.goal_head.parameters()` and so in
+`slow_parameters()` and the slow optimiser; `head.draw`/`head.logits` receive the raw observations, from which the pointer
+reads its features.
 
 ## `ActingState` (`:209`)
 

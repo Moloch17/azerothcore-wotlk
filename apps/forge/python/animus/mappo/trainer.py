@@ -633,6 +633,10 @@ class MappoTrainer:
         self.goal_targets = max(1, config.goal_targets)
         self.goal_count = self.goal_kinds * self.goal_targets if self.goal_kinds else 0
         self.slow_goal_size = config.slow_goal_size if self.goal_count else 0
+        # The eval arm random_goal (evaluation.ablation_chooser): while set, a goal choice draws the primary uniformly
+        # over the goals on offer instead of from the head. A host flag read by the eager decision (_decide) only; the
+        # rollout graph, which training uses, never sees it set.
+        self.uniform_goals = False
         self.goal_slots = max(1, config.goal_slots) if self.goal_count else 1
         # The slots are drawn and scored by the slow loop's own update (_update_goals); a queue needs two slots behind
         # the pair held.
@@ -802,9 +806,13 @@ class MappoTrainer:
             blocks = ((stage.get("layouts") or {}).get(layout) or {}).get("blocks") or []
             at = next((int(b["obs"][0]) for b in blocks if b.get("name") == goals.get("block", "goal")), -1)
             block_at.append(at)
+        notes = []
         for actor in (self.actor, self._rollout_actor):
             if actor is not None and actor.goal_head is not None:
-                actor.goal_head.set_space(goals["accepts"], block_at)
+                # The manifest's offsets for the place slots' features (goal block revision 3), read, not assumed.
+                notes.append(actor.goal_head.set_space(goals["accepts"], block_at, goals))
+        if notes:
+            print(f"Goal head: {notes[0]}", flush=True)
 
     def camera_columns_clear(self) -> bool:
         """Whether no layout's adapter reads its camera's columns (the resume guard: resume_check.py calls it too)."""
@@ -1031,7 +1039,7 @@ class MappoTrainer:
                      else torch.full((rows, 1), -1, dtype=torch.long, device=self.rollout_device))
             goals = self._rollout_actor.decide_goals(goal_features, obs_t, layout_t,
                                                      self._tensor(state.goal, torch.long).reshape(rows), queue,
-                                                     clock, deterministic)
+                                                     clock, deterministic, self.uniform_goals)
             chosen_t = goals["chosen"]
             if slow_before is not None:
                 slow_after = torch.where(chosen_t[:, None], goal_features, slow_before)

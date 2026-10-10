@@ -62,6 +62,10 @@ mappo:
   # "auto" (was 2048 for every card): the learner picks the chunk at start from the device's free memory, the whole
   # minibatch (0) where it fits, and 2048 where there is no GPU to ask. A number here is taken as it is.
   vision_chunk_rows: auto
+  # A goal is held at most 32 s (128 decisions), not M1's 16 s (m2-goals plan 3.6): rooms are 5 to 36 s apart at 7 yd/s,
+  # so a leg of 150 yd met the 64-decision clock once and the clock became a source of churn. A maximum, not a period:
+  # a reached or lost primary chooses again at once, and choosing the same goal again is free. M3 and M4 restate 64.
+  goal_every_decisions: 128
 
 # Amendment 9: 78 episodes every 10M, at the training rung (each of its rooms in turn, the object types cycled: at the
 # deep rung every room twice), so `found` is the rung's own found rate, which the fade reads. The full sweep -- every
@@ -85,6 +89,10 @@ eval:
   # cleared; the image blanked, the map kept); no_map zeroes the map block's columns and the mental map's crop;
   # no_memory resets the recurrent state (GRU memory, slow memory, held goal and queue) before every decision, so the
   # policy acts from what it sees now. M1's no_compass has nothing to zero here (null drops the inherited key).
+  # no_goal zeroes the goal block's columns (no goal on offer but the placeholder, the held-goal compass and the place
+  # slots empty: the policy as it was before room goals); random_goal draws the goals uniformly over those on offer
+  # (the follower without the planner). Read no_goal before no_memory, which also drops the held goal and queue
+  # (m2-goals plan 5.2).
   # Readings, never gates. M3 and M4 extend this file and restate `arms: {}`.
   arms:
     no_compass: null
@@ -92,6 +100,8 @@ eval:
     no_camera: 64
     no_map: 64
     no_memory: 64
+    no_goal: 64
+    random_goal: 64
   report: [found, found_hallway, found_doorway, found_room, found_deep, seek_rung, rung_carried, find_seconds,
            sighted, sight_seconds, sight_to_arrival, rooms_looked, rooms_entered, rooms_reentered, revisit_rate,
            rooms_before_found, objective_visible, room_depth, difficulty, deep_room, object_fallback,
@@ -108,7 +118,9 @@ status:
   headline: [found, found_hallway, found_doorway, found_room, found_deep, seek_rung, found_deepest, find_seconds,
              sight_seconds, sight_to_arrival, rooms_looked, rooms_before_found, revisit_rate, objective_visible,
              wall_seconds, timed_out, died,
-             found_no_flag, found_no_camera, found_no_map, found_no_memory]
+             plan_share, goal_follow_rate, rooms_checked_per_min, returns, slots_waiting, checked_miss,
+             check_cover_at_find,
+             found_no_flag, found_no_camera, found_no_map, found_no_memory, found_no_goal, found_random_goal]
   targets:
     # M1's targets are not M2's measures (null drops an inherited key).
     arrived: null

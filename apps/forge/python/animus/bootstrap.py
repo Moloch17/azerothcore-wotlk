@@ -436,6 +436,70 @@ def _seed_shared(new: dict, old: dict) -> None:
             tensor.copy_(old[key])
 
 
+#: The goal block's name in stage.json (goals.block), and what a changed revision of it resets (m2-goals W3b): the
+#: goal head, whose choices were made over the old block's offers, and the slow loop that read its features. The
+#: embeddings stay: they are what the fast policy's features were conditioned on.
+GOAL_BLOCK = "goal"
+GOAL_RESET_PREFIXES = ("goal_head.", "slow_memory.", "slow_value.")
+#: The embedding tables that carry a goal's kind and target to the policy (actor: shift and scale; critic: shift).
+GOAL_EMBEDDINGS = ("goal_embedding.kind.weight", "goal_embedding.target.weight", "goal_embedding.kind_scale.weight",
+                   "goal_embedding.target_scale.weight")
+
+
+def _goal_ids(stage: dict | None) -> tuple[int, int, list[int]] | None:
+    """(the kind of travel_to, the kind of fight, the place target ids) from a stage.json's "goals", or None when the
+    manifest does not name the place slots (a goal block before revision 3) or the kinds."""
+    goals = (stage or {}).get("goals") or {}
+    kinds, slots = list(goals.get("kinds") or ()), goals.get("place_slots")
+    if "travel_to" not in kinds or "fight" not in kinds or not slots:
+        return None
+    first, count = int(slots["first"]), int(slots["count"])
+    return kinds.index("travel_to"), kinds.index("fight"), list(range(first, first + count))
+
+
+def _reseed_goals(actor: dict, critic: dict, fresh: dict, stage: dict | None, old_stage: dict | None) -> list[str]:
+    """After _seed_shared, when the goal block's revision differs between the checkpoint's stage and this one (M2's
+    room goals, revision 2 -> 3): the goal head and the slow loop start fresh (`fresh`: the new networks' own initial
+    values) -- the checkpoint's head chose among the old block's offers and may have collapsed on one of them (the
+    reseeded M2 sat on Fight about no one at zero entropy) -- and the embeddings are kept, with the Fight/none entries
+    warm-copied into travel_to and the place targets where those are untrained, so a goal that names a place conditions
+    the policy as the goal it used to hold did. Returns what happened, for the log; nothing when the revisions agree
+    (every other stage, every same-revision seed), which then behaves exactly as before."""
+    old_revision, new_revision = _block_revision(old_stage, GOAL_BLOCK), _block_revision(stage, GOAL_BLOCK)
+    if old_revision is None or new_revision is None or old_revision == new_revision:
+        return []
+    reset = [key for key in fresh if key.startswith(GOAL_RESET_PREFIXES)]
+    for key in reset:
+        actor[key].copy_(fresh[key])
+    lines = [f"goal block revision {old_revision} -> {new_revision}: the goal head and the slow loop start fresh "
+             f"({len(reset)} tensors: {', '.join(sorted({k.split('.')[0] for k in reset}))}); their optimiser too; "
+             f"the goal embeddings are kept"]
+    ids = _goal_ids(stage)
+    if ids is None:
+        lines.append("  no place slots in this stage's goals: no embedding warm-copied")
+        return lines
+    travel, fight, places = ids
+    copied = 0
+    for network in (actor, critic):
+        for key in GOAL_EMBEDDINGS:
+            if key not in network:
+                continue
+            table = network[key]
+            # The kind table is indexed by kind, the target table by target: Fight about no one is kind `fight`
+            # and target 0; a destination row still at zero was never trained, and takes the source's.
+            if key.endswith("kind.weight") or key.endswith("kind_scale.weight"):
+                pairs = [(fight, travel)]
+            else:
+                pairs = [(0, place) for place in places]
+            for source, destination in pairs:
+                if source < table.shape[0] and destination < table.shape[0] and not bool(table[destination].any()):
+                    table[destination].copy_(table[source])
+                    copied += 1
+    lines.append(f"  goal embeddings: Fight/none warm-copied into travel_to and place targets {places[0]}.."
+                 f"{places[-1]} ({copied} untrained rows, actor and critic)")
+    return lines
+
+
 #: The camera: its encoder (VisionEncoder, in the actor alone: the critic reads the actor's) and each network's join
 #: onto its adapters' output (VisionJoin).
 VISION = ("vision.", "vision_join.")
@@ -625,8 +689,11 @@ def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, ove
     critic = {key: tensor.clone() for key, tensor in trainer.critic.state_dict().items()}
 
     if not overlay:
+        fresh_goals = {key: tensor.clone() for key, tensor in actor.items() if key.startswith(GOAL_RESET_PREFIXES)}
         _seed_shared(actor, old["actor"])
         _seed_shared(critic, old["critic"])
+        for line in _reseed_goals(actor, critic, fresh_goals, stage, old_stage):
+            print(f"  {line}" if not line.startswith(" ") else line, flush=True)
         vision = _seed_vision(actor, old["actor"], stage, old_stage)
         _seed_vision(critic, old["critic"], stage, old_stage)
         if vision is not None:

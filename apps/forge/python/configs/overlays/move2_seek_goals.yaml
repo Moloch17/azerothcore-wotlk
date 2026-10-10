@@ -1,0 +1,27 @@
+# Overlay for the SEEDED START of move2_seek with room goals (m2-goals plan 4.1 and 4.2; owner, 2026-10-09). Not a stage
+# config: it extends nothing, nothing lists it as a stage (it lives under configs/overlays/), and it is applied only by
+# hand, `--overlay` on the learner command line, over move2_seek.yaml with its whole extends chain, before any --set.
+# Together with move2_seek_reseed.yaml it is the whole of the start: that overlay says where the ladder begins (the
+# single deep rung, fade.rungs [0.0], already the state of move2_seek.yaml) and the learning rate; this one says what
+# the goal machinery does on the way in.
+#
+# What the start is: a FRESH start of move2_seek seeded from the live run's checkpoint (finetune_from, the default path
+# runs/_finetune/move2_seek/best.pt), NOT a resume. The goal block grew to revision 3 (108 columns: the held goal's
+# compass and 7 place slots of 5 values), so the layouts changed and `resume` refuses it (layout_changes). The seed is
+# by name, and because the goal block's revision differs from the checkpoint's the seeder (bootstrap._reseed_goals):
+#   - resets goal_head.* (the head collapsed on Fight about no one at zero entropy: it holds no M2 knowledge) and the
+#     slow loop (slow_memory, slow_value; the slow optimiser always starts fresh), and prints what it reset;
+#   - keeps goal_embedding.* and warm-copies the Fight/none entries into travel_to and the place targets (14..20)
+#     where those rows are untrained, so a goal that names a place conditions the fast policy as the one it held;
+#   - leaves the new goal-block columns at zero weight (_seed_adapter_blocks) and the pointer head's last layer at zero
+#     (GoalHead.pointer), so the seeded policy begins as it was except for the fresh, near-uniform goal draws.
+# Expect the found rate to dip while the goals are near random and the aids (RoomGoal, RoomSwitch: the sim's Aid
+# category, fading to 0 at Seek.AidUntil of the budget) are at full scale (plan 4.1, phase A). The kill and rollback
+# rules are plan 5.4.
+#
+# Restated here only so the overlay is not empty and the cadence is visible beside the rest: a goal is held at most 32 s.
+mappo:
+  goal_every_decisions: 128
+  # Contingency, by plan 4.1 and 5.4: if the head collapses again (goal_entropy under 0.78 nats before goal_follow_rate
+  # passes 0.3), restart the learner with the end of the goal entropy schedule raised from 0.05 of itself to 0.3:
+  #   goal_entropy_final_fraction: 0.3

@@ -461,7 +461,12 @@ def standard_error(values: np.ndarray, groups: np.ndarray | None = None) -> floa
 #:               the camera's row) zeroed, which is what the sim sends a seat without a map (every cell unknown);
 #:   no_memory   the recurrent state (the actor GRU memory, slow memory, held goal and its age, goal queue)
 #:               reset to its episode-start value before every decision: the policy acts from the current observation.
-ABLATIONS = ("no_flag", "no_camera", "no_compass", "no_map", "no_memory")
+#:   no_goal     the goal block's observation columns zeroed (m2-goals): no goal is on offer but the placeholder (Fight
+#:               about no one), the held-goal compass reads 0 and the place slots are empty, which is the policy as it
+#:               was before room goals;
+#:   random_goal the goal head replaced by a uniform draw over the goals on offer (the primary only; nothing held beside
+#:               it or queued): the follower without the planner. A learner-side flag, MappoTrainer.uniform_goals.
+ABLATIONS = ("no_flag", "no_camera", "no_compass", "no_map", "no_memory", "no_goal", "random_goal")
 #: What an ablation arm reports and shows in forge status (<column>_<arm>).
 ABLATION_COLUMNS = ("arrived", "arrived_no_compass", "arrived_with_compass", "objective_visible")
 #: Bit 5 of the class byte (byte 3) of every pixel: the objective flag (Vision EncodePixel, cpp-vision.md).
@@ -525,7 +530,7 @@ def ablation_chooser(choose: Callable, arm: str, spec, stage: dict | None) -> Ca
     `choose.acting`."""
     if arm not in ABLATIONS:
         raise ValueError(f"unknown ablation arm {arm!r}; expected one of {list(ABLATIONS)}")
-    block = {"no_compass": "compass", "no_map": "map"}.get(arm)
+    block = {"no_compass": "compass", "no_map": "map", "no_goal": "goal"}.get(arm)
     spans = compass_spans(spec, stage, block) if block else []
     if block and not any(count for _, count in spans):
         raise ValueError(f"eval.arms.{arm}: the stage has no {block} block to zero")
@@ -534,11 +539,19 @@ def ablation_chooser(choose: Callable, arm: str, spec, stage: dict | None) -> Ca
         if acting is None or all(getattr(acting, name) is None for name in ("memory", "goal", "slow_memory", "queue")):
             raise ValueError("eval.arms.no_memory: the policy carries no memory, goal or queue to reset")
 
+    if arm == "random_goal":
+        acting = getattr(choose, "acting", None)
+        if acting is None or acting.goal is None:
+            raise ValueError("eval.arms.random_goal: the policy chooses no goals")
+
     def chooser(step):
         if arm == "no_memory":
             forget(choose.acting, len(step.done))
             return choose(step)
-        if arm == "no_compass":
+        if arm == "random_goal":
+            # The draw itself is the trainer's (uniform_goals, set around the arm by Run.evaluate_arms).
+            return choose(step)
+        if arm in ("no_compass", "no_goal"):
             return choose(replace(step, obs=ablate_obs(step.obs, step.layout, spans)))
         image = getattr(step, "image", None)
         if image is None:

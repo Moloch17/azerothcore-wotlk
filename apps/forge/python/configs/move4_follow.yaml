@@ -28,6 +28,8 @@ mappo:
   # M2's 2.2e-4 (deep rung, 2026-10-09) is M2's own: this stage keeps the 1.5e-4 it inherited before it.
   actor_lr: 0.00015
   critic_lr: 0.00015
+  # M2 holds a goal at most 32 s (128 decisions: room goals); this stage keeps M1's 16 s (64).
+  goal_every_decisions: 64
 
 # Every evaluation plays both dungeons' fixed routes (the route is the dungeon's: door, then each boss's place) from
 # seeded episodes -- the same parties, stops and sudden stops each time -- at the training rung.
