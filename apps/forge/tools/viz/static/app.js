@@ -80,10 +80,16 @@ async function loadEvaluation(mapWanted, seedWanted) {
   stopPlay();
   state.selected = null;
   const q = `run=${encodeURIComponent(state.run)}&steps=${state.steps}&policy=${encodeURIComponent(state.policy)}`;
-  const [eps, tr] = await Promise.all([api('/api/episodes?' + q), api('/api/trace?' + q)]);
+  const [eps, tr, media] = await Promise.all([api('/api/episodes?' + q), api('/api/trace?' + q),
+    api('/api/media?' + q).catch(() => [])]);
   state.episodes = eps;
   state.stepSeconds = tr.step_seconds || 0.25;
   state.blocks = tr.blocks.filter((b) => b.episode && b.x && b.x.length);
+  // The evaluation's videos are of these very episodes (the learner's evaluation, filmed by the sim): by seed and agent.
+  const videos = new Map(media.map((v) => [`${v.seed}.${v.agent}`, v]));
+  for (const b of state.blocks) b.video = videos.get(`${b.seed}.${b.agent}`) || null;
+  state.videoCount = media.length;
+  state.hover = null;
   const maps = [...new Set(state.blocks.map((b) => b.episode.map))].sort((a, b) => a - b);
   const tabs = $('maps');
   tabs.innerHTML = '';
@@ -216,6 +222,7 @@ function renderList() {
   box.innerHTML = '';
   const bs = visibleBlocks().slice().sort((a, b) => (a.episode.found - b.episode.found) || (a.seed - b.seed));
   $('epCount').textContent = `(${bs.length})`;
+  let selRow = null;
   for (const b of bs) {
     const e = b.episode;
     const row = document.createElement('div');
@@ -224,10 +231,14 @@ function renderList() {
     row.innerHTML = `<span class="dot" style="background:${e.found ? css('--found') : css('--missed')}"></span>
       <span class="seed">#${b.seed}</span>
       <span>${e.class}${e.room ? ' · ' + e.room : ''}</span>
-      <span class="t">${e.found ? Math.round(e.find_seconds || 0) + ' s' : 'miss'}</span>`;
+      <span class="t">${b.video ? '<b class="vid" title="filmed: video in the media panel">▶</b> ' : ''}${e.found ? Math.round(e.find_seconds || 0) + ' s' : 'miss'}</span>`;
     row.onclick = () => selectEpisode(b);
+    row.onmouseenter = () => { state.hover = b; draw(); };
+    row.onmouseleave = () => { if (state.hover === b) { state.hover = null; draw(); } };
     box.appendChild(row);
+    if (state.selected === b) selRow = row;
   }
+  if (selRow) selRow.scrollIntoView({ block: 'nearest' });
 }
 
 // ---- drawing --------------------------------------------------------------------------------------------------------
@@ -347,8 +358,23 @@ function draw() {
       ctx.strokeRect(px - r, py - r, 2 * r, 2 * r);
     });
   }
+  if (state.hover && state.hover !== state.selected && bs.includes(state.hover)) drawHover(ctx, v, state.hover);
   if (state.selected) drawSelected(ctx, v);
   drawLegend();
+}
+
+function drawHover(ctx, v, b) {
+  // a dark casing under a bright line, so the route stands out on any floor shade
+  const path = () => {
+    ctx.beginPath();
+    b.x.forEach((x, k) => { const [px, py] = worldToPx(x, b.y[k]); k ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+  };
+  ctx.globalAlpha = 1;
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  ctx.strokeStyle = 'rgba(10, 12, 16, 0.85)'; ctx.lineWidth = 5.5 / v.scale; path(); ctx.stroke();
+  ctx.strokeStyle = b.episode.found ? css('--found') : css('--missed'); ctx.lineWidth = 3 / v.scale; path(); ctx.stroke();
+  const [sx, sy] = worldToPx(b.x[0], b.y[0]);
+  ctx.fillStyle = css('--start'); ctx.beginPath(); ctx.arc(sx, sy, 4.5 / v.scale, 0, 7); ctx.fill();
 }
 
 function drawSelected(ctx, v) {
@@ -400,6 +426,8 @@ function drawLegend() {
   if ($('lEnds').checked) items.push(['x', '#f2f2f2', 'end']);
   if ($('lPins').checked) items.push(['dot', '#ff3b6b', 'wall contact (bright: stopped)']);
   if ($('lHeat').checked) items.push(['line', 'linear-gradient(90deg, rgb(88,15,109), rgb(243,120,25), rgb(252,255,164))', 'time spent (log scale)']);
+  if (state.bg?.water) items.push(['dot', 'rgb(52,128,214)', 'water']);
+  if (state.bg?.lava) items.push(['dot', 'rgb(255,96,24)', 'lava']);
   $('legend').innerHTML = items.map(([k, c, t]) =>
     `<span><i class="${k === 'dot' ? 'dot' : k === 'box' ? 'box' : ''}" style="${k === 'box' ? 'border-color' : 'background'}:${c}"></i>${t}</span>`).join('')
     + `<span style="opacity:.7">floor shaded by height · north up</span>`;
@@ -422,7 +450,66 @@ function selectEpisode(b) {
   zoomToRoute(b);
   renderList();
   writeHash();
+  showMedia(b);
   updatePlayer();
+}
+
+// ---- the bot's view: the evaluation video's frame for the replay's decision -----------------------------------------
+
+const frameImages = new Map();               // url -> Image, the frames already asked for
+function frameUrl(b, i) {
+  const k = Math.max(0, Math.min(b.video.frames - 1, i));
+  return `/api/frame?run=${encodeURIComponent(state.run)}&steps=${state.steps}&file=${encodeURIComponent(b.video.file)}&i=${k}`;
+}
+function preload(url) {
+  let im = frameImages.get(url);
+  if (!im) {
+    im = new Image();
+    im.src = url;
+    frameImages.set(url, im);
+    if (frameImages.size > 1500) frameImages.delete(frameImages.keys().next().value);
+  }
+  return im;
+}
+function showMedia(b) {
+  const box = $('media');
+  box.hidden = false;
+  $('mframe').hidden = !b.video;
+  $('mopen').hidden = !b.video;
+  frameImages.clear();
+  if (b.video) {
+    $('mtitle').textContent = "The bot's view";
+    $('mopen').href = b.video.url;
+    $('mnote').textContent = `${b.video.frames} frames at ${b.video.fps} per second, one per decision` +
+      (b.video.dropped ? ` · ${b.video.dropped} dropped` : '') + (b.video.truncated ? ' · cut short' : '');
+    return;
+  }
+  $('mtitle').textContent = 'No video of this route';
+  const filmed = state.blocks.filter((x) => x.video && x.episode.map === state.map);
+  const note = $('mnote');
+  if (!state.videoCount) {
+    note.textContent = state.policy === 'learner'
+      ? 'This evaluation has no videos.'
+      : 'Videos are filmed of the learner evaluation only (policy "learner").';
+    return;
+  }
+  note.textContent = `The sim films ${state.videoCount} sampled episodes of each evaluation` +
+    (filmed.length ? '; on this map:' : '; none on this map.');
+  for (const x of filmed) {
+    const btn = document.createElement('button');
+    btn.textContent = `#${x.seed} ${x.episode.class}`;
+    btn.onclick = () => selectEpisode(x);
+    note.appendChild(btn);
+  }
+}
+function updateFrame(b, i) {
+  if (!b.video) return;
+  const url = frameUrl(b, i), im = preload(url), img = $('mframe');
+  const show = () => { if (state.selected === b && state.play.i === i) img.src = url; };
+  if (im.complete && im.naturalWidth) show(); else im.addEventListener('load', show, { once: true });
+  // keep the next stretch of frames coming while it plays
+  const ahead = state.play.playing ? Math.ceil(24 * Number($('speed').value) / 4) : 4;
+  for (let k = 1; k <= ahead; k++) preload(frameUrl(b, i + k));
 }
 function zoomToRoute(b) {
   const c = $('canvas');
@@ -448,6 +535,7 @@ function updatePlayer() {
   $('pinfo').textContent = `decision ${i} · x ${b.x[i].toFixed(1)} y ${b.y[i].toFixed(1)} z ${b.z[i].toFixed(1)} · ` +
     `${b.moving && b.moving[i] ? 'moving' : 'stopped'}${b.wall && b.wall[i] ? ' · against a wall' : ''} · keys ${keys}` +
     `${b.flag && b.flag[i] ? ' · object in view (' + b.flag[i] + ' px)' : ''} · return so far ${ret.toFixed(2)}`;
+  updateFrame(b, i);
   draw();
 }
 function stopPlay() { state.play.playing = false; $('play').textContent = 'Play'; }
@@ -485,8 +573,32 @@ function wire() {
   const c = $('canvas');
   let drag = null;
   c.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY, vx: state.view.x, vy: state.view.y, moved: false }; c.setPointerCapture(e.pointerId); c.classList.add('drag'); });
+  let hoverQueued = null;
+  const tip = $('tip');
+  const hoverAt = () => {
+    const { x, y } = hoverQueued;
+    hoverQueued = null;
+    const b = state.bg && $('lRoutes').checked ? nearestBlock(x, y) : null;
+    c.style.cursor = b ? 'pointer' : '';
+    if (b) {
+      const e = b.episode;
+      tip.hidden = false;
+      tip.textContent = `#${b.seed} · ${e.class}${e.room ? ' · ' + e.room : ''} · ` +
+        (e.found ? `found in ${Math.round(e.find_seconds || 0)} s` : 'not found') + (b.video ? ' · ▶ video' : '');
+      tip.style.left = `${Math.min(x + 14, c.clientWidth - tip.offsetWidth - 8)}px`;
+      tip.style.top = `${Math.max(8, y - 34)}px`;
+    } else tip.hidden = true;
+    if (b !== state.hover) { state.hover = b; draw(); }
+  };
+  c.addEventListener('pointerleave', () => { tip.hidden = true; if (state.hover) { state.hover = null; draw(); } });
   c.addEventListener('pointermove', (e) => {
-    if (!drag) return;
+    if (!drag) {
+      const r = c.getBoundingClientRect();
+      if (!hoverQueued) requestAnimationFrame(hoverAt);
+      hoverQueued = { x: e.clientX - r.left, y: e.clientY - r.top };
+      return;
+    }
+    tip.hidden = true;
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
     if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
     state.view.x = drag.vx + dx; state.view.y = drag.vy + dy;
@@ -534,7 +646,14 @@ function wire() {
     requestAnimationFrame(tick);
   };
   $('scrub').oninput = () => { stopPlay(); state.play.i = Number($('scrub').value); updatePlayer(); };
-  $('pclose').onclick = () => { stopPlay(); state.selected = null; $('player').hidden = true; renderList(); writeHash(); draw(); };
+  $('pclose').onclick = () => {
+    stopPlay(); state.selected = null; $('player').hidden = true; $('media').hidden = true; renderList(); writeHash(); draw();
+  };
+  $('mhide').onclick = () => {
+    const min = $('media').classList.toggle('min');
+    $('mhide').textContent = min ? '+' : '–';
+    $('mhide').title = min ? 'Show the view' : 'Hide the view';
+  };
   document.addEventListener('keydown', (e) => {
     if (!state.selected || e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
     if (e.key === ' ') { e.preventDefault(); $('play').click(); }

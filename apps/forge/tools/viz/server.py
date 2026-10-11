@@ -207,6 +207,136 @@ def scene_triangles(scenes_dir, map_id):
     return _cached("scene", path, build)
 
 
+GRID_SIZE, GRID_CELLS = 533.3333, 128    # the terrain's grids (Camera.h GridU): u = 128 * (32 - x / 533.3333)
+WATER, LAVA = 1, 2                       # liquid kinds as the viewer draws them
+CEILING_NZ = -0.3                        # a face whose normal points this much down is a ceiling or overhang
+
+
+def scene_liquids(scenes_dir, map_id):
+    """The scene's liquid surfaces (BakedScene.h): the models' liquid triangles with their kind byte (bits 0-1:
+    0 water, 1 ocean, 2 magma, 3 slime), and the terrain's liquid tiles (a level and a kind per cell: 1 water,
+    3 magma or slime)."""
+    path = scenes_dir / f"{map_id:03d}.scene"
+
+    def build():
+        b = path.read_bytes()
+        section = lambda slot: struct.unpack_from("<QQ", b, 256 + 16 * slot)
+        count = struct.unpack_from("<I", b, 80)[0]
+        tris, kinds = np.zeros((0, 3, 3), np.float32), np.zeros(0, np.uint8)
+        if count:
+            t = np.frombuffer(b, "<f4", count=count * 9, offset=section(4)[0]).reshape(count, 3, 3)
+            tris = np.stack([t[:, 0], t[:, 0] + t[:, 1], t[:, 0] + t[:, 2]], axis=1)
+            raw = np.frombuffer(b, np.uint8, count=count, offset=section(5)[0])
+            kinds = np.where((raw & 3) >= 2, LAVA, WATER).astype(np.uint8)
+        tiles = {}
+        index_off, index_bytes = section(9)
+        liquid_off = section(11)[0]
+        cells = GRID_CELLS * GRID_CELLS
+        for k in range(index_bytes // 36):
+            tx, ty, _flags, _mx, _fl, _hi, _ho, li = struct.unpack_from("<iiIffIII", b, index_off + 36 * k)
+            if li == 0xFFFFFFFF:
+                continue
+            base = liquid_off + li * cells * 5
+            level = np.frombuffer(b, "<f4", count=cells, offset=base).reshape(GRID_CELLS, GRID_CELLS)
+            kind = np.frombuffer(b, np.uint8, count=cells, offset=base + cells * 4).reshape(GRID_CELLS, GRID_CELLS)
+            tiles[(tx, ty)] = (level, np.where(kind == 0, 0, np.where(kind == 3, LAVA, WATER)).astype(np.uint8))
+        return tris, kinds, tiles
+    return _cached("liquids", path, build)
+
+
+def _barycentric(p, x0, y1, w, h):
+    """The pixels a triangle covers: (r0, c0, inside mask, a, b, c) or None."""
+    cx, cy = (p[:, 0] - x0) / PX, (y1 - p[:, 1]) / PX        # north up
+    c0, c1 = int(max(0, math.floor(cx.min()))), int(min(w - 1, math.ceil(cx.max())))
+    r0, r1 = int(max(0, math.floor(cy.min()))), int(min(h - 1, math.ceil(cy.max())))
+    if c1 < c0 or r1 < r0:
+        return None
+    gc, gr = np.meshgrid(np.arange(c0, c1 + 1) + 0.5, np.arange(r0, r1 + 1) + 0.5)
+    ax, ay, bx, by, qx, qy = cx[0], cy[0], cx[1], cy[1], cx[2], cy[2]
+    d = (by - qy) * (ax - qx) + (qx - bx) * (ay - qy)
+    if abs(d) < 1e-9:
+        return None
+    a = ((by - qy) * (gc - qx) + (qx - bx) * (gr - qy)) / d
+    bb = ((qy - ay) * (gc - qx) + (ax - qx) * (gr - qy)) / d
+    cc = 1 - a - bb
+    inside = (a >= -0.02) & (bb >= -0.02) & (cc >= -0.02)
+    return (r0, c0, inside, a, bb, cc) if inside.any() else None
+
+
+def liquid_layer(scenes_dir, map_id, x0, x1, y0, y1, zlo, zhi, w, h):
+    """The top liquid surface per pixel inside the height band: its level (-inf for none) and kind."""
+    tris, kinds, tiles = scene_liquids(scenes_dir, map_id)
+    level = np.full((h, w), -np.inf, dtype=np.float32)
+    kind = np.zeros((h, w), dtype=np.uint8)
+    terrain = np.zeros((h, w), dtype=bool)      # the top surface is terrain liquid (its ground is not drawn)
+    if len(tris):
+        tz, txy = tris[:, :, 2], tris[:, :, :2]
+        keep = (tz.max(1) >= zlo) & (tz.min(1) <= zhi) & \
+               (txy[:, :, 0].max(1) >= x0) & (txy[:, :, 0].min(1) <= x1) & \
+               (txy[:, :, 1].max(1) >= y0) & (txy[:, :, 1].min(1) <= y1)
+        for i in np.nonzero(keep)[0]:
+            hit = _barycentric(tris[i], x0, y1, w, h)
+            if hit is None:
+                continue
+            r0, c0, inside, a, bb, cc = hit
+            p = tris[i]
+            zz = a * p[0, 2] + bb * p[1, 2] + cc * p[2, 2]
+            ok = inside & (zz >= zlo) & (zz <= zhi)
+            sub_l = level[r0:r0 + ok.shape[0], c0:c0 + ok.shape[1]]
+            sub_k = kind[r0:r0 + ok.shape[0], c0:c0 + ok.shape[1]]
+            higher = ok & (zz > sub_l)
+            sub_l[higher] = zz[higher]
+            sub_k[higher] = kinds[i]
+            terrain[r0:r0 + ok.shape[0], c0:c0 + ok.shape[1]][higher] = False
+    if tiles:
+        # Each pixel's terrain cell: u, v from the pixel centre's world x, y.
+        wx = x0 + (np.arange(w) + 0.5) * PX
+        wy = y1 - (np.arange(h) + 0.5) * PX
+        u = np.floor(GRID_CELLS * (32 - wx / GRID_SIZE)).astype(int)
+        v = np.floor(GRID_CELLS * (32 - wy / GRID_SIZE)).astype(int)
+        for (tx, ty), (lv, kd) in tiles.items():
+            cols = np.nonzero(u // GRID_CELLS == tx)[0]
+            rows = np.nonzero(v // GRID_CELLS == ty)[0]
+            if not len(cols) or not len(rows):
+                continue
+            cu, cv = u[cols] - tx * GRID_CELLS, v[rows] - ty * GRID_CELLS
+            z = lv[cu[None, :], cv[:, None]]                  # rows (y) x cols (x); index cellX * 128 + cellY
+            k = kd[cu[None, :], cv[:, None]]
+            ok = (k > 0) & (z >= zlo) & (z <= zhi)
+            sub_l, sub_k = level[np.ix_(rows, cols)], kind[np.ix_(rows, cols)]
+            higher = ok & (z > sub_l)
+            sub_l[higher], sub_k[higher] = z[higher], k[higher]
+            sub_t = terrain[np.ix_(rows, cols)]
+            sub_t[higher] = True
+            level[np.ix_(rows, cols)], kind[np.ix_(rows, cols)], terrain[np.ix_(rows, cols)] = sub_l, sub_k, sub_t
+    return level, kind, terrain
+
+
+def ceiling_between(tris, n, x0, y1, w, h, floor, level, want):
+    """Per pixel of `want`: a downward-facing surface lies between the floor and the liquid's level there."""
+    covered = np.zeros((h, w), dtype=bool)
+    rows, cols = np.nonzero(want)
+    if not len(rows):
+        return covered
+    lo, hi = float(floor[want].min()), float(level[want].max())
+    wx0, wx1 = x0 + cols.min() * PX, x0 + (cols.max() + 1) * PX
+    wy1, wy0 = y1 - rows.min() * PX, y1 - (rows.max() + 1) * PX
+    tz, txy = tris[:, :, 2], tris[:, :, :2]
+    pick = (n[:, 2] <= CEILING_NZ) & (tz.max(1) >= lo) & (tz.min(1) <= hi) & \
+           (txy[:, :, 0].max(1) >= wx0) & (txy[:, :, 0].min(1) <= wx1) & \
+           (txy[:, :, 1].max(1) >= wy0) & (txy[:, :, 1].min(1) <= wy1)
+    for i in np.nonzero(pick)[0]:
+        hit = _barycentric(tris[i], x0, y1, w, h)
+        if hit is None:
+            continue
+        r0, c0, inside, a, bb, cc = hit
+        p = tris[i]
+        zz = a * p[0, 2] + bb * p[1, 2] + cc * p[2, 2]
+        sl = np.s_[r0:r0 + inside.shape[0], c0:c0 + inside.shape[1]]
+        covered[sl] |= inside & want[sl] & (zz > floor[sl] + 0.5) & (zz < level[sl] - 0.1)
+    return covered
+
+
 def render_background(scenes_dir, map_id, x0, x1, y0, y1, zlo, zhi):
     tris, n = scene_triangles(scenes_dir, map_id)
     w, h = int((x1 - x0) / PX) + 1, int((y1 - y0) / PX) + 1
@@ -256,6 +386,22 @@ def render_background(scenes_dir, map_id, x0, x1, y0, y1, zlo, zhi):
     img[shade, :3] = (img[shade, :3] * 0.45).astype(np.uint8)
     edge = wall & ~has
     img[edge] = (52, 56, 64, 255)
+    # Water and lava, where the liquid's surface is at or above the floor there (a bridge over lava stays a bridge).
+    # A model's liquid volume runs on under the rock around a pool, so it is drawn only over its own basin: a floor
+    # below it with no ceiling between (not over empty space, nor over a tunnel that runs beneath it). Terrain
+    # liquid's ground is terrain, which this drawing leaves out, so it is drawn wherever no floor stands above it.
+    level, kind, terrain = liquid_layer(scenes_dir, map_id, x0, x1, y0, y1, zlo, zhi, w, h)
+    with np.errstate(invalid="ignore"):
+        above = ~has | (level >= floor - 0.25)
+    covered = ceiling_between(tris, n, x0, y1, w, h, floor, level, (kind > 0) & ~terrain & has & above)
+    show = (kind > 0) & above & (terrain | (has & ~covered))
+    for k, colour, alpha in ((WATER, (52, 128, 214), 0.6), (LAVA, (255, 96, 24), 0.88)):
+        m = show & (kind == k)
+        if not m.any():
+            continue
+        under = np.where(img[m, 3:4] > 0, img[m, :3].astype(np.float32), np.float32(30))
+        img[m, :3] = (under * (1 - alpha) + np.array(colour, np.float32) * alpha).astype(np.uint8)
+        img[m, 3] = 255
     buf = io.BytesIO()
     Image.fromarray(img, "RGBA").save(buf, "PNG", optimize=True)
     return buf.getvalue()
@@ -290,7 +436,8 @@ def background(run, scenes_dir, steps, policy, map_id, zlo=None, zhi=None):
     band_lo = route_lo - 4 if zlo is None else zlo
     band_hi = route_hi + 3 if zhi is None else zhi
     band_lo, band_hi = math.floor(band_lo), math.ceil(band_hi)
-    name = f"{map_id:03d}_{x0}_{x1}_{y0}_{y1}_{band_lo}_{band_hi}.png".replace("-", "m")
+    # The trailing tag names the drawing: a background drawn before liquids were (no tag) is drawn again.
+    name = f"{map_id:03d}_{x0}_{x1}_{y0}_{y1}_{band_lo}_{band_hi}_liq.png".replace("-", "m")
     out_dir = run / "viz" / "backgrounds"
     path = out_dir / name
     if not path.exists():
@@ -299,9 +446,78 @@ def background(run, scenes_dir, steps, policy, map_id, zlo=None, zhi=None):
         tmp = path.with_suffix(".tmp")
         tmp.write_bytes(png)
         tmp.replace(path)
+    tris, kinds, tiles = scene_liquids(scenes_dir, map_id)
+    tile_kinds = {int(k) for _, kd in tiles.values() for k in np.unique(kd) if k}
     return {"map": map_id, "name": MAP_NAMES.get(map_id, f"map {map_id}"), "x0": x0, "x1": x1, "y0": y0, "y1": y1,
             "px": PX, "zlo": band_lo, "zhi": band_hi, "zmin": math.floor(float(zs.min())),
-            "zmax": math.ceil(float(zs.max())), "image": f"/runs/{run.name}/viz/backgrounds/{name}"}
+            "zmax": math.ceil(float(zs.max())), "image": f"/runs/{run.name}/viz/backgrounds/{name}",
+            "water": bool((kinds == WATER).any()) or WATER in tile_kinds,
+            "lava": bool((kinds == LAVA).any()) or LAVA in tile_kinds}
+
+
+# ---- evaluation videos ----------------------------------------------------------------------------------------------
+#
+# The sim films the learner's own evaluation (AnimusForge.cpp: mode 1, no baseline) into runs/<run>/videos/<env steps>/:
+# the same episodes as eval_trace_<env steps>_learner.npz, one animated PNG per sampled seed (one frame per decision,
+# the camera image with the map inset) and a JSON sidecar naming its seed and agent.
+
+VIDEO_POLICY = "learner"
+_frames_lock = threading.Lock()
+_frames = {}                 # (path, mtime) -> list of JPEG frames; the few most recent videos only
+_decoding = {}               # (path, mtime) -> the lock its one decode holds
+FRAME_CACHE = 4
+
+
+def media(run, steps, policy):
+    """The videos of this evaluation, by sidecar: [{seed, agent, outcome, frames, fps, file, url}]."""
+    if policy != VIDEO_POLICY:
+        return []
+    folder = run / "videos" / str(steps)
+    out = []
+    for side in sorted(folder.glob("*.json")) if folder.is_dir() else []:
+        if side.name == "index.json":
+            continue
+        try:
+            s = json.loads(side.read_text())
+        except (OSError, ValueError):
+            continue
+        if not (folder / s.get("file", "")).is_file():
+            continue
+        out.append({"seed": int(s.get("seed", -1)), "agent": int(s.get("agent", 0)), "outcome": s.get("outcome"),
+                    "frames": int(s.get("frames", 0)), "fps": s.get("fps", 4), "file": s["file"],
+                    "dropped": int(s.get("dropped_frames", 0)), "truncated": bool(s.get("truncated")),
+                    "url": f"/runs/{run.name}/videos/{steps}/{s['file']}"})
+    return out
+
+
+def video_frame(run, steps, file, index):
+    """Frame `index` of a video as JPEG. The whole video is decoded once (an animated PNG composes each frame from
+    the ones before it) and kept for the next requests."""
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+\.png", file):
+        raise LookupError("bad video name")
+    path = run / "videos" / str(steps) / file
+    key = (str(path), path.stat().st_mtime)
+    with _frames_lock:
+        frames = _frames.get(key)
+        decoding = _decoding.setdefault(key, threading.Lock())
+    if frames is None:
+        with decoding:                       # the player's prefetch asks for many frames at once: decode once
+            with _frames_lock:
+                frames = _frames.get(key)
+            if frames is None:
+                frames = []
+                with Image.open(path) as im:
+                    for k in range(getattr(im, "n_frames", 1)):
+                        im.seek(k)
+                        buf = io.BytesIO()
+                        im.convert("RGB").save(buf, "JPEG", quality=85)
+                        frames.append(buf.getvalue())
+                with _frames_lock:
+                    _frames[key] = frames
+                    while len(_frames) > FRAME_CACHE:
+                        _decoding.pop(old := next(iter(_frames)), None)
+                        _frames.pop(old)
+    return frames[max(0, min(len(frames) - 1, index))]
 
 
 # ---- HTTP -----------------------------------------------------------------------------------------------------------
@@ -343,7 +559,17 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             if url.path == "/api/runs":
                 return self._json(runs_index(self.runs_dir))
-            if url.path in ("/api/episodes", "/api/trace", "/api/background"):
+            if url.path == "/api/frame":
+                run = self._run(q)
+                body = video_frame(run, int(q["steps"][0]), q["file"][0], int(q["i"][0]))
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Cache-Control", "max-age=86400")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if url.path in ("/api/episodes", "/api/trace", "/api/background", "/api/media"):
                 run = self._run(q)
                 steps = int(q["steps"][0])
                 policy = q["policy"][0]
@@ -353,6 +579,8 @@ class Handler(SimpleHTTPRequestHandler):
                     return self._json(episodes(run, steps, policy))
                 if url.path == "/api/trace":
                     return self._json(trace_payload(run, steps, policy))
+                if url.path == "/api/media":
+                    return self._json(media(run, steps, policy))
                 zlo = float(q["zlo"][0]) if "zlo" in q else None
                 zhi = float(q["zhi"][0]) if "zhi" in q else None
                 return self._json(background(run, self.scenes_dir, steps, policy, int(q["map"][0]), zlo, zhi))
@@ -363,9 +591,9 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json({"error": str(e)}, HTTPStatus.BAD_REQUEST)
 
     def _run_file(self, rel):
-        """Only a run's viz/ files are served (the rendered backgrounds)."""
+        """Only a run's viz/ files (the rendered backgrounds) and its videos/ are served."""
         parts = rel.split("/")
-        if len(parts) < 3 or parts[1] != "viz" or ".." in parts:
+        if len(parts) < 3 or parts[1] not in ("viz", "videos") or ".." in parts:
             raise LookupError("not served")
         path = (self.runs_dir / rel).resolve()
         if not str(path).startswith(str(self.runs_dir.resolve())) or not path.is_file():

@@ -74,9 +74,21 @@ canvas.drag { cursor: grabbing; }
 .pcontrols { display: flex; align-items: center; gap: 8px; }
 .pcontrols input[type=range] { flex: 1; }
 .pcontrols select, .pcontrols .small { background: #262c35; color: #e4e8ee; border-color: #39404b; }
+.tip { position: absolute; pointer-events: none; background: rgba(20, 23, 28, .92); color: #e4e8ee; font-size: 12px; padding: 3px 8px; border-radius: 6px; white-space: nowrap; }
+.media { position: absolute; right: 12px; top: 50px; width: min(440px, 46%); background: rgba(20, 23, 28, .92); color: #e4e8ee; border-radius: 10px; padding: 8px; }
+.media.min #mframe, .media.min .mnote { display: none; }
+.mhead { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; font-weight: 600; }
+.mhead a { color: #9cc0ff; font-weight: 400; font-size: 12px; margin-left: auto; }
+.mhead button { color: #e4e8ee; border-color: #39404b; }
+#mframe { display: block; width: 100%; image-rendering: pixelated; border-radius: 4px; background: #000; }
+.mnote { font-size: 12px; color: #aab3c0; margin-top: 6px; }
+.mnote button { font: inherit; font-size: 12px; margin: 2px 4px 0 0; padding: 1px 6px; border-radius: 5px; border: 1px solid #39404b; background: #262c35; color: #e4e8ee; cursor: pointer; }
+.ep .vid { color: var(--accent); font-weight: 700; }
+.ep.sel .vid { color: #fff; }
 .pinfo { margin-top: 4px; font-size: 12px; color: #aab3c0; font-variant-numeric: tabular-nums; }
 
 @media (max-width: 760px) {
+  .media { left: 12px; right: 12px; width: auto; top: 50px; }
   .layout { grid-template-columns: 1fr; grid-template-rows: auto 60vh; }
   .side { border-right: 0; border-bottom: 1px solid var(--border); max-height: 40vh; }
 }
