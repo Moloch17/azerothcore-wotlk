@@ -125,7 +125,11 @@ eval:
     sweep: 195
     sweep_rotating: 195
     deadmines: 165
-  heldout_every: 1
+  # Every 4th evaluation (was 1; owner, 2026-10-11): the three held-out arenas play the deep rung (rung 3) and took
+  # 5.2 of each evaluation's 9.3 minutes on the host, whose learner does not train meanwhile, while the ladder sat on
+  # rung 1 and every one of their episodes timed out (found 0: the policy has never trained with the deep rung's goal
+  # and plan inputs). The stage's last evaluation still plays them all.
+  heldout_every: 4
   heldout_on_best: false
   # The rotating sweep every second evaluation (exploration v3; the 195-episode second sweep doubled the held-out time;
   # the stage's last evaluation plays both). The rotation moves on by the evaluation number either way.
@@ -137,7 +141,9 @@ eval:
   # wall, moving and held keys, speed, the held goal's point.
   trace_all: true
   # The ablation arms, each replaying the evaluation's seeds (the training rung's placements, the deterministic policy)
-  # with one input taken away; 64 episodes each, after every evaluation (arms_every 1), read as found_no_flag and the
+  # with one input taken away; 64 episodes each, after every 4th evaluation (arms_every 4: was 1, owner 2026-10-11, the
+  # ten arms took 2.6 minutes of the host's every 5M steps; the stage's last evaluation plays them all), read as
+  # found_no_flag and the
   # like in forge status and as policy rows in eval.csv. no_flag and no_camera exist from M1 (the objective flag
   # cleared; the image blanked, the map kept); no_map zeroes the map block's columns and the mental map's crop;
   # no_memory resets the recurrent state (GRU memory, slow memory, held goal and queue) before every decision, so the
@@ -157,6 +163,7 @@ eval:
   # (revision 3: frontier_*, region_*, clusters, searched_cells, by the manifest's names): what the coverage inputs are
   # worth. The crop's bytes stay (no_map's and no_searched's).
   # Readings, never gates. M3 and M4 extend this file and restate `arms: {}`.
+  arms_every: 4
   arms:
     no_compass: null
     no_flag: 64
