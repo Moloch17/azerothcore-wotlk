@@ -158,6 +158,9 @@ services:
       # The forge sim itself opens no network listener by default (no world socket or remote access; SOAP only
       # when SOAP.Enabled is set, on 127.0.0.1:7878).
       - "127.0.0.1:${DOCKER_TENSORBOARD_EXTERNAL_PORT:-16006}:16006"
+      # The route viewer (apps/forge/tools/viz, started by forge-worldserver.sh), open to the LAN; it only reads the
+      # runs. On host networking (docker-compose.cluster.yml) the container binds FORGE_VIZ_PORT itself.
+      - "${DOCKER_FORGE_VIZ_EXTERNAL_PORT:-8770}:8770"
     volumes:
       - ${DOCKER_VOL_ROOT:-.}:/azerothcore:cached
       - ac-animus-forge-build-dev:/azerothcore/var/build

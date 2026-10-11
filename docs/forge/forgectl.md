@@ -537,6 +537,13 @@ keeps it going (Ctrl-C to stop); `--all` adds workers that are out of the cluste
 and skipped; an interrupted pass keeps the offsets it reached. The first pass of move2_seek (2026-10-11) brought about
 1.1 GB of logs and 8 MB of images from four workers in 18 s; later passes copy only what is new.
 
+`--follow` (in place of a stage) collects, each pass, every plain-named run whose `progress.json` the host wrote in
+the last hour, so a plan that moves to its next stage is followed and the last one's tail still comes home.
+`forgectl stage start|resume` makes sure `collect --follow --every 15 --yes` runs on the host (one loop, by
+`~/.forgectl/collect-loop.pid`; log `~/.forgectl/collect-loop.log`), and `forgectl stage cancel` stops it and makes
+one last pass. A plan started from the console (`forge start`) instead of forgectl has no loop until a forgectl
+start/resume, or `forgectl collect --follow --every 15` by hand.
+
 ## `forgectl videos <stage>`
 
 Wraps `apps/forge/tools/collect-videos.sh`: each worker's `runs/<stage>/videos/` is copied into this checkout's run

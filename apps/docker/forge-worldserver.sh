@@ -7,7 +7,8 @@
 #   2. put back missing config files: any .conf from its .dist
 #   3. install whatever the forge learner's Python venv is missing (animus-venv.sh)
 #   4. start TensorBoard in the background, on http://localhost:${FORGE_TENSORBOARD_PORT:-16006}
-#   5. exec the worldserver, which starts the learner itself (AnimusForge.Learner.AutoStart)
+#   5. start the route viewer in the background, on http://<this machine>:${FORGE_VIZ_PORT:-8770}
+#   6. exec the worldserver, which starts the learner itself (AnimusForge.Learner.AutoStart)
 
 set -euo pipefail
 
@@ -89,6 +90,25 @@ if [[ -x "$VENV/bin/tensorboard" ]]; then
     echo "TensorBoard: http://localhost:$TENSORBOARD_PORT (logdir $RUNS)"
 else
     echo "TensorBoard is not installed in $VENV; skipping it."
+fi
+
+# The route viewer (apps/forge/tools/viz): the evaluation routes on each map's baked scene, served to the LAN. It only
+# reads the runs and the scenes and writes nothing but runs/<run>/viz/. Kept in a loop: a crash, or the port still
+# held by a viewer started outside the container (./forge-viz.sh), is retried every 30 s instead of leaving it off.
+# The container's init stops it with the worldserver.
+VIZ_PORT="${FORGE_VIZ_PORT:-8770}"
+VIZ_RUNS="${AC_ANIMUS_FORGE_OUTPUT_DIR:-$LEARNER}/runs"
+if "$VENV/bin/python" -c "import numpy, PIL" 2>/dev/null; then
+    (
+        while :; do
+            "$VENV/bin/python" "$ROOT/apps/forge/tools/viz/server.py" --runs "$VIZ_RUNS" \
+                --scenes "$CONF/modules/animus/scenes" --host 0.0.0.0 --port "$VIZ_PORT" > "$LOGS/viz.log" 2>&1 || true
+            sleep 30
+        done
+    ) &
+    echo "Route viewer: http://localhost:$VIZ_PORT (runs $VIZ_RUNS)"
+else
+    echo "The route viewer needs numpy and Pillow in $VENV; skipping it."
 fi
 
 cd "$BIN"

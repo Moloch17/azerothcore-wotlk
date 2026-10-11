@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from . import audit, console, remote
+from . import audit, collect, console, remote
 from .config import Config, Machine
 from .ui import Declined, Failure, confirm, note, say
 
@@ -179,6 +179,11 @@ def run(config: Config, action: str, stages: list[str], yes: bool, archive_ok: b
         say(f"Not sent or not answered on: {', '.join(failed)}. Check `forgectl cluster`.")
         return 1
     say(f"Done: `{console_line(action, stages)}` was accepted on {', '.join(m.name for m in targets)}.")
+    # The workers' share of the run (camera images, videos, logs) follows it home to the host while it trains.
+    if action in ("start", "resume"):
+        collect.ensure_loop(config)
+    elif action == "cancel":
+        collect.stop_loop(config)
     return 0
 
 

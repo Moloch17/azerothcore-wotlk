@@ -104,8 +104,11 @@ def parser() -> argparse.ArgumentParser:
 
     co = add("collect", "bring every worker's share of a run (run folder without checkpoints, learner and server "
                         "logs) into the host's runs/<stage>/workers/<machine>/; run it on the host",
-             "forgectl collect move2_seek --check   |   forgectl collect move2_seek --every 15 --yes")
-    co.add_argument("stage")
+             "forgectl collect move2_seek --check   |   forgectl collect --follow --every 15 --yes")
+    co.add_argument("stage", nargs="?", help="the run to collect (or --follow)")
+    co.add_argument("--follow", action="store_true",
+                    help="each pass, the runs the host is training (progress.json newer than an hour); "
+                         "`forgectl stage start|resume` runs this every 15 min, `stage cancel` stops it")
     co.add_argument("--check", action="store_true", help="say what each worker would send; copy nothing")
     co.add_argument("--every", type=float, metavar="MINUTES", help="keep collecting, one pass every MINUTES")
     co.add_argument("--all", action="store_true", help="include workers that are out of the cluster")
@@ -148,7 +151,7 @@ def dispatch(args, config) -> int:
     if args.command == "conf-sync":
         return confsync.run(config, args.check, args.yes)
     if args.command == "collect":
-        return collect.run(config, args.stage, args.check, args.every, args.all, args.yes)
+        return collect.run(config, args.stage, args.check, args.every, args.all, args.yes, args.follow)
     if args.command == "videos":
         return videos.run(config, args.stage, args.check, args.dry_run, args.on_host, args.yes)
     raise Failure(f"unknown command {args.command}")

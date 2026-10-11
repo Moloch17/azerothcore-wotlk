@@ -28,8 +28,10 @@ What the first start does (`apps/docker/forge-worldserver.sh`): builds the world
 configure` and `compile` if `env/dist/bin/worldserver` is missing, a build was requested (`env/dist/.forge-build`), or the
 CPU differs from the one the binary was built for (`env/dist/.forge-build-cpu`; the build uses `-march=native`); restores
 missing `.conf` files from their `.dist`; runs `animus-venv.sh`; starts TensorBoard on
-`http://localhost:16006` (`FORGE_TENSORBOARD_PORT`, loopback in the bridge network) reading `<OutputDir>/runs`; then
-`exec ./worldserver`. The database is created by the worldserver's own `Updates.AutoSetup`; the `stock` profile services
+`http://localhost:16006` (`FORGE_TENSORBOARD_PORT`, loopback in the bridge network) reading `<OutputDir>/runs`; starts the route viewer (`apps/forge/tools/viz`) on
+`http://<machine>:8770` (`FORGE_VIZ_PORT`, open to the LAN, in a loop that retries every 30 s while the port is busy;
+log `env/dist/logs/viz.log`); then `exec ./worldserver`. Without a worldserver, `./forge-viz.sh` in the repository
+root serves the same viewer for offline looking (`--open`, `--lan`, `--port`). The database is created by the worldserver's own `Updates.AutoSetup`; the `stock` profile services
 are not needed.
 
 `forge.sh`:
