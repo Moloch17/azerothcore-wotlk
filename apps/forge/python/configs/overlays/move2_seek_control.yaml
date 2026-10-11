@@ -1,4 +1,8 @@
 # The CONTROL ARM of the 2026-10-11 no-map A/B: move2_seek_nomap.yaml without its drop (that file says why both
 # arms exist and how they are read). Applied only by hand, `--overlay` on the learner command line.
 fade:
-  rungs: [0.5]
+  rungs: [0.5, 0.0]  # a ladder must end at 0; the gate (found 0.8) is not met inside an arm, so the doorway rung holds
+eval:
+  # The start evaluation runs before the sim is told the ladder's scale: it would place at the hallway and the
+  # 0.8 gate would step the ladder at once. The seed's last live evaluation is the baseline.
+  at_start: false
