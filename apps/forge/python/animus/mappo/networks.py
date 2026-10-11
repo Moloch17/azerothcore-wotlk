@@ -1887,8 +1887,18 @@ class VisionEncoder(nn.Module):
             total += cells * (4 * 3 * per_cell + 16)
         return total
 
-    def __init__(self, descriptors: Sequence[dict | None]):
+    #: The camera-side inputs a trainer may leave unread (mappo.drop_inputs): "map", the mental map's crop and its
+    #: scalars (no MapEncoder: the crop's bytes still travel and are skipped), and "coverage", the coarse coverage
+    #: grid (no CoverageEncoder). "map" takes "coverage" with it (the sim's rule: a coverage block needs the map).
+    #: The dropped columns stay blind to the adapters, so a network with and without reads the same checkpoint.
+    DROPPABLE = ("map", "coverage")
+
+    def __init__(self, descriptors: Sequence[dict | None], drop: Sequence[str] = ()):
         super().__init__()
+        unknown = sorted(set(drop) - set(self.DROPPABLE))
+        if unknown:
+            raise ValueError(f"mappo.drop_inputs: unknown {unknown}; expected some of {list(self.DROPPABLE)}")
+        self.dropped = frozenset(drop) | (frozenset(["coverage"]) if "map" in drop else frozenset())
         image = next(entry for entry in descriptors if entry is not None)
         self.height, self.width = image["height"], image["width"]
         self.channels, self.classes = image["channels"], image["classes"]
@@ -1936,18 +1946,21 @@ class VisionEncoder(nn.Module):
         self.map_bytes = 0
         if any(crop is not None for crop in crops):
             crop = next(crop for crop in crops if crop is not None)
-            self.map = MapEncoder(crop, self.class_embed, self.EMBED,
-                                  [c["first"] if c is not None else -1 for c in crops])
+            # The crop's bytes follow the image in every row whether or not they are read (pixels() skips them).
             self.map_bytes = crop["map_bytes"]
+            if "map" not in self.dropped:
+                self.map = MapEncoder(crop, self.class_embed, self.EMBED,
+                                      [c["first"] if c is not None else -1 for c in crops])
         # The coarse coverage grid (general search sec 5), where the layouts have the block: its columns are read raw
         # by its own small encoder, whose join adds to the embedding as the map's does.
         grids = [entry.get("coverage") if entry is not None else None for entry in descriptors]
         self.coverage = None
         if any(grid is not None for grid in grids):
-            if self.map is None:
+            if not self.map_bytes:
                 raise ValueError("a coverage block needs the mental map's block (the sim's Problem() rule)")
             grid = next(grid for grid in grids if grid is not None)
-            self.coverage = CoverageEncoder(grid, self.EMBED, [g["first"] if g is not None else -1 for g in grids])
+            if "coverage" not in self.dropped:
+                self.coverage = CoverageEncoder(grid, self.EMBED, [g["first"] if g is not None else -1 for g in grids])
         # The seen and remembered list (dungeon-curriculum I1, I2), where the layouts have a sight block: read with
         # the entity list's encoder, pooled onto the embedding, and pointed at by the actor's presses.
         sights = [entry.get("sight") if entry is not None else None for entry in descriptors]
@@ -2130,19 +2143,21 @@ class LookHead(nn.Module):
         return torch.where(seeing, log_prob, zero), torch.where(seeing, entropy, zero)
 
 
-def _attach_vision(network: nn.Module, vision, encoder: "VisionEncoder | None" = None) -> None:
+def _attach_vision(network: nn.Module, vision, encoder: "VisionEncoder | None" = None,
+                   drop: Sequence[str] = ()) -> None:
     """Give an actor or critic the camera: the encoder (VisionEncoder) and its own join (VisionJoin), and keep the
     camera's columns -- image and scalars -- out of every layout's adapter (attach_blind_columns, tag "vision") and
     normaliser (RunningNorm.hide). `vision` is vision_of()'s per-layout image, or None (no camera: nothing changes).
     With `encoder` (another network's: the trainer's critic gets the actor's), the network reads that one through a
     reference that is not one of its modules -- not in its parameters, its state dict or its .to() -- else it builds
-    and owns its own."""
+    and owns its own. `drop` names the camera-side inputs an owned encoder leaves unread (VisionEncoder.DROPPABLE,
+    mappo.drop_inputs)."""
     network.vision = None
     network.vision_join = None
     if vision is None:
         return
     if encoder is None:
-        network.vision = VisionEncoder(vision)
+        network.vision = VisionEncoder(vision, drop)
     else:
         share_vision(network, encoder)
     network.vision_join = VisionJoin(network.vision.has_vision, network.adapters[0].out_features)
@@ -2330,7 +2345,7 @@ class LayoutActor(nn.Module):
     def __init__(self, layouts: Sequence[tuple[int, int]], hidden: Sequence[int], foresight_outputs: int = 0,
                  recurrent_size: int = 0, goal_count: int = 0, goal_targets: int = 1, slow_size: int = 0,
                  foresight_feedback: bool = False, lookahead: bool = False, goal_slots: int = 1,
-                 vision=None):
+                 vision=None, drop_inputs: Sequence[str] = ()):
         """layouts: (obs dim, action count) per layout; hidden: widths, the first being the adapters' output.
 
         `foresight_outputs` adds a head on the trunk that predicts what happens after this decision (mappo.trainer's
@@ -2386,8 +2401,9 @@ class LayoutActor(nn.Module):
         # features the action head and the slow loop read, so the policy acts on what it expects to happen.
         self.foresight_feedback = bool(foresight_feedback and foresight_outputs)
         self.foresight_proj = _linear(foresight_outputs, head_width, 0.01) if self.foresight_feedback else None
-        # The camera (VisionEncoder; vision_of(stage.json), None = no layout has one).
-        _attach_vision(self, vision)
+        # The camera (VisionEncoder; vision_of(stage.json), None = no layout has one), less the inputs dropped
+        # (mappo.drop_inputs).
+        _attach_vision(self, vision, drop=drop_inputs)
         # The sight list's pointer heads (SightPointers), where the layouts have a sight block: the actor's own.
         sight = self.vision.sight if self.vision is not None else None
         self.sight_pointers = SightPointers(sight.presses, head_width) if sight is not None else None

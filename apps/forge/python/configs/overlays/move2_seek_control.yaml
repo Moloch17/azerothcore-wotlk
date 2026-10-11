@@ -1,0 +1,4 @@
+# The CONTROL ARM of the 2026-10-11 no-map A/B: move2_seek_nomap.yaml without its drop (that file says why both
+# arms exist and how they are read). Applied only by hand, `--overlay` on the learner command line.
+fade:
+  rungs: [0.5]

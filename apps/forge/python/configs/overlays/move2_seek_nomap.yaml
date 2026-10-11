@@ -1,0 +1,22 @@
+# Overlay for the NO-MAP ARM of the 2026-10-11 A/B (the owner: "do 4 right now", after the look-coefficient resume).
+# Not a stage config: it extends nothing, nothing lists it as a stage, and it is applied only by hand, `--overlay` on
+# the learner command line (AnimusForge.Learner.Args) over move2_seek.yaml with its whole extends chain.
+#
+# The question: the ablation arms no_map, no_coverage and no_searched have read within noise of the learner since the
+# general-search rebuild (0027), and random_goal equals the learner; are the mental map's crop and scalars and the
+# coarse coverage grid dead weight on the doorway rung? Two arms, each a fresh M2 run seeded from the live run's
+# checkpoint at update 4,4xx (~61M, doorway rung; the file put at runs/_finetune/move2_seek/best.pt, which outranks
+# the parent in the seed chain) and pinned to the doorway rung: the CONTROL arm with this file's `fade` alone (the
+# overlay move2_seek_control.yaml) and this arm with mappo.drop_inputs. Both restart the budget schedules (the entropy
+# anneal, the learning rates, the Aid fades), which is why the control is needed: the live run's next 10M is not a
+# control. Read at 0, 5M and 10M (eval.at_start, every_env_steps): found, found_arena_rooms, sighted, and the update's
+# compute seconds on the learner log's "update N" line (the encoders' cost); no_map, no_coverage and no_searched must
+# equal the learner exactly in this arm (nothing reads those columns any more).
+#
+# total_env_steps is NOT shortened: the learning rates and the entropy coefficient fall over it, and a 10M budget
+# would anneal them to the floor inside the arm. Each arm is cancelled by hand once its 10M evaluation has landed.
+fade:
+  # The doorway rung alone (the live run's rung): a fresh run would otherwise start at the hallway.
+  rungs: [0.5]
+mappo:
+  drop_inputs: [map, coverage]

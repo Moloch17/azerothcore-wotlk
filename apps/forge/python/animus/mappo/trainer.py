@@ -63,6 +63,12 @@ class MappoConfig:
     # at a time; 0 = the whole minibatch at once. "auto" (VISION_CHUNK_AUTO) lets the learner choose at start from the
     # device's free memory (train.choose_vision_chunk_rows); it is replaced by a number before the trainer is built.
     vision_chunk_rows: int | str = 0
+    # Camera-side inputs the networks leave unread (VisionEncoder.DROPPABLE: "map", the mental map's crop and
+    # scalars, no MapEncoder; "coverage", the coarse coverage grid, no CoverageEncoder; "map" takes "coverage"
+    # with it). The sim still sends them and the columns stay blind to the adapters, so a checkpoint seeds either
+    # way (the dropped encoders are simply not built): a training-time ablation, where the eval arms no_map and
+    # no_coverage zero the same inputs at evaluation only. () reads everything the stage has.
+    drop_inputs: tuple[str, ...] = ()
     value_coef: float = 1.0
     actor_lr: float = 5e-4
     critic_lr: float = 5e-4
@@ -712,7 +718,7 @@ class MappoTrainer:
         self.actor = LayoutActor(self.layouts, hidden, self.foresight_outputs, self.recurrent_size,
                                  self.goal_kinds, self.goal_targets, self.slow_goal_size, config.foresight_feedback,
                                  config.goal_lookahead, self.goal_slots,
-                                 self.vision).to(self.train_device)
+                                 self.vision, tuple(config.drop_inputs)).to(self.train_device)
         if self.actor.goal_head is not None:
             self.actor.goal_head.slot_entropy_weight = config.goal_slot_entropy_weight
             self.actor.goal_head.cell_entropy_weight = config.goal_cell_entropy_weight
