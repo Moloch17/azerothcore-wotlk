@@ -94,8 +94,8 @@ def _num(v, default=None):
         return default
 
 
-def episodes(run, steps, policy):
-    """The evaluation's episodes, keyed by (seed, agent), with the fields the viewer shows."""
+def _episode_rows(run):
+    """eval_episodes.jsonl grouped by (env_steps, policy)."""
     path = run / "eval_episodes.jsonl"
 
     def build():
@@ -108,7 +108,27 @@ def episodes(run, steps, policy):
                     continue
                 rows.setdefault((int(r.get("env_steps", -1)), r.get("policy")), []).append(r)
         return rows
-    rows = _cached("episodes", path, build).get((steps, policy), [])
+    return _cached("episodes", path, build)
+
+
+def map_points(run, map_id):
+    """Every object and end position the run has on the map, across all its evaluations: the searched area."""
+    pts = []
+    for rows in _episode_rows(run).values():
+        for r in rows:
+            if int(_num(r.get("seek_map"), 0)) != map_id:
+                continue
+            for p in ("object", "end"):
+                xyz = [_num(r.get(f"{p}_{a}")) for a in "xyz"]
+                if None not in xyz:
+                    pts.append(xyz)
+    a = np.array(pts, dtype=np.float64).reshape(-1, 3)
+    return a[:, 0], a[:, 1], a[:, 2]
+
+
+def episodes(run, steps, policy):
+    """The evaluation's episodes, keyed by (seed, agent), with the fields the viewer shows."""
+    rows = _episode_rows(run).get((steps, policy), [])
     cats = _categories(run)
     rooms, objects = cats.get("seek_room", []), cats.get("seek_object", [])
     out = []
@@ -258,10 +278,17 @@ def background(run, scenes_dir, steps, policy, map_id, zlo=None, zhi=None):
     if not xs:
         raise LookupError(f"no routes on map {map_id} in this evaluation")
     xs, ys, zs = np.concatenate(xs), np.concatenate(ys), np.concatenate(zs)
-    x0, x1 = math.floor(xs.min() - MARGIN), math.ceil(xs.max() + MARGIN)
-    y0, y1 = math.floor(ys.min() - MARGIN), math.ceil(ys.max() + MARGIN)
-    band_lo = float(np.percentile(zs, 1)) - 4 if zlo is None else zlo
-    band_hi = float(np.percentile(zs, 99)) + 3 if zhi is None else zhi
+    # The whole searched map, not only where this evaluation's bots went (a bot that barely moved would leave most of
+    # it undrawn): every episode of the run on this map adds its object and end positions.
+    px_, py_, pz_ = map_points(run, map_id)
+    ax, ay = np.concatenate([xs, px_]), np.concatenate([ys, py_])
+    x0, x1 = math.floor(ax.min() - MARGIN), math.ceil(ax.max() + MARGIN)
+    y0, y1 = math.floor(ay.min() - MARGIN), math.ceil(ay.max() + MARGIN)
+    route_lo, route_hi = float(np.percentile(zs, 1)), float(np.percentile(zs, 99))
+    if len(pz_):
+        route_lo, route_hi = min(route_lo, float(pz_.min())), max(route_hi, float(pz_.max()))
+    band_lo = route_lo - 4 if zlo is None else zlo
+    band_hi = route_hi + 3 if zhi is None else zhi
     band_lo, band_hi = math.floor(band_lo), math.ceil(band_hi)
     name = f"{map_id:03d}_{x0}_{x1}_{y0}_{y1}_{band_lo}_{band_hi}.png".replace("-", "m")
     out_dir = run / "viz" / "backgrounds"
