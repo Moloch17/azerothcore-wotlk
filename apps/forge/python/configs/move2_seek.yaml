@@ -54,7 +54,13 @@ mappo:
   # non-zero on 0.1% of decisions, no camera sweep while standing in any argmax set); with Explore paying a stationary
   # sweep from the doorway rung now (Seek.ExploreFromRung 1) the head gets a stronger prior to use it. M3 and M4 extend
   # this file and restate 0.004 (their camera is not this stage's lesson); C1 is a root config at 0.004.
-  look_entropy_coef: 0.01
+  # 0.004 again (2026-10-11, resumed from update 2500 at 41.7M on the doorway rung): at 0.01, parity with
+  # entropy_coef, the look head read 4.7 of its 5.17 nats (7x5x5) all run long, uniform noise in training and
+  # hold under argmax, the failure move1_controls.yaml records at parity; the v3 run at 0.004 read 3.3 nats and
+  # sighted the object in 54% of episodes against 34% here. The real coefficient follows entropy_coef's
+  # schedule as a share (0.00883 x 0.4 = 0.0035 at the resume). Watch look_entropy, then sighted, then
+  # found_arena_rooms.
+  look_entropy_coef: 0.004
   # 1.5e-4 for the fresh run (2026-10-10, lead): a seed from M1 with fresh Adam moments and fresh heads has no settled
   # policy to raise. The history, for the day to raise it: 1.5e-4 from the cleanup deploy (2026-10-07), the rate M2 was effectively running at: a convergence bug read every
   # harder rung as a plateau and annealed the rate from ~30M steps (fixed by ConvergenceController.rebaseline), so the

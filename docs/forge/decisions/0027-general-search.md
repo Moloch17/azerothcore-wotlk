@@ -75,3 +75,15 @@ FAILED 120 s episode (85% of a failure's income, against Arrive 3.0) with the ha
 ones with no movement gradient and feeding the pin replay ring. Reverted: Seek.ExploreFromRung 2, Seek.StepCost 0.0005,
 Seek.TrapFromRung 2, Seek.TrapShare 0.1, mappo.greedy_env_fraction 0 (move2_seek.yaml). The contact inputs, the keys-up
 spin, the Recovered rebate (no measurable effect either way) and the wall escalation stay.
+
+## Amendment 2026-10-11: the look coefficient
+The run reached 41.7M on the doorway rung (argmax found 0.29, sampled 0.43, climbing about 0.045 a 10M) with the look
+head at 4.7 of its 5.17 nats the whole way: at `look_entropy_coef` 0.01, parity with `entropy_coef`, the camera is
+uniform noise in training and hold under argmax, the failure move1_controls.yaml records at parity. The v3 run at
+0.004 read 3.3 nats and sighted the object in 54% of episodes against 34% here; the ablation arms read the mental map,
+the coverage block and the searched channel within noise of the learner, and the render width makes no difference
+(found by 32/48/64/128 within noise). So the camera, not the price list, is the limiter: `look_entropy_coef` 0.004
+again (M8 reverted), the run resumed from update 2500 rather than restarted. The readings to watch, in order:
+`look_entropy` toward 2-3 nats, `sighted`, `found_arena_rooms`. Open as a design item for the next rebuild: a rung
+between hallway and doorway with the object off the corridor's axis (M1's `CornerShare` mechanism) or a start
+distribution near the object's door, since FovH 120 cannot see a door being passed at 90 degrees.
