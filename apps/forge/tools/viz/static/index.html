@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Forge Route Viewer</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="bar">
+  <div class="brand">Forge route viewer</div>
+  <label>Run <select id="run"></select></label>
+  <label>Evaluation <select id="eval"></select></label>
+  <label>Policy <select id="policy"></select></label>
+  <nav id="maps" class="tabs" aria-label="Maps"></nav>
+  <span id="status" class="status"></span>
+</header>
+
+<main class="layout">
+  <aside class="side">
+    <section class="panel" id="summary"></section>
+
+    <section class="panel">
+      <h2>Show</h2>
+      <div class="seg" id="outcome">
+        <button data-v="all" class="on">All</button><button data-v="found">Found</button><button data-v="missed">Missed</button>
+      </div>
+      <label class="row">Colour by
+        <select id="colourBy"><option value="outcome">outcome</option><option value="class">class</option><option value="episode">episode</option></select>
+      </label>
+      <div class="chips" id="classes"></div>
+      <label class="row">Seed <input id="seedFilter" type="search" placeholder="e.g. 42"></label>
+    </section>
+
+    <section class="panel">
+      <h2>Layers</h2>
+      <label class="check"><input type="checkbox" id="lRoutes" checked> Routes</label>
+      <label class="check"><input type="checkbox" id="lStarts" checked> Starts</label>
+      <label class="check"><input type="checkbox" id="lObjects" checked> Objects</label>
+      <label class="check"><input type="checkbox" id="lEnds"> Ends</label>
+      <label class="check"><input type="checkbox" id="lHeat"> Time heatmap</label>
+      <label class="check"><input type="checkbox" id="lPins"> Wall contact</label>
+      <label class="row">Route opacity <input type="range" id="alpha" min="5" max="100" value="35"></label>
+      <div class="band">
+        <span>Floor height band</span>
+        <input id="zlo" type="number" step="1"> to <input id="zhi" type="number" step="1">
+        <button id="bandApply" class="small">Redraw</button>
+      </div>
+    </section>
+
+    <section class="panel grow">
+      <h2>Episodes <span id="epCount" class="muted"></span></h2>
+      <div class="list" id="episodes" role="listbox" aria-label="Episodes"></div>
+    </section>
+  </aside>
+
+  <section class="stage">
+    <canvas id="canvas"></canvas>
+    <div class="legend" id="legend"></div>
+    <div class="zoom">
+      <button id="fit" title="Fit the map">Fit</button>
+      <button id="zin" title="Zoom in">+</button>
+      <button id="zout" title="Zoom out">−</button>
+    </div>
+    <div class="player" id="player" hidden>
+      <div class="ptitle" id="ptitle"></div>
+      <div class="pcontrols">
+        <button id="play" class="small">Play</button>
+        <select id="speed"><option value="1">1×</option><option value="4" selected>4×</option><option value="16">16×</option></select>
+        <input type="range" id="scrub" min="0" max="0" value="0">
+        <span id="ptime" class="muted"></span>
+        <button id="pclose" class="small ghost" title="Close">✕</button>
+      </div>
+      <div class="pinfo" id="pinfo"></div>
+    </div>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
