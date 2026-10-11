@@ -532,6 +532,11 @@ class Handler(SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
 
+    def end_headers(self):
+        if getattr(self, "_static", False):
+            self.send_header("Cache-Control", "no-cache")
+        super().end_headers()
+
     def _json(self, value, status=HTTPStatus.OK):
         body = json.dumps(value, separators=(",", ":")).encode()
         gz = "gzip" in (self.headers.get("Accept-Encoding") or "") and len(body) > 2048
@@ -586,6 +591,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(background(run, self.scenes_dir, steps, policy, int(q["map"][0]), zlo, zhi))
             if url.path.startswith("/runs/"):
                 return self._run_file(url.path[len("/runs/"):])
+            self._static = True              # the page's own files: the browser asks again after an update
             return super().do_GET()
         except (LookupError, KeyError, ValueError, OSError) as e:
             return self._json({"error": str(e)}, HTTPStatus.BAD_REQUEST)

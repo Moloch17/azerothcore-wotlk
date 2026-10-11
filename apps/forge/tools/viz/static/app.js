@@ -300,7 +300,7 @@ function draw() {
   const heat = $('lHeat').checked;
   if ($('lRoutes').checked) {
     const alpha = Number($('alpha').value) / 100 * (heat ? 0.3 : 1);
-    const dim = state.selected ? 0.25 : 1;
+    const dim = state.selected ? 0.25 : state.hover ? 0.5 : 1;    // the hovered route stands out of the rest
     ctx.lineJoin = 'round'; ctx.lineCap = 'round';
     bs.forEach((b, i) => {
       if (b === state.selected) return;
@@ -556,13 +556,40 @@ function tick(now) {
 
 // ---- input ----------------------------------------------------------------------------------------------------------
 
+// A route's points in background pixels and their bounding box, kept until the map's background changes.
+function routePx(b) {
+  if (b._pxFor === state.bg) return b._px;
+  const pts = new Float32Array(b.x.length * 2);
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let k = 0; k < b.x.length; k++) {
+    const [px, py] = worldToPx(b.x[k], b.y[k]);
+    pts[2 * k] = px; pts[2 * k + 1] = py;
+    x0 = Math.min(x0, px); y0 = Math.min(y0, py); x1 = Math.max(x1, px); y1 = Math.max(y1, py);
+  }
+  b._px = { pts, x0, y0, x1, y1 };
+  b._pxFor = state.bg;
+  return b._px;
+}
+
+// The route under the pointer: the one whose drawn line (every segment, not only its points) passes closest, within
+// a few screen pixels at any zoom.
 function nearestBlock(sx, sy) {
   const [px, py] = screenToPx(sx, sy);
-  let best = null, bestD = (8 / state.view.scale) ** 2;
+  const reach = 7 / state.view.scale;
+  let best = null, bestD = reach * reach;
   for (const b of visibleBlocks()) {
-    for (let k = 0; k < b.x.length; k += 2) {
-      const [qx, qy] = worldToPx(b.x[k], b.y[k]);
-      const d = (qx - px) ** 2 + (qy - py) ** 2;
+    const r = routePx(b);
+    if (px < r.x0 - reach || px > r.x1 + reach || py < r.y0 - reach || py > r.y1 + reach) continue;
+    const p = r.pts, n = p.length / 2;
+    for (let k = 0; k < n; k++) {
+      const ax = p[2 * k], ay = p[2 * k + 1];
+      let d;
+      if (k + 1 < n) {                                  // distance to the segment k .. k+1
+        const bx = p[2 * k + 2], by = p[2 * k + 3], vx = bx - ax, vy = by - ay;
+        const len = vx * vx + vy * vy;
+        const t = len ? Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / len)) : 0;
+        d = (ax + t * vx - px) ** 2 + (ay + t * vy - py) ** 2;
+      } else d = (ax - px) ** 2 + (ay - py) ** 2;
       if (d < bestD) { bestD = d; best = b; }
     }
   }
@@ -607,8 +634,9 @@ function wire() {
   c.addEventListener('pointerup', (e) => {
     c.classList.remove('drag');
     if (drag && !drag.moved && state.bg) {
+      // the highlighted route is the one a click takes; a touch (no hover) finds the route under the finger
       const r = c.getBoundingClientRect();
-      const b = nearestBlock(e.clientX - r.left, e.clientY - r.top);
+      const b = (e.pointerType === 'mouse' && state.hover) || nearestBlock(e.clientX - r.left, e.clientY - r.top);
       if (b) selectEpisode(b);
     }
     drag = null;
