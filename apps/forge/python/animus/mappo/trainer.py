@@ -121,6 +121,15 @@ class MappoConfig:
     # the actor and critic, their inputs' uploads and their results' downloads replayed as one launch, instead of
     # issued one by one from Python. The same computation; off (or off the GPU, or with a slow layout) it runs eager.
     rollout_graphs: bool = True
+    # Every GPU stream the trainer would make of its own (the rollout's high-priority stream, the update's two
+    # halves) is the device's default stream instead, so nothing executes concurrently with anything else on the
+    # card; a graph is still captured (on a stream of its own, as capture requires) and replayed on the default
+    # stream. For a card that hangs when two streams run at once: sarah's RX 6700 XT (gfx1031 under
+    # HSA_OVERRIDE_GFX_VERSION 10.3.0, ROCm 6.4) froze within seconds whenever an update ran beside the rollout's
+    # stream, graph or eager, any priority, and ran for minutes with everything on one stream (2026-10-11,
+    # the isolated stress). Costs the overlap of the rollout's acting with the update, on that machine alone
+    # (AnimusForge.Learner.Args --set mappo.single_stream=true).
+    single_stream: bool = False
     # How data-parallel learners (animus.parallel) keep one policy. "gradients": every optimizer step's gradients are
     # averaged over the ranks, so they train as one learner on the pool -- the right thing on one machine, and ~8
     # Gbit/s a link for stage4_duel's 5.8M parameters across machines. "weights": each rank trains on its own envs
@@ -452,6 +461,10 @@ class _RolloutGraph:
         self.outputs: _Packed | None = None     # laid out by the first warm-up, once the results' shapes are known
 
         stream = trainer._rollout_stream
+        # A graph cannot be captured on the default stream (mappo.single_stream replays on it): capture on a
+        # stream of its own, which the default stream then waits for.
+        if stream == torch.cuda.default_stream(device):
+            stream = torch.cuda.Stream(device=device)
         # Warm up on the capture stream (allocator and library workspaces), then capture.
         stream.wait_stream(torch.cuda.current_stream(device))
         with torch.no_grad():
@@ -462,6 +475,7 @@ class _RolloutGraph:
             self.graph = torch.cuda.CUDAGraph()
             with torch.cuda.graph(self.graph, stream=stream):
                 self._body(rows)
+        torch.cuda.current_stream(device).wait_stream(stream)
 
     def _body(self, rows: int) -> None:
         trainer = self.trainer
@@ -731,11 +745,19 @@ class MappoTrainer:
 
         self.reset_optimizers()
 
-        self._rollout_stream = (torch.cuda.Stream(device=self.rollout_device, priority=-1)
-                                if self.rollout_device.type == "cuda" else None)
-        # The recurrent update's actor and critic halves (_update_recurrent); None off the GPU.
-        self._update_streams = (tuple(torch.cuda.Stream(device=self.train_device) for _ in range(2))
-                                if self.train_device.type == "cuda" else (None, None))
+        if config.single_stream:
+            # One stream for everything (mappo.single_stream): the device's default, so the rollout's acting, the
+            # update's halves and the downloads never execute beside each other.
+            self._rollout_stream = (torch.cuda.current_stream(self.rollout_device)
+                                    if self.rollout_device.type == "cuda" else None)
+            self._update_streams = ((torch.cuda.current_stream(self.train_device),) * 2
+                                    if self.train_device.type == "cuda" else (None, None))
+        else:
+            self._rollout_stream = (torch.cuda.Stream(device=self.rollout_device, priority=-1)
+                                    if self.rollout_device.type == "cuda" else None)
+            # The recurrent update's actor and critic halves (_update_recurrent); None off the GPU.
+            self._update_streams = (tuple(torch.cuda.Stream(device=self.train_device) for _ in range(2))
+                                    if self.train_device.type == "cuda" else (None, None))
         self._rollout_graphs: dict[tuple, _RolloutGraph] = {}
         self._graph_log_seen: set = set()
         #: The last act_and_value's obs, mask and state on the device, when a device-fed graph took them (else None).
