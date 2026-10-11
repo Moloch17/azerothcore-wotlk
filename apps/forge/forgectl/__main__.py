@@ -5,7 +5,8 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import audit, cluster, config as config_module, confsync, deploy, doctor, logs, snapshot, stage, videos, watch
+from . import (audit, cluster, collect, config as config_module, confsync, deploy, doctor, logs, snapshot, stage,
+               videos, watch)
 from .config import ConfigError
 from .ui import Failure, say
 
@@ -101,6 +102,15 @@ def parser() -> argparse.ArgumentParser:
     cs.add_argument("--yes", action="store_true", help="do not ask")
 
 
+    co = add("collect", "bring every worker's share of a run (run folder without checkpoints, learner and server "
+                        "logs) into the host's runs/<stage>/workers/<machine>/; run it on the host",
+             "forgectl collect move2_seek --check   |   forgectl collect move2_seek --every 15 --yes")
+    co.add_argument("stage")
+    co.add_argument("--check", action="store_true", help="say what each worker would send; copy nothing")
+    co.add_argument("--every", type=float, metavar="MINUTES", help="keep collecting, one pass every MINUTES")
+    co.add_argument("--all", action="store_true", help="include workers that are out of the cluster")
+    co.add_argument("--yes", action="store_true", help="do not ask before copying")
+
     vd = add("videos", "collect a stage's evaluation videos from the workers into the run folder",
              "forgectl videos move2_seek --check")
     vd.add_argument("stage")
@@ -137,6 +147,8 @@ def dispatch(args, config) -> int:
         return deploy.build(config, args.cluster, args.yes, args.timeout, stop_running=args.stop_running)
     if args.command == "conf-sync":
         return confsync.run(config, args.check, args.yes)
+    if args.command == "collect":
+        return collect.run(config, args.stage, args.check, args.every, args.all, args.yes)
     if args.command == "videos":
         return videos.run(config, args.stage, args.check, args.dry_run, args.on_host, args.yes)
     raise Failure(f"unknown command {args.command}")
@@ -152,6 +164,8 @@ def changes_state(args) -> bool:
         return not args.check
     if args.command == "cluster":
         return getattr(args, "cluster_command", None) == "move-host"
+    if args.command == "collect":
+        return not args.check
     if args.command == "videos":
         return not (args.check or args.dry_run)
     return False
@@ -168,6 +182,8 @@ def planned_machines(args, config) -> list:
         return list(config.workers)
     if args.command == "cluster":
         return list(config.cluster)
+    if args.command == "collect":
+        return collect.machines(config, args.all)
     if args.command == "videos":
         return [*config.workers, *([config.host] if args.on_host else [])]
     return []

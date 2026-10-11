@@ -39,6 +39,7 @@ may itself be listed (`local = true` there: no ssh).
 | `forgectl stage status\|start\|resume\|pause\|cancel` | drive a stage | console commands |
 | `forgectl build [--cluster]` | rebuild here, or push and rebuild every machine | restarts worldservers |
 | `forgectl cluster move-host <machine> [<stage>]` | move the host role and a run | everything |
+| `forgectl collect <stage>` | bring every worker's share of a run (run folder without checkpoints, logs) to the host | writes the host's run folder |
 | `forgectl videos <stage>` | collect evaluation videos from the workers | writes the run folder |
 
 ## `forgectl cluster`
@@ -517,6 +518,25 @@ or undo (restore, then `forgectl build --cluster` so the worldservers read the r
 until it is settled. The audit line notes the mixed stop.
 Without `<stage>` no run is copied or resumed. The target must have `in_cluster = true`.
 
+## `forgectl collect <stage> [--check] [--every MINUTES] [--all]`
+
+Consolidates a run on the host. A follower learner rank writes nothing into the run (rank 0 on the host writes the
+checkpoints, metrics and evaluations), so what a worker holds of it is its `runs/<stage>/` folder (camera audit
+images, videos) and its logs. Each worker's share lands in the host's `runs/<stage>/workers/<machine>/`:
+
+- `run/`: the worker's `runs/<stage>/`, never `*.pt` checkpoints; a file is copied when it is missing here or its size
+  differs (tar over ssh, no rsync needed).
+- `logs/`: `animus-learner.log`, `Server.log`, `Errors.log` ([paths] in cluster.toml), appended from the byte offset
+  the last pass stopped at, gzip on the wire. The learner log's first collection starts at its first line naming the
+  stage, not at the top. A log that was truncated or replaced (a worldserver restart rewrites `Server.log`) starts
+  again after a `==== forgectl collect ... ====` marker line.
+- `collect.json`: each log's inode and offset, and the last pass's time, file count and bytes.
+
+Run it on the host (it refuses elsewhere). `--check` says what each pass would copy and writes nothing; `--every 15`
+keeps it going (Ctrl-C to stop); `--all` adds workers that are out of the cluster. An unreachable worker is reported
+and skipped; an interrupted pass keeps the offsets it reached. The first pass of move2_seek (2026-10-11) brought about
+1.1 GB of logs and 8 MB of images from four workers in 18 s; later passes copy only what is new.
+
 ## `forgectl videos <stage>`
 
 Wraps `apps/forge/tools/collect-videos.sh`: each worker's `runs/<stage>/videos/` is copied into this checkout's run
@@ -528,7 +548,7 @@ then needs ssh keys to the workers).
 
 Every command that changes something appends two lines to `~/.forgectl/audit.log` (an intent line when it starts, a result line when it ends) on the machine it was run from
 (the directory is created, mode 0700; `$FORGECTL_HOME` moves it). Logged: `stage start|resume|pause|cancel`,
-`build`, `conf-sync` (without `--check`), `cluster move-host`, `videos` (without `--check`/`--dry-run`). Not logged:
+`build`, `conf-sync` (without `--check`), `cluster move-host`, `collect` (without `--check`), `videos` (without `--check`/`--dry-run`). Not logged:
 `cluster`, `status`, `doctor`, `watch`, `stage status`, `logs`, `test`, and the `--check`/`--dry-run` forms.
 
 ```
