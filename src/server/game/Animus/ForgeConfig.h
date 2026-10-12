@@ -122,13 +122,16 @@ namespace AnimusForge
         /// AnimusForge.Vision.AuditInterval / AuditSeats: every AuditInterval seconds of real time (0 = never) while a
         /// stage with a camera trains or runs, AuditSeats seats' frames as the learner gets them are saved under
         /// runs/<scenario>/camera/ (AnimusForge::Forge::MaybeAuditCamera).
-        uint32 VisionAuditInterval = 300;
+        uint32 VisionAuditInterval = 0;     // owner 2026-10-11: camera pictures from evaluations only (the videos)
         uint32 VisionAuditSeats = 4;
         /// AnimusForge.Vision.EvalVideos / EvalVideoScale: episodes of every evaluation (0 = none) filmed as the seat
         /// saw them, a composite frame a decision scaled up EvalVideoScale times, under runs/<scenario>/videos/
         /// (Animus::Vision::EvalVideoRecorder, AnimusForge::Forge::CaptureEvalVideos).
-        uint32 VisionEvalVideos = 8;
-        uint32 VisionEvalVideoScale = 4;
+        // Owner 2026-10-11: every evaluation route has its video (EVAL_VIDEOS_ALL: more than any evaluation plays),
+        // at twice the camera's size (a quarter of 4x's bytes; the route viewer scales it up).
+        static constexpr uint32 EVAL_VIDEOS_ALL = 4096;
+        uint32 VisionEvalVideos = EVAL_VIDEOS_ALL;
+        uint32 VisionEvalVideoScale = 2;
         /// AnimusForge.Map.*: the mental map's caps (MaxTiles fine tiles, CoarseTiles coarse ones an evicted fine
         /// tile folds into) and how a training seat's map lives across resets (KeepShare, AgeOffsetSeconds;
         /// perception-goals REDESIGN §3, amendments 1 and 3). The process's, like the camera's

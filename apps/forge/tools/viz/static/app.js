@@ -462,7 +462,8 @@ function selectEpisode(b) {
 const frameImages = new Map();               // url -> Image, the frames already asked for
 function frameUrl(b, i) {
   const k = Math.max(0, Math.min(b.video.frames - 1, i));
-  return `/api/frame?run=${encodeURIComponent(state.run)}&steps=${state.steps}&file=${encodeURIComponent(b.video.file)}&i=${k}`;
+  const folder = b.video.folder ? `&folder=${encodeURIComponent(b.video.folder)}` : '';
+  return `/api/frame?run=${encodeURIComponent(state.run)}&steps=${state.steps}${folder}&file=${encodeURIComponent(b.video.file)}&i=${k}`;
 }
 function preload(url) {
   let im = frameImages.get(url);
@@ -491,12 +492,12 @@ function showMedia(b) {
   const filmed = state.blocks.filter((x) => x.video && x.episode.map === state.map);
   const note = $('mnote');
   if (!state.videoCount) {
-    note.textContent = state.policy === 'learner'
-      ? 'This evaluation has no videos.'
-      : 'Videos are filmed of the learner evaluation only (policy "learner").';
+    note.textContent = state.policy === 'learner' || state.policy.startsWith('heldout_')
+      ? 'This evaluation has no videos (every route is filmed from 2026-10-11; older evaluations have a sample).'
+      : 'Videos are filmed of the learner and held-out evaluations, not the ablations or the sampled policy.';
     return;
   }
-  note.textContent = `The sim films ${state.videoCount} sampled episodes of each evaluation` +
+  note.textContent = `${state.videoCount} episodes of this evaluation were filmed` +
     (filmed.length ? '; on this map:' : '; none on this map.');
   for (const x of filmed) {
     const btn = document.createElement('button');

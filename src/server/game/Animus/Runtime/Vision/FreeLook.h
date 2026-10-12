@@ -151,12 +151,18 @@ namespace Animus::Vision::FreeLook
         switch (uint32_t(choice[HEAD_ZOOM]))
         {
             case ZOOM_IN:
-                state.ZoomLevel = state.ZoomLevel > 0 ? state.ZoomLevel - 1 : 0;
+            {
+                // Never nearer than the conf's ZoomMin (a third-person camera; owner, 2026-10-11).
+                uint32_t const nearest = NearestZoomLevel(settings.ZoomMin);
+                state.ZoomLevel = state.ZoomLevel > nearest ? state.ZoomLevel - 1 : std::max(state.ZoomLevel, nearest);
                 break;
+            }
             case ZOOM_OUT:
                 state.ZoomLevel = std::min(state.ZoomLevel + 1, ZOOM_LEVEL_COUNT - 1);
                 break;
             case ZOOM_RECENTRE:
+                // Recentre brings the zoom back too: to the conf's Zoom, where every episode starts.
+                state.ZoomLevel = NearestZoomLevel(settings.Zoom);
                 state.YawOffset = 0.0f;
                 state.Pitch = std::clamp(settings.Pitch * DEGREES, -PITCH_LIMIT, PITCH_LIMIT);
                 state.YawRate = 0.0f;

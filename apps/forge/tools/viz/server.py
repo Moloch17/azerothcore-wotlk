@@ -473,34 +473,62 @@ _decoding = {}               # (path, mtime) -> the lock its one decode holds
 FRAME_CACHE = 4
 
 
-def media(run, steps, policy):
-    """The videos of this evaluation, by sidecar: [{seed, agent, outcome, frames, fps, file, url}]."""
-    if policy != VIDEO_POLICY:
-        return []
-    folder = run / "videos" / str(steps)
-    out = []
-    for side in sorted(folder.glob("*.json")) if folder.is_dir() else []:
-        if side.name == "index.json":
-            continue
+FOLDER_RE = re.compile(r"\d+(-heldout\d+)?")
+
+
+def _arena_names(run):
+    """stage.json's arenas, by index (a held-out video's sidecar names its arena's index)."""
+    def build():
         try:
-            s = json.loads(side.read_text())
+            return [a.get("name") for a in json.loads((run / "stage.json").read_text()).get("arenas") or ()]
         except (OSError, ValueError):
-            continue
-        if not (folder / s.get("file", "")).is_file():
-            continue
-        out.append({"seed": int(s.get("seed", -1)), "agent": int(s.get("agent", 0)), "outcome": s.get("outcome"),
-                    "frames": int(s.get("frames", 0)), "fps": s.get("fps", 4), "file": s["file"],
-                    "dropped": int(s.get("dropped_frames", 0)), "truncated": bool(s.get("truncated")),
-                    "url": f"/runs/{run.name}/videos/{steps}/{s['file']}"})
+            return []
+    stage = run / "stage.json"
+    return _cached("arenas", stage, build) if stage.exists() else []
+
+
+def media(run, steps, policy):
+    """The videos of this evaluation, by sidecar: [{seed, agent, outcome, frames, fps, folder, file, url}]. The learner's
+    are in videos/<steps>/; a held-out arena's (policy heldout_<arena>) in videos/<steps>-heldout<N>/, told apart by
+    the sidecar's arena index (every route is filmed since 2026-10-11)."""
+    if policy == VIDEO_POLICY:
+        folders = [run / "videos" / str(steps)]
+        arena = None
+    elif policy.startswith("heldout_"):
+        folders = sorted((run / "videos").glob(f"{steps}-heldout*"))
+        arena = policy[len("heldout_"):]
+    else:
+        return []
+    names = _arena_names(run) if arena else []
+    out = []
+    for folder in folders:
+        for side in sorted(folder.glob("*.json")) if folder.is_dir() else []:
+            if side.name == "index.json":
+                continue
+            try:
+                s = json.loads(side.read_text())
+            except (OSError, ValueError):
+                continue
+            if not (folder / s.get("file", "")).is_file():
+                continue
+            if arena is not None:
+                index = int(_num((s.get("measures") or {}).get("arena"), -1))
+                if not (0 <= index < len(names)) or names[index] != arena:
+                    continue
+            out.append({"seed": int(s.get("seed", -1)), "agent": int(s.get("agent", 0)), "outcome": s.get("outcome"),
+                        "frames": int(s.get("frames", 0)), "fps": s.get("fps", 4), "folder": folder.name,
+                        "file": s["file"], "dropped": int(s.get("dropped_frames", 0)),
+                        "truncated": bool(s.get("truncated")),
+                        "url": f"/runs/{run.name}/videos/{folder.name}/{s['file']}"})
     return out
 
 
-def video_frame(run, steps, file, index):
+def video_frame(run, folder, file, index):
     """Frame `index` of a video as JPEG. The whole video is decoded once (an animated PNG composes each frame from
     the ones before it) and kept for the next requests."""
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+\.png", file):
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+\.png", file) or not FOLDER_RE.fullmatch(str(folder)):
         raise LookupError("bad video name")
-    path = run / "videos" / str(steps) / file
+    path = run / "videos" / str(folder) / file
     key = (str(path), path.stat().st_mtime)
     with _frames_lock:
         frames = _frames.get(key)
@@ -571,7 +599,9 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(runs_index(self.runs_dir))
             if url.path == "/api/frame":
                 run = self._run(q)
-                body = video_frame(run, int(q["steps"][0]), q["file"][0], int(q["i"][0]))
+                # The video's folder: videos/<steps>/ (the learner's), or a held-out arena's <steps>-heldout<N>/.
+                folder = q["folder"][0] if "folder" in q else str(int(q["steps"][0]))
+                body = video_frame(run, folder, q["file"][0], int(q["i"][0]))
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", "image/jpeg")
                 self.send_header("Cache-Control", "max-age=86400")

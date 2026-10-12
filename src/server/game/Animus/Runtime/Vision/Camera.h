@@ -54,7 +54,11 @@ namespace Animus::Vision
         float FovH = 120.0f;
         float FovV = 60.0f;
         float Range = 100.0f;       // yards: the units a frame can see (a ray itself has no range)
-        float Zoom = 6.0f;
+        /// Owner 2026-10-11: a third-person camera, as the game's, well back from the character (it shows much more of
+        /// what is around it). Zoom is where an episode starts and where recentre returns; ZoomMin the nearest a
+        /// seat's zoom-in reaches (0 would let it zoom in to the eyes: it did, and played first-person).
+        float Zoom = 12.0f;
+        float ZoomMin = 6.0f;
         float Pitch = -15.0f;       // degrees, + up: the default looks slightly down
         /// AnimusForge.Vision.RenderSizes: a seat draws one at every episode reset, by weight, and casts its frames
         /// at it; each is at most Width x Height. One entry renders every seat at it (a user's tier). The default

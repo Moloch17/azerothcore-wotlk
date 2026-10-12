@@ -119,6 +119,7 @@ void Animus::Curriculum::VisionBlock::DescribeManifest(Layout const& /*layout*/,
     camera["unit_range"] = double(settings.Range);
     camera["caster"] = "raycast+sight";
     camera["zoom"] = double(settings.Zoom);
+    camera["zoom_min"] = double(settings.ZoomMin);
     camera["pitch"] = double(settings.Pitch);
     camera["yaw_offset"] = 0.0;
     block["camera"] = std::move(camera);

@@ -403,10 +403,10 @@ stages and the gate's tools depend on; each must be present with the same value 
 
 | Key | Value in the template | Depends on it |
 |---|---|---|
-| `AnimusForge.Vision.EvalVideos` | 8 | the evaluation videos each machine films (`forgectl videos`, `collect-videos.sh`); a machine without it films the code default, also 8, but a conf that says 0 films none |
-| `AnimusForge.Vision.EvalVideoScale` | 4 | how large those frames are scaled; a different scale makes videos that do not compare |
+| `AnimusForge.Vision.EvalVideos` | 4096 (every route; was 8 until 2026-10-11) | the evaluation videos each machine films (`forgectl videos`, `collect-videos.sh`); a machine without it films the code default, also 4096, but a conf that says 0 films none |
+| `AnimusForge.Vision.EvalVideoScale` | 2 (was 4 until 2026-10-11) | how large those frames are scaled; a different scale makes videos that do not compare |
 | `AnimusForge.TicksPerDecision` and `AnimusForge.HalfBatch` (no `AnimusForge.Stage.<stage>.TicksPerDecision` line for any of the 10 stages) | 1 and 1 on every machine (decision 0006, update 2026-10-09: M1 and M2 trained that way, and a changed tick mid-curriculum would change the timing already learned) | the world tick the controller's facing and heartbeat run at; **a machine that adds a per-stage key (5 = a 50 ms tick) runs that stage on different dynamics, silently, in the pooled data** |
-| `AnimusForge.Vision.Width`, `Height`, `RenderSizes`, `FovH`, `FovV`, `Range`, `Zoom`, `Pitch` | 128, 64, "32x16, 48x24, 64x32, 128x64:0.4", 120, 60, 100, 6, -15 | the camera of every stage with a vision block; only the image's width and height are checked against the learner (the image byte count), the rest are not |
+| `AnimusForge.Vision.Width`, `Height`, `RenderSizes`, `FovH`, `FovV`, `Range`, `Zoom`, `ZoomMin`, `Pitch` | 128, 64, "32x16, 48x24, 64x32, 128x64:0.4", 120, 60, 100, 12, 6, -15 (Zoom 6 and no ZoomMin until 2026-10-11) | the camera of every stage with a vision block; only the image's width and height are checked against the learner (the image byte count), the rest are not |
 | `AnimusForge.Map.MaxTiles`, `CoarseTiles`, `KeepShare`, `AgeOffsetSeconds`, `AnimusForge.Memory.MaxEntities` | 4096, 0, 0.5, 600, 64 | the mental map and the entity memory the observation carries (M2 on) |
 | `AnimusForge.Classes`, `EpisodeSeconds`, `SpawnPoint.MapId/X/Y/Z/O`, `ContinentReplicas`, `HalfBatch` | per the host's conf | what every episode is built from |
 
@@ -432,7 +432,7 @@ machine only:
 ```
 ssh <m> 'cd ~/animus-forge/env/dist/etc/modules && \
    cp -p mod_animus_forge.conf mod_animus_forge.conf.bak-$(date +%Y%m%d-%H%M%S) && \
-   printf "%s\n" "AnimusForge.Vision.EvalVideos = 8" "AnimusForge.Vision.EvalVideoScale = 4" \
+   printf "%s\n" "AnimusForge.Vision.EvalVideos = 4096" "AnimusForge.Vision.EvalVideoScale = 2" \
    >> mod_animus_forge.conf'
 ```
 

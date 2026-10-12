@@ -296,6 +296,7 @@ void AnimusForge::ForgeConfig::Load()
         Vision.FovV = ranged("AnimusForge.Vision.FovV", defaults.FovV, 20.0f, 120.0f);
         Vision.Range = ranged("AnimusForge.Vision.Range", defaults.Range, 10.0f, 500.0f);
         Vision.Zoom = ranged("AnimusForge.Vision.Zoom", defaults.Zoom, 0.0f, 50.0f);
+        Vision.ZoomMin = std::min(Vision.Zoom, ranged("AnimusForge.Vision.ZoomMin", defaults.ZoomMin, 0.0f, 50.0f));
         Vision.Pitch = ranged("AnimusForge.Vision.Pitch", defaults.Pitch, -80.0f, 80.0f);
         // The learner cuts the canonical image into a 16-wide grid of square patches (Vision::Patch): a size it
         // does not tile is said, not changed -- the learner refuses it with the manifest in hand.
@@ -311,10 +312,13 @@ void AnimusForge::ForgeConfig::Load()
             sizeErrors);
         for (std::string const& error : sizeErrors)
             LOG_ERROR("server.loading", "AnimusForge.Vision.RenderSizes: {}", error);
-        VisionAuditInterval = uint32(ranged("AnimusForge.Vision.AuditInterval", 300.0f, 0.0f, 86400.0f));
+        // Camera pictures from evaluations only (owner, 2026-10-11): no training audits by default; every evaluation
+        // route filmed, at twice the camera's size.
+        VisionAuditInterval = uint32(ranged("AnimusForge.Vision.AuditInterval", 0.0f, 0.0f, 86400.0f));
         VisionAuditSeats = uint32(ranged("AnimusForge.Vision.AuditSeats", 4.0f, 1.0f, 64.0f));
-        VisionEvalVideos = uint32(ranged("AnimusForge.Vision.EvalVideos", 8.0f, 0.0f, 64.0f));
-        VisionEvalVideoScale = uint32(ranged("AnimusForge.Vision.EvalVideoScale", 4.0f, 1.0f, 8.0f));
+        VisionEvalVideos = uint32(ranged("AnimusForge.Vision.EvalVideos", float(EVAL_VIDEOS_ALL), 0.0f,
+            float(EVAL_VIDEOS_ALL)));
+        VisionEvalVideoScale = uint32(ranged("AnimusForge.Vision.EvalVideoScale", 2.0f, 1.0f, 8.0f));
 
         // The mental map (perception-goals REDESIGN §3): its caps and its persistence across resets.
         Animus::Vision::MapRunSettings const maps;

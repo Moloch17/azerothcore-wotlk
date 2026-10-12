@@ -5400,10 +5400,22 @@ AnimusForge.Vision.Range = 100
 #    AnimusForge.Vision.Zoom
 #        Description: Yards from the pivot (the head) back to the camera, before the boom pulls in
 #                     at a wall. 0 sees from the eyes. A seat's camera starts each episode at the
-#                     zoom level nearest it (0, 3, 6 or 12 yd) and steps between those levels.
+#                     zoom level nearest it (0, 3, 6 or 12 yd) and steps between those levels;
+#                     recentre brings it back here. 12 (owner, 2026-10-11): a third-person camera
+#                     well back from the character, as the game's, which shows much more of what is
+#                     around it.
+#        Default:     12 - (0 to 50)
+
+AnimusForge.Vision.Zoom = 12
+
+#
+#    AnimusForge.Vision.ZoomMin
+#        Description: The nearest a seat's zoom-in reaches (the level nearest it), at most Zoom.
+#                     0 lets a seat zoom in to its eyes -- one did, and played first-person for most
+#                     of every episode.
 #        Default:     6 - (0 to 50)
 
-AnimusForge.Vision.Zoom = 6
+AnimusForge.Vision.ZoomMin = 6
 
 #
 #    AnimusForge.Vision.Pitch
@@ -5420,10 +5432,11 @@ AnimusForge.Vision.Pitch = -15
 #                     runs/<scenario>/camera/: one PNG a frame (depth, kind, height over the feet
 #                     and slope, side by side; the objective white) and a row in audit.csv (who,
 #                     where, when, pixels of each kind). The seats are drawn at random, one a
-#                     layout first. 0 saves none.
-#        Default:     300 - (0 to 86400)
+#                     layout first. 0 saves none (the default since 2026-10-11, owner: camera
+#                     pictures from evaluations only, EvalVideos).
+#        Default:     0 - (0 to 86400)
 
-AnimusForge.Vision.AuditInterval = 300
+AnimusForge.Vision.AuditInterval = 0
 
 #
 #    AnimusForge.Vision.AuditSeats
@@ -5442,18 +5455,20 @@ AnimusForge.Vision.AuditSeats = 4
 #                     and an index.json and index.html per evaluation. The episodes are chosen from
 #                     the evaluation's seeds alone, spread over the classes and rungs, so every
 #                     checkpoint films the same ones. A cluster's sims each film this many of
-#                     their own share. 0 films none.
-#        Default:     8 - (0 to 64)
+#                     their own share. 0 films none; 4096 (the default since 2026-10-11, owner:
+#                     every evaluation route has its video) is more than any evaluation plays.
+#        Default:     4096 - (0 to 4096)
 
-AnimusForge.Vision.EvalVideos = 8
+AnimusForge.Vision.EvalVideos = 4096
 
 #
 #    AnimusForge.Vision.EvalVideoScale
 #        Description: Each camera pixel drawn this many times as wide and high in the videos
-#                     (nearest pixel): 4 makes a 128 x 64 camera 512 x 256.
-#        Default:     4 - (1 to 8)
+#                     (nearest pixel): 2 makes a 128 x 64 camera 256 x 128 (a quarter of 4's bytes,
+#                     with every route filmed; the route viewer scales it up).
+#        Default:     2 - (1 to 8)
 
-AnimusForge.Vision.EvalVideoScale = 4
+AnimusForge.Vision.EvalVideoScale = 2
 
 #
 #    AnimusForge.Map.MaxTiles
