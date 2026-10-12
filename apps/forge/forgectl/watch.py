@@ -88,7 +88,8 @@ def conditions(doc: dict, limits: dict) -> dict[tuple, Event]:
             add("host_idle", "critical", host, f"{stage}: progress.json says {plan.get('phase')} but the sim on "
                 f"{host} is idle (last plan: {plan.get('last_plan') or 'none, so the worldserver restarted'})")
         seen = doc.get("workers_seen_by_host")
-        if plan.get("state") == "running" and plan.get("phase") == "training" and seen is not None:
+        if (plan.get("state") == "running" and plan.get("phase") == "training" and seen is not None
+                and not plan.get("console_paused")):
             states = {w["machine"]: w["state"] for w in seen if w.get("machine")}
             for machine in doc.get("machines") or []:
                 name = machine["name"]
@@ -302,8 +303,12 @@ def run(config: Config, once: bool, interval: float | None = None, resume: bool 
                 for event in diff(state.get("snapshot"), document, limits, state):
                     tell(event, config, state, time.time())
                 if resume and not once:
-                    for event in heal.consider(config, document, state, time.time()):
-                        tell(event, config, state, time.time())
+                    try:
+                        for event in heal.consider(config, document, state, time.time()):
+                            tell(event, config, state, time.time())
+                    except Exception as error:   # a watcher must outlive a bad mend too
+                        say(f"{time.strftime('%Y-%m-%d %H:%M:%S')} auto-resume raised: {type(error).__name__}: "
+                            f"{error}")
                 state["snapshot"] = document
                 state["saved_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
                 save_state(state)

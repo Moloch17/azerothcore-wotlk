@@ -15,7 +15,8 @@ worker runs a plan, then `forge resume <stage>` on the host; the workers rejoin 
 log as `forgectl watch --resume recover <stage>`.
 When not:
   - the operator's hold is set (`forgectl stage cancel|pause`, `build --stop-running`, `move-host`; cleared by
-    `stage start|resume`), or the host's last plan says cancelled (a `forge cancel` typed into the console);
+    `stage start|resume`), the plan is paused, or the host's last plan says cancelled (a `forge pause` or `forge
+    cancel` typed into the console);
   - the stage is decided (finished.json), or the plan is evaluating (a worker condition waits for training);
   - within resume_grace_minutes of the plan starting to run (machines are still joining);
   - within resume_gap_minutes of the last attempt, or after resume_max_attempts attempts that did not bring a healthy
@@ -86,6 +87,9 @@ def consider(config: Config, doc: dict, state: dict, now: float) -> list[Event]:
         return []
     if now - attempted < settings["resume_gap_minutes"] * 60:
         return []
+    if plan.get("console_paused"):
+        return note_once(heal, "paused", Event(
+            "auto_resume_skipped", "info", name, f"{name}: {why}; not resumed: the plan is paused"))
     if "cancelled" in (plan.get("last_plan") or "") and plan.get("console_idle"):
         return note_once(heal, "console_cancel", Event(
             "auto_resume_skipped", "info", name, f"{name}: {why}; not resumed: the host's last plan was cancelled "
