@@ -94,41 +94,84 @@ def _num(v, default=None):
         return default
 
 
-def _episode_rows(run):
-    """eval_episodes.jsonl grouped by (env_steps, policy)."""
+_STEPS_RE = re.compile(rb'"env_steps":\s*(\d+)')
+_POLICY_RE = re.compile(rb'"policy":\s*"([^"]*)"')
+_index_lock = threading.Lock()
+_index = {}                  # path -> {"ino", "size", "spans": {(steps, policy): [(offset, length)]}}
+_rows_cache = {}             # (path, steps, policy, size) -> parsed rows; the few most recent evaluations only
+ROWS_CACHE = 6
+
+
+def _episode_index(path):
+    """Where each evaluation's lines are in eval_episodes.jsonl: (env_steps, policy) -> [(offset, length)]. Only the
+    bytes added since the last look are scanned, and only for those two fields (the file holds every evaluation the
+    run ever played: parsing it whole on each new evaluation was the slow load)."""
+    stat = path.stat()
+    with _index_lock:
+        entry = _index.get(str(path))
+        if not entry or entry["ino"] != stat.st_ino or stat.st_size < entry["size"]:
+            entry = {"ino": stat.st_ino, "size": 0, "spans": {}}
+            _index[str(path)] = entry
+        if stat.st_size > entry["size"]:
+            with open(path, "rb") as f:
+                f.seek(entry["size"])
+                offset = entry["size"]
+                for line in f:
+                    if not line.endswith(b"\n"):
+                        break                       # a line still being written: next time
+                    steps, policy = _STEPS_RE.search(line), _POLICY_RE.search(line)
+                    if steps and policy:
+                        key = (int(steps.group(1)), policy.group(1).decode())
+                        entry["spans"].setdefault(key, []).append((offset, len(line)))
+                    offset += len(line)
+                entry["size"] = offset
+        return entry
+
+
+def _episode_rows(run, steps, policy):
+    """The selected evaluation's rows of eval_episodes.jsonl, and nothing else read or parsed."""
     path = run / "eval_episodes.jsonl"
-
-    def build():
-        rows = {}
-        with open(path) as f:
-            for line in f:
-                try:
-                    r = json.loads(line)
-                except ValueError:
-                    continue
-                rows.setdefault((int(r.get("env_steps", -1)), r.get("policy")), []).append(r)
+    if not path.exists():
+        return []
+    entry = _episode_index(path)
+    key = (str(path), steps, policy, entry["size"])
+    with _index_lock:
+        rows = _rows_cache.get(key)
+        spans = list(entry["spans"].get((steps, policy), ()))
+    if rows is not None:
         return rows
-    return _cached("episodes", path, build)
-
-
-def map_points(run, map_id):
-    """Every object and end position the run has on the map, across all its evaluations: the searched area."""
-    pts = []
-    for rows in _episode_rows(run).values():
-        for r in rows:
-            if int(_num(r.get("seek_map"), 0)) != map_id:
+    rows = []
+    with open(path, "rb") as f:
+        for offset, length in spans:
+            f.seek(offset)
+            try:
+                rows.append(json.loads(f.read(length)))
+            except ValueError:
                 continue
-            for p in ("object", "end"):
-                xyz = [_num(r.get(f"{p}_{a}")) for a in "xyz"]
-                if None not in xyz:
-                    pts.append(xyz)
+    with _index_lock:
+        _rows_cache[key] = rows
+        while len(_rows_cache) > ROWS_CACHE:
+            _rows_cache.pop(next(iter(_rows_cache)))
+    return rows
+
+
+def map_points(run, steps, policy, map_id):
+    """The selected evaluation's object and end positions on the map: with its routes, the searched area."""
+    pts = []
+    for r in _episode_rows(run, steps, policy):
+        if int(_num(r.get("seek_map"), 0)) != map_id:
+            continue
+        for p in ("object", "end"):
+            xyz = [_num(r.get(f"{p}_{a}")) for a in "xyz"]
+            if None not in xyz:
+                pts.append(xyz)
     a = np.array(pts, dtype=np.float64).reshape(-1, 3)
     return a[:, 0], a[:, 1], a[:, 2]
 
 
 def episodes(run, steps, policy):
     """The evaluation's episodes, keyed by (seed, agent), with the fields the viewer shows."""
-    rows = _episode_rows(run).get((steps, policy), [])
+    rows = _episode_rows(run, steps, policy)
     cats = _categories(run)
     rooms, objects = cats.get("seek_room", []), cats.get("seek_object", [])
     out = []
@@ -430,8 +473,9 @@ def background(run, scenes_dir, steps, policy, map_id, zlo=None, zhi=None):
         raise LookupError(f"no routes on map {map_id} in this evaluation")
     xs, ys, zs = np.concatenate(xs), np.concatenate(ys), np.concatenate(zs)
     # The whole searched map, not only where this evaluation's bots went (a bot that barely moved would leave most of
-    # it undrawn): every episode of the run on this map adds its object and end positions.
-    px_, py_, pz_ = map_points(run, map_id)
+    # it undrawn): every episode of this evaluation on this map adds its object and end positions (its objects span the
+    # rung's rooms).
+    px_, py_, pz_ = map_points(run, steps, policy, map_id)
     ax, ay = np.concatenate([xs, px_]), np.concatenate([ys, py_])
     x0, x1 = math.floor(ax.min() - MARGIN), math.ceil(ax.max() + MARGIN)
     y0, y1 = math.floor(ay.min() - MARGIN), math.ceil(ay.max() + MARGIN)

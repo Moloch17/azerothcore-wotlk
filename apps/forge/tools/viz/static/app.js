@@ -25,7 +25,12 @@ async function api(path) {
   if (!r.ok) throw new Error(data.error || r.statusText);
   return data;
 }
-function setStatus(text) { $('status').textContent = text || ''; }
+// What is loading (or went wrong): in the header and, until the map is drawn, over the map itself.
+function setStatus(text) {
+  $('status').textContent = text || '';
+  $('loading').textContent = text || '';
+  $('loading').hidden = !text;
+}
 
 // ---- selection: run, evaluation, policy, map ------------------------------------------------------------------------
 
@@ -60,8 +65,10 @@ async function loadRuns() {
   const h = readHash();
   fillSelect($('run'), state.runs.map((r) => [r.name, r.name]), h.run);
   state.run = $('run').value;
-  fillEvals(h.steps, h.policy);
-  await loadEvaluation(h.map, h.seed);
+  // A page (re)load always opens the run's latest evaluation, the learner's policy (owner, 2026-10-12): the address's
+  // evaluation and episode are where the last session was, not what to open now.
+  fillEvals(null, null);
+  await loadEvaluation(h.map, null);
 }
 
 function currentRun() { return state.runs.find((r) => r.name === state.run); }
