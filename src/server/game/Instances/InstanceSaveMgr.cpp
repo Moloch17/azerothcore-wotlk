@@ -102,12 +102,14 @@ InstanceSave* InstanceSaveMgr::AddInstanceSave(uint32 mapId, uint32 instanceId, 
     if (!startup)
         save->InsertToDB();
 
+    std::lock_guard<std::mutex> guard(_storageLock);
     m_instanceSaveById[instanceId] = save;
     return save;
 }
 
 InstanceSave* InstanceSaveMgr::GetInstanceSave(uint32 InstanceId)
 {
+    std::lock_guard<std::mutex> guard(_storageLock);
     InstanceSaveHashMap::iterator itr = m_instanceSaveById.find(InstanceId);
     return itr != m_instanceSaveById.end() ? itr->second : nullptr;
 }
@@ -124,9 +126,14 @@ bool InstanceSaveMgr::DeleteInstanceSaveIfNeeded(InstanceSave* save, bool skipMa
     if (!lock_instLists && save && save->m_playerList.empty() && (skipMapCheck || !sMapMgr->FindMap(save->GetMapId(), save->GetInstanceId())))
     {
         // delete save from storage:
-        InstanceSaveHashMap::iterator itr = m_instanceSaveById.find(save->GetInstanceId());
-        ASSERT(itr != m_instanceSaveById.end() && itr->second == save);
-        m_instanceSaveById.erase(itr);
+        {
+            std::lock_guard<std::mutex> guard(_storageLock);
+            InstanceSaveHashMap::iterator itr = m_instanceSaveById.find(save->GetInstanceId());
+            // Forge: another map task got here first (an unload beside the last unbind); it owns the delete.
+            if (itr == m_instanceSaveById.end() || itr->second != save)
+                return false;
+            m_instanceSaveById.erase(itr);
+        }
 
         // delete save from db:
         // character_instance is deleted when unbinding a certain player
@@ -427,7 +434,7 @@ void InstanceSaveMgr::LoadCharacterBinds()
             if (InstanceSave* save = GetInstanceSave(instanceId))
             {
                 PlayerCreateBoundInstancesMaps(guid);
-                InstancePlayerBind& bind = playerBindStorage[guid]->m[save->GetDifficulty()][save->GetMapId()];
+                InstancePlayerBind& bind = BindsOf(guid)->m[save->GetDifficulty()][save->GetMapId()];
                 if (bind.save) // pussywizard: another bind for the same map and difficulty! may happen because of mysql thread races
                 {
                     if (bind.perm) // already loaded perm -> delete currently checked one from db
@@ -580,7 +587,7 @@ void InstanceSaveMgr::MergeWithNewInstanceSaves(InstanceMapLoadRows const& loadR
         ObjectGuid guid = ObjectGuid::Create<HighGuid::Player>(row.guidLow);
 
         PlayerCreateBoundInstancesMaps(guid);
-        InstancePlayerBind& bind = playerBindStorage[guid]->m[save->GetDifficulty()][save->GetMapId()];
+        InstancePlayerBind& bind = BindsOf(guid)->m[save->GetDifficulty()][save->GetMapId()];
         if (bind.save) // pussywizard: another bind for the same map and difficulty! may happen because of mysql thread races
         {
             if (bind.perm) // already loaded perm -> delete currently checked one from db
@@ -811,7 +818,7 @@ InstancePlayerBind* InstanceSaveMgr::PlayerBindToInstance(ObjectGuid guid, Insta
     // Forge: sim bots (WorldSession::IsSimSession) have no character row to bind.
     bool const persistBinding = (!sToCloud9Sidecar->ClusterModeEnabled()
         || sToCloud9Sidecar->IsMapAssigned(save->GetMapId())) && !(player && player->GetSession()->IsSimSession());
-    InstancePlayerBind& bind = playerBindStorage[guid]->m[save->GetDifficulty()][save->GetMapId()];
+    InstancePlayerBind& bind = BindsOf(guid)->m[save->GetDifficulty()][save->GetMapId()];
     ASSERT(!bind.perm || permanent); // ensure there's no changing permanent to temporary, this can be done only by unbinding
 
     if (bind.save)
@@ -891,7 +898,7 @@ InstancePlayerBind* InstanceSaveMgr::PlayerBindToInstance(ObjectGuid guid, Insta
 
 void InstanceSaveMgr::PlayerUnbindInstance(ObjectGuid guid, uint32 mapid, Difficulty difficulty, bool deleteFromDB, Player* player /*= nullptr*/)
 {
-    BoundInstancesMapWrapper* w = playerBindStorage[guid];
+    BoundInstancesMapWrapper* w = BindsOf(guid);
     BoundInstancesMap::iterator itr = w->m[difficulty].find(mapid);
     if (itr != w->m[difficulty].end())
     {
@@ -914,7 +921,7 @@ void InstanceSaveMgr::PlayerUnbindInstance(ObjectGuid guid, uint32 mapid, Diffic
 
 void InstanceSaveMgr::PlayerUnbindInstanceNotExtended(ObjectGuid guid, uint32 mapid, Difficulty difficulty, Player* player /*= nullptr*/)
 {
-    BoundInstancesMapWrapper* w = playerBindStorage[guid];
+    BoundInstancesMapWrapper* w = BindsOf(guid);
     BoundInstancesMap::iterator itr = w->m[difficulty].find(mapid);
     if (itr != w->m[difficulty].end())
     {
@@ -941,11 +948,13 @@ InstancePlayerBind* InstanceSaveMgr::PlayerGetBoundInstance(ObjectGuid guid, uin
         return nullptr;
 
     BoundInstancesMapWrapper* w = nullptr;
-    PlayerBindStorage::const_iterator itr = playerBindStorage.find(guid);
-    if (itr != playerBindStorage.end())
+    {
+        std::lock_guard<std::mutex> guard(_storageLock);
+        PlayerBindStorage::const_iterator itr = playerBindStorage.find(guid);
+        if (itr == playerBindStorage.end())
+            return nullptr;
         w = itr->second;
-    else
-        return nullptr;
+    }
 
     BoundInstancesMap::iterator itr2 = w->m[difficulty_fixed].find(mapid);
     if (itr2 != w->m[difficulty_fixed].end())
@@ -964,6 +973,7 @@ bool InstanceSaveMgr::PlayerIsPermBoundToInstance(ObjectGuid guid, uint32 mapid,
 
 BoundInstancesMap const& InstanceSaveMgr::PlayerGetBoundInstances(ObjectGuid guid, Difficulty difficulty)
 {
+    std::lock_guard<std::mutex> guard(_storageLock);
     PlayerBindStorage::iterator itr = playerBindStorage.find(guid);
     if (itr != playerBindStorage.end())
         return itr->second->m[difficulty];
@@ -972,8 +982,16 @@ BoundInstancesMap const& InstanceSaveMgr::PlayerGetBoundInstances(ObjectGuid gui
 
 void InstanceSaveMgr::PlayerCreateBoundInstancesMaps(ObjectGuid guid)
 {
+    std::lock_guard<std::mutex> guard(_storageLock);
     if (playerBindStorage.find(guid) == playerBindStorage.end())
         playerBindStorage[guid] = new BoundInstancesMapWrapper;
+}
+
+// The player's bind maps, as `playerBindStorage[guid]` read them before the lock: the caller made them first.
+BoundInstancesMapWrapper* InstanceSaveMgr::BindsOf(ObjectGuid guid)
+{
+    std::lock_guard<std::mutex> guard(_storageLock);
+    return playerBindStorage[guid];
 }
 
 InstanceSave* InstanceSaveMgr::PlayerGetInstanceSave(ObjectGuid guid, uint32 mapid, Difficulty difficulty)

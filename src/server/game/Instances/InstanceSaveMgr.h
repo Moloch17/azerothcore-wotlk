@@ -223,7 +223,13 @@ protected:
 private:
     void _ResetOrWarnAll(uint32 mapid, Difficulty difficulty, bool warn, time_t resetTime);
     void _ResetSave(InstanceSaveHashMap::iterator& itr);
+    BoundInstancesMapWrapper* BindsOf(ObjectGuid guid);
     bool lock_instLists{false};
+    // Forge: map tasks of different maps create and unload instances (and bind seats) at the same time, so the two
+    // hash maps below are only found in, inserted into and erased from under this lock. It is held for the container
+    // operation alone, never across a call out of the manager, so it is always the innermost lock. The world-thread
+    // passes (the load, MergeWithNewInstanceSaves, the reset in Update) run after the map tasks are joined.
+    std::mutex _storageLock;
     InstanceSaveHashMap m_instanceSaveById;
     ResetTimeByMapDifficultyMap m_resetTimeByMapDifficulty;
     ResetTimeByMapDifficultyMap m_resetExtendedTimeByMapDifficulty;
