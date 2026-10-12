@@ -6577,6 +6577,14 @@ AnimusForge.Curriculum.PartyFollow.CastShare = 0
 #        of Stuck and Wall charges (a run of 1 s or more) cost, at most RecoverCap, once the body is RecoverYards from
 #        the pin point within RecoverMs: the gradient points at leaving, never at bumping. Stuck needs a held key:
 #        standing still with the keys up is never Stuck or Wall.
+#        Search coverage (2026-10-11, decision 0029): a room is SEEN (RoomSeen 0.3, now category Exploring, floored
+#        at ExploreFloor) once RoomSeenShare (0.6) of its floor cells were hit by this episode's rays -- 0 is the old
+#        rule, RoomSeenRays rays of one frame -- and CHECKED only by CheckedShare of its floor seen (CheckedByVisit 1
+#        restores "or stood in it"; rooms_checked is not comparable across the change). Revisit (0.03) is the price
+#        inside a room already checked and RevisitCorridor (0.01) elsewhere (negative: Revisit everywhere), over
+#        RevisitAgeMs 30000. A chosen cell block is stale (CellStale 0.05) when the seat stood on it or, StaleSearched
+#        1, every floor cell of it was looked at this episode and none is frontier (the map's searched channel);
+#        CellGoal (0.1, now category Exploring) pays reaching a chosen block that was not stale.
 AnimusForge.Curriculum.Seek.Arrive = 3.0
 AnimusForge.Curriculum.Seek.StepCost = 0.0005
 AnimusForge.Curriculum.Seek.Death = 6.0
@@ -6590,7 +6598,7 @@ AnimusForge.Curriculum.Seek.WallSlide = 0.5
 AnimusForge.Curriculum.Seek.Attempts = 24
 AnimusForge.Curriculum.Seek.FloorTolerance = 2.0
 AnimusForge.Curriculum.Seek.Clearance = 0.8
-AnimusForge.Curriculum.Seek.RoomSeen = 0.1
+AnimusForge.Curriculum.Seek.RoomSeen = 0.3
 AnimusForge.Curriculum.Seek.RoomSeenRays = 3
 AnimusForge.Curriculum.Seek.CarryShare = 0.1
 AnimusForge.Curriculum.Seek.RungSeconds0 = 90
@@ -6611,6 +6619,8 @@ AnimusForge.Curriculum.Seek.Return = 0.05
 AnimusForge.Curriculum.Seek.AidUntil = 0.4
 AnimusForge.Curriculum.Seek.GlimpseRays = 1
 AnimusForge.Curriculum.Seek.CheckedShare = 0.6
+AnimusForge.Curriculum.Seek.RoomSeenShare = 0.6
+AnimusForge.Curriculum.Seek.CheckedByVisit = 0
 AnimusForge.Curriculum.Seek.EnterDwellMs = 1000
 AnimusForge.Curriculum.Seek.ReturnAwayYards = 8.0
 AnimusForge.Curriculum.Seek.ReturnAwayMs = 2000
@@ -6621,11 +6631,12 @@ AnimusForge.Curriculum.Seek.CellSame = 6.0
 AnimusForge.Curriculum.Seek.CellMinYards = 8.0
 AnimusForge.Curriculum.Seek.CellPatienceMs = 20000
 AnimusForge.Curriculum.Seek.CellPatienceYards = 2.0
-AnimusForge.Curriculum.Seek.CellGoal = 0.05
+AnimusForge.Curriculum.Seek.CellGoal = 0.1
 AnimusForge.Curriculum.Seek.CellProgress = 0.004
 AnimusForge.Curriculum.Seek.CellSwitch = 0.02
 AnimusForge.Curriculum.Seek.CellLost = 0.03
-AnimusForge.Curriculum.Seek.CellStale = 0.01
+AnimusForge.Curriculum.Seek.CellStale = 0.05
+AnimusForge.Curriculum.Seek.StaleSearched = 1
 AnimusForge.Curriculum.Seek.ExploreSeen = 0.002
 AnimusForge.Curriculum.Seek.ExploreCap = 5.0
 AnimusForge.Curriculum.Seek.ExploreFloor = 0.5
@@ -6663,8 +6674,9 @@ AnimusForge.Curriculum.Seek.PocketEntry = 0.3
 AnimusForge.Curriculum.Seek.PocketMemoryMs = 10000
 AnimusForge.Curriculum.Seek.PocketMinCells = 6
 AnimusForge.Curriculum.Seek.ClusterMinCells = 2
-AnimusForge.Curriculum.Seek.Revisit = 0.002
-AnimusForge.Curriculum.Seek.RevisitAgeMs = 60000
+AnimusForge.Curriculum.Seek.Revisit = 0.03
+AnimusForge.Curriculum.Seek.RevisitCorridor = 0.01
+AnimusForge.Curriculum.Seek.RevisitAgeMs = 30000
 AnimusForge.Curriculum.Seek.TrapFromRung = 2
 AnimusForge.Curriculum.Seek.TrapReplayShare = 0.5
 AnimusForge.Curriculum.Seek.RecoverYards = 4.0

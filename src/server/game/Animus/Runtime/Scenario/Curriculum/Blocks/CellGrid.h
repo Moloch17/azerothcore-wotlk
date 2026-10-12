@@ -140,6 +140,25 @@ namespace Animus::Curriculum
             return false;
         }
 
+        /// Whether block (r, c) is searched (decision 0029): it has floor-like crop cells, every one of them was
+        /// looked at over all four of its 1-yd cells this episode (CROP_SEARCHED at SEARCHED_MAX), and none is
+        /// frontier -- what the map's searched channel shows the seat; a block at the edge of the seen floor is not.
+        [[nodiscard]] inline bool Searched(uint8 const* crop, uint32 r, uint32 c)
+        {
+            uint32 floors = 0;
+            for (uint32 dr = 0; dr < POOL; ++dr)
+                for (uint32 dc = 0; dc < POOL; ++dc)
+                {
+                    uint8 const* cell = CellAt(crop, r * POOL + dr, c * POOL + dc);
+                    if (!FloorLike(cell[Vision::CROP_CODE]))
+                        continue;
+                    if (cell[Vision::CROP_FRONTIER] || cell[Vision::CROP_SEARCHED] < Vision::SEARCHED_MAX)
+                        return false;
+                    ++floors;
+                }
+            return floors > 0;
+        }
+
         /// The world point of block (r, c) of a crop taken at `pose` (the crop's own rotation, MentalMap::Crop): its
         /// centre, at the mean height of its floor-like cells over the feet.
         [[nodiscard]] inline Position WorldPoint(uint8 const* crop, CropPose const& pose, uint32 r, uint32 c)

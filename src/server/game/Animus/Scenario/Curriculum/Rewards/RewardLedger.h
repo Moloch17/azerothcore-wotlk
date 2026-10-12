@@ -287,7 +287,6 @@ namespace Animus::Curriculum
             // The seek stage's room goals: a teaching aid on the progress-linear aid scale.
             case RewardTerm::RoomGoal:
             case RewardTerm::RoomSwitch:
-            case RewardTerm::CellGoal:
             case RewardTerm::CellProgress:
             // The trap drill's way out (M2 explore-unstuck): once, on the aid scale.
             case RewardTerm::Escape:
@@ -299,6 +298,10 @@ namespace Animus::Curriculum
             case RewardTerm::RoomEntry:
             case RewardTerm::FrontierClear:
             case RewardTerm::PocketEntry:
+            // Search coverage (decision 0029): a room seen over most of its floor, and a chosen block reached that was
+            // not yet searched -- floored like Explore, so the fade leaves the search its reasons.
+            case RewardTerm::RoomSeen:
+            case RewardTerm::CellGoal:
                 return RewardCategory::Exploring;
             case RewardTerm::DamageDealt:
             case RewardTerm::Approach:
@@ -319,7 +322,6 @@ namespace Animus::Curriculum
             case RewardTerm::Facing:
             case RewardTerm::Sighting:
             case RewardTerm::NewGround:
-            case RewardTerm::RoomSeen:
                 return RewardCategory::Shaping;
             case RewardTerm::Count:
                 break;

@@ -2795,7 +2795,9 @@ bool Animus::Curriculum::StageScenario::LatchCell(Env const& env, uint32 seatInd
         return false;
     out.Valid = true;
     out.Where = CellGrid::WorldPoint(crop.data(), pose, row, col);
-    out.Stale = CellGrid::Stood(crop.data(), row, col);
+    // Stale (Seek.CellStale): stood on, or (decision 0029) wholly searched this episode with no frontier left in it.
+    out.Stale = CellGrid::Stood(crop.data(), row, col)
+        || (_tuning.Seek.StaleSearched && CellGrid::Searched(crop.data(), row, col));
     return true;
 }
 
@@ -4115,8 +4117,9 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
             hold.Rewarded = true;
             ++seat.GoalsReached;
             ++seat.GoalsReachedBy[GoalKindOf(hold.Goal)];
-            // A cell goal reached: its aid, once, for one chosen far enough away on a block not yet walked, into the
-            // same row.
+            // A cell goal reached: CellGoal, once, for one chosen far enough away on a block not stale (not walked,
+            // nor -- Seek.StaleSearched -- searched), into the same row. Category Exploring since decision 0029, so
+            // the fade leaves it the Explore floor.
             if (cellHold)
             {
                 ++seat.CellGoalsReached;

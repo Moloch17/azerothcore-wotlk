@@ -519,8 +519,13 @@ namespace Animus::Curriculum
             uint32 Attempts = 24;
             float FloorTolerance = 2.0f;
             float Clearance = 0.8f;
-            float RoomSeen = 0.1f;
+            float RoomSeen = 0.3f;
             uint32 RoomSeenRays = 3;
+            // Search coverage (decision 0029): a room is SEEN (RoomSeen, Exploring) once RoomSeenShare of its floor
+            // cells were hit by this episode's rays, not on RoomSeenRays rays of one frame (0: the old ray rule); and
+            // CHECKED only so (CheckedByVisit 0), never by a dwell alone.
+            float RoomSeenShare = 0.6f;
+            uint32 CheckedByVisit = 0;
             float CarryShare = 0.1f;
             uint32 RungSeconds0 = 90;
             uint32 RungSeconds1 = 120;
@@ -550,11 +555,14 @@ namespace Animus::Curriculum
             float CellMinYards = 8.0f;
             uint32 CellPatienceMs = 20000;
             float CellPatienceYards = 2.0f;
-            float CellGoal = 0.05f;
+            float CellGoal = 0.1f;
             float CellProgress = 0.004f;
             float CellSwitch = 0.02f;
             float CellLost = 0.03f;
-            float CellStale = 0.01f;
+            float CellStale = 0.05f;
+            // Decision 0029: a chosen block is stale when the seat stood on it OR (StaleSearched 1) every floor cell of
+            // it was looked at this episode and none is frontier: the map's searched channel, the seat's own input.
+            uint32 StaleSearched = 1;
             float ExploreSeen = 0.002f;
             float ExploreCap = 5.0f;
             float ExploreFloor = 0.5f;
@@ -593,8 +601,11 @@ namespace Animus::Curriculum
             uint32 PocketMemoryMs = 10000;
             uint32 PocketMinCells = 6;
             uint32 ClusterMinCells = 2;
-            float Revisit = 0.002f;
-            uint32 RevisitAgeMs = 60000;
+            // Decision 0029: Revisit is the price inside a room already CHECKED (searched), RevisitCorridor elsewhere
+            // (the corridors a search has to cross again; a negative value means Revisit everywhere, the old rule).
+            float Revisit = 0.03f;
+            float RevisitCorridor = 0.01f;
+            uint32 RevisitAgeMs = 30000;
             // Movement pacing (decision 0027's amendments to 0023 and 0026): the trap drill's own rung and its replayed
             // pin poses, and the pin rebate.
             uint32 TrapFromRung = 2;
@@ -1041,6 +1052,8 @@ namespace Animus::Curriculum
             f("Seek.AidUntil", tuning.Seek.AidUntil);
             f("Seek.GlimpseRays", tuning.Seek.GlimpseRays);
             f("Seek.CheckedShare", tuning.Seek.CheckedShare);
+            f("Seek.RoomSeenShare", tuning.Seek.RoomSeenShare);
+            f("Seek.CheckedByVisit", tuning.Seek.CheckedByVisit);
             f("Seek.EnterDwellMs", tuning.Seek.EnterDwellMs);
             f("Seek.ReturnAwayYards", tuning.Seek.ReturnAwayYards);
             f("Seek.ReturnAwayMs", tuning.Seek.ReturnAwayMs);
@@ -1056,6 +1069,7 @@ namespace Animus::Curriculum
             f("Seek.CellSwitch", tuning.Seek.CellSwitch);
             f("Seek.CellLost", tuning.Seek.CellLost);
             f("Seek.CellStale", tuning.Seek.CellStale);
+            f("Seek.StaleSearched", tuning.Seek.StaleSearched);
             f("Seek.ExploreSeen", tuning.Seek.ExploreSeen);
             f("Seek.ExploreCap", tuning.Seek.ExploreCap);
             f("Seek.ExploreFloor", tuning.Seek.ExploreFloor);
@@ -1094,6 +1108,7 @@ namespace Animus::Curriculum
             f("Seek.PocketMinCells", tuning.Seek.PocketMinCells);
             f("Seek.ClusterMinCells", tuning.Seek.ClusterMinCells);
             f("Seek.Revisit", tuning.Seek.Revisit);
+            f("Seek.RevisitCorridor", tuning.Seek.RevisitCorridor);
             f("Seek.RevisitAgeMs", tuning.Seek.RevisitAgeMs);
             f("Seek.TrapFromRung", tuning.Seek.TrapFromRung);
             f("Seek.TrapReplayShare", tuning.Seek.TrapReplayShare);

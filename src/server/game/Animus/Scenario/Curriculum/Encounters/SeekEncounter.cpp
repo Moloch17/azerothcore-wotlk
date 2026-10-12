@@ -1540,8 +1540,14 @@ void Animus::Curriculum::SeekEncounter::Revisit(Env const& env, EnvSeek& seek, P
         float const weight = tuning.RevisitAgeMs
             ? std::clamp(float(now - std::min(now, stood->second)) / float(tuning.RevisitAgeMs), 0.0f, 1.0f) : 1.0f;
         seek.RevisitSeconds += weight * seconds;
-        if (!paid && tuning.Revisit > 0.0f && weight > 0.0f)
-            ledger.AddFixed(RewardTerm::Revisit, -tuning.Revisit * weight * seconds);
+        // Decision 0029: the full price inside a room already searched (checked: most of its floor seen), the
+        // corridor price elsewhere -- going back over the corridors is how a search reaches its next room; going
+        // back over a searched room is what it should remember not to do. A negative RevisitCorridor is the old rule.
+        int32 const room = seek.LastRoom;
+        bool const searched = room >= 0 && uint32(room) < seek.Track.size() && seek.Track[uint32(room)].Checked;
+        float const price = searched || tuning.RevisitCorridor < 0.0f ? tuning.Revisit : tuning.RevisitCorridor;
+        if (!paid && price > 0.0f && weight > 0.0f)
+            ledger.AddFixed(RewardTerm::Revisit, -price * weight * seconds);
         stood->second = now;
     }
 }
@@ -1676,8 +1682,9 @@ void Animus::Curriculum::SeekEncounter::TrackRooms(Env const& env, EnvSeek& seek
             }
         }
 
-        // Checked: visited, or CheckedShare of its floor cells hit by this episode's rays.
-        if (!track.Checked && (track.Visited || (counts[index] && tuning.CheckedShare <= 1.0f
+        // Checked: CheckedShare of its floor cells hit by this episode's rays (or, Seek.CheckedByVisit 1, the old rule,
+        // visited at all: decision 0029 counts a room searched by what was seen of it, never by a dwell alone).
+        if (!track.Checked && ((tuning.CheckedByVisit && track.Visited) || (counts[index] && tuning.CheckedShare <= 1.0f
             && float(track.Hit.size()) >= tuning.CheckedShare * float(track.Floor))))
         {
             track.Checked = true;
@@ -1887,12 +1894,28 @@ void Animus::Curriculum::SeekEncounter::Reward(Env& env, uint32 seatIndex, Playe
             track.SumZ += hitZ;
             ++track.Hits;
         });
-        for (uint32 room : Draw::NewlyLooked(counts, seek.Looked, tuning.RoomSeenRays))
+        if (tuning.RoomSeenShare > 0.0f)
         {
-            (void)room;
-            ++seek.RoomsLooked;
-            ledger.Add(RewardTerm::RoomSeen, tuning.RoomSeen);
+            // Search coverage (decision 0029): a room is seen once RoomSeenShare of its floor cells were hit by this
+            // episode's rays -- a glance through its door from the corridor is a few cells, not the room.
+            for (uint32 index = 0; index < counts.size() && index < seek.Looked.size(); ++index)
+            {
+                RoomTrack const& track = seek.Track[index];
+                if (!counts[index] || seek.Looked[index]
+                    || float(track.Hit.size()) < tuning.RoomSeenShare * float(track.Floor))
+                    continue;
+                seek.Looked[index] = true;
+                ++seek.RoomsLooked;
+                ledger.Add(RewardTerm::RoomSeen, tuning.RoomSeen);
+            }
         }
+        else
+            for (uint32 room : Draw::NewlyLooked(counts, seek.Looked, tuning.RoomSeenRays))
+            {
+                (void)room;
+                ++seek.RoomsLooked;
+                ledger.Add(RewardTerm::RoomSeen, tuning.RoomSeen);
+            }
     }
 
     // Explore (before the rooms below are marked entered): the floor the frame landed on for the first time, and the
