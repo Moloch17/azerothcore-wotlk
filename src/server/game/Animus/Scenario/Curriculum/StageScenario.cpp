@@ -101,6 +101,8 @@ namespace
     static_assert(PARTY_MEMBERS == GROUP_MEMBERS + SPOTLIGHT_SLOTS, "teammate slots are the group and the spotlights");
 
     constexpr float PARTY_SPACING = 3.0f;
+    /// A party seat's spread spot is taken only with the ground there within this many yards of the spawn's height.
+    constexpr float PARTY_GROUND_YARDS = 3.0f;
     constexpr float REWARD_TUNING_MS = 50.0f;       // per-decision reward terms are tuned for this decision interval
     constexpr float MAX_COMBAT_TIME_MS = 60000.0f;
     constexpr float MAX_UNSEEN_TIME_MS = 20000.0f;
@@ -2364,8 +2366,21 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
             // not spawn in one line forty spacings long.
             uint32 const inGroup = seat % GROUP_SEATS;
             uint32 const group = seat / GROUP_SEATS;
-            start.m_positionX += (inGroup % 2 ? -PARTY_SPACING : PARTY_SPACING) * float(1 + inGroup / 2);
-            start.m_positionY += (inGroup % 2 ? PARTY_SPACING : -PARTY_SPACING) - PARTY_SPACING * 2.0f * float(group);
+            Position spread = start;
+            spread.m_positionX += (inGroup % 2 ? -PARTY_SPACING : PARTY_SPACING) * float(1 + inGroup / 2);
+            spread.m_positionY += (inGroup % 2 ? PARTY_SPACING : -PARTY_SPACING) - PARTY_SPACING * 2.0f * float(group);
+            // Only onto ground at the spawn's own height: a spawn on a ledge (the follow stage's starts along the
+            // way, decision 0033) put seats in the air over Ragefire's chasm, and they fell through the world. Off the
+            // ground, the seat stands on the spawn itself. The instance's heights, or the map's (a fresh instance is
+            // made by the first seat's build).
+            Map* ground = map ? map : sMapMgr->CreateBaseMap(EpisodeMapId(env));
+            float const floorZ = ground ? ground->GetHeight(spread.GetPositionX(), spread.GetPositionY(),
+                start.GetPositionZ() + 2.0f) : INVALID_HEIGHT;
+            if (floorZ > INVALID_HEIGHT + 1.0f && std::fabs(floorZ - start.GetPositionZ()) <= PARTY_GROUND_YARDS)
+            {
+                start = spread;
+                start.m_positionZ = floorZ;
+            }
         }
 
         Player* bot = reuse[seat] ? ReuseSeat(env, seat, start) : BuildSeat(env, seat, map, level, start);
