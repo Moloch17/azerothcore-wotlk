@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# Bring a cluster machine up to date with the dev machine, over SSH: the code (this repository, branch forge), then rebuild and restart the worldserver.
+# Bring a cluster machine up to date with the dev machine, over SSH: the code (this repository, the branch this checkout
+# is on: forge, or forge-dev while the cluster runs the dev branch), then rebuild and restart the worldserver.
 #
 #   apps/forge/tools/cluster-pull.sh [user@host]     default: the host the code was cloned from
 #
@@ -27,8 +28,9 @@ if [[ -z "$source" ]]; then
     exit 1
 fi
 
-echo "Code: pulling forge from $source..."
-git pull --ff-only "$source:git/animus-forge.git" forge
+branch="$(git rev-parse --abbrev-ref HEAD)"
+echo "Code: pulling $branch from $source..."
+git pull --ff-only "$source:git/animus-forge.git" "$branch"
 
 echo "Rebuilding and restarting the worldserver..."
 mkdir -p env/dist

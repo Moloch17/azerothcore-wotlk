@@ -5,7 +5,7 @@
 [cluster]
 host = "dev"            # the machine that holds the run and decides (AnimusForge.Cluster.Role = "host")
 lan_remote = "lan"      # the remote the workers pull from (a bare repository on the dev machine)
-branch = "forge"        # the branch that is deployed
+branch = "forge-dev"    # the branch that is deployed (forge-dev: the owner's dev branch, 2026-10-12; forge otherwise)
 control_port = 7700     # worker -> host control; also the port in each worker's Cluster.Host
 data_port = 7701
 weights_port = 7702     # weight exchange between learners
