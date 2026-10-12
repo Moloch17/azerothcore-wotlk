@@ -49,7 +49,7 @@ user = "spencer"
 address = "192.168.0.66"
 role = "worker"
 path = "~/animus-forge"
-in_cluster = false   # out again 2026-10-11 19:40 (owner: "stop training with spencer thomas and eli"; worldserver stopped)
+in_cluster = true    # back 2026-10-11 (owner: "rebuild, and bring in the whole cluster")
 
 [[machine]]
 name = "thomas"
@@ -57,7 +57,7 @@ user = "thomas"
 address = "192.168.0.67"
 role = "worker"
 path = "~/animus-forge"
-in_cluster = false   # out again 2026-10-11 19:40 (owner: "stop training with spencer thomas and eli"; worldserver stopped)
+in_cluster = true    # back 2026-10-11 (owner: "rebuild, and bring in the whole cluster")
 
 [[machine]]
 name = "moloch"         # the .117 machine
@@ -73,7 +73,7 @@ user = "eli"
 address = "192.168.0.65"
 role = "worker"
 path = "~/animus-forge"
-in_cluster = false   # out since 2026-10-10 (owner: dev, sarah and the ProLiant only)
+in_cluster = true    # back 2026-10-11 (owner: "rebuild, and bring in the whole cluster")
 
 [doctor]                # thresholds for `forgectl doctor` (a key left out takes the default shown)
 disk_min_gb = 30                 # free space under a checkout below this is a FAIL (the deploy gate's number)
