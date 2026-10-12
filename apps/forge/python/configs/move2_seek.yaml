@@ -30,8 +30,9 @@ run_name: move2_seek
 # The latest M1 checkpoint (the default, said here because M1 is still training as this is written).
 seed_from: latest
 
-# A ceiling, not a target: convergence ends the stage.
-total_env_steps: 250000000
+# A ceiling, not a target: convergence ends the stage. 400M (was 250M; owner, 2026-10-11 at 184M): the ladder was at
+# 0.77 of the 0.8 that steps it to the deep rung, the search-coverage change (decision 0029) only 6M steps old.
+total_env_steps: 400000000
 
 mappo:
   # A 300 s episode whose one Outcome may come minutes in: 0.997 a 100 ms (M1's) discounts an arrival 60 s away to
@@ -270,8 +271,9 @@ status:
 convergence:
   # Twelve evaluations without a new best (60M steps at 5M an evaluation; was six at 10M) before the score counts as
   # plateaued (M1's 3, restated in M3 and M4): with found near 0.9 and +-0.03 between evaluations on the deep rung,
-  # a few would end the stage early.
-  patience: 12
+  # a few would end the stage early. 16 (was 12; owner, 2026-10-11): most of the evaluations since the best at 155.4M
+  # came before the search-coverage change (decision 0029).
+  patience: 16
   # Converged on the stage's own measure, the share of objects found; at the top of its ladder (at_top_rung: the
   # ladder at the deep rung, which is the fade's end).
   measure: found
