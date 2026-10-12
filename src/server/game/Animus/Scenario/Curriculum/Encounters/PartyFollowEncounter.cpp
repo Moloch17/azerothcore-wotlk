@@ -27,6 +27,7 @@
 #include "Map.h"
 #include "Standing.h"
 #include "ObjectMgr.h"
+#include "MapMgr.h"
 #include "ObjectPool.h"
 #include "PartyFramesBlock.h"
 #include "PathGenerator.h"
@@ -40,6 +41,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <set>
 
 namespace
 {
@@ -514,6 +516,27 @@ Animus::Curriculum::PartyFollowEncounter::Way const* Animus::Curriculum::PartyFo
     }
     Way& way = _ways[map->GetId()];
     way = MakeWay(door, stops, legs, _scenario.Tuning().PartyFollow.WaypointYards, LEG_SHORT_YARDS, DROP_YARDS);
+    // The way's terrain and collision, loaded now on the base map (every instance of the map reads it), on the world
+    // thread: a party started or led far along the way stood on grids nobody had loaded, the loads were deferred past
+    // the decision, and the controller found no floor and fell through the world (2026-10-12). The constructor loads
+    // the stage's spawn points' grids the same way; the way reaches far past them.
+    if (Map* base = sMapMgr->CreateBaseMap(map->GetId()))
+    {
+        constexpr float REACH = 40.0f;
+        std::set<std::pair<uint32, uint32>> grids;
+        for (Position const& corner : way.Chain)
+            for (int32 dx = -1; dx <= 1; ++dx)
+                for (int32 dy = -1; dy <= 1; ++dy)
+                {
+                    GridCoord const grid = Acore::ComputeGridCoord(corner.GetPositionX() + float(dx) * REACH,
+                        corner.GetPositionY() + float(dy) * REACH);
+                    grids.emplace(grid.x_coord, grid.y_coord);
+                }
+        for (auto const& [x, y] : grids)
+            base->EnsureGridCreated(GridCoord(x, y));
+        LOG_INFO("module.animus", "{}: map {} follow way: {} grids along it loaded", _scenario.Name(), map->GetId(),
+            grids.size());
+    }
     // The starts: the waypoints with the ground under them at their own height and no floor just above (the server's
     // heights; the map's grids load on demand here, on the world thread). The door is always one.
     for (uint32 index : way.Waypoints)
