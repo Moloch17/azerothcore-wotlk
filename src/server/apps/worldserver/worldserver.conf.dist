@@ -6514,6 +6514,11 @@ AnimusForge.Curriculum.PartyFollow.SettleAfterMs = 1500
 AnimusForge.Curriculum.PartyFollow.SettleSpeed = 0.5
 AnimusForge.Curriculum.PartyFollow.DriftYards = 20.0
 AnimusForge.Curriculum.PartyFollow.Drift = 0.01
+#   closing the gap (decision 0034, Shaping: fades up the ladder): Approach per yard of the gap past BandMax closed,
+#   charged per yard opened, the gap capped at ApproachCapYards; Drift from DriftMovingYards while the leader walks
+AnimusForge.Curriculum.PartyFollow.Approach = 0.005
+AnimusForge.Curriculum.PartyFollow.ApproachCapYards = 60.0
+AnimusForge.Curriculum.PartyFollow.DriftMovingYards = 10.0
 
 #
 #    AnimusForge.Curriculum.Seek.*

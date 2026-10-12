@@ -224,7 +224,8 @@ float Animus::Curriculum::PartyFollowEncounter::Uniform(Env const& env, float lo
 std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::PartyFollowEncounter::RewardTerms() const
 {
     // Fidget is the scenario's column already (every stage's noise prices); this encounter pays it too.
-    return { RewardTerm::FollowKept, RewardTerm::Settled, RewardTerm::Regroup, RewardTerm::Drift, RewardTerm::Lost,
+    return { RewardTerm::FollowKept, RewardTerm::Settled, RewardTerm::Regroup, RewardTerm::Approach, RewardTerm::Drift,
+        RewardTerm::Lost,
         RewardTerm::Blocking, RewardTerm::Death, RewardTerm::Stuck, RewardTerm::Wall };
 }
 
@@ -272,6 +273,19 @@ void Animus::Curriculum::PartyFollowEncounter::AddEpisodeInfo(EpisodeInfoTable& 
     {
         SeatFollow const* follow = seatOf(env, seat);
         return follow ? float(follow->FidgetMs) / 1000.0f : 0.0f;
+    });
+    // The gap past the band closed, less opened (decision 0034): a frozen follower reads about minus the leader's
+    // lead; one that keeps up reads near 0 or above.
+    table.Add("approach_yards", [seatOf](Env const& env, uint32 seat)
+    {
+        SeatFollow const* follow = seatOf(env, seat);
+        return follow ? follow->ApproachYards : 0.0f;
+    });
+    // Moved at all: a follower that stood the episode through (the freeze seen at 40M) reads 0.
+    table.Add("follower_yards", [seatOf](Env const& env, uint32 seat)
+    {
+        SeatFollow const* follow = seatOf(env, seat);
+        return follow ? follow->MovedYards : 0.0f;
     });
     table.Add("drift_seconds", [seatOf](Env const& env, uint32 seat)
     {
@@ -1078,12 +1092,17 @@ void Animus::Curriculum::PartyFollowEncounter::Reward(Env& env, uint32 seatIndex
         float const dx = bot->GetPositionX() - follow.LastX;
         float const dy = bot->GetPositionY() - follow.LastY;
         moved = std::sqrt(dx * dx + dy * dy);
+        follow.MovedYards += moved;
     }
     follow.LastX = bot->GetPositionX();
     follow.LastY = bot->GetPositionY();
     follow.HasLastPos = true;
     if (!bot->IsAlive() || follow.Clock.Out)
+    {
+        // A rise at the start point is not a gap opened by the seat: the gap is measured afresh after it.
+        follow.LastGap = -1.0f;
         return;
+    }
     CurriculumTuning::SeekTuning const& costs = _scenario.Tuning().Seek;
     if (stuckMs)
         ledger.AddFixed(RewardTerm::Stuck, -costs.Stuck * float(stuckMs) / 1000.0f);
@@ -1099,17 +1118,24 @@ void Animus::Curriculum::PartyFollowEncounter::Reward(Env& env, uint32 seatIndex
     }
     Player* leader = Leader(env);
     if (!leader || !leader->IsInWorld() || !leader->IsAlive() || leader->GetMapId() != bot->GetMapId())
+    {
+        follow.LastGap = -1.0f;
         return;
+    }
     float const distance = bot->GetExactDist(leader);
     follow.DistanceSum += distance;
     ++follow.Samples;
+    SeatState const& leaderSeat = _scenario.Data(env).Seats[_scenario.OwnerAgent()];
+    bool const leaderMoving = leaderSeat.Controls.Held.Forward != 0 || leaderSeat.Controls.Held.Strafe != 0;
     uint32 const band = Standing::Band(distance, tuning.BandMin, tuning.BandMax, tuning.LostYards);
     if (band == 1)
     {
         follow.InBandMs += stepMs;
         ledger.Add(RewardTerm::FollowKept, tuning.Kept * seconds);
     }
-    else if (band == 2 && distance > tuning.DriftYards)
+    // Drifting off: past DriftYards, or past DriftMovingYards (the band's edge) while the leader walks away -- watching
+    // it go is not waiting (decision 0034).
+    else if (band == 2 && (distance > tuning.DriftYards || (leaderMoving && distance > tuning.DriftMovingYards)))
     {
         follow.DriftMs += stepMs;
         ledger.Add(RewardTerm::Drift, -tuning.Drift * seconds);
@@ -1119,10 +1145,18 @@ void Animus::Curriculum::PartyFollowEncounter::Reward(Env& env, uint32 seatIndex
         follow.LostMs += stepMs;
         ledger.Add(RewardTerm::Lost, -tuning.Lost * seconds);
     }
+    // Closing the gap (decision 0034, Shaping: the fade takes it away up the ladder): the yards of the gap past the
+    // band closed since the last decision, paid, and opened, charged -- a difference of one capped gap, so it sums to
+    // the gap at the start less the gap at the end and cannot be farmed by going back and forth.
+    float const gap = std::clamp(distance - tuning.BandMax, 0.0f, std::max(0.0f, tuning.ApproachCapYards));
+    if (follow.LastGap >= 0.0f && gap != follow.LastGap)
+    {
+        follow.ApproachYards += follow.LastGap - gap;
+        ledger.Add(RewardTerm::Approach, tuning.Approach * (follow.LastGap - gap));
+    }
+    follow.LastGap = gap;
     // Waiting with a leader who has stood a moment (decision 0033): standing still in the band is paid, moving about
     // in it is charged. Translation alone counts: turning and looking round are free.
-    SeatState const& leaderSeat = _scenario.Data(env).Seats[_scenario.OwnerAgent()];
-    bool const leaderMoving = leaderSeat.Controls.Held.Forward != 0 || leaderSeat.Controls.Held.Strafe != 0;
     bool const waiting = party.Mode == Phase::Stopped && !leaderMoving
         && env.EpisodeElapsedMs - std::min(env.EpisodeElapsedMs, party.StopStartMs) >= tuning.SettleAfterMs;
     if (waiting && band == 1)

@@ -91,14 +91,15 @@ eval:
            leader_rises, leader_cast, start_along, difficulty, at_top_rung, course_kinks, control_changes_per_minute,
            wall_seconds, stuck_seconds, died, reward_follow_kept, reward_settled, reward_regroup, reward_drift,
            reward_lost, reward_blocking, reward_death, reward_fidget, reward_stuck, reward_wall, reward_jitter,
-           reward_effort, reward_repeat]
+           reward_effort, reward_repeat, approach_yards, follower_yards, reward_approach]
 
 # forge status for this stage: the share kept with the leader (the plan's M4 measure, kept-with-leader >= 90%), how
 # still the party stands with a still leader, how soon it regroups at a stop and how often, straying and blocking,
 # deaths and rejoins, the leader's progress along its hops, and the rung. Targets are a readout, never a gate.
 status:
   headline: [follow_kept_share, settled_share, regroup_share, regroup_seconds, drift_seconds, lost_seconds,
-             blocking_seconds, deaths, rejoin_seconds, rejoined, leader_route_share, difficulty, wall_seconds, died]
+             blocking_seconds, deaths, rejoin_seconds, rejoined, leader_route_share, difficulty, wall_seconds, died,
+             follower_yards, approach_yards]
   targets:
     # M2's targets are not M4's measures (null drops an inherited key; a target must be in the headline).
     found: null

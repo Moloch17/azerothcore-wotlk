@@ -448,6 +448,11 @@ namespace Animus::Curriculum
             float SettleSpeed = 0.5f;
             float DriftYards = 20.0f;
             float Drift = 0.01f;
+            // Closing the gap (decision 0034): Shaping per yard of the gap past BandMax closed (and charged per yard
+            // opened), the gap capped at ApproachCapYards; Drift from DriftMovingYards while the leader walks.
+            float Approach = 0.005f;
+            float ApproachCapYards = 60.0f;
+            float DriftMovingYards = 10.0f;
         } PartyFollow;
 
         /// The seek stage (Opposition::Seek, M2: SeekEncounter): one real object in one of the Stockades' rooms, found
@@ -1078,6 +1083,9 @@ namespace Animus::Curriculum
             f("PartyFollow.SettleSpeed", tuning.PartyFollow.SettleSpeed);
             f("PartyFollow.DriftYards", tuning.PartyFollow.DriftYards);
             f("PartyFollow.Drift", tuning.PartyFollow.Drift);
+            f("PartyFollow.Approach", tuning.PartyFollow.Approach);
+            f("PartyFollow.ApproachCapYards", tuning.PartyFollow.ApproachCapYards);
+            f("PartyFollow.DriftMovingYards", tuning.PartyFollow.DriftMovingYards);
             f("Seek.Arrive", tuning.Seek.Arrive);
             f("Seek.StepCost", tuning.Seek.StepCost);
             f("Seek.Death", tuning.Seek.Death);

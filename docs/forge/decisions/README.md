@@ -32,3 +32,4 @@ Decisions with lasting consequences, one file each. Dates are the day the owner 
 | [0026](0026-searched-state.md) | The seat sees what it has searched this episode; stale means no new room; the trap and the wall pin cost more | 2026-10-10 |
 | [0027](0027-general-search.md) | Search that transfers: two maps trained, one held out, the search terms from the seat's own map; the movement pacing amendments | 2026-10-10 |
 | [0033](0033-follow-wandering-leader.md) | The follow leader wanders from a random start; followers are paid to wait with it and remember where the party was | 2026-10-12 |
+| [0034](0034-follow-close-the-gap.md) | A follower is paid to close the gap (fading) and charged for watching the leader walk away | 2026-10-12 |

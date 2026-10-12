@@ -164,6 +164,9 @@ namespace Animus::Curriculum
             uint32 WaitMs = 0;                  // in the band beside a leader who has stood SettleAfterMs
             uint32 SettledMs = 0;               // ... standing still
             uint32 FidgetMs = 0;                // ... moving about
+            float LastGap = -1.0f;              // the capped gap past the band at the last reward, -1 none yet
+            float ApproachYards = 0.0f;         // the gap's yards closed, less opened, this episode
+            float MovedYards = 0.0f;            // yards walked this episode (alive, between rewards)
             double DistanceSum = 0.0;
             uint32 Samples = 0;
             bool RegroupPending = false;
