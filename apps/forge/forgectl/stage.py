@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from . import audit, collect, console, remote
+from . import audit, collect, console, remote, watch_loop
 from .config import Config, Machine
 from .ui import Declined, Failure, confirm, note, say
 
@@ -181,10 +181,38 @@ def run(config: Config, action: str, stages: list[str], yes: bool, archive_ok: b
     say(f"Done: `{console_line(action, stages)}` was accepted on {', '.join(m.name for m in targets)}.")
     # The workers' share of the run (camera images, videos, logs) follows it home to the host while it trains.
     if action in ("start", "resume"):
+        hold(config, False)
         collect.ensure_loop(config)
-    elif action == "cancel":
-        collect.stop_loop(config)
+        watch_loop.ensure(config)
+    elif action in ("pause", "cancel"):
+        hold(config, True)
+        if action == "cancel":
+            collect.stop_loop(config)
     return 0
+
+
+HOLD = '"$HOME"/.forgectl/watch-hold'
+
+
+def hold(config: Config, on: bool) -> None:
+    """The operator's stop on the host: `stage cancel|pause` (and so `build --stop-running` and `move-host`) set it,
+    `stage start|resume` clear it. `forgectl watch --resume` never resumes a plan while it is set."""
+    script = (f'mkdir -p "$HOME"/.forgectl && date +%Y-%m-%dT%H:%M:%S%z > {HOLD}\n' if on else f"rm -f {HOLD}\n")
+    result = remote.on(config.host, script, timeout=30)
+    if not result.ok:
+        say(f"Watch hold: could not be {'set' if on else 'cleared'} on {config.host.name} ({result.reason()}); "
+            + ("`forgectl watch --resume` may resume this plan." if on else "`forgectl watch --resume` stays held."))
+    elif on:
+        say(f"Watch hold: set on {config.host.name}; `forgectl watch --resume` leaves the plan alone until `forgectl "
+            "stage start|resume`.")
+
+
+def held(config: Config) -> str | None:
+    """When the hold was set ("" if that cannot be read), or None when there is none or the host cannot be read."""
+    result = remote.on(config.host, f"cat {HOLD} 2>/dev/null && echo '##held'\n", timeout=30)
+    if not result.ok or "##held" not in result.out:
+        return None
+    return result.out.replace("##held", "").strip()
 
 
 def parse_learner_line(line: str) -> dict:

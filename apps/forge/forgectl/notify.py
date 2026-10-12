@@ -65,8 +65,13 @@ def send_desktop(event: Event, settings: dict) -> str:
     if not program:
         return "notify-send is not installed"
     urgency = {"info": "low", "warn": "normal", "critical": "critical"}[event.severity]
+    env = dict(os.environ)
+    # A watcher started detached (setsid, ssh, systemd) has no session bus address; the login's bus is the usual one.
+    bus = Path(f"/run/user/{os.getuid()}/bus")
+    if not env.get("DBUS_SESSION_BUS_ADDRESS") and bus.exists():
+        env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={bus}"
     result = subprocess.run([program, "-u", urgency, "-a", "forgectl", f"forgectl {event.kind}", event.text],
-                            capture_output=True, text=True, timeout=SEND_TIMEOUT)
+                            capture_output=True, text=True, timeout=SEND_TIMEOUT, env=env)
     return "" if result.returncode == 0 else f"notify-send exit {result.returncode}: {result.stderr.strip()[:200]}"
 
 

@@ -17,7 +17,8 @@ DOCTOR_DEFAULTS = {"disk_min_gb": 30, "learner_error_hours": 6, "partial_stale_m
 # whose value is empty/false is off; with none on, watch prints to stdout only.
 NOTIFY_DEFAULTS = {"min_severity": "info", "poll_seconds": 60, "learner_silent_minutes": 10, "confirm_polls": 2,
                    "debounce_minutes": 30, "desktop": False, "command": "", "webhook_url": "", "webhook_header": "",
-                   "file": ""}
+                   "file": "", "resume_grace_minutes": 10, "resume_gap_minutes": 30, "resume_max_attempts": 3,
+                   "resume_idle_wait_minutes": 15}
 SEVERITIES = ("info", "warn", "critical")
 
 

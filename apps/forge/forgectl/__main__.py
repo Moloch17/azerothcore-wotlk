@@ -66,6 +66,10 @@ def parser() -> argparse.ArgumentParser:
              "forgectl watch   |   forgectl watch --once")
     wt.add_argument("--once", action="store_true", help="one pass, then exit (exit 1 if the host cannot be read)")
     wt.add_argument("--interval", type=float, help="seconds between polls (default [notify] poll_seconds, 60)")
+    wt.add_argument("--resume", action="store_true",
+                    help="also mend a dropped plan: cancel everywhere and resume the stage when a worker or the host "
+                         "drops out of it (not under the operator's hold, never during an evaluation; limits in "
+                         "[notify] resume_*). `forgectl stage start|resume` keeps one running on the host")
 
     sg = add("stage", "start, resume, pause or cancel a stage on the host (pause and cancel reach the workers too)",
              "forgectl stage resume move2_seek    |    forgectl stage cancel")
@@ -140,7 +144,7 @@ def dispatch(args, config) -> int:
     if args.command == "doctor":
         return doctor.run(config)
     if args.command == "watch":
-        return watch.run(config, args.once, args.interval)
+        return watch.run(config, args.once, args.interval, args.resume)
     if args.command == "stage":
         return stage.run(config, args.action, args.stages, getattr(args, "yes", False),
                           getattr(args, "archive_ok", False))

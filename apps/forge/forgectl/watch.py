@@ -1,15 +1,17 @@
 """`forgectl watch`: poll the cluster the way `forgectl status --json` reads it and tell the operator what changed.
 
-READ-ONLY toward the cluster (the same ssh reads as `status --json`, without the console); it writes only to its sinks
-(see notify.py) and to its small state file, ~/.forgectl/watch-state.json. With no sink configured it prints.
+READ-ONLY toward the cluster (the same ssh reads as `status --json`, and the host's `forge status`, which only reads);
+it writes only to its sinks (see notify.py) and to its small state file, ~/.forgectl/watch-state.json. With no sink
+configured it prints. With --resume it also mends a dropped plan (heal.py), and that does change the cluster.
 
 `diff(previous, current, limits, state)` is the whole decision of what to say, from two status documents:
   transitions   a stage finished (converged or reached its ceiling), the plan moved to the next stage, a ladder rung or
                 the fade scale stepped, an evaluation finished (with its headline numbers), the plan ended or the sim
                 went idle without a decision;
   conditions    (told when they appear, and again as "cleared" when they go) ladder_collapsed, ladder_stalled,
-                learner_silent, plan_stale, worker_down, disk_low, fingerprint_refused, host_unreadable.
-A worker_down or host_unreadable must hold for `confirm_polls` polls in a row before it is told (a ssh flap is not a
+                learner_silent, plan_stale, worker_down, worker_idle, host_idle, disk_low, fingerprint_refused,
+                host_unreadable.
+A worker_down, worker_idle, host_idle or host_unreadable must hold for `confirm_polls` polls in a row before it is told (a ssh flap is not a
 drop). The same event (kind and subject) is not sent twice inside `debounce_minutes`.
 """
 from __future__ import annotations
@@ -20,7 +22,7 @@ import os
 import time
 from pathlib import Path
 
-from . import notify, snapshot
+from . import heal, notify, snapshot
 from .config import Config
 from .home import forgectl_home
 from .notify import Event
@@ -28,7 +30,8 @@ from .ui import Failure, say
 
 STATE_NAME = "watch-state.json"
 LOCK_NAME = "watch.lock"
-CONFIRMED = ("worker_down", "host_unreadable")   # conditions that must hold for several polls in a row
+# conditions that must hold for several polls in a row
+CONFIRMED = ("worker_down", "worker_idle", "host_idle", "host_unreadable")
 MAX_HEADLINE = 8
 
 
@@ -81,6 +84,19 @@ def conditions(doc: dict, limits: dict) -> dict[tuple, Event]:
         elif plan.get("state") == "stale":
             add("plan_stale", "critical", stage, f"{stage}: progress.json says {plan.get('phase')} but was last "
                 f"written {(plan.get('progress_age_s') or 0) // 60:.0f} min ago; the learner is not running")
+        if plan.get("state") in ("running", "stale") and plan.get("console_idle"):
+            add("host_idle", "critical", host, f"{stage}: progress.json says {plan.get('phase')} but the sim on "
+                f"{host} is idle (last plan: {plan.get('last_plan') or 'none, so the worldserver restarted'})")
+        seen = doc.get("workers_seen_by_host")
+        if plan.get("state") == "running" and plan.get("phase") == "training" and seen is not None:
+            states = {w["machine"]: w["state"] for w in seen if w.get("machine")}
+            for machine in doc.get("machines") or []:
+                name = machine["name"]
+                if (not machine["in_cluster"] or name == doc.get("host") or machine_state(machine, doc) != "up"
+                        or states.get(name) == "training"):
+                    continue
+                add("worker_idle", "warn", name, f"worker {name} is up but not training ("
+                    + (f"the host sees it {states[name]}" if states.get(name) else "the host does not see it") + ")")
         for line in (doc.get("cluster") or {}).get("refused") or []:
             add("fingerprint_refused", "warn", line[-60:], f"the host refused a worker: {line[:200]}")
     for machine in doc.get("machines") or []:
@@ -244,7 +260,8 @@ def note_previous_stage(config: Config, old: dict | None, new: dict) -> None:
 
 
 def poll(config: Config) -> dict:
-    return snapshot.collect(config, use_console=False)
+    # The console's `forge status` is what says a worker is idle in the host's eyes and the host's sim is idle.
+    return snapshot.collect(config, use_console=True)
 
 
 def acquire_lock():
@@ -260,13 +277,14 @@ def acquire_lock():
     return handle
 
 
-def run(config: Config, once: bool, interval: float | None = None) -> int:
+def run(config: Config, once: bool, interval: float | None = None, resume: bool = False) -> int:
     settings = config.notify
     interval = settings["poll_seconds"] if interval is None else interval
     lock = acquire_lock()
     sinks = notify.enabled(settings)
     say(f"forgectl watch: {'one pass' if once else f'polling every {interval:g} s, Ctrl-C to stop'}; sinks: "
-        f"{', '.join(sinks) if sinks else 'none (printing only)'}; state {state_path()}")
+        f"{', '.join(sinks) if sinks else 'none (printing only)'}; state {state_path()}"
+        + ("; resumes a dropped plan" if resume else ""))
     state = load_state()
     limits = limits_of(config)
     if once:
@@ -283,6 +301,9 @@ def run(config: Config, once: bool, interval: float | None = None) -> int:
                 note_previous_stage(config, state.get("snapshot"), document)
                 for event in diff(state.get("snapshot"), document, limits, state):
                     tell(event, config, state, time.time())
+                if resume and not once:
+                    for event in heal.consider(config, document, state, time.time()):
+                        tell(event, config, state, time.time())
                 state["snapshot"] = document
                 state["saved_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
                 save_state(state)

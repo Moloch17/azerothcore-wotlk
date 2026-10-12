@@ -249,6 +249,8 @@ def parse_console(config: Config, text: str) -> dict:
     """What the host's `forge status` says that no file holds: the last plan's line and the workers it sees."""
     names = {m.address: m.name for m in config.machines}
     last_plan, workers = None, []
+    # The first line is the sim's state ("Forge: idle", or the running plan), as stage.machine_plan_state reads it.
+    first = next((line.strip() for line in text.splitlines() if line.strip()), "")
     for line in text.splitlines():
         match = re.match(r"^\s*last plan\s+(.*)$", line)
         if match:
@@ -261,11 +263,11 @@ def parse_console(config: Config, text: str) -> dict:
                             else pairs["scenario"], "envs": num(pairs.get("envs")),
                             "env_steps_per_sec": num(pairs.get("env_steps_per_s")),
                             "last_seen_s": num(found.group(4))})
-    return {"available": True, "last_plan": last_plan, "workers": workers}
+    return {"available": True, "last_plan": last_plan, "workers": workers, "idle": "idle" in first.lower()}
 
 
 def read_console(config: Config) -> dict:
-    unavailable = {"available": False, "last_plan": None, "workers": None}
+    unavailable = {"available": False, "last_plan": None, "workers": None, "idle": None}
     try:
         result = console_module.send(config, config.host, "forge status", timeout=12)
     except (Failure, OSError):
@@ -355,12 +357,13 @@ def collect(config: Config, stage: str | None = None, use_console: bool = True, 
         jobs.append(lambda: read_console(config))
     results = remote.parallel_map(lambda job: job(), jobs)
     statuses, (run, run_problem), refused = results[0], results[1], results[2]
-    console = results[3] if use_console else {"available": False, "last_plan": None, "workers": None}
+    console = results[3] if use_console else {"available": False, "last_plan": None, "workers": None, "idle": None}
     ok = host_reachable(statuses, config) and not run_problem
     machines, parts = cluster_part(config, statuses, refused)
     host_doc = next((m for m in machines if m["name"] == config.host_name), None) or {}
     learner = dict(host_doc.get("learner") or {})
-    plan = {**run["plan"], "last_plan": console["last_plan"], "console_available": console["available"]}
+    plan = {**run["plan"], "last_plan": console["last_plan"], "console_available": console["available"],
+            "console_idle": console["idle"]}
     return {**header(config, "status"), "read_ok": ok, "read_problem": run_problem or None, "cluster": parts,
             "plan": plan, "progress": run["progress"], "ladder": run["ladder"], "eval": run["eval"],
             "finished": run["finished"], "spec": run["spec"], "learner": learner,

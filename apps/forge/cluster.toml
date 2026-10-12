@@ -85,13 +85,18 @@ dev_gpu_busy_max_percent = 30    # the dev card counts as idle at or below this 
 [notify]                # `forgectl watch`: where messages go. A sink left empty/false is off; with none on, watch prints.
 # Put a webhook URL or token in ~/.forgectl/notify.toml (a [notify] table there overrides this one), not here:
 # this file is tracked.
-min_severity = "info"            # info, warn or critical: lower events are printed but not sent
+min_severity = "warn"            # info, warn or critical: lower events are printed but not sent
 poll_seconds = 60                # seconds between polls
 learner_silent_minutes = 10      # the plan trains and the host learner's log is older than this: learner_silent
 confirm_polls = 2                # a worker drop or an unreadable host must hold for this many polls to be told
 debounce_minutes = 30            # the same event (kind and subject) is not sent twice inside this window
-desktop = false                  # notify-send, if installed
+desktop = true                   # notify-send, if installed (the login's /run/user bus when started detached)
 command = ""                     # a shell command; the message is in $FORGECTL_MESSAGE and is $1
 webhook_url = ""                 # an http(s) URL; the body is JSON {"text", "content", "kind", "severity", ...}
 webhook_header = ""              # one optional header, "Name: value" (an Authorization token)
-file = ""                        # append one line per message to this file (~ is expanded)
+file = "~/.forgectl/alerts.log"  # append one line per message to this file (~ is expanded)
+# `forgectl watch --resume` (started by `forgectl stage start|resume`): cancel everywhere and resume a dropped stage.
+resume_grace_minutes = 10        # after the plan starts running, machines are joining: no worker drop is mended
+resume_gap_minutes = 30          # at most one automatic resume this often
+resume_max_attempts = 3          # this many resumes without a healthy plan, then one critical alert and reports only
+resume_idle_wait_minutes = 15    # how long the cancel may take to reach idle ('Plan ended') before the resume fails

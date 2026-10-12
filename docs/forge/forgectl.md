@@ -261,11 +261,16 @@ map_update_threads, stage_ticks {stage: ticks}}`.
 ## `forgectl watch`
 
 A long-running watcher: it polls the cluster the way `status --json` reads it (files over ssh, the machine probes, the
-refusal lines; **not** the console) and sends a message when something changes, so nobody has to run `forgectl
-cluster` and read. It runs in the foreground (Ctrl-C stops it, exit 0); `--once` does one pass and exits (1 if the
-host could not be read); `--interval SECONDS` overrides `poll_seconds`.
+refusal lines, and the host's `forge status`, which only reads) and sends a message when something changes, so nobody
+has to run `forgectl cluster` and read. It runs in the foreground (Ctrl-C stops it, exit 0); `--once` does one pass and
+exits (1 if the host could not be read); `--interval SECONDS` overrides `poll_seconds`; `--resume` also mends a dropped
+plan (below).
 
-**It is read-only toward the cluster**: it never changes a machine and is not audited. It writes only to its sinks and
+**`forgectl stage start|resume` keeps one `forgectl watch --resume` running on the host** (pid file
+`~/.forgectl/watch-loop.pid`, log `~/.forgectl/watch-loop.log`), started from the host's checkout. `stage cancel` does
+not stop it; stop it with `kill $(cat ~/.forgectl/watch-loop.pid)`.
+
+**Without `--resume` it is read-only toward the cluster**: it never changes a machine and is not audited. It writes only to its sinks and
 to `~/.forgectl/watch-state.json` (mode 0600; `$FORGECTL_HOME` moves it), which holds the last poll, which alarms are
 active and when each event was last sent. One watcher per machine: a second one stops with "another forgectl watch is
 running" (an exclusive lock on `~/.forgectl/watch.lock`). The first poll is the baseline: it reports what is wrong
@@ -284,10 +289,31 @@ right now (a worker down, a low disk), but not transitions, because there is no 
 | `learner_silent` | critical | the plan is training and the host learner's log is older than `learner_silent_minutes` (10) |
 | `plan_stale` | critical | `progress.json` says training or evaluating but has not been written for 5 min (2 h while evaluating) |
 | `worker_down` | warn | a cluster worker is unreachable, its worldserver container is not running, or (while training) its learner stopped stepping; must hold for `confirm_polls` (2) polls in a row |
+| `worker_idle` | warn | while training, a worker that answers and runs its worldserver is not `state=training` in the host's `forge status` (a worker rebooted into an idle container, a hung learner that left the plan); `confirm_polls` polls |
+| `host_idle` | critical | `progress.json` says training or evaluating but the host's `forge status` says idle (the worldserver crashed and docker restarted it idle); `confirm_polls` polls |
 | `fingerprint_refused` | warn | a new `refused the worker` line in the host's log |
 | `disk_low` | warn | a machine has less free disk than `[doctor] disk_min_gb` (30) |
 | `host_unreadable` | critical | the host (or its run directory) cannot be read, so the watcher is blind; also after `confirm_polls` polls |
 | `<kind>_cleared` | info | a condition above went away (`worker_down_cleared` is a worker rejoining) |
+| `auto_resumed` | warn | `--resume` cancelled everywhere and resumed the stage; says why and which attempt |
+| `auto_resume_failed` | critical | the cancel did not reach idle in time, the host refused the resume, or its container is down |
+| `auto_resume_gave_up` | critical | `resume_max_attempts` resumes did not bring a healthy plan back; it only reports until `stage resume` |
+| `auto_resume_skipped` | info | a mendable condition while the operator's hold is set or the console's last plan was cancelled |
+
+**`--resume`: mending a dropped plan** (apps/forge/forgectl/heal.py). After a poll, a confirmed `worker_idle`,
+`worker_down` whose learner STALLED (an unreachable machine or a stopped container is only told: a resume cannot
+bring it back), `learner_silent`, `host_idle` or `plan_stale` makes it do what the operator does by hand: `forge
+cancel` on the host and every worker, wait until the host is idle and no worker runs a plan, `forge resume <stage>` on
+the host (the workers rejoin by themselves). Each attempt is an audit entry, `forgectl watch --resume recover
+<stage>`. It does nothing:
+- while the operator's hold is set: `stage cancel|pause` (so `build --stop-running` and `move-host` too) write
+  `~/.forgectl/watch-hold` on the host, `stage start|resume` remove it; nor when the host's last plan says cancelled
+  (a `forge cancel` typed into the console);
+- when the stage is decided (`finished.json`); for a worker condition, while the plan evaluates or inside
+  `resume_grace_minutes` (10) of the plan starting to run;
+- within `resume_gap_minutes` (30) of its last attempt, or after `resume_max_attempts` (3) attempts without a healthy
+  plan in between (one `auto_resume_gave_up`, then reports only).
+`--once` never resumes.
 
 A condition (everything from `ladder_collapsed` down) is told once when it appears and once when it clears, not on
 every poll. The same event (kind and subject) is not sent twice inside `debounce_minutes` (30). Everything is printed
@@ -300,16 +326,20 @@ out of the tracked file.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `min_severity` | `"info"` | `info`, `warn` or `critical`: lower events are printed, not sent |
+| `min_severity` | `"info"` (`"warn"` in cluster.toml) | `info`, `warn` or `critical`: lower events are printed, not sent |
 | `poll_seconds` | `60` | seconds between polls (each poll takes about 8 s, mostly the 5-second learner sample) |
 | `learner_silent_minutes` | `10` | the `learner_silent` limit |
 | `confirm_polls` | `2` | polls a `worker_down` or `host_unreadable` must hold before it is told (`--once` waives it) |
 | `debounce_minutes` | `30` | the same event is not sent twice inside this window |
-| `desktop` | `false` | `notify-send` (needs a desktop session; reports `notify-send is not installed` or its error otherwise) |
+| `desktop` | `false` (`true` in cluster.toml) | `notify-send` (needs a desktop session; a watcher started without a bus address uses `/run/user/<uid>/bus`; reports `notify-send is not installed` or its error otherwise) |
 | `command` | `""` | a shell command run with `sh -c`; the message is in `$FORGECTL_MESSAGE` and is `$1`; `$FORGECTL_KIND`, `$FORGECTL_SEVERITY` and `$FORGECTL_SUBJECT` are set too |
 | `webhook_url` | `""` | an `http://` or `https://` URL; the body is JSON `{"text", "content", "kind", "severity", "subject", "time"}` (`text` for Slack-style and `content` for Discord-style hooks) |
 | `webhook_header` | `""` | one header, `"Name: value"` (for a token) |
-| `file` | `""` | append `time severity kind subject: text` per message to this file (`~` is expanded) |
+| `file` | `""` (`~/.forgectl/alerts.log` in cluster.toml) | append `time severity kind subject: text` per message to this file (`~` is expanded) |
+| `resume_grace_minutes` | `10` | `--resume`: no worker drop is mended this soon after the plan starts running |
+| `resume_gap_minutes` | `30` | `--resume`: at most one attempt this often |
+| `resume_max_attempts` | `3` | `--resume`: attempts without a healthy plan before it gives up |
+| `resume_idle_wait_minutes` | `15` | `--resume`: how long the cancel may take to reach idle |
 
 An unknown key or a wrong type is a configuration error naming the key. Example `command`:
 `command = "printf '%s\n' \"$FORGECTL_MESSAGE\" | mail -s forgectl me@example.com"` (needs a working `mail` on the
