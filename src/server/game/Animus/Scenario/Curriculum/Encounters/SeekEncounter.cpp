@@ -2035,7 +2035,19 @@ void Animus::Curriculum::SeekEncounter::Reward(Env& env, uint32 seatIndex, Playe
             track.SumZ += hitZ;
             ++track.Hits;
         });
-        if (tuning.RoomSeenShare > 0.0f)
+        // Below Seek.RoomSeenShareFromRung (the hallway and doorway rungs, decision 0032) a room is seen on a glance --
+        // Seek.RoomGlanceRays of one frame's rays on its floor, paid Seek.RoomSeenGlance: the doorway rung's object
+        // stands just inside a door the seat has to look into in passing, and the coverage rule paid nothing for that
+        // look (the Stockades' side-on cells stalled at about 20% found).
+        bool const glance = seek.Rung < tuning.RoomSeenShareFromRung;
+        if (glance)
+            for (uint32 room : Draw::NewlyLooked(counts, seek.Looked, tuning.RoomGlanceRays))
+            {
+                (void)room;
+                ++seek.RoomsLooked;
+                ledger.Add(RewardTerm::RoomSeen, tuning.RoomSeenGlance);
+            }
+        else if (tuning.RoomSeenShare > 0.0f)
         {
             // Search coverage (decision 0029): a room is seen once RoomSeenShare of its floor cells were hit by this
             // episode's rays -- a glance through its door from the corridor is a few cells, not the room.

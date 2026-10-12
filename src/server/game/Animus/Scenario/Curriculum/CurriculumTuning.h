@@ -526,6 +526,11 @@ namespace Animus::Curriculum
             // CHECKED only so (CheckedByVisit 0), never by a dwell alone.
             float RoomSeenShare = 0.6f;
             uint32 CheckedByVisit = 0;
+            // Decision 0032: below RoomSeenShareFromRung (the hallway and doorway rungs) a room is seen on a glance,
+            // RoomGlanceRays rays of one frame on its floor, paid RoomSeenGlance (the rule before 0029, its price).
+            uint32 RoomSeenShareFromRung = 2;
+            uint32 RoomGlanceRays = 3;
+            float RoomSeenGlance = 0.1f;
             float CarryShare = 0.1f;
             uint32 RungSeconds0 = 90;
             uint32 RungSeconds1 = 120;
@@ -1064,6 +1069,9 @@ namespace Animus::Curriculum
             f("Seek.CheckedShare", tuning.Seek.CheckedShare);
             f("Seek.RoomSeenShare", tuning.Seek.RoomSeenShare);
             f("Seek.CheckedByVisit", tuning.Seek.CheckedByVisit);
+            f("Seek.RoomSeenShareFromRung", tuning.Seek.RoomSeenShareFromRung);
+            f("Seek.RoomGlanceRays", tuning.Seek.RoomGlanceRays);
+            f("Seek.RoomSeenGlance", tuning.Seek.RoomSeenGlance);
             f("Seek.EnterDwellMs", tuning.Seek.EnterDwellMs);
             f("Seek.ReturnAwayYards", tuning.Seek.ReturnAwayYards);
             f("Seek.ReturnAwayMs", tuning.Seek.ReturnAwayMs);

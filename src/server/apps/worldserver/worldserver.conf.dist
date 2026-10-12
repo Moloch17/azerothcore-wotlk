@@ -6600,6 +6600,10 @@ AnimusForge.Curriculum.PartyFollow.CastShare = 0
 #        RevisitAgeMs 30000. A chosen cell block is stale (CellStale 0.05) when the seat stood on it or, StaleSearched
 #        1, every floor cell of it was looked at this episode and none is frontier (the map's searched channel);
 #        CellGoal (0.1, now category Exploring) pays reaching a chosen block that was not stale.
+#        Doorway glance (2026-10-12, decision 0032): the coverage rule applies from RoomSeenShareFromRung (2)
+#        up; below it (the hallway and doorway rungs) a room is seen on a glance, RoomGlanceRays (3) of one
+#        frame's rays on its floor, paid RoomSeenGlance (0.1): the doorway rung's object is just inside a
+#        door the seat must look into in passing.
 #        Deferred placement (2026-10-11, decision 0030, systematic search): DeferShare (0.4) of the training episodes
 #        placed at DeferFromRung (2, the room rung) or above start with no object; it is placed, out of the seat's
 #        sight and on floor its rays never showed, in an unsearched room of the placed rung's (a room is searched when
@@ -6643,6 +6647,9 @@ AnimusForge.Curriculum.Seek.GlimpseRays = 1
 AnimusForge.Curriculum.Seek.CheckedShare = 0.6
 AnimusForge.Curriculum.Seek.RoomSeenShare = 0.6
 AnimusForge.Curriculum.Seek.CheckedByVisit = 0
+AnimusForge.Curriculum.Seek.RoomSeenShareFromRung = 2
+AnimusForge.Curriculum.Seek.RoomGlanceRays = 3
+AnimusForge.Curriculum.Seek.RoomSeenGlance = 0.1
 AnimusForge.Curriculum.Seek.EnterDwellMs = 1000
 AnimusForge.Curriculum.Seek.ReturnAwayYards = 8.0
 AnimusForge.Curriculum.Seek.ReturnAwayMs = 2000
