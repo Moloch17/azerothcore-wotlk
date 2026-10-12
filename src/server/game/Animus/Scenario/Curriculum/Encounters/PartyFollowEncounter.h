@@ -115,6 +115,10 @@ namespace Animus::Curriculum
             std::vector<float> Along;
             std::vector<Step> Steps;
             std::vector<uint32> Waypoints;
+            /// The waypoints a party may be spawned at: the ground found under each, at its height, and no floor just
+            /// above it (a path corner's height can be a lower storey's or under the floor: a party spawned there fell
+            /// through the world, 2026-10-12). Hops still go to every waypoint: the leader steers by x and y.
+            std::vector<uint32> Starts;
         };
 
         /// The way through `stops` from `door` as `legs` (the corners of each leg, the stock PathGenerator's), with

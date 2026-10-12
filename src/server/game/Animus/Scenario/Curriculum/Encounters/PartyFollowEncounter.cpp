@@ -60,6 +60,10 @@ namespace
     constexpr uint32 LOOK_MIN_STOP_MS = 2500;
     /// With no hop of the drawn length either way, the leader stands this long and draws again.
     constexpr uint32 NOWHERE_STOP_MS = 5000;
+    /// A waypoint is a start only with the ground found within this many yards of its height, and no floor more than
+    /// this above it within START_CEILING_YARDS.
+    constexpr float START_FLOOR_YARDS = 2.5f;
+    constexpr float START_CEILING_YARDS = 20.0f;
 
     /// The corners of the stock PathGenerator's way from `from` to `to` (the smoothed path its creatures walk, a point
     /// every 4 yd), chained while it stops short of the end; the point `from` itself is left out. Empty when there is
@@ -401,10 +405,10 @@ void Animus::Curriculum::PartyFollowEncounter::BeforeLevel(Env& env)
     // Anywhere along the way (decision 0033), once the map's way is known (its first episode starts at the door and
     // works it out): a waypoint drawn, the party facing on along the way.
     Way const* way = WayOf(mapId);
-    if (!way || way->Waypoints.size() < 2 || !Chance(env, _scenario.Tuning().PartyFollow.StartAnywhere))
+    if (!way || way->Starts.size() < 2 || !Chance(env, _scenario.Tuning().PartyFollow.StartAnywhere))
         return;
-    std::size_t const pick = std::uniform_int_distribution<std::size_t>(0, way->Waypoints.size() - 1)(Rng(env));
-    uint32 const at = way->Waypoints[pick];
+    std::size_t const pick = std::uniform_int_distribution<std::size_t>(0, way->Starts.size() - 1)(Rng(env));
+    uint32 const at = way->Starts[pick];
     Position const& here = way->Chain[at];
     Position const& on = way->Chain[at + 1 < way->Chain.size() ? at + 1 : at - 1];
     float const yaw = std::atan2(on.GetPositionY() - here.GetPositionY(), on.GetPositionX() - here.GetPositionX());
@@ -510,11 +514,26 @@ Animus::Curriculum::PartyFollowEncounter::Way const* Animus::Curriculum::PartyFo
     }
     Way& way = _ways[map->GetId()];
     way = MakeWay(door, stops, legs, _scenario.Tuning().PartyFollow.WaypointYards, LEG_SHORT_YARDS, DROP_YARDS);
+    // The starts: the waypoints with the ground under them at their own height and no floor just above (the server's
+    // heights; the map's grids load on demand here, on the world thread). The door is always one.
+    for (uint32 index : way.Waypoints)
+    {
+        Position& corner = way.Chain[index];
+        float const below = map->GetHeight(corner.GetPositionX(), corner.GetPositionY(), corner.GetPositionZ() + 1.0f);
+        float const above = map->GetHeight(corner.GetPositionX(), corner.GetPositionY(),
+            corner.GetPositionZ() + START_CEILING_YARDS, true, START_CEILING_YARDS + 5.0f);
+        bool const floor = below > INVALID_HEIGHT + 1.0f
+            && std::fabs(below - corner.GetPositionZ()) <= START_FLOOR_YARDS;
+        bool const ceiling = above > INVALID_HEIGHT + 1.0f && above > corner.GetPositionZ() + START_FLOOR_YARDS;
+        if (index == 0 || (floor && !ceiling))
+            way.Starts.push_back(index);
+    }
     uint32 const cuts = uint32(std::count(way.Steps.begin(), way.Steps.end(), Step::Cut));
     uint32 const drops = uint32(std::count(way.Steps.begin(), way.Steps.end(), Step::Drop));
-    LOG_INFO("module.animus", "{}: map {} follow way: {} legs, {} corners, {:.0f} yd, {} waypoints, {} drops, {} cut "
-        "(the leader never crosses a cut, nor climbs a drop)", _scenario.Name(), map->GetId(), legs.size(),
-        way.Chain.size(), way.Along.empty() ? 0.0f : way.Along.back(), way.Waypoints.size(), drops, cuts);
+    LOG_INFO("module.animus", "{}: map {} follow way: {} legs, {} corners, {:.0f} yd, {} waypoints ({} starts: the "
+        "others' ground is not at their height), {} drops, {} cut (the leader never crosses a cut, nor climbs a drop)",
+        _scenario.Name(), map->GetId(), legs.size(), way.Chain.size(), way.Along.empty() ? 0.0f : way.Along.back(),
+        way.Waypoints.size(), way.Starts.size(), drops, cuts);
     return &way;
 }
 
