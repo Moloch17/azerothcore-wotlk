@@ -95,6 +95,8 @@ PER_EVENT = {
     # over the regroups; the rejoins after a rise at the entrance (I4) over the rises, their time over the rejoins.
     "regroup_share": "regroup_stops",
     "regroup_seconds": "regroups",
+    # ... and the share stood still over the time spent waiting beside a still leader (decision 0033).
+    "settled_share": "wait_seconds",
     "rejoined": "rises",
     "rejoin_seconds": "rejoins",
     # A whole dungeon's (InstanceEncounter, I4 wired into the wing runs): the time from a rise at the entrance to the
