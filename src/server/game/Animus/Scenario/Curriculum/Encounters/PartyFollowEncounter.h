@@ -25,6 +25,7 @@
 #include "Env.h"
 #include "Position.h"
 #include <array>
+#include <atomic>
 #include <map>
 #include <mutex>
 #include <random>
@@ -119,7 +120,13 @@ namespace Animus::Curriculum
             /// above it (a path corner's height can be a lower storey's or under the floor: a party spawned there fell
             /// through the world, 2026-10-12). Hops still go to every waypoint: the leader steers by x and y.
             std::vector<uint32> Starts;
+            /// Steps the leader could not walk (BLOCKED_FORWARD, BLOCKED_BACK, per step): marked when it gave up a hop
+            /// there after jumping and side-stepping -- a rock lip or a ledge the stock path climbs and a player's
+            /// controller does not (2026-10-12) -- and never crossed that way again by any env on the map.
+            std::vector<std::atomic<uint8>> Blocked;
         };
+        static constexpr uint8 BLOCKED_FORWARD = 1;
+        static constexpr uint8 BLOCKED_BACK = 2;
 
         /// The way through `stops` from `door` as `legs` (the corners of each leg, the stock PathGenerator's), with
         /// waypoints every `waypointYards` and at each leg's end; a leg that ended more than `shortYards` from its
@@ -186,6 +193,7 @@ namespace Animus::Curriculum
             uint32 At = 0;
             uint32 Target = 0;
             std::vector<Position> Hop;
+            std::vector<uint32> HopIndex;       // each hop corner's chain index
             uint32 Corner = 0;
             bool HopStops = true;
             bool HopWalk = true;
@@ -244,6 +252,9 @@ namespace Animus::Curriculum
         bool PickHop(Env const& env, EnvParty& party) const;
         /// The leader's keys this decision (the script's).
         void Steer(Env& env, EnvParty& party, Player* leader);
+        /// The leader gave its hop up at its current corner: the step into that corner is marked blocked that way
+        /// (Way::Blocked), for every env on the map.
+        void BlockStep(EnvParty const& party);
         void RespawnFollowers(Env& env, EnvParty& party);
 
         /// The episode's generator (seeded in BeforeLevel: from the evaluation seed in an evaluation).

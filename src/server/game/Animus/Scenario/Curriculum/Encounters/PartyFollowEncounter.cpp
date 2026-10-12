@@ -66,6 +66,9 @@ namespace
     /// this above it within START_CEILING_YARDS.
     constexpr float START_FLOOR_YARDS = 2.5f;
     constexpr float START_CEILING_YARDS = 20.0f;
+    /// A stuck leader jumps from this long stuck, and side-steps from this long (PartyFollowEncounter::Steer).
+    constexpr uint32 UNSTICK_JUMP_MS = 500;
+    constexpr uint32 UNSTICK_SIDESTEP_MS = 2000;
 
     /// The corners of the stock PathGenerator's way from `from` to `to` (the smoothed path its creatures walk, a point
     /// every 4 yd), chained while it stops short of the end; the point `from` itself is left out. Empty when there is
@@ -153,15 +156,20 @@ bool Animus::Curriculum::PartyFollowEncounter::Walkable(Way const& way, uint32 f
 {
     if (from == to || from >= way.Chain.size() || to >= way.Chain.size())
         return false;
+    // A step the leader could not walk (Way::Blocked), that way, is as a cut.
+    auto const blocked = [&way](uint32 step, uint8 bit)
+    {
+        return step < way.Blocked.size() && (way.Blocked[step].load(std::memory_order_relaxed) & bit);
+    };
     if (from < to)
     {
         for (uint32 step = from; step < to; ++step)
-            if (way.Steps[step] == Step::Cut)
+            if (way.Steps[step] == Step::Cut || blocked(step, BLOCKED_FORWARD))
                 return false;
         return true;
     }
     for (uint32 step = to; step < from; ++step)
-        if (way.Steps[step] != Step::Both)
+        if (way.Steps[step] != Step::Both || blocked(step, BLOCKED_BACK))
             return false;
     return true;
 }
@@ -516,6 +524,7 @@ Animus::Curriculum::PartyFollowEncounter::Way const* Animus::Curriculum::PartyFo
     }
     Way& way = _ways[map->GetId()];
     way = MakeWay(door, stops, legs, _scenario.Tuning().PartyFollow.WaypointYards, LEG_SHORT_YARDS, DROP_YARDS);
+    way.Blocked = std::vector<std::atomic<uint8>>(way.Steps.size());
     // The way's terrain and collision, loaded now on the base map (every instance of the map reads it), on the world
     // thread: a party started or led far along the way stood on grids nobody had loaded, the loads were deferred past
     // the decision, and the controller found no floor and fell through the world (2026-10-12). The constructor loads
@@ -661,12 +670,19 @@ bool Animus::Curriculum::PartyFollowEncounter::PickHop(Env const& env, EnvParty&
     uint32 const target = found[std::uniform_int_distribution<std::size_t>(0, found.size() - 1)(Rng(env))];
     party.Target = target;
     party.Hop.clear();
+    party.HopIndex.clear();
     if (target > at)
         for (uint32 index = at + 1; index <= target; ++index)
+        {
             party.Hop.push_back(way->Chain[index]);
+            party.HopIndex.push_back(index);
+        }
     else
         for (uint32 index = at; index-- > target;)
+        {
             party.Hop.push_back(way->Chain[index]);
+            party.HopIndex.push_back(index);
+        }
     party.Corner = 0;
     party.HopStops = !Chance(env, tuning.PassChance);
     party.HopWalk = party.Rung < tuning.WalkRungs || Chance(env, tuning.WalkChance);
@@ -754,9 +770,10 @@ void Animus::Curriculum::PartyFollowEncounter::Steer(Env& env, EnvParty& party, 
         }
         else if (stuck)
         {
-            // Given up: it stands where it is on the way (the nearest corner of the chain it may walk on from) and
-            // draws again.
+            // Given up: the step into the corner it could not reach is blocked that way for good, and it stands where
+            // it is on the way (the nearest corner of the chain it may walk on from) and draws again.
             ++party.Skips;
+            BlockStep(party);
             // The first give-ups of each map, told: where the leader stood, the corner it walked to and what lay
             // between (the leader wandered on the Deadmines and Ragefire ways without finishing a hop, 2026-10-12).
             bool tell = false;
@@ -810,6 +827,13 @@ void Animus::Curriculum::PartyFollowEncounter::Steer(Env& env, EnvParty& party, 
             Position const& corner = party.Hop[party.Corner];
             held = Movement::Seek(seat.Mover.Body, corner.GetPositionX(), corner.GetPositionY());
             held.Walk = party.HopWalk;
+            // Stuck, as a player gets out of it: a jump at a lip from half a second on, and from two seconds a step
+            // to one side and then the other, a second each (the stock path climbs rock lips a player's controller
+            // walks into, 2026-10-12). GiveUpMs later the hop is given up and the step marked blocked.
+            if (seat.StuckRunMs >= UNSTICK_JUMP_MS)
+                held.Jump = true;
+            if (seat.StuckRunMs >= UNSTICK_SIDESTEP_MS)
+                held.Strafe = (seat.StuckRunMs / 1000) % 2 ? 1 : -1;
         }
         else if (party.Mode == Phase::Stopped && party.LookUntilMs)
         {
@@ -827,6 +851,31 @@ void Animus::Curriculum::PartyFollowEncounter::Steer(Env& env, EnvParty& party, 
     }
     held.FaceTurnApplied = seat.Controls.Held.FaceTurnApplied;
     seat.Controls.Held = held;
+}
+
+void Animus::Curriculum::PartyFollowEncounter::BlockStep(EnvParty const& party)
+{
+    if (party.Corner >= party.HopIndex.size())
+        return;
+    Way const* way = WayOf(party.MapId);
+    if (!way)
+        return;
+    // The step from the corner before (the hop's start for its first corner) into the corner it could not reach.
+    uint32 const to = party.HopIndex[party.Corner];
+    uint32 const from = party.Corner ? party.HopIndex[party.Corner - 1] : party.At;
+    if (from == to || std::max(from, to) - std::min(from, to) != 1)
+        return;
+    uint32 const step = std::min(from, to);
+    uint8 const bit = to > from ? BLOCKED_FORWARD : BLOCKED_BACK;
+    if (step >= way->Blocked.size())
+        return;
+    uint8 const before = const_cast<Way*>(way)->Blocked[step].fetch_or(bit, std::memory_order_relaxed);
+    if (!(before & bit))
+        LOG_INFO("module.animus", "{}: map {} follow way: step {} ({:.1f}, {:.1f}, {:.1f}) -> ({:.1f}, {:.1f}, {:.1f}) "
+            "blocked {} (the leader could not walk it)", _scenario.Name(), party.MapId, step,
+            way->Chain[step].GetPositionX(), way->Chain[step].GetPositionY(), way->Chain[step].GetPositionZ(),
+            way->Chain[step + 1].GetPositionX(), way->Chain[step + 1].GetPositionY(),
+            way->Chain[step + 1].GetPositionZ(), to > from ? "forward" : "back");
 }
 
 void Animus::Curriculum::PartyFollowEncounter::RespawnFollowers(Env& env, EnvParty& party)
