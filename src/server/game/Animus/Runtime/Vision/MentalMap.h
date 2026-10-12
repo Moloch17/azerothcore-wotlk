@@ -188,10 +188,9 @@ namespace Animus::Vision
 
     /// The most CROP_SEARCHED reads (a crop cell is four 1-yd cells).
     constexpr uint32_t SEARCHED_MAX = 4;
-    /// The map block's two journal scalars: seconds since the body last stood on ground it had never stood on, and
-    /// the 1-yd cells it has stood on, each over its scale and clamped to 1.
+    /// The map block's journal scalar of seconds since the body last stood on ground it had never stood on, over this
+    /// and clamped to 1 (the cells stood on are on a log scale since map block revision 4: MapBlock::TOTAL_LOG_MAX).
     constexpr float GROUND_AGE_SCALE_S = 120.0f;
-    constexpr float GROUND_TOTAL_SCALE = 3000.0f;
 
     /// What a crop cell is (CROP_CODE): MAP_CODES values.
     enum class MapCode : uint8_t

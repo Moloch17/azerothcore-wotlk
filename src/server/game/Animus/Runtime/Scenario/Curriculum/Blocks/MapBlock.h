@@ -22,6 +22,8 @@
 #include "Block.h"
 #include "Coverage.h"
 #include "MentalMap.h"
+#include <algorithm>
+#include <cmath>
 
 namespace Animus::Curriculum
 {
@@ -53,12 +55,12 @@ namespace Animus::Curriculum
             OBS_KEPT,               // 1 when this episode's map was kept from the one before (amendment 1)
             OBS_SEARCHED,           // the share of the crop's 1-yd cells looked at this episode
             OBS_NEW_AGE,            // seconds since the body last stood on new ground, over GROUND_AGE_SCALE_S, <= 1
-            OBS_TOTAL,              // the 1-yd cells the body has stood on this episode, over GROUND_TOTAL_SCALE, <= 1
+            OBS_TOTAL,              // the 1-yd cells the body has stood on this episode, LogShare over TOTAL_LOG_MAX
             /// **The coverage scalars** (revision 3, general search; Coverage::Analyse over this decision's crop):
             /// the nearest frontier cluster's bearing off the facing (sin, cos) and distance (over COVERAGE_REACH),
             /// the largest cluster's the same, the cluster count over CLUSTER_SCALE, and the 1-yd cells looked at
-            /// THIS episode over the whole map (MentalMap::SearchedCells, over SEARCHED_SCALE): the episode-local
-            /// progress record. Zeros where there is none.
+            /// THIS episode over the whole map (MentalMap::SearchedCells, LogShare over SEARCHED_LOG_MAX): the
+            /// episode-local progress record. Zeros where there is none.
             OBS_FRONTIER_SIN,
             OBS_FRONTIER_COS,
             OBS_FRONTIER_DIST,
@@ -70,19 +72,30 @@ namespace Animus::Curriculum
             OBS_COUNT
         };
         static constexpr float CLUSTER_SCALE = 8.0f;
-        static constexpr float SEARCHED_SCALE = 6000.0f;
+        /// The episode's whole-map totals on a log scale that no dungeon fills (revision 4, decision 0031): the 1-yd
+        /// cells looked at (searched_cells) and stood on (total). Linear over 6000 and 3000 they reached 1 about a
+        /// third of the way into most rung-2 episodes and said nothing after; log1p(n) / log1p(max) keeps the early
+        /// cells fine (100 -> 0.39, 1000 -> 0.59) and still rises at 20000 (0.84).
+        static constexpr float SEARCHED_LOG_MAX = 131072.0f;
+        static constexpr float TOTAL_LOG_MAX = 32768.0f;
+        [[nodiscard]] static float LogShare(float count, float max)
+        {
+            return std::min(1.0f, std::log1p(std::max(0.0f, count)) / std::log1p(max));
+        }
 
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         /// 1: the first map (perception-goals REDESIGN §3, the Change: one 48 x 48 crop at 2 yd, six channels).
         /// 2: the searched channel (a seventh) and the three scalars searched, new_age, total (exploration v3,
         /// decision 0026). 3: the eight coverage scalars (frontier_sin .. searched_cells; general search, decision
-        /// 0027); the crop is unchanged.
-        [[nodiscard]] uint32 Revision() const override { return 3; }
+        /// 0027); the crop is unchanged. 4: searched_cells and total on the log scale (LogShare; decision 0031): the
+        /// same columns, no longer capped a third of the way into an episode.
+        [[nodiscard]] uint32 Revision() const override { return 4; }
         /// "map": { transport "bytes", height, width (Vision::CROP), cell (yards), channels (7), channel_names,
         /// map_bytes, codes, code_names, code_channel, height_channel, height_step, height_zero, visited_channel,
         /// age_channel, age_scale, age_never, class_channel, classes (Vision::CLASS_LIMIT), frontier_channel,
-        /// searched_channel, searched_max, new_age_scale_s, total_scale, epoch ("episode"), scalars, scalar_names,
-        /// coverage_cell_yards, coverage_reach_yards, cluster_scale, floor_scale, cluster_min_cells, pocket_min_cells }
+        /// searched_channel, searched_max, new_age_scale_s, total_log_max, epoch ("episode"), scalars, scalar_names,
+        /// coverage_cell_yards, coverage_reach_yards, cluster_scale, searched_cells_log_max, cluster_min_cells,
+        /// pocket_min_cells }
         /// -- the block's columns are the scalars; the crop is the STEP's map section.
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;

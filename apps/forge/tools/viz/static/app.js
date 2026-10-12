@@ -545,7 +545,8 @@ function updatePlayer() {
   if (b.reward) for (let k = 0; k <= i; k++) ret += b.reward[k];
   $('pinfo').textContent = `decision ${i} · x ${b.x[i].toFixed(1)} y ${b.y[i].toFixed(1)} z ${b.z[i].toFixed(1)} · ` +
     `${b.moving && b.moving[i] ? 'moving' : 'stopped'}${b.wall && b.wall[i] ? ' · against a wall' : ''} · keys ${keys}` +
-    `${b.flag && b.flag[i] ? ' · object in view (' + b.flag[i] + ' px)' : ''} · return so far ${ret.toFixed(2)}`;
+    `${b.flag && b.flag[i] ? ' · object in view (' + b.flag[i] + ' px)' : ''} · return so far ${ret.toFixed(2)}` +
+    (b.searched && b.searched[i] != null ? ` · ${b.searched[i].toLocaleString()} cells searched` : '');
   updateFrame(b, i);
   drawCurve(b, i);
   draw();

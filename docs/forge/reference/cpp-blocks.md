@@ -495,9 +495,13 @@ through `SeatView::CoverageOut` for the seek encounter): `frontier_sin`, `fronti
 nearest frontier cluster's centroid, bearing off `view.Facing` as sin/cos, distance over `Coverage::REACH` 48 yd,
 clamped), `region_sin`, `region_cos`, `region_dist` (10-12: the largest cluster's, by cells), `clusters` (13: the
 cluster count over `CLUSTER_SCALE` 8, clamped) and `searched_cells` (14: `MentalMap::SearchedCells()`, the 1-yd cells
-looked at THIS episode over the whole map, over `SEARCHED_SCALE` 6000, clamped: the episode-local progress record;
-`KnownCells` would count walls and passes and outlive the episode on a kept map). Zeros when there is no cluster.
-Manifest adds `coverage_cell_yards` 2, `coverage_reach_yards` 48, `cluster_scale` 8, `floor_scale` 6000,
+looked at THIS episode over the whole map, `MapBlock::LogShare` = log1p(cells) / log1p(`SEARCHED_LOG_MAX` 131072),
+clamped -- revision 4, decision 0031; over a linear 6000 until then, which capped a third of the way into most rung-2
+episodes: the episode-local progress record; `KnownCells` would count walls and passes and outlive the episode on a
+kept map). `total` (6) is likewise log1p(cells stood on) / log1p(`TOTAL_LOG_MAX` 32768) since revision 4 (over 3000
+before). Zeros when there is no cluster.
+Manifest adds `coverage_cell_yards` 2, `coverage_reach_yards` 48, `cluster_scale` 8, `searched_cells_log_max` 131072
+(`floor_scale` 6000 until revision 4; `total_log_max` 32768 replaces `total_scale` 3000),
 `cluster_min_cells` and `pocket_min_cells` (`Seek.ClusterMinCells` 2 / `Seek.PocketMinCells` 6, set once by the
 scenario: `MapBlock::ConfigureCoverage`). The learner reads the scalar count from the manifest.
 

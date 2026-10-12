@@ -98,13 +98,14 @@ void Animus::Curriculum::MapBlock::DescribeManifest(Layout const& /*layout*/, bo
     map["searched_channel"] = uint32(Vi::CROP_SEARCHED);
     map["searched_max"] = Vi::SEARCHED_MAX;
     map["new_age_scale_s"] = double(Vi::GROUND_AGE_SCALE_S);
-    map["total_scale"] = double(Vi::GROUND_TOTAL_SCALE);
+    // Revision 4: total and searched_cells are log1p(cells) / log1p(the max), clamped to 1 (MapBlock::LogShare).
+    map["total_log_max"] = double(TOTAL_LOG_MAX);
     map["epoch"] = "episode";
     // The coverage scalars' frame (revision 3, Coverage.h).
     map["coverage_cell_yards"] = double(Coverage::CELL);
     map["coverage_reach_yards"] = double(Coverage::REACH);
     map["cluster_scale"] = double(CLUSTER_SCALE);
-    map["floor_scale"] = double(SEARCHED_SCALE);
+    map["searched_cells_log_max"] = double(SEARCHED_LOG_MAX);
     map["cluster_min_cells"] = ClusterMinCells.load(std::memory_order_relaxed);
     map["pocket_min_cells"] = PocketMinCells.load(std::memory_order_relaxed);
     map["scalars"] = uint32(OBS_COUNT);
@@ -206,7 +207,7 @@ void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uin
     map->Crop(x, y, z, view.Facing, crop);
     Scalars(crop, view.MapKept, obs);
     obs[OBS_NEW_AGE] = std::min(1.0f, float(map->SecondsSinceGround()) / Vi::GROUND_AGE_SCALE_S);
-    obs[OBS_TOTAL] = std::min(1.0f, float(map->GroundTotal()) / Vi::GROUND_TOTAL_SCALE);
+    obs[OBS_TOTAL] = LogShare(float(map->GroundTotal()), TOTAL_LOG_MAX);
     // The coverage analysis of this crop (general search): the scalars' clusters, and the seek encounter's terms
     // through the seat's summary (CoverageOut), the same frame the encounter's other reads are of.
     thread_local Coverage::Summary analysis;
@@ -214,7 +215,7 @@ void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uin
     Coverage::Analyse(crop, x, y, z, view.Facing, ClusterMinCells.load(std::memory_order_relaxed),
         PocketMinCells.load(std::memory_order_relaxed), summary);
     CoverageScalars(summary, view.Facing, obs);
-    obs[OBS_SEARCHED_CELLS] = std::min(1.0f, float(map->SearchedCells()) / SEARCHED_SCALE);
+    obs[OBS_SEARCHED_CELLS] = LogShare(float(map->SearchedCells()), SEARCHED_LOG_MAX);
     // Where this crop was taken from and how many of its blocks a cell goal can name (free choice goals): the ACT that
     // answers this observation is decoded against exactly this pose (StageScenario::ApplyGoals).
     if (view.Crop)

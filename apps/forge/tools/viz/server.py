@@ -209,8 +209,31 @@ def trace(run, steps, policy):
     return _cached("trace", path, build)
 
 
+def _searched_to_cells(run):
+    """How the map block's searched_cells scalar maps back to 1-yd cells, from the run's stage.json: log1p over
+    searched_cells_log_max (map block revision 4, decision 0031), else linear over floor_scale (6000 before)."""
+    def build():
+        try:
+            layouts = json.loads((run / "stage.json").read_text()).get("layouts") or {}
+        except (OSError, ValueError):
+            layouts = {}
+        for entry in layouts.values():
+            for block in entry.get("blocks", ()):
+                spec = block.get("map") if block.get("name") == "map" else None
+                if spec and spec.get("searched_cells_log_max"):
+                    top = math.log1p(float(spec["searched_cells_log_max"]))
+                    return lambda v: math.expm1(v * top)
+                if spec and spec.get("floor_scale"):
+                    scale = float(spec["floor_scale"])
+                    return lambda v: v * scale
+        return lambda v: v
+    stage = run / "stage.json"
+    return _cached("searched_scale", stage, build) if stage.exists() else (lambda v: v)
+
+
 def trace_payload(run, steps, policy):
     starts, c, meta = trace(run, steps, policy)
+    to_cells = _searched_to_cells(run)
     eps = {(e["seed"], e["agent"]): e for e in episodes(run, steps, policy)}
     blocks = []
     get = lambda k, a, b, nd: [round(float(v), nd) for v in c[k][a:b]] if k in c else None
@@ -231,7 +254,9 @@ def trace_payload(run, steps, policy):
             "reward": get("reward", a, b, 3),
             "flag": c["flag_pixels"][a:b].astype(int).tolist() if "flag_pixels" in c else None,
             # The map's searched cells over the episode (the coverage curve; traces from decision 0030 on).
-            "searched": get("searched", a, b, 4),
+            # ... as 1-yd cells looked at so far this episode (the scalar's scale undone, _searched_to_cells).
+            "searched": ([int(round(to_cells(float(v)))) if np.isfinite(v) else None for v in c["searched"][a:b]]
+                         if "searched" in c else None),
         })
     return {"step_seconds": meta.get("step_seconds", 0.25), "blocks": blocks}
 
