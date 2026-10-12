@@ -444,7 +444,10 @@ function selectEpisode(b) {
   $('ptitle').textContent = `#${b.seed} · ${e.class}${e.race ? ' (' + e.race + ')' : ''}${e.level ? ' L' + e.level : ''}` +
     ` · ${e.room || 'room ?'}${e.object ? ' · ' + e.object : ''} · ` +
     (e.found ? `found in ${Math.round(e.find_seconds || 0)} s` : 'not found') +
-    (e.pin_events ? ` · ${e.pin_events} pins` : '');
+    (e.pin_events ? ` · ${e.pin_events} pins` : '') +
+    // systematic search (decision 0030): the rung's rooms covered and the time spent re-crossing searched rooms
+    (e.checked_share != null ? ` · ${Math.round(e.checked_share * 100)}% of rooms searched` : '') +
+    (e.searched_revisit_s ? ` · ${Math.round(e.searched_revisit_s)} s re-searching` : '');
   $('scrub').max = b.x.length - 1;
   $('scrub').value = 0;
   zoomToRoute(b);
@@ -536,8 +539,36 @@ function updatePlayer() {
     `${b.moving && b.moving[i] ? 'moving' : 'stopped'}${b.wall && b.wall[i] ? ' · against a wall' : ''} · keys ${keys}` +
     `${b.flag && b.flag[i] ? ' · object in view (' + b.flag[i] + ' px)' : ''} · return so far ${ret.toFixed(2)}`;
   updateFrame(b, i);
+  drawCurve(b, i);
   draw();
 }
+// The coverage curve (decision 0030): the map's searched cells over the episode, the current decision marked. Traces
+// older than the field have none: the curve stays hidden.
+function hasCurve(b) { return !!(b.searched && b.searched.some((v) => v != null && Number.isFinite(v) && v > 0)); }
+function drawCurve(b, i) {
+  const box = $('pcurve');
+  box.hidden = !hasCurve(b);
+  if (box.hidden) return;
+  const c = $('curve'), dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.round(c.clientWidth * dpr)), h = Math.round(44 * dpr);
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, w, h);
+  const v = b.searched.map((x) => (x != null && Number.isFinite(x) ? x : 0));
+  const top = Math.max(...v, 1e-6), n = Math.max(1, v.length - 1);
+  const px = (k) => (k / n) * (w - 2) + 1, py = (x) => h - 2 - (x / top) * (h - 6);
+  ctx.beginPath();
+  v.forEach((x, k) => (k ? ctx.lineTo(px(k), py(x)) : ctx.moveTo(px(k), py(x))));
+  ctx.lineTo(px(v.length - 1), h); ctx.lineTo(px(0), h); ctx.closePath();
+  ctx.fillStyle = 'rgba(91, 140, 255, 0.25)'; ctx.fill();
+  ctx.beginPath();
+  v.forEach((x, k) => (k ? ctx.lineTo(px(k), py(x)) : ctx.moveTo(px(k), py(x))));
+  ctx.strokeStyle = '#5b8cff'; ctx.lineWidth = 1.5 * dpr; ctx.stroke();
+  // the decision shown
+  ctx.strokeStyle = '#ffe680'; ctx.lineWidth = 1.5 * dpr;
+  ctx.beginPath(); ctx.moveTo(px(i), 0); ctx.lineTo(px(i), h); ctx.stroke();
+}
+
 function stopPlay() { state.play.playing = false; $('play').textContent = 'Play'; }
 function tick(now) {
   if (!state.play.playing || !state.selected) return;
@@ -674,6 +705,15 @@ function wire() {
     requestAnimationFrame(tick);
   };
   $('scrub').oninput = () => { stopPlay(); state.play.i = Number($('scrub').value); updatePlayer(); };
+  // A click on the coverage curve jumps the replay to that decision.
+  $('curve').addEventListener('click', (e) => {
+    const b = state.selected;
+    if (!b) return;
+    const r = $('curve').getBoundingClientRect();
+    stopPlay();
+    state.play.i = Math.max(0, Math.min(b.x.length - 1, Math.round((e.clientX - r.left) / r.width * (b.x.length - 1))));
+    updatePlayer();
+  });
   $('pclose').onclick = () => {
     stopPlay(); state.selected = null; $('player').hidden = true; $('media').hidden = true; renderList(); writeHash(); draw();
   };

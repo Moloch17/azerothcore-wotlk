@@ -70,6 +70,12 @@ PER_EVENT = {
     "found_doorway": "rung_doorway",
     "found_room": "rung_room",
     "found_deep": "rung_deep",
+    # ... and systematic search (decision 0030): found over the deferred episodes, when and whether forced the object
+    # was placed over the placed ones, and the seconds to half the rung's rooms checked over the episodes that got there.
+    "found_deferred": "deferred",
+    "defer_placed_s": "defer_placed",
+    "defer_forced": "defer_placed",
+    "half_checked_s": "half_checked",
     # M1 redesigned (SightEncounter): the arrival rate in the episodes that withheld the compass, and in those that
     # showed it.
     "arrived_no_compass": "compass_withheld",

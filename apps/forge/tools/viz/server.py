@@ -146,6 +146,9 @@ def episodes(run, steps, policy):
             "end_xyz": [_num(r.get("end_x")), _num(r.get("end_y")), _num(r.get("end_z"))],
             "pin_events": _num(r.get("pin_events")), "wall_seconds": _num(r.get("wall_seconds")),
             "return": _num(r.get("return")), "rung": _num(r.get("seek_rung")),
+            # Systematic search (decision 0030): the rung's rooms covered, the seconds to half of them, wasted travel.
+            "checked_share": _num(r.get("checked_share")), "half_checked_s": _num(r.get("half_checked_s")),
+            "searched_revisit_s": _num(r.get("searched_revisit_s")),
         })
     return out
 
@@ -184,6 +187,8 @@ def trace_payload(run, steps, policy):
             "strafe": c["held_strafe"][a:b].astype(int).tolist() if "held_strafe" in c else None,
             "reward": get("reward", a, b, 3),
             "flag": c["flag_pixels"][a:b].astype(int).tolist() if "flag_pixels" in c else None,
+            # The map's searched cells over the episode (the coverage curve; traces from decision 0030 on).
+            "searched": get("searched", a, b, 4),
         })
     return {"step_seconds": meta.get("step_seconds", 0.25), "blocks": blocks}
 

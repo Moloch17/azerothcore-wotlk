@@ -6585,6 +6585,13 @@ AnimusForge.Curriculum.PartyFollow.CastShare = 0
 #        RevisitAgeMs 30000. A chosen cell block is stale (CellStale 0.05) when the seat stood on it or, StaleSearched
 #        1, every floor cell of it was looked at this episode and none is frontier (the map's searched channel);
 #        CellGoal (0.1, now category Exploring) pays reaching a chosen block that was not stale.
+#        Deferred placement (2026-10-11, decision 0030, systematic search): DeferShare (0.4) of the training episodes
+#        placed at DeferFromRung (2, the room rung) or above start with no object; it is placed, out of the seat's
+#        sight and on floor its rays never showed, in an unsearched room of the placed rung's (a room is searched when
+#        CheckedShare of its floor was seen) once DeferLeft (1) or fewer remain unsearched, or at DeferLatestShare
+#        (0.75) of the clock in the least covered one; such an episode lasts DeferSeconds (420). The goals are offered
+#        before the placement, as in any search. Never a seeded (evaluation) episode, the held-out sweep or the trap
+#        drill; DeferShare 0 turns it off.
 AnimusForge.Curriculum.Seek.Arrive = 3.0
 AnimusForge.Curriculum.Seek.StepCost = 0.0005
 AnimusForge.Curriculum.Seek.Death = 6.0
@@ -6677,6 +6684,11 @@ AnimusForge.Curriculum.Seek.ClusterMinCells = 2
 AnimusForge.Curriculum.Seek.Revisit = 0.03
 AnimusForge.Curriculum.Seek.RevisitCorridor = 0.01
 AnimusForge.Curriculum.Seek.RevisitAgeMs = 30000
+AnimusForge.Curriculum.Seek.DeferShare = 0.4
+AnimusForge.Curriculum.Seek.DeferFromRung = 2
+AnimusForge.Curriculum.Seek.DeferLeft = 1
+AnimusForge.Curriculum.Seek.DeferLatestShare = 0.75
+AnimusForge.Curriculum.Seek.DeferSeconds = 420
 AnimusForge.Curriculum.Seek.TrapFromRung = 2
 AnimusForge.Curriculum.Seek.TrapReplayShare = 0.5
 AnimusForge.Curriculum.Seek.RecoverYards = 4.0

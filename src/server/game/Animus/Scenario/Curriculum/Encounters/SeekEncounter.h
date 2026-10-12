@@ -221,6 +221,15 @@ namespace Animus::Curriculum
             uint32 MaxWaiting = 0;
             bool FirstGoal = false;
             uint32 FirstGoalMs = 0;
+            // Deferred placement (decision 0030): no object at the start; placed in an unsearched candidate room later
+            // (DeferForced: at the clock's DeferLatestShare, not because the rooms were searched). The candidates are
+            // the placed rung's rooms, kept for every episode (checked_share, half_checked_s).
+            bool Deferred = false;
+            bool DeferForced = false;
+            uint32 DeferPlacedMs = 0;
+            std::vector<uint32> Candidates;
+            uint32 HalfCheckedMs = 0;
+            float SearchedRevisitSeconds = 0.0f;    // Revisit's weighed seconds inside rooms already checked
             bool ObjectChecked = false;         // the object's room was checked, and when
             uint32 ObjectCheckedMs = 0;
             float CoverAtFind = 0.0f;
@@ -340,7 +349,13 @@ namespace Animus::Curriculum
 
         /// Put the episode's object in `room` of `arena`: a spot on its floor, clear of walls, else its centre; at
         /// the doorway rung, just inside its opening (else on its floor).
-        bool Place(Env const& env, EnvSeek& seek, Map* map, ArenaDefinition const& arena, uint32 phase) const;
+        /// With `hideFrom` (deferred placement): only a spot of the room's floor this episode's rays never hit and out
+        /// of that seat's line of sight, else any spot out of its sight, else the usual draw.
+        bool Place(Env const& env, EnvSeek& seek, Map* map, ArenaDefinition const& arena, uint32 phase,
+            Player* hideFrom = nullptr) const;
+        /// Deferred placement (decision 0030) for one decision: place the object when DeferLeft or fewer candidates
+        /// are unsearched, or the clock is at DeferLatestShare. True once placed.
+        bool PlaceDeferred(Env const& env, EnvSeek& seek, Map* map, ArenaDefinition const& arena, Player* bot) const;
         /// ... at the hallway rung: a hallway point in sight of a seat at `start` (SightDraw::Place).
         bool PlaceInHallway(EnvSeek& seek, Map* map, ArenaDefinition const& arena, Player* bot,
             Position const& start) const;

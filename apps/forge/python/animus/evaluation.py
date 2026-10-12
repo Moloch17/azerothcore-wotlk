@@ -664,7 +664,10 @@ TRACE_FIELDS = (
     ("x", np.float32), ("y", np.float32), ("z", np.float32), ("yaw", np.float32),
     ("cam_yaw", np.float32), ("cam_pitch", np.float32), ("flag_pixels", np.int16),
     ("against_wall", np.int8), ("moving", np.int8), ("speed", np.float32),
-    ("held_forward", np.int8), ("held_strafe", np.int8), ("goal_x", np.float32), ("goal_y", np.float32))
+    ("held_forward", np.int8), ("held_strafe", np.int8), ("goal_x", np.float32), ("goal_y", np.float32),
+    # The map block's searched_cells scalar (the 1-yd cells looked at this episode, over its scale): the coverage
+    # curve the route viewer draws beside a replay (decision 0030).
+    ("searched", np.float32))
 TRACE_FIELD_NAMES = tuple(name for name, _ in TRACE_FIELDS)
 #: Where each trace field that reads an observation column finds it: (block, column name or scalar index).
 TRACE_COLUMNS = {
@@ -672,7 +675,8 @@ TRACE_COLUMNS = {
     "against_wall": ("move", "against_wall"), "moving": ("move", "moving"), "speed": ("move", "speed"),
     "held_forward": ("move", "held_forward"), "held_strafe": ("move", "held_strafe"),
     "goal_present": ("goal", "goal_held_present"), "goal_sin": ("goal", "goal_held_sin"),
-    "goal_cos": ("goal", "goal_held_cos"), "goal_dist": ("goal", "goal_held_dist")}
+    "goal_cos": ("goal", "goal_held_cos"), "goal_dist": ("goal", "goal_held_dist"),
+    "searched": ("map", "searched_cells")}
 #: The held goal's distance is carried as yards / this (GoalBlock goal_held_dist).
 GOAL_HELD_DIST_SCALE = 500.0
 #: The sample columns of the protocol-20 kinematics (human.motion: t x y z yaw pitch ...).
@@ -692,7 +696,8 @@ def trace_columns(spec, stage: dict | None) -> dict[str, np.ndarray]:
             if block is None:
                 continue
             if isinstance(column, str):
-                names = list(block.get("obs_names") or ())
+                # The map block names its scalars under "map" (MapBlock::DescribeManifest), the others as obs_names.
+                names = list(block.get("obs_names") or (block.get("map") or {}).get("scalar_names") or ())
                 if column not in names:
                     continue
                 column = names.index(column)
@@ -745,7 +750,7 @@ class TraceCollector:
         sin, cos = self._read(obs, layout, "cam_sin"), self._read(obs, layout, "cam_cos")
         block[..., at["cam_yaw"]] = np.arctan2(sin, cos)
         block[..., at["cam_pitch"]] = self._read(obs, layout, "cam_pitch") * (np.pi / 2.0)
-        for name in ("against_wall", "moving", "speed", "held_forward", "held_strafe"):
+        for name in ("against_wall", "moving", "speed", "held_forward", "held_strafe", "searched"):
             block[..., at[name]] = self._read(obs, layout, name)
         image = getattr(step, "image", None)
         if image is not None and self.image_bytes:

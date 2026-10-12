@@ -200,6 +200,9 @@ eval:
            frontier_clusters_peak, frontier_clusters_cleared, frontier_clear_reward,
            pockets_seen, pockets_entered, pocket_entry_reward, seat_in_chamber_share, explore_pocket_cells,
            revisit_seconds, revisit_share, reward_frontier_clear, reward_pocket_entry, reward_revisit,
+           # Systematic search (decision 0030): the deferred placement and the coverage measures.
+           deferred, found_deferred, defer_placed_s, defer_forced, checked_share, half_checked_s,
+           searched_revisit_s, yards_per_room_checked,
            # Movement pacing (contract M3, M5, M7; from the controller's body, not the server position): where a trap
            # start came from, the recovery rebate, straight runs, pauses and looks, pins and escapes.
            trap_source, recoveries, reward_recovered,
@@ -233,7 +236,10 @@ status:
              # Movement pacing (M7): escape time over the pin events, the pins and escapes, looking while paused,
              # straight runs and the recovery rebate's events (control_changes_per_minute, already listed: 40-80 a
              # minute is the found band).
-             time_to_escape_s, pin_events, contact_escapes, pause_look_share, straight_run_mean_s, recoveries]
+             time_to_escape_s, pin_events, contact_escapes, pause_look_share, straight_run_mean_s, recoveries,
+             # Systematic search (decision 0030): the deferred episodes' found (training), the rung's rooms covered,
+             # the wasted travel.
+             found_deferred, defer_forced, checked_share, searched_revisit_s]
   targets:
     # M1's targets are not M2's measures (null drops an inherited key).
     arrived: null

@@ -606,6 +606,16 @@ namespace Animus::Curriculum
             float Revisit = 0.03f;
             float RevisitCorridor = 0.01f;
             uint32 RevisitAgeMs = 30000;
+            // Deferred placement (decision 0030, systematic search): DeferShare of the training episodes placed at
+            // DeferFromRung or above have no object at the start; it is placed out of sight in an unsearched room of
+            // the rung's once DeferLeft or fewer remain unsearched, or at DeferLatestShare of the clock in the least
+            // covered one; such an episode lasts DeferSeconds. Never a seeded (evaluation) episode, the sweep or the
+            // trap drill.
+            float DeferShare = 0.4f;
+            uint32 DeferFromRung = 2;
+            uint32 DeferLeft = 1;
+            float DeferLatestShare = 0.75f;
+            uint32 DeferSeconds = 420;
             // Movement pacing (decision 0027's amendments to 0023 and 0026): the trap drill's own rung and its replayed
             // pin poses, and the pin rebate.
             uint32 TrapFromRung = 2;
@@ -1109,6 +1119,11 @@ namespace Animus::Curriculum
             f("Seek.ClusterMinCells", tuning.Seek.ClusterMinCells);
             f("Seek.Revisit", tuning.Seek.Revisit);
             f("Seek.RevisitCorridor", tuning.Seek.RevisitCorridor);
+            f("Seek.DeferShare", tuning.Seek.DeferShare);
+            f("Seek.DeferFromRung", tuning.Seek.DeferFromRung);
+            f("Seek.DeferLeft", tuning.Seek.DeferLeft);
+            f("Seek.DeferLatestShare", tuning.Seek.DeferLatestShare);
+            f("Seek.DeferSeconds", tuning.Seek.DeferSeconds);
             f("Seek.RevisitAgeMs", tuning.Seek.RevisitAgeMs);
             f("Seek.TrapFromRung", tuning.Seek.TrapFromRung);
             f("Seek.TrapReplayShare", tuning.Seek.TrapReplayShare);

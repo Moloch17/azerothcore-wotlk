@@ -458,6 +458,55 @@ void Animus::Curriculum::SeekEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
     {
         return float(_envs[env.Index].RoomsChecked) * 60000.0f / float(std::max<uint32>(1, env.EpisodeElapsedMs));
     });
+    // **Systematic search** (decision 0030): the deferred placement -- whether the episode deferred, whether and when
+    // its object was placed and whether the clock forced it (over the placed ones), found over the deferred ones --
+    // and, every episode, the coverage of the placed rung's rooms (the share checked, the seconds to half of them,
+    // over the episodes that got there), the wasted travel (Revisit's weighed seconds inside rooms already checked)
+    // and the route's efficiency (yards travelled per room checked).
+    table.Add("deferred", [this](Env const& env, uint32) { return _envs[env.Index].Deferred ? 1.0f : 0.0f; });
+    table.Add("defer_placed", [this](Env const& env, uint32)
+    {
+        return _envs[env.Index].DeferPlacedMs ? 1.0f : 0.0f;
+    });
+    table.Add("defer_placed_s", [this](Env const& env, uint32)
+    {
+        return float(_envs[env.Index].DeferPlacedMs) / 1000.0f;
+    });
+    table.Add("defer_forced", [this](Env const& env, uint32)
+    {
+        EnvSeek const& seek = _envs[env.Index];
+        return seek.DeferPlacedMs && seek.DeferForced ? 1.0f : 0.0f;
+    });
+    table.Add("found_deferred", [this](Env const& env, uint32)
+    {
+        EnvSeek const& seek = _envs[env.Index];
+        return seek.Deferred && seek.Found ? 1.0f : 0.0f;
+    });
+    table.Add("checked_share", [this](Env const& env, uint32)
+    {
+        EnvSeek const& seek = _envs[env.Index];
+        uint32 checked = 0;
+        for (uint32 index : seek.Candidates)
+            checked += index < seek.Track.size() && seek.Track[index].Checked ? 1 : 0;
+        return seek.Candidates.empty() ? 0.0f : float(checked) / float(seek.Candidates.size());
+    });
+    table.Add("half_checked", [this](Env const& env, uint32)
+    {
+        return _envs[env.Index].HalfCheckedMs ? 1.0f : 0.0f;
+    });
+    table.Add("half_checked_s", [this](Env const& env, uint32)
+    {
+        return float(_envs[env.Index].HalfCheckedMs) / 1000.0f;
+    });
+    table.Add("searched_revisit_s", [this](Env const& env, uint32)
+    {
+        return _envs[env.Index].SearchedRevisitSeconds;
+    });
+    table.Add("yards_per_room_checked", [this](Env const& env, uint32)
+    {
+        EnvSeek const& seek = _envs[env.Index];
+        return seek.Travelled / float(std::max<uint32>(1, seek.RoomsChecked));
+    });
     table.Add("returns", [this](Env const& env, uint32) { return float(_envs[env.Index].Returns); });
     table.Add("slots_waiting", [this](Env const& env, uint32) { return float(_envs[env.Index].MaxWaiting); });
     table.Add("time_to_first_goal", [this](Env const& env, uint32)
@@ -638,7 +687,7 @@ bool Animus::Curriculum::SeekEncounter::Summon(EnvSeek& seek, Map* map, ArenaDef
 }
 
 bool Animus::Curriculum::SeekEncounter::Place(Env const& env, EnvSeek& seek, Map* map, ArenaDefinition const& arena,
-    uint32 phase) const
+    uint32 phase, Player* hideFrom) const
 {
     CurriculumTuning::SeekTuning const& tuning = _scenario.Tuning().Seek;
     SeekRoom const& room = arena.Rooms[uint32(seek.Room)];
@@ -683,18 +732,36 @@ bool Animus::Curriculum::SeekEncounter::Place(Env const& env, EnvSeek& seek, Map
             z = pz;
             found = true;
         }
-    for (uint32 attempt = 0; attempt < std::max<uint32>(1, tuning.Attempts) && !found; ++attempt)
+    // Deferred placement (decision 0030): hidden from `hideFrom` -- first a spot of the floor this episode's rays never
+    // hit and out of the seat's line of sight, then any spot out of its sight, then the usual draw.
+    float const eyeX = hideFrom ? hideFrom->GetPositionX() : 0.0f;
+    float const eyeY = hideFrom ? hideFrom->GetPositionY() : 0.0f;
+    float const eyeZ = hideFrom ? hideFrom->GetPositionZ() + Vision::PIVOT_SHARE * Movement::ShapeOf(hideFrom).Height
+        : 0.0f;
+    float const centreRise = arena.Objects[seek.ObjectIndex].Height * 0.5f;
+    auto const hidden = [&](float px, float py, float pz, bool unseen)
     {
-        auto const [px, py] = Draw::PointIn(room.Floor, uniform(attempt, SALT_TRIANGLE), uniform(attempt, SALT_A),
-            uniform(attempt, SALT_B));
-        float const pz = floorAt(px, py);
-        if (std::fabs(pz - room.FloorZ) > tuning.FloorTolerance || !clear(px, py, pz))
-            continue;
-        x = px;
-        y = py;
-        z = pz;
-        found = true;
-    }
+        if (unseen && uint32(seek.Room) < seek.Track.size()
+            && seek.Track[uint32(seek.Room)].Hit.count(Draw::CoverCell(px, py)))
+            return false;
+        return !map->isInLineOfSight(eyeX, eyeY, eyeZ, px, py, pz + centreRise, phase, LINEOFSIGHT_ALL_CHECKS,
+            VMAP::ModelIgnoreFlags::Nothing);
+    };
+    for (uint32 pass = hideFrom ? 0 : 2; pass < 3 && !found; ++pass)
+        for (uint32 attempt = 0; attempt < std::max<uint32>(1, tuning.Attempts) && !found; ++attempt)
+        {
+            auto const [px, py] = Draw::PointIn(room.Floor, uniform(attempt, SALT_TRIANGLE), uniform(attempt, SALT_A),
+                uniform(attempt, SALT_B));
+            float const pz = floorAt(px, py);
+            if (std::fabs(pz - room.FloorZ) > tuning.FloorTolerance || !clear(px, py, pz))
+                continue;
+            if (pass < 2 && !hidden(px, py, pz, pass == 0))
+                continue;
+            x = px;
+            y = py;
+            z = pz;
+            found = true;
+        }
     if (!found)
     {
         float const centre = floorAt(x, y);
@@ -705,6 +772,58 @@ bool Animus::Curriculum::SeekEncounter::Place(Env const& env, EnvSeek& seek, Map
 
     float const facing = uniform(0, SALT_FACING) * TWO_PI;
     return Summon(seek, map, arena, Position(x, y, z, facing), phase);
+}
+
+bool Animus::Curriculum::SeekEncounter::PlaceDeferred(Env const& env, EnvSeek& seek, Map* map,
+    ArenaDefinition const& arena, Player* bot) const
+{
+    // Deferred placement (decision 0030): the object goes in the last unsearched room -- once DeferLeft or fewer of
+    // the rung's rooms are still unsearched (RoomTrack::Checked, CheckedShare of the floor seen) -- or, at
+    // DeferLatestShare of the clock, in the least covered unsearched one: the find comes after the search, never by
+    // luck, and a seat that never finishes still has an object to find.
+    CurriculumTuning::SeekTuning const& tuning = _scenario.Tuning().Seek;
+    if (!map || seek.Track.size() != arena.Rooms.size())
+        return false;
+    uint32 unsearched = 0;
+    for (uint32 room : seek.Candidates)
+        if (room < seek.Track.size() && !seek.Track[room].Checked)
+            ++unsearched;
+    bool const late = env.EpisodeLengthMs
+        && float(env.EpisodeElapsedMs) >= tuning.DeferLatestShare * float(env.EpisodeLengthMs);
+    if (unsearched > tuning.DeferLeft && !late)
+        return false;
+
+    // The least covered of the unsearched candidates (of every candidate when all were searched at once).
+    int32 pick = -1;
+    float least = 2.0f;
+    for (uint32 room : seek.Candidates)
+    {
+        if (room >= seek.Track.size() || (unsearched && seek.Track[room].Checked))
+            continue;
+        RoomTrack const& track = seek.Track[room];
+        float const cover = float(track.Hit.size()) / float(std::max<uint32>(1, track.Floor));
+        if (cover < least)
+        {
+            least = cover;
+            pick = int32(room);
+        }
+    }
+    if (pick < 0)
+        return false;
+
+    seek.Room = pick;
+    seek.Depth = Draw::Depths(arena.Rooms)[uint32(pick)];
+    seek.Tier = Draw::Tier(seek.Depth);
+    seek.HardRoom = Draw::IsHardRoom(arena.Rooms[uint32(pick)].Name);
+    if (!Place(env, seek, map, arena, bot->GetPhaseMask(), bot))
+    {
+        // No object could be spawned: the episode goes on without one (logged by Summon), not retried every decision.
+        seek.Deferred = false;
+        return false;
+    }
+    seek.DeferForced = unsearched > tuning.DeferLeft;
+    seek.DeferPlacedMs = std::max<uint32>(1, env.EpisodeElapsedMs);
+    return true;
 }
 
 bool Animus::Curriculum::SeekEncounter::PlaceInHallway(EnvSeek& seek, Map* map, ArenaDefinition const& arena,
@@ -1002,8 +1121,20 @@ bool Animus::Curriculum::SeekEncounter::Build(Env& env, Map* map, uint8 /*level*
     }
     BotFactory::TeleportWithinMap(bot, pose);
 
-    bool built = false;
-    if (placed == Draw::Rung::Hallway)
+    // The placed rung's rooms, every episode (checked_share, half_checked_s); and deferred placement (decision 0030):
+    // DeferShare of the training episodes at DeferFromRung or above start with no object -- it is placed later, in
+    // the last unsearched of these rooms (PlaceDeferred). Never a seeded episode, the sweep or the trap drill.
+    seek.Candidates = Draw::RungRooms(arena.Rooms, placed);
+    if (!seeded && !seek.Sweep && !seek.Trap && uint32(placed) >= tuning.DeferFromRung && tuning.DeferShare > 0.0f
+        && seek.Candidates.size() >= 2 && frand(0.0f, 1.0f) < tuning.DeferShare)
+    {
+        seek.Deferred = true;
+        seek.Room = -1;
+        seek.HardRoom = false;
+    }
+
+    bool built = seek.Deferred;
+    if (!built && placed == Draw::Rung::Hallway)
         built = PlaceInHallway(seek, map, arena, bot, start);
     if (!built)
     {
@@ -1023,6 +1154,9 @@ bool Animus::Curriculum::SeekEncounter::Build(Env& env, Map* map, uint8 /*level*
     // the arena's own 300 s while the learner moved to 420 s: the sets were not on the same clock).
     env.EpisodeLengthMs = (seek.Sweep ? Draw::RungSeconds(Draw::Rung::Deep, RungSeconds(tuning))
         : Draw::RungSeconds(Draw::Rung(seek.Rung), RungSeconds(tuning))) * IN_MILLISECONDS;
+    // A deferred episode covers the rung's rooms before its find: its own clock.
+    if (seek.Deferred && tuning.DeferSeconds)
+        env.EpisodeLengthMs = tuning.DeferSeconds * IN_MILLISECONDS;
     if (seek.Room >= 0 && uint32(seek.Room) < arena.Rooms.size())
     {
         seek.Depth = Draw::Depths(arena.Rooms)[uint32(seek.Room)];
@@ -1063,7 +1197,9 @@ void Animus::Curriculum::SeekEncounter::View(Env const& env, uint32 seatIndex, S
     world.Places = {};
     world.HasAssignment = false;
     world.HasSeenPlaces = _scenario.Tuning().Seek.Goals != 0;
-    world.RoomGoals = seek.Placed && seek.RoomGoals && view.Bot && view.Bot->IsAlive();
+    // A deferred episode (decision 0030) offers the goals before its object is placed: from the inside it must look
+    // like any other search, the object not yet in view (its flag and point stay with Placed, HasObjective).
+    world.RoomGoals = (seek.Placed || seek.Deferred) && seek.RoomGoals && view.Bot && view.Bot->IsAlive();
     world.SearchGoals = world.RoomGoals && _scenario.Tuning().Seek.SearchGoals != 0;
     // Cell goals (Seek.GoalSource 1): the goal is a block of the seat's own crop, so there are no room slots and no
     // way on to fill; RoomGoals stays true beside it (the gates that exempt a place goal from the straight-line gap).
@@ -1546,6 +1682,8 @@ void Animus::Curriculum::SeekEncounter::Revisit(Env const& env, EnvSeek& seek, P
         int32 const room = seek.LastRoom;
         bool const searched = room >= 0 && uint32(room) < seek.Track.size() && seek.Track[uint32(room)].Checked;
         float const price = searched || tuning.RevisitCorridor < 0.0f ? tuning.Revisit : tuning.RevisitCorridor;
+        if (searched)
+            seek.SearchedRevisitSeconds += weight * seconds;    // wasted travel (searched_revisit_s)
         if (!paid && price > 0.0f && weight > 0.0f)
             ledger.AddFixed(RewardTerm::Revisit, -price * weight * seconds);
         stood->second = now;
@@ -1781,9 +1919,12 @@ void Animus::Curriculum::SeekEncounter::Reward(Env& env, uint32 seatIndex, Playe
         ledger.Add(RewardTerm::Death, -tuning.Death);
     }
     bool const timeIsUp = env.EpisodeLengthMs && env.EpisodeElapsedMs >= env.EpisodeLengthMs;
-    if (seek.Placed && !seek.Found && timeIsUp)
+    // A deferred episode (decision 0030) searches before its object is placed: everything below runs for it but the
+    // found check.
+    bool const searching = seek.Placed || seek.Deferred;
+    if (searching && !seek.Found && timeIsUp)
         tally.TimedOut = true;
-    if (!seek.Placed || seek.Found || !bot->IsAlive())
+    if (!searching || seek.Found || !bot->IsAlive())
         return;
 
     // The costs, read off the controller's counts as the ground course reads them: on from the first step at their
@@ -1975,6 +2116,25 @@ void Animus::Curriculum::SeekEncounter::Reward(Env& env, uint32 seatIndex, Playe
                 seek.FirstGoalMs = env.EpisodeElapsedMs;
                 break;
             }
+
+    // The coverage curve's midpoint (systematic search): when half the placed rung's rooms were checked.
+    if (!seek.HalfCheckedMs && !seek.Candidates.empty())
+    {
+        uint32 checked = 0;
+        for (uint32 index : seek.Candidates)
+            checked += index < seek.Track.size() && seek.Track[index].Checked ? 1 : 0;
+        if (2 * checked >= seek.Candidates.size())
+            seek.HalfCheckedMs = std::max<uint32>(1, env.EpisodeElapsedMs);
+    }
+
+    // Deferred placement (decision 0030): the object appears in the last unsearched room, out of sight; this
+    // decision is not a find.
+    if (!seek.Placed)
+    {
+        if (seek.Deferred)
+            PlaceDeferred(env, seek, env.FindMap(), arena, bot);
+        return;
+    }
 
     // Found: stopped (Standing::Stopped, the server's applied state) beside the object, on its floor.
     float const distance = bot->GetExactDist2d(&seek.Spot);
