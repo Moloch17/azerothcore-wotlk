@@ -757,6 +757,28 @@ void Animus::Curriculum::PartyFollowEncounter::Steer(Env& env, EnvParty& party, 
             // Given up: it stands where it is on the way (the nearest corner of the chain it may walk on from) and
             // draws again.
             ++party.Skips;
+            // The first give-ups of each map, told: where the leader stood, the corner it walked to and what lay
+            // between (the leader wandered on the Deadmines and Ragefire ways without finishing a hop, 2026-10-12).
+            bool tell = false;
+            {
+                std::lock_guard<std::mutex> lock(_routesLock);
+                tell = _skipsTold[party.MapId]++ < SKIPS_TOLD;
+            }
+            if (tell && party.Corner < party.Hop.size())
+            {
+                Position const& corner = party.Hop[party.Corner];
+                Map* map = leader->GetMap();
+                LOG_INFO("module.animus", "{}: map {} leader gave up hop {} -> {} at corner {}/{}: leader ({:.1f}, {:.1f}, "
+                    "{:.1f}) ground {:.1f}; corner ({:.1f}, {:.1f}, {:.1f}) ground {:.1f}; {:.1f} yd away, {:.1f} yd "
+                    "up; walking {}, wall {}, keys fwd {} strafe {} turn {:.2f}", _scenario.Name(), party.MapId, party.At,
+                    party.Target, party.Corner, party.Hop.size(), leader->GetPositionX(), leader->GetPositionY(),
+                    leader->GetPositionZ(), map->GetHeight(leader->GetPositionX(), leader->GetPositionY(),
+                    leader->GetPositionZ() + 2.0f), corner.GetPositionX(), corner.GetPositionY(),
+                    corner.GetPositionZ(), map->GetHeight(corner.GetPositionX(), corner.GetPositionY(),
+                    corner.GetPositionZ() + 2.0f), leader->GetExactDist2d(&corner),
+                    corner.GetPositionZ() - leader->GetPositionZ(), party.HopWalk, seat.Mover.TickWall,
+                    int32(seat.Controls.Held.Forward), int32(seat.Controls.Held.Strafe), seat.Controls.Held.TurnRate);
+            }
             if (Way const* way = WayOf(party.MapId))
             {
                 float nearest = std::numeric_limits<float>::max();

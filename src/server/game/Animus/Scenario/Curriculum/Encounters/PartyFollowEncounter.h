@@ -258,6 +258,9 @@ namespace Animus::Curriculum
         mutable std::mutex _routesLock;
         std::map<uint32, std::vector<Position>> _routes;
         std::map<uint32, Way> _ways;
+        /// Give-ups told per map (the first SKIPS_TOLD of each, in the log).
+        std::map<uint32, uint32> _skipsTold;
+        static constexpr uint32 SKIPS_TOLD = 25;
     };
 }
 
