@@ -128,6 +128,8 @@ class EvalConfig:
     #     new_age and total scalars zeroed (exploration v3): what the searched-state input is worth.
     #   no_coverage: the coverage block's columns and the map block's coverage scalars (revision 3: frontier_*,
     #     region_*, clusters, searched_cells) zeroed (general search): what the coverage inputs are worth.
+    #   no_party, no_recall: the party frames block's columns zeroed, or only its recall columns (member*_recall*,
+    #     revision 3) (decision 0033): what the frames and dots, or the remembered and predicted places, are worth.
     arms: dict = field(default_factory=dict)
     arms_every: int = 1
     # The routes of every evaluation, kept: the learner's scored seats' raw kinematic tracks (x, y, z, yaw, ...) with
@@ -402,7 +404,7 @@ MAX_HINDSIGHT_LOOKBACK = 256
 
 #: The evaluation arms beside the plain one ("all bots"): eval.arms names them (dungeon-curriculum I7).
 EVAL_ARMS = ("with_human", "with_partners", "no_flag", "no_camera", "no_compass", "no_map", "no_memory", "no_goal",
-             "random_goal", "random_cell", "no_plan", "no_searched", "no_coverage")
+             "random_goal", "random_cell", "no_plan", "no_searched", "no_coverage", "no_party", "no_recall")
 
 
 @dataclass

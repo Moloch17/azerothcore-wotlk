@@ -47,6 +47,82 @@ namespace
     }
 }
 
+Animus::Curriculum::PartyRecall::Entry* Animus::Curriculum::PartyRecall::Find(uint64 guid, bool make)
+{
+    Entry* free = nullptr;
+    Entry* oldest = nullptr;
+    for (Entry& entry : Entries)
+    {
+        if (entry.Known && entry.Guid == guid)
+            return &entry;
+        if (!entry.Known)
+            free = free ? free : &entry;
+        else if (!oldest || entry.SeenMs < oldest->SeenMs)
+            oldest = &entry;
+    }
+    if (!make)
+        return nullptr;
+    Entry* slot = free ? free : oldest;
+    *slot = Entry();
+    slot->Guid = guid;
+    return slot;
+}
+
+void Animus::Curriculum::PartyRecall::See(uint64 guid, float x, float y, uint64 nowMs)
+{
+    // A clock that ran backwards is a new episode: nothing seen before it counts.
+    if (nowMs < LastMs)
+        Clear();
+    LastMs = nowMs;
+    Entry* entry = Find(guid, true);
+    if (entry->Known && nowMs > entry->SeenMs)
+    {
+        // The pace between two sightings, smoothed; one that implies more than a run is a jump (a rise at the door,
+        // a teleport), not a pace, and forgets the old one.
+        float const seconds = float(nowMs - entry->SeenMs) / 1000.0f;
+        float const vx = (x - entry->X) / seconds;
+        float const vy = (y - entry->Y) / seconds;
+        if (vx * vx + vy * vy > MAX_SPEED * MAX_SPEED)
+        {
+            entry->Vx = 0.0f;
+            entry->Vy = 0.0f;
+        }
+        else
+        {
+            entry->Vx = 0.5f * entry->Vx + 0.5f * vx;
+            entry->Vy = 0.5f * entry->Vy + 0.5f * vy;
+        }
+    }
+    else if (!entry->Known)
+    {
+        entry->Vx = 0.0f;
+        entry->Vy = 0.0f;
+    }
+    if (nowMs >= entry->SeenMs || !entry->Known)
+    {
+        entry->X = x;
+        entry->Y = y;
+        entry->SeenMs = nowMs;
+    }
+    entry->Known = true;
+}
+
+bool Animus::Curriculum::PartyRecall::Believe(uint64 guid, uint64 nowMs, float& x, float& y, float& ageSeconds,
+    float& speed)
+{
+    if (nowMs < LastMs)
+        Clear();
+    Entry const* entry = Find(guid, false);
+    if (!entry)
+        return false;
+    ageSeconds = float(nowMs - std::min(nowMs, entry->SeenMs)) / 1000.0f;
+    float const carried = std::min(ageSeconds, PREDICT_SECONDS);
+    x = entry->X + entry->Vx * carried;
+    y = entry->Y + entry->Vy * carried;
+    speed = std::sqrt(entry->Vx * entry->Vx + entry->Vy * entry->Vy);
+    return true;
+}
+
 Animus::Curriculum::PartyFramesBlock::Dot Animus::Curriculum::PartyFramesBlock::DotOf(float selfX, float selfY,
     float facing, float otherX, float otherY, float radius)
 {
@@ -68,7 +144,7 @@ Animus::Curriculum::PartyFramesBlock::Dot Animus::Curriculum::PartyFramesBlock::
 
 void Animus::Curriculum::PartyFramesBlock::FillFrame(SeatView::PartyFrame& out, Unit const* member, bool leads,
     Player const* bot, float selfX, float selfY, float facing, float radius, ObjectGuid focus,
-    Vision::SeenList const* seen)
+    Vision::SeenList const* seen, PartyRecall* recall, uint64 nowMs)
 {
     out = SeatView::PartyFrame();
     if (!member || !bot)
@@ -100,6 +176,33 @@ void Animus::Curriculum::PartyFramesBlock::FillFrame(SeatView::PartyFrame& out, 
         out.DotShown = dot.Shown;
         out.DotRight = dot.Right;
         out.DotForward = dot.Forward;
+    }
+
+    // Where the seat believes it is (revision 3): seen now -- its dot, or in the camera's frame -- is a sighting;
+    // otherwise the memory's guess.
+    if (recall)
+    {
+        uint64 const raw = member->GetGUID().GetRawValue();
+        bool const live = sameMap && (out.DotShown || (seen && CombatBlock::InView(*seen, raw)));
+        if (live)
+            recall->See(raw, member->GetPositionX(), member->GetPositionY(), nowMs);
+        float x = 0.0f;
+        float y = 0.0f;
+        float age = 0.0f;
+        float speed = 0.0f;
+        if (sameMap && recall->Believe(raw, nowMs, x, y, age, speed))
+        {
+            float const dx = x - selfX;
+            float const dy = y - selfY;
+            float const c = std::cos(facing);
+            float const s = std::sin(facing);
+            out.RecallKnown = true;
+            out.RecallLive = live;
+            out.RecallForward = dx * c + dy * s;
+            out.RecallRight = dx * s - dy * c;
+            out.RecallAgeSeconds = age;
+            out.RecallSpeed = speed;
+        }
     }
 
     // Its target, where the seat's client has it too (what /assist would select).
@@ -148,7 +251,7 @@ void Animus::Curriculum::PartyFramesBlock::FillFromGroup(SeatView& view)
     ObjectGuid const focus = view.Focus ? *view.Focus : ObjectGuid::Empty;
     for (uint32 slot = 0; slot < count; ++slot)
         FillFrame(view.Frames[slot], members[slot], members[slot]->GetGUID() == leader, bot, selfX, selfY,
-            view.Facing, view.MinimapYards, focus, view.Seen);
+            view.Facing, view.MinimapYards, focus, view.Seen, view.Party, view.NowMs);
 }
 
 Animus::Curriculum::BlockSize Animus::Curriculum::PartyFramesBlock::Size(Layout const& /*layout*/) const
@@ -188,6 +291,13 @@ char const* Animus::Curriculum::PartyFramesBlock::FeatureName(uint32 feature)
         case FRAME_TARGET_HOSTILE:  return "target_hostile";
         case FRAME_TARGET_MINE:     return "target_mine";
         case FRAME_TARGET_IN_VIEW:  return "target_in_view";
+        case FRAME_RECALL:          return "recall";
+        case FRAME_RECALL_LIVE:     return "recall_live";
+        case FRAME_RECALL_RIGHT:    return "recall_right";
+        case FRAME_RECALL_FORWARD:  return "recall_forward";
+        case FRAME_RECALL_DISTANCE: return "recall_distance";
+        case FRAME_RECALL_AGE:      return "recall_age";
+        case FRAME_RECALL_SPEED:    return "recall_speed";
         default:                    return "";
     }
 }
@@ -235,6 +345,17 @@ void Animus::Curriculum::PartyFramesBlock::Observe(SeatView const& view, float* 
             mask[ACTION_SELECT_FIRST + member] = 1;
             mask[ACTION_FOCUS_FIRST + member] = 1;
             mask[ACTION_ASSIST_FIRST + member] = 1;
+        }
+        if (frame.RecallKnown)
+        {
+            out[FRAME_RECALL] = 1.0f;
+            out[FRAME_RECALL_LIVE] = frame.RecallLive ? 1.0f : 0.0f;
+            out[FRAME_RECALL_RIGHT] = std::clamp(frame.RecallRight / RECALL_YARDS, -1.0f, 1.0f);
+            out[FRAME_RECALL_FORWARD] = std::clamp(frame.RecallForward / RECALL_YARDS, -1.0f, 1.0f);
+            out[FRAME_RECALL_DISTANCE] = std::clamp(std::sqrt(frame.RecallRight * frame.RecallRight
+                + frame.RecallForward * frame.RecallForward) / RECALL_YARDS, 0.0f, 1.0f);
+            out[FRAME_RECALL_AGE] = std::clamp(frame.RecallAgeSeconds / RECALL_AGE_SECONDS, 0.0f, 1.0f);
+            out[FRAME_RECALL_SPEED] = std::clamp(frame.RecallSpeed / PartyRecall::MAX_SPEED, 0.0f, 1.0f);
         }
         if (!frame.DotShown)
             continue;

@@ -982,7 +982,9 @@ dungeon's boss route. Nothing is fought. The leader lives in the **owner's slot*
 
 ### Rewards (per follower, `Reward`, `.cpp:601-700`)
 
-`RewardTerms()`: FollowKept, Regroup, Lost, Blocking, Death, Stuck, Wall. Reads `PartyFollow.*` and
+The leader's wandering route, the waiting terms and the start-point rise are decision 0033 (`docs/forge/decisions/0033-follow-wandering-leader.md`): the way is one chain of the stock path's corners per map (`Way`: steps Both / Drop / Cut, waypoints every `WaypointYards`), the leader starts at a random waypoint and hops along it (`PickHop`), drawn from the episode's own generator (seeded by the evaluation seed in an evaluation).
+
+`RewardTerms()`: FollowKept, Settled, Regroup, Drift, Lost, Blocking, Death, Stuck, Wall (and Fidget, the scenario's column). Reads `PartyFollow.*` and
 `Seek.Stuck/Wall/WallSlide`.
 `stepMs` = time since the seat's last reward call; only seats < 5 and active.
 
@@ -993,6 +995,9 @@ dungeon's boss route. Nothing is fought. The leader lives in the **owner's slot*
 | Wall | Cost | `AddFixed(-Standing::WallCharge(wallS, moved, asked, Wall, WallSlide))`, `asked = speed(kind) * DecisionMs/1000` | `Seek.Wall` 0.02, `Seek.WallSlide` 0.5 |
 | FollowKept | Outcome | band 1 (distance within `BandMin..BandMax`): `+Kept * seconds` | `Kept` 0.02, `BandMin` 3, `BandMax` 10 |
 | Lost | Cost | band 3 (past `LostYards`): `-Lost * seconds` | `Lost` 0.02, `LostYards` 40 |
+| Drift | Cost | band 2 past `DriftYards`: `-Drift * seconds` | `Drift` 0.01, `DriftYards` 20 |
+| Settled | Outcome | band 1, the leader stopped (no keys) for `SettleAfterMs`, the follower's speed under `SettleSpeed`: `+Settled * seconds` | `Settled` 0.02, `SettleAfterMs` 1500, `SettleSpeed` 0.5 |
+| Fidget | Cost | the same wait, the follower moving: `-Fidget * seconds` | `PartyFollow.Fidget` 0.01 |
 | Regroup | Outcome | once per counted stop when a pending follower is in band: `+Regroup * RegroupShare(since, RegroupWindow)`; expires unpaid after the window | `Regroup` 0.5, `RegroupWindow` 20 s, `RegroupMinStopMs` 2000 |
 | Blocking | Cost | `InTheWay(...)` with the leader's held keys moving: `-Blocking * seconds` | `Blocking` 0.05, `BlockYards` 2.5, `BlockHalfAngle` 45 |
 
@@ -1004,9 +1009,11 @@ leader on the same map. Death is the only term here paid while dead.
 
 `follow_kept_share` (InBandMs / elapsed), `follow_distance_mean`, `lost_seconds`, `blocking_seconds`, `regroup_stops`,
 `regroups`, `regroup_share` (regroups / regroup_stops), `regroup_seconds` (mean), `deaths`, `rises`, `rejoins`,
-`rejoin_seconds`, `rejoined` (share of rises that rejoined; 0 when no rises), `dead_seconds`, `leader_stops_reached`,
-`leader_route_share`, `leader_skips`, `leader_sudden_stops`, `leader_drops`, `leader_rises`, `leader_cast`, `difficulty`
-(the rung), `at_top_rung`. Plus `reward_*` for the seven terms. `apps/forge/python/configs/move4_follow.yaml:37-93`
+`rejoin_seconds`, `rejoined` (share of rises that rejoined; 0 when no rises), `dead_seconds`, `settled_share`,
+`wait_seconds`, `wait_fidget_seconds`, `drift_seconds`, `leader_hops`, `leader_route_share` (hops walked / hops ended),
+`leader_reverse_hops`, `leader_pass_hops`, `leader_stops_reached`, `leader_skips`, `leader_sudden_stops`,
+`leader_look_stops`, `leader_drops`, `leader_rises`, `leader_cast`, `start_along`, `follow_map`, `start_x/y/z`,
+`difficulty` (the rung), `at_top_rung`. Plus `reward_*` for the nine terms. `apps/forge/python/configs/move4_follow.yaml:37-93`
 reads
 `follow_kept_share` (headline, target `>= 0.9`, `gate_metric`, `measure`), `regroup_share >= 0.9`, `lost_seconds <= 5`,
 `rejoined >= 0.9` and the others in its report list. `deaths` and `rejoined` columns are also defined by other

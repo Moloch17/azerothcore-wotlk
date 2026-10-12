@@ -44,7 +44,7 @@ are those of commit `bd32b9dc8`.
 | Blocks/CellGrid.h | 168 | Header-only: the cell goal's pooled-block geometry, `Choosable`/`Count`/`Stood`, `WorldPoint`/`Locate`, cell words, `CropPose`, `CellPoint`. |
 | Blocks/SightBlock.h | 146 | Seen+remembered list and pointer presses, revision 2. |
 | Blocks/SightBlock.cpp | 311 | List writer, named row, masks, press dispatch. |
-| Blocks/PartyFramesBlock.h | 138 | Party frames, revision 2. |
+| Blocks/PartyFramesBlock.h | 160 | Party frames, revision 3 (recall columns: where each member was last seen and is believed to be, decision 0033). |
 | Blocks/PartyFramesBlock.cpp | 276 | Frame fill from the core group, minimap dots, presses. |
 | Blocks/CombatBlock.h | 200 | Player/pet frames, target frame, per-slot combat columns, revision 1. |
 | Blocks/CombatBlock.cpp | 344 | Threat status, visible enemies, ground fire, presses. |

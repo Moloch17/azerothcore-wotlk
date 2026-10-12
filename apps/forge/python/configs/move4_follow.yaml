@@ -1,19 +1,22 @@
-# M4 -- follow (dungeon-curriculum plan Part 2; I5, the party follow, and I4, death in an instance). A party of five in
-# an empty Ragefire Chasm or Deadmines, at the dungeon's level band: a leader (the owner's slot: the script's keys, the
-# route planner's corners toward each boss's place in turn -- a script, never a bot input) walks the dungeon's route
-# from the door, stopping at each boss's place; the four learned followers keep 3-10 yd from it, out of its way,
-# through its doors and drops, waiting when it stops and regrouping after (PartyFollow.* in the conf template). A
-# follower knows the leader by the party frames (always: health, power, alive, in combat, the leader) and the minimap's
-# dots (a position only within 60 yd: the party frames block), by what its camera shows and by what it remembers --
-# never a bearing through a wall. A follower that dies rises at the entrance after Respawn.DelayMs, at full health and
-# power, and walks back; the episode never ends on a death.
+# M4 -- follow (dungeon-curriculum plan Part 2; I5, the party follow, and I4, death in an instance; decision 0033). A
+# party of five in an empty Ragefire Chasm or Deadmines, at the dungeon's level band: a leader (the owner's slot: the
+# script's keys toward the corners of the stock path's way through the dungeon -- a script, never a bot input, the thing
+# followed and not a teacher) wanders the dungeon's way: from a random point of it, hop by hop, forwards and back,
+# standing a while or passing on, walking or running, looking round at its halts, until the clock ends. The four
+# learned followers keep 3-10 yd from it, out of its way, through its doors and drops, standing still with it while it
+# stands and regrouping after (PartyFollow.* in the conf template). A follower knows the leader by the party frames
+# (always: health, power, alive, in combat, the leader), the minimap's dots (a position only within 60 yd), its memory
+# of where each member was last seen and at what pace (the recall columns, party frames revision 3), what its camera
+# shows and what its own recurrent memory keeps -- never a bearing through a wall. A follower that dies rises at the
+# episode's start point after Respawn.DelayMs, at full health and power, and walks back; the episode never ends on a
+# death. Wailing Caverns is held out.
 #
 # Seeds from move2_seek (stage.json's seed chain): the move block, the camera and the mental map carry over by name;
 # the party frames block starts fresh (its join at zero). M2's hyperparameters otherwise; what differs is below.
 extends: move2_seek.yaml
 run_name: move4_follow
 
-# The latest M2 checkpoint (the default, said here because M2 has not trained yet as this is written).
+# The latest M2 checkpoint: the only one whose camera was trained at the locked 12-yd boom (decision 0031's run).
 seed_from: latest
 
 # A ceiling, not a target: convergence ends the stage.
@@ -38,36 +41,64 @@ mappo:
   # M2 holds a goal at most 32 s (128 decisions: room goals); this stage keeps M1's 16 s (64).
   goal_every_decisions: 64
 
-# Every evaluation plays both dungeons' fixed routes (the route is the dungeon's: door, then each boss's place) from
-# seeded episodes -- the same parties, stops and sudden stops each time -- at the training rung.
+# Every evaluation plays seeded episodes -- the leader's wandering is drawn from the evaluation seed, so the same parties,
+# starts, hops and sudden stops each time -- at the training rung, on both training dungeons; and Wailing Caverns, held
+# out, every evaluation.
 eval:
   every_env_steps: 10000000
-  episodes: 64
+  # 96 (64 before decision 0033): the wandering leader makes an episode's reading noisier than the fixed route's.
+  episodes: 96
   # M2 plays the sampled policy at every evaluation since its deep rung (2026-10-09); this stage keeps its own.
   sampled_every: 0
   # M2's held-out "sweep", "sweep_rotating" and "deadmines" (its held-out MAP; the Deadmines is a training map here) are
-  # arenas this stage does not hold out: left inherited, the learner refuses to start (train.heldout_arenas). Null
-  # drops the whole map.
-  heldout: null
-  # M2's per-arena cadence and all-seeds trace files (exploration v3) are its own: restated off (an empty map replaces).
+  # arenas this stage does not have: null drops each inherited key (the learner refuses an arena the stage lacks).
+  # `wailing` (decision 0033): Wailing Caverns, never trained on, every evaluation -- a party that learned to follow is
+  # told from one that learned two dungeons.
+  heldout:
+    sweep: null
+    sweep_rotating: null
+    deadmines: null
+    wailing: 48
+  heldout_every: 1
+  heldout_on_best: false
+  # M2's per-arena cadence is its own: an empty map replaces it.
   heldout_cadence: {}
-  trace_all: false
-  # M2's ablation arms (no_flag, no_camera, no_map, no_memory, no_goal, random_goal, random_cell, no_plan, no_searched,
-  # no_coverage) are its own: this stage plays none.
-  arms: {}
-  report: [follow_kept_share, follow_distance_mean, regroup_share, regroup_seconds, regroups, regroup_stops,
-           lost_seconds, blocking_seconds, deaths, rises, rejoins, rejoin_seconds, rejoined, dead_seconds,
-           leader_route_share, leader_stops_reached, leader_skips, leader_sudden_stops, leader_drops, leader_rises,
-           leader_cast, difficulty, at_top_rung, course_kinks, control_changes_per_minute, wall_seconds,
-           stuck_seconds, died, reward_follow_kept, reward_regroup, reward_lost, reward_blocking, reward_death,
-           reward_stuck, reward_wall, reward_jitter, reward_effort, reward_repeat]
+  # Every scored follower's decisions, kept for the route viewer (eval_trace_<steps>_<policy>.npz).
+  trace_all: true
+  # The ablation arms (decision 0033), the evaluation's seeds again with one input taken away, 48 episodes each every
+  # second evaluation: no_camera (the image blanked: the entity list stays), no_map (the map block and the crop),
+  # no_memory (the recurrent state reset every decision), no_party (the party frames block: frames, dots and recall)
+  # and no_recall (the recall columns alone: what remembering and predicting where each member is is worth). Readings,
+  # never gates. M2's other arms have no meaning here (no goals of its kind, no coverage block): null drops each.
+  arms_every: 2
+  arms:
+    no_flag: null
+    no_goal: null
+    random_goal: null
+    random_cell: null
+    no_plan: null
+    no_searched: null
+    no_coverage: null
+    no_camera: 48
+    no_map: 48
+    no_memory: 48
+    no_party: 48
+    no_recall: 48
+  report: [follow_kept_share, follow_distance_mean, settled_share, wait_seconds, wait_fidget_seconds, drift_seconds,
+           regroup_share, regroup_seconds, regroups, regroup_stops, lost_seconds, blocking_seconds, deaths, rises,
+           rejoins, rejoin_seconds, rejoined, dead_seconds, leader_route_share, leader_hops, leader_reverse_hops,
+           leader_pass_hops, leader_stops_reached, leader_skips, leader_sudden_stops, leader_look_stops, leader_drops,
+           leader_rises, leader_cast, start_along, difficulty, at_top_rung, course_kinks, control_changes_per_minute,
+           wall_seconds, stuck_seconds, died, reward_follow_kept, reward_settled, reward_regroup, reward_drift,
+           reward_lost, reward_blocking, reward_death, reward_fidget, reward_stuck, reward_wall, reward_jitter,
+           reward_effort, reward_repeat]
 
 # forge status for this stage: the share kept with the leader (the plan's M4 measure, kept-with-leader >= 90%), how
-# soon the party regroups at a stop and how often, straying and blocking, deaths and rejoins, the leader's progress
-# along the route, and the rung. Targets are a readout, never a gate.
+# still the party stands with a still leader, how soon it regroups at a stop and how often, straying and blocking,
+# deaths and rejoins, the leader's progress along its hops, and the rung. Targets are a readout, never a gate.
 status:
-  headline: [follow_kept_share, regroup_share, regroup_seconds, lost_seconds, blocking_seconds, deaths,
-             rejoin_seconds, rejoined, leader_route_share, difficulty, wall_seconds, died]
+  headline: [follow_kept_share, settled_share, regroup_share, regroup_seconds, drift_seconds, lost_seconds,
+             blocking_seconds, deaths, rejoin_seconds, rejoined, leader_route_share, difficulty, wall_seconds, died]
   targets:
     # M2's targets are not M4's measures (null drops an inherited key; a target must be in the headline).
     found: null
@@ -84,18 +115,20 @@ status:
     pause_look_share: null
     straight_run_mean_s: null
     follow_kept_share: ">= 0.9"
+    settled_share: ">= 0.8"
     regroup_share: ">= 0.9"
     regroup_seconds: "<= 5"
+    drift_seconds: "<= 10"
     lost_seconds: "<= 5"
     blocking_seconds: "<= 3"
     rejoined: ">= 0.9"
     wall_seconds: "<= 2"
     died: "<= 0.02"
-  # Death knights are never fielded here, by design: the party follows through a dungeon at its level band (13-20) and a
+  # Death knights are never fielded here, by design: the party follows through a dungeon at its level band (13-25) and a
   # death knight starts at 55; the sim draws the seat again among the classes that fit (StageScenario's level redraw,
   # which the party follow takes as a dungeon does). forge status lists it under the headline, as group1_roles does.
   excluded:
-    death_knight: "the party follows through a dungeon at its level band (13-20) and a death knight starts at 55"
+    death_knight: "the party follows through a dungeon at its level band (13-25) and a death knight starts at 55"
 
 convergence:
   # M1's patience, restated: M2 raises its own to 6 (2026-10-09).
@@ -104,18 +137,19 @@ convergence:
   # its ladder (at_top_rung).
   measure: follow_kept_share
 
-# The ladder (a slow, steady leader -> running -> sudden stops -> sudden stops and steps back) is the fade's: the
-# stage pays no shaping, so the fade moves the rung alone. It steps as soon as the kept share at the rung is 0.75 or
-# more at an evaluation -- the gate alone, never waiting on a plateau (require_plateau: false) or on the cost ladder.
+# The ladder (a slow, steady leader -> running and turning back -> sudden stops -> sudden stops and steps back) is the
+# fade's: the stage pays no shaping, so the fade moves the rung alone. It steps as soon as the kept share at the rung is
+# 0.75 or more at an evaluation -- the gate alone, never waiting on a plateau (require_plateau: false) or on the cost
+# ladder.
 fade:
   rungs: [1.0, 0.5, 0.25, 0.0]
   gate_metric: follow_kept_share
   gate_value: 0.75
   require_plateau: false
 
-# No cost ladder: Stuck, Wall, Lost, Blocking and Death are at their fixed price from the first step (Costs, off any
-# ladder), and the noise prices (jitter, effort, repeats) at full price from the start, so nothing waits on a cost
-# ladder (the dungeon plan's rule; M1's stall).
+# No cost ladder: Stuck, Wall, Drift, Lost, Fidget, Blocking and Death are at their fixed price from the first step
+# (Costs, off any ladder), and the noise prices (jitter, effort, repeats) at full price from the start, so nothing waits
+# on a cost ladder (the dungeon plan's rule; M1's stall).
 costs:
   enabled: false
   # M2's gate (found, 0.8) is inherited and means nothing here: this stage reports no `found` column (null drops it).

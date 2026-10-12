@@ -37,6 +37,14 @@ namespace
         { .MapId = 36, .Entry = 643, .Level = 20, .Difficulty = DUNGEON_NORMAL, .Name = "Sneed" },
         { .MapId = 36, .Entry = 1763, .Level = 20, .Difficulty = DUNGEON_NORMAL, .Name = "Gilnid" },
         { .MapId = 36, .Entry = 639, .Level = 20, .Difficulty = DUNGEON_NORMAL, .Name = "Edwin VanCleef" },
+        // Wailing Caverns, the follow stage's held-out map (decision 0033: never trained on, evaluated every time).
+        // Mutanus is left out: he is summoned by the Disciple's event and has no spawn row to stand at.
+        { .MapId = 43, .Entry = 3671, .Level = 20, .Difficulty = DUNGEON_NORMAL, .Name = "Lady Anacondra" },
+        { .MapId = 43, .Entry = 3670, .Level = 20, .Difficulty = DUNGEON_NORMAL, .Name = "Lord Pythas" },
+        { .MapId = 43, .Entry = 3669, .Level = 20, .Difficulty = DUNGEON_NORMAL, .Name = "Lord Cobrahn" },
+        { .MapId = 43, .Entry = 3674, .Level = 20, .Difficulty = DUNGEON_NORMAL, .Name = "Skum" },
+        { .MapId = 43, .Entry = 3673, .Level = 20, .Difficulty = DUNGEON_NORMAL, .Name = "Lord Serpentis" },
+        { .MapId = 43, .Entry = 5775, .Level = 20, .Difficulty = DUNGEON_NORMAL, .Name = "Verdan the Everliving" },
     };
 
     std::vector<BossRow> const NONE;

@@ -96,6 +96,8 @@ std::string_view Animus::Curriculum::RewardTermName(RewardTerm term)
         case RewardTerm::PocketEntry:           return "pocket_entry";
         case RewardTerm::Revisit:               return "revisit";
         case RewardTerm::Recovered:             return "recovered";
+        case RewardTerm::Settled:               return "settled";
+        case RewardTerm::Drift:                 return "drift";
         case RewardTerm::Count:                 break;
     }
 

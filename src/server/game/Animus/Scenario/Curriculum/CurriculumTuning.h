@@ -376,21 +376,32 @@ namespace Animus::Curriculum
         } Respawn;
 
         /// **The party follow** (Opposition::PartyFollow, M4 move4_follow; dungeon-curriculum I5): a party of
-        /// followers keeps with a leader walking a dungeon's route from the door to its last boss, stopping at each
-        /// boss's place for StopSeconds of the rung. The leader is in the owner's slot, moved by the player controller:
-        /// the script's keys (the route planner's corners toward the next stop -- a script, never a bot input) or, a
-        /// CastShare percent of training episodes, a frozen checkpoint's (the learner's cast.agents.leader).
+        /// followers keeps with a leader wandering a dungeon's way (decision 0033). The way is the stock PathGenerator's
+        /// path from the door through each boss's place, sampled into waypoints every WaypointYards; an episode starts
+        /// at a random one (StartAnywhere percent of episodes; else the door) and the leader hops from waypoint to
+        /// waypoint, HopMinYards-HopMaxYards along the way, backwards ReverseChance percent of hops from
+        /// ReverseFromRung (never back up a drop it cannot climb, never across a cut in the way), standing at the end of
+        /// a hop for StopSeconds of the rung or passing on (PassChance percent), until the clock ends. The leader is in
+        /// the owner's slot, moved by the player controller: the script's keys toward the corners of its hop (a script,
+        /// never a bot input: the thing followed, not a teacher, decision 0002) or, a CastShare percent of training
+        /// episodes, a frozen checkpoint's (the learner's cast.agents.leader).
         ///
-        /// **The ladder** (the shaping fade's rungs, SightDraw::Rung): the leader walks below WalkRungs; from
-        /// SuddenFromRung it also stops where nobody expects it, for SuddenStopMinMs-SuddenStopMaxMs, every
-        /// SuddenGapMin-SuddenGapMax seconds; from BackStepFromRung some of those stops step back BackStepYards first.
+        /// **The ladder** (the shaping fade's rungs, SightDraw::Rung): the leader walks below WalkRungs and walks
+        /// WalkChance percent of its hops above; from SuddenFromRung it also stops where nobody expects it, for
+        /// SuddenStopMinMs-SuddenStopMaxMs, every SuddenGapMin-SuddenGapMax seconds; from BackStepFromRung some of
+        /// those stops step back BackStepYards first. At LookChance percent of its stops it looks round (turns at
+        /// LookRate rad/s for a second or two, once or twice), as a player at a halt does.
         ///
         /// Paid to each follower: Kept per second within [BandMin, BandMax] yards of the leader (FollowKept,
         /// Outcome); Regroup at each stop of the leader's of at least RegroupMinStopMs, once, on coming into the band,
         /// times 1 - seconds/RegroupWindow (Outcome: the leader's stops are the leader's, so it cannot be farmed);
-        /// Lost per second past LostYards and Blocking per second within BlockYards ahead of a moving leader, inside
-        /// BlockHalfAngle degrees of its facing (Costs); Death per death (Cost); Stuck and Wall at their own fixed
-        /// price (Seek.*: off the cost ladder). The minimap shows party members within MinimapYards.
+        /// Settled per second standing still (under SettleSpeed yd/s) in the band while the leader has stood
+        /// SettleAfterMs (Outcome: waiting with a player who waits, the owner, 2026-10-12), and Fidget per second moving
+        /// about in the band then (Cost); Drift per second between DriftYards and LostYards, Lost per second past
+        /// LostYards and Blocking per second within BlockYards ahead of a moving leader, inside BlockHalfAngle degrees
+        /// of its facing (Costs); Death per death (Cost); Stuck and Wall at their own fixed price (Seek.*: off the cost
+        /// ladder). The minimap shows party members within MinimapYards. A dead follower rises at the episode's start
+        /// point (the door, or the waypoint it began at) after Respawn.DelayMs.
         struct PartyFollowTuning
         {
             float BandMin = 3.0f;
@@ -419,6 +430,24 @@ namespace Animus::Curriculum
             int32 BackStepChance = 30;
             uint32 GiveUpMs = 6000;
             int32 CastShare = 0;
+            // The wandering route (decision 0033).
+            int32 StartAnywhere = 75;
+            float WaypointYards = 15.0f;
+            float HopMinYards = 20.0f;
+            float HopMaxYards = 90.0f;
+            int32 ReverseChance = 30;
+            uint32 ReverseFromRung = 1;
+            int32 PassChance = 35;
+            int32 WalkChance = 20;
+            int32 LookChance = 60;
+            float LookRate = 1.2f;
+            // Waiting with a still leader, and drifting off (decision 0033).
+            float Settled = 0.02f;
+            float Fidget = 0.01f;
+            uint32 SettleAfterMs = 1500;
+            float SettleSpeed = 0.5f;
+            float DriftYards = 20.0f;
+            float Drift = 0.01f;
         } PartyFollow;
 
         /// The seek stage (Opposition::Seek, M2: SeekEncounter): one real object in one of the Stockades' rooms, found
@@ -1033,6 +1062,22 @@ namespace Animus::Curriculum
             f("PartyFollow.BackStepChance", tuning.PartyFollow.BackStepChance);
             f("PartyFollow.GiveUpMs", tuning.PartyFollow.GiveUpMs);
             f("PartyFollow.CastShare", tuning.PartyFollow.CastShare);
+            f("PartyFollow.StartAnywhere", tuning.PartyFollow.StartAnywhere);
+            f("PartyFollow.WaypointYards", tuning.PartyFollow.WaypointYards);
+            f("PartyFollow.HopMinYards", tuning.PartyFollow.HopMinYards);
+            f("PartyFollow.HopMaxYards", tuning.PartyFollow.HopMaxYards);
+            f("PartyFollow.ReverseChance", tuning.PartyFollow.ReverseChance);
+            f("PartyFollow.ReverseFromRung", tuning.PartyFollow.ReverseFromRung);
+            f("PartyFollow.PassChance", tuning.PartyFollow.PassChance);
+            f("PartyFollow.WalkChance", tuning.PartyFollow.WalkChance);
+            f("PartyFollow.LookChance", tuning.PartyFollow.LookChance);
+            f("PartyFollow.LookRate", tuning.PartyFollow.LookRate);
+            f("PartyFollow.Settled", tuning.PartyFollow.Settled);
+            f("PartyFollow.Fidget", tuning.PartyFollow.Fidget);
+            f("PartyFollow.SettleAfterMs", tuning.PartyFollow.SettleAfterMs);
+            f("PartyFollow.SettleSpeed", tuning.PartyFollow.SettleSpeed);
+            f("PartyFollow.DriftYards", tuning.PartyFollow.DriftYards);
+            f("PartyFollow.Drift", tuning.PartyFollow.Drift);
             f("Seek.Arrive", tuning.Seek.Arrive);
             f("Seek.StepCost", tuning.Seek.StepCost);
             f("Seek.Death", tuning.Seek.Death);

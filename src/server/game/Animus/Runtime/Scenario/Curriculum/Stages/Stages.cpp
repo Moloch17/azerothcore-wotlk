@@ -761,35 +761,43 @@ namespace
             .FocusChance = 100,
         });
 
-        // M4 -- follow (dungeon-curriculum Part 2, I5): a party of five -- a leader and four learned followers -- in an
-        // empty Ragefire Chasm or Deadmines (cleared whole, as the Stockades: SpawnArea::ClearMap, and their doors,
-        // levers and chests removed: ObjectPool::ClearOwn), at the dungeon's level band (the dungeon finder's). The
-        // leader walks the dungeon's route from the door through each boss's place in turn, stopping at each; the
-        // followers keep 3-10 yd from it, out of its way, through its doors and drops, waiting when it stops and
-        // regrouping after (PartyFollowEncounter). Deaths are rare here, but a follower that dies rises at the
-        // entrance after Respawn.DelayMs and walks back (I4, EntranceRespawn): the episode never ends on one.
+        // M4 -- follow (dungeon-curriculum Part 2, I5; decision 0033): a party of five -- a leader and four learned
+        // followers -- in an empty Ragefire Chasm or Deadmines (cleared whole, as the Stockades: SpawnArea::ClearMap,
+        // and their doors, levers and chests removed: ObjectPool::ClearOwn), at the dungeon's level band (the dungeon
+        // finder's). The leader wanders the dungeon's way (the stock path from the door through each boss's place):
+        // from a random point of it, hop by hop, forwards and back, standing a while or passing on, looking round at
+        // its halts, until the clock ends -- no route to learn by heart. The followers keep 3-10 yd from it, out of
+        // its way, through its doors and drops, standing still with it while it stands and regrouping after
+        // (PartyFollowEncounter). Deaths are rare here, but a follower that dies rises at the episode's start point
+        // after Respawn.DelayMs and walks back (I4, EntranceRespawn): the episode never ends on one.
         //
         // **The ladder** (the shaping fade's rungs; the stage has no shaping, so the fade is the ladder alone): a
-        // slow, steady leader (walking, long stops), then running, then stopping unannounced, then stopping
-        // unannounced more often and sometimes stepping back first.
+        // slow, steady leader (walking, long stops, forward hops), then running and turning back, then stopping
+        // unannounced, then stopping unannounced more often and sometimes stepping back first.
         //
         // Core and the goal block are the frame; Move the lesson; the camera (with its entity list) and the mental
         // map how the leader is seen and the way remembered; the party frames block what a player's UI shows of the
-        // party -- the frames, always, and the minimap's dots within its radius. No compass: the leader is not an
-        // objective point. The evaluation plays both dungeons' fixed routes from seeded episodes at the training rung.
+        // party -- the frames, always, the minimap's dots within its radius, and (revision 3) where each member was
+        // last seen and is believed to be now. No compass: the leader is not an objective point. The evaluation plays
+        // seeded episodes (the same wanderings every time) at the training rung; Wailing Caverns is held out
+        // (`wailing`, EvalOnly: eval.heldout), so a party that learned to follow is told from one that learned two
+        // dungeons.
         stages.push_back({
             .Name = "move4_follow",
             .Suffix = "_follow",
             .Extends = "move2_seek",
-            .Summary = "an empty Ragefire Chasm or Deadmines: four followers keep with a leader walking the dungeon's "
-                "route from the door, through its doors and drops, waiting and regrouping when it stops; a death "
-                "rises at the entrance and walks back",
+            .Summary = "an empty Ragefire Chasm or Deadmines: four followers keep with a leader wandering the dungeon's "
+                "way, through its doors and drops, standing still with it and regrouping when it stops; a death "
+                "rises at the start and walks back; Wailing Caverns held out",
             .Blocks = { Core, Move, Vision, Map, PartyFrames, Goal },
             .Arenas = {
                 { .Name = "ragefire", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::PartyFollow,
                     .PartySize = GROUP_MEMBERS, .EpisodeSeconds = 300, .MapId = MAP_RAGEFIRE_CHASM },
                 { .Name = "deadmines", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::PartyFollow,
                     .PartySize = GROUP_MEMBERS, .EpisodeSeconds = 300, .MapId = MAP_DEADMINES },
+                { .Name = "wailing", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::PartyFollow,
+                    .EvalOnly = true, .PartySize = GROUP_MEMBERS, .EpisodeSeconds = 300,
+                    .MapId = MAP_WAILING_CAVERNS },
             },
             .MapId = MAP_RAGEFIRE_CHASM,
         });

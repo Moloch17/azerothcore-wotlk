@@ -383,9 +383,12 @@ per second beyond 40 yd, `Blocking` 0.05 per second within 2.5 yd ahead of a mov
 steps back (`PartyFollow.WalkRungs 1, SuddenFromRung 2, BackStepFromRung 3`); gate `follow_kept_share` 0.75,
 `require_plateau: false`; `costs.enabled: false` with its gate removed.
 
-**Evaluation.** Every 10M, 64 episodes (fixed routes, seeded), `heldout: null` (M2's sweep arena does not exist here).
+**Evaluation.** Every 10M, 96 episodes (seeded wanderings: decision 0033), Wailing Caverns held out (`wailing`, 48
+episodes every evaluation), arms `no_camera`, `no_map`, `no_memory`, `no_party`, `no_recall` (48 each, every second
+evaluation), `trace_all` on.
 
-**Status.** Headline: follow_kept_share, regroup_share, regroup_seconds, lost_seconds, blocking_seconds, deaths,
+**Status.** Headline: follow_kept_share, settled_share (>= 0.8), regroup_share, regroup_seconds, drift_seconds (<= 10),
+lost_seconds, blocking_seconds, deaths,
 rejoin_seconds,
 rejoined, leader_route_share, difficulty, wall_seconds, died. Targets: follow_kept_share >= 0.9, regroup_share >= 0.9,
 regroup_seconds <= 5, lost_seconds <= 5, blocking_seconds <= 3, rejoined >= 0.9, wall_seconds <= 2, died <= 0.02.

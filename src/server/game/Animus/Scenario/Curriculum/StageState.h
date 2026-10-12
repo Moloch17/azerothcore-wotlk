@@ -244,6 +244,9 @@ namespace Animus::Curriculum
         mutable std::array<uint64, SIGHT_SLOTS> SightGuids{};
         /// The seat's client focus (EntityActions: Press::Focus): the friend its beneficial spells go to.
         mutable ObjectGuid Focus;
+        /// Where it last saw each member of its party, and at what pace (the party frames block, revision 3): the
+        /// episode's, forgotten when the clock starts again. Mutable like the entity memory.
+        mutable PartyRecall Party;
         /// The sight block's presses refused this episode, by EntityActions::Refusal.
         std::array<uint32, EntityActions::REFUSALS> ActRefusedBy{};
         mutable Movement::Client Mover;

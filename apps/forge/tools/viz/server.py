@@ -155,13 +155,24 @@ def _episode_rows(run, steps, policy):
     return rows
 
 
+#: A follow episode (move4_follow, decision 0033) counts as kept, the viewer's "found", at this share of its time kept
+#: within the band of the leader (the stage's ladder gate).
+FOLLOW_KEPT = 0.75
+
+
+def _map_of(r):
+    """The episode's map: the seek stage's seek_map, the follow stage's follow_map."""
+    return int(_num(r.get("seek_map"), _num(r.get("follow_map"), 0)))
+
+
 def map_points(run, steps, policy, map_id):
-    """The selected evaluation's object and end positions on the map: with its routes, the searched area."""
+    """The selected evaluation's object (a follow episode's start) and end positions on the map: with its routes, the
+    searched area."""
     pts = []
     for r in _episode_rows(run, steps, policy):
-        if int(_num(r.get("seek_map"), 0)) != map_id:
+        if _map_of(r) != map_id:
             continue
-        for p in ("object", "end"):
+        for p in ("object", "end", "start"):
             xyz = [_num(r.get(f"{p}_{a}")) for a in "xyz"]
             if None not in xyz:
                 pts.append(xyz)
@@ -177,15 +188,32 @@ def episodes(run, steps, policy):
     out = []
     for r in rows:
         room_i, obj_i = _num(r.get("seek_room")), _num(r.get("seek_object"))
+        kept = _num(r.get("follow_kept_share"))
+        follow = r.get("follow_map") is not None and r.get("seek_map") is None
+        summary = None
+        if follow:
+            # A follow episode: "found" is kept with the leader, its object the start, and its line the follow numbers.
+            parts = [f"kept {round((kept or 0) * 100)}%"]
+            for key, label in (("settled_share", "settled"), ("regroup_share", "regrouped")):
+                value = _num(r.get(key))
+                if value is not None:
+                    parts.append(f"{label} {round(value * 100)}%")
+            lost = _num(r.get("lost_seconds"))
+            if lost:
+                parts.append(f"lost {round(lost)} s")
+            summary = " · ".join(parts)
         out.append({
             "seed": int(r.get("seed", -1)), "agent": int(r.get("agent", 0) or 0),
-            "map": int(_num(r.get("seek_map"), 0)),
-            "found": bool(_num(r.get("found"), 0)), "timed_out": bool(_num(r.get("timed_out"), 0)),
+            "map": _map_of(r),
+            "found": (kept or 0) >= FOLLOW_KEPT if follow else bool(_num(r.get("found"), 0)),
+            "timed_out": bool(_num(r.get("timed_out"), 0)),
             "find_seconds": _num(r.get("find_seconds")),
+            "summary": summary,
             "class": r.get("layout") or r.get("class") or "?", "race": RACES.get(int(_num(r.get("race"), 0)), r.get("race")), "level": _num(r.get("level")),
             "room": rooms[int(room_i)] if room_i is not None and 0 <= int(room_i) < len(rooms) else None,
             "object": objects[int(obj_i)] if obj_i is not None and 0 <= int(obj_i) < len(objects) else None,
-            "object_xyz": [_num(r.get("object_x")), _num(r.get("object_y")), _num(r.get("object_z"))],
+            "object_xyz": ([_num(r.get("start_x")), _num(r.get("start_y")), _num(r.get("start_z"))] if follow else
+                           [_num(r.get("object_x")), _num(r.get("object_y")), _num(r.get("object_z"))]),
             "end_xyz": [_num(r.get("end_x")), _num(r.get("end_y")), _num(r.get("end_z"))],
             "pin_events": _num(r.get("pin_events")), "wall_seconds": _num(r.get("wall_seconds")),
             "return": _num(r.get("return")), "rung": _num(r.get("seek_rung")),

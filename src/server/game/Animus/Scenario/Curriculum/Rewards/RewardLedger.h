@@ -181,6 +181,12 @@ namespace Animus::Curriculum
         PocketEntry,
         Revisit,
         Recovered,
+        /// The party follow's wait (decision 0033): standing still in the band beside a leader who stands
+        /// (PartyFollow.Settled, Outcome; its moving-about counterpart is Fidget), and drifting off between
+        /// PartyFollow.DriftYards and LostYards (PartyFollow.Drift, Cost). Appended: the terms before keep their
+        /// numbers.
+        Settled,
+        Drift,
         Count
     };
 
@@ -233,8 +239,10 @@ namespace Animus::Curriculum
             case RewardTerm::FollowKept:
             // The interact stage's door opened by its lever (M3).
             case RewardTerm::DoorOpened:
-            // The party follow's regroup at the leader's stops (2026-10-06).
+            // The party follow's regroup at the leader's stops (2026-10-06), and its wait beside a still leader
+            // (decision 0033).
             case RewardTerm::Regroup:
+            case RewardTerm::Settled:
             // The combat stages' own (2026-10-06): surviving, interrupts landed.
             case RewardTerm::Survived:
             case RewardTerm::InterruptLanded:
@@ -262,6 +270,7 @@ namespace Animus::Curriculum
             case RewardTerm::Stuck:
             case RewardTerm::Wall:
             case RewardTerm::Lost:
+            case RewardTerm::Drift:
             // A decoy taken for the named object (M3).
             case RewardTerm::WrongObject:
             case RewardTerm::Blocking:

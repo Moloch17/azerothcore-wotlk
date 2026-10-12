@@ -238,7 +238,7 @@ function renderList() {
     row.innerHTML = `<span class="dot" style="background:${e.found ? css('--found') : css('--missed')}"></span>
       <span class="seed">#${b.seed}</span>
       <span>${e.class}${e.room ? ' · ' + e.room : ''}</span>
-      <span class="t">${b.video ? '<b class="vid" title="filmed: video in the media panel">▶</b> ' : ''}${e.found ? Math.round(e.find_seconds || 0) + ' s' : 'miss'}</span>`;
+      <span class="t">${b.video ? '<b class="vid" title="filmed: video in the media panel">▶</b> ' : ''}${e.summary ? (e.summary.split(' · ')[0]) : e.found ? Math.round(e.find_seconds || 0) + ' s' : 'miss'}</span>`;
     row.onclick = () => selectEpisode(b);
     row.onmouseenter = () => { state.hover = b; draw(); };
     row.onmouseleave = () => { if (state.hover === b) { state.hover = null; draw(); } };
@@ -449,8 +449,9 @@ function selectEpisode(b) {
   const e = b.episode;
   $('player').hidden = false;
   $('ptitle').textContent = `#${b.seed} · ${e.class}${e.race ? ' (' + e.race + ')' : ''}${e.level ? ' L' + e.level : ''}` +
-    ` · ${e.room || 'room ?'}${e.object ? ' · ' + e.object : ''} · ` +
-    (e.found ? `found in ${Math.round(e.find_seconds || 0)} s` : 'not found') +
+    // a follow episode (decision 0033) shows its follow numbers instead of a room and a find
+    (e.summary ? ` · ${e.summary}` : ` · ${e.room || 'room ?'}${e.object ? ' · ' + e.object : ''} · ` +
+      (e.found ? `found in ${Math.round(e.find_seconds || 0)} s` : 'not found')) +
     (e.pin_events ? ` · ${e.pin_events} pins` : '') +
     // systematic search (decision 0030): the rung's rooms covered and the time spent re-crossing searched rooms
     (e.checked_share != null ? ` · ${Math.round(e.checked_share * 100)}% of rooms searched` : '') +
@@ -651,7 +652,8 @@ function wire() {
       const e = b.episode;
       tip.hidden = false;
       tip.textContent = `#${b.seed} · ${e.class}${e.room ? ' · ' + e.room : ''} · ` +
-        (e.found ? `found in ${Math.round(e.find_seconds || 0)} s` : 'not found') + (b.video ? ' · ▶ video' : '');
+        (e.summary || (e.found ? `found in ${Math.round(e.find_seconds || 0)} s` : 'not found')) +
+        (b.video ? ' · ▶ video' : '');
       tip.style.left = `${Math.min(x + 14, c.clientWidth - tip.offsetWidth - 8)}px`;
       tip.style.top = `${Math.max(8, y - 34)}px`;
     } else tip.hidden = true;

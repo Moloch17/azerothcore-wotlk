@@ -59,6 +59,43 @@ namespace Animus::Curriculum
     struct Layout;
     class SeatMemory;
 
+    /// **Where a seat last saw each member of its party** (the party frames block, revision 3; the owner, 2026-10-12:
+    /// "bots need to remember and predict teammate locations when they look away or are out of view"). A member is
+    /// seen while its minimap dot shows or the seat's camera has it in frame; each sighting keeps its place and its
+    /// pace (the velocity between sightings, smoothed). Out of sight, the frame reads the last place carried on by the
+    /// last pace for at most PREDICT_SECONDS -- a player expects a teammate who walked round a corner to keep walking
+    /// -- then held there, with the time since it was seen. Kept per seat for the episode (SeatState::Party), keyed
+    /// by the member's GUID; a clock that ran backwards (a new episode) forgets everything.
+    struct PartyRecall
+    {
+        /// How far a member's last pace is carried on out of sight, seconds.
+        static constexpr float PREDICT_SECONDS = 3.0f;
+        /// The pace a sighting may imply at most, yd/s (a run, a little over): a jump between two far-apart
+        /// sightings (a rise at the door) is not a speed.
+        static constexpr float MAX_SPEED = 8.0f;
+
+        struct Entry
+        {
+            uint64 Guid = 0;
+            float X = 0.0f;
+            float Y = 0.0f;
+            float Vx = 0.0f;
+            float Vy = 0.0f;
+            uint64 SeenMs = 0;
+            bool Known = false;
+        };
+        std::array<Entry, 8> Entries{};
+        uint64 LastMs = 0;
+
+        void Clear() { *this = PartyRecall(); }
+        /// The member's entry; `make` takes a free one (or the oldest) for a member not yet kept, else null.
+        Entry* Find(uint64 guid, bool make);
+        /// A sighting of the member at (x, y) at `nowMs`.
+        void See(uint64 guid, float x, float y, uint64 nowMs);
+        /// Where the member is believed to be at `nowMs`; false when it was never seen.
+        bool Believe(uint64 guid, uint64 nowMs, float& x, float& y, float& ageSeconds, float& speed);
+    };
+
     /// A dungeon's way on, as the goal head names it (peak-play W3, InstanceEncounter::View and SeenWorld): the goal
     /// block's TravelTo places and its assignment. (The journal of the first curriculum's quests, with the corpses,
     /// nodes and vendors beside it, was deleted with it; the goal space keeps its targets, which are the layout's.)
@@ -392,10 +429,21 @@ namespace Animus::Curriculum
             bool TargetHostile = false;             // ... hostile to the seat
             bool TargetMine = false;                // ... the seat's own selection
             bool TargetInView = false;              // ... in the seat's camera's frame now
+            // Where the seat believes it is (PartyRecall, revision 3): known once seen on the minimap or in the
+            // camera this episode; live while it is seen; else the last sighting carried on by its last pace.
+            bool RecallKnown = false;
+            bool RecallLive = false;
+            float RecallRight = 0.0f;               // yards, in the seat's facing frame, as the dot
+            float RecallForward = 0.0f;
+            float RecallAgeSeconds = 0.0f;          // since it was last seen
+            float RecallSpeed = 0.0f;               // yd/s, its pace when last seen
             ObjectGuid Guid;                        // the member, for a press on its frame
         };
         std::array<PartyFrame, GROUP_MEMBERS> Frames{};
         float MinimapYards = 60.0f;
+        /// **The seat's memory of its party** (SeatState::Party; the party frames block, revision 3): each member's
+        /// last seen place and pace. Null for a view without one (then the frames' recall columns stay 0).
+        PartyRecall* Party = nullptr;
 
         /// **What the goal names** (M3 interact; the sight block's named row): the kind of thing the seat is to find
         /// or act on -- its semantic class (Vision::Class), its template entry and whether it is a game object, as a

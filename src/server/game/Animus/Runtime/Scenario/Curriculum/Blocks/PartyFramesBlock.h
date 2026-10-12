@@ -57,10 +57,22 @@ namespace Animus::Curriculum
     /// columns and no presses; the combat block's member frames (its revision 0) moved here. The columns are named
     /// (DescribeColumns), so a checkpoint of either seeds them by name: M4's member{i}_* where they were; the combat
     /// block's member features start fresh (the combat stages had no party, so those columns never read anything).
+    ///
+    /// **Revision 3** (decision 0033, the owner, 2026-10-12: "bots need to remember and predict teammate locations
+    /// when they look away or are out of view"): seven recall columns per member from the seat's memory of its party
+    /// (PartyRecall): whether it was ever seen this episode, whether it is seen now (its dot, or in the camera's
+    /// frame), where it is believed to be (right, forward and distance, over RECALL_YARDS, in the seat's facing frame:
+    /// the last sighting carried on by the last pace, PartyRecall::PREDICT_SECONDS at most), the seconds since it was
+    /// seen (over RECALL_AGE_SECONDS) and its pace then. Appended after revision 2's columns, named: a revision 2
+    /// checkpoint seeds every column it had, the recall ones start fresh.
     class PartyFramesBlock final : public Block
     {
     public:
-        static constexpr uint32 REVISION = 2;
+        static constexpr uint32 REVISION = 3;
+        /// The recall's place is read over this many yards (clamped): a dungeon's corridors, a little past the minimap.
+        static constexpr float RECALL_YARDS = 120.0f;
+        /// ... and its age over this many seconds (clamped).
+        static constexpr float RECALL_AGE_SECONDS = 30.0f;
         /// The client fades a party frame past this many yards (the range the frame's spells are checked at).
         static constexpr float FRAME_RANGE = 40.0f;
 
@@ -90,6 +102,14 @@ namespace Animus::Curriculum
             FRAME_TARGET_HOSTILE,
             FRAME_TARGET_MINE,          // the seat's own selection
             FRAME_TARGET_IN_VIEW,       // in the seat's camera's frame now
+            // Revision 3: where the seat believes it is (PartyRecall).
+            FRAME_RECALL,               // seen this episode
+            FRAME_RECALL_LIVE,          // seen now: its dot, or in the camera's frame
+            FRAME_RECALL_RIGHT,         // / RECALL_YARDS, in [-1, 1]
+            FRAME_RECALL_FORWARD,
+            FRAME_RECALL_DISTANCE,      // / RECALL_YARDS, in [0, 1]
+            FRAME_RECALL_AGE,           // seconds since seen / RECALL_AGE_SECONDS, in [0, 1]
+            FRAME_RECALL_SPEED,         // its pace when last seen / PartyRecall::MAX_SPEED, in [0, 1]
             FRAME_FEATURES
         };
 
@@ -115,9 +135,11 @@ namespace Animus::Curriculum
 
         /// **One member's frame**, as `bot`'s client shows it (the one place a member's frame is read): `leads` it
         /// leads the party; its dot from the seat at (selfX, selfY) facing `facing`, within `radius`; `focus` the
-        /// seat's focus and `seen` its camera's last frame (null: none).
+        /// seat's focus and `seen` its camera's last frame (null: none); `recall` the seat's memory of its party, told
+        /// of a sighting and read for the recall columns at `nowMs` (null: those stay 0).
         static void FillFrame(SeatView::PartyFrame& out, Unit const* member, bool leads, Player const* bot,
-            float selfX, float selfY, float facing, float radius, ObjectGuid focus, Vision::SeenList const* seen);
+            float selfX, float selfY, float facing, float radius, ObjectGuid focus, Vision::SeenList const* seen,
+            PartyRecall* recall = nullptr, uint64 nowMs = 0);
         /// **The frames from the seat's core group** (StageScenario::ViewSeat, in a stage with this block): its leader
         /// first, then the others in the group's order, the seat itself aside; the frames empty without a group. An
         /// encounter whose party has no core group fills them itself (PartyFollowEncounter::View).

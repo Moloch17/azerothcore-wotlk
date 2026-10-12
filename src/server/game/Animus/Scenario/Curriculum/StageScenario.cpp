@@ -3575,6 +3575,8 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
         view.SightGuids = &seat.SightGuids;
         view.Focus = &seat.Focus;
     }
+    // Its memory of where its party was, in a stage with party frames (revision 3, decision 0033).
+    view.Party = _stage.Has(BlockId::PartyFrames) ? &seat.Party : nullptr;
     // Until this episode's client has taken its body from the server, the seat reads the server's (Client::Stop).
     view.Body = seat.Mover.Started() ? &seat.Mover.Body : nullptr;
     view.PinnedMs = seat.StuckRunMs;
@@ -3646,8 +3648,9 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     view.TargetSlot = seat.TargetSlot;
     view.RankTier = seat.RankTier;
 
-    // The party frames (the party frames block, revision 2: the one source of party-member state): from the seat's
-    // core group, where it has one; an encounter whose party has none (the party follow) fills them in its View.
+    // The party frames (the party frames block, revision 3: the one source of party-member state, with the seat's
+    // recall of where each member was): from the seat's core group, where it has one; an encounter whose party has
+    // none (the party follow) fills them in its View.
     if (_stage.Has(BlockId::PartyFrames))
     {
         view.MinimapYards = _tuning.PartyFollow.MinimapYards;

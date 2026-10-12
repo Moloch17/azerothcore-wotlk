@@ -482,8 +482,12 @@ def standard_error(values: np.ndarray, groups: np.ndarray | None = None) -> floa
 #:               block's searched, new_age and total scalars zeroed: what the searched-state input is worth;
 #:   no_coverage (general search) the coverage block's columns and the map block's coverage scalars (revision 3:
 #:               frontier_*, region_*, clusters, searched_cells, by name) zeroed: what the coverage inputs are worth.
+#:   no_party    (decision 0033) the party frames block's columns zeroed: no frames, no minimap dots, no recall -- the
+#:               party known by the camera and the policy's own memory alone;
+#:   no_recall   (decision 0033) the party frames block's recall columns alone (member*_recall*, revision 3) zeroed:
+#:               what remembering and predicting where each member is is worth beside the dots and the camera.
 ABLATIONS = ("no_flag", "no_camera", "no_compass", "no_map", "no_memory", "no_goal", "random_goal", "random_cell",
-             "no_plan", "no_searched", "no_coverage")
+             "no_plan", "no_searched", "no_coverage", "no_party", "no_recall")
 #: The ablations that are a flag on the trainer's goal draw (Run.evaluate_arms sets them), not an edit of the input.
 GOAL_DRAW_ARMS = ("random_goal", "random_cell", "no_plan")
 #: What an ablation arm reports and shows in forge status (<column>_<arm>).
@@ -582,6 +586,21 @@ def coverage_columns(spec, stage: dict | None) -> list[list[int]]:
     return out
 
 
+def block_named_columns(spec, stage: dict | None, block_name: str, contains: str) -> list[list[int]]:
+    """Per layout of `spec`, the absolute observation columns of block `block_name` whose stage.json obs_names contain
+    `contains` (empty where the layout lacks the block or such columns)."""
+    out = []
+    for layout in spec.layouts:
+        entry = ((stage or {}).get("layouts") or {}).get(layout.name) or {}
+        block = next((b for b in entry.get("blocks", ()) if b.get("name") == block_name), None)
+        if block is None:
+            out.append([])
+            continue
+        first = int(block["obs"][0])
+        out.append([first + i for i, name in enumerate(block.get("obs_names") or ()) if contains in name])
+    return out
+
+
 def ablate_columns(obs: np.ndarray, layout: np.ndarray, columns: list[list[int]]) -> np.ndarray:
     """A copy of `obs` [E, A, O] with each row's `columns` (per layout index: absolute observation columns) zeroed."""
     obs = np.array(host(obs), copy=True)
@@ -607,7 +626,7 @@ def ablation_chooser(choose: Callable, arm: str, spec, stage: dict | None) -> Ca
     `choose.acting`."""
     if arm not in ABLATIONS:
         raise ValueError(f"unknown ablation arm {arm!r}; expected one of {list(ABLATIONS)}")
-    block = {"no_compass": "compass", "no_map": "map", "no_goal": "goal"}.get(arm)
+    block = {"no_compass": "compass", "no_map": "map", "no_goal": "goal", "no_party": "party_frames"}.get(arm)
     spans = compass_spans(spec, stage, block) if block else []
     if block and not any(count for _, count in spans):
         raise ValueError(f"eval.arms.{arm}: the stage has no {block} block to zero")
@@ -619,6 +638,10 @@ def ablation_chooser(choose: Callable, arm: str, spec, stage: dict | None) -> Ca
     if arm == "no_coverage" and not any(coverage):
         raise ValueError("eval.arms.no_coverage: the stage has no coverage block and no map block with coverage "
                          "scalars (map block revision 3) to zero")
+    recall = block_named_columns(spec, stage, "party_frames", "_recall") if arm == "no_recall" else []
+    if arm == "no_recall" and not any(recall):
+        raise ValueError("eval.arms.no_recall: the stage has no party frames block with recall columns (party frames "
+                         "revision 3) to zero")
     if arm == "no_memory":
         acting = getattr(choose, "acting", None)
         if acting is None or all(getattr(acting, name) is None for name in ("memory", "goal", "slow_memory", "queue")):
@@ -637,11 +660,13 @@ def ablation_chooser(choose: Callable, arm: str, spec, stage: dict | None) -> Ca
             # The draw itself is the trainer's (uniform_goals, uniform_cells, single_goal: set around the arm by
             # Run.evaluate_arms).
             return choose(step)
-        if arm in ("no_compass", "no_goal"):
+        if arm in ("no_compass", "no_goal", "no_party"):
             return choose(replace(step, obs=ablate_obs(step.obs, step.layout, spans)))
         if arm == "no_coverage":
             # Observation columns only (the crop's bytes are no_map's and no_searched's): no image needed.
             return choose(replace(step, obs=ablate_columns(step.obs, step.layout, coverage)))
+        if arm == "no_recall":
+            return choose(replace(step, obs=ablate_columns(step.obs, step.layout, recall)))
         image = getattr(step, "image", None)
         if image is None:
             raise ValueError(f"eval.arms.{arm}: the stage has no camera image to edit")
