@@ -18,7 +18,9 @@
 
 #include "MapBlock.h"
 #include "CellGrid.h"
+#include "Layout.h"
 #include "Player.h"
+#include "StageDefinition.h"
 #include "SeatView.h"
 #include "UnitBody.h"
 #include "VisionCost.h"
@@ -65,7 +67,7 @@ Animus::Curriculum::BlockSize Animus::Curriculum::MapBlock::Size(Layout const& /
     return BlockSize{ OBS_COUNT, 0 };
 }
 
-void Animus::Curriculum::MapBlock::DescribeManifest(Layout const& /*layout*/, boost::json::object& block) const
+void Animus::Curriculum::MapBlock::DescribeManifest(Layout const& layout, boost::json::object& block) const
 {
     boost::json::object map;
     map["transport"] = "bytes";
@@ -78,7 +80,20 @@ void Animus::Curriculum::MapBlock::DescribeManifest(Layout const& /*layout*/, bo
     for (char const* name : Vi::CROP_CHANNEL_NAMES)
         channels.push_back(boost::json::string(name));
     map["channel_names"] = std::move(channels);
-    map["map_bytes"] = Vi::CROP_BYTES;
+    // Revision 5: the tiers (StageDefinition::MapTiers), fine first; map_bytes is their total and tier_bytes one
+    // tier's, so a learner reads the tier count off either.
+    uint32 const tiers = std::max<uint32>(1, layout.Stage ? layout.Stage->MapTiers : 1);
+    boost::json::array tierList;
+    for (uint32 tier = 0; tier < tiers; ++tier)
+    {
+        boost::json::object entry;
+        entry["cell"] = tier == 0 ? double(Vi::CROP_CELL) : double(Vi::COARSE_CELL);
+        entry["bytes"] = Vi::CROP_BYTES;
+        tierList.push_back(std::move(entry));
+    }
+    map["tiers"] = std::move(tierList);
+    map["tier_bytes"] = Vi::CROP_BYTES;
+    map["map_bytes"] = Vi::CROP_BYTES * tiers;
     map["codes"] = Vi::MAP_CODES;
     boost::json::array codes;
     for (char const* name : Vi::MAP_CODE_NAMES)

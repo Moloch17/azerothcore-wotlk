@@ -235,6 +235,10 @@ namespace Animus
         /// Image; and the ended episodes' last, beside FinalImage. Empty for a stage without a map block.
         std::vector<uint8> MapCrop;
         std::vector<uint8> FinalMapCrop;
+        /// Per agent, Spec().LabelBytes bytes: its training labels for the observation in Obs (the nav stages'
+        /// traversability classes and route cost-to-go, protocol 31), written with Layout and Present. Empty for a
+        /// stage without labels; the ended episodes' final observations have none.
+        std::vector<uint8> Labels;
         std::vector<int32> Actions;
         /// The goal each agent is pursuing, in agent order, as the learner sent it (Curriculum::NO_GOAL for none).
         /// A host fills it before ApplyActions; a policy without goals leaves it alone.

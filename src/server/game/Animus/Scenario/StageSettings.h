@@ -77,6 +77,10 @@ namespace Animus
         /// Where a stage writes its layout manifests and stage.json (<LayoutsDir>/<stage>/); empty = nowhere.
         std::string LayoutsDir;
 
+        /// The host's data folder (AnimusForge.DataDir): the baked scenes live in its scenes/, the nav stages'
+        /// traversability bakes in its trav/ (Vision::TravRegistry). Empty = the working directory.
+        std::string DataDir;
+
         /// The run's own event log (<RunsDir>/<stage>/events.log): one timestamped line per event the sim itself
         /// wants a person to find in the run directory, appended and never rewritten. Empty = nowhere (mod-animus).
         std::string EventsLog;

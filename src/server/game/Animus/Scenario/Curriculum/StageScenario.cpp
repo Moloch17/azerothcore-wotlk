@@ -48,6 +48,7 @@
 #include "RolesEncounter.h"
 #include "CombatBlock.h"
 #include "PartyFollowEncounter.h"
+#include "PointNavEncounter.h"
 #include "BuildRetry.h"
 #include "SpellMgr.h"
 #include "Env.h"
@@ -283,6 +284,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         _tuning.Instance.WingRungStart)
 {
     _eventsLog = settings.EventsLog;
+    _dataDir = settings.DataDir;
     // The coverage analysis's sizes (MapBlock::Observe, general search) are the seek tuning's: set once here.
     MapBlock::ConfigureCoverage(_tuning.Seek.ClusterMinCells, _tuning.Seek.PocketMinCells);
 
@@ -377,7 +379,8 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // ... and its look head's choices come back with the actions (free look, protocol 22).
     _spec.LookHeads = _stage.Has(BlockId::Vision) ? Vision::FreeLook::HEADS : 0;
     // The mental map's crop travels as bytes too, in a section of its own (perception-goals REDESIGN §3, protocol 24).
-    _spec.MapBytes = _stage.Has(BlockId::Map) ? Vision::CROP_BYTES : 0;
+    // ... in as many tiers as the stage asks (StageDefinition::MapTiers; map block revision 5), fine first.
+    _spec.MapBytes = _stage.Has(BlockId::Map) ? Vision::CROP_BYTES * std::max<uint32>(1, _stage.MapTiers) : 0;
     _data.resize(settings.Envs);
 
     // The encounters any of the stage's arenas uses, in build order.
@@ -401,6 +404,11 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     auto const hasInteract = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Interact; };
     auto const hasCombat = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Combat; };
     auto const hasRoles = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Roles; };
+    // The nav stages' point goal, or the labeller beside another encounter (nav6's follow arenas, LabelsOnly).
+    auto const hasPointNav = [](ArenaDefinition const& arena)
+    {
+        return arena.Against == Opposition::PointNav || arena.LabelsOnly;
+    };
 
     // Rewards do not depend on each other's order: what several read (a seat's damage taken) is computed before any
     // encounter's Reward.
@@ -432,11 +440,19 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     Encounter* roles = nullptr;
     if (_stage.AnyArena(hasRoles))
         roles = add(std::make_unique<RolesEncounter>(*this, envs));
+    // The nav stages' point goal and its labels (decision 0036): after the party follow, whose leader's last report
+    // is nav6's goal. Its labels are the STEP's labels section (protocol 31).
+    if (_stage.AnyArena(hasPointNav))
+    {
+        _pointNav = add(std::make_unique<PointNavEncounter>(*this, envs));
+        _pointNav->FollowLeader(_partyFollow);
+        _spec.LabelBytes = PointNavEncounter::LABEL_BYTES;
+    }
 
     // The order episode info columns and reward terms are listed in. An encounter left out of this list still
     // runs -- it is only the columns and the terms that are missed.
     for (Encounter* encounter : std::initializer_list<Encounter*>{ instance, _party, _partyFollow, seek, sight,
-        interact, combat, roles })
+        interact, combat, roles, _pointNav })
         if (encounter)
             _rewardOrder.push_back(encounter);
 
@@ -451,7 +467,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
                 || (encounter == _partyFollow && hasPartyFollow(arena))
                 || (encounter == seek && hasSeek(arena)) || (encounter == sight && hasSight(arena))
                 || (encounter == interact && hasInteract(arena)) || (encounter == combat && hasCombat(arena))
-                || (encounter == roles && hasRoles(arena));
+                || (encounter == roles && hasRoles(arena)) || (encounter == _pointNav && hasPointNav(arena));
         };
 
         std::vector<Encounter*>& build = _arenaEncounters.emplace_back();
@@ -1382,6 +1398,30 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
     for (std::string const& merge : _stage.Merges)
         merges.push_back(boost::json::string(merge));
 
+    // The STEP's labels (protocol 31; vision movement curriculum, CONTRACT.md sec 3.1): bytes per agent, 0 without a
+    // nav encounter, and the layout of a row: the traversability classes of the fine (2 yd) and coarse (8 yd) crop
+    // frames, their route cost-to-go as f16 yards (unreachable = 65504), and four f32 scalars (C_body, C_start, the
+    // goal's forward and right yards in the body frame). The frames are the map crop's of the same observation.
+    boost::json::object& labels = stageFile["labels"].emplace_object();
+    labels["bytes"] = _spec.LabelBytes;
+    labels["side"] = Vision::TRAV_LABEL_SIDE;
+    labels["fine_cell"] = double(Vision::TRAV_CELL);
+    labels["coarse_cell"] = double(Vision::TRAV_LABEL_COARSE_CELL);
+    labels["fine_classes"] = Vision::TRAV_LABEL_FINE_CLASSES;
+    labels["coarse_classes"] = Vision::TRAV_LABEL_COARSE_CLASSES;
+    labels["fine_cost"] = Vision::TRAV_LABEL_FINE_COST;
+    labels["coarse_cost"] = Vision::TRAV_LABEL_COARSE_COST;
+    labels["scalars"] = Vision::TRAV_LABEL_SCALARS;
+    labels["cost_dtype"] = "f16";
+    labels["unreachable"] = double(Vision::TRAV_UNREACHABLE);
+    labels["classes"] = Vision::TRAV_CLASSES;
+    boost::json::array& classNames = labels["class_names"].emplace_array();
+    for (char const* name : Vision::TRAV_CLASS_NAMES)
+        classNames.push_back(boost::json::string(name));
+    boost::json::array& scalarNames = labels["scalar_names"].emplace_array();
+    for (char const* name : { "c_body", "c_start", "goal_forward_yards", "goal_right_yards" })
+        scalarNames.push_back(boost::json::string(name));
+
     // The critic state's width, and where it holds the episode's arena, so the learner knows each decision's arena.
     boost::json::object& state = stageFile["state"].emplace_object();
     state["dim"] = _spec.StateDim;
@@ -1625,7 +1665,9 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
         cells["wall_code"] = uint32(Vision::MapCode::Wall);
         cells["hazard_code"] = uint32(Vision::MapCode::Hazard);
         cells["height_zero"] = uint32(Vision::CROP_HEIGHT_ZERO);
-        cells["rise_units"] = uint32(CellGrid::RISE_UNITS);
+        // 0: no height limit on a choosable block (vision movement curriculum I8; it was 16 units, 4 yd).
+        cells["rise_units"] = 0;
+        cells["unknown_choosable"] = true;
         cells["min_floor_cells"] = CellGrid::MIN_FLOOR;
         cells["positions"] = PLAN_POSITIONS;
         cells["ticket_bits"] = CellGrid::TICKET_BITS;
@@ -2439,14 +2481,17 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     // opened a new, uncleared instance (a level-1 seat in live Ragefire), so it is emptied when it opens too; a seek
     // arena off the Stockades is a whole dungeon (the Deadmines runs ~450 yd end to end), cleared to the dungeon
     // radius.
+    // The nav stages (decision 0036) mix dungeons per env too, and a pair may be drawn anywhere in one: emptied to
+    // the dungeon radius, on every new instance.
     bool const partyFollow = Arena(env).Against == Opposition::PartyFollow;
     bool const seek = Arena(env).Against == Opposition::Seek;
+    bool const pointNav = Arena(env).Against == Opposition::PointNav;
     bool const newInstance = env.MapId != map->GetId() || env.InstanceId != map->GetInstanceId();
-    if ((firstBuild || ((partyFollow || seek) && newInstance)) && map->Instanceable())
+    if ((firstBuild || ((partyFollow || seek || pointNav) && newInstance)) && map->Instanceable())
     {
-        bool const wholeDungeon = partyFollow || (seek && map->GetId() != MAP_STORMWIND_STOCKADE);
+        bool const wholeDungeon = partyFollow || pointNav || (seek && map->GetId() != MAP_STORMWIND_STOCKADE);
         if (seek || Arena(env).Against == Opposition::Sight || Arena(env).Against == Opposition::Combat
-            || Arena(env).Against == Opposition::Roles || partyFollow)
+            || Arena(env).Against == Opposition::Roles || partyFollow || pointNav)
             SpawnArea::ClearMap(lead, wholeDungeon ? DUNGEON_CLEAR_RADIUS : INSTANCE_CLEAR_RADIUS);
         // M3's Deadmines is wider than the Stockades: from any of its sites to the ship's far end.
         else if (Arena(env).Against == Opposition::Interact)
@@ -2779,8 +2824,9 @@ void Animus::Curriculum::StageScenario::AcceptResurrections(Env& env)
 
 bool Animus::Curriculum::StageScenario::DeadForGood(Env const& env, uint32 seatIndex) const
 {
-    // Nobody is dead for good where a seat comes back alive at the entrance (dungeon-curriculum I4).
-    if (Arena(env).RespawnAtEntrance)
+    // Nobody is dead for good where a seat comes back alive at the entrance (dungeon-curriculum I4), nor in a nav
+    // stage, whose seat rises at its start point (PointNavEncounter::Update) whatever the arena says.
+    if (Arena(env).RespawnAtEntrance || Arena(env).Against == Opposition::PointNav)
         return false;
     CombatTally const& tally = Data(env).Seats[seatIndex].Combat;
     Player* bot = env.FindBot(seatIndex);
@@ -3996,6 +4042,21 @@ void Animus::Curriculum::StageScenario::AgentKinematics(Env const& env, float* k
     }
 }
 
+void Animus::Curriculum::StageScenario::AgentLabels(Env const& env, uint8* labels) const
+{
+    uint32 const agents = _spec.AgentsPerEnv;
+    uint32 const bytes = _spec.LabelBytes;
+    if (!_pointNav || !bytes)
+    {
+        std::fill(labels, labels + std::size_t(agents) * bytes, uint8(0));
+        return;
+    }
+    // Every agent row: a seat's labels at the pose its map crop was taken from; the owner's row (never a seat in a
+    // nav stage) and an empty seat's are zeros with every cost unreachable (WriteLabels does that for no body).
+    for (uint32 agent = 0; agent < agents; ++agent)
+        _pointNav->WriteLabels(env, agent, labels + std::size_t(agent) * bytes);
+}
+
 void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, float* obs, uint8* mask,
     uint8* image, uint8* map)
 {
@@ -4253,6 +4314,11 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
         std::chrono::nanoseconds>(std::chrono::steady_clock::now() - viewMark).count()));
     view.Image = image;
     SeatEncoder::Observe(view, obs, mask);
+    // The map's coarse tier (map block revision 5), behind the fine crop the map block wrote: the same pose, 8-yd
+    // cells (MentalMap::CropWide), in a stage that asks for two tiers.
+    if (map && _stage.MapTiers >= 2 && seat.Crop.Valid)
+        seat.Map.Crop(seat.Crop.X, seat.Crop.Y, seat.Crop.Z, seat.Crop.Yaw, map + Vision::CROP_BYTES,
+            float(Vision::COARSE_CELL));
     // What the frame showed of the objective: its flagged pixels, and the first frame with any (seek's measures).
     if (image && view.HasObjective)
     {

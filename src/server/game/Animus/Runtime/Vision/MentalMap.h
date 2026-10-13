@@ -49,7 +49,9 @@
 /// never marks a floor. WriteBody marks the cells the body stood on visited (and their floor, from the feet).
 ///
 /// **Reads** (Crop): the MapBlock's one egocentric, heading-up crop (the Change, 2026-10-06): CROP x CROP cells of
-/// CROP_CELL yards round the body, each summarising its four 1-yd cells, six bytes a cell (CropChannel).
+/// CROP_CELL yards round the body, each summarising its four 1-yd cells, seven bytes a cell (CropChannel); and, for
+/// the nav stages (map block revision 5, CONTRACT.md sec 3.2), the same crop at COARSE_CELL yards a cell -- 384 yd
+/// across, each cell summarising its 64 1-yd cells -- the planner's far tier.
 namespace Animus::Vision
 {
     /// Cells a tile side, and a cell's size in yards.
@@ -285,8 +287,11 @@ namespace Animus::Vision
         [[nodiscard]] MapCell const* FindCell(int32_t cx, int32_t cy) const;
 
         /// The crop round (x, y) at the feet's height z, heading-up for yaw (WoW's, counter-clockwise from +x), into
-        /// `out` (CROP_BYTES).
-        void Crop(float x, float y, float z, float yaw, uint8_t* out) const;
+        /// `out` (CROP_BYTES). `cell` is a crop cell's side: CROP_CELL (each cell its four 1-yd cells by priority),
+        /// or wider (COARSE_CELL: each cell the majority code of its 1-yd cells, the mean floor height, any visited,
+        /// the newest look, any frontier, the cells looked at this episode over 16 scaled to SEARCHED_MAX, the most
+        /// recent entity's class; the same bytes and the same frame).
+        void Crop(float x, float y, float z, float yaw, uint8_t* out, float cell = CROP_CELL) const;
 
         [[nodiscard]] std::size_t Tiles() const { return _tiles.size(); }
 
@@ -314,6 +319,9 @@ namespace Animus::Vision
         void Evict();
         void Fold(int64_t key, Tile const& tile);
         [[nodiscard]] MapCell const* FindCoarse(int32_t cx, int32_t cy) const;
+        /// Crop at a cell wider than CROP_CELL: the kept tiles' cells scattered into the crop's cells (a window copy
+        /// of 547 x 547 cells for 8-yd cells would cost more than the crop itself).
+        void CropWide(float x, float y, float z, float yaw, float cell, uint8_t* out) const;
 
         /// Stamp a look on `cell`, which Touch returned last (its tile is _lastTile, whose counters move).
         void MarkSeen(MapCell& cell, uint16_t stamp);

@@ -50,15 +50,17 @@ namespace Animus::Curriculum
 
     /// **The cell grid of a cell goal** (free choice goals, contract sec 1): the learner picks a block of the seat's
     /// crop, POOL x POOL crop cells (4 yd) wide, as GRID x GRID of them. The learner (mappo/networks.py cell_valid) and
-    /// the sim both implement Choosable exactly: seen floor only, never the navmesh.
+    /// the sim both implement Choosable exactly: the seat's own map, never the navmesh. Opened for the nav stages
+    /// (vision movement curriculum I8, CONTRACT.md sec 3.3): a block of unknown ground is choosable too -- a storey
+    /// above or a direction through unseen space is pressable, and a pick that turns out to be wall is priced by
+    /// CellLost, never masked -- and no height limit.
     namespace CellGrid
     {
         constexpr uint32 POOL = 2;
         constexpr uint32 GRID = Vision::CROP / POOL;
         constexpr uint32 CELLS = GRID * GRID;
-        /// A block's floor must sit within this many height units (CROP_HEIGHT_STEP each, 4 yd) of the feet.
-        constexpr int32 RISE_UNITS = 16;
-        /// ... and at least this many of its crop cells must be floor-like (floor or door).
+        /// At least this many of a block's crop cells must be floor-like (floor or door) or unknown. (RISE_UNITS, the
+        /// height limit of the first cell grid, is gone: I8 admits any height.)
         constexpr uint32 MIN_FLOOR = 2;
         /// A cell word is (ticket << CELL_BITS) | (cell + 1); 0 is none.
         constexpr uint32 TICKET_BITS = 11;
@@ -98,24 +100,20 @@ namespace Animus::Curriculum
             return code == uint8(Vision::MapCode::Floor) || code == uint8(Vision::MapCode::Door);
         }
 
-        /// Whether block (r, c) can be chosen: none of its four crop cells is wall or hazard, at least MIN_FLOOR are
-        /// floor-like, and every floor-like one has a height within RISE_UNITS of the feet (height byte 0 is none).
+        /// Whether block (r, c) can be chosen: none of its four crop cells is wall or hazard, and at least MIN_FLOOR
+        /// of them are floor-like or unknown; the height is not looked at (I8). The count is kept, though every
+        /// block without a wall or hazard has four such cells, so the sim and cell_valid read the same rule.
         [[nodiscard]] inline bool Choosable(uint8 const* crop, uint32 r, uint32 c)
         {
             uint32 floors = 0;
             for (uint32 dr = 0; dr < POOL; ++dr)
                 for (uint32 dc = 0; dc < POOL; ++dc)
                 {
-                    uint8 const* cell = CellAt(crop, r * POOL + dr, c * POOL + dc);
-                    uint8 const code = cell[Vision::CROP_CODE];
+                    uint8 const code = CellAt(crop, r * POOL + dr, c * POOL + dc)[Vision::CROP_CODE];
                     if (code == uint8(Vision::MapCode::Wall) || code == uint8(Vision::MapCode::Hazard))
                         return false;
-                    if (!FloorLike(code))
-                        continue;
-                    int32 const height = cell[Vision::CROP_HEIGHT];
-                    if (height == 0 || std::abs(height - int32(Vision::CROP_HEIGHT_ZERO)) > RISE_UNITS)
-                        return false;
-                    ++floors;
+                    if (FloorLike(code) || code == uint8(Vision::MapCode::Unknown))
+                        ++floors;
                 }
             return floors >= MIN_FLOOR;
         }
@@ -160,7 +158,8 @@ namespace Animus::Curriculum
         }
 
         /// The world point of block (r, c) of a crop taken at `pose` (the crop's own rotation, MentalMap::Crop): its
-        /// centre, at the mean height of its floor-like cells over the feet.
+        /// centre, at the mean height of its floor-like cells over the feet -- at the feet's height when it has none
+        /// (an unknown block, I8).
         [[nodiscard]] inline Position WorldPoint(uint8 const* crop, CropPose const& pose, uint32 r, uint32 c)
         {
             float const forward = Forward(r);

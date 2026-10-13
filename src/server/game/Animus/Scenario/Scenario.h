@@ -61,6 +61,9 @@ namespace Animus
         /// Per agent, the bytes of its mental map's crop (Vision::CROP_BYTES) when the stage has a map block, else 0:
         /// the STEP's map section (perception-goals REDESIGN §3, protocol 24).
         uint32 MapBytes = 0;
+        /// Per agent, the bytes of its training labels (PointNavEncounter::LABEL_BYTES) when the stage has a nav
+        /// encounter, else 0: the STEP's labels section (vision movement curriculum, protocol 31).
+        uint32 LabelBytes = 0;
         std::vector<LayoutSpec> Layouts;    // empty = one layout named after the scenario, ObsDim x NumActions
     };
 
@@ -158,6 +161,15 @@ namespace Animus
         virtual void AgentKinematics(Env const& /*env*/, float* kinematics) const
         {
             std::fill(kinematics, kinematics + Spec().AgentsPerEnv * Kinematics::SAMPLE_DIM, 0.0f);
+        }
+
+        /// labels: [AgentsPerEnv * Spec().LabelBytes] each agent's training labels for the observation just taken
+        /// (the nav stages' traversability classes and route cost-to-go, CONTRACT.md sec 3.1; protocol 31). Called
+        /// with AgentLayouts, after a live Observe only (an ended episode's final observation has none). Never
+        /// called when LabelBytes is 0.
+        virtual void AgentLabels(Env const& /*env*/, uint8* labels) const
+        {
+            std::fill(labels, labels + std::size_t(Spec().AgentsPerEnv) * Spec().LabelBytes, uint8(0));
         }
 
         /// reward: [AgentsPerEnv], from env.StepStats (cleared by EnvPool afterwards).

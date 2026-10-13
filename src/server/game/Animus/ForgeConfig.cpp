@@ -683,6 +683,7 @@ Animus::StageSettings AnimusForge::ForgeConfig::Stage(std::string const& scenari
     stage.ContinentReplicas = ContinentReplicas;
     stage.TuningPrefix = "AnimusForge.Curriculum.";
     stage.LayoutsDir = LayoutsDir().string();
+    stage.DataDir = DataDir;
     if (!scenario.empty())
         stage.EventsLog = (RunsDir() / scenario / "events.log").string();
     return stage;

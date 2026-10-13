@@ -456,9 +456,11 @@ void Animus::Curriculum::PartyFollowEncounter::BeforeLevel(Env& env)
 
     // The dungeon's level band (the dungeon finder's, as a whole dungeon's run was), and its front door: where a party
     // that walked in stands.
+    // A nav6 arena (LabelsOnly: the follow with the nav labeller beside it) plays at the stage's own level, as the
+    // other nav stages do; the band is the follow stage's.
     EnvState& data = _scenario.Data(env);
     for (BossRow const& row : FollowBosses())
-        if (row.MapId == mapId)
+        if (row.MapId == mapId && !_scenario.Arena(env).LabelsOnly)
         {
             auto const [low, high] = InstanceEncounter::DungeonLevels(row);
             data.EpisodeLevel = uint8(std::min<uint32>(urand(low, std::max(low, high)), DEFAULT_MAX_LEVEL));

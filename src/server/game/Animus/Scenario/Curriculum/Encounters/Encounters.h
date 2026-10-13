@@ -31,6 +31,8 @@
 #include "StageScenario.h"
 #include "WingRun.h"
 #include "SeenPlaces.h"
+// The nav stages' encounter (decision 0036) lives in its own header, as the sight and seek encounters do.
+#include "PointNavEncounter.h"
 #include <unordered_set>
 #include <mutex>
 #include <array>

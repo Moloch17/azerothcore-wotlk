@@ -84,6 +84,19 @@ namespace Animus::Curriculum
 
         /// Whether the episode has a leader in the owner's slot.
         [[nodiscard]] bool HasLeader(Env const& env) const { return _envs[env.Index].Built; }
+        /// The leader's position as the server last had it (its last report, Report): what every follower reads,
+        /// and the nav stages' labeller's goal (nav6, PointNavEncounter in labels-only mode). False before the first
+        /// report of the episode.
+        [[nodiscard]] bool LeaderReported(Env const& env, float& x, float& y, float& z) const
+        {
+            EnvParty const& party = _envs[env.Index];
+            if (!party.Built || !party.Reported)
+                return false;
+            x = party.RepX;
+            y = party.RepY;
+            z = party.RepZ;
+            return true;
+        }
 
         [[nodiscard]] std::vector<RewardTerm> RewardTerms() const override;
         void AddEpisodeInfo(EpisodeInfoTable& table) override;

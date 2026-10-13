@@ -2343,8 +2343,8 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
         if (_pool)
         {
             Animus::ScenarioSpec const& wire = _pool->Spec();
-            _vision.AgentKiB = double(wire.ObsDim * sizeof(float) + wire.NumActions + wire.ImageBytes + wire.MapBytes)
-                / 1024.0;
+            _vision.AgentKiB = double(wire.ObsDim * sizeof(float) + wire.NumActions + wire.ImageBytes + wire.MapBytes
+                + wire.LabelBytes) / 1024.0;
             _vision.MapKiB = double(wire.MapBytes) / 1024.0;
         }
         std::vector<std::pair<uint64, std::string>> refused;
@@ -2839,6 +2839,8 @@ bool AnimusForge::Forge::SendSpec(uint32 rank)
     msg.JitterMs = _jitterOn ? RunConfig().Jitter.JitterMs : 0;
     msg.SpikeMaxMs = _jitterOn ? RunConfig().Jitter.SpikeMaxMs : 0;
     msg.SpikeProb = _jitterOn ? RunConfig().Jitter.SpikeProb : 0.0f;
+    // The nav stages' training labels per agent (protocol 31); 0 for every other stage.
+    msg.LabelBytes = spec.LabelBytes;
 
     uint32 const layoutCount = uint32(spec.Layouts.size());
     std::vector<LayoutMsg> layouts(layoutCount);
@@ -3048,6 +3050,9 @@ bool AnimusForge::Forge::SendStep(uint32 group)
                 // envs' last. Always on the socket (the device buffers carry no map yet: G3's).
                 _pool->MapCrop.empty() ? none : chunk(_pool->MapCrop),
                 _pool->FinalMapCrop.empty() ? none : endedBytes(_pool->FinalMapCrop, _endedMap),
+                // The nav stages' labels (protocol 31), last of all and only for the observation rows: the
+                // traversability classes and route cost-to-go of every env's agents (no final_labels).
+                _pool->Labels.empty() ? none : chunk(_pool->Labels),
             };
         if (!_server.Send(MsgType::Step, chunks))
             return false;

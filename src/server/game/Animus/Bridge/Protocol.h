@@ -81,6 +81,16 @@
  *                                                     frontier); all zeros for an agent with no map. Always on the
  *                                                     socket, even with DEVICE buffers (G3 has to carry it there)
  *                              u8  final_map[D*A*M]   last crop of each ended episode, the same D envs as final_obs
+ *                            With a map block of two tiers (map block revision 5, stage.json map.tiers; MapBytes is
+ *                            then 2 x 16,128) each crop row is the fine 2-yd crop then the coarse 8-yd one.
+ *                            and, only in a stage with a nav encounter (L = SPEC's LabelBytes > 0; protocol 31),
+ *                            last of all:
+ *                              u8  labels[E*A*L]      each agent's training labels for its obs row (CONTRACT.md sec
+ *                                                     3.1; stage.json labels): the traversability classes of the
+ *                                                     fine and coarse crop frames (48 x 48 u8 each), their route
+ *                                                     cost-to-go (48 x 48 f16 yards each, 65504 unreachable) and
+ *                                                     f32 C_body, C_start, goal_forward, goal_right. No
+ *                                                     final_labels: an ended episode's final row has none.
  *                            A stage without one sends exactly the protocol 20 STEP (SPEC grows by ImageBytes for
  *                            every stage).
  *   client -> server  ACT    { i32 actions[E*A] } or, from a policy with a goal head,

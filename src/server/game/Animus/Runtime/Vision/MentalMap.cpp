@@ -635,8 +635,13 @@ void Animus::Vision::MentalMap::WriteBody(float x, float y, float z, bool ground
     _bodyY = y;
 }
 
-void Animus::Vision::MentalMap::Crop(float x, float y, float z, float yaw, uint8_t* out) const
+void Animus::Vision::MentalMap::Crop(float x, float y, float z, float yaw, uint8_t* out, float cell) const
 {
+    if (cell > CROP_CELL + 0.01f)
+    {
+        CropWide(x, y, z, yaw, cell, out);
+        return;
+    }
     // A window of the map's cells round the body, wide enough for the turned crop and a cell of neighbours for the
     // frontier: one copy of the tiles' rows rather than a tile lookup per sample.
     float const halfDiagonal = float(CROP) * CROP_CELL * 0.5f * 1.41422f;
@@ -752,4 +757,145 @@ void Animus::Vision::MentalMap::Crop(float x, float y, float z, float yaw, uint8
             cell[CROP_FRONTIER] = frontier ? 1 : 0;
             cell[CROP_SEARCHED] = searched;
         }
+}
+
+void Animus::Vision::MentalMap::CropWide(float x, float y, float z, float yaw, float cell, uint8_t* out) const
+{
+    // The crop's frame (Crop): forward along (cos yaw, sin yaw), right along (sin yaw, -cos yaw); a 1-yd cell goes to
+    // the crop cell its centre falls in, row 0 the furthest ahead.
+    float const forwardX = std::cos(yaw);
+    float const forwardY = std::sin(yaw);
+    float const rightX = forwardY;
+    float const rightY = -forwardX;
+    float const centre = float(CROP) * 0.5f;
+    float const half = centre * cell;
+    float const reach = half * 1.41422f;            // the turned crop's corner
+    int32_t const cellsPer = std::max<int32_t>(1, int32_t(std::lround(cell / MAP_CELL)));
+    uint32_t const perCell = uint32_t(cellsPer) * uint32_t(cellsPer);
+    // Every 1-yd cell counted against the searched channel's scale: count / (perCell / SEARCHED_MAX).
+    uint32_t const searchedPer = std::max<uint32_t>(1, perCell / SEARCHED_MAX);
+
+    struct Sum
+    {
+        uint32_t Codes[MAP_CODES] = {};
+        float Height = 0.0f;
+        uint32_t Floors = 0;
+        bool Visited = false;
+        double Newest = -1.0;
+        double EntityAge = -1.0;
+        uint8_t Entity = 0;
+        bool Frontier = false;
+        uint32_t Searched = 0;
+        uint32_t Known = 0;
+    };
+    thread_local std::vector<Sum> sums;
+    sums.assign(std::size_t(CROP) * CROP, Sum());
+
+    static int32_t const NEIGHBOURS[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
+    int32_t const cx0 = CellOf(x - reach);
+    int32_t const cx1 = CellOf(x + reach);
+    int32_t const cy0 = CellOf(y - reach);
+    int32_t const cy1 = CellOf(y + reach);
+    auto const scatter = [&](int32_t tx, int32_t ty, Tile const& tile)
+    {
+        int32_t const fx0 = std::max(cx0, tx * MAP_TILE);
+        int32_t const fx1 = std::min(cx1, tx * MAP_TILE + MAP_TILE - 1);
+        int32_t const fy0 = std::max(cy0, ty * MAP_TILE);
+        int32_t const fy1 = std::min(cy1, ty * MAP_TILE + MAP_TILE - 1);
+        for (int32_t cy = fy0; cy <= fy1; ++cy)
+            for (int32_t cx = fx0; cx <= fx1; ++cx)
+            {
+                MapCell const& mapCell =
+                    tile.Cells[std::size_t((cy - ty * MAP_TILE) * MAP_TILE + (cx - tx * MAP_TILE))];
+                if (!Known(mapCell))
+                    continue;
+                float const dx = (float(cx) + 0.5f) * MAP_CELL - x;
+                float const dy = (float(cy) + 0.5f) * MAP_CELL - y;
+                float const forward = dx * forwardX + dy * forwardY;
+                float const right = dx * rightX + dy * rightY;
+                float const row = std::floor(centre - forward / cell);
+                float const col = std::floor(centre + right / cell);
+                if (row < 0.0f || col < 0.0f || row >= float(CROP) || col >= float(CROP))
+                    continue;
+                Sum& sum = sums[std::size_t(row) * CROP + std::size_t(col)];
+                MapCode const here = CodeOf(mapCell, z);
+                ++sum.Codes[uint8_t(here)];
+                ++sum.Known;
+                float floor = 0.0f;
+                if (NearestFloor(mapCell, z, floor))
+                {
+                    sum.Height += floor;
+                    ++sum.Floors;
+                }
+                sum.Visited = sum.Visited || (mapCell.Flags & MAP_VISITED);
+                if (mapCell.Seen >= _epoch)
+                    ++sum.Searched;
+                double const age = std::max(0.0, _clock - (double(mapCell.Seen) - 1.0));
+                if (sum.Newest < 0.0 || age < sum.Newest)
+                    sum.Newest = age;
+                double const entityAge = EntityAge(mapCell, _clock);
+                if (entityAge >= 0.0 && (sum.EntityAge < 0.0 || entityAge < sum.EntityAge))
+                {
+                    sum.EntityAge = entityAge;
+                    sum.Entity = uint8_t(mapCell.Entity & CLASS_MASK);
+                }
+                if (!sum.Frontier && here == MapCode::Floor)
+                    for (auto const& offset : NEIGHBOURS)
+                    {
+                        MapCell const* beside = FindCell(cx + offset[0], cy + offset[1]);
+                        if (!beside)
+                            beside = FindCoarse(cx + offset[0], cy + offset[1]);
+                        if (!beside || !Known(*beside))
+                        {
+                            sum.Frontier = true;
+                            break;
+                        }
+                    }
+            }
+    };
+    for (auto const& [key, tile] : _tiles)
+    {
+        int32_t const tx = int32_t(key >> 32);
+        int32_t const ty = int32_t(uint32_t(key & 0xFFFFFFFFu));
+        if (tx * MAP_TILE > cx1 || tx * MAP_TILE + MAP_TILE - 1 < cx0 || ty * MAP_TILE > cy1
+            || ty * MAP_TILE + MAP_TILE - 1 < cy0)
+            continue;
+        scatter(tx, ty, *tile);
+    }
+    for (auto const& [key, tile] : _coarse)
+    {
+        // A coarse tile's cells stand for COARSE_CELL-yd cells (Fold): read at their own coordinates, which is what
+        // FindCoarse does, so they are scattered by key too -- an approximation a training seat never meets.
+        int32_t const tx = int32_t(key >> 32);
+        int32_t const ty = int32_t(uint32_t(key & 0xFFFFFFFFu));
+        if (tx * MAP_TILE > cx1 || tx * MAP_TILE + MAP_TILE - 1 < cx0 || ty * MAP_TILE > cy1
+            || ty * MAP_TILE + MAP_TILE - 1 < cy0)
+            continue;
+        scatter(tx, ty, *tile);
+    }
+
+    static uint8_t const PRIORITY[MAP_CODES] = { 0, 1, 4, 3, 2 };   // unknown, floor, wall, door, hazard
+    for (uint32_t index = 0; index < CROP * CROP; ++index)
+    {
+        Sum const& sum = sums[index];
+        // The majority over all the cell's 1-yd cells, the unseen ones counted as unknown; a tie goes to the code
+        // the fine crop would rank higher.
+        uint32_t counts[MAP_CODES];
+        std::copy(std::begin(sum.Codes), std::end(sum.Codes), std::begin(counts));
+        counts[uint8_t(MapCode::Unknown)] += perCell > sum.Known ? perCell - sum.Known : 0;
+        MapCode code = MapCode::Unknown;
+        for (uint32_t candidate = 1; candidate < MAP_CODES; ++candidate)
+            if (counts[candidate] > counts[uint8_t(code)]
+                || (counts[candidate] == counts[uint8_t(code)] && PRIORITY[candidate] > PRIORITY[uint8_t(code)]))
+                code = MapCode(candidate);
+        uint8_t* bytes = out + std::size_t(index) * CROP_CHANNELS;
+        bytes[CROP_CODE] = uint8_t(code);
+        bytes[CROP_HEIGHT] = sum.Floors ? uint8_t(std::clamp(int32_t(CROP_HEIGHT_ZERO)
+            + int32_t(std::lround((sum.Height / float(sum.Floors) - z) / CROP_HEIGHT_STEP)), 1, 255)) : 0;
+        bytes[CROP_VISITED] = sum.Visited ? 1 : 0;
+        bytes[CROP_AGE] = sum.Newest < 0.0 ? CROP_AGE_NEVER : AgeByte(float(sum.Newest));
+        bytes[CROP_CLASS] = sum.Entity;
+        bytes[CROP_FRONTIER] = sum.Frontier ? 1 : 0;
+        bytes[CROP_SEARCHED] = uint8_t(std::min<uint32_t>(SEARCHED_MAX, sum.Searched / searchedPer));
+    }
 }

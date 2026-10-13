@@ -81,6 +81,7 @@ Animus::EnvPool::EnvPool(Scenario& scenario, StageSettings const& settings)
     // No map yet: every cell unknown (zeros, the map block's own "nothing").
     MapCrop.assign(std::size_t(agents) * _spec.MapBytes, 0);
     FinalMapCrop.assign(std::size_t(agents) * _spec.MapBytes, 0);
+    Labels.assign(std::size_t(agents) * _spec.LabelBytes, 0);
     _envSeed.assign(envs, NO_EPISODE_SEED);
     Actions.assign(agents, 0);
     // GOAL_WIRE_INTS per agent: four joint ids (NO_GOAL) then four cell words (none), until a learner with a goal head
@@ -481,6 +482,9 @@ void Animus::EnvPool::DescribeAgents(Env const& env)
     _scenario.AgentLayouts(env, &Layout[first]);
     _scenario.AgentPresence(env, &Present[first]);
     _scenario.AgentKinematics(env, &KinematicSamples[std::size_t(first) * Kinematics::SAMPLE_DIM]);
+    // The training labels of the observation just taken (protocol 31), in a stage that has them.
+    if (_spec.LabelBytes)
+        _scenario.AgentLabels(env, &Labels[std::size_t(first) * _spec.LabelBytes]);
 }
 
 bool Animus::EnvPool::ChooseLocalActions(std::string const& policy, uint32 begin, uint32 count)

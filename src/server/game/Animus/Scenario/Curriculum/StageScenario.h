@@ -41,6 +41,7 @@ namespace Animus::Curriculum
 {
     class PartyFollowEncounter;
     class PartyEncounter;
+    class PointNavEncounter;
 
     /// One curriculum stage (see StageDefinition) for every class of StageSettings::Classes, as layouts of one
     /// policy.
@@ -149,6 +150,8 @@ namespace Animus::Curriculum
         void AgentLayouts(Env const& env, uint16* layout) const override;
         void AgentPresence(Env const& env, uint8* present) const override;
         void AgentKinematics(Env const& env, float* kinematics) const override;
+        /// The nav stages' labels (PointNavEncounter::WriteLabels) for every agent, after the observation.
+        void AgentLabels(Env const& env, uint8* labels) const override;
         void Reward(Env& env, float* reward) override;
         void EpisodeInfo(Env const& env, float* info) const override;
         [[nodiscard]] std::vector<std::string> EpisodeInfoNames() const override { return _info.Names(); }
@@ -246,6 +249,8 @@ namespace Animus::Curriculum
         void NoteWingRun(uint32 rung, bool probe, float progress);
         /// One timestamped line appended to the run's events.log (StageSettings::EventsLog), where the sim has one.
         void AppendRunEvent(std::string const& line) const;
+        /// The host's data folder (StageSettings::DataDir): the traversability bakes go in its trav/.
+        [[nodiscard]] std::string const& DataDir() const { return _dataDir; }
 
         std::string TakeClusterTally() override;
         void AddClusterTally(std::string const& tally) override;
@@ -509,6 +514,7 @@ namespace Animus::Curriculum
         WingLadder _wingLadder;
         std::mutex _wingLadderLock;
         std::string _eventsLog;                 // StageSettings::EventsLog
+        std::string _dataDir;                   // StageSettings::DataDir
         /// A cluster worker follows the host's rung and reports its runs instead of stepping (FollowClusterRung);
         /// the runs since its last report, as "rung/probes/others" with comma-separated progress.
         bool _wingFollower = false;
@@ -525,6 +531,8 @@ namespace Animus::Curriculum
         /// Not dead code: the owner's slot and these two uses are what the leader stands on.
         PartyFollowEncounter* _partyFollow = nullptr;
         PartyEncounter* _party = nullptr;
+        /// The nav stages' point goal and labeller (PointNavEncounter, decision 0036): the STEP's labels are its.
+        PointNavEncounter* _pointNav = nullptr;
     };
 }
 

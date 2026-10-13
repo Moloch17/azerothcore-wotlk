@@ -1,0 +1,788 @@
+/*
+ * This file is part of the Animus Forge project, based on AzerothCore.
+ * See AUTHORS file for Copyright information.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program. If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#include "PointNavEncounter.h"
+#include "BotFactory.h"
+#include "Camera.h"
+#include "CellGrid.h"
+#include "EncoderSupport.h"
+#include "Env.h"
+#include "EnvPool.h"
+#include "EpisodeInfoTable.h"
+#include "GoalBlock.h"
+#include "Log.h"
+#include "Map.h"
+#include "MapVisionWorld.h"
+#include "ObjectMgr.h"
+#include "ObjectPool.h"
+#include "PartyFollowEncounter.h"
+#include "Player.h"
+#include "Random.h"
+#include "SeatView.h"
+#include "SightDraw.h"
+#include "StageDefinition.h"
+#include "StageScenario.h"
+#include "StageState.h"
+#include "Standing.h"
+#include "UnitBody.h"
+#include "UnitDefines.h"
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <filesystem>
+#include <limits>
+#include <sstream>
+#include <stdexcept>
+
+namespace
+{
+    constexpr float TWO_PI = 2.0f * float(M_PI);
+    /// The run speed the time ratio's optimum is walked at (yards a second).
+    constexpr float RUN_YARDS_PER_SECOND = 7.0f;
+    /// Candidates tested for a SightOnly start at most (one camera ray each).
+    constexpr uint32 SIGHT_TESTS = 64;
+    /// Goals redrawn when no start fits the bins, before the nearest fit is taken.
+    constexpr uint32 GOAL_TRIES = 4;
+    /// Yards over 500: what the critic's state carries of a route distance.
+    constexpr float STATE_YARDS_SCALE = 500.0f;
+}
+
+Animus::Curriculum::PointNavEncounter::PointNavEncounter(StageScenario& scenario, uint32 envs)
+    : Encounter(scenario), _envs(envs), _rngs(envs)
+{
+}
+
+std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::PointNavEncounter::RewardTerms() const
+{
+    return { RewardTerm::Arrive, RewardTerm::StepCost, RewardTerm::Death, RewardTerm::FallHurt, RewardTerm::Drowned,
+        RewardTerm::Lost, RewardTerm::Revisit, RewardTerm::Stuck, RewardTerm::Wall };
+}
+
+std::vector<float> Animus::Curriculum::PointNavEncounter::ParseList(std::string const& list)
+{
+    std::vector<float> out;
+    std::stringstream in(list);
+    std::string item;
+    while (std::getline(in, item, ','))
+    {
+        try
+        {
+            out.push_back(std::stof(item));
+        }
+        catch (std::exception const&)
+        {
+            return {};
+        }
+    }
+    return out;
+}
+
+void Animus::Curriculum::PointNavEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
+{
+    // Columns the core or another encounter of the stage already reports (died, timed_out, jumps, drowned, the
+    // seconds stuck, at a wall or swimming; the party follow's start_x/y/z and lost_seconds in nav6) are left to
+    // them: a name twice in the row would be read as whichever the learner took last.
+    auto const add = [&table](char const* name, EpisodeInfoTable::Getter getter)
+    {
+        if (!table.Contains(name))
+            table.Add(name, std::move(getter));
+    };
+    auto const seatOf = [this](Env const& env, uint32 seat) -> SeatNav const&
+    {
+        return _envs[env.Index].Seats[std::min<uint32>(seat, GROUP_SEATS - 1)];
+    };
+    auto const nav = [this](Env const& env) -> EnvNav const& { return _envs[env.Index]; };
+    // The stage's measure: arrived, and SPL (success weighted by path length: the optimum over the longer of the
+    // optimum and the yards travelled), and the time against walking the optimum at run speed.
+    add("arrived", [seatOf](Env const& env, uint32 seat) { return seatOf(env, seat).Reached ? 1.0f : 0.0f; });
+    add("spl", [seatOf, nav](Env const& env, uint32 seat)
+    {
+        SeatNav const& s = seatOf(env, seat);
+        float const optimal = nav(env).CStart;
+        if (!s.Reached || optimal >= Vision::TRAV_UNREACHABLE)
+            return 0.0f;
+        return optimal / std::max(optimal, std::max(s.Travelled, 0.01f));
+    });
+    add("time_ratio", [seatOf, nav](Env const& env, uint32 seat)
+    {
+        SeatNav const& s = seatOf(env, seat);
+        float const optimal = nav(env).CStart;
+        if (!s.Reached || optimal >= Vision::TRAV_UNREACHABLE)
+            return 0.0f;
+        return (float(s.ArriveMs) / 1000.0f) / std::max(0.25f, optimal / RUN_YARDS_PER_SECOND);
+    });
+    add("optimal_yards", [nav](Env const& env, uint32)
+    {
+        return nav(env).CStart >= Vision::TRAV_UNREACHABLE ? 0.0f : nav(env).CStart;
+    });
+    add("straight_yards", [nav](Env const& env, uint32) { return nav(env).Straight; });
+    add("detour_factor", [nav](Env const& env, uint32)
+    {
+        EnvNav const& n = nav(env);
+        return n.CStart >= Vision::TRAV_UNREACHABLE || n.Straight <= 0.0f ? 0.0f : n.CStart / n.Straight;
+    });
+    add("travelled_yards", [seatOf](Env const& env, uint32 seat) { return seatOf(env, seat).Travelled; });
+    add("stop_error_yards", [seatOf](Env const& env, uint32 seat) { return seatOf(env, seat).StopError; });
+    add("falls", [this](Env const& env, uint32 seat)
+    {
+        return float(_scenario.Data(env).Seats[std::min<uint32>(seat, MAX_SEATS - 1)].Falls);
+    });
+    add("fall_damage_share", [seatOf](Env const& env, uint32 seat) { return seatOf(env, seat).FallShare; });
+    add("drowned", [this](Env const& env, uint32 seat)
+    {
+        return _scenario.Data(env).Seats[std::min<uint32>(seat, MAX_SEATS - 1)].Drowned ? 1.0f : 0.0f;
+    });
+    add("died", [this](Env const& env, uint32 seat)
+    {
+        return _scenario.Data(env).Seats[std::min<uint32>(seat, MAX_SEATS - 1)].Combat.Died ? 1.0f : 0.0f;
+    });
+    add("timed_out", [this](Env const& env, uint32 seat)
+    {
+        return _scenario.Data(env).Seats[std::min<uint32>(seat, MAX_SEATS - 1)].Combat.TimedOut ? 1.0f : 0.0f;
+    });
+    add("stuck_seconds", [seatOf](Env const& env, uint32 seat) { return float(seatOf(env, seat).StuckMs) / 1000.0f; });
+    add("wall_seconds", [seatOf](Env const& env, uint32 seat) { return float(seatOf(env, seat).WallMs) / 1000.0f; });
+    add("lost_seconds", [seatOf](Env const& env, uint32 seat) { return float(seatOf(env, seat).LostMs) / 1000.0f; });
+    add("revisit_seconds", [seatOf](Env const& env, uint32 seat)
+    {
+        return float(seatOf(env, seat).RevisitMs) / 1000.0f;
+    });
+    add("jumps", [this](Env const& env, uint32 seat)
+    {
+        return float(_scenario.Data(env).Seats[std::min<uint32>(seat, MAX_SEATS - 1)].Jumps);
+    });
+    add("swim_seconds", [this](Env const& env, uint32 seat)
+    {
+        return float(_scenario.Data(env).Seats[std::min<uint32>(seat, MAX_SEATS - 1)].WaterMs) / 1000.0f;
+    });
+    // The draw: the rung and its bins, whether the start was a replayed failure, and where (the map, the start and
+    // the goal; a nav6 episode has no pair and reports its map alone).
+    add("nav_rung", [nav](Env const& env, uint32) { return float(nav(env).Rung); });
+    // The learner's fade ladder and convergence read the rung as `difficulty` and `at_top_rung`, as the seek and
+    // follow stages report them (train.py difficulty_column); in nav6 the follow's own stand.
+    add("difficulty", [nav](Env const& env, uint32) { return float(nav(env).Rung); });
+    add("at_top_rung", [nav](Env const& env, uint32) { return nav(env).Rung + 1 >= RUNGS ? 1.0f : 0.0f; });
+    add("detour_bin", [nav](Env const& env, uint32) { return float(nav(env).DetourBin); });
+    add("length_bin", [nav](Env const& env, uint32) { return float(nav(env).LengthBin); });
+    add("replayed", [nav](Env const& env, uint32) { return nav(env).Replayed ? 1.0f : 0.0f; });
+    add("map", [nav](Env const& env, uint32) { return float(nav(env).MapId); });
+    add("start_x", [nav](Env const& env, uint32) { return nav(env).Start.GetPositionX(); });
+    add("start_y", [nav](Env const& env, uint32) { return nav(env).Start.GetPositionY(); });
+    add("start_z", [nav](Env const& env, uint32) { return nav(env).Start.GetPositionZ(); });
+    add("goal_x", [nav](Env const& env, uint32) { return nav(env).Goal.GetPositionX(); });
+    add("goal_y", [nav](Env const& env, uint32) { return nav(env).Goal.GetPositionY(); });
+    add("goal_z", [nav](Env const& env, uint32) { return nav(env).Goal.GetPositionZ(); });
+    // The planner's readout: over the cell goals chosen, the route distance of the chosen block less the best
+    // choosable block's (0 without a choice), and how many were chosen.
+    add("waypoint_regret_yards", [seatOf](Env const& env, uint32 seat)
+    {
+        SeatNav const& s = seatOf(env, seat);
+        return s.Waypoints ? s.RegretSum / float(s.Waypoints) : 0.0f;
+    });
+    add("waypoints_chosen", [seatOf](Env const& env, uint32 seat) { return float(seatOf(env, seat).Waypoints); });
+}
+
+void Animus::Curriculum::PointNavEncounter::ResetEpisode(Env& env)
+{
+    // The bake and the map stay (they are the arena's); the pair and the measures go.
+    EnvNav& nav = _envs[env.Index];
+    Vision::TravGrid const* grid = nav.Grid;
+    uint32 const mapId = nav.MapId;
+    nav = EnvNav();
+    nav.Grid = grid;
+    nav.MapId = mapId;
+}
+
+void Animus::Curriculum::PointNavEncounter::BeforeLevel(Env& env)
+{
+    ArenaDefinition const& arena = _scenario.Arena(env);
+    EnvNav& nav = _envs[env.Index];
+    nav.LabelsOnly = arena.LabelsOnly;
+    uint32 const mapId = arena.MapId ? arena.MapId : _scenario.Stage().MapId;
+    if (env.Evaluating && env.EpisodeSeedIndex != Animus::NO_EPISODE_SEED)
+        _rngs[env.Index].seed(uint32(env.EpisodeSeedIndex) * 2654435761u ^ (mapId * 40503u + 0x7f4a7c15u));
+    else
+        _rngs[env.Index].seed(urand(0, std::numeric_limits<uint32>::max() - 1));
+    if (nav.LabelsOnly)
+        return;     // the party follow places the party; this is its labeller
+
+    // The seat stands at the dungeon's door until Build draws its pair: an arena on a map of its own has no ground
+    // of its own, and the stage's spawn is on another map.
+    EnvState& data = _scenario.Data(env);
+    if (AreaTriggerTeleport const* entrance = sObjectMgr->GetMapEntranceTrigger(mapId))
+    {
+        data.EpisodeSpawn.Relocate(entrance->target_X, entrance->target_Y, entrance->target_Z,
+            entrance->target_Orientation);
+        data.HasEpisodeSpawn = true;
+    }
+    data.DungeonDifficulty = 0;
+    data.RaidDifficulty = 0;
+}
+
+Animus::Curriculum::PointNavEncounter::OpenBins Animus::Curriculum::PointNavEncounter::BinsOf(uint32 rung) const
+{
+    CurriculumTuning::PointNavTuning const& tuning = _scenario.Tuning().PointNav;
+    std::string const& spec = rung == 0 ? tuning.RungBins0 : rung == 1 ? tuning.RungBins1
+        : rung == 2 ? tuning.RungBins2 : tuning.RungBins3;
+    std::vector<float> const pair = ParseList(spec);
+    OpenBins bins;
+    if (pair.size() >= 2)
+    {
+        bins.Detour = uint32(std::max(1.0f, pair[0]));
+        bins.Length = uint32(std::max(1.0f, pair[1]));
+    }
+    return bins;
+}
+
+Animus::Vision::TravGrid const* Animus::Curriculum::PointNavEncounter::EnsureGrid(Env const& env, Map* map,
+    Player const* bot) const
+{
+    ArenaDefinition const& arena = _scenario.Arena(env);
+    Vision::TravBakeRequest request;
+    request.World = map;
+    request.PhaseMask = bot ? bot->GetPhaseMask() : 1;
+    request.Arena = arena.Name;
+    request.HasBox = arena.HasBox;
+    request.Box = { arena.BoxMinX, arena.BoxMinY, arena.BoxMaxX, arena.BoxMaxY };
+    // The flood starts at the dungeon's door: where the entrance's trigger puts a player.
+    if (AreaTriggerTeleport const* entrance = sObjectMgr->GetMapEntranceTrigger(map->GetId()))
+    {
+        request.HasSeed = true;
+        request.SeedX = entrance->target_X;
+        request.SeedY = entrance->target_Y;
+        request.SeedZ = entrance->target_Z;
+    }
+    std::string const travDir = (std::filesystem::path(_scenario.DataDir()) / "trav").string();
+    Vision::TravBakeReport report;
+    std::string error;
+    Vision::TravGrid const* grid = Vision::TravRegistry::Instance().Ensure(request, travDir, report, error);
+    if (!grid)
+        LOG_ERROR("module.animus", "{}: arena {} has no traversability bake: {}", _scenario.Name(), arena.Name,
+            error);
+    return grid;
+}
+
+Position Animus::Curriculum::PointNavEncounter::CellPoint(Vision::TravGrid const& grid, uint32 cell, bool bed)
+{
+    float const z = bed ? grid.Ground[cell] : grid.StandingZ(cell);
+    return Position(grid.CentreX(cell), grid.CentreY(cell), z, 0.0f);
+}
+
+float Animus::Curriculum::PointNavEncounter::CostAt(EnvNav const& nav, float x, float y)
+{
+    if (!nav.Grid || nav.Cost.size() != nav.Grid->Cells())
+        return Vision::TRAV_UNREACHABLE;
+    uint32 const cell = nav.Grid->CellOf(x, y);
+    return cell == Vision::TRAV_NO_CELL ? Vision::TRAV_UNREACHABLE : nav.Cost[cell];
+}
+
+std::mt19937& Animus::Curriculum::PointNavEncounter::Rng(Env const& env) const
+{
+    return _rngs[env.Index];
+}
+
+float Animus::Curriculum::PointNavEncounter::Uniform(Env const& env) const
+{
+    return std::uniform_real_distribution<float>(0.0f, 1.0f)(Rng(env));
+}
+
+bool Animus::Curriculum::PointNavEncounter::DrawPair(Env& env, Map* map, Player* bot, EnvNav& nav)
+{
+    CurriculumTuning::PointNavTuning const& tuning = _scenario.Tuning().PointNav;
+    ArenaDefinition const& arena = _scenario.Arena(env);
+    Vision::TravGrid const& grid = *nav.Grid;
+    if (grid.Reachable.size() < 2)
+        return false;
+    auto const pick = [&](std::size_t count) { return std::min(count - 1, std::size_t(Uniform(env) * float(count))); };
+
+    // The rung's bins: the detour and length edges the tuning lists, and how many of each the rung opens.
+    std::vector<float> detours = ParseList(tuning.DetourBins);
+    std::vector<float> lengths = ParseList(tuning.LengthBins);
+    if (detours.size() < 2)
+        detours = { 1.0f, 4.0f };
+    if (lengths.size() < 2)
+        lengths = { 5.0f, 400.0f };
+    OpenBins const open = BinsOf(nav.Rung);
+    uint32 const detourBins = std::min<uint32>(open.Detour, uint32(detours.size()) - 1);
+    uint32 const lengthBins = std::min<uint32>(open.Length, uint32(lengths.size()) - 1);
+    nav.DetourBin = uint32(pick(detourBins));
+    nav.LengthBin = uint32(pick(lengthBins));
+    float const detourLow = detours[nav.DetourBin];
+    float const detourHigh = detours[nav.DetourBin + 1];
+    float const lengthLow = lengths[nav.LengthBin];
+    float const lengthHigh = lengths[nav.LengthBin + 1];
+
+    // A failure replayed (training only): the seat starts where a seat of this arena failed, with that goal.
+    if (!env.Evaluating && env.EpisodeSeedIndex == Animus::NO_EPISODE_SEED && tuning.ReplayShare > 0
+        && Uniform(env) * 100.0f < float(tuning.ReplayShare))
+    {
+        std::lock_guard lock(_poolLock);
+        auto const found = _pools.find(_scenario.Data(env).Arena);
+        if (found != _pools.end() && !found->second.Ring.empty())
+        {
+            Failure const& failure = found->second.Ring[pick(found->second.Ring.size())];
+            uint32 const start = grid.CellOf(failure.Where.GetPositionX(), failure.Where.GetPositionY());
+            if (failure.GoalCell < grid.Cells() && start != Vision::TRAV_NO_CELL)
+            {
+                Vision::CostToGo(grid, failure.GoalCell, tuning.DropHurtYards, nav.Cost);
+                if (nav.Cost[start] < Vision::TRAV_UNREACHABLE)
+                {
+                    nav.GoalCell = failure.GoalCell;
+                    nav.GoalAtBed = failure.GoalAtBed;
+                    nav.StartCell = start;
+                    nav.Start = failure.Where;
+                    nav.Replayed = true;
+                }
+            }
+        }
+    }
+
+    if (!nav.Replayed)
+    {
+        // The goal first, one Dijkstra, then a start among the cells whose route length and detour fall in the bins;
+        // the goal drawn again a few times when none does, then the nearest fit. SightOnly: the start's eye sees the
+        // goal (SightDraw::InSight, the camera's own ray).
+        Vision::MapVisionWorld const world(map, bot->GetPhaseMask());
+        float const eyeRise = Vision::PIVOT_SHARE * Movement::ShapeOf(bot).Height;
+        std::vector<uint32> fits;
+        uint32 bestCell = Vision::TRAV_NO_CELL;
+        float bestMiss = std::numeric_limits<float>::infinity();
+        float const detourMid = 0.5f * (detourLow + detourHigh);
+        float const lengthMid = 0.5f * (lengthLow + lengthHigh);
+        for (uint32 attempt = 0; attempt < GOAL_TRIES && nav.StartCell == Vision::TRAV_NO_CELL; ++attempt)
+        {
+            uint32 const goal = grid.Reachable[pick(grid.Reachable.size())];
+            Vision::CostToGo(grid, goal, tuning.DropHurtYards, nav.Cost);
+            Position const goalPoint = CellPoint(grid, goal, false);
+            fits.clear();
+            for (uint32 cell : grid.Reachable)
+            {
+                float const route = nav.Cost[cell];
+                if (cell == goal || route >= Vision::TRAV_UNREACHABLE || route <= 0.0f)
+                    continue;
+                Position const point = CellPoint(grid, cell, false);
+                float const straight = std::max(0.5f, point.GetExactDist(&goalPoint));
+                float const detour = route / straight;
+                if (route >= lengthLow && route < lengthHigh && detour >= detourLow && detour < detourHigh)
+                    fits.push_back(cell);
+                // The nearest fit, by how far the pair misses the bins' middles (in log yards and log detour).
+                float const miss = std::fabs(std::log(route / lengthMid)) + std::fabs(std::log(detour / detourMid));
+                if (miss < bestMiss)
+                {
+                    bestMiss = miss;
+                    bestCell = cell;
+                    nav.GoalCell = goal;
+                }
+            }
+            if (fits.empty())
+                continue;
+            // Uniform over the fits; a SightOnly arena tests them in a uniform order for the one in sight.
+            std::shuffle(fits.begin(), fits.end(), Rng(env));
+            uint32 const tests = arena.SightOnly ? std::min<uint32>(SIGHT_TESTS, uint32(fits.size())) : 1;
+            for (uint32 index = 0; index < tests; ++index)
+            {
+                uint32 const cell = fits[index];
+                Position const point = CellPoint(grid, cell, false);
+                if (arena.SightOnly && !SightDraw::InSight({ point.GetPositionX(), point.GetPositionY(),
+                    point.GetPositionZ() + eyeRise }, { goalPoint.GetPositionX(), goalPoint.GetPositionY(),
+                    goalPoint.GetPositionZ() + 1.0f }, Vision::OBJECTIVE_RADIUS, world))
+                    continue;
+                nav.StartCell = cell;
+                nav.GoalCell = goal;
+                break;
+            }
+        }
+        if (nav.StartCell == Vision::TRAV_NO_CELL)
+        {
+            if (bestCell == Vision::TRAV_NO_CELL)
+                return false;
+            // The nearest fit's goal may be an earlier try's: its cost map again.
+            Vision::CostToGo(grid, nav.GoalCell, tuning.DropHurtYards, nav.Cost);
+            nav.StartCell = bestCell;
+        }
+        nav.Start = CellPoint(grid, nav.StartCell, false);
+        // A goal on water: at the surface, or at the bed BedShare percent of the time (nav5's dives).
+        nav.GoalAtBed = grid.ClassOf(nav.GoalCell) == Vision::TravClass::Water
+            && Uniform(env) * 100.0f < float(tuning.BedShare);
+    }
+
+    nav.Goal = CellPoint(grid, nav.GoalCell, nav.GoalAtBed);
+    nav.CStart = nav.Cost[nav.StartCell];
+    nav.Straight = nav.Start.GetExactDist(&nav.Goal);
+    return nav.CStart < Vision::TRAV_UNREACHABLE;
+}
+
+bool Animus::Curriculum::PointNavEncounter::Build(Env& env, Map* map, uint8 /*level*/)
+{
+    Player* bot = _scenario.SeatBot(env, 0);
+    if (!bot || !map)
+        return false;
+    EnvNav& nav = _envs[env.Index];
+    bool const labelsOnly = nav.LabelsOnly;
+    nav = EnvNav();
+    nav.LabelsOnly = labelsOnly;
+    nav.MapId = map->GetId();
+    nav.Rung = std::min<uint32>(SightDraw::Rung(_scenario.ShapingScale()), RUNGS - 1);
+    // The dungeon's own doors and levers out of the way: the bake knows the static walls alone.
+    ObjectPool::ClearOwn(map);
+    nav.Grid = EnsureGrid(env, map, bot);
+    if (!nav.Grid)
+        return false;
+    if (nav.LabelsOnly)
+    {
+        // Nothing placed: the leader's position is the goal (Update), the party's start the follow's.
+        nav.Start = _scenario.SpawnPointFor(env);
+        nav.StartCell = nav.Grid->CellOf(nav.Start.GetPositionX(), nav.Start.GetPositionY());
+        return true;
+    }
+    if (!DrawPair(env, map, bot, nav))
+    {
+        LOG_ERROR("module.animus", "{}: arena {} on map {} has no (start, goal) pair to draw", _scenario.Name(),
+            _scenario.Arena(env).Name, map->GetId());
+        return false;
+    }
+
+    // The seat at its start, facing a random way; the start is the episode's spawn, so the critic's origin and the
+    // rise after a death are both there.
+    float const facing = Uniform(env) * TWO_PI;
+    Position const start(nav.Start.GetPositionX(), nav.Start.GetPositionY(), nav.Start.GetPositionZ(), facing);
+    nav.Start = start;
+    BotFactory::TeleportWithinMap(bot, start);
+    EnvState& data = _scenario.Data(env);
+    data.EpisodeSpawn = start;
+    data.HasEpisodeSpawn = true;
+    nav.Placed = true;
+    if (_scenario.Arena(env).Revisit)
+        nav.Seats[0].Stood.assign(nav.Grid->Cells(), 0);
+    return true;
+}
+
+void Animus::Curriculum::PointNavEncounter::Update(Env& env)
+{
+    EnvNav& nav = _envs[env.Index];
+    if (!nav.Grid)
+        return;
+    CurriculumTuning::RespawnTuning const& respawn = _scenario.Tuning().Respawn;
+    EnvState& data = _scenario.Data(env);
+    if (nav.LabelsOnly)
+    {
+        // The goal is the leader as the server last had it (PartyFollowEncounter::LeaderReported); its cost map is
+        // worked out again only when its cell moves, on this map thread, once for every follower.
+        float x = 0.0f;
+        float y = 0.0f;
+        float z = 0.0f;
+        if (!_follow || !_follow->LeaderReported(env, x, y, z))
+            return;
+        uint32 const cell = nav.Grid->CellOf(x, y);
+        nav.Goal.Relocate(x, y, z, 0.0f);
+        if (cell != Vision::TRAV_NO_CELL && cell != nav.GoalCell)
+        {
+            nav.GoalCell = cell;
+            Vision::CostToGo(*nav.Grid, cell, _scenario.Tuning().PointNav.DropHurtYards, nav.Cost);
+            nav.CStart = nav.StartCell == Vision::TRAV_NO_CELL ? Vision::TRAV_UNREACHABLE : nav.Cost[nav.StartCell];
+        }
+        return;
+    }
+    if (!nav.Placed)
+        return;
+
+    // A death rises at the start point after the delay (EntranceRespawn); the episode goes on.
+    for (uint32 seatIndex = 0; seatIndex < data.ActiveSeats && seatIndex < GROUP_SEATS; ++seatIndex)
+    {
+        Player* bot = _scenario.SeatBot(env, seatIndex);
+        if (!bot || !bot->IsInWorld())
+            continue;
+        SeatNav& seat = nav.Seats[seatIndex];
+        RespawnClock::Step const step = seat.Clock.Note(env.EpisodeElapsedMs, bot->IsAlive(), -1.0f,
+            respawn.DelayMs, respawn.RejoinYards);
+        if (step == RespawnClock::Step::Rise)
+        {
+            RiseAtEntrance(bot, data.Seats[seatIndex], nav.Start, env.EpisodeElapsedMs);
+            seat.Clock.Risen(env.EpisodeElapsedMs);
+            seat.HasLastPos = false;
+        }
+    }
+}
+
+bool Animus::Curriculum::PointNavEncounter::SelectTarget(Env const& env, uint32 /*seat*/, Unit*& target)
+{
+    // Nothing to fight: the seat acts without a target. The party follow's labeller leaves the choice to it.
+    if (_envs[env.Index].LabelsOnly)
+        return false;
+    target = nullptr;
+    return true;
+}
+
+void Animus::Curriculum::PointNavEncounter::View(Env const& env, uint32 /*seat*/, SeatView& view) const
+{
+    EnvNav const& nav = _envs[env.Index];
+    if (nav.LabelsOnly)
+        return;
+    // The marker: a point the compass shows, never withheld; the camera flags nothing (there is no object).
+    view.HasObjective = nav.Placed;
+    view.Objective = nav.Goal;
+    view.ObjectiveRadius = 0.0f;
+    view.CompassWithheld = false;
+}
+
+void Animus::Curriculum::PointNavEncounter::NoteFailure(Env const& env, EnvNav const& nav, Position const& where)
+{
+    if (env.Evaluating || nav.GoalCell == Vision::TRAV_NO_CELL)
+        return;
+    uint32 const size = std::max<uint32>(1, _scenario.Tuning().PointNav.FailurePool);
+    std::lock_guard lock(_poolLock);
+    FailurePool& pool = _pools[_scenario.Data(env).Arena];
+    Failure const failure{ where, nav.GoalCell, nav.GoalAtBed };
+    if (pool.Ring.size() < size)
+        pool.Ring.push_back(failure);
+    else
+    {
+        pool.Ring[pool.Next % size] = failure;
+        pool.Next = (pool.Next + 1) % size;
+    }
+}
+
+void Animus::Curriculum::PointNavEncounter::NoteWaypoint(Env const& env, uint32 seatIndex, EnvNav& nav,
+    SeatNav& seat) const
+{
+    SeatState& state = _scenario.Data(env).Seats[seatIndex];
+    GoalHold const& held = state.Holds[0];
+    if (!state.CellGoals || !GoalBlock::IsCellGoal(held.Goal) || !held.CellValid || held.Ticket == seat.LastTicket)
+        return;
+    seat.LastTicket = held.Ticket;
+    CropPose const& pose = state.ChoicePose;
+    if (!pose.Valid)
+        return;
+    // The crop the choice was made from, as LatchCell reads it back, and the least route distance over its
+    // choosable blocks against the chosen block's.
+    thread_local std::vector<uint8> crop(Vision::CROP_BYTES);
+    state.Map.Crop(pose.X, pose.Y, pose.Z, pose.Yaw, crop.data());
+    float best = Vision::TRAV_UNREACHABLE;
+    for (uint32 r = 0; r < CellGrid::GRID; ++r)
+        for (uint32 c = 0; c < CellGrid::GRID; ++c)
+        {
+            if (!CellGrid::Choosable(crop.data(), r, c))
+                continue;
+            Position const point = CellGrid::WorldPoint(crop.data(), pose, r, c);
+            best = std::min(best, CostAt(nav, point.GetPositionX(), point.GetPositionY()));
+        }
+    float const chosen = CostAt(nav, held.Place.GetPositionX(), held.Place.GetPositionY());
+    if (best >= Vision::TRAV_UNREACHABLE || chosen >= Vision::TRAV_UNREACHABLE)
+        return;
+    seat.RegretSum += std::max(0.0f, chosen - best);
+    ++seat.Waypoints;
+}
+
+void Animus::Curriculum::PointNavEncounter::Reward(Env& env, uint32 seatIndex, Player* bot, RewardLedger& ledger)
+{
+    EnvNav& nav = _envs[env.Index];
+    if (nav.LabelsOnly || !nav.Placed || !bot || seatIndex >= GROUP_SEATS)
+        return;
+    CurriculumTuning::PointNavTuning const& tuning = _scenario.Tuning().PointNav;
+    CurriculumTuning::ControlsTuning const& controls = _scenario.Tuning().Controls;
+    SeatNav& seat = nav.Seats[seatIndex];
+    SeatState& state = _scenario.Data(env).Seats[seatIndex];
+    uint32 const stepMs = _scenario.StepMs(env);
+    float const seconds = float(stepMs) / 1000.0f;
+    ++seat.Decisions;
+
+    // The clock, and a death (paid each time; the seat rises at the start, Update). Drowning is the death under
+    // water the scenario noted (SeatState::Drowned), paid once.
+    CombatTally& tally = state.Combat;
+    if (!tally.DeathCounted && !bot->IsAlive())
+    {
+        tally.DeathCounted = true;
+        tally.Died = true;
+        tally.DeathMs = env.EpisodeElapsedMs;
+        ++tally.Deaths;
+        ledger.Add(RewardTerm::Death, -tuning.Death);
+    }
+    if (state.Drowned && !seat.DrownedPaid)
+    {
+        seat.DrownedPaid = true;
+        ledger.Add(RewardTerm::Drowned, -tuning.Drowned);
+        NoteFailure(env, nav, bot->GetPosition());
+    }
+    // Falls: what the server's own HandleFall took since the last reward, as a share of maximum health
+    // (PlayerLink's tally, summed into SeatState::FallDamage by TrackController).
+    float const fallDelta = std::max(0.0f, state.FallDamage - seat.LastFallDamage);
+    seat.LastFallDamage = state.FallDamage;
+    if (fallDelta > 0.0f)
+    {
+        seat.FallShare += fallDelta;
+        ledger.Add(RewardTerm::FallHurt, -tuning.FallHurt * fallDelta);
+        NoteFailure(env, nav, bot->GetPosition());
+    }
+    bool const timeIsUp = env.EpisodeLengthMs && env.EpisodeElapsedMs >= env.EpisodeLengthMs;
+    if (!seat.Reached && timeIsUp)
+    {
+        tally.TimedOut = true;
+        if (!nav.TimedOutNoted)
+        {
+            nav.TimedOutNoted = true;
+            NoteFailure(env, nav, bot->GetPosition());
+        }
+    }
+    if (seat.Reached)
+        return;
+    ledger.Add(RewardTerm::StepCost, -tuning.StepCost);
+    if (!bot->IsAlive() || seat.Clock.Out)
+        return;
+
+    // How far the body went since the last decision, on the server's applied position.
+    float moved = 0.0f;
+    if (seat.HasLastPos)
+    {
+        float const dx = bot->GetPositionX() - seat.LastX;
+        float const dy = bot->GetPositionY() - seat.LastY;
+        moved = std::sqrt(dx * dx + dy * dy);
+        seat.Travelled += moved;
+    }
+    bool const firstLook = !seat.HasLastPos;
+    seat.LastX = bot->GetPositionX();
+    seat.LastY = bot->GetPositionY();
+    seat.HasLastPos = true;
+
+    // Wall and Stuck at their fixed price (as M1), and a pin PinSeconds long into the failure pool, once per pin.
+    uint32 const stuckMs = state.StuckMs - std::min(state.StuckMs, seat.LastStuckMs);
+    uint32 const wallMs = state.WallMs - std::min(state.WallMs, seat.LastWallMs);
+    seat.LastStuckMs = state.StuckMs;
+    seat.LastWallMs = state.WallMs;
+    seat.StuckMs += stuckMs;
+    seat.WallMs += wallMs;
+    if (stuckMs)
+        ledger.AddFixed(RewardTerm::Stuck, -controls.Stuck * float(stuckMs) / 1000.0f);
+    if (wallMs)
+    {
+        Movement::ControlState const& held = state.Controls.Held;
+        UnitMoveType const kind = held.Walk ? MOVE_WALK : held.Forward < 0 && !held.Strafe ? MOVE_RUN_BACK : MOVE_RUN;
+        float const asked = bot->GetSpeed(kind) * seconds;
+        float const charge = Standing::WallCharge(float(wallMs) / 1000.0f, moved, asked, controls.Wall,
+            controls.WallSlide);
+        if (charge > 0.0f)
+            ledger.AddFixed(RewardTerm::Wall, -charge);
+    }
+    if (state.StuckRunMs >= tuning.PinSeconds * 1000)
+    {
+        if (!seat.PinNoted)
+        {
+            seat.PinNoted = true;
+            NoteFailure(env, nav, bot->GetPosition());
+        }
+    }
+    else
+        seat.PinNoted = false;
+
+    // The route distance where the body stands: Lost while it exceeds the start's by LostYards (off the bake is
+    // lost too); Revisit on stepping onto a bake cell stood on before, in the arenas that ask -- a step, not a
+    // dwell: standing still on one's own cell costs nothing (the plan's standing-still-pays-0).
+    seat.CBody = CostAt(nav, bot->GetPositionX(), bot->GetPositionY());
+    if (seat.CBody > nav.CStart + tuning.LostYards)
+    {
+        seat.LostMs += stepMs;
+        ledger.Add(RewardTerm::Lost, -tuning.Lost * seconds);
+    }
+    uint32 const cell = nav.Grid->CellOf(bot->GetPositionX(), bot->GetPositionY());
+    if (!seat.Stood.empty() && cell != Vision::TRAV_NO_CELL)
+    {
+        if (cell != seat.LastCell && seat.Stood[cell])
+        {
+            seat.RevisitMs += stepMs;
+            ledger.Add(RewardTerm::Revisit, -tuning.Revisit * seconds);
+        }
+        seat.Stood[cell] = 1;
+    }
+    seat.LastCell = cell;
+    NoteWaypoint(env, seatIndex, nav, seat);
+
+    // Arriving: stopped within ArriveYards of the goal (2D) and ArriveRise of its height. The first look is at
+    // rest and is no stop.
+    float const distance = bot->GetExactDist2d(&nav.Goal);
+    bool const inside = distance <= tuning.ArriveYards
+        && std::fabs(bot->GetPositionZ() - nav.Goal.GetPositionZ()) <= tuning.ArriveRise;
+    bool const stopped = Standing::Stopped(bot->GetUnitMovementFlags(), moved, tuning.StopMoved);
+    if (firstLook || !(stopped && inside))
+        return;
+    seat.Reached = true;
+    seat.ArriveMs = env.EpisodeElapsedMs;
+    seat.StopError = distance;
+    ledger.Add(RewardTerm::Arrive, tuning.Arrive);
+}
+
+void Animus::Curriculum::PointNavEncounter::WriteState(Env const& env, float* state) const
+{
+    // The critic sees the goal in the first enemy slot (the stage has no enemies): where it is, relative to the
+    // spawn as every position in the state is; the route distance from the body in its health column and from the
+    // start in its max-health column, each over 500 yd.
+    EnvNav const& nav = _envs[env.Index];
+    if (!nav.Grid || (!nav.Placed && !nav.LabelsOnly) || nav.GoalCell == Vision::TRAV_NO_CELL)
+        return;
+    Position const& origin = _scenario.SpawnPointFor(env);
+    float* slot = state + StageScenario::STATE_GLOBAL_COUNT + MAX_SEATS * StageScenario::STATE_SEAT_FEATURES;
+    slot[StageScenario::STATE_ENEMY_PRESENT] = 1.0f;
+    slot[StageScenario::STATE_ENEMY_ALIVE] = nav.Seats[0].Reached ? 0.0f : 1.0f;
+    slot[StageScenario::STATE_ENEMY_X] = Encoding::RelativePosition(nav.Goal.GetPositionX(), origin.GetPositionX());
+    slot[StageScenario::STATE_ENEMY_Y] = Encoding::RelativePosition(nav.Goal.GetPositionY(), origin.GetPositionY());
+    float const body = nav.Seats[0].CBody;
+    slot[StageScenario::STATE_ENEMY_HEALTH] = body >= Vision::TRAV_UNREACHABLE ? 1.0f
+        : std::min(1.0f, body / STATE_YARDS_SCALE);
+    slot[StageScenario::STATE_ENEMY_MAX_HEALTH] = nav.CStart >= Vision::TRAV_UNREACHABLE ? 1.0f
+        : std::min(1.0f, nav.CStart / STATE_YARDS_SCALE);
+}
+
+void Animus::Curriculum::PointNavEncounter::WriteLabels(Env const& env, uint32 seatIndex, uint8* out) const
+{
+    namespace Vi = Animus::Vision;
+    std::memset(out, 0, LABEL_BYTES);
+    uint16_t* fineCost = reinterpret_cast<uint16_t*>(out + Vi::TRAV_LABEL_FINE_COST);
+    uint16_t* coarseCost = reinterpret_cast<uint16_t*>(out + Vi::TRAV_LABEL_COARSE_COST);
+    float* scalars = reinterpret_cast<float*>(out + Vi::TRAV_LABEL_SCALARS);
+    uint16_t const unreachable = Vi::FloatToHalf(Vi::TRAV_UNREACHABLE);
+    std::fill(fineCost, fineCost + Vi::TRAV_LABEL_CELLS, unreachable);
+    std::fill(coarseCost, coarseCost + Vi::TRAV_LABEL_CELLS, unreachable);
+    scalars[0] = Vi::TRAV_UNREACHABLE;
+    scalars[1] = Vi::TRAV_UNREACHABLE;
+
+    EnvNav const& nav = _envs[env.Index];
+    if (!nav.Grid || seatIndex >= MAX_SEATS)
+        return;
+    Player const* bot = _scenario.SeatBotInWorld(env, seatIndex);
+    if (!bot)
+        return;
+    // The pose the map crop was taken at (the same observation), else the body's.
+    SeatState const& state = _scenario.Data(env).Seats[seatIndex];
+    CropPose const& pose = state.Crop;
+    float const x = pose.Valid ? pose.X : bot->GetPositionX();
+    float const y = pose.Valid ? pose.Y : bot->GetPositionY();
+    float const yaw = pose.Valid ? pose.Yaw : bot->GetOrientation();
+    bool const haveGoal = nav.GoalCell != Vi::TRAV_NO_CELL && nav.Cost.size() == nav.Grid->Cells();
+    static std::vector<float> const noCost;
+    std::vector<float> const& cost = haveGoal ? nav.Cost : noCost;
+    Vi::SampleLabels(*nav.Grid, cost, x, y, yaw, Vi::TRAV_CELL, out + Vi::TRAV_LABEL_FINE_CLASSES, fineCost);
+    Vi::SampleLabels(*nav.Grid, cost, x, y, yaw, Vi::TRAV_LABEL_COARSE_CELL, out + Vi::TRAV_LABEL_COARSE_CLASSES,
+        coarseCost);
+    if (!haveGoal)
+        return;
+    scalars[0] = CostAt(nav, x, y);
+    scalars[1] = nav.CStart;
+    // The goal in the body frame: forward along the facing, right along (sin yaw, -cos yaw) -- what the compass says.
+    float const dx = nav.Goal.GetPositionX() - x;
+    float const dy = nav.Goal.GetPositionY() - y;
+    scalars[2] = dx * std::cos(yaw) + dy * std::sin(yaw);
+    scalars[3] = dx * std::sin(yaw) - dy * std::cos(yaw);
+}

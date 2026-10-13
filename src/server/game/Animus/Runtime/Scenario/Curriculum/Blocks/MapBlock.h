@@ -88,11 +88,15 @@ namespace Animus::Curriculum
         /// 2: the searched channel (a seventh) and the three scalars searched, new_age, total (exploration v3,
         /// decision 0026). 3: the eight coverage scalars (frontier_sin .. searched_cells; general search, decision
         /// 0027); the crop is unchanged. 4: searched_cells and total on the log scale (LogShare; decision 0031): the
-        /// same columns, no longer capped a third of the way into an episode.
-        [[nodiscard]] uint32 Revision() const override { return 4; }
-        /// "map": { transport "bytes", height, width (Vision::CROP), cell (yards), channels (7), channel_names,
-        /// map_bytes, codes, code_names, code_channel, height_channel, height_step, height_zero, visited_channel,
-        /// age_channel, age_scale, age_never, class_channel, classes (Vision::CLASS_LIMIT), frontier_channel,
+        /// same columns, no longer capped a third of the way into an episode. 5: the crop may come in two tiers
+        /// (vision movement curriculum, CONTRACT.md sec 3.2): the manifest's `tiers` lists each tier's cell, fine
+        /// first (2 yd) then coarse (8 yd, Vision::COARSE_CELL, MentalMap::CropWide), `map_bytes` is the tiers'
+        /// total, and the STEP's map section carries the tiers in that order. A stage with StageDefinition::MapTiers
+        /// 1 is byte-identical to revision 4.
+        [[nodiscard]] uint32 Revision() const override { return 5; }
+        /// "map": { transport "bytes", height, width (Vision::CROP), cell (yards), tiers [{cell, bytes}...],
+        /// tier_bytes (one tier's), channels (7), channel_names, map_bytes (every tier's), codes, code_names,
+        /// code_channel, height_channel, height_step, height_zero, visited_channel, age_channel, age_scale, age_never, class_channel, classes (Vision::CLASS_LIMIT), frontier_channel,
         /// searched_channel, searched_max, new_age_scale_s, total_log_max, epoch ("episode"), scalars, scalar_names,
         /// coverage_cell_yards, coverage_reach_yards, cluster_scale, searched_cells_log_max, cluster_min_cells,
         /// pocket_min_cells }
