@@ -34,3 +34,4 @@ Decisions with lasting consequences, one file each. Dates are the day the owner 
 | [0033](0033-follow-wandering-leader.md) | The follow leader wanders from a random start; followers are paid to wait with it and remember where the party was | 2026-10-12 |
 | [0034](0034-follow-close-the-gap.md) | A follower is paid to close the gap (fading) and charged for watching the leader walk away | 2026-10-12 |
 | [0035](0035-follow-leader-is-the-group-leader.md) | The follow leader runs the stock path as the group leader, seen at a player report cadence; rising gates, settled and wall fixes | 2026-10-13 |
+| [0036](0036-pointnav-curriculum.md) | PointNav on a learned costmap and planner: the vision movement curriculum nav1-nav6, potential progress that never fades, dungeons only (outdoors Phase B) | 2026-10-13 |

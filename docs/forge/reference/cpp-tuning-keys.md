@@ -4,7 +4,9 @@ Reference for every value that shapes what the curriculum trains on and what it 
 review and refactor; everything is checked against the tree at `bd32b9dc8` (branch `forge`, 2026-10-07).
 
 **Scope.** `CurriculumTuning.h` / `CurriculumTuning.cpp`: the 22 tuning groups, their 297 config keys (293 fields of the
-struct plus the four `StandIn.*` keys of `StandIn::Tuning`), how they are loaded, recorded and fingerprinted, the
+struct plus the four `StandIn.*` keys of `StandIn::Tuning`; 23 groups and 319 keys since the `PointNav` group of
+2026-10-13, decision 0036, whose 22 keys close the table of section 4),
+ how they are loaded, recorded and fingerprinted, the
 the (removed) conf.dist agreement check, and the three per-arena override families that are read by name outside the
 Visit list. It does not describe what the encounters do with the numbers (see [cpp-encounters.md](cpp-encounters.md),
 [cpp-stagescenario.md](cpp-stagescenario.md), [cpp-rewards-routing.md](cpp-rewards-routing.md)) nor the forge's own
@@ -168,6 +170,7 @@ Struct line ranges are in `CurriculumTuning.h`. "Per decision" terms are tuned f
 | `Resurrection` | 829-836 | 2 | `StageScenario.cpp:2643`, `PartyEncounter.cpp:270` | Grace to wait for a resurrection; payment for reviving an ally. |
 | `Output` | 838-846 | 1 | `StageScenario.cpp:4986-4989` | A clock charge per second an engaged enemy lives. |
 | `StandIn` | 848 (`StandIn.h:105-114`) | 4 | `StandInSeat.cpp:82-91`, `StandIn.h:142-146` | The "human" stand-in: share of episodes and style draw (lead / role). |
+| `PointNav` | 480-504 (2026-10-13) | 22 | `Encounters/PointNavEncounter.cpp` (in flight), `Vision/TravBake.cpp` (`DropHurtYards`) | The nav stages (decision 0036): arrival geometry, the Outcome and Cost prices (Arrive, StepCost, Death, FallHurt, Drowned, Lost/LostYards, Revisit), the pair draw (`DetourBins`, `LengthBins`, `RungBins0-3`, `ReplayShare`, `BedShare`) and the failure pool (`PinSeconds`, `FailurePool`). The four string keys are the first non-numeric tuning keys (`Visit` passes `std::string&`; `Json` writes them as strings). Stuck and Wall are `Seek.*`, as M4's. No shaping key: the potential is the learner's. |
 
 Notes per group worth knowing before changing it:
 
@@ -606,6 +609,28 @@ through to `StandIn.Share`, so its default 0 is never consulted today (the "defe
 | StandIn | `StandIn.LeadChance` | 50 | int32 | Load: 0..100 | `Encounters/StandIn.h:142` | group1, dungeon2-3 |
 | StandIn | `StandIn.TankChance` | 34 | int32 | Load: 0..100; pair scaled to sum <= 100 | `Encounters/StandIn.h:145`, `Encounters/StandIn.h:146` | group1, dungeon2-3 |
 | StandIn | `StandIn.HealerChance` | 33 | int32 | Load: 0..100; pair scaled to sum <= 100 | `Encounters/StandIn.h:146` | group1, dungeon2-3 |
+| PointNav | `PointNav.ArriveYards` | 1.0f | float | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (arrival: within this of the goal, 2D) |
+| PointNav | `PointNav.ArriveRise` | 2.0f | float | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (arrival: within this of the goal's height) |
+| PointNav | `PointNav.StopMoved` | 0.05f | float | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (a stop: under this many yards moved over the decision) |
+| PointNav | `PointNav.Arrive` | 3.0f | float | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (Outcome, once) |
+| PointNav | `PointNav.StepCost` | 0.002f | float | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (Cost per decision) |
+| PointNav | `PointNav.Death` | 3.0f | float | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (Cost per death) |
+| PointNav | `PointNav.FallHurt` | 2.0f | float | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (Cost x the share of max health a fall took) |
+| PointNav | `PointNav.Drowned` | 3.0f | float | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (Cost, a death under water) |
+| PointNav | `PointNav.Lost` | 0.02f | float | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (Cost per second while C(body) > C(start) + LostYards) |
+| PointNav | `PointNav.LostYards` | 40.0f | float | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (the Lost threshold, yards of route) |
+| PointNav | `PointNav.Revisit` | 0.002f | float | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (Cost per second on ground stood on before (arenas flagged Revisit)) |
+| PointNav | `PointNav.ReplayShare` | 20 | int32 | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (percent of training episodes started from the failure pool) |
+| PointNav | `PointNav.BedShare` | 30 | int32 | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (percent of nav5's draws with the goal on a water cell's bed) |
+| PointNav | `PointNav.DropHurtYards` | 100.0f | float | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (the bake's price of a damaging drop: yards per share of health) |
+| PointNav | `PointNav.DetourBins` | "1.0,1.2,1.6,2.5,4.0" | std::string | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (detour bin edges (route / straight), comma list) |
+| PointNav | `PointNav.LengthBins` | "5,20,60,120,250,400" | std::string | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (route length bin edges, yards, comma list) |
+| PointNav | `PointNav.RungBins0` | "1,2" | std::string | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (rung 0: "detourMaxBin,lengthMaxBin") |
+| PointNav | `PointNav.RungBins1` | "2,3" | std::string | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (rung 1) |
+| PointNav | `PointNav.RungBins2` | "3,4" | std::string | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (rung 2) |
+| PointNav | `PointNav.RungBins3` | "4,5" | std::string | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (rung 3) |
+| PointNav | `PointNav.PinSeconds` | 4 | uint32 | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (a controller pin this long is a failure (the pool)) |
+| PointNav | `PointNav.FailurePool` | 512 | uint32 | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (the failure ring's size per arena) |
 
 ## 5. Reviewer notes
 

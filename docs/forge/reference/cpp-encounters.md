@@ -41,6 +41,7 @@ UNVERIFIED items; [known-issues.md](known-issues.md) aggregates them.
 | `Curriculum/Encounters/PartyEncounter.cpp` | 541 | PartyEncounter: the core group and role pay. |
 | `Curriculum/Encounters/PartyFollowEncounter.cpp` | 738 | PartyFollowEncounter implementation (M4, scripted leader). |
 | `Curriculum/Encounters/PartyFollowEncounter.h` | 182 | PartyFollowEncounter class and state. |
+| `Curriculum/Encounters/PointNavEncounter.{h,cpp}` | in flight | PointNavEncounter (N1-N6: a point goal over the traversability bake; labels in STEP; decision 0036). |
 | `Curriculum/Encounters/RolesDraw.h` | 239 | Pure draws and role constants for G1 drills. |
 | `Curriculum/Encounters/RolesEncounter.cpp` | 727 | RolesEncounter implementation (G1). |
 | `Curriculum/Encounters/RolesEncounter.h` | 154 | RolesEncounter class and state. |
@@ -1051,6 +1052,85 @@ encounter in the same stage creates a duplicate column; in M4 only this encounte
 3. `RegroupPending` can remain true when a follower is out; cleared at `Died` (`:448`) only.
 4. `.h:43-46` states the leader is "no dead code" - the leader is the sole user of `OwnerAgent`/`BuildOwnerSeat`,
    a leftover slot of the deleted owner mechanism.
+
+## E2a.1b PointNavEncounter (N1-N6 `nav1_sight` to `nav6_follow`; `PointNavEncounter.{h,cpp}`, in flight 2026-10-13)
+
+`Opposition::PointNav` (and, with `ArenaDefinition::LabelsOnly`, a labeller beside `Opposition::PartyFollow` in
+`nav6_follow`). Written from the build contract (`.agents/plans/vision-movement-curriculum/CONTRACT.md`, sec 1-3) and
+[decision 0036](../decisions/0036-pointnav-curriculum.md); the sim core agent writes the bodies in the same build, so
+line numbers are absent and the details are `UNVERIFIED` until it lands. One seat (nav6: M4's party), nothing fought,
+a cleared instance of its own per env; dungeons only in this build (outdoors is Phase B).
+
+### The bake (`Runtime/Vision/TravBake.{h,cpp}`)
+
+A 2-yd grid (`TRAV_CELL`) over the arena's box (`ArenaDefinition::HasBox/BoxMin*/BoxMax*`; an instance's loaded grids
+without one), each cell a `TravClass` (`Unknown, Free, Wall, Water, Hazard, StepUp, Jump, DropSafe, DropHurt,
+DropLethal, Slope`) from the player controller's own rules, never the navmesh: ground z from `Map::GetHeight` with
+vmaps at the cell centre; `Water` when the liquid level is 1.5 yd over the bed (two heights kept: bed and surface),
+`Hazard` for magma or slime; `Slope` when the local normal's z is under `WALKABLE_NORMAL_Z` (cos 50 deg); `Wall` by
+line of sight between adjacent cells' standing points (a cell with no passable edge). Edges to the 8 neighbours cost
+yards: a climb within `STEP_UP` (1.19) walks (water x1.5), within `JUMP_RISE` (1.64) jumps at x1.5 and marks the
+cell `Jump`, higher has no edge; a drop under `FALL_DAMAGE_FROM` (13.48) is `DropSafe` at cost, under
+`FALL_LETHAL_FROM` (69.0) `DropHurt` at cost + damageperc x `PointNav.DropHurtYards` (100), lethal has no edge
+(`DropLethal`). `CostToGo` is a Dijkstra from the goal cell (`TRAV_UNREACHABLE` 65504 = no route), once an episode on
+the map thread, cached per (bake, goal cell). Baked at the arena's first episode on the worldserver, cached to disk as
+`trav/<mapId>-<arena>.trav` beside the camera's scenes (versioned header, FNV digest of scene digest + box + version;
+a mismatch rebakes); one log line per bake (cells, class histogram). Spawn and goal candidates: every `Free` cell
+reachable from the seed cell (the map entrance or the box centre).
+
+### The draw (`BeforeLevel` / `Build`)
+
+Per episode a detour bin and a length bin uniform over the rung's open bins (`PointNav.DetourBins`, `LengthBins`;
+`RungBins<rung>` = "detourMaxBin,lengthMaxBin"); the goal first, one Dijkstra, then the start uniform among the cells
+whose `C` is in the length bin and whose `C / straight` (3D) is in the detour bin; no fit: redraw the goal up to four
+times, then the nearest fit. `PointNav.ReplayShare` (20) percent of training episodes start at a point of the arena's
+failure pool (a ring of `FailurePool` 512: pinned >= `PinSeconds`, fell for damage, drowned, timed out; position and
+goal) with the same goal; evaluations draw seeded pairs by `EpisodeSeed`, no replay. `SightOnly` arenas (nav1) draw
+starts in line of sight of the goal; `BedShare` (30) percent of nav5's draws put the goal on a water cell's bed. The
+spawn is the start cell's centre at ground z, facing random (`EpisodeSpawn`, as PartyFollow); the goal is a point,
+no object: the **compass block** shows it (bearing, distance), never withheld.
+
+### Labels in STEP (protocol 31; `SpecMsg::LabelBytes` 13840)
+
+For the observation rows only, after the map section: fine costmap classes (48x48 u8 in the fine crop's frame),
+coarse costmap classes (48x48 u8, the majority of 16 bake cells), fine and coarse cost-to-go (48x48 f16 yards), then
+f32 `C_body`, `C_start`, `goal_forward_yards`, `goal_right_yards`. `LabelBytes = 0` in stages without PointNav. In
+nav6 (labels-only) the point is the leader's believed position and the C-map is recomputed only when the leader's
+cell changes.
+
+### Rewards (no Shaping)
+
+Arrive (`PointNav.Arrive` 3.0, Outcome) once, `Standing::Stopped` within `ArriveYards` (1.0, 2D) and `ArriveRise`
+(2.0) of the goal; StepCost 0.002 per decision; Stuck and Wall at `Seek.*`'s fixed prices; FallHurt (`RewardTerm::
+FallHurt`, Cost) = the share of max health a fall took x `PointNav.FallHurt` 2.0; Death 3.0; Drowned (`RewardTerm::
+Drowned`, 3.0) on underwater self damage at a death; Lost 0.02/s while `C(body) > C(start) + LostYards` (40);
+Revisit 0.002/s on ground stood on before (arenas flagged `Revisit`); Timeout 0. The potential on `C` is the learner's
+(`potential:` in the yaml, its own gamma); the sim's `reward_potential` column is 0. A death rises the seat at its
+start point after `Respawn.DelayMs` (`RespawnAtEntrance`; the episode goes on). In labels-only mode nothing is placed
+and nothing is paid: `PartyFollowEncounter` pays.
+
+### Episode-info columns
+
+arrived, spl, time_ratio, optimal_yards, straight_yards, detour_factor, travelled_yards, stop_error_yards, falls,
+fall_damage_share, drowned, died, timed_out, stuck_seconds, wall_seconds, lost_seconds, revisit_seconds, jumps,
+swim_seconds, nav_rung, detour_bin, length_bin, replayed, map, start_x/y/z, goal_x/y/z, waypoint_regret_yards,
+waypoints_chosen (meanings in [metrics.md](metrics.md), N1-N6).
+
+### Stage definition it runs under
+
+`Stages.cpp` nav1-nav6: blocks core, move, compass, vision (entities), map with `MapTiers = 2`, goal (nav6 adds
+party_frames); Level 1; `NavArena(name, map, seconds, flag)` arenas with `RespawnAtEntrance`, `wailing` (43)
+`EvalOnly` in every stage. `ArenaProblem` requires of a nav arena one seat, those blocks, a map, the rise and two map
+tiers, and allows a compass on a party follow only with `LabelsOnly`.
+
+### Quirks and open points (hand-back of the stages agent, 2026-10-13)
+
+1. `PartyFollowEncounter::BeforeLevel` sets `EpisodeLevel` from the dungeon band, which overrides the stage's
+   `Level` 1 in nav6 (`StageScenario.cpp` level pick: `EpisodeLevel` first).
+2. `StageScenario.cpp` (`Build`, the clear): the whole-dungeon clear and the re-clear on a map change are gated on
+   `partyFollow || seek`; a PointNav arena would get only the spawn-area clear unless the encounter wiring adds it.
+3. No bake box is authored for the Scarlet Monastery (four disconnected wings: the Graveyard's entrance seeds the
+   bake) or Maraudon (two entrances; `GetMapEntranceTrigger` picks one).
 
 ## E2a.2 CombatEncounter (C1-C3 `combat1_fight`, `combat2_packs`, `combat3_survive`; `CombatEncounter.h` 183, `.cpp` 707, `CombatDraw.h` 148)
 

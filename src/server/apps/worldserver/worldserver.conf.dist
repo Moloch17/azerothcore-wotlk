@@ -5022,6 +5022,19 @@ AnimusForge.OutputDir = ""
 #                                 the gunpowder carried from the start; acting through the sight block)
 #                                 "move4_follow" (an empty Ragefire Chasm or Deadmines: four followers keep
 #                                 with a leader walking the dungeon's route; a death rises at the entrance)
+#                     The nav stages (the vision movement curriculum, decision 0036), a second root seeded from
+#                     nothing: a point goal shown by the compass over a traversability bake of an emptied
+#                     dungeon, the route learned on a costmap and a planner; every race and class at level 1;
+#                     dungeons only in this build (outdoors is Phase B); Wailing Caverns held out of every one:
+#                       nav       "nav1_sight" (Stockades, Ragefire: a point in sight, stop on it)
+#                                 "nav2_detour" (Stockades, Deadmines, Shadowfang Keep: the straight line blocked)
+#                                 "nav3_vertical" (Deadmines, Shadowfang, Gnomeregan, Razorfen Kraul: storeys,
+#                                 steps, jumps, drops)
+#                                 "nav4_beyond" (Gnomeregan, Uldaman, Scarlet Monastery, Maraudon: the route out
+#                                 of view, dead ends, no ground twice)
+#                                 "nav5_water" (Blackfathom Deeps, Deadmines, Maraudon: swim or go round, the bed)
+#                                 "nav6_follow" (Ragefire, Deadmines: move4_follow's party, the leader's believed
+#                                 position the point)
 #                     The combat stages (dungeon-curriculum C1-C3), from move3_interact, on a cleared Ragefire Chasm
 #                     at its levels, the seat seeing what it fights:
 #                       combat    "combat1_fight" (one creature at a time; a friend to taunt off and heal)
@@ -5176,6 +5189,13 @@ AnimusForge.TicksPerDecision = 1
 #AnimusForge.Stage.move2_seek.TicksPerDecision = 5
 #AnimusForge.Stage.move3_interact.TicksPerDecision = 5
 #AnimusForge.Stage.move4_follow.TicksPerDecision = 5
+# The nav stages (decision 0036) are movement alone, as the move stages; no Envs key either, as theirs.
+#AnimusForge.Stage.nav1_sight.TicksPerDecision = 5
+#AnimusForge.Stage.nav2_detour.TicksPerDecision = 5
+#AnimusForge.Stage.nav3_vertical.TicksPerDecision = 5
+#AnimusForge.Stage.nav4_beyond.TicksPerDecision = 5
+#AnimusForge.Stage.nav5_water.TicksPerDecision = 5
+#AnimusForge.Stage.nav6_follow.TicksPerDecision = 5
 # The combat stages move on the player controller too.
 #AnimusForge.Stage.combat1_fight.TicksPerDecision = 5
 #AnimusForge.Stage.combat2_packs.TicksPerDecision = 5
@@ -6528,6 +6548,60 @@ AnimusForge.Curriculum.PartyFollow.BurstSecondsMax = 8.0
 AnimusForge.Curriculum.PartyFollow.Approach = 0.005
 AnimusForge.Curriculum.PartyFollow.ApproachCapYards = 60.0
 AnimusForge.Curriculum.PartyFollow.DriftMovingYards = 10.0
+
+#
+#    AnimusForge.Curriculum.PointNav.*
+#        The nav stages (nav1_sight ... nav6_follow; PointNavEncounter; the vision movement curriculum, decision 0036):
+#        a point goal shown by the compass (the minimap marker: bearing and distance, exact), the route unknown, over
+#        a traversability bake of the dungeon (Vision/TravBake: a 2-yd grid of what a player's controller walks, steps
+#        up, jumps, drops and swims, with 8-neighbour edge costs in yards; a Dijkstra from the goal once an episode
+#        gives every cell's route cost-to-go). The bake is training labels and the learner's potential, never a policy
+#        input. Dungeons only in this build.
+#        Paid: Arrive (Outcome) once, stopped (moved under StopMoved yards over the decision) within ArriveYards of
+#        the goal (2D) and ArriveRise of its height. Costs: StepCost per decision; Death per death (the seat rises at
+#        its start point after Respawn.DelayMs, the episode goes on); FallHurt times the share of maximum health a
+#        fall took; Drowned on a death under water; Lost per second while the route cost-to-go from the body exceeds
+#        the start's by LostYards; Revisit per second on ground stood on before this episode (arenas flagged Revisit:
+#        nav4 on); Stuck and Wall at Seek's fixed prices. No shaping from the sim: the potential on the cost-to-go is
+#        the learner's (potential.* in its yaml), paid with its own discount and never faded.
+#        The draw: DetourBins and LengthBins are comma lists of bin edges (route / straight line; route yards); a rung
+#        of the ladder opens the bins up to RungBins<rung> = "detourMaxBin,lengthMaxBin" (indexes into the edges).
+#        Each episode draws a detour bin and a length bin uniformly over the open ones, the goal cell first, one
+#        Dijkstra, then the start uniformly among the cells whose route length and detour fall in them (the goal is
+#        redrawn up to four times, then the nearest fit). ReplayShare percent of training episodes start instead at a
+#        point of the arena's failure pool (the last FailurePool failures: a seat pinned PinSeconds or more, a fall for
+#        damage, a drowning, a timeout -- its position and its goal; evaluations never replay). A SightOnly arena
+#        (nav1) draws starts in line of sight of the goal. BedShare percent of nav5's draws put the goal on a water
+#        cell's bed (goal z = the bed; the surface otherwise). DropHurtYards prices a damaging drop's edge in the bake:
+#        the fall's share of health times it, in yards of walking (a half-health fall costs 50 yd).
+#   arriving: stopped within ArriveYards (2D) and ArriveRise (height) of the point, under StopMoved yards of motion
+AnimusForge.Curriculum.PointNav.ArriveYards = 1.0
+AnimusForge.Curriculum.PointNav.ArriveRise = 2.0
+AnimusForge.Curriculum.PointNav.StopMoved = 0.05
+#   the outcome and the costs
+AnimusForge.Curriculum.PointNav.Arrive = 3.0
+AnimusForge.Curriculum.PointNav.StepCost = 0.002
+AnimusForge.Curriculum.PointNav.Death = 3.0
+AnimusForge.Curriculum.PointNav.FallHurt = 2.0
+AnimusForge.Curriculum.PointNav.Drowned = 3.0
+AnimusForge.Curriculum.PointNav.Lost = 0.02
+AnimusForge.Curriculum.PointNav.LostYards = 40.0
+AnimusForge.Curriculum.PointNav.Revisit = 0.002
+#   the draw: failure replay (percent of training episodes), the bed goal (percent of nav5's draws), the bake's
+#   price of a damaging drop (yards per share of health)
+AnimusForge.Curriculum.PointNav.ReplayShare = 20
+AnimusForge.Curriculum.PointNav.BedShare = 30
+AnimusForge.Curriculum.PointNav.DropHurtYards = 100.0
+#   the bins (comma lists of edges) and what each rung of the ladder opens ("detourMaxBin,lengthMaxBin")
+AnimusForge.Curriculum.PointNav.DetourBins = "1.0,1.2,1.6,2.5,4.0"
+AnimusForge.Curriculum.PointNav.LengthBins = "5,20,60,120,250,400"
+AnimusForge.Curriculum.PointNav.RungBins0 = "1,2"
+AnimusForge.Curriculum.PointNav.RungBins1 = "2,3"
+AnimusForge.Curriculum.PointNav.RungBins2 = "3,4"
+AnimusForge.Curriculum.PointNav.RungBins3 = "4,5"
+#   the failure pool: a pin this long is a failure; the ring holds this many per arena
+AnimusForge.Curriculum.PointNav.PinSeconds = 4
+AnimusForge.Curriculum.PointNav.FailurePool = 512
 
 #
 #    AnimusForge.Curriculum.Seek.*

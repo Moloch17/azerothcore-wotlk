@@ -45,10 +45,13 @@ repository**; see [06-animus.md](06-animus.md).
 - **Convergence, not pass gates**: a stage ends when its classes' convergence signals say so (or at a step ceiling);
   the learner exits 0 either way and the plan moves on.
 
-## The ten stages (default queue, in order)
+## The sixteen stages (default queue, in order)
 
-`move1_controls`, `move2_seek`, `move3_interact`, `move4_follow`, `combat1_fight`, `combat2_packs`, `combat3_survive`,
-`group1_roles`, `dungeon2_ragefire`, `dungeon3_deadmines` (order from `Stages.cpp`). Seeding parents (`Extends`):
+`move1_controls`, `move2_seek`, `move3_interact`, `move4_follow`, `nav1_sight`, `nav2_detour`, `nav3_vertical`,
+`nav4_beyond`, `nav5_water`, `nav6_follow`, `combat1_fight`, `combat2_packs`, `combat3_survive`,
+`group1_roles`, `dungeon2_ragefire`, `dungeon3_deadmines` (order from `Stages.cpp`; the nav stages are the vision
+movement curriculum, [decision 0036](decisions/0036-pointnav-curriculum.md), a second root seeded from
+nothing). Seeding parents (`Extends`):
 move2 from move1; move3 and move4 from move2; combat1 from move3; then each combat/group/dungeon stage from the
 previous one; `group1_roles` also merges `move4_follow`. One-line summaries of each are the `Summary` fields in `Stages.cpp`; the full descriptions are in
 [reference/stages.md](reference/stages.md). The first curriculum (v1) was deleted on 2026-10-07 (git tags

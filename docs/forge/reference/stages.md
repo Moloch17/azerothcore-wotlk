@@ -1,6 +1,8 @@
-# Reference: the ten live stages
+# Reference: the sixteen live stages
 
-Purpose and scope: one section per live curriculum stage (`move1_controls` to `dungeon3_deadmines`), written from the
+Purpose and scope: one section per live curriculum stage (`move1_controls` to `dungeon3_deadmines`, and the six nav
+stages `nav1_sight` to `nav6_follow` of the vision movement curriculum, decision 0036, added 2026-10-13), written from
+the
 stage's definition in `src/server/game/Animus/Runtime/Scenario/Curriculum/Stages/Stages.cpp`, its learner config
 `apps/forge/python/configs/<stage>.yaml` (with its `extends:` chain merged as `animus/config.py` `load_yaml` does) and
 the encounters and tuning it uses. It describes what the code does, not what a comment says; where they disagree the
@@ -36,7 +38,7 @@ stage is [../04-curriculum.md](../04-curriculum.md). Related references: [00-arc
 
 (The other encounters' and tuning files' line counts are in the cpp-* documents.)
 
-## Overview of all ten
+## Overview of all sixteen
 
 | # | Stage | Place | Level | Seats | Opposition | Ladder (gate) | Budget | Trained? |
 |---|---|---|---|---|---|---|---|---|
@@ -50,9 +52,18 @@ stage is [../04-curriculum.md](../04-curriculum.md). Related references: [00-arc
 | 8 | `group1_roles` | Ragefire, cleared | 13 to 18 | 5 | Roles | per-class tier + fade (`won` 0.6) | 400M | never |
 | 9 | `dungeon2_ragefire` | Ragefire, door to Bazzalan | band | 5 | Instance (whole wing) | wing ladder + fade (`full_clear` 0.5) | 1500M | never |
 | 10 | `dungeon3_deadmines` | Deadmines, door to VanCleef | 17 to 20 | 5 | Instance (whole wing) | wing ladder + fade (`bar_clear` 0.5) | 2000M | never |
+| 11 | `nav1_sight` | Stockades (34) and Ragefire (389), emptied | 1 (death knight 55) | 1 | PointNav (`PointNavEncounter`) | fade = draw bins (`spl` 0.6, 0.7, 0.8) | 50M | never |
+| 12 | `nav2_detour` | Stockades, Deadmines (36), Shadowfang Keep (33) | 1 | 1 | PointNav | same | 150M | never |
+| 13 | `nav3_vertical` | Deadmines, Shadowfang, Gnomeregan (90), Razorfen Kraul (47) | 1 | 1 | PointNav | same | 200M | never |
+| 14 | `nav4_beyond` | Gnomeregan, Uldaman (70), Scarlet Monastery (189), Maraudon (349) | 1 | 1 | PointNav (Revisit) | same | 300M | never |
+| 15 | `nav5_water` | Blackfathom Deeps (48), Deadmines, Maraudon | 1 | 1 | PointNav | same | 150M | never |
+| 16 | `nav6_follow` | Ragefire and Deadmines, emptied | 1 (intent; see 16) | 5 (4 learned) | PartyFollow + PointNav labels | same (`follow_kept_share`) | 250M | never |
 
-The queue order is the table's order (every stage is in the default queue). Budgets are ceilings, not
-targets (see [../04-curriculum.md](../04-curriculum.md)).
+The queue order is the table's order (every stage is in the default queue; `Stages.cpp` lists the nav stages right
+after `move4_follow`, so the default queue runs them between it and `combat1_fight`). Budgets are ceilings, not
+targets (see [../04-curriculum.md](../04-curriculum.md)). The nav stages are **dungeons only** in this build: every
+arena is an emptied instance; outdoor arenas (continent boxes) are Phase B of the vision movement plan. Wailing
+Caverns (43) is held out of every nav stage as the arena `wailing`.
 
 ### Seed chain
 
@@ -72,6 +83,13 @@ move1_controls
      └─ move4_follow ─────────────────────────────────────────────────> group1_roles
                                                                             └─ dungeon2_ragefire
                                                                                 └─ dungeon3_deadmines
+
+nav1_sight (a second root: seeds from nothing before it, plan decision 7)
+ └─ nav2_detour
+     └─ nav3_vertical
+         └─ nav4_beyond
+             └─ nav5_water
+                 └─ nav6_follow
 ```
 
 `extends:` at the top of a yaml is the separate **config chain**. They differ: `combat1_fight.yaml` has no `extends`
@@ -103,6 +121,8 @@ end of the file), so the lists below include it. Widths are the class-independen
 | `combat3_survive` | the above plus gauntlet (after pet) | 3790, 353 |
 | `group1_roles` | the above plus party_frames (after sight) | 3874, 365 |
 | `dungeon2_ragefire`, `dungeon3_deadmines` | core, move, duel, pet, pack, gauntlet, vision, entities, map, sight, party_frames, combat, goal | 4908, 390 |
+| `nav1_sight` to `nav5_water` | core, move, compass, vision, entities, map, goal (the map block with two tiers, `MapTiers = 2`: revision 5) | `UNVERIFIED` (not yet built) |
+| `nav6_follow` | core, move, compass, vision, entities, map, party_frames, goal (two map tiers) | `UNVERIFIED` |
 
 Block ids: core 0, move 1, compass 2, duel 3, pack 4, gauntlet 5, pet 11, vision 20, entities 21, map 22, sight 23,
 party_frames 24, combat 25, goal 26 (`Layout/Block.h`; never renumbered). What each block is:
@@ -154,6 +174,7 @@ party_frames 24, combat 25, goal 26 (`Layout/Block.h`; never renumbered). What e
 | `group1_roles` | 0.999 | 2 | 1.5e-4 | 0.004 | 128 | |
 | `dungeon2_ragefire` | 0.999 | 2 | 1.5e-4 | 0.004 | 128 | extends `group1_roles`; restates `goal_entropy_final_fraction: 0.5` |
 | `dungeon3_deadmines` | 0.999 (inherited) | 2 | 1.5e-4 | 0.004 | 128 | |
+| `nav1_sight` to `nav6_follow` | per `configs/nav*.yaml` (the learner agent's; contract sec 5) | | | | | `potential:` (enabled, yards_scale 0.01, clip 50) and `aux:` (costmap_coef 0.5, planner_coef 0.5) sections; `entropy_final_fraction 0.1`; `sampled_every 1` |
 
 M1's rate 1.5e-4 was halved at 93M steps (comment in the yaml); M2's is the same value for a different reason
 ([../decisions/0013-m2-learning-rate.md](../decisions/0013-m2-learning-rate.md)). The combat line does not inherit
@@ -593,6 +614,177 @@ wing_wipes <= 1.
 
 **Unproven.** Never trained; the highest-risk stage (the first curriculum never reached the bar, at best about 10% in
 evaluation).
+
+---
+
+## The nav stages (11 to 16): what they share
+
+The vision movement curriculum ([../decisions/0036-pointnav-curriculum.md](../decisions/0036-pointnav-curriculum.md);
+`.agents/plans/vision-movement-curriculum/`): **PointNav** -- a point goal whose position is always known and whose
+route is not. The goal is the **compass block** (bearing sin/cos, distance/500, distance/40: the minimap marker, exact,
+never withheld in a nav stage). The route is learned by two auxiliary heads in the learner's network -- a **costmap**
+(48x48 traversability classes, cross-entropy against the sim's bake) and a **planner** (value iteration over the
+costmap, the map crop and the goal; L1 against the bake's cost-to-go) -- whose readouts feed the policy's trunk and
+its cell pointer; what the policy acts on is its own prediction, never the bake (plan decision 1).
+
+* **The bake** (`Runtime/Vision/TravBake`, contract sec 1): a 2-yd grid over the arena's box (an instance's loaded
+  grids without one), each cell classed by the player controller's rules (`Unknown, Free, Wall, Water, Hazard, StepUp,
+  Jump, DropSafe, DropHurt, DropLethal, Slope`) with 8-neighbour edge costs in yards (a jump x1.5, swimming x1.5, a
+  damaging drop + `PointNav.DropHurtYards` x the health share, no edge up past 1.64 yd or down past 69 yd). A Dijkstra
+  from the goal once an episode gives `C(cell)`. Baked at the arena's first episode, cached under `trav/` beside the
+  camera's scenes.
+* **The draw** (`PointNavEncounter`, contract sec 2): a detour bin and a length bin uniform over the bins the rung
+  opens (`PointNav.DetourBins`, `LengthBins`, `RungBins0-3`); the goal first, one Dijkstra, the start among the cells
+  whose `C` and `C / straight` fall in the bins. `PointNav.ReplayShare` (20%) of training episodes replay a failure.
+  Evaluations draw seeded pairs, no replay.
+* **The sim pays** (all Outcome/Cost, no Shaping): Arrive 3.0 once (stopped within 1 yd, 2D, on the floor); StepCost
+  0.002 per decision; Stuck and Wall 0.02/s (Seek's); FallHurt 2.0 x the share of max health a fall took; Death 3.0;
+  Drowned 3.0; Lost 0.02/s while `C(body) > C(start) + 40`; Revisit 0.002/s on ground stood on before (nav4 on);
+  Timeout 0. **The potential** `gamma * phi(next) - phi(cur)`, `phi = -min(C, 5000) * 0.01`, is paid by the learner
+  with its own discount (0 on a done row, 0 when either C is unreachable), never faded; the sim's `reward_potential`
+  column stays 0.
+* **Labels in STEP** (protocol 31, contract sec 3.1): per agent 13,840 bytes after the map section -- fine and coarse
+  costmap classes (48x48 u8 each, the crop's frame), fine and coarse cost-to-go (48x48 f16), then `C_body`, `C_start`
+  and the goal in the body frame. Never in the observation.
+* **Death**: the seat rises at its start point after `Respawn.DelayMs` and the episode goes on (`RespawnAtEntrance`).
+* **The ladder**: difficulty alone -- the fade's rungs open the bins (`fade.rungs [1.0, 0.5, 0.25, 0.0]`), stepped on
+  argmax `spl`, `gate_values [0.6, 0.7, 0.8]` (nav6: `follow_kept_share`); `convergence.measure spl`.
+* **Evaluation**: every 10M, 256 episodes, the held-out `wailing` arena every evaluation, arms `no_camera`, `no_map`,
+  `no_planner` (value readouts zeroed), `no_memory`; argmax scored, sampled reported beside it.
+* **Level 1** everywhere (a death knight at 55), every race and class: the lesson is the movement alone.
+* **Dungeons only** in this build: the camera's scene baker bakes whole maps, so a continent box is Phase B. Every
+  arena is an emptied instance with its own replica per env; Wailing Caverns (43) is the held-out `wailing` arena of
+  every stage and is never trained. Map ids: Stockades 34, Shadowfang Keep 33, Deadmines 36, Wailing Caverns 43,
+  Razorfen Kraul 47, Blackfathom Deeps 48, Uldaman 70, Gnomeregan 90, Scarlet Monastery 189, Maraudon 349, Ragefire
+  Chasm 389.
+* **Spawn points**: the stage definition names one (the map's entrance area trigger, `Stages.cpp` `DungeonEntrance`)
+  for the validation and `StageMaps`; the encounter draws every start from the bake's reachable `Free` cells. No
+  bake box is authored yet for the Scarlet Monastery or Maraudon: the bake is what the entrance reaches (the
+  Monastery's Graveyard wing, its four wings being disconnected inside; Maraudon from the orange wing's door).
+* **Validation** (`Stages.cpp` `ArenaProblem`, amended 2026-10-13): a nav arena is one seat on a dungeon's map with
+  the move, compass, vision and map blocks, `RespawnAtEntrance` and `MapTiers = 2`; `SightOnly`, `Revisit` and a box
+  are nav arenas' only; `LabelsOnly` rides on a party follow with the compass and both map tiers, and is the one
+  party follow allowed a compass. PointNav arenas draw their own spawns and do not count as fighting.
+
+## 11. `nav1_sight`
+
+**Purpose.** The controls and the stop: a point in line of sight (`SightOnly`); the costmap's free/wall basics.
+The plan's intent is 5 to 60 yd and a start bearing opening to +-180 degrees.
+
+**Seed.** None (`Extends = ""`): a fresh network, the second root of the curriculum.
+
+**Place.** Arenas `stockades` (34, the hallways) and `ragefire` (389), weight 1 each, 60 s; `wailing` (43) held out.
+
+**Blocks.** core, move, compass, vision, entities, map (two tiers), goal.
+
+**Episode.** A seat at a bake cell facing a random way, the goal in sight; Arrive on the stop.
+
+**Rewards.** Arrive 3.0; StepCost, Stuck, Wall, FallHurt, Death, Drowned, Lost (all as the shared list).
+
+**Ladder.** `PointNav.RungBins0 "1,2"` to `RungBins3 "4,5"` (indexes into `DetourBins` "1.0,1.2,1.6,2.5,4.0" and
+`LengthBins` "5,20,60,120,250,400"): rung 0 opens detour 1.0-1.2 and lengths 5-20 yd, rung 3 detour up to 2.5 and
+lengths up to 250 yd; gates `spl` 0.6, 0.7, 0.8. **One global set:** the bins and rung tables are one `PointNav.*`
+tuning loaded per worldserver, with no per-stage override family (only `Arena.<stage>.<arena>.Weight/WeightFinal/
+StandInShare` are read by name), so every nav stage opens the same bins at the same rung; the plan's per-stage
+ranges below are intent until a per-stage key or a stage-scaled reader exists (hand-back, 2026-10-13).
+
+**Evaluation.** 256 seeded pairs every 10M; `wailing` every evaluation; the four arms.
+
+**Status.** Headline: arrived, spl, time_ratio, stop_error_yards, wall_seconds, stuck_seconds, timed_out, died,
+costmap_iou, planner_mae_known. Never trained.
+
+## 12. `nav2_detour`
+
+**Purpose.** The straight line is blocked in view: doors, pillars, room walls; local replanning. Lost joins the costs
+(it is paid from nav1, but first matters here).
+
+**Seed.** `nav1_sight`.
+
+**Place.** `stockades` (34, the rooms), `deadmines` (36), `shadowfang` (33), 120 s; `wailing` held out.
+
+**Blocks.** As nav1.
+
+**Episode / Rewards / Ladder / Evaluation.** As nav1; the plan's intent is detour 1.0-1.2 opening to 2.5 and
+20 to 120 yd (see the global-bins note under nav1).
+
+**Status.** Headline adds detour_factor, lost_seconds. Never trained.
+
+## 13. `nav3_vertical`
+
+**Purpose.** Step up, jump or go round; safe against hurting and lethal drops; stairs, ramps, decks, storeys.
+
+**Seed.** `nav2_detour`.
+
+**Place.** `deadmines` (36: ramps, decks), `shadowfang` (33: stairs, towers), `gnomeregan` (90: levels, drops),
+`razorfen` (47: ramps), 150 s; `wailing` held out.
+
+**Blocks.** As nav1. The cell grid admits any height and unknown blocks (contract sec 3.3), so a storey above is
+pressable; a bad pick is priced by `CellLost`.
+
+**Rewards.** FallHurt and Death are the lesson's prices; jumps and falls are counted.
+
+**Status.** Headline adds falls, fall_damage_share, jumps; targets falls <= 0.05 a trip, lethal-drop recall (the
+costmap's `drop_lethal` IoU) >= 0.98. Never trained.
+
+## 14. `nav4_beyond`
+
+**Purpose.** The route is not in view: plan over the mental map's two tiers, commit to a direction, recognise a dead
+end and leave it, on maps kept half-known across resets (`KeepShare`).
+
+**Seed.** `nav3_vertical`.
+
+**Place.** `gnomeregan` (90), `uldaman` (70), `scarlet` (189, the Graveyard wing: no box authored), `maraudon` (349,
+no box authored), 300 s; `wailing` held out. All arenas `Revisit`.
+
+**Rewards.** Revisit 0.002/s on ground stood on before joins the costs (`PointNav.Revisit`, by the arena flag).
+
+**Ladder.** The plan's intent: lengths 100 to 400 yd, detour 1.3 to 4.0, a dead-end share 0 to 0.4 (the global-bins
+note under nav1 applies: the committed `RungBins3` stops at detour 2.5 and 250 yd).
+
+**Status.** Headline adds revisit_seconds, waypoint_regret_yards, waypoints_chosen; target spl >= 0.7 at detour >=
+2.5. Never trained.
+
+## 15. `nav5_water`
+
+**Purpose.** Swim or go round; banks taller than a step are walls; the bed as a goal (breath); surfacing.
+
+**Seed.** `nav4_beyond`.
+
+**Place.** `blackfathom` (48), `deadmines` (36: the cove), `maraudon` (349: the pools), 180 s; `wailing` (its pools)
+held out. `PointNav.BedShare` (30%) of the draws put the goal on a water cell's bed.
+
+**Rewards.** Drowned 3.0 (underwater self-damage at death) joins the costs; `swim_seconds` is counted.
+
+**Status.** Headline adds drowned, swim_seconds; target drowned <= 0.01. Never trained.
+
+## 16. `nav6_follow`
+
+**Purpose.** The moving point: `move4_follow`'s party (four learned followers and their group's leader, the stock-path
+leader at a player's report cadence, decision 0035) with the compass on the leader's **believed position** (the party
+frames' recall) and the planner routing to it; keep 3 to 10 yd, do not block. It supersedes `move4_follow` (plan
+decision 8).
+
+**Seed.** `nav5_water`; the party frames block starts fresh.
+
+**Place.** `ragefire` (389) and `deadmines` (36), `Opposition::PartyFollow` with `LabelsOnly = true`, a party of five
+(`PartySize = GROUP_MEMBERS`), 300 s; `wailing` held out.
+
+**Blocks.** core, move, compass, vision, entities, map (two tiers), party_frames, goal.
+
+**Episode.** `PartyFollowEncounter` places the leader, forms the group and pays the followers; PointNav runs beside it
+as a **labeller only**: the leader's believed position is the point the compass shows and the C-map is computed to
+(recomputed only when the leader's cell changes); it places nothing and pays nothing. A frozen-checkpoint leader
+walking its own PointNav trips (plan I9) is a follow-up.
+
+**Rewards.** PartyFollow's: FollowKept, Settled, Regroup (Outcome), Blocking, Lost, Death, Fidget, Drift (Cost),
+Approach (Shaping); the learner's potential on the route distance to the believed position.
+
+**Ladder.** PartyFollow's leader rungs; gates on `follow_kept_share`.
+
+**Status.** Headline: follow_kept_share, settled_share, lost_seconds, blocking_seconds, died, and the aux stats.
+Target follow_kept_share >= 0.8 argmax on `wailing`. Never trained. **Level:** the stage says 1, but
+`PartyFollowEncounter::BeforeLevel` sets the episode level from the dungeon's band and that overrides a stage's
+`Level` (`StageScenario.cpp` level pick), so nav6 runs at the band until the encounter is told otherwise.
 
 ---
 

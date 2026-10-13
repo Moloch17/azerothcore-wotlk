@@ -34,6 +34,10 @@
  *   party      combat3_survive (+ move4_follow's party frames, merged by name) ─ group1_roles (dungeon-curriculum G1)
  *              ─ dungeon2_ragefire ─ dungeon3_deadmines (dungeon-curriculum D2, D3: real dungeon wings; Wailing
  *              Caverns held out; group2_corridor and dungeon1_pulls retired 2026-10-08, vision-only movement)
+ *   nav        nav1_sight ─ nav2_detour ─ nav3_vertical ─ nav4_beyond ─ nav5_water ─ nav6_follow (the vision movement
+ *              curriculum, decision 0036: a point goal over a traversability bake, the route learned on a costmap and
+ *              a planner; a second root, seeded from nothing before it; dungeons only in this build, Wailing Caverns
+ *              held out of every stage)
  *
  * Every movement stage runs 50 ms world ticks (AnimusForge.Stage.<name>.TicksPerDecision in the conf template): the
  * controller's mouse-look facing rule and its heartbeat are checked once a world tick, so a coarser tick would leave
@@ -601,6 +605,75 @@ namespace
         return { 3.81f, -14.82f, -17.84f, 4.39f };
     }
 
+    /// **The nav stages' entrances** (vision movement curriculum, decision 0036): where each dungeon's own entrance
+    /// area trigger puts a player (areatrigger_teleport's target for the map, read offline 2026-10-13 from
+    /// data/sql/base/db_world/areatrigger_teleport.sql: the Stockades' 101, the Deadmines' 78, Shadowfang Keep's 145,
+    /// Wailing Caverns' 228, Razorfen Kraul's 244, Blackfathom Deeps' 257, Uldaman's 286, Gnomeregan's 324 (the front
+    /// door, not the train depot's 523), the Scarlet Monastery's 45 (the Graveyard wing: the four wings of map 189 do
+    /// not connect inside), Maraudon's 3133 (the orange wing, Foulspore Cavern) and Ragefire Chasm's 2230). The stage
+    /// definition's one spawn point: PointNavEncounter draws every episode's start from the traversability bake
+    /// instead (every reachable Free cell), as PartyFollowEncounter draws its own, and sObjectMgr->
+    /// GetMapEntranceTrigger gives it the same point at runtime; this table is the stage's fallback ground and what
+    /// StageMaps and the stage's validation see.
+    Position DungeonEntrance(uint32 mapId)
+    {
+        switch (mapId)
+        {
+            case MAP_STORMWIND_STOCKADE:    return StockadeEntrance();
+            case MAP_RAGEFIRE_CHASM:        return RagefireEntrance();
+            case MAP_SHADOWFANG_KEEP:       return { -229.135f, 2109.18f, 76.8898f, 1.267f };
+            case MAP_DEADMINES:             return { -16.4f, -383.07f, 61.78f, 1.86f };
+            case MAP_WAILING_CAVERNS:       return { -163.49f, 132.9f, -73.66f, 5.83f };
+            case MAP_RAZORFEN_KRAUL:        return { 1943.0f, 1544.63f, 82.0f, 1.38f };
+            case MAP_BLACKFATHOM_DEEPS:     return { -151.89f, 106.96f, -39.87f, 4.53f };
+            case MAP_ULDAMAN:               return { -226.8f, 49.09f, -46.03f, 1.39f };
+            case MAP_GNOMEREGAN:            return { -332.22f, -2.28f, -150.86f, 2.77f };
+            case MAP_SCARLET_MONASTERY:     return { 1688.99f, 1053.48f, 18.6775f, 0.00117f };
+            case MAP_MARAUDON:              return { 1019.69f, -458.31f, -43.43f, 0.31f };
+            default:                        return StockadeEntrance();
+        }
+    }
+
+    /// What a nav arena asks of its draw beyond the map (ArenaDefinition::SightOnly, Revisit).
+    enum class NavFlag : uint8
+    {
+        None,
+        SightOnly,      // starts in line of sight of the goal (nav1)
+        Revisit,        // ground stood on before is priced (nav4 on)
+    };
+
+    /// **A nav stage's arena** (Opposition::PointNav, PointNavEncounter): one seat in a cleared dungeon of its own,
+    /// a point goal drawn from the dungeon's traversability bake, a death rising at the start point (RespawnAtEntrance:
+    /// the encounter's own rise, the episode going on). Every nav arena is this but for its map, its clock and its
+    /// flag.
+    ArenaDefinition NavArena(char const* name, uint32 mapId, uint32 episodeSeconds, NavFlag flag = NavFlag::None)
+    {
+        return { .Name = name, .Weight = 1, .Against = Opposition::PointNav, .EpisodeSeconds = episodeSeconds,
+            .MapId = mapId, .RespawnAtEntrance = true, .Revisit = flag == NavFlag::Revisit,
+            .SightOnly = flag == NavFlag::SightOnly };
+    }
+
+    /// **The nav stages' blocks**: Core and the goal block the frame, Move the lesson, the compass the goal (the
+    /// minimap marker: bearing and distance to the point, exact, never withheld in a nav stage), the camera (with its
+    /// entity list, inserted after it) and the mental map -- two tiers of it here (StageDefinition::MapTiers 2: the
+    /// 2-yd crop and an 8-yd coarse crop, map block revision 5) -- what the costmap and planner heads read. No sight
+    /// block: nothing is pressed; no coverage block: the coarse tier is the far view.
+    std::vector<BlockId> NavBlocks()
+    {
+        using enum BlockId;
+        return { Core, Move, Compass, Vision, Map, Goal };
+    }
+
+    /// Wailing Caverns (map 43), held out of every nav stage: never drawn in training nor in an ordinary evaluation
+    /// (EvalOnly), played only by the learner's eval.heldout, so a policy that learned a dungeon's routes is told from
+    /// one that learned to find routes. The learner's yamls name it `wailing`.
+    ArenaDefinition NavHeldOut(uint32 episodeSeconds, NavFlag flag = NavFlag::None)
+    {
+        ArenaDefinition arena = NavArena("wailing", MAP_WAILING_CAVERNS, episodeSeconds, flag);
+        arena.EvalOnly = true;
+        return arena;
+    }
+
     /// **The dungeon stages' blocks** (dungeon-curriculum G2, D1-D3): G1's -- the camera, its entities, the mental map,
     /// the sight list with the combat block's nameplate columns and the player, pet and target frames, the party frames
     /// (PartyFrames revision 2: the one source of the members' state, their minimap dots and targets), duel, pet and
@@ -803,6 +876,179 @@ namespace
                     .MapId = MAP_WAILING_CAVERNS },
             },
             .MapId = MAP_RAGEFIRE_CHASM,
+        });
+
+        // **The nav stages** (the vision movement curriculum, decision 0036; .agents/plans/vision-movement-curriculum/,
+        // 2026-10-13): PointNav -- a point goal whose position is always known (the compass: the minimap marker) and
+        // whose route is not, in cleared dungeons, one seat, every race and class at level 1 (a death knight at its
+        // 55: the lesson is the movement alone, as M1). A second root of the curriculum: nav1 seeds from nothing
+        // before it (plan decision 7), the chain nav1 -> nav6 seeds by name. **Dungeons only in this build** (the
+        // camera's scene baker bakes whole maps; a continent box is Phase B): every arena is an emptied instance with
+        // its own replica per env, its traversability bake (Vision/TravBake: a 2-yd grid of what a player's controller
+        // can walk, step up, jump, drop and swim, with route costs in yards) over the instance's loaded grids.
+        //
+        // **The episode** (PointNavEncounter): a goal cell and a start cell drawn from the bake by a detour bin (route
+        // over straight line) and a length bin, uniform over the bins the rung opens (PointNav.DetourBins, LengthBins,
+        // RungBins0-3); a fifth of training episodes replay a failure (where a seat was pinned, fell, drowned or timed
+        // out, with that goal: PointNav.ReplayShare). The seat spawns at the start cell facing a random way; the goal
+        // is a point, no object. Arrive (Outcome) once, stopped within PointNav.ArriveYards of it on its own floor.
+        // Costs: the step cost, Stuck and Wall at their fixed price, FallHurt per share of health a fall took, Death,
+        // Drowned, Lost per second further from the goal by route than the start was by PointNav.LostYards, Revisit
+        // per second on ground stood on before (arenas with Revisit, nav4 on). **No shaping from the sim**: the
+        // potential on the route cost-to-go is the learner's (its own discount), paid at x1 the whole curriculum; the
+        // sim sends the bake's labels (costmap classes and cost-to-go of both map tiers, C(body)) in the STEP, for the
+        // learner's auxiliary heads, never in the observation. A death rises at the start point after
+        // Respawn.DelayMs and the episode goes on. The ladder is difficulty alone (the fade's rungs open the bins),
+        // stepped on argmax SPL; Wailing Caverns (43) is held out of every stage (`wailing`, EvalOnly).
+        //
+        // N1 -- sight: the point is in line of sight of the start (SightOnly: the Stockades' hallways, Ragefire
+        // Chasm). The controls, stopping on the point, the costmap's free/wall basics. 60 s.
+        stages.push_back({
+            .Name = "nav1_sight",
+            .Suffix = "_nav",
+            .Extends = "",
+            .Summary = "an empty Stockades or Ragefire Chasm: walk to a point in sight, shown by the compass, as fast "
+                "as possible, and stop on it; Wailing Caverns held out",
+            .Blocks = NavBlocks(),
+            .Arenas = {
+                NavArena("stockades", MAP_STORMWIND_STOCKADE, 60, NavFlag::SightOnly),
+                NavArena("ragefire", MAP_RAGEFIRE_CHASM, 60, NavFlag::SightOnly),
+                NavHeldOut(60, NavFlag::SightOnly),
+            },
+            .MapId = MAP_STORMWIND_STOCKADE,
+            .SpawnPoints = { DungeonEntrance(MAP_STORMWIND_STOCKADE) },
+            .Level = 1,
+            .MapTiers = 2,
+        });
+
+        // N2 -- detour: the straight line is blocked in view (doors, pillars, room walls: the Stockades' rooms, the
+        // Deadmines, Shadowfang Keep); local replanning. Lost (one rule: further from the goal by route than the start
+        // was) joins the costs. 120 s.
+        stages.push_back({
+            .Name = "nav2_detour",
+            .Suffix = "_nav",
+            .Extends = "nav1_sight",
+            .Summary = "an empty Stockades, Deadmines or Shadowfang Keep: a point whose straight line is blocked in "
+                "view -- doors, pillars, walls -- reached by the route round; Wailing Caverns held out",
+            .Blocks = NavBlocks(),
+            .Arenas = {
+                NavArena("stockades", MAP_STORMWIND_STOCKADE, 120),
+                NavArena("deadmines", MAP_DEADMINES, 120),
+                NavArena("shadowfang", MAP_SHADOWFANG_KEEP, 120),
+                NavHeldOut(120),
+            },
+            .MapId = MAP_STORMWIND_STOCKADE,
+            .SpawnPoints = { DungeonEntrance(MAP_STORMWIND_STOCKADE) },
+            .Level = 1,
+            .MapTiers = 2,
+        });
+
+        // N3 -- vertical: step up, jump or go round; safe against hurting and lethal drops; stairs, ramps and decks
+        // (the Deadmines' ramps and decks, Shadowfang's stairs and towers, Gnomeregan's levels and drops, Razorfen
+        // Kraul's ramps). FallHurt and Death matter here. 150 s.
+        stages.push_back({
+            .Name = "nav3_vertical",
+            .Suffix = "_nav",
+            .Extends = "nav2_detour",
+            .Summary = "an empty Deadmines, Shadowfang Keep, Gnomeregan or Razorfen Kraul: a point a storey away -- "
+                "step up, jump or go round, drop where it is safe, never where it kills; Wailing Caverns held out",
+            .Blocks = NavBlocks(),
+            .Arenas = {
+                NavArena("deadmines", MAP_DEADMINES, 150),
+                NavArena("shadowfang", MAP_SHADOWFANG_KEEP, 150),
+                NavArena("gnomeregan", MAP_GNOMEREGAN, 150),
+                NavArena("razorfen", MAP_RAZORFEN_KRAUL, 150),
+                NavHeldOut(150),
+            },
+            .MapId = MAP_DEADMINES,
+            .SpawnPoints = { DungeonEntrance(MAP_DEADMINES) },
+            .Level = 1,
+            .MapTiers = 2,
+        });
+
+        // N4 -- beyond sight: the route is not in view -- plan over the mental map's two tiers, commit to a direction,
+        // recognise a dead end and leave it, on maps kept half-known across resets (Gnomeregan, Uldaman, the Scarlet
+        // Monastery's Graveyard wing, Maraudon). Revisit (ground stood on before) joins the costs: the arena flag,
+        // priced by PointNav.Revisit. The Scarlet Monastery and Maraudon are huge: no bake box is authored yet, so the
+        // bake is the instance's loaded grids reached from the entrance (the Graveyard wing alone for the Monastery,
+        // whose wings do not connect inside). 300 s.
+        stages.push_back({
+            .Name = "nav4_beyond",
+            .Suffix = "_nav",
+            .Extends = "nav3_vertical",
+            .Summary = "an empty Gnomeregan, Uldaman, Scarlet Monastery or Maraudon: a point hundreds of yards off, "
+                "the route out of view -- plan on the map, commit, leave dead ends, never the same ground twice; "
+                "Wailing Caverns held out",
+            .Blocks = NavBlocks(),
+            .Arenas = {
+                NavArena("gnomeregan", MAP_GNOMEREGAN, 300, NavFlag::Revisit),
+                NavArena("uldaman", MAP_ULDAMAN, 300, NavFlag::Revisit),
+                NavArena("scarlet", MAP_SCARLET_MONASTERY, 300, NavFlag::Revisit),
+                NavArena("maraudon", MAP_MARAUDON, 300, NavFlag::Revisit),
+                NavHeldOut(300, NavFlag::Revisit),
+            },
+            .MapId = MAP_GNOMEREGAN,
+            .SpawnPoints = { DungeonEntrance(MAP_GNOMEREGAN) },
+            .Level = 1,
+            .MapTiers = 2,
+        });
+
+        // N5 -- water: swim or go round; banks taller than a step are walls; the bed as a goal (PointNav.BedShare of
+        // the draws put the goal on a water cell's bed: breath), surfacing (Blackfathom Deeps, the Deadmines' cove,
+        // Maraudon's pools; Wailing Caverns' pools held out). Drowned (a death under water) joins the costs. 180 s.
+        stages.push_back({
+            .Name = "nav5_water",
+            .Suffix = "_nav",
+            .Extends = "nav4_beyond",
+            .Summary = "an empty Blackfathom Deeps, Deadmines or Maraudon: a point across or under water -- swim or go "
+                "round, dive to the bed and surface in time; Wailing Caverns held out",
+            .Blocks = NavBlocks(),
+            .Arenas = {
+                NavArena("blackfathom", MAP_BLACKFATHOM_DEEPS, 180),
+                NavArena("deadmines", MAP_DEADMINES, 180),
+                NavArena("maraudon", MAP_MARAUDON, 180),
+                NavHeldOut(180),
+            },
+            .MapId = MAP_BLACKFATHOM_DEEPS,
+            .SpawnPoints = { DungeonEntrance(MAP_BLACKFATHOM_DEEPS) },
+            .Level = 1,
+            .MapTiers = 2,
+        });
+
+        // N6 -- follow, the moving point: move4_follow's party (four learned followers and their group's leader, the
+        // stock-path leader at a player's report cadence: PartyFollowEncounter, decision 0035) in an empty Ragefire
+        // Chasm or Deadmines, with the party frames and the compass. The arenas are Opposition::PartyFollow -- the
+        // encounter that places the leader, forms the group and pays the followers (FollowKept, Blocking, Lost, Death)
+        // -- with LabelsOnly set, which means: **also run PointNav as a labeller**. The leader's believed position (the
+        // party frames' recall) is the point the compass shows and the C-map is computed to; the C-map is recomputed
+        // only when the leader's cell changes; PointNav places nothing and pays nothing. The potential on the route
+        // distance to the leader's believed position is the learner's, as in every nav stage. A frozen-checkpoint
+        // leader walking its own PointNav trips (plan I9) is a follow-up: this build keeps the stock-path leader.
+        // 300 s. The level: PartyFollowEncounter::BeforeLevel draws the dungeon's band, which overrides a stage's
+        // Level (StageScenario's level pick), so Level 1 here is the intent and not yet the effect.
+        stages.push_back({
+            .Name = "nav6_follow",
+            .Suffix = "_nav",
+            .Extends = "nav5_water",
+            .Summary = "an empty Ragefire Chasm or Deadmines: four followers keep with their group's leader running "
+                "the dungeon's way, the leader's believed position the compass's point and the planner's goal; "
+                "Wailing Caverns held out",
+            .Blocks = { Core, Move, Compass, Vision, Map, PartyFrames, Goal },
+            .Arenas = {
+                { .Name = "ragefire", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::PartyFollow,
+                    .PartySize = GROUP_MEMBERS, .EpisodeSeconds = 300, .MapId = MAP_RAGEFIRE_CHASM,
+                    .RespawnAtEntrance = true, .LabelsOnly = true },
+                { .Name = "deadmines", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::PartyFollow,
+                    .PartySize = GROUP_MEMBERS, .EpisodeSeconds = 300, .MapId = MAP_DEADMINES,
+                    .RespawnAtEntrance = true, .LabelsOnly = true },
+                { .Name = "wailing", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::PartyFollow,
+                    .EvalOnly = true, .PartySize = GROUP_MEMBERS, .EpisodeSeconds = 300,
+                    .MapId = MAP_WAILING_CAVERNS, .RespawnAtEntrance = true, .LabelsOnly = true },
+            },
+            .MapId = MAP_RAGEFIRE_CHASM,
+            .SpawnPoints = { DungeonEntrance(MAP_RAGEFIRE_CHASM) },
+            .Level = 1,
+            .MapTiers = 2,
         });
 
         // **The combat stages** (dungeon-curriculum C1-C3, approved 2026-10-06): fighting on a cleared Ragefire Chasm
@@ -1116,10 +1362,36 @@ namespace
             || !stage.Has(BlockId::PartyFrames)))
             return "a party follow is walked with the move block and the leader found with the camera and the party "
                 "frames";
-        if (partyFollow && stage.Has(BlockId::Compass))
+        // ... unless PointNav labels it (nav6, LabelsOnly): the leader's believed position is then the point the
+        // compass shows, the minimap marker a player's party frames give.
+        if (partyFollow && !arena.LabelsOnly && stage.Has(BlockId::Compass))
             return "a party follow's leader is no objective point: the compass would point at it";
         if (arena.PartySize && (arena.Seats != SeatPlan::Party || arena.PartySize > GROUP_SEATS))
             return "a party size is a party's, 1 to GROUP_SEATS";
+
+        // The nav stages (decision 0036, PointNavEncounter): one seat on its own in a cleared instance, a point goal
+        // shown by the compass over the dungeon's traversability bake, seen with the camera and planned on the mental
+        // map (two tiers: StageDefinition::MapTiers); its start drawn from the bake, its dead rising at the start.
+        bool const pointNav = arena.Against == Opposition::PointNav;
+        if (pointNav && (arena.Seats != SeatPlan::Solo || !arena.Rooms.empty() || !arena.Objects.empty()))
+            return "a nav arena is one seat on its own, with no room or object of its own";
+        if (pointNav && (!stage.Has(BlockId::Move) || !stage.Has(BlockId::Compass) || !stage.Has(BlockId::Vision)
+            || !stage.Has(BlockId::Map)))
+            return "a nav arena is walked with the move block, pointed at by the compass, seen with the camera and "
+                "planned on the mental map";
+        if (pointNav && (!arena.MapId || !arena.RespawnAtEntrance))
+            return "a nav arena is on a dungeon's own map and its dead rise at the start";
+        if (pointNav && stage.MapTiers != 2)
+            return "a nav arena's planner reads both tiers of the mental map (MapTiers 2)";
+        if ((arena.SightOnly || arena.Revisit || arena.HasBox) && !pointNav)
+            return "a sight-only draw, a revisit price and a bake box are a nav arena's";
+        if (arena.HasBox && (arena.BoxMinX >= arena.BoxMaxX || arena.BoxMinY >= arena.BoxMaxY))
+            return "a bake box is its min and max x and y, in order";
+        // PointNav as a labeller beside the party follow (nav6): the leader's believed position is the point, so the
+        // compass and the two-tier map are needed as in a nav arena, and nothing else of PointNav's.
+        if (arena.LabelsOnly && (!partyFollow || !stage.Has(BlockId::Compass) || !stage.Has(BlockId::Map)
+            || stage.MapTiers != 2))
+            return "labels-only PointNav rides on a party follow, with the compass and both tiers of the mental map";
 
         // The combat stages: one seat on a dungeon's own ground, seeing what it fights (the sight block and the combat
         // block's columns on it) and coming back at the entrance after a death.
@@ -1166,7 +1438,8 @@ namespace
 
         // An arena on a map of its own stands on its own ground: the stage's points are on the stage's map. An
         // encounter that finds its own spawn (an instance's door, a quest giver, a node field, an inn) needs none.
-        bool const ownSpawn = instance || arena.Against == Opposition::PartyFollow;
+        bool const ownSpawn = instance || arena.Against == Opposition::PartyFollow
+            || arena.Against == Opposition::PointNav;     // the nav stages: every reachable cell of the bake
         if (arena.MapId && arena.MapId != stage.MapId && arena.SpawnPoints.empty() && !ownSpawn)
             return "an arena on a map of its own needs its own spawn points";
 
@@ -1189,6 +1462,9 @@ namespace
         // The coverage block samples the mental map's tile counters (general search): it needs the map block.
         if (stage.Has(BlockId::Coverage) && !stage.Has(BlockId::Map))
             return "a coverage block samples the mental map's tiles: it needs the map block";
+        // The map block's crop has one tier, or two for the nav stages (the 8-yd coarse tier, revision 5).
+        if (stage.MapTiers < 1 || stage.MapTiers > 2 || (stage.MapTiers == 2 && !stage.Has(BlockId::Map)))
+            return "the mental map's tiers are 1 or 2, and two tiers need the map block";
         // Entity memory is written from the camera's entity list, by the entities block before the sight block reads
         // it (dungeon-curriculum I2).
         if (stage.Has(BlockId::Sight))
@@ -1238,7 +1514,8 @@ namespace
         bool const fights = stage.AnyArena([](ArenaDefinition const& arena)
         {
             return arena.Against != Opposition::Seek && arena.Against != Opposition::Sight
-                && arena.Against != Opposition::Interact && arena.Against != Opposition::PartyFollow;
+                && arena.Against != Opposition::Interact && arena.Against != Opposition::PartyFollow
+                && arena.Against != Opposition::PointNav;
         });
         if (fights && !stage.Has(BlockId::Duel))
             return "a stage that fights something needs the duel block";

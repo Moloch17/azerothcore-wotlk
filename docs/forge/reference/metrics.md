@@ -10,7 +10,10 @@ wire), [stages.md](stages.md), [config-yaml.md](config-yaml.md), [cpp-rewards-ro
 
 Stage abbreviations used in the tables: **M1** move1_controls, **M2** move2_seek, **M3** move3_interact, **M4** move4_follow,
 **C1** combat1_fight, **C2** combat2_packs, **C3** combat3_survive, **G1** group1_roles, **D2** dungeon2_ragefire, **D3** dungeon3_deadmines
-(the old G2 and D1 stages were retired 2026-10-08, decision 0019; D2 and D3 keep their numbers).
+(the old G2 and D1 stages were retired 2026-10-08, decision 0019; D2 and D3 keep their numbers); **N1-N6** nav1_sight,
+nav2_detour, nav3_vertical, nav4_beyond, nav5_water, nav6_follow (the vision movement curriculum, decision 0036,
+2026-10-13: dungeons only in this build, outdoors is Phase B; N1-N5 are PointNav stages, N6 is a party follow with
+PointNav as a labeller).
 
 ## Map of files
 
@@ -174,6 +177,49 @@ follow_kept_share (share of the episode within the leader's band: the measure), 
 rejoin_seconds, rejoined, dead_seconds, leader_out_of_sight_seconds (the leader neither in the camera's frame nor in line of sight), wall_pin_max_seconds / wall_extra_charge (the wall escalation), leader_hops, leader_route_share (hops walked to their end / hops drawn), leader_reverse_hops, leader_pass_hops, leader_stops_reached, leader_sudden_stops, leader_look_stops, leader_bursts, leader_drops, leader_rises, leader_reports (movement reports the leader made), leader_report_age_ms / leader_moving_report_age_ms (how old the server's copy of the leader's pose was at the decisions: all of them / the ones it moved through) (how old the server's copy of the leader's pose was at the decisions: 0-500 ms while it moves, decision 0035), start_along (yards along the way the episode began), follow_map, start_x/y/z, difficulty (rung), at_top_rung. Every stage: steep_seconds and edge_seconds beside wall_seconds (held keys refused for a slope, or over a void edge). Arms (decision 0033): `_no_camera`, `_no_map`, `_no_memory`, `_no_party`, `_no_recall`; held out `wailing`.
 (The M4 leader is the encounter's player, run along the stock path as the group's leader, decision 0035: `leader_*` read it.)
 
+### N1-N6 (PointNavEncounter; nav1_sight to nav5_water, and nav6_follow in labels-only mode)
+
+Per seat, written at the episode's end (contract sec 3; the encounter is in flight, so names are the contract's and the
+exact set is `stage.json` `episode_info` once built):
+
+| Column | Meaning | Unit |
+|---|---|---|
+| arrived | Stopped within `PointNav.ArriveYards` (1.0, 2D) and `ArriveRise` (2.0) of the goal: the outcome. | 0/1 |
+| spl | Success weighted by path length: `arrived x optimal / max(optimal, travelled)` (Habitat's SPL). **The nav stages' measure**: the fade's gate (0.6, 0.7, 0.8), `convergence.measure`, the headline. | 0..1 |
+| time_ratio | Seconds taken over the optimum's run time, `seconds / (optimal / 7)` (7 yd/s run speed). | ratio |
+| optimal_yards | The bake's route cost from the start to the goal, `C(start)`. | yd |
+| straight_yards | The 3D straight-line distance from the start to the goal. | yd |
+| detour_factor | `optimal / straight`: the pair's drawn difficulty. | ratio |
+| travelled_yards | The seat's own path length. | yd |
+| stop_error_yards | Distance from the goal at the stop (or at the end). | yd |
+| falls | Landings after a drop. | count |
+| fall_damage_share | Max health lost to falls over the episode, in max healths. | share |
+| drowned | Died under water (underwater self damage > 0 at the death). | 0/1 |
+| died | Died at least once (the seat rises at its start point and goes on). | 0/1 |
+| timed_out | The clock ended before the arrival. | 0/1 |
+| stuck_seconds, wall_seconds | As every stage (a key held with no motion; pressing into a wall). | s |
+| lost_seconds | Time with `C(body) > C(start) + PointNav.LostYards` (40): further from the goal by route than the start was. | s |
+| revisit_seconds | Time on ground stood on before this episode (arenas flagged `Revisit`: N4 on). | s |
+| jumps | Jump presses that left the ground. | count |
+| swim_seconds | Time swimming. | s |
+| nav_rung | The ladder's rung (which bins were open). | 0-3 |
+| detour_bin, length_bin | The bins the pair was drawn from (indexes into `PointNav.DetourBins` / `LengthBins`). | index |
+| replayed | The episode started from the arena's failure pool (training only). | 0/1 |
+| map | The arena's map id (the held-out `wailing` is 43). | id |
+| start_x/y/z, goal_x/y/z | The pair, world coordinates. | yd |
+| waypoint_regret_yards | Mean over the cell pointer's choices of `C(chosen block) - min C over the choosable blocks`; 0 without a choice. | yd |
+| waypoints_chosen | Cell-goal choices made. | count |
+| reward_potential | The potential term's column on the sim's side: **always 0** (the learner pays it; see section 5). | |
+
+N6 writes M4's columns (`follow_kept_share` and the `leader_*` family) beside these; its `arrived`, `spl` and the pair
+columns describe the leader's believed position as the point.
+
+Learner-side readings of the nav stages (metrics.csv per update, and the evaluation summary; `trainer.py`):
+`costmap_loss`, `planner_loss`, `costmap_iou` (mean over the classes present of the costmap head's IoU against the
+bake's labels, both tiers), `planner_mae_yards` (L1 of the planner's cost-to-go against the bake on reachable cells, yards),
+`planner_mae_known` (the same on the cells the map crop knows: the honest diagnostic), `reward_potential` (the mean
+potential paid per update). Nothing is computed when `label_bytes == 0` (a stage without labels).
+
 ### C1-C3 (CombatEncounter)
 
 won (something taken down and no death), survived (no death), kills, packs_cleared, pulls, extra_pulls, interrupts, deaths, rises, rejoins, rejoin_seconds, rejoined,
@@ -219,7 +265,7 @@ One column per term the stage pays: the episode sum of that term for the seat (`
 
 | Term | Category | Stages that pay it |
 |---|---|---|
-| arrive | Outcome | M1 M2 M3 |
+| arrive | Outcome | M1 M2 M3 N1-N5 |
 | follow_kept | Outcome | M4 |
 | regroup | Outcome | M4 |
 | door_opened | Outcome | M3 |
@@ -231,16 +277,19 @@ One column per term the stage pays: the episode sum of that term for the seat (`
 | pull_clean | Outcome | G1 |
 | ready_pull | Outcome | D2 D3 |
 | death | Cost | all |
-| step_cost | Cost | all but M4 |
+| step_cost | Cost | all but M4 and N6 |
 | timeout | Cost | D2 D3 |
 | teammate_death | Cost | C1 C2 C3 G1 D2 D3 |
 | early_pull | Cost | G1 D2 D3 |
 | pull_extra | Cost | C1 C2 C3 G1 |
 | repeat, jitter, aimless, effort, fidget (noise prices) | Cost | all |
-| stuck, wall (noise prices) | Cost | M1 M2 M3 M4 |
-| lost | Cost | M4 D2 D3 |
+| stuck, wall (noise prices) | Cost | M1 M2 M3 M4 N1-N6 |
+| lost | Cost | M4 D2 D3 N1-N6 (the nav rule: `C(body) > C(start) + 40`) |
 | wrong_object | Cost | M3 |
-| blocking | Cost | M4 |
+| blocking | Cost | M4 N6 |
+| fall_hurt | Cost | N1-N5 (share of max health lost to falls x `PointNav.FallHurt`) |
+| drowned | Cost | N1-N5 (a death under water, `PointNav.Drowned`) |
+| revisit | Cost | N4 N5 (arenas flagged `Revisit`; `PointNav.Revisit` per second) |
 | away | Cost | C1 C2 C3 G1 D2 D3 |
 | hurt, fire_hurt | Cost | C1 C2 C3 |
 | idle | Cost | D2 D3 |
@@ -273,6 +322,8 @@ From `EvalResult.summary` (evaluation.py):
 | found_heldout_map (progress only) | `found` over the held-out arenas whose stage.json `map_id` is not any trainable arena's, weighted by their episodes (M2: the Deadmines alone; the sweeps are on the training map). None until such an arena has played or without `map_id` in the manifest. | M2 headline, display target >= 0.8 (the transfer headline; never a gate). |
 | `<metric>_arena_<arena>` | a headline metric so named that is not a column of its own reads `summary["arenas"][arena][metric]` (`ProgressWriter._headline_value`); the sim's `found_arena_<arena>` columns are plain columns and are read as such. | progress.json `eval_<metric>_arena_<arena>`. |
 | bands / layouts / specs / castings / arenas / builds / difficulties / up_to / top_rung / categories | grouped copies of the means, see below. | eval.jsonl, `casting_weights`, convergence. |
+| reward_potential (learner) | The nav stages' potential-based progress, `gamma * phi(next) - phi(cur)` with `phi = -min(C, 5000) * 0.01`, added at GAE time by the learner with its own gamma (0 on a done row; 0 when either C is unreachable); its mean per update in metrics.csv and in the evaluation summary. The sim's column of the same name is 0. | N1-N6 (decision 0036). |
+| costmap_iou, planner_mae_yards, planner_mae_known | The nav stages' auxiliary-head diagnostics (see N1-N6 above), in the evaluation summary beside the training row. | N1-N6 headline. |
 | realism_emd, realism_emd_<context>, realism_disc | earth mover's distance between the seats' motion histograms and the players' (human_reference.json), per context; discriminator mean output. | eval.csv extra columns (only with `style.reference`). |
 
 Per-class convergence signals (stage.py, `ClassState.missing`): `score` (plateau of the class's measure: `convergence.measure` or the score), `kl` (LR-normalised approx_kl under `convergence.kl` 0.003 over the window), `entropy`
@@ -328,6 +379,8 @@ Resolved with a small script over the ten files (`extends` merged, `null` drops 
 | G1 | won | won 0.6 | won 0.6 (off) | won | 384 / 10M | human 64, partners 64 | |
 | D2 | full_clear | full_clear 0.5 | full_clear 0.5 (off) | full_clear | 64 / 20M | human 32, partners 32 | heldout 16 |
 | D3 | bar_clear | bar_clear 0.5 | bar_clear 0.5 (off) | bar_clear | 64 / 20M | human 32, partners 32 | heldout 16 |
+| N1-N5 | spl | spl 0.6, 0.7, 0.8 (rising gates); [1, .5, .25, 0] = the draw bins | none | spl | 256 / 10M | no_camera, no_map, no_planner, no_memory | wailing, every evaluation |
+| N6 | follow_kept_share | follow_kept_share (rising gates) | none | follow_kept_share | 256 / 10M | the same | wailing, every evaluation |
 
 (C1-D3 fade rungs [1, .5, .25, 0] with `moving_classes: 1000`.) Gate semantics: a fade rung steps when the evaluation's `gate_metric` mean is >= `gate_value` (at least one evaluation at the rung); it raises a collapse alarm (`ladder_collapsed`) if the metric falls, and a stall warning
 (`ladder_stalled`, `stall_evals` 4 and `stall_env_steps` 20M) if it sits flat; ladders re-baseline stage convergence at every gate-stepped rung (`ConvergenceController.rebaseline`, writes `best_rung<k>.pt`).
@@ -346,6 +399,7 @@ Headlines (`status.headline`) and targets, per stage (target in brackets, a read
 * **G1**: won [>=0.7], won_hold/keep/focus/pull [>=0.7], hold_share [>=0.8], kept_share [>=0.8], focus_share [>=0.6], clean_share [>=0.9], extra_pulls [<=0.1], party_deaths, wipes [<=0.05], rejoined [>=0.9], rejoin_seconds [<=60], roles_rung. Excluded: death_knight.
 * **D2**: full_clear [>=0.7], cleared [>=0.7], wing_cleared_share, wing_wipes [<=1], boss_oggleflint/taragaman/jergosh/bazzalan, wing_rejoin_seconds [<=90], clear_allbot, clear_standin, standin_gap [<=0.1], wing_rung.
 * **D3**: bar_clear [>=0.7], cleared [>=0.7], full_clear [>=0.7], wing_wipes [<=1], boss_rhahkzor/sneed/gilnid/smite/greenskin/cookie/vancleef (vancleef [>=0.7]), deaths_tank/healer/damage, clear_allbot, clear_standin, standin_gap [<=0.1], wing_rung.
+* **N1-N6** (contract sec 5; the yamls are the learner agent's): arrived, spl [>=0.9 N1, >=0.85 N2, >=0.8 N3 and N5, >=0.7 N4 at detour >= 2.5], time_ratio, stop_error_yards [<=0.5 N1], detour_factor, falls [<=0.05 N3], fall_damage_share, drowned [<=0.01 N5], died, timed_out, lost_seconds, revisit_seconds, wall_seconds, stuck_seconds, waypoint_regret_yards, costmap_iou, planner_mae_known, reward_potential; N6 follow_kept_share [>=0.8 argmax on wailing], settled_share, lost_seconds, blocking_seconds, died. Argmax is scored and judges the ladder; sampled is reported beside it (plan decision 5).
 
 The `eval.report` lists (what the console and eval.jsonl summaries carry beyond the headline) are each stage's `reward_*` columns plus the stage's own measures; see the yamls ([config-yaml.md](config-yaml.md)). Names in `eval.report` that the stage does not report are ignored
 (`present = [c for c in columns if c in info_names]`).

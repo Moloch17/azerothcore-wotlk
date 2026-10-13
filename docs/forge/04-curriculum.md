@@ -13,9 +13,8 @@ chapter describes them.
 
 ## 4.1 The line of stages
 
-Ten stages, trained in this order, each seeded from the stage named in [reference/stages.md](reference/stages.md)'s
-seed
-chain. All are in the default queue, so `forge start` with no stage name walks them in order.
+Sixteen stages (ten, and the six nav stages of decision 0036 since 2026-10-13), trained in this order, each seeded
+from the stage named in [reference/stages.md](reference/stages.md)'s seed chain. All are in the default queue, so `forge start` with no stage name walks them in order.
 
 | Stage | Budget | Eval every | Episodes |
 |---|---|---|---|
@@ -29,6 +28,12 @@ chain. All are in the default queue, so `forge start` with no stage name walks t
 | `group1_roles` | 400M | 10M | 384 |
 | `dungeon2_ragefire` | 1500M | 20M | 64 |
 | `dungeon3_deadmines` | 2000M | 20M | 64 |
+| `nav1_sight` | 50M | 10M | 256 |
+| `nav2_detour` | 150M | 10M | 256 |
+| `nav3_vertical` | 200M | 10M | 256 |
+| `nav4_beyond` | 300M | 10M | 256 |
+| `nav5_water` | 150M | 10M | 256 |
+| `nav6_follow` | 250M | 10M | 256 |
 
 The table is checked by hand against each `configs/<stage>.yaml`
 (`total_env_steps`, `eval.every_env_steps`, `eval.episodes`). Budgets are env steps (decisions x envs x seats). A budget
@@ -49,6 +54,14 @@ movement   move1_controls   the controls, walk and stop beside an object (emptie
 party      group1_roles (from combat3_survive, merging move4_follow's party frames)   one role drilled an episode
 dungeons   └─ dungeon2_ragefire   Ragefire, door to Bazzalan (Wailing Caverns held out)
               └─ dungeon3_deadmines   the Deadmines, door to VanCleef (the bar)
+nav        nav1_sight   a point in sight, stop on it (Stockades, Ragefire); a second root, seeded from nothing
+           └─ nav2_detour   the straight line blocked (Stockades, Deadmines, Shadowfang)
+              └─ nav3_vertical   steps, jumps, drops, storeys (Deadmines, Shadowfang, Gnomeregan, Razorfen)
+                 └─ nav4_beyond   the route out of view (Gnomeregan, Uldaman, Scarlet, Maraudon)
+                    └─ nav5_water   swim or go round, the bed (Blackfathom, Deadmines, Maraudon)
+                       └─ nav6_follow   move4_follow's party, the leader's believed position the point
+           (dungeons only in this build; Wailing Caverns held out of every nav stage; the queue runs them after
+           move4_follow)
 ```
 
 It is a line, not a tree, for one reason: a branch is cheaper to train but ends in several checkpoints, and what a leaf
