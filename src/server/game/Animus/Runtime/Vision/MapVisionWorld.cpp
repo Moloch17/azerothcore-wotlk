@@ -59,6 +59,18 @@ Animus::Vision::SurfaceHit Animus::Vision::MapVisionWorld::StaticHit(Vec3 from, 
 Animus::Vision::SurfaceHit Animus::Vision::MapVisionWorld::DynamicHit(Vec3 from, Vec3 to) const
 {
     SurfaceHit hit;
+#ifdef ANIMUS_STOCK_CORE
+    // A stock core (the realm's mod-animus): its dynamic tree gives the distance to the first hit and no more, so a
+    // door or other game object is drawn as a wall facing the eye (no normal, no object to class it by). The forge
+    // removes the dungeons' own doors in every stage that trains on this camera, so a policy has not learned to tell
+    // them apart (live-follow plan, decision 2).
+    G3D::Vector3 const start(from.X, from.Y, from.Z);
+    G3D::Vector3 const end(to.X, to.Y, to.Z);
+    float distance = (end - start).magnitude();
+    if (distance > 0.0f && _map->GetDynamicMapTree().GetIntersectionTime(_phaseMask,
+        G3D::Ray::fromOriginAndDirection(start, (end - start) / distance), end, distance))
+        hit.Distance = distance;
+#else
     float distance = 0.0f;
     float normalZ = 0.0f;
     GameObjectModel const* model = nullptr;
@@ -69,6 +81,7 @@ Animus::Vision::SurfaceHit Animus::Vision::MapVisionWorld::DynamicHit(Vec3 from,
         hit.NormalZ = normalZ;
         hit.Object = model;
     }
+#endif
     return hit;
 }
 
@@ -84,7 +97,12 @@ bool Animus::Vision::MapVisionWorld::StaticAnyHit(Vec3 from, Vec3 to) const
 
 bool Animus::Vision::MapVisionWorld::DynamicAnyHit(Vec3 from, Vec3 to) const
 {
+#ifdef ANIMUS_STOCK_CORE
+    return !_map->GetDynamicMapTree().isInLineOfSight(from.X, from.Y, from.Z, to.X, to.Y, to.Z, _phaseMask,
+        VMAP::ModelIgnoreFlags::Nothing);
+#else
     return _map->GetMapCollisionData().GetDynamicTree().AnyHit(_phaseMask, from.X, from.Y, from.Z, to.X, to.Y, to.Z);
+#endif
 }
 
 Animus::Vision::TerrainTile Animus::Vision::MapVisionWorld::Tile(int32_t tileX, int32_t tileY) const
