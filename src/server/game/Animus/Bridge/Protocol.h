@@ -201,7 +201,12 @@ namespace AnimusForge
     // 30: the mental map's crop has a seventh channel, searched (map block revision 2, three more scalars, exploration
     // v3, docs/forge/decisions/0026): CROP_BYTES is 16,128 (was 13,824), so the STEP's map section is 2,304 bytes
     // longer a seat. The learner reads map_bytes from HELLO, so the bump refuses a stale pair; it is not a layout.
-    constexpr uint32 PROTOCOL_VERSION = 30;
+    // 31: the nav stages' labels (vision movement curriculum, decision 0036): SPEC ends with LabelBytes, and a stage
+    // with labels ends each STEP with every agent's label bytes (after everything else: the traversability classes
+    // and route cost-to-go of both map tiers, training-only; CONTRACT.md sec 3.1). A stage without labels has
+    // protocol 30's STEP; every SPEC is four bytes longer. The map section may carry two tiers (map block revision 5;
+    // MapBytes says so).
+    constexpr uint32 PROTOCOL_VERSION = 31;
     constexpr uint32 SCENARIO_NAME_SIZE = 32;
     constexpr uint32 POLICY_NAME_SIZE = 32;
     constexpr uint32 LAYOUT_NAME_SIZE = 48;
@@ -282,9 +287,12 @@ namespace AnimusForge
         uint32 JitterMs;
         uint32 SpikeMaxMs;
         float SpikeProb;
+        /// Bytes per agent of each STEP's labels (ScenarioSpec::LabelBytes; 0 without a labelling encounter;
+        /// protocol 31): the traversability classes and route cost-to-go the nav stages train their heads on.
+        uint32 LabelBytes;
     };
-    // The learner's SPEC (protocol.py): "<12I32s4I2If", 108 bytes.
-    static_assert(sizeof(SpecMsg) == 12 * 4 + SCENARIO_NAME_SIZE + 4 * 4 + 3 * 4 && sizeof(SpecMsg) == 108);
+    // The learner's SPEC (protocol.py): "<12I32s4I2IfI", 112 bytes.
+    static_assert(sizeof(SpecMsg) == 12 * 4 + SCENARIO_NAME_SIZE + 4 * 4 + 3 * 4 + 4 && sizeof(SpecMsg) == 112);
 
     struct LayoutMsg
     {

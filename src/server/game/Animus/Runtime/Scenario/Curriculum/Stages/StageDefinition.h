@@ -64,6 +64,9 @@ namespace Animus::Curriculum
         /// A party of five drilling one role on a cleared dungeon's own ground (RolesEncounter, the drill in
         /// ArenaDefinition::Roles) -- G1 of the dungeon curriculum.
         Roles,
+        /// Nothing to fight: a point goal shown by the compass (the minimap marker) over a traversability bake of
+        /// the dungeon, the route unknown (PointNavEncounter) -- the nav stages, decision 0036.
+        PointNav,
     };
 
     /// What a combat arena's creatures are (Opposition::Combat, CombatEncounter): the dungeon curriculum's C1-C3.
@@ -255,6 +258,18 @@ namespace Animus::Curriculum
         /// Deadmines at 17-20), in place of the dungeon finder's range. 0: the dungeon finder's.
         uint8 LevelFirst = 0;
         uint8 LevelLast = 0;
+        /// The nav stages (Opposition::PointNav): an optional box the traversability bake is limited to (the
+        /// instance's loaded grids without one); Revisit prices ground stood on before; SightOnly draws starts in
+        /// line of sight of the goal (nav1); LabelsOnly makes PointNav a labeller beside another encounter (nav6: the
+        /// leader's believed position is the point, nothing is placed or paid).
+        bool HasBox = false;
+        float BoxMinX = 0.0f;
+        float BoxMinY = 0.0f;
+        float BoxMaxX = 0.0f;
+        float BoxMaxY = 0.0f;
+        bool Revisit = false;
+        bool SightOnly = false;
+        bool LabelsOnly = false;
 
         [[nodiscard]] uint32 SeatCount() const;
     };
@@ -299,6 +314,9 @@ namespace Animus::Curriculum
         /// minimum (a death knight's 55). 0 = drawn as usual. The user's M1 (2026-10-05): level 1, so a class's kit is
         /// one or two spells and the lesson is the movement alone.
         uint8 Level = 0;
+        /// Tiers of the mental map's crop in the map block (1: the 2-yd crop; 2: and the 8-yd coarse tier, map
+        /// block revision 5, the nav stages).
+        uint8 MapTiers = 1;
 
         [[nodiscard]] bool Has(BlockId block) const;
         /// Seats per env: the largest arena's.
