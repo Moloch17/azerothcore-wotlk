@@ -60,7 +60,8 @@ namespace Animus::Curriculum
     /// leader's true pose moves every update, but the server's copy of it (its Player's position and facing, which
     /// every follower's frame, dot, recall, camera and reward reads) is set only when a client would have sent one
     /// (Movement::Cadence): at once on a start, a stop or a facing change of 0.1 rad, else every 500 ms while it
-    /// moves, and once at the episode's start. leader_report_age_ms says how stale that copy was at the decisions.
+    /// moves, and once at the episode's start. leader_report_age_ms says how stale that copy was at the decisions
+    /// (leader_moving_report_age_ms: at the ones the leader moved through; stops send nothing).
     ///
     /// **The ladder** (the shaping fade's rungs, SightDraw::Rung; an evaluation plays the training rung): rung 0
     /// forward hops and long stops; rung 1 turning back and speed bursts; rung 2 also stopping unannounced; rung 3
@@ -112,7 +113,9 @@ namespace Animus::Curriculum
 
         /// **A dungeon's way**: its chain of corners from the door through each boss's place, the yards along it to
         /// each, each step's kind (Steps[i]: Chain[i] to Chain[i + 1]), the waypoints (chain indexes, ascending) and
-        /// the ones a party may start at (their ground found at their height, no floor just above).
+        /// the ones a party may start at (their ground found at their height, no floor just above, and not a dead
+        /// end). Dead[i] marks a waypoint the leader could never leave for another live one (a stretch walled in by
+        /// cuts, the foot of a drop before a cut): never a start, never a hop's end.
         struct Way
         {
             std::vector<Position> Chain;
@@ -120,6 +123,7 @@ namespace Animus::Curriculum
             std::vector<Step> Steps;
             std::vector<uint32> Waypoints;
             std::vector<uint32> Starts;
+            std::vector<bool> Dead;
         };
 
         /// The way through `stops` from `door` as `legs` (the corners of each leg, the stock PathGenerator's), with
@@ -131,6 +135,8 @@ namespace Animus::Curriculum
             float climbPerYard, float stepUp);
         /// Whether the leader may walk the chain from index `from` to index `to` (either way along it).
         [[nodiscard]] static bool Walkable(Way const& way, uint32 from, uint32 to);
+        /// Fills way.Dead: a waypoint is dead when no live waypoint is walkable from it (to a fixed point).
+        static void MarkDead(Way& way);
 
         /// Whether a follower at (x, y) stands in a moving leader's way: within `yards` of it, inside `halfAngle`
         /// degrees either side of its facing.
@@ -230,6 +236,8 @@ namespace Animus::Curriculum
             uint32 LastUpdateMs = 0;            // the clock at the last Update (its dt)
             uint64 ReportAgeSumMs = 0;          // the copy's age at each update, summed
             uint32 ReportAgeSamples = 0;
+            uint64 MovingReportAgeSumMs = 0;    // ... at the updates the leader moved through
+            uint32 MovingReportAgeSamples = 0;
 
             uint32 Hops = 0;
             uint32 HopsDone = 0;

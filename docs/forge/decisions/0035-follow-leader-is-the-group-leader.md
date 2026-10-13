@@ -27,7 +27,8 @@ charged, no measure of line of sight, and an anneal warning that fired when no a
   with no per-reader override. **Deviation from the plan's letter:** the plan said `MotionMaster::MovePoint`; a
   spline relocates the Player every tick, so every reader would need its own reported-state override and the entity
   list could not have one. Relocating the Player at report cadence gives exact parity with a real player in one
-  place. `leader_report_age_ms` reads 0-500 ms while moving.
+  place. `leader_moving_report_age_ms` reads 0-500 ms (`leader_report_age_ms` counts the stops too, where a
+  standing player's copy ages: seconds).
 - **Rising gates** (B1): `fade.gate_values [0.65, 0.70, 0.75]` on the eval mean follow_kept_share, one per step.
 - **settled_share** (B2): the speed is the distance moved over the decision.
 - **Walls** (B3): `wall_seconds` / `steep_seconds` / `edge_seconds` from the controller's AgainstWall, SteepSlope and

@@ -168,6 +168,7 @@ Animus::Curriculum::PartyFollowEncounter::Way Animus::Curriculum::PartyFollowEnc
             way.Waypoints.push_back(index);
             next = way.Along[index] + std::max(1.0f, waypointYards);
         }
+    MarkDead(way);
     return way;
 }
 
@@ -186,6 +187,32 @@ bool Animus::Curriculum::PartyFollowEncounter::Walkable(Way const& way, uint32 f
         if (way.Steps[step] != Step::Both && way.Steps[step] != Step::DownBackward)
             return false;
     return true;
+}
+
+void Animus::Curriculum::PartyFollowEncounter::MarkDead(Way& way)
+{
+    // A waypoint with no other waypoint walkable from it is dead; so is one whose only ways out lead to dead ones
+    // (the first run of decision 0035 parked the leader for whole episodes at two such starts). Repeated to a fixed
+    // point: at most one waypoint dies a round.
+    way.Dead.assign(way.Chain.size(), false);
+    for (bool changed = true; changed;)
+    {
+        changed = false;
+        for (uint32 from : way.Waypoints)
+        {
+            if (way.Dead[from])
+                continue;
+            bool out = false;
+            for (uint32 to : way.Waypoints)
+                if (!way.Dead[to] && Walkable(way, from, to))
+                {
+                    out = true;
+                    break;
+                }
+            if (!out)
+                way.Dead[from] = changed = true;
+        }
+    }
 }
 
 bool Animus::Curriculum::PartyFollowEncounter::InTheWay(float leaderX, float leaderY, float leaderYaw,
@@ -359,7 +386,8 @@ void Animus::Curriculum::PartyFollowEncounter::AddEpisodeInfo(EpisodeInfoTable& 
     // How the leader went: hops drawn and walked to their end (and as a share of those drawn), turned back, passed
     // through without a stop, stops made, sudden stops, halts it looked round at, bursts of speed, drops taken, stood
     // up after dying; where it began (yards along the way from the door); and how the server saw it (B4, A4): the
-    // movement reports it made and how old the server's copy of its pose was at the decisions.
+    // movement reports it made and how old the server's copy of its pose was at the decisions (all of them, and the
+    // ones it moved through).
     table.Add("leader_hops", [this](Env const& env, uint32) { return float(_envs[env.Index].Hops); });
     table.Add("leader_route_share", [this](Env const& env, uint32)
     {
@@ -385,6 +413,12 @@ void Animus::Curriculum::PartyFollowEncounter::AddEpisodeInfo(EpisodeInfoTable& 
     {
         EnvParty const& party = _envs[env.Index];
         return party.ReportAgeSamples ? float(party.ReportAgeSumMs) / float(party.ReportAgeSamples) : 0.0f;
+    });
+    table.Add("leader_moving_report_age_ms", [this](Env const& env, uint32)
+    {
+        EnvParty const& party = _envs[env.Index];
+        return party.MovingReportAgeSamples
+            ? float(party.MovingReportAgeSumMs) / float(party.MovingReportAgeSamples) : 0.0f;
     });
     table.Add("start_along", [this](Env const& env, uint32) { return _envs[env.Index].StartAlong; });
     // Where it was (the route viewer's map and origin; follow_map as seek_map is the seek stage's).
@@ -444,11 +478,14 @@ void Animus::Curriculum::PartyFollowEncounter::BeforeLevel(Env& env)
     }
 
     // Anywhere along the way (decision 0033), once the map's way is known (its first episode starts at the door and
-    // works it out): a start waypoint drawn, the party facing on along the way.
+    // works it out): a start waypoint drawn, the party facing on along the way; else the first start (the door, or
+    // the first waypoint the leader can leave when the door is a dead end).
     Way const* way = WayOf(mapId);
-    if (!way || way->Starts.size() < 2 || !Chance(env, _scenario.Tuning().PartyFollow.StartAnywhere))
+    if (!way || way->Starts.empty())
         return;
-    std::size_t const pick = std::uniform_int_distribution<std::size_t>(0, way->Starts.size() - 1)(Rng(env));
+    std::size_t pick = 0;
+    if (way->Starts.size() >= 2 && Chance(env, _scenario.Tuning().PartyFollow.StartAnywhere))
+        pick = std::uniform_int_distribution<std::size_t>(0, way->Starts.size() - 1)(Rng(env));
     uint32 const at = way->Starts[pick];
     Position const& here = way->Chain[at];
     Position const& on = way->Chain[at + 1 < way->Chain.size() ? at + 1 : at - 1];
@@ -618,9 +655,12 @@ Animus::Curriculum::PartyFollowEncounter::Way const* Animus::Curriculum::PartyFo
             base->EnsureGridCreated(GridCoord(x, y));
     }
     // The starts: the waypoints with the ground under them at their own height and no floor just above (the server's
-    // heights; the map's grids are loaded above). The door is always one.
+    // heights; the map's grids are loaded above), never a dead end. The door is one unless it is a dead end; a dead
+    // door puts the first live waypoint first (the one a party starts at when it does not start anywhere).
     for (uint32 index : way.Waypoints)
     {
+        if (way.Dead[index])
+            continue;
         Position& corner = way.Chain[index];
         float const below = map->GetHeight(corner.GetPositionX(), corner.GetPositionY(), corner.GetPositionZ() + 1.0f);
         float const above = map->GetHeight(corner.GetPositionX(), corner.GetPositionY(),
@@ -631,13 +671,24 @@ Animus::Curriculum::PartyFollowEncounter::Way const* Animus::Curriculum::PartyFo
         if (index == 0 || (floor && !ceiling))
             way.Starts.push_back(index);
     }
+    if (way.Starts.empty())
+        for (uint32 index : way.Waypoints)
+            if (!way.Dead[index])
+            {
+                way.Starts.push_back(index);
+                break;
+            }
+    if (way.Starts.empty())
+        way.Starts.push_back(0);
+    uint32 const deadEnds = uint32(std::count(way.Dead.begin(), way.Dead.end(), true));
     uint32 const cuts = uint32(std::count(way.Steps.begin(), way.Steps.end(), Step::Cut));
     uint32 const oneWay = uint32(std::count_if(way.Steps.begin(), way.Steps.end(),
         [](Step step) { return step == Step::DownForward || step == Step::DownBackward; }));
-    LOG_INFO("module.animus", "{}: map {} follow way: {} legs, {} corners, {:.0f} yd, {} waypoints ({} starts), {} "
-        "steps downhill only (a follower could not climb them back), {} cut (the leader never crosses a cut)",
+    LOG_INFO("module.animus", "{}: map {} follow way: {} legs, {} corners, {:.0f} yd, {} waypoints ({} starts, {} dead "
+        "ends, first start at {:.0f} yd), {} steps downhill only (a follower could not climb them back), {} cut (the "
+        "leader never crosses a cut)",
         _scenario.Name(), map->GetId(), legs.size(), way.Chain.size(), way.Along.empty() ? 0.0f : way.Along.back(),
-        way.Waypoints.size(), way.Starts.size(), oneWay, cuts);
+        way.Waypoints.size(), way.Starts.size(), deadEnds, way.Along[way.Starts.front()], oneWay, cuts);
     return &way;
 }
 
@@ -701,6 +752,8 @@ bool Animus::Curriculum::PartyFollowEncounter::PickHop(Env const& env, EnvParty&
     if (!way || way->Waypoints.size() < 2)
         return false;
     uint32 const at = party.At;
+    if (way->Dead[at])
+        return false;
     float const here = way->Along[at];
     float const low = std::max(1.0f, tuning.HopMinYards);
     float const high = std::max(low, tuning.HopMaxYards);
@@ -713,7 +766,7 @@ bool Animus::Curriculum::PartyFollowEncounter::PickHop(Env const& env, EnvParty&
             if (back ? index >= at : index <= at)
                 continue;
             float const yards = std::fabs(way->Along[index] - here);
-            if (yards >= low && yards <= high && Walkable(*way, at, index))
+            if (yards >= low && yards <= high && !way->Dead[index] && Walkable(*way, at, index))
                 found.push_back(index);
         }
         return found;
@@ -731,7 +784,7 @@ bool Animus::Curriculum::PartyFollowEncounter::PickHop(Env const& env, EnvParty&
         // Nothing of the hop's length either way (a short stretch between cuts): the nearest walkable waypoint.
         float best = std::numeric_limits<float>::max();
         for (uint32 index : way->Waypoints)
-            if (Walkable(*way, at, index) && std::fabs(way->Along[index] - here) < best)
+            if (!way->Dead[index] && Walkable(*way, at, index) && std::fabs(way->Along[index] - here) < best)
             {
                 best = std::fabs(way->Along[index] - here);
                 found = { index };
@@ -978,9 +1031,16 @@ void Animus::Curriculum::PartyFollowEncounter::Update(Env& env)
     party.LastLeaderZ = party.Z;
     party.HasLeaderZ = true;
     Report(env, party, leader, false);
-    // How stale the server's copy is at this decision: what the followers observe after this update.
-    party.ReportAgeSumMs += now - std::min(now, party.RepMs);
+    // How stale the server's copy is at this decision: what the followers observe after this update (and only at
+    // the updates it moved through: a stop reports once, then its copy ages as a standing player's does).
+    uint32 const age = now - std::min(now, party.RepMs);
+    party.ReportAgeSumMs += age;
     ++party.ReportAgeSamples;
+    if (party.Moving)
+    {
+        party.MovingReportAgeSumMs += age;
+        ++party.MovingReportAgeSamples;
+    }
 }
 
 bool Animus::Curriculum::PartyFollowEncounter::SelectTarget(Env const& /*env*/, uint32 /*seat*/, Unit*& target)
