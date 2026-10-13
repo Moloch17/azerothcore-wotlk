@@ -86,6 +86,60 @@ The .amdl format (little-endian); a reader must follow it exactly, and a change 
                                             own token (attended); added to the first layer before its tanh
         u32  pointer_count; per pointer: u32 first_action, u32 set (its index above),
             f32 query_weight[embed * feature_width], query_bias[embed]   its actions' logits are slot . query
+    (version 10 on; a file of 10 is written only for a policy that needs the tail -- a camera, a place pointer, a
+    cell head, or two goals read from a goal block of revision 2 on -- every other policy is still written as 9)
+    u8       goal_space                     1: the stage had a goal block, so a layout without one has nothing to choose
+    u8       place_pointer                  the goal head's pointer over place slots (GoalHead.pointer)
+    if place_pointer:
+        u32  at (its first column inside the goal block), first_target, count, features, hidden
+        f32  w1[hidden * features], b1[hidden], w2[hidden], b2      score = w2 . tanh(w1 x + b1) + b2, per slot, added
+                                            to target first_target + k of every kind (primary and later slots)
+    u8       cells                          the goal head's cell pointer (GoalHead.cell, CellPointer)
+    if cells:
+        u32  crop_offset (the crop's first byte in the crop buffer), grid, pool, joint (the cell goal's joint id),
+             rise_units, min_floor_cells, features (22), hidden (32), chain_hidden (16)
+        f32  local_weight[hidden * features], local_bias[hidden], query_weight[hidden * goal_width], query_bias[hidden],
+             score_weight[hidden], score_bias, chain1_weight[chain_hidden * 3], chain1_bias[chain_hidden],
+             chain2_weight[chain_hidden], chain2_bias
+    u8       camera                         the camera (VisionEncoder) and its free look (LookHead)
+    if camera:
+        u32  height, width, patch, scalars, scalars_first (the vision block's first column), crop_bytes (the map's
+             bytes that travel with the image, read or not)
+        u32  pixel_class_count, then pixel_classes[pixel_class_count]     the one-hot planes' classes, in plane order
+        u32  class_limit, class_width; f32 class_embed[class_limit * class_width]   (the entity list's and the map's)
+        u32  patch_out, mix_out, embed
+        f32  patch_weight[patch_out * patch * patch * (4 + pixel_class_count)], patch_bias[patch_out],
+             mix_weight[mix_out * patch_out], mix_bias[mix_out], embed_weight[embed * (2 * mix_out + scalars)],
+             embed_bias[embed]
+        u8   entities                       the entity list (VisibleEntities)
+        if entities:
+            u32  first, slots, width, present, class_column, type_column; i32 object_column, memory_column;
+            u32  buckets, type_width, token
+            f32  type_embed[buckets * type_width], w1[token * (width - 2 + class_width + type_width)], b1[token],
+                 w2[token * token], b2[token], pool_weight[embed * 2 * token], pool_bias[embed]
+        u8   map                            the mental map's encoder (MapEncoder)
+        if map:
+            u32  first (its scalars' first column), scalars, height, width, patch, codes, code_width, patch_out,
+                 mix_out, map_embed
+            f32  code_embed[codes * code_width], patch_weight[patch_out * patch * patch * (code_width + class_width +
+                 6)], patch_bias, mix_weight[mix_out * patch_out], mix_bias, embed_weight[map_embed * (3 * mix_out +
+                 scalars)], embed_bias, join_weight[embed * map_embed], join_bias[embed]
+        f32  join_weight[adapter_out * embed], join_bias[adapter_out]        (VisionJoin)
+        u32  look_heads, then sizes[look_heads]
+        f32  look_weight[sum(sizes) * feature_width], look_bias[sum(sizes)]  (LookHead, on the action head's features)
+
+The camera (version 10, mappo.networks.VisionEncoder): the image's bytes [height][width][4] -- distance, height, normal,
+class byte -- are decoded as the sim's Vision::DecodePixel (255 -> 1.0 else b / 254; (b - 128) / 125; b / 255; the
+objective bit 5) and the class (b & 31) one-hot over pixel_classes; patch x patch squares, each its pixels row by row
+and every pixel's planes (distance, height, normal, objective, one-hot), through patch + SiLU and mix + SiLU; per
+channel the spatial softmax's expected (x, y) over the patch grid (linspace -1..1), then the block's scalars, embed. The
+map's crop (height x width x 7 bytes, decode_map) and the entity list's pool are added to it, then SiLU, then the join,
+which is added to the first layer before its tanh. The free look's heads are each an argmax at evaluation.
+
+A version 10 model also decides its goals as the learner does now (LayoutActor.decide_goals, GoalHead.draw): the goal
+block has no order columns (revision 2 on), the first goal is allowed only when nothing else is, a queued goal is never
+one already drawn at the same choice, and with a cell pointer every slot whose goal is the cell goal names a block of
+the crop. Versions 7 to 9 keep the reader's older rules.
 
 Every layer but the last is followed by tanh. With a memory, the last layer (the action head) reads the GRU's state
 instead of the trunk's output: the trunk feeds the GRU, whose state is carried from decision to decision and cleared
@@ -125,8 +179,13 @@ AMDL_MAGIC = b"AMDL"
 # is an 8 without the section.
 # 9: the seat sets' attention layer (mappo.entity_attention): the section's attention flag and, with it, the layer and
 # the own token's pool columns. A reader of 9 reads 7 and 8.
-AMDL_VERSION = 9
-AMDL_VERSIONS = (7, 8, 9)
+# 10: the camera (VisionEncoder with its map and entity list), its free look (LookHead), and the goal head's place
+# pointer and cell pointer, as a tail after the seat sets, and the learner's current goal decision. Written only where
+# a policy has one of them; every other policy is still written as 9, which a reader of 9 keeps reading.
+AMDL_VERSION = 10
+AMDL_VERSIONS = (7, 8, 9, 10)
+#: The version a policy without the tail is written as.
+AMDL_PLAIN_VERSION = 9
 
 _TRUNK_KEY = re.compile(r"^trunk\.layers\.(\d+)\.(weight|bias)$")
 
@@ -199,7 +258,9 @@ def write_amdl(
     feedback: dict[str, np.ndarray] | None = None,
     slow: dict[str, np.ndarray] | None = None,
     seat_sets: dict | None = None,
+    tail: dict | None = None,
 ) -> None:
+    """Write one model. `tail` is the version 10 tail (tail_weights); without one the file is version 9."""
     if layers[0][0].shape[1] != obs_dim + num_agents:
         raise ValueError(f"first layer takes {layers[0][0].shape[1]} inputs, expected {obs_dim} + {num_agents}")
     if memory is not None and layers[-1][0].shape[1] != memory["weight_hh"].shape[1]:
@@ -210,7 +271,7 @@ def write_amdl(
     encoded = name.encode("utf-8")
     with open(path, "wb") as out:
         out.write(AMDL_MAGIC)
-        out.write(struct.pack("<IH", AMDL_VERSION, len(encoded)))
+        out.write(struct.pack("<IH", AMDL_VERSION if tail else AMDL_PLAIN_VERSION, len(encoded)))
         out.write(encoded)
         out.write(struct.pack("<IIII", obs_dim, num_agents, num_actions, len(layers)))
         for weight, bias in layers:
@@ -289,6 +350,63 @@ def write_amdl(
                 out.write(struct.pack("<II", pointer["first"], pointer["set"]))
                 out.write(np.ascontiguousarray(pointer["weight"], dtype="<f4").tobytes())
                 out.write(np.ascontiguousarray(pointer["bias"], dtype="<f4").tobytes())
+        if tail:
+            _write_tail(out, tail)
+
+
+def _floats(out, *arrays) -> None:
+    for array in arrays:
+        out.write(np.ascontiguousarray(array, dtype="<f4").tobytes())
+
+
+def _write_tail(out, tail: dict) -> None:
+    """The version 10 tail (see the format above)."""
+    out.write(struct.pack("<B", 1 if tail["goal_space"] else 0))
+    pointer = tail.get("place_pointer")
+    out.write(struct.pack("<B", 1 if pointer else 0))
+    if pointer:
+        out.write(struct.pack("<5I", *(int(pointer[key]) for key in ("at", "first", "count", "features", "hidden"))))
+        _floats(out, *(pointer[key] for key in ("w1", "b1", "w2", "b2")))
+    cells = tail.get("cells")
+    out.write(struct.pack("<B", 1 if cells else 0))
+    if cells:
+        out.write(struct.pack("<9I", *(int(cells[key]) for key in CELL_HEADER)))
+        _floats(out, *(cells[key] for key in CELL_ARRAYS))
+    camera = tail.get("camera")
+    out.write(struct.pack("<B", 1 if camera else 0))
+    if not camera:
+        return
+    out.write(struct.pack("<6I", *(int(camera[key]) for key in ("height", "width", "patch", "scalars", "first",
+                                                                 "crop_bytes"))))
+    out.write(struct.pack("<I", len(camera["pixel_classes"])))
+    out.write(struct.pack(f"<{len(camera['pixel_classes'])}I", *camera["pixel_classes"]))
+    out.write(struct.pack("<II", *camera["class_embed"].shape))
+    _floats(out, camera["class_embed"])
+    out.write(struct.pack("<3I", camera["patch_weight"].shape[0], camera["mix_weight"].shape[0],
+                          camera["embed_weight"].shape[0]))
+    _floats(out, *(camera[key] for key in ("patch_weight", "patch_bias", "mix_weight", "mix_bias", "embed_weight",
+                                           "embed_bias")))
+    entities = camera.get("entities")
+    out.write(struct.pack("<B", 1 if entities else 0))
+    if entities:
+        out.write(struct.pack("<6I", *(int(entities[key]) for key in ("first", "slots", "width", "present",
+                                                                       "class_column", "type_column"))))
+        out.write(struct.pack("<2i", int(entities["object_column"]), int(entities["memory_column"])))
+        out.write(struct.pack("<3I", *entities["type_embed"].shape, entities["w2"].shape[0]))
+        _floats(out, *(entities[key] for key in ("type_embed", "w1", "b1", "w2", "b2", "pool_weight", "pool_bias")))
+    crop = camera.get("map")
+    out.write(struct.pack("<B", 1 if crop else 0))
+    if crop:
+        out.write(struct.pack("<7I", *(int(crop[key]) for key in ("first", "scalars", "height", "width", "patch")),
+                              *crop["code_embed"].shape))
+        out.write(struct.pack("<3I", crop["patch_weight"].shape[0], crop["mix_weight"].shape[0],
+                              crop["embed_weight"].shape[0]))
+        _floats(out, *(crop[key] for key in MAP_ARRAYS))
+    _floats(out, camera["join_weight"], camera["join_bias"])
+    heads = camera["look_heads"]
+    out.write(struct.pack("<I", len(heads)))
+    out.write(struct.pack(f"<{len(heads)}I", *heads))
+    _floats(out, camera["look_weight"], camera["look_bias"])
 
 
 def memory_weights(actor_state: dict[str, torch.Tensor]) -> dict[str, np.ndarray] | None:
@@ -421,35 +539,153 @@ def slow_weights(actor_state: dict[str, torch.Tensor]) -> dict[str, np.ndarray] 
             for name in ("weight_ih", "weight_hh", "bias_ih", "bias_hh")}
 
 
+#: The cell pointer's header and arrays in the order the tail writes them (version 10).
+CELL_HEADER = ("crop_offset", "grid", "pool", "joint", "rise", "min_floor", "features", "hidden", "chain_hidden")
+CELL_ARRAYS = ("local_weight", "local_bias", "query_weight", "query_bias", "score_weight", "score_bias",
+               "chain1_weight", "chain1_bias", "chain2_weight", "chain2_bias")
+_CELL_KEYS = {"local_weight": "local.weight", "local_bias": "local.bias", "query_weight": "query.weight",
+              "query_bias": "query.bias", "score_weight": "score.weight", "score_bias": "score.bias",
+              "chain1_weight": "chain.0.weight", "chain1_bias": "chain.0.bias", "chain2_weight": "chain.2.weight",
+              "chain2_bias": "chain.2.bias"}
+#: The map encoder's arrays in the order the tail writes them, and their MapEncoder keys.
+MAP_ARRAYS = ("code_embed", "patch_weight", "patch_bias", "mix_weight", "mix_bias", "embed_weight", "embed_bias",
+              "join_weight", "join_bias")
+_MAP_KEYS = {"code_embed": "code_embed.weight", "patch_weight": "patch.weight", "patch_bias": "patch.bias",
+             "mix_weight": "mix.weight", "mix_bias": "mix.bias", "embed_weight": "embed.weight",
+             "embed_bias": "embed.bias", "join_weight": "join.weight", "join_bias": "join.bias"}
+
+
+def tail_weights(actor_state: dict[str, torch.Tensor], stage: dict, names: list[str], layout: int) -> dict | None:
+    """The version 10 tail of one layout's model -- the goal head's place pointer and cell pointer, the camera
+    (VisionEncoder with its map and entity list) and its free look -- or None when the policy has none of them and
+    reads no goal block of revision 2 on with two goals (it is written as version 9). Refused (ValueError): camera parts the realm format has no section for (the coarse coverage
+    grid, the sight list and its pointer presses), and a camera without the stage.json that describes it."""
+    def array(key: str, dtype: str = "<f4") -> np.ndarray:
+        return actor_state[key].detach().cpu().numpy().astype(dtype)
+
+    from .mappo.networks import (CELL_CHAIN_HIDDEN, CELL_FEATURES, CELL_HIDDEN, CELL_MIN_FLOOR, CELL_RISE_UNITS,
+                                 IMAGE_BYTES_PER_PIXEL, PLACE_FEATURES, POINTER_HIDDEN, vision_of)
+    tail: dict = {"goal_space": bool("goal_head.block_at" in actor_state
+                                      and (actor_state["goal_head.block_at"] >= 0).any())}
+    goals = (stage or {}).get("goals") or {}
+    # A goal block of revision 2 on has no order columns: a reader of 9 would take what was achieved for the director's
+    # order, so a policy with two goals and a queue that reads one is written as 10 (the learner's current rules).
+    entry = ((stage or {}).get("layouts") or {}).get(names[layout]) or {}
+    revision = next((int(block.get("revision") or 0) for block in entry.get("blocks", ())
+                     if block.get("name") == goals.get("block", "goal")), 0)
+    needed = revision >= 2 and "goal_head.slot_bias" in actor_state
+    if "goal_head.place_spec" in actor_state:
+        at, first, count, features = (int(v) for v in actor_state["goal_head.place_spec"].tolist())
+        if at >= 0 and count > 0:
+            if features != PLACE_FEATURES:
+                raise ValueError(f"the place pointer reads {features} features a slot, the learner {PLACE_FEATURES}")
+            tail["place_pointer"] = {"at": at, "first": first, "count": count, "features": features,
+                                     "hidden": POINTER_HIDDEN,
+                                     "w1": array("goal_head.pointer.0.weight"), "b1": array("goal_head.pointer.0.bias"),
+                                     "w2": array("goal_head.pointer.2.weight"), "b2": array("goal_head.pointer.2.bias")}
+            needed = True
+
+    vision = vision_of(stage, names) if stage else None
+    if vision is None and any(key.startswith(("vision.", "look_head.")) for key in actor_state):
+        raise ValueError("the actor has a camera (vision.* weights) but no stage.json describes it: not exporting")
+    own = vision[layout] if vision is not None else None
+
+    if "goal_head.cell_spec" in actor_state:
+        at, grid, pool, joint = (int(v) for v in actor_state["goal_head.cell_spec"].tolist())
+        slots = int(actor_state["goal_head.slot_bias"].shape[0]) + 1 if "goal_head.slot_bias" in actor_state else 1
+        if at >= 0 and joint >= 0 and grid > 0 and pool > 0 and slots > 1:
+            if own is None or own.get("map") is None:
+                raise ValueError("the goal head points at the map's cells, but this layout has no mental map")
+            offset = at - own["image_bytes"]
+            if offset < 0 or offset + grid * pool * grid * pool * 7 > own["map"]["map_bytes"]:
+                raise ValueError(f"the cell pointer's crop at image byte {at} is not inside the map's crop")
+            described = goals.get("cells") or {}
+            tail["cells"] = {"crop_offset": offset, "grid": grid, "pool": pool, "joint": joint,
+                             "rise": int(described.get("rise_units", CELL_RISE_UNITS)),
+                             "min_floor": int(described.get("min_floor_cells", CELL_MIN_FLOOR)),
+                             "features": CELL_FEATURES, "hidden": CELL_HIDDEN, "chain_hidden": CELL_CHAIN_HIDDEN,
+                             **{name: array(f"goal_head.cell.{key}") for name, key in _CELL_KEYS.items()}}
+            needed = True
+
+    if own is not None:
+        if any(key.startswith(("vision.coverage.", "vision.sight.", "sight_pointers.")) for key in actor_state) \
+                or own.get("coverage") is not None or own.get("sight") is not None:
+            raise ValueError("the camera's coverage grid and sight list have no .amdl section: not exporting")
+        if own["bytes_per_pixel"] != IMAGE_BYTES_PER_PIXEL:
+            raise ValueError(f"a camera of {own['bytes_per_pixel']} bytes a pixel")
+        camera = {"height": own["height"], "width": own["width"], "patch": own["patch"], "scalars": own["scalars"],
+                  "first": own["first"], "crop_bytes": own["map"]["map_bytes"] if own.get("map") else 0,
+                  "pixel_classes": [int(c) for c in own["pixel_classes"]],
+                  "class_embed": array("vision.class_embed.weight"),
+                  "patch_weight": array("vision.patch.weight"), "patch_bias": array("vision.patch.bias"),
+                  "mix_weight": array("vision.mix.weight"), "mix_bias": array("vision.mix.bias"),
+                  "embed_weight": array("vision.embed.weight"), "embed_bias": array("vision.embed.bias"),
+                  "join_weight": array("vision_join.linear.weight"), "join_bias": array("vision_join.linear.bias")}
+        listed = own.get("entities")
+        if listed is not None and "vision.entities.pool.weight" in actor_state:
+            camera["entities"] = {
+                "first": listed["first"], "slots": listed["slots"], "width": listed["width"],
+                "present": listed["present"], "class_column": listed["class_column"],
+                "type_column": listed["type_column"], "object_column": listed["object_column"],
+                "memory_column": listed["memory_column"],
+                "type_embed": array("vision.entities.type_embed.weight"),
+                "w1": array("vision.entities.encoders.visible.0.weight"),
+                "b1": array("vision.entities.encoders.visible.0.bias"),
+                "w2": array("vision.entities.encoders.visible.2.weight"),
+                "b2": array("vision.entities.encoders.visible.2.bias"),
+                "pool_weight": array("vision.entities.pool.weight"), "pool_bias": array("vision.entities.pool.bias")}
+            inputs = listed["width"] - 2 + camera["class_embed"].shape[1] + camera["entities"]["type_embed"].shape[1]
+            if camera["entities"]["w1"].shape[1] != inputs:
+                raise ValueError(f"the entity encoder takes {camera['entities']['w1'].shape[1]} inputs, expected "
+                                 f"{inputs}")
+        crop = own.get("map")
+        if crop is not None and "vision.map.patch.weight" in actor_state:
+            from .mappo.networks import MapEncoder
+            camera["map"] = {"first": crop["first"], "scalars": crop["scalars"], "height": crop["height"],
+                             "width": crop["width"], "patch": MapEncoder.PATCH,
+                             **{name: array(f"vision.map.{key}") for name, key in _MAP_KEYS.items()}}
+        if "look_head.linear.weight" in actor_state:
+            camera["look_heads"] = [int(h) for h in own["look"]]
+            camera["look_weight"] = array("look_head.linear.weight")
+            camera["look_bias"] = array("look_head.linear.bias")
+            if sum(camera["look_heads"]) != camera["look_weight"].shape[0]:
+                raise ValueError(f"the look head has {camera['look_weight'].shape[0]} outputs, the manifest's heads "
+                                 f"{camera['look_heads']}")
+        else:
+            camera["look_heads"], camera["look_weight"], camera["look_bias"] = [], np.zeros((0,), "<f4"), \
+                np.zeros((0,), "<f4")
+        tail["camera"] = camera
+        needed = True
+    return tail if needed else None
+
+
 def export_layouts(
     actor_state: dict[str, torch.Tensor], spec: dict, out_dir: str | Path, manifest_dir: str | Path | None = None,
-    goal_every: int = 0
+    goal_every: int = 0, only: list[str] | None = None, stage: dict | None = None
 ) -> list[Path]:
     """Write every layout's model to out_dir/<model name>.amdl, each atomically; returns the files written.
 
     manifest_dir is the stage's layouts directory (the sim writes <OutputDir>/layouts/<scenario>/): its stage.json
     names the models, and each <model name>.json layout manifest there is copied beside its model, so whoever loads the
     model can check it reads the same layout.
+
+    A policy with a camera, a place pointer or a cell head is written as version 10 (tail_weights), every other as 9.
+    `only` names the layouts to write (all by default); `stage` is the stage.json to read when the manifest directory
+    has none (a checkpoint carries its own).
     """
     out_dir = Path(out_dir)
     manifests = Path(manifest_dir) if manifest_dir is not None else Path("layouts") / spec["scenario"]
     stage_path = manifests / STAGE_FILE
-    stage = json.loads(stage_path.read_text()) if stage_path.is_file() else {}
+    if stage_path.is_file():
+        stage = json.loads(stage_path.read_text())
+    stage = stage or {}
     models = model_names(stage) if stage else {}
     layouts = spec["layouts"]
-    # The camera (VisionEncoder) and its free look (LookHead) have no section in the realm's format (the realm is
-    # parked, camera-vision.FREELOOK.md F): a model without them would act on a policy whose adapter is blind to the
-    # image it was trained to read, and that never turns the camera it was trained to turn. Refused before any file is
-    # written.
-    seeing = [layout["name"] for layout in layouts
-              if any(block.get("name") == "vision" for block in
-                     ((stage.get("layouts") or {}).get(layout["name"]) or {}).get("blocks", ()))]
-    if seeing or any(key.startswith(("vision.", "look_head.")) for key in actor_state):
-        raise ValueError(f"{', '.join(seeing) or 'this checkpoint'}: the camera and its look head are not exported -- "
-                         f"the vision encoder and the free look have no .amdl section (the realm format is parked); "
-                         f"not exporting")
     written = []
+    names = [entry["name"] for entry in layouts]
     for index, layout in enumerate(layouts):
+        if only is not None and layout["name"] not in only:
+            continue
         name = model_name(spec["scenario"], layout["name"], len(layouts), models)
         layers = with_agent_column(layout_layers(actor_state, index))
         memory = memory_weights(actor_state)
@@ -457,11 +693,12 @@ def export_layouts(
         target = out_dir / f"{name}.amdl"
         partial = out_dir / f".{target.name}.partial"
         try:
-            seats = seat_set_weights(actor_state, stage, [entry["name"] for entry in layouts], index)
+            seats = seat_set_weights(actor_state, stage, names, index)
+            tail = tail_weights(actor_state, stage, names, index)
             write_amdl(partial, name, layout["obs_dim"], 1, layout["num_actions"], layers, memory, goals,
-                       goal_every, feedback_weights(actor_state), slow_weights(actor_state), seats)
+                       goal_every, feedback_weights(actor_state), slow_weights(actor_state), seats, tail)
             os.replace(partial, target)
-        except OSError:
+        except BaseException:
             partial.unlink(missing_ok=True)
             raise
         written.append(target)
@@ -628,9 +865,89 @@ def read_amdl(path: str | Path) -> dict:
                                               "weight": floats(embed * width, embed, width),
                                               "bias": floats(embed, embed)})
 
+    tail = None
+    if version >= 10:
+        def u32s(count: int) -> tuple[int, ...]:
+            nonlocal offset
+            values = struct.unpack_from(f"<{count}I", data, offset)
+            offset += 4 * count
+            return values
+
+        def flag() -> bool:
+            nonlocal offset
+            offset += 1
+            return bool(data[offset - 1])
+
+        tail = {"goal_space": flag()}
+        if flag():
+            at, first, count, features, hidden = u32s(5)
+            tail["place_pointer"] = {"at": at, "first": first, "count": count, "features": features, "hidden": hidden,
+                                     "w1": floats(hidden * features, hidden, features), "b1": floats(hidden, hidden),
+                                     "w2": floats(hidden, 1, hidden), "b2": floats(1, 1)}
+        if flag():
+            cells = dict(zip(CELL_HEADER, u32s(len(CELL_HEADER))))
+            hidden, chain, goal_width = cells["hidden"], cells["chain_hidden"], (slow_size or width)
+            shapes = {"local_weight": (hidden, cells["features"]), "local_bias": (hidden,),
+                      "query_weight": (hidden, goal_width), "query_bias": (hidden,), "score_weight": (1, hidden),
+                      "score_bias": (1,), "chain1_weight": (chain, 3), "chain1_bias": (chain,),
+                      "chain2_weight": (1, chain), "chain2_bias": (1,)}
+            for key in CELL_ARRAYS:
+                cells[key] = floats(int(np.prod(shapes[key])), *shapes[key])
+            tail["cells"] = cells
+        if flag():
+            camera = dict(zip(("height", "width", "patch", "scalars", "first", "crop_bytes"), u32s(6)))
+            (count,) = u32s(1)
+            camera["pixel_classes"] = list(u32s(count))
+            limit, class_width = u32s(2)
+            camera["class_embed"] = floats(limit * class_width, limit, class_width)
+            patch_out, mix_out, embed = u32s(3)
+            per_patch = camera["patch"] ** 2 * (4 + count)
+            camera.update(patch_weight=floats(patch_out * per_patch, patch_out, per_patch),
+                          patch_bias=floats(patch_out, patch_out), mix_weight=floats(mix_out * patch_out, mix_out,
+                                                                                     patch_out),
+                          mix_bias=floats(mix_out, mix_out))
+            inputs = 2 * mix_out + camera["scalars"]
+            camera.update(embed_weight=floats(embed * inputs, embed, inputs), embed_bias=floats(embed, embed))
+            if flag():
+                entities = dict(zip(("first", "slots", "width", "present", "class_column", "type_column"), u32s(6)))
+                entities["object_column"], entities["memory_column"] = struct.unpack_from("<2i", data, offset)
+                offset += 8
+                buckets, type_width, token = u32s(3)
+                inputs = entities["width"] - 2 + class_width + type_width
+                entities.update(type_embed=floats(buckets * type_width, buckets, type_width),
+                                w1=floats(token * inputs, token, inputs), b1=floats(token, token),
+                                w2=floats(token * token, token, token), b2=floats(token, token),
+                                pool_weight=floats(embed * 2 * token, embed, 2 * token), pool_bias=floats(embed, embed))
+                camera["entities"] = entities
+            if flag():
+                crop = dict(zip(("first", "scalars", "height", "width", "patch", "codes", "code_width"), u32s(7)))
+                map_patch, map_mix, map_embed = u32s(3)
+                per_patch = crop["patch"] ** 2 * (crop["code_width"] + class_width + 6)
+                inputs = 3 * map_mix + crop["scalars"]
+                crop.update(code_embed=floats(crop["codes"] * crop["code_width"], crop["codes"], crop["code_width"]),
+                            patch_weight=floats(map_patch * per_patch, map_patch, per_patch),
+                            patch_bias=floats(map_patch, map_patch),
+                            mix_weight=floats(map_mix * map_patch, map_mix, map_patch),
+                            mix_bias=floats(map_mix, map_mix),
+                            embed_weight=floats(map_embed * inputs, map_embed, inputs),
+                            embed_bias=floats(map_embed, map_embed),
+                            join_weight=floats(embed * map_embed, embed, map_embed), join_bias=floats(embed, embed))
+                camera["map"] = crop
+            adapter_out = layers[0][0].shape[0]
+            camera["join_weight"] = floats(adapter_out * embed, adapter_out, embed)
+            camera["join_bias"] = floats(adapter_out, adapter_out)
+            (heads,) = u32s(1)
+            camera["look_heads"] = list(u32s(heads))
+            total = sum(camera["look_heads"])
+            camera["look_weight"] = floats(total * width, total, width)
+            camera["look_bias"] = floats(total, total)
+            tail["camera"] = camera
+
     if offset != len(data):
         raise ValueError(f"{len(data) - offset} trailing bytes")
     return {
+        "version": version,
+        "tail": tail,
         "name": name,
         "obs_dim": obs_dim,
         "num_agents": num_agents,
@@ -651,7 +968,12 @@ def reference_decide(model: dict, obs: np.ndarray, mask: np.ndarray, agent: int 
 
     `state` is what the policy carries between decisions -- {"memory": [R], "goal": int, "age": int} -- updated in
     place. A model without a memory or goals ignores it, and so behaves the same however it is called.
+
+    Versions 7 to 9 only: a version 10 model (a camera, the goal head's pointers) is checked against the learner's own
+    network instead (animus.golden).
     """
+    if model.get("tail"):
+        raise ValueError("reference_decide reads versions 7 to 9; check a version 10 model with animus.golden")
     x = np.concatenate([obs.astype(np.float32), np.eye(model["num_agents"], dtype=np.float32)[agent]])
     layers = model["layers"]
     extra = 0.0
@@ -886,7 +1208,8 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     manifests = Path(args.layouts_dir) / checkpoint["spec"]["scenario"]
     goal_every = int(checkpoint.get("config", {}).get("mappo", {}).get("goal_every_decisions", 0))
-    for path in export_layouts(checkpoint["trainer"]["actor"], checkpoint["spec"], out, manifests, goal_every):
+    for path in export_layouts(checkpoint["trainer"]["actor"], checkpoint["spec"], out, manifests, goal_every,
+                               stage=checkpoint.get("stage")):
         print(f"Wrote {path} (update {checkpoint.get('update', '?')})")
 
 
