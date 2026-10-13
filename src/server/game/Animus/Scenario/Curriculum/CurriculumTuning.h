@@ -398,16 +398,16 @@ namespace Animus::Curriculum
         /// once on a start, stop or a facing change of 0.1 rad, else every 500 ms while it moves), and that is what
         /// the followers' frames, dots, recall and rewards read.
         ///
-        /// Paid to each follower: Kept per second within [BandMin, BandMax] yards of the leader (FollowKept,
-        /// Outcome); Regroup at each stop of the leader's of at least RegroupMinStopMs, once, on coming into the band,
-        /// times 1 - seconds/RegroupWindow (Outcome: the leader's stops are the leader's, so it cannot be farmed);
-        /// Settled per second standing still (under SettleSpeed yd/s) in the band while the leader has stood
-        /// SettleAfterMs (Outcome: waiting with a player who waits, the owner, 2026-10-12), and Fidget per second moving
-        /// about in the band then (Cost); Drift per second between DriftYards and LostYards, Lost per second past
-        /// LostYards and Blocking per second within BlockYards ahead of a moving leader, inside BlockHalfAngle degrees
-        /// of its facing (Costs); Death per death (Cost); Stuck and Wall at their own fixed price (Seek.*: off the cost
-        /// ladder). The minimap shows party members within MinimapYards. A dead follower rises at the episode's start
-        /// point (the door, or the waypoint it began at) after Respawn.DelayMs.
+        /// Paid to each follower: Kept per second within [BandMin, BandMax] yards of the leader (FollowKept, Outcome);
+        /// Regroup at each stop of the leader's of at least RegroupMinStopMs, once, on coming into the band, times
+        /// 1 - seconds/RegroupWindow (Outcome: the leader's stops are the leader's, so it cannot be farmed); Settled
+        /// per second standing still (under SettleSpeed yd/s) in the band while the leader has stood SettleAfterMs
+        /// (Outcome: waiting with a player who waits, the owner, 2026-10-12), and Fidget per second moving about in
+        /// the band then (Cost); Drift per second between DriftYards and LostYards, Lost per second past LostYards and
+        /// Blocking per second within BlockYards ahead of a moving leader, inside BlockHalfAngle degrees of its facing
+        /// (Costs); Death per death (Cost); Stuck and Wall at their own fixed price (Seek.*: off the cost ladder). The
+        /// minimap shows party members within MinimapYards. A dead follower rises at the episode's start point (the
+        /// door, or the waypoint it began at) after Respawn.DelayMs.
         struct PartyFollowTuning
         {
             float BandMin = 3.0f;
