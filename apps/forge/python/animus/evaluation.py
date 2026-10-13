@@ -486,10 +486,14 @@ def standard_error(values: np.ndarray, groups: np.ndarray | None = None) -> floa
 #:               party known by the camera and the policy's own memory alone;
 #:   no_recall   (decision 0033) the party frames block's recall columns alone (member*_recall*, revision 3) zeroed:
 #:               what remembering and predicting where each member is is worth beside the dots and the camera.
+#:   no_planner  (vision movement curriculum) the planner's value readouts into the trunk and the cell pointer's
+#:               planner bonus zeroed (MappoTrainer.set_planner_off): what the planner is worth beside the map.
 ABLATIONS = ("no_flag", "no_camera", "no_compass", "no_map", "no_memory", "no_goal", "random_goal", "random_cell",
-             "no_plan", "no_searched", "no_coverage", "no_party", "no_recall")
+             "no_plan", "no_searched", "no_coverage", "no_party", "no_recall", "no_planner")
 #: The ablations that are a flag on the trainer's goal draw (Run.evaluate_arms sets them), not an edit of the input.
 GOAL_DRAW_ARMS = ("random_goal", "random_cell", "no_plan")
+#: ... and the ones that are a flag on the networks (Run.evaluate_arms likewise): the chooser edits nothing.
+NETWORK_FLAG_ARMS = ("no_planner",)
 #: What an ablation arm reports and shows in forge status (<column>_<arm>).
 ABLATION_COLUMNS = ("arrived", "arrived_no_compass", "arrived_with_compass", "objective_visible")
 #: Bit 5 of the class byte (byte 3) of every pixel: the objective flag (Vision EncodePixel, cpp-vision.md).
@@ -656,9 +660,9 @@ def ablation_chooser(choose: Callable, arm: str, spec, stage: dict | None) -> Ca
         if arm == "no_memory":
             forget(choose.acting, len(step.done))
             return choose(step)
-        if arm in GOAL_DRAW_ARMS:
+        if arm in GOAL_DRAW_ARMS or arm in NETWORK_FLAG_ARMS:
             # The draw itself is the trainer's (uniform_goals, uniform_cells, single_goal: set around the arm by
-            # Run.evaluate_arms).
+            # Run.evaluate_arms), or the planner's readouts are (set_planner_off).
             return choose(step)
         if arm in ("no_compass", "no_goal", "no_party"):
             return choose(replace(step, obs=ablate_obs(step.obs, step.layout, spans)))
@@ -853,7 +857,8 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
                    score_column: str = SCORE_COLUMN, arena: int = 0,
                    collect_motion: bool = False, stand_in: bool = False, training_stand_in: bool = False,
                    excluded: Callable[[int], np.ndarray] | None = None,
-                   trace_all: dict[str, np.ndarray] | None = None) -> tuple[EvalResult, p.Step]:
+                   trace_all: dict[str, np.ndarray] | None = None,
+                   potential: tuple[float, float, float] | None = None) -> tuple[EvalResult, p.Step]:
     """Run seeded episodes first_seed..first_seed+episodes-1 (a data-parallel learner's share of an evaluation; 0..
     episodes-1 alone) and return their results and the fresh training STEP after them.
 
@@ -882,6 +887,12 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
     `any_playing(playing)` is whether any data-parallel learner still plays its share (Ranks.any): the sim answers
     every rank's envs on the same decision and switches mode only once all of them ask, so a rank done with its
     seeds keeps stepping until the last one is, and they switch back together.
+
+    `potential` (gamma a decision, yards_scale, clip; vision movement curriculum) sums the learner's potential term
+    (mappo.buffer.compute_potential's rule, off each STEP's labels) over every episode and writes it as the episode's
+    `reward_potential` column -- over the sim's own (which is 0: the term is the learner's), or appended as a column
+    of that name -- so the summary reads it beside the sim's reward columns. None, or a stage without labels: the
+    sim's columns as they are.
     """
     started = time.perf_counter()
     envs, agents = spec.num_envs, spec.agents_per_env
@@ -917,6 +928,25 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
     motion_tracks: list[np.ndarray] = []
     motion_ids: list[tuple] = []
     tracer = TraceCollector(spec, trace_all) if trace_all is not None and not baseline else None
+    # The potential term's running sum per seat, and the C(body) its last step was labelled with.
+    paying = potential is not None and getattr(step, "labels", None) is not None
+    potential_sum = np.zeros((envs, agents), dtype=np.float64)
+    c_before = p.c_body_of(step.labels) if paying else None
+    potential_column = info_names.index("reward_potential") if "reward_potential" in info_names else None
+    info_dim = spec.episode_info_dim + (1 if paying and potential_column is None else 0)
+    if paying and potential_column is None:
+        info_names.append("reward_potential")
+
+    def phi(c: np.ndarray) -> np.ndarray:
+        return -np.minimum(c, potential[2] * 100.0) * potential[1]
+
+    def with_potential(info: np.ndarray, value: float) -> np.ndarray:
+        if not paying:
+            return info
+        if potential_column is not None:
+            info[potential_column] = value
+            return info
+        return np.concatenate([info, np.array([value], dtype=np.float32)])
 
     def playing() -> bool:
         mine = len(finished) < episodes and decisions < max_decisions
@@ -954,6 +984,12 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
             tracer.reward(step.reward)
 
         running += step.reward
+        if paying:
+            c_after = p.c_body_of(step.labels)
+            paid = (c_before < p.LABEL_UNREACHABLE) & (c_after < p.LABEL_UNREACHABLE) \
+                & ~np.asarray(step.done, dtype=bool)[:, None]
+            potential_sum += np.where(paid, potential[0] * phi(c_after) - phi(c_before), 0.0)
+            c_before = c_after
         if collect_motion:
             for e in np.flatnonzero(~np.asarray(step.done, dtype=bool)):
                 moving[e].append(np.array(step.kinematics[e]))
@@ -972,8 +1008,8 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
             if counted:
                 dropped = excluded(int(e)) if excluded is not None else np.zeros(agents, dtype=bool)
                 finished[index] = [
-                    (float(running[e, a]), step.episode_info[e, a].copy(), names[int(layout[e, a])], taken[e, a].copy(),
-                     allowed[e, a].copy())
+                    (float(running[e, a]), with_potential(step.episode_info[e, a].copy(), float(potential_sum[e, a])),
+                     names[int(layout[e, a])], taken[e, a].copy(), allowed[e, a].copy())
                     for a in range(agents)
                     if (present is None or step.episode_info[e, a, present] > 0.0)
                     and not dropped[a]
@@ -993,6 +1029,7 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
                 tracing[e] = []
 
             running[e] = 0.0
+            potential_sum[e] = 0.0
             taken[e] = 0
             allowed[e] = 0
 
@@ -1004,8 +1041,8 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
     result = EvalResult(
         policy=baseline or "learner",
         returns=np.array([row[0] for row in rows], dtype=np.float64),
-        infos=np.array([row[1] for row in rows], dtype=np.float32).reshape(len(rows), spec.episode_info_dim),
-        info_names=tuple(spec.episode_info_names),
+        infos=np.array([row[1] for row in rows], dtype=np.float32).reshape(len(rows), info_dim),
+        info_names=tuple(info_names),
         layouts=tuple(row[2] for row in rows),
         seeds=tuple(seeds),
         arenas=tuple(arenas),

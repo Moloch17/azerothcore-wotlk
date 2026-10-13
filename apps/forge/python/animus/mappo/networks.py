@@ -28,6 +28,8 @@ import torch
 from torch import nn
 from torch.distributions import Categorical
 
+from ..protocol import TRAV_CLASS_NAMES, TRAV_CLASSES
+
 MASKED_LOGIT = -1e9
 
 #: The goal block's place slots (m2-goals; stage.json goals.place_slots): the values a slot has (sin and cos of the
@@ -434,19 +436,19 @@ def cell_valid(crops: torch.Tensor, grid: int = CELL_GRID, pool: int = CELL_POOL
                min_floor: int = CELL_MIN_FLOOR) -> torch.Tensor:
     """Which pooled blocks of the mental map's crop a cell goal may name, bool [N, grid * grid] (row-major, block (r, c)
     at r * grid + c) from the crop bytes [N, side x side x 7] (or [N, side, side, 7]) alone -- the contract's one
-    definition (free-choice-goals CONTRACT 1.3), which the sim's CellGrid::Choosable implements too: no cell of the block
-    is a Wall or a Hazard; at least `min_floor` are floor-like (Floor or Door); and every floor-like cell has a known
-    height within `rise` units (4 yd) of the feet's. An unknown cell is not floor. A pure function of the bytes, with no
-    branch on data: the rollout graph captures it."""
+    definition (free-choice-goals CONTRACT 1.3, opened by the vision movement curriculum's I8, CONTRACT.md sec 3.3),
+    which the sim's CellGrid::Choosable implements too: no cell of the block is a Wall or a Hazard, and at least
+    `min_floor` are floor-like (Floor or Door) OR unknown; no height limit (`rise` is kept for the callers and the
+    export, and read by nothing). A storey above, or a direction through unknown space, is pressable; a bad pick is
+    priced by the Cell* costs, never masked. A pure function of the bytes, with no branch on data: the rollout graph
+    captures it."""
     side = grid * pool
     cells = crops.reshape(-1, side, side, MAP_CHANNELS)
     code = cells[..., MAP_CODE]
-    height = cells[..., MAP_HEIGHT].to(torch.int16)
-    like = (code == MAP_FLOOR) | (code == MAP_DOOR)
+    like = (code == MAP_FLOOR) | (code == MAP_DOOR) | (code == 0)
     barred = (code == MAP_WALL) | (code == MAP_HAZARD)
-    off = like & ((height == 0) | ((height - MAP_HEIGHT_ZERO).abs() > rise))
     count = lambda mask: _block_sum(mask.to(torch.int32), grid, pool)
-    return ((count(barred) == 0) & (count(off) == 0) & (count(like) >= min_floor)).reshape(cells.shape[0], -1)
+    return ((count(barred) == 0) & (count(like) >= min_floor)).reshape(cells.shape[0], -1)
 
 
 def cell_features(crops: torch.Tensor, grid: int = CELL_GRID, pool: int = CELL_POOL, rise: int = CELL_RISE_UNITS,
@@ -536,6 +538,10 @@ class CellPointer(nn.Module):
         nn.init.zeros_(self.chain[0].bias)
         nn.init.zeros_(self.chain[2].weight)
         nn.init.zeros_(self.chain[2].bias)
+        # The planner's bonus (vision movement curriculum, CONTRACT.md sec 5): the value of each block under the VIN
+        # (MapEncoder.plan's pool) times this scalar, added to the score. Zero at the start, so a fresh head draws as it
+        # did; a checkpoint from before the planner loads without it (load_actor_state tolerates goal_head.cell.*).
+        self.planner_weight = nn.Parameter(torch.zeros(1))
 
 
 class GoalHead(nn.Module):
@@ -860,8 +866,8 @@ class GoalHead(nn.Module):
 
     def cell_inputs(self, image: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """What every slot's cell scores share, once per row, from the image bytes [rows, I] (the camera's pixels, then
-        the mental map's crop): (the blocks' hidden features [rows, B, CELL_HIDDEN], the choosable mask [rows, B]),
-        B = grid x grid."""
+        the mental map's crop -- its fine tier first, where the map has two): (the blocks' hidden features [rows, B,
+        CELL_HIDDEN], the choosable mask [rows, B]), B = grid x grid."""
         side = self.cell_grid * self.cell_pool
         crops = image.reshape(image.shape[0], -1)[:, self.cell_at:self.cell_at + side * side * MAP_CHANNELS]
         x, valid = cell_features(crops, self.cell_grid, self.cell_pool, self.cell_rise, self.cell_min_floor)
@@ -869,10 +875,12 @@ class GoalHead(nn.Module):
         return nn.functional.silu(self.cell.local(x.to(weight.dtype))), valid
 
     def cell_scores(self, hidden: torch.Tensor, shifted: torch.Tensor, prev_row: torch.Tensor,
-                    prev_col: torch.Tensor) -> torch.Tensor:
+                    prev_col: torch.Tensor, bonus: torch.Tensor | None = None) -> torch.Tensor:
         """A slot's score per block [rows, B]: the score of tanh(the block's hidden features + the slot's query), plus
         the chain feature -- the block's offset (rows, columns, distance, over CELL_OFFSET_SCALE blocks) from the
-        previous cell of the plan, `prev_row`, `prev_col` [rows] floats (the seat's own block at the start)."""
+        previous cell of the plan, `prev_row`, `prev_col` [rows] floats (the seat's own block at the start) -- plus,
+        with the planner (`bonus` [rows, B]: each block's pooled value under the VIN, MapEncoder.plan), that value
+        times the pointer's planner_weight. A bonus of another grid is ignored."""
         weight = self.cell.query.weight
         query = self.cell.query(shifted.to(weight.dtype))
         score = self.cell.score(torch.tanh(hidden + query[:, None, :])).squeeze(-1)
@@ -883,40 +891,47 @@ class GoalHead(nn.Module):
         d_row = (rows[None, :] - prev_row[:, None].to(hidden.dtype)) / CELL_OFFSET_SCALE
         d_col = (columns[None, :] - prev_col[:, None].to(hidden.dtype)) / CELL_OFFSET_SCALE
         offset = torch.stack([d_row, d_col, torch.sqrt(d_row * d_row + d_col * d_col)], dim=-1)
-        return score + self.cell.chain(offset).squeeze(-1)
+        score = score + self.cell.chain(offset).squeeze(-1)
+        if bonus is not None and bonus.shape[-1] == grid * grid:
+            score = score + self.cell.planner_weight.to(score.dtype) * bonus.detach().to(score.dtype)
+        return score
 
-    def cell_primary(self, features: torch.Tensor, image: torch.Tensor, block: torch.Tensor):
+    def cell_primary(self, features: torch.Tensor, image: torch.Tensor, block: torch.Tensor,
+                     bonus: torch.Tensor | None = None):
         """The primary slot's cell distribution scored again (the planner's hindsight and the update's statistics):
         (log probability of `block` [rows], whether that block is choosable, the distribution's entropy, whether any
         block is choosable). The slot is the first, so it scores from `features` as it was drawn, from the seat's own
-        block, with every choosable block allowed."""
+        block, with every choosable block allowed. `bonus` as cell_scores'."""
         hidden, valid = self.cell_inputs(image)
         seat = torch.full((features.shape[0],), (self.cell_grid - 1) / 2.0, dtype=hidden.dtype, device=hidden.device)
-        logits = masked_logits(self.cell_scores(hidden, features, seat, seat).to(features.dtype), valid)
+        logits = masked_logits(self.cell_scores(hidden, features, seat, seat, bonus).to(features.dtype), valid)
         block = block.long().clamp(0, valid.shape[-1] - 1)
         return (log_prob_of(logits, block), valid.gather(1, block[:, None])[:, 0], _entropy(logits),
                 valid.any(dim=-1))
 
-    def cell_primary_many(self, features: torch.Tensor, image: torch.Tensor, blocks: torch.Tensor):
+    def cell_primary_many(self, features: torch.Tensor, image: torch.Tensor, blocks: torch.Tensor,
+                          bonus: torch.Tensor | None = None):
         """cell_primary for several blocks per row (the planner's lookback hindsight): `blocks` [rows, M] scored
         against ONE pass of each row's cell distribution. (log probabilities [rows, M], whether each is choosable
         [rows, M], the entropy [rows], whether any block is choosable [rows])."""
         hidden, valid = self.cell_inputs(image)
         seat = torch.full((features.shape[0],), (self.cell_grid - 1) / 2.0, dtype=hidden.dtype, device=hidden.device)
-        logits = masked_logits(self.cell_scores(hidden, features, seat, seat).to(features.dtype), valid)
+        logits = masked_logits(self.cell_scores(hidden, features, seat, seat, bonus).to(features.dtype), valid)
         blocks = blocks.long().clamp(0, valid.shape[-1] - 1)
         log_probs = logits.gather(1, blocks) - torch.logsumexp(logits, dim=-1, keepdim=True)
         return log_probs, valid.gather(1, blocks), _entropy(logits), valid.any(dim=-1)
 
     def draw(self, features: torch.Tensor, obs: torch.Tensor, layout: torch.Tensor, deterministic: bool,
              slots: torch.Tensor | None = None, uniform: bool = False, cells: torch.Tensor | None = None,
-             image: torch.Tensor | None = None, uniform_cells: bool = False, single: bool = False):
+             image: torch.Tensor | None = None, uniform_cells: bool = False, single: bool = False,
+             bonus: torch.Tensor | None = None):
         """The slots drawn at a choice, or scored when `slots` [rows, S] (and `cells`) is given: (slots [rows, S] with -1
         for none, log probability, entropy, cells [rows, S] -- the block each slot named, -1 where its goal is not the
         cell goal). `uniform` (the eval arm random_goal): the primary is drawn uniformly over the goals on offer and the
         cell uniformly over the choosable blocks, and nothing is held beside it or queued. `uniform_cells`
         (random_cell): the cells are drawn uniformly, the goals from the head. `single` (no_plan): nothing is held
-        beside the primary or queued, the primary from the head.
+        beside the primary or queued, the primary from the head. `bonus` [rows, B]: the planner's pooled value per
+        block (cell_scores), with a planner.
 
         With a cell head (and the image bytes): a slot whose goal is the cell goal also draws a block, from the blocks
         the crop says are choosable (cell_valid) less every block within one of a cell drawn before it in this choice,
@@ -959,8 +974,8 @@ class GoalHead(nn.Module):
 
             def draw_cell(shifted: torch.Tensor, allowed: torch.Tensor, goal: torch.Tensor, slot: int):
                 """(the block a cell goal names, -1 for another goal; its log probability; its entropy)."""
-                logits = masked_logits(self.cell_scores(hidden, shifted, previous[0], previous[1]).to(features.dtype),
-                                       allowed)
+                logits = masked_logits(self.cell_scores(hidden, shifted, previous[0], previous[1],
+                                                        bonus).to(features.dtype), allowed)
                 if uniform or uniform_cells:
                     logits = uniform_logits(logits)
                 if cells is None:
@@ -1155,11 +1170,22 @@ def _map_of(entry: dict, name: str) -> dict | None:
                                                  "scalars")}
     out["cell"] = float(described.get("cell", 2.0))
     out["first"] = int(block["obs"][0])
+    # The crop's tiers (map block revision 5, vision movement curriculum CONTRACT.md sec 3.2): the manifest's
+    # `tiers: [{cell: 2}, {cell: 8}]` says the crop section is [fine][coarse], each height x width x channels bytes
+    # (`crop_bytes`); without the key there is one tier. `map_bytes` is the whole section (what the SPEC announces
+    # and the camera's row carries), whichever the manifest wrote.
+    tiers = list(described.get("tiers") or ())
+    out["tier_cells"] = tuple(float(tier.get("cell", out["cell"])) if isinstance(tier, dict) else float(tier)
+                              for tier in tiers) or (out["cell"],)
+    out["tiers"] = len(out["tier_cells"])
+    out["crop_bytes"] = out["height"] * out["width"] * out["channels"]
     if (out["channels"], out["codes"]) != (MAP_CHANNELS, MAP_CODES) or not 1 <= out["classes"] <= CLASS_LIMIT \
-            or out["map_bytes"] != out["height"] * out["width"] * out["channels"]:
+            or out["map_bytes"] not in (out["crop_bytes"], out["crop_bytes"] * out["tiers"]):
         raise ValueError(f"{name}: a map crop of {out['height']} x {out['width']} x {out['channels']} channels "
-                         f"({out['map_bytes']} bytes, {out['codes']} codes, {out['classes']} classes); this learner "
-                         f"decodes {MAP_CHANNELS} channels and {MAP_CODES} codes, height x width x channels bytes")
+                         f"({out['map_bytes']} bytes, {out['codes']} codes, {out['classes']} classes, {out['tiers']} "
+                         f"tier(s)); this learner decodes {MAP_CHANNELS} channels and {MAP_CODES} codes, height x "
+                         f"width x channels bytes a tier")
+    out["map_bytes"] = out["crop_bytes"] * out["tiers"]
     # Exploration v3 (map block revision 2): the manifest names the searched channel; one without the key (a sim of the
     # six-channel map) is refused above on its channel count, so the key is only cross-checked when it is there.
     if "searched_channel" in described and int(described["searched_channel"]) != MAP_SEARCHED:
@@ -1168,6 +1194,29 @@ def _map_of(entry: dict, name: str) -> dict | None:
     if int(block["obs"][1]) != out["scalars"]:
         raise ValueError(f"{name}: the map block is {block['obs'][1]} columns, its scalars {out['scalars']}")
     return out
+
+
+#: The compass block in stage.json (BlockId::Compass): the objective's bearing and distance off the body, the nav
+#: stages' minimap marker (vision movement curriculum, CONTRACT.md sec 0: the planner's goal plane reads it).
+COMPASS_BLOCK = "compass"
+COMPASS_COLUMNS = ("objective", "objective_bearing_sin", "objective_bearing_cos", "objective_distance")
+COMPASS_SCALE = 500.0
+
+
+def compass_of(entry: dict, name: str) -> dict | None:
+    """A layout's compass block as stage.json describes it -- {"first": its first observation column, "present",
+    "sin", "cos", "dist": the absolute columns of the objective's presence, bearing sin and cos and distance over
+    "scale" yards} -- or None without one (or without the obs_names that locate the columns)."""
+    block = next((b for b in entry.get("blocks", ()) if b.get("name") == COMPASS_BLOCK), None)
+    if block is None:
+        return None
+    names = list(block.get("obs_names") or ())
+    if any(column not in names for column in COMPASS_COLUMNS):
+        return None
+    first = int(block["obs"][0])
+    present, sin, cos, dist = (first + names.index(column) for column in COMPASS_COLUMNS)
+    return {"first": first, "present": present, "sin": sin, "cos": cos, "dist": dist,
+            "scale": float(block.get("objective_scale", COMPASS_SCALE))}
 
 
 def coverage_of(entry: dict, name: str) -> dict | None:
@@ -1346,7 +1395,7 @@ def vision_of(stage: dict | None, layout_names: Sequence[str]) -> list[dict | No
         listed = _entities_of(entry, name)
         described_layout = {"first": first, **described, "image_bytes": image_bytes, "entities": listed, "map": crop,
                             "camera_bytes": image_bytes + (crop["map_bytes"] if crop else 0),
-                            "coverage": coverage_of(entry, name)}
+                            "coverage": coverage_of(entry, name), "compass": compass_of(entry, name)}
         sight = _sight_of(entry, name, listed)
         if sight is not None:
             described_layout["sight"] = sight
@@ -1444,6 +1493,109 @@ def decode_map(crops: torch.Tensor, height: int, width: int) -> dict[str, torch.
     }
 
 
+def decode_map_tiers(crops: torch.Tensor, height: int, width: int, tiers: int) -> list[dict[str, torch.Tensor]]:
+    """decode_map of each tier of a crop section [N, tiers x H x W x 7] (map block revision 5: [fine][coarse]), in
+    order; one entry for a one-tier map."""
+    per = height * width * MAP_CHANNELS
+    rows = crops.reshape(crops.shape[0], -1)
+    return [decode_map(rows[:, tier * per:(tier + 1) * per], height, width) for tier in range(tiers)]
+
+
+def goal_plane(forward: torch.Tensor, right: torch.Tensor, present: torch.Tensor, side: int,
+               cell: float) -> torch.Tensor:
+    """The planner's goal plane [N, side, side]: a one-hot of the goal's cell in a heading-up crop of `side` cells of
+    `cell` yards (row 0 furthest ahead, column 0 furthest left, the body at the centre), from the goal's forward and
+    right yards in the body frame; the border cell where the line from the body to the goal leaves the crop when it
+    lies outside; all zero where no goal is present."""
+    centre = (side - 1) / 2.0
+    f = forward.to(torch.float32) / cell
+    r = right.to(torch.float32) / cell
+    reach = torch.maximum(f.abs(), r.abs()).clamp(min=1e-6)
+    t = (centre / reach).clamp(max=1.0)
+    row = torch.round(centre - t * f).clamp(0, side - 1).long()
+    col = torch.round(centre + t * r).clamp(0, side - 1).long()
+    plane = forward.new_zeros((forward.shape[0], side * side), dtype=torch.float32)
+    plane.scatter_(1, (row * side + col)[:, None], present.to(torch.float32)[:, None])
+    return plane.reshape(-1, side, side)
+
+
+class CostmapHead(nn.Module):
+    """**The costmap head** (vision movement curriculum, CONTRACT.md sec 5 (b)): from a tier's decoded map planes
+    (MapEncoder.planes, [N, H, W, P]) and the camera's embedding broadcast over the crop (Linear EMBED -> VISION, plus a
+    learned bias per tier, the same head on both tiers), two 3 x 3 convolutions of HIDDEN channels with SiLU and a 1 x 1
+    to TRAV_CLASSES logits a cell: the egocentric traversability the policy plans on, trained by cross-entropy against
+    the sim's bake (trainer aux.costmap_coef) and never by the return."""
+
+    VISION = 8
+    HIDDEN = 32
+
+    def __init__(self, planes: int, vision_width: int, tiers: int):
+        super().__init__()
+        self.vision = _linear(vision_width, self.VISION, 1.0)
+        self.tier_bias = nn.Parameter(torch.zeros(tiers, self.VISION))
+        self.conv1 = nn.Conv2d(planes + self.VISION, self.HIDDEN, 3, padding=1)
+        self.conv2 = nn.Conv2d(self.HIDDEN, self.HIDDEN, 3, padding=1)
+        self.out = nn.Conv2d(self.HIDDEN, TRAV_CLASSES, 1)
+
+    def forward(self, planes: torch.Tensor, camera: torch.Tensor, tier: int) -> torch.Tensor:
+        """`planes` [N, P, H, W], `camera` [N, vision_width] -> logits [N, TRAV_CLASSES, H, W]."""
+        silu = nn.functional.silu
+        seen = self.vision(camera.to(self.vision.weight.dtype)) + self.tier_bias[tier].to(self.vision.weight.dtype)
+        seen = seen[:, :, None, None].expand(-1, -1, planes.shape[-2], planes.shape[-1])
+        x = silu(self.conv1(torch.cat([planes.to(seen.dtype), seen], dim=1)))
+        return self.out(silu(self.conv2(x)))
+
+
+class Planner(nn.Module):
+    """**The planner** (CONTRACT.md sec 5 (c)): a value iteration network over a tier's planes -- the costmap's softmax
+    (TRAV_CLASSES), the decoded map planes and the goal plane -- `K` iterations of value = max over CHANNELS of
+    conv3x3(cat(value, planes)), the planes' convolution taken once (`fixed`, the per-channel step costs) and the
+    value's each iteration (`recur`, no bias), the two summing to the one conv3x3 of the contract. One Planner for both
+    tiers. Initialised as Bellman's own rule: channel c of `recur` copies neighbour c of the 3 x 3 (the eight
+    neighbours), `fixed` is small, so the value starts at 0 everywhere and propagates as the step costs are learned.
+    Under a gradient the iterations are checkpointed SEGMENT at a time (torch.utils.checkpoint), so the update keeps
+    SEGMENT iterations' activations a row rather than K; the rollout runs it without one."""
+
+    K = 40
+    CHANNELS = 8
+    SEGMENT = 8
+
+    def __init__(self, planes: int):
+        super().__init__()
+        self.planes = planes
+        self.fixed = nn.Conv2d(planes, self.CHANNELS, 3, padding=1)
+        self.recur = nn.Conv2d(1, self.CHANNELS, 3, padding=1, bias=False)
+        with torch.no_grad():
+            nn.init.orthogonal_(self.fixed.weight, gain=0.1)
+            nn.init.zeros_(self.fixed.bias)
+            self.recur.weight.zero_()
+            neighbours = [(r, c) for r in range(3) for c in range(3) if (r, c) != (1, 1)]
+            for channel in range(self.CHANNELS):
+                r, c = neighbours[channel % len(neighbours)]
+                self.recur.weight[channel, 0, r, c] = 1.0
+
+    def _iterate(self, value: torch.Tensor, fixed: torch.Tensor, count: int) -> torch.Tensor:
+        for _ in range(count):
+            value = (self.recur(value) + fixed).amax(dim=1, keepdim=True)
+        return value
+
+    def forward(self, planes: torch.Tensor) -> torch.Tensor:
+        """`planes` [N, P, H, W] -> the value [N, H, W] after K iterations (unitless; -value x 100 is yards of
+        cost-to-go once trained, MapEncoder.plan)."""
+        fixed = self.fixed(planes.to(self.fixed.weight.dtype))
+        value = fixed.new_zeros((planes.shape[0], 1, planes.shape[-2], planes.shape[-1]))
+        done = 0
+        while done < self.K:
+            count = min(self.SEGMENT, self.K - done)
+            if torch.is_grad_enabled() and fixed.requires_grad:
+                from torch.utils.checkpoint import checkpoint
+                value = checkpoint(self._iterate, value, fixed, count, use_reentrant=False)
+            else:
+                value = self._iterate(value, fixed, count)
+            done += count
+        return value[:, 0]
+
+
 def _spatial_softmax(features: torch.Tensor, grid_x: torch.Tensor, grid_y: torch.Tensor) -> torch.Tensor:
     """Per channel of [N, C, H, W] the expected (x, y) of its softmax over the grid, [N, 2C]."""
     flat = features.flatten(2)
@@ -1463,6 +1615,17 @@ class MapEncoder(nn.Module):
     raw), and Linear -> EMBED. A convolution stack at the crop's own resolution was measured first: 3.6 times the
     camera's update cost on the host's card, the patches a fraction of it.
 
+    **Two tiers** (map block revision 5, vision movement curriculum CONTRACT.md sec 3.2; `crop["tiers"]` 2): the crop
+    section is [fine 48 x 48 at 2 yd][coarse 48 x 48 at 8 yd], each tier through the same patch and mix weights plus a
+    learned tier embedding on its patch features, the two tiers' keypoints and means concatenated before `embed`. A
+    one-tier map's parameters are exactly what they were. With two tiers the encoder also carries the **costmap head**
+    (CostmapHead) and the **planner** (Planner, `plan`): per tier the head's TRAV_CLASSES logits a cell from the tier's
+    planes and the camera's embedding, and the VIN's value over softmax(logits) + the planes + the goal plane (the
+    compass block's bearing and distance, goal_plane); its readouts -- the value at the centre 3 x 3 of each tier --
+    join the embedding through `planner_join` (detached: the planner learns from its own labels, the trainer's aux
+    losses, and the policy reads it), and the fine tier's value pooled over the cell pointer's blocks is the pointer's
+    bonus (CellPointer.planner_weight). `planner_off` (the eval arm no_planner) zeroes both.
+
     **The join** (`join`, orthogonal): EMBED -> the camera's embedding width, after a SiLU, added to the camera's
     embedding before its own SiLU, so both networks read the map through their own camera join. Seeding from a
     checkpoint without a map zeroes it (bootstrap._seed_map): the seeded policy starts as it was, and the map comes in
@@ -1472,14 +1635,23 @@ class MapEncoder(nn.Module):
     PATCH = 4
     WIDTHS = (64, 64)
     EMBED = 128
+    #: The planner's readouts a tier: the value at the centre 3 x 3 cells (rows and columns READOUT_FIRST on).
+    READOUT = 9
+    READOUT_FIRST = 22
 
-    def __init__(self, crop: dict, class_embedding: nn.Embedding, out_width: int, starts: Sequence[int]):
+    def __init__(self, crop: dict, class_embedding: nn.Embedding, out_width: int, starts: Sequence[int],
+                 compass: Sequence[dict | None] = ()):
         super().__init__()
         self.height, self.width = crop["height"], crop["width"]
         if self.height % self.PATCH or self.width % self.PATCH:
             raise ValueError(f"the map's crop is {self.width} x {self.height}; its encoder cuts it into {self.PATCH} x "
                              f"{self.PATCH} patches")
+        self.tiers = int(crop.get("tiers", 1))
+        self.tier_cells = tuple(float(cell) for cell in crop.get("tier_cells", (crop.get("cell", 2.0),)))
+        self.crop_bytes = self.height * self.width * MAP_CHANNELS
         self.map_bytes, self.scalars = crop["map_bytes"], crop["scalars"]
+        if self.map_bytes != self.crop_bytes * self.tiers or len(self.tier_cells) != self.tiers:
+            raise ValueError(f"a map of {self.map_bytes} bytes is not {self.tiers} tier(s) of {self.crop_bytes}")
         self.code_embed = nn.Embedding(MAP_CODES, self.CODE_EMBED)
         # The camera's class embedding, held by reference: one table for the pixels, the list and the map.
         self.__dict__["class_embedding"] = class_embedding
@@ -1491,15 +1663,36 @@ class MapEncoder(nn.Module):
                                         torch.linspace(-1.0, 1.0, self.grid[1]), indexing="ij")
         self.register_buffer("grid_x", grid_x.reshape(-1), persistent=False)
         self.register_buffer("grid_y", grid_y.reshape(-1), persistent=False)
-        self.embed = nn.Linear(3 * self.WIDTHS[1] + self.scalars, self.EMBED)
+        self.embed = nn.Linear(self.tiers * 3 * self.WIDTHS[1] + self.scalars, self.EMBED)
         self.join = _linear(self.EMBED, out_width, math.sqrt(2))
         # Each layout's first map column (the scalars), -1 for a layout without the map.
         self.register_buffer("start", torch.tensor(list(starts), dtype=torch.long), persistent=False)
         self.register_buffer("offsets", torch.arange(self.scalars, dtype=torch.long), persistent=False)
+        # The two-tier map's extras (none, and no new parameter, on a one-tier map: a checkpoint of one loads as it is).
+        self.planner_off = False
+        self.compass_scale = COMPASS_SCALE
+        if self.tiers > 1:
+            self.tier_embed = nn.Parameter(torch.zeros(self.tiers, self.WIDTHS[1]))
+            self.costmap = CostmapHead(self.planes_per_cell, out_width, self.tiers)
+            self.planner = Planner(TRAV_CLASSES + self.planes_per_cell + 1)
+            self.planner_join = _linear(self.tiers * self.READOUT, out_width, math.sqrt(2))
+            # Per layout the compass block's columns (present, bearing sin, cos, distance; compass_of), -1 without:
+            # the goal plane reads them. Derived from stage.json, not learned.
+            columns = [[c["present"], c["sin"], c["cos"], c["dist"]] if c else [-1, -1, -1, -1] for c in compass]
+            self.register_buffer("compass", torch.tensor(columns or [[-1] * 4], dtype=torch.long), persistent=False)
+            scales = [c["scale"] for c in compass if c]
+            self.compass_scale = float(scales[0]) if scales else COMPASS_SCALE
+
+    @property
+    def planner_on(self) -> bool:
+        return self.tiers > 1
 
     def planes(self, crops: torch.Tensor) -> torch.Tensor:
-        """[N, M] bytes -> [N, H, W, P] planes: the code's embedding, the class's, the six values."""
-        decoded = decode_map(crops, self.height, self.width)
+        """[N, M] bytes of one tier -> [N, H, W, P] planes: the code's embedding, the class's, the six values."""
+        return self.planes_of(decode_map(crops, self.height, self.width))
+
+    def planes_of(self, decoded: dict[str, torch.Tensor]) -> torch.Tensor:
+        """planes() from a tier's decode_map."""
         dtype = self.embed.weight.dtype
         # The embeddings' backward (a scatter of 2,304 cells a row onto a few rows) is about two thirds of the
         # encoder's update on the host's card; one-hot products instead measured no faster (the code's) or slower
@@ -1513,16 +1706,81 @@ class MapEncoder(nn.Module):
         cut = planes.reshape(planes.shape[0], rows, self.PATCH, cols, self.PATCH, self.planes_per_cell)
         return cut.permute(0, 1, 3, 2, 4, 5).reshape(planes.shape[0], rows * cols, -1)
 
-    def forward(self, obs: torch.Tensor, layout: torch.Tensor, crops: torch.Tensor) -> torch.Tensor:
-        """What the map adds to the camera's embedding (before its SiLU), [N, out_width]."""
+    def goal(self, obs: torch.Tensor, layout: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """The goal in the body frame off each row's compass block: (forward yards, right yards, present) [N] each;
+        0 and absent for a layout without a compass or a withheld one (its presence column 0). WoW's yaw turns left,
+        so a positive bearing is to the left: right = -distance x sin(bearing)."""
+        layout = layout.reshape(-1).long()
+        columns = self.compass[layout.clamp(max=self.compass.shape[0] - 1)]
+        has = columns[:, 0] >= 0
+        picked = obs.gather(1, columns.clamp(min=0).clamp(max=obs.shape[-1] - 1)).to(torch.float32)
+        present = has & (picked[:, 0] > 0.5)
+        distance = picked[:, 3] * self.compass_scale
+        forward = torch.where(present, distance * picked[:, 2], torch.zeros_like(distance))
+        right = torch.where(present, -distance * picked[:, 1], torch.zeros_like(distance))
+        return forward, right, present
+
+    def plan(self, obs: torch.Tensor, layout: torch.Tensor, decoded: list[dict[str, torch.Tensor]],
+             planes: list[torch.Tensor], camera: torch.Tensor, plan_out: dict | None = None) -> torch.Tensor:
+        """The costmap head and the planner over both tiers: the readouts [N, tiers x READOUT], detached (the caller
+        joins them; forward). With `plan_out` (a dict) the parts are left in it: "costmap" (logits
+        [N, C, H, W] a tier), "cost_to_go" (-value x 100, yards, [N, H, W] a tier), "value", "goal_plane", "readout"
+        [N, tiers x READOUT] and "pool" [N, (H / CELL_POOL) x (W / CELL_POOL)], the fine tier's value averaged over
+        the cell pointer's blocks (its bonus). Computed under the caller's grad mode: the trainer's aux pass keeps the
+        graph, every other call runs it without one (the readouts are detached either way)."""
+        forward, right, present = self.goal(obs, layout)
+        side = self.height
+        c = self.READOUT_FIRST
+        out = {"costmap": [], "cost_to_go": [], "value": [], "goal_plane": []}
+        readouts = []
+        for tier, (planes_tier, cell) in enumerate(zip(planes, self.tier_cells)):
+            nchw = planes_tier.permute(0, 3, 1, 2)
+            logits = self.costmap(nchw, camera, tier)
+            plane = goal_plane(forward, right, present, side, cell)
+            inputs = torch.cat([torch.softmax(logits.to(torch.float32), dim=1), nchw.to(torch.float32),
+                                plane[:, None]], dim=1)
+            value = self.planner(inputs).to(torch.float32)
+            readouts.append(value[:, c:c + 3, c:c + 3].reshape(value.shape[0], -1))
+            out["costmap"].append(logits)
+            out["cost_to_go"].append(-value * 100.0)
+            out["value"].append(value)
+            out["goal_plane"].append(plane)
+        readout = torch.cat(readouts, dim=-1)
+        pool = nn.functional.avg_pool2d(out["value"][0][:, None], CELL_POOL)[:, 0].reshape(readout.shape[0], -1)
+        if self.planner_off:
+            readout = torch.zeros_like(readout)
+            pool = torch.zeros_like(pool)
+        out["readout"], out["pool"] = readout.detach(), pool.detach()
+        if plan_out is not None:
+            plan_out.update(out)
+        return out["readout"]
+
+    def forward(self, obs: torch.Tensor, layout: torch.Tensor, crops: torch.Tensor,
+                camera: torch.Tensor | None = None, plan_out: dict | None = None, grad: bool = False) -> torch.Tensor:
+        """What the map adds to the camera's embedding (before its SiLU), [N, out_width]. `camera` [N, out_width] is
+        the camera's own embedding (the costmap head reads it; None skips the planner), `plan_out` and `grad` as
+        plan()'s: the planner runs without a graph unless `grad`."""
         silu = nn.functional.silu
         layout = layout.reshape(-1).long()
         columns = (self.start[layout].clamp(min=0)[:, None] + self.offsets[None, :]).clamp(max=obs.shape[-1] - 1)
         scalars = obs.gather(1, columns).to(self.embed.weight.dtype)
-        features = silu(self.mix(silu(self.patch(self.patches(self.planes(crops))))))     # [N, patches, C]
-        grid = features.transpose(1, 2).reshape(features.shape[0], -1, *self.grid)
-        pooled = torch.cat([_spatial_softmax(grid, self.grid_x, self.grid_y), features.mean(dim=1), scalars], dim=-1)
-        return self.join(silu(self.embed(pooled)))
+        decoded = decode_map_tiers(crops, self.height, self.width, self.tiers)
+        planes = [self.planes_of(tier) for tier in decoded]
+        pooled = []
+        for tier, tier_planes in enumerate(planes):
+            features = silu(self.mix(silu(self.patch(self.patches(tier_planes)))))     # [N, patches, C]
+            if self.tiers > 1:
+                features = features + self.tier_embed[tier].to(features.dtype)
+            grid = features.transpose(1, 2).reshape(features.shape[0], -1, *self.grid)
+            pooled += [_spatial_softmax(grid, self.grid_x, self.grid_y), features.mean(dim=1)]
+        out = self.join(silu(self.embed(torch.cat([*pooled, scalars], dim=-1))))
+        if self.planner_on and camera is not None:
+            # The planner without a graph unless asked (the aux pass): its readouts are detached either way, and the
+            # join learns from the return outside the no_grad.
+            with torch.set_grad_enabled(grad and torch.is_grad_enabled()):
+                readout = self.plan(obs, layout, decoded, planes, camera, plan_out)
+            out = out + self.planner_join(readout.to(self.planner_join.weight.dtype)).to(out.dtype)
+        return out
 
 
 class CoverageEncoder(nn.Module):
@@ -1882,10 +2140,21 @@ class VisionEncoder(nn.Module):
         total = 4 * pixels * (channels + (channels - 1) + 2 * planes)
         crop = image.get("map")
         if crop is not None:
-            cells = int(crop["height"]) * int(crop["width"])
+            tiers = int(crop.get("tiers", 1))
+            cells = int(crop["height"]) * int(crop["width"]) * tiers
             per_cell = MapEncoder.CODE_EMBED + cls.CLASS_EMBED + 5
             total += cells * (4 * 3 * per_cell + 16)
+            if tiers > 1:
+                # The planner's transients a tier in the no-grad pass (MapEncoder.plan): the costmap's hidden planes
+                # and logits, their softmax, the VIN's input planes and the fixed step costs, float32 a cell.
+                planes = CostmapHead.HIDDEN * 2 + 2 * TRAV_CLASSES + (TRAV_CLASSES + per_cell + 1) + Planner.CHANNELS
+                total += int(crop["height"]) * int(crop["width"]) * 4 * planes * tiers
         return total
+
+    @property
+    def planner_on(self) -> bool:
+        """Whether the map's encoder carries the costmap head and the planner (a two-tier map)."""
+        return self.map is not None and self.map.planner_on
 
     #: The camera-side inputs a trainer may leave unread (mappo.drop_inputs): "map", the mental map's crop and its
     #: scalars (no MapEncoder: the crop's bytes still travel and are skipped), and "coverage", the coarse coverage
@@ -1950,7 +2219,8 @@ class VisionEncoder(nn.Module):
             self.map_bytes = crop["map_bytes"]
             if "map" not in self.dropped:
                 self.map = MapEncoder(crop, self.class_embed, self.EMBED,
-                                      [c["first"] if c is not None else -1 for c in crops])
+                                      [c["first"] if c is not None else -1 for c in crops],
+                                      [entry.get("compass") if entry is not None else None for entry in descriptors])
         # The coarse coverage grid (general search sec 5), where the layouts have the block: its columns are read raw
         # by its own small encoder, whose join adds to the embedding as the map's does.
         grids = [entry.get("coverage") if entry is not None else None for entry in descriptors]
@@ -2034,15 +2304,17 @@ class VisionEncoder(nn.Module):
         y = (weights * self.grid_y.to(weights.dtype)).sum(-1)
         return torch.cat([x, y], dim=-1)
 
-    def forward(self, obs: torch.Tensor, layout: torch.Tensor, image: torch.Tensor | None) -> torch.Tensor:
+    def forward(self, obs: torch.Tensor, layout: torch.Tensor, image: torch.Tensor | None,
+                plan_out: dict | None = None, grad: bool = False) -> torch.Tensor:
         """The camera's embedding of rows `obs` [N, O] with their images `image` [N, I] uint8, [N, 256] (a layout
-        without the camera's rows are zeroed by the join)."""
+        without the camera's rows are zeroed by the join). `plan_out` and `grad`: the planner's parts, left in the dict
+        (MapEncoder.plan), and whether the planner keeps a graph (the trainer's aux pass)."""
         decoded, scalars = self.gather(obs, layout, image)
         features = self.features(self.patches(self.planes(decoded)))
         out = self.embed(torch.cat([self.keypoints(features), scalars], dim=-1))
         if self.map is not None:
             crops = image.reshape(-1, self.image_bytes + self.map_bytes)[:, self.image_bytes:]
-            out = out + self.map(obs, layout, crops).to(out.dtype)
+            out = out + self.map(obs, layout, crops, out, plan_out, grad).to(out.dtype)
         if self.coverage is not None:
             out = out + self.coverage(obs, layout).to(out.dtype)
         if self.entities is not None:
@@ -2568,7 +2840,7 @@ class LayoutActor(nn.Module):
                      queue: torch.Tensor, clock: torch.Tensor, deterministic: bool,
                      uniform: bool = False, image: torch.Tensor | None = None, plan: torch.Tensor | None = None,
                      serial: torch.Tensor | None = None, uniform_cells: bool = False,
-                     single: bool = False) -> dict[str, torch.Tensor]:
+                     single: bool = False, bonus: torch.Tensor | None = None) -> dict[str, torch.Tensor]:
         """**The goal decision of one step** (next-run plan, Wave 4), the same in the rollout, its captured graph,
         the teachers and the module's runtime. Flat rows; `held` the goal (pair) held, `queue` [rows, S - 2] the goals
         waiting (-1 none), `clock` the goal clock's choices. In order:
@@ -2588,7 +2860,8 @@ class LayoutActor(nn.Module):
         [rows] the choices it has made this episode. The words follow the goals as the goals move -- an ended secondary
         loses its word, a promotion shifts the queue's up -- and a choice writes the words of the cells it drew, each
         with a ticket of its own (the sim latches a cell once, at the ticket's first sight, in the frame of the
-        observation it was drawn from). Returned as `cells` [rows, S] (the blocks drawn, -1 none) and `plan`."""
+        observation it was drawn from). Returned as `cells` [rows, S] (the blocks drawn, -1 none) and `plan`. `bonus`
+        [rows, B]: the planner's pooled value per block (MapEncoder.plan's "pool"), the cell pointer's bonus."""
         head = self.goal_head
         rows = features.shape[0]
         signals = head.signals(obs, layout)
@@ -2612,7 +2885,7 @@ class LayoutActor(nn.Module):
         chosen = clock | (signals["ended"] & ~promote) | signals["event"]
 
         slots, log_prob, _, cells = head.draw(features, obs, layout, deterministic, uniform=uniform, image=image,
-                                              uniform_cells=uniform_cells, single=single)
+                                              uniform_cells=uniform_cells, single=single, bonus=bonus)
         primary = torch.where(chosen, slots[:, 0], primary)
         secondary = torch.where(chosen, slots[:, 1], secondary)
         queue = torch.where(chosen[:, None], slots[:, 2:], queue)

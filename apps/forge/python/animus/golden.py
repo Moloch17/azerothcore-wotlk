@@ -188,7 +188,9 @@ def golden_layout(actor, layout_name: str, index: int, vision: dict, num_actions
                 mask[:] = 0                                      # nothing allowed: action 0
             image = _image(rng, vision["height"], vision["width"], vision["patch"], list(vision["pixel_classes"]))
             # Step 11 chooses (the block's event) with no block choosable: the cell goal falls back and is withdrawn.
-            crop = _crop(rng, side, head.cell_pool if head.cell_on else 2, empty=step == 11) if crop_bytes else \
+            # One synthetic crop a tier (a two-tier map's section is [fine][coarse], the same bytes each).
+            crop = np.concatenate([_crop(rng, side, head.cell_pool if head.cell_on else 2, empty=step == 11)
+                                   for _ in range(int(vision["map"].get("tiers", 1)))]) if crop_bytes else \
                 np.zeros(0, np.uint8)
 
             with torch.no_grad():

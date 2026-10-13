@@ -1,0 +1,212 @@
+# N1 -- point in sight (vision movement curriculum, decision 0036; .agents/plans/vision-movement-curriculum: the PLAN's
+# §7 and CONTRACT.md secs 4 and 5). PointNav in an empty Stockades and Ragefire Chasm (arenas `stockades`, `ragefire`;
+# Wailing Caverns held out): each episode the seat spawns at a reachable cell of the bake, facing a random way, and a
+# point goal is drawn in line of sight (PointNav.SightOnly) by the rung's detour and length bins. The goal is a minimap
+# marker -- the compass block's bearing and distance, never withheld -- and the lesson is the controls: a straight line,
+# stopping on the point (Arrive within 1 yd, stopped), the costmap's free / wall basics. No sim shaping at all: the time
+# cost (StepCost a decision), Stuck and Wall from the first step, Death, and the learner's own potential term (below).
+#
+# The network: the camera, the two-tier mental map (the fine 48 x 48 crop at 2 yd and the coarse at 8 yd, map block
+# revision 5), the costmap head and the planner (mappo.networks MapEncoder.plan: a VIN over the predicted
+# traversability, trained by the labels the sim sends with every STEP, protocol 31), the cell pointer reading the
+# planner's value, and the GRU. Every class and race at level 1, one layout per class around the shared trunk.
+#
+# The root of the nav chain (nav2_detour .. nav6_follow extend it): nothing to extend, nothing to seed from (the PLAN's
+# decision 7: fresh weights, no seeding from M1-M4). init_from auto reads an empty seed chain.
+
+run_name: nav1_sight
+socket: /tmp/animus-forge.sock
+seed: 1
+
+init_from: auto
+seed_from: latest
+
+# A ceiling, not a target: convergence ends the stage (no pass gates).
+total_env_steps: 50000000
+rollout_length: 128
+
+overlap_updates: true
+torch_threads: 4
+log_every: 1
+checkpoint_every: 100
+keep_checkpoints: 5
+
+train_device: auto
+rollout_device: auto
+
+mappo:
+  hidden: [256, 512, 512]
+  # Per 100 ms of game time, compounded to the decision (250 ms). 0.997 for 60 s trips in sight; the later stages
+  # lengthen it to 0.999 (nav4 on).
+  gamma: 0.997
+  gae_lambda: 0.985
+  reference_decision_ms: 100
+  foresight_coef: 0.25
+  foresight_horizons_seconds: [5.0, 30.0]
+  foresight_time_scale_seconds: 60.0
+  recurrent_size: 128
+  chunk_length: 32
+  # The goal head and the cell pointer (free-choice-goals): the waypoint is a block of the fine crop, chosen every
+  # 2 s (8 decisions; a maximum, a reached one chooses again at once), scored with the planner's pooled value.
+  goal_count: 10
+  goal_slots: 4
+  hindsight_coef: 0.1
+  goal_targets: 23
+  goal_every_decisions: 8
+  slow_goal_size: 128
+  slow_goal_gamma: 0.993
+  slow_goal_lambda: 0.95
+  slow_goal_lr: 0.0003
+  goal_cell_hindsight_lookback: 8
+  goal_cell_hindsight_coef: 0.15
+  foresight_obs_targets: true
+  foresight_feedback: true
+  goal_lookahead: true
+  lookahead_coef: 0.5
+  goal_entropy_scale: 1.0
+  goal_entropy_final_fraction: 0.05
+  goal_slot_entropy_weight: 0.1
+  clip: 0.2
+  value_clip: 0.2
+  entropy_coef: 0.01
+  # The look head at 0.4 of movement's (move2_seek's reading, 2026-10-11).
+  look_entropy_coef: 0.004
+  value_coef: 1.0
+  actor_lr: 0.00015
+  critic_lr: 0.00015
+  lr_final_fraction: 0.1
+  # Argmax parity (the PLAN's §5): the entropy anneals to a tenth of itself by the budget's end, so the argmax policy
+  # the evaluation and the export play is the one training sampled.
+  entropy_final_fraction: 0.1
+  epochs: 2
+  minibatches: 4
+  max_grad_norm: 0.5
+  use_value_norm: true
+  value_norm_beta: 0.99
+  per_layout_advantages: true
+  min_layout_rows: 32
+  target_kl: 0.02
+  # The camera's update chunked where the card needs it (train.choose_vision_chunk_rows).
+  vision_chunk_rows: auto
+
+# The potential-based progress term (CONTRACT.md sec 5; the PLAN's §3), paid by the learner on the sim's C(body)
+# labels with the learner's own gamma: every yard toward the goal by the best route pays, standing still pays 0,
+# walking away pays negative; 0 on a done row and where no route is known. Paid at x1 for the whole curriculum: it
+# never fades (the fade below is the difficulty ladder alone).
+potential:
+  enabled: true
+  yards_scale: 0.01
+  clip: 50
+
+# The costmap head's cross-entropy and the planner's L1 (CONTRACT.md sec 5), each at half the policy loss's weight,
+# never faded, on 512 rows of every minibatch (the VIN's backward is memory-bound).
+aux:
+  costmap_coef: 0.5
+  planner_coef: 0.5
+  rows: 512
+
+# Seeded evaluation every 10M steps: 256 trips at the training rung's bins over the two training dungeons (the pairs
+# seeded by EpisodeSeed, no failure replay), argmax; the sampled policy on the same seeds at every evaluation (the
+# argmax gap); Wailing Caverns, never trained on, every evaluation; and the ablation arms every evaluation.
+eval:
+  every_env_steps: 10000000
+  at_start: true
+  episodes: 256
+  seed: 1000
+  deterministic: true
+  sampled_every: 1
+  trace_episodes: 32
+  trace_all: true
+  heldout:
+    wailing: 64
+  heldout_every: 1
+  heldout_on_best: true
+  # The learner's own inputs taken away on the evaluation's seeds (evaluation.ABLATIONS): no_camera (the image
+  # blanked), no_map (the map block and both crop tiers zeroed), no_planner (the planner's readouts and the pointer's
+  # bonus zeroed), no_memory (the recurrent state reset every decision). Readings, never gates: what the policy steers
+  # by, read as spl_no_camera and the like in forge status.
+  arms_every: 1
+  arms:
+    no_camera: 64
+    no_map: 64
+    no_planner: 64
+    no_memory: 64
+  # The sim's episode columns (CONTRACT.md sec 3), and the learner's potential term summed over the episode.
+  report: [arrived, spl, time_ratio, optimal_yards, straight_yards, detour_factor, travelled_yards, stop_error_yards,
+           falls, fall_damage_share, drowned, died, timed_out, stuck_seconds, wall_seconds, lost_seconds,
+           revisit_seconds, jumps, swim_seconds, nav_rung, detour_bin, length_bin, replayed, waypoint_regret_yards,
+           waypoints_chosen, at_top_rung, difficulty, course_kinks, control_changes_per_minute, movement_casts,
+           reward_arrive, reward_step_cost, reward_stuck, reward_wall, reward_fall_hurt, reward_death, reward_drowned,
+           reward_lost, reward_revisit, reward_potential, reward_jitter, reward_effort, reward_repeat,
+           goals_cell_chosen, goals_cell_reached, goals_cell_lost, goals_cell_invalid, cell_goal_seconds,
+           reward_cell_goal, reward_cell_lost]
+
+# forge status for this stage: did it arrive, how efficiently (spl: arrived x optimal / max(optimal, travelled)), how
+# fast against the bake's optimum, how precisely it stopped, how cleanly it got there, the rung; the perception and
+# planning modules' own quality (costmap_iou, planner_mae_yards on the labelled cells, planner_mae_known on the cells
+# the map knows -- from the last update) and the potential paid; the held-out dungeon's and the arms' spl. Targets are
+# a readout, never a gate (no pass gates: convergence alone ends the stage).
+status:
+  headline: [arrived, spl, time_ratio, stop_error_yards, falls, fall_damage_share, died, drowned, timed_out,
+             lost_seconds, wall_seconds, stuck_seconds, waypoint_regret_yards, waypoints_chosen, nav_rung, at_top_rung,
+             costmap_iou, planner_mae_yards, planner_mae_known, reward_potential, reward_potential_train,
+             spl_heldout_wailing, arrived_heldout_wailing, spl_no_camera, spl_no_map, spl_no_planner, spl_no_memory]
+  targets:
+    arrived: ">= 0.98"
+    spl: ">= 0.9"
+    stop_error_yards: "<= 0.5"
+    wall_seconds: "<= 0.5"
+    timed_out: "<= 0.02"
+    died: "<= 0.01"
+
+convergence:
+  # Converged on the stage's own measure, the argmax SPL at the top rung of the ladder (at_top_rung); the ladder
+  # settled is a convergence signal too.
+  measure: spl
+  patience: 3
+  window: 4
+  z: 2.0
+  min_improvement: 0.02
+  min_improvement_abs: 0.01
+  kl: 0.003
+  entropy_slope: 0.01
+  hold_share: 0.02
+  lr_hold_until_plateau: true
+
+# The difficulty ladder (decision 0010), and nothing else: the stage pays no shaping, so the fade's scale is only the
+# rung the sim reads (PointNav.RungBins0..3: which detour and length bins are open, and the start bearing's spread).
+# It steps as soon as the evaluation's spl at the rung meets the rung's gate -- 0.6 off rung 0, 0.7 off rung 1, 0.8 off
+# rung 2 -- never waiting on a plateau (require_plateau false) and never back on the score; a collapse or stall only
+# warns. A curriculum ladder, not a pass gate.
+fade:
+  enabled: true
+  rungs: [1.0, 0.5, 0.25, 0.0]
+  window: 3
+  regress_z: 2.0
+  give_up: 2
+  gate_metric: spl
+  gate_value: 0.8
+  gate_values: [0.6, 0.7, 0.8]
+  require_plateau: false
+
+# No cost ladder: StepCost, Stuck, Wall, Death and the noise prices are at full price from the first step (the dungeon
+# plan's rule; M1's stall on a ladder that waited).
+costs:
+  enabled: false
+
+entropy_floor:
+  fraction: 0.3
+  max_boost: 4.0
+  rate: 0.05
+
+# More episodes for the classes arriving least; no replay of the evaluation's seeds (they are held out).
+layout_sampling:
+  enabled: true
+  strength: 1.0
+  max_ratio: 4.0
+  metric: spl
+  replay_fraction: 0.0
+
+# The movement-style reward (animus.style): off.
+style:
+  enabled: false

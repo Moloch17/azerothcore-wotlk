@@ -11,7 +11,14 @@ from enum import IntEnum
 
 import numpy as np
 
-PROTOCOL_VERSION = 30
+PROTOCOL_VERSION = 31
+# 31: the nav stages' labels (vision movement curriculum, decision 0036; CONTRACT.md sec 3.1): SPEC ends with the label
+# bytes per agent (Spec.label_bytes, 0 for a stage without a labelling encounter), and a stage with labels ends each
+# STEP -- after everything else, the map section included -- with every agent's labels [E, A, label_bytes] uint8 (the
+# observation rows only; no final labels): the traversability classes and route cost-to-go of both map tiers, and the
+# body's own cost-to-go (LABEL_* below). Training-only: never in the observation, never in a device buffer. The map
+# section may carry two tiers (map block revision 5, [fine 48 x 48 x 7][coarse 48 x 48 x 7]; Spec.map_bytes says so,
+# stage.json's map.tiers which). A stage without labels sends protocol 30's STEP; every SPEC is four bytes longer.
 # 30: exploration v3 (.agents/plans/explore-v3): the mental map's crop has a seventh channel, searched (map block
 # revision 2), so a STEP's map section is 48 x 48 x 7 = 16,128 bytes an agent (was 13,824). The learner reads map_bytes
 # from the SPEC and would not misparse; the bump makes a stale pair refuse instead of training on six channels. The
@@ -75,8 +82,8 @@ class MsgType(IntEnum):
 HEADER = struct.Struct("<II")  # type, payload length
 HELLO = struct.Struct("<III")  # version, this learner's rank, data-parallel learners (0 and 1 alone)
 # ..., scenario name, kinematics width (20), image bytes per agent (21), look heads (22), map bytes per agent (24)
-# ..., the tick jitter's body ms, largest spike ms and spike probability (27)
-SPEC = struct.Struct(f"<12I{SCENARIO_NAME_SIZE}s4I2If")
+# ..., the tick jitter's body ms, largest spike ms and spike probability (27), label bytes per agent (31)
+SPEC = struct.Struct(f"<12I{SCENARIO_NAME_SIZE}s4I2IfI")
 LAYOUT_COUNT = struct.Struct("<I")
 LAYOUT = struct.Struct(f"<II{LAYOUT_NAME_SIZE}s")  # obs dim, actions, name
 STEP_HEADER = struct.Struct("<QII")  # decision counter, first env, env count
@@ -111,6 +118,24 @@ IMAGE_FIELDS = ("image", "final_image")
 # The mental map's crop as bytes (protocol 24, Vision::MentalMap::Crop): 48 x 48 cells of 7 bytes (6 before protocol 30), [row][col][channel].
 # A row without a map (no character, a director) is all zeros: every cell unknown, never seen.
 MAP_FIELDS = ("map", "final_map")
+# The nav stages' labels (protocol 31, CONTRACT.md sec 3.1): LABEL_BYTES an agent, laid out as the offsets below say --
+# the fine crop's traversability classes (48 x 48 u8 TravClass, the fine map crop's frame), the coarse crop's (8 yd
+# cells), the fine and coarse route cost-to-go (48 x 48 f16 yards, LABEL_UNREACHABLE where unreachable or unknown),
+# then four f32: C(body), C(start), the goal's forward and right yards in the body frame.
+LABEL_FIELDS = ("labels",)
+LABEL_SIDE = 48
+LABEL_CELLS = LABEL_SIDE * LABEL_SIDE
+LABEL_FINE_CLASS = 0
+LABEL_COARSE_CLASS = LABEL_CELLS
+LABEL_FINE_COST = 2 * LABEL_CELLS
+LABEL_COARSE_COST = LABEL_FINE_COST + 2 * LABEL_CELLS
+LABEL_SCALARS = LABEL_COARSE_COST + 2 * LABEL_CELLS
+LABEL_BYTES = LABEL_SCALARS + 4 * 4
+LABEL_UNREACHABLE = 65504.0
+#: TravClass (Runtime/Vision/TravBake.h): the classes a label cell can carry, in order.
+TRAV_CLASS_NAMES = ("unknown", "free", "wall", "water", "hazard", "step_up", "jump", "drop_safe", "drop_hurt",
+                    "drop_lethal", "slope")
+TRAV_CLASSES = len(TRAV_CLASS_NAMES)
 NO_FRAME_PIXEL = (255, 128, 0, 0)
 # The look choice that changes nothing (protocol 22, revision 4's heads [7, 5, 5]): yaw rate 0, pitch rate 0, hold.
 # What an ACT carries for agents nobody chose a look for (a scripted baseline's evaluation): in range, and still.
@@ -165,6 +190,9 @@ class Spec:
     jitter_ms: int = 0
     spike_max_ms: int = 0
     spike_prob: float = 0.0
+    # Bytes per agent of each STEP's labels (protocol 31): LABEL_BYTES in a nav stage, 0 without labels. Socket only,
+    # never a device buffer (extra_bytes leaves them out), never part of the camera's row.
+    label_bytes: int = 0
 
     @property
     def mean_decision_ms(self) -> float:
@@ -232,6 +260,9 @@ class Spec:
         if self.map_bytes:
             # The mental map's crops (protocol 24): every agent's after any auto-reset, then the ended envs' last ones.
             layout += [("map", u8, (e, a, self.map_bytes)), ("final_map", u8, (d, a, self.map_bytes))]
+        if self.label_bytes:
+            # The labels (protocol 31), last of all: the observation rows' only (no final labels).
+            layout += [("labels", u8, (e, a, self.label_bytes))]
         return [item for item in layout if item[0] not in DEVICE_FIELDS] if device else layout
 
     def step_payload_size(self, envs: int | None = None, ended: int | None = None, device: bool = False) -> int:
@@ -273,6 +304,20 @@ class Step:
     # [E, A] bool: the "human" stand-in's row (present 2 on the wire, protocol 25) -- present, played by a frozen
     # partner, never a sample. None where nobody said (a step built by hand): no stand-in.
     stand_in: np.ndarray | None = None
+    # [E, A, L] uint8 labels (protocol 31, Spec.label_bytes; LABEL_* say what is where); None in a stage without them
+    # (or a step built by hand), which encodes as zeros.
+    labels: np.ndarray | None = None
+
+
+def c_body_of(labels) -> np.ndarray:
+    """The body's route cost-to-go of each label row, [...] float32 from `labels` [..., LABEL_BYTES] (numpy or torch on
+    any device; the latter is read on the host): the first f32 of the label scalars, LABEL_UNREACHABLE where the sim
+    found no route (an empty seat's row too: the sim writes every cost unreachable for a seat without a body)."""
+    if hasattr(labels, "detach"):
+        labels = labels.detach().cpu().numpy()
+    labels = np.asarray(labels, dtype=np.uint8)
+    scalars = np.ascontiguousarray(labels[..., LABEL_SCALARS:LABEL_SCALARS + 4])
+    return scalars.view("<f4")[..., 0].astype(np.float32, copy=True)
 
 
 def no_frame(shape: tuple[int, ...]) -> np.ndarray:
@@ -361,6 +406,7 @@ def encode_spec(spec: Spec) -> bytes:
         spec.jitter_ms,
         spec.spike_max_ms,
         spec.spike_prob,
+        spec.label_bytes,
     )
     body += LAYOUT_COUNT.pack(len(spec.layouts))
     for layout in spec.layouts:
@@ -390,6 +436,7 @@ def decode_spec(payload: bytes) -> Spec:
         jitter_ms=fields[17],
         spike_max_ms=fields[18],
         spike_prob=float(fields[19]),
+        label_bytes=fields[20],
         layouts=tuple(layouts),
         episode_info_names=tuple(names.split(",")) if names else (),
     )
@@ -434,10 +481,11 @@ def _decode_layout(spec: Spec, envs: int, device: bool) -> list[tuple[str, np.dt
     key = (spec, envs, device)
     layout = _DECODE_LAYOUTS.get(key)
     if layout is None:
-        # The u1 flags (mask, done, terminated) read as bool; the images, the map crops and present (0, 1 or 2) are
-        # bytes.
+        # The u1 flags (mask, done, terminated) read as bool; the images, the map crops, the labels and present (0, 1
+        # or 2) are bytes.
         layout = _DECODE_LAYOUTS[key] = [(name, dtype, shape, dtype == np.dtype("u1") and name not in IMAGE_FIELDS
-                                          and name not in MAP_FIELDS and name != "present")
+                                          and name not in MAP_FIELDS and name not in LABEL_FIELDS
+                                          and name != "present")
                                          for name, dtype, shape in spec.step_layout(envs, device=device)]
     return layout
 

@@ -121,12 +121,33 @@ The .amdl format (little-endian); a reader must follow it exactly, and a change 
         if map:
             u32  first (its scalars' first column), scalars, height, width, patch, codes, code_width, patch_out,
                  mix_out, map_embed
+            u32  tiers                      (version 11 only) the crop section's tiers, [fine][coarse] at 2
             f32  code_embed[codes * code_width], patch_weight[patch_out * patch * patch * (code_width + class_width +
-                 6)], patch_bias, mix_weight[mix_out * patch_out], mix_bias, embed_weight[map_embed * (3 * mix_out +
-                 scalars)], embed_bias, join_weight[embed * map_embed], join_bias[embed]
+                 6)], patch_bias, mix_weight[mix_out * patch_out], mix_bias, embed_weight[map_embed * (tiers * 3 *
+                 mix_out + scalars)], embed_bias, join_weight[embed * map_embed], join_bias[embed]
+            if tiers > 1:  f32 tier_embed[tiers * mix_out]    added to each tier's patch features (version 11)
         f32  join_weight[adapter_out * embed], join_bias[adapter_out]        (VisionJoin)
         u32  look_heads, then sizes[look_heads]
         f32  look_weight[sum(sizes) * feature_width], look_bias[sum(sizes)]  (LookHead, on the action head's features)
+    (version 11 on: a file of 11 is written only for a policy with the planner; every other policy is still 10 or 9)
+    u8       planner                        the costmap head and the planner (MapEncoder.plan, a two-tier map)
+    if planner:
+        u32  tiers, classes (11), vision (8), hidden (32), k (40), channels (8), planes (16, the map's planes a
+             cell), readout (9), readout_first (22: the centre 3 x 3 of the value map), compass_present,
+             compass_sin, compass_cos, compass_dist (this layout's compass block columns; all 0xFFFFFFFF = none)
+        f32  tier_cells[tiers] (yards), compass_scale (yards the distance column is over)
+        f32  costmap: vision_weight[vision * embed], vision_bias[vision], tier_bias[tiers * vision],
+             conv1_weight[hidden * (planes + vision) * 9], conv1_bias[hidden], conv2_weight[hidden * hidden * 9],
+             conv2_bias[hidden], out_weight[classes * hidden], out_bias[classes]     (3 x 3 convs padded 1, SiLU
+             after the first two; the camera's embedding -- its `embed` output before the SiLU -- through vision,
+             plus the tier's bias, broadcast over the crop as planes + vision input channels)
+        f32  planner: fixed_weight[channels * (classes + planes + 1) * 9], fixed_bias[channels],
+             recur_weight[channels * 1 * 9]         (value_0 = 0; k times value = max over channels of
+             conv3x3(value; recur) + conv3x3(softmax(costmap), planes, goal plane; fixed))
+        f32  join_weight[embed * tiers * readout], join_bias[embed]      the readouts (each tier's value at rows and
+             columns readout_first..+2) added to the camera's embedding before its SiLU
+        f32  pointer_weight                 the cell pointer's bonus: value averaged over each pool x pool block
+                                            of the fine tier times this, added to every cell score
 
 The camera (version 10, mappo.networks.VisionEncoder): the image's bytes [height][width][4] -- distance, height, normal,
 class byte -- are decoded as the sim's Vision::DecodePixel (255 -> 1.0 else b / 254; (b - 128) / 125; b / 255; the
@@ -182,10 +203,15 @@ AMDL_MAGIC = b"AMDL"
 # 10: the camera (VisionEncoder with its map and entity list), its free look (LookHead), and the goal head's place
 # pointer and cell pointer, as a tail after the seat sets, and the learner's current goal decision. Written only where
 # a policy has one of them; every other policy is still written as 9, which a reader of 9 keeps reading.
-AMDL_VERSION = 10
-AMDL_VERSIONS = (7, 8, 9, 10)
-#: The version a policy without the tail is written as.
+# 11: the nav stages' two-tier map (the map section's tiers and tier embedding) and the planner section (the costmap
+# head, the VIN, its join and the pointer's bonus) after the camera's tail (vision movement curriculum, CONTRACT.md
+# sec 5). Written only for a policy with the planner; every other policy is still 10 or 9. A checkpoint with a planner
+# is never written as 10 (write_amdl refuses).
+AMDL_VERSION = 11
+AMDL_VERSIONS = (7, 8, 9, 10, 11)
+#: The version a policy without the tail is written as, and the one with the camera tail and no planner.
 AMDL_PLAIN_VERSION = 9
+AMDL_CAMERA_VERSION = 10
 
 _TRUNK_KEY = re.compile(r"^trunk\.layers\.(\d+)\.(weight|bias)$")
 
@@ -269,9 +295,13 @@ def write_amdl(
         raise ValueError(f"last layer has {layers[-1][0].shape[0]} outputs, expected {num_actions}")
 
     encoded = name.encode("utf-8")
+    planner = bool(tail and tail.get("planner"))
+    version = AMDL_VERSION if planner else (AMDL_CAMERA_VERSION if tail else AMDL_PLAIN_VERSION)
+    if planner and version < AMDL_VERSION:
+        raise ValueError("a policy with a planner is written as version 11, never 10")
     with open(path, "wb") as out:
         out.write(AMDL_MAGIC)
-        out.write(struct.pack("<IH", AMDL_VERSION if tail else AMDL_PLAIN_VERSION, len(encoded)))
+        out.write(struct.pack("<IH", version, len(encoded)))
         out.write(encoded)
         out.write(struct.pack("<IIII", obs_dim, num_agents, num_actions, len(layers)))
         for weight, bias in layers:
@@ -351,7 +381,7 @@ def write_amdl(
                 out.write(np.ascontiguousarray(pointer["weight"], dtype="<f4").tobytes())
                 out.write(np.ascontiguousarray(pointer["bias"], dtype="<f4").tobytes())
         if tail:
-            _write_tail(out, tail)
+            _write_tail(out, tail, version)
 
 
 def _floats(out, *arrays) -> None:
@@ -359,8 +389,8 @@ def _floats(out, *arrays) -> None:
         out.write(np.ascontiguousarray(array, dtype="<f4").tobytes())
 
 
-def _write_tail(out, tail: dict) -> None:
-    """The version 10 tail (see the format above)."""
+def _write_tail(out, tail: dict, version: int = AMDL_CAMERA_VERSION) -> None:
+    """The version 10 tail (see the format above), and the version 11 map tiers and planner section with one."""
     out.write(struct.pack("<B", 1 if tail["goal_space"] else 0))
     pointer = tail.get("place_pointer")
     out.write(struct.pack("<B", 1 if pointer else 0))
@@ -375,6 +405,8 @@ def _write_tail(out, tail: dict) -> None:
     camera = tail.get("camera")
     out.write(struct.pack("<B", 1 if camera else 0))
     if not camera:
+        if version >= AMDL_VERSION:
+            out.write(struct.pack("<B", 0))     # no camera: no planner
         return
     out.write(struct.pack("<6I", *(int(camera[key]) for key in ("height", "width", "patch", "scalars", "first",
                                                                  "crop_bytes"))))
@@ -401,12 +433,28 @@ def _write_tail(out, tail: dict) -> None:
                               *crop["code_embed"].shape))
         out.write(struct.pack("<3I", crop["patch_weight"].shape[0], crop["mix_weight"].shape[0],
                               crop["embed_weight"].shape[0]))
+        tiers = int(crop.get("tiers", 1))
+        if version >= AMDL_VERSION:
+            out.write(struct.pack("<I", tiers))
+        elif tiers > 1:
+            raise ValueError("a two-tier map is written as version 11, never 10")
         _floats(out, *(crop[key] for key in MAP_ARRAYS))
+        if tiers > 1:
+            _floats(out, crop["tier_embed"])
     _floats(out, camera["join_weight"], camera["join_bias"])
     heads = camera["look_heads"]
     out.write(struct.pack("<I", len(heads)))
     out.write(struct.pack(f"<{len(heads)}I", *heads))
     _floats(out, camera["look_weight"], camera["look_bias"])
+    if version < AMDL_VERSION:
+        return
+    planner = tail.get("planner")
+    out.write(struct.pack("<B", 1 if planner else 0))
+    if not planner:
+        return
+    out.write(struct.pack("<13I", *(int(planner[key]) & 0xFFFFFFFF for key in PLANNER_HEADER)))
+    _floats(out, np.asarray(planner["tier_cells"], dtype="<f4"), np.asarray([planner["compass_scale"]], dtype="<f4"))
+    _floats(out, *(planner[key] for key in PLANNER_ARRAYS))
 
 
 def memory_weights(actor_state: dict[str, torch.Tensor]) -> dict[str, np.ndarray] | None:
@@ -547,6 +595,19 @@ _CELL_KEYS = {"local_weight": "local.weight", "local_bias": "local.bias", "query
               "query_bias": "query.bias", "score_weight": "score.weight", "score_bias": "score.bias",
               "chain1_weight": "chain.0.weight", "chain1_bias": "chain.0.bias", "chain2_weight": "chain.2.weight",
               "chain2_bias": "chain.2.bias"}
+#: The planner section's header (version 11) and arrays in the order the tail writes them, with their actor keys.
+PLANNER_HEADER = ("tiers", "classes", "vision", "hidden", "k", "channels", "planes", "readout", "readout_first",
+                  "compass_present", "compass_sin", "compass_cos", "compass_dist")
+PLANNER_ARRAYS = ("vision_weight", "vision_bias", "tier_bias", "conv1_weight", "conv1_bias", "conv2_weight",
+                  "conv2_bias", "out_weight", "out_bias", "fixed_weight", "fixed_bias", "recur_weight", "join_weight",
+                  "join_bias", "pointer_weight")
+_PLANNER_KEYS = {"vision_weight": "costmap.vision.weight", "vision_bias": "costmap.vision.bias",
+                 "tier_bias": "costmap.tier_bias", "conv1_weight": "costmap.conv1.weight",
+                 "conv1_bias": "costmap.conv1.bias", "conv2_weight": "costmap.conv2.weight",
+                 "conv2_bias": "costmap.conv2.bias", "out_weight": "costmap.out.weight", "out_bias": "costmap.out.bias",
+                 "fixed_weight": "planner.fixed.weight", "fixed_bias": "planner.fixed.bias",
+                 "recur_weight": "planner.recur.weight", "join_weight": "planner_join.weight",
+                 "join_bias": "planner_join.bias"}
 #: The map encoder's arrays in the order the tail writes them, and their MapEncoder keys.
 MAP_ARRAYS = ("code_embed", "patch_weight", "patch_bias", "mix_weight", "mix_bias", "embed_weight", "embed_bias",
               "join_weight", "join_bias")
@@ -640,10 +701,33 @@ def tail_weights(actor_state: dict[str, torch.Tensor], stage: dict, names: list[
                                  f"{inputs}")
         crop = own.get("map")
         if crop is not None and "vision.map.patch.weight" in actor_state:
-            from .mappo.networks import MapEncoder
+            from .mappo.networks import CostmapHead, MapEncoder, Planner
+            tiers = int(crop.get("tiers", 1))
             camera["map"] = {"first": crop["first"], "scalars": crop["scalars"], "height": crop["height"],
-                             "width": crop["width"], "patch": MapEncoder.PATCH,
+                             "width": crop["width"], "patch": MapEncoder.PATCH, "tiers": tiers,
                              **{name: array(f"vision.map.{key}") for name, key in _MAP_KEYS.items()}}
+            if tiers > 1:
+                camera["map"]["tier_embed"] = array("vision.map.tier_embed")
+            if "vision.map.planner.fixed.weight" in actor_state:
+                # The planner (version 11): refused without the two-tier map it plans over.
+                if tiers < 2 or "vision.map.tier_embed" not in actor_state:
+                    raise ValueError("the actor has a planner (vision.map.planner.*) but this layout's map has one "
+                                     "tier: not exporting")
+                compass = own.get("compass") or {}
+                tail["planner"] = {
+                    "tiers": tiers, "classes": int(actor_state["vision.map.costmap.out.weight"].shape[0]),
+                    "vision": CostmapHead.VISION, "hidden": CostmapHead.HIDDEN, "k": Planner.K,
+                    "channels": Planner.CHANNELS,
+                    "planes": int(actor_state["vision.map.costmap.conv1.weight"].shape[1]) - CostmapHead.VISION,
+                    "readout": MapEncoder.READOUT, "readout_first": MapEncoder.READOUT_FIRST,
+                    "compass_present": int(compass.get("present", -1)), "compass_sin": int(compass.get("sin", -1)),
+                    "compass_cos": int(compass.get("cos", -1)), "compass_dist": int(compass.get("dist", -1)),
+                    "tier_cells": [float(cell) for cell in crop.get("tier_cells", ())],
+                    "compass_scale": float(compass.get("scale", 500.0)),
+                    **{name: array(f"vision.map.{key}") for name, key in _PLANNER_KEYS.items()},
+                    "pointer_weight": (array("goal_head.cell.planner_weight")
+                                       if "goal_head.cell.planner_weight" in actor_state
+                                       else np.zeros((1,), "<f4"))}
         if "look_head.linear.weight" in actor_state:
             camera["look_heads"] = [int(h) for h in own["look"]]
             camera["look_weight"] = array("look_head.linear.weight")
@@ -922,8 +1006,9 @@ def read_amdl(path: str | Path) -> dict:
             if flag():
                 crop = dict(zip(("first", "scalars", "height", "width", "patch", "codes", "code_width"), u32s(7)))
                 map_patch, map_mix, map_embed = u32s(3)
+                crop["tiers"] = u32s(1)[0] if version >= 11 else 1
                 per_patch = crop["patch"] ** 2 * (crop["code_width"] + class_width + 6)
-                inputs = 3 * map_mix + crop["scalars"]
+                inputs = crop["tiers"] * 3 * map_mix + crop["scalars"]
                 crop.update(code_embed=floats(crop["codes"] * crop["code_width"], crop["codes"], crop["code_width"]),
                             patch_weight=floats(map_patch * per_patch, map_patch, per_patch),
                             patch_bias=floats(map_patch, map_patch),
@@ -932,6 +1017,8 @@ def read_amdl(path: str | Path) -> dict:
                             embed_weight=floats(map_embed * inputs, map_embed, inputs),
                             embed_bias=floats(map_embed, map_embed),
                             join_weight=floats(embed * map_embed, embed, map_embed), join_bias=floats(embed, embed))
+                if crop["tiers"] > 1:
+                    crop["tier_embed"] = floats(crop["tiers"] * map_mix, crop["tiers"], map_mix)
                 camera["map"] = crop
             adapter_out = layers[0][0].shape[0]
             camera["join_weight"] = floats(adapter_out * embed, adapter_out, embed)
@@ -942,6 +1029,25 @@ def read_amdl(path: str | Path) -> dict:
             camera["look_weight"] = floats(total * width, total, width)
             camera["look_bias"] = floats(total, total)
             tail["camera"] = camera
+        if version >= 11 and flag():
+            planner = dict(zip(PLANNER_HEADER, u32s(len(PLANNER_HEADER))))
+            for key in ("compass_present", "compass_sin", "compass_cos", "compass_dist"):
+                planner[key] = -1 if planner[key] == 0xFFFFFFFF else planner[key]
+            tiers, classes, vision_width = planner["tiers"], planner["classes"], planner["vision"]
+            hidden, channels, planes = planner["hidden"], planner["channels"], planner["planes"]
+            planner["tier_cells"] = floats(tiers, tiers).tolist()
+            planner["compass_scale"] = float(floats(1, 1)[0])
+            embed = tail["camera"]["embed_weight"].shape[0]
+            shapes = {"vision_weight": (vision_width, embed), "vision_bias": (vision_width,),
+                      "tier_bias": (tiers, vision_width), "conv1_weight": (hidden, planes + vision_width, 3, 3),
+                      "conv1_bias": (hidden,), "conv2_weight": (hidden, hidden, 3, 3), "conv2_bias": (hidden,),
+                      "out_weight": (classes, hidden, 1, 1), "out_bias": (classes,),
+                      "fixed_weight": (channels, classes + planes + 1, 3, 3), "fixed_bias": (channels,),
+                      "recur_weight": (channels, 1, 3, 3), "join_weight": (embed, tiers * planner["readout"]),
+                      "join_bias": (embed,), "pointer_weight": (1,)}
+            for key in PLANNER_ARRAYS:
+                planner[key] = floats(int(np.prod(shapes[key])), *shapes[key])
+            tail["planner"] = planner
 
     if offset != len(data):
         raise ValueError(f"{len(data) - offset} trailing bytes")

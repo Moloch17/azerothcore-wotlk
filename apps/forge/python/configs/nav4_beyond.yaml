@@ -1,0 +1,19 @@
+# N4 -- beyond sight (vision movement curriculum PLAN §7, CONTRACT.md sec 4): the route is not in view. Plan over the
+# mental map, commit to a direction, recognise a dead end and leave it, on half-known maps (the map memory kept across
+# resets at KeepShare): Gnomeregan, Uldaman, the Scarlet Monastery, Maraudon (Wailing Caverns held out). Trips of 100 to
+# 400 yd at detour 1.3 to 4; Revisit (0.002/s on ground stood on before, the arena flag) joins the costs. Episodes of
+# 300 s. Seeds from nav3_vertical.
+extends: nav3_vertical.yaml
+run_name: nav4_beyond
+
+# A ceiling, not a target: convergence ends the stage.
+total_env_steps: 300000000
+
+mappo:
+  # 300 s trips whose Arrive may be minutes in: the PLAN's longer horizon from here on (0.999 per 100 ms).
+  gamma: 0.999
+
+status:
+  targets:
+    spl: ">= 0.7"
+    falls: null

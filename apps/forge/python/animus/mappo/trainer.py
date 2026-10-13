@@ -14,6 +14,8 @@ from torch import nn
 from ..device import host
 from ..parallel import Ranks
 from ..protocol import GOAL_SLOTS_ON_WIRE
+from ..protocol import (LABEL_COARSE_CLASS, LABEL_COARSE_COST, LABEL_FINE_CLASS, LABEL_FINE_COST, LABEL_SIDE,
+                        LABEL_UNREACHABLE, TRAV_CLASSES)
 from .buffer import RolloutBuffer
 from .networks import (LayoutActor, LayoutCritic, SharedInputDense, _carry_sequence, _per_layout, load_actor_state,
                        per_layout, per_layout_host, sample_logits, skip_distribution_checks, goal_pair,
@@ -216,6 +218,24 @@ class MappoConfig:
     # learned from the chosen goals' outcomes (lookahead_coef) and read by the goal choice.
     goal_lookahead: bool = False
     lookahead_coef: float = 0.5
+
+
+@dataclass
+class AuxConfig:
+    """The nav stages' auxiliary losses (vision movement curriculum, CONTRACT.md sec 5; TrainConfig.aux), on the
+    actor's minibatch wherever the stage sends labels (protocol 31) and the map has two tiers (the costmap head and
+    the planner, MapEncoder): `costmap_coef` x the cross-entropy of the costmap head's logits against the bake's
+    classes on the cells whose label is not unknown, both tiers, and `planner_coef` x the L1 of the planner's
+    cost-to-go against the bake's on the cells whose route is reachable, both tiers, in yards / 100. Computed on
+    `rows` rows of each minibatch drawn at random among its samples (0 = every row: the VIN's backward keeps
+    SEGMENT iterations' activations a row, so a whole minibatch of thousands of rows is gigabytes), encoded again
+    with a graph (the camera learns from the costmap too). Statistics in metrics.csv: costmap_loss, planner_loss,
+    costmap_iou (the mean IoU over the classes present in the batch), planner_mae_yards (over the reachable cells)
+    and planner_mae_known (over the reachable cells the fine crop knows). Nothing happens without labels."""
+
+    costmap_coef: float = 0.5
+    planner_coef: float = 0.5
+    rows: int = 512
 
 
 #: The foresight's observation targets (MappoConfig.foresight_obs_targets): the seat's health 8 and 20 decisions on
@@ -502,8 +522,9 @@ class _RolloutGraph:
         # row through the encoder, zero for a layout without one, so the graph's shapes do not depend on the batch.
         # One encoder for both (the critic reads the actor's), so the image is encoded once and each network's own
         # join reads it.
+        plan: dict = {}
         if actor.vision is not None:
-            seen = actor.vision(obs_t, layout_t, inputs["image"].reshape(rows, -1))
+            seen = actor.vision(obs_t, layout_t, inputs["image"].reshape(rows, -1), plan_out=plan)
             actor_own = actor_own + vision_term(actor, obs_t, layout_t, seen).to(actor_own.dtype)
             critic_own = critic_own + vision_term(critic, obs_t, layout_t, seen).to(critic_own.dtype)
         features = actor.features_from(actor.trunk(actor_own), memory)
@@ -527,7 +548,8 @@ class _RolloutGraph:
                                          self.deterministic,
                                          image=inputs["image"].reshape(rows, -1) if trainer.image_bytes else None,
                                          plan=inputs["plan"].reshape(rows, -1) if cell else None,
-                                         serial=inputs["serial"].reshape(rows) if cell else None)
+                                         serial=inputs["serial"].reshape(rows) if cell else None,
+                                         bonus=plan.get("pool"))
             chosen_t = decided["chosen"]
             if slow_before is not None:
                 out["slow_memory"] = torch.where(chosen_t[:, None], goal_features, slow_before).reshape(
@@ -673,9 +695,12 @@ class MappoTrainer:
         rollout_device: str = "cpu",
         ranks=None,
         vision=None,
+        aux: "AuxConfig | None" = None,
     ):
-        """layouts: (obs dim, action count) per agent layout, in the sim's layout order."""
+        """layouts: (obs dim, action count) per agent layout, in the sim's layout order. `aux`: the nav stages'
+        auxiliary losses (AuxConfig; the defaults without one)."""
         skip_distribution_checks()
+        self.aux = aux if aux is not None else AuxConfig()
         if config.vision_chunk_rows == VISION_CHUNK_AUTO:
             # Anything that builds a trainer without train.make_trainer (which chooses): the stage yamls' old value.
             config = copy.copy(config)
@@ -1082,10 +1107,11 @@ class MappoTrainer:
             image_t = self._image_tensor(image, rows)
             # The camera (and the map) encoded once, for the actor and the critic both: the rollout copies share the
             # one encoder, as the graph path (_RolloutGraph) and the update do.
-            seen = (self._rollout_actor.vision(obs_t, layout_t, image_t)
+            plan: dict = {}
+            seen = (self._rollout_actor.vision(obs_t, layout_t, image_t, plan_out=plan)
                     if self._rollout_actor.vision is not None else None)
             decided = self._decide(obs, mask, layout, deterministic, state, (obs_t, layout_t, groups), downloads,
-                                   image=image_t, vision_embedding=seen)
+                                   image=image_t, vision_embedding=seen, bonus=plan.get("pool"))
 
             state_t = self._tensor(state_features)[:, None, :].expand(envs, agents, state_features.shape[-1]).reshape(
                 rows, -1)
@@ -1110,12 +1136,13 @@ class MappoTrainer:
     @torch.no_grad()
     def _decide(self, obs: np.ndarray, mask: np.ndarray, layout: np.ndarray, deterministic: bool,
                 state: "ActingState | None", prepared=None, downloads: "_Downloads | None" = None, image=None,
-                vision_embedding: torch.Tensor | None = None):
+                vision_embedding: torch.Tensor | None = None, bonus: torch.Tensor | None = None):
         """One decision of the actor: actions, their log probabilities, the foresight predictions and the goals. The
         acting state's memory and goal are updated when the result is finished. `prepared` is (obs, layout, groups)
         as tensors when the caller has them already. With `downloads` the results are queued there and the caller
         finishes them after its one wait for the device (_Decided.finish); without, they are finished here.
-        `vision_embedding` is the camera's embedding of the rows when the caller has encoded it already."""
+        `vision_embedding` is the camera's embedding of the rows when the caller has encoded it already, `bonus` the
+        planner's pooled value with it (MapEncoder.plan); without them the camera is encoded here."""
         own = downloads is None
         if own:
             downloads = _Downloads(self._rollout_stream)
@@ -1129,6 +1156,10 @@ class MappoTrainer:
             obs_t, layout_t, groups = prepared
         mask_t = self._tensor(mask).reshape(rows, -1)
         image_t = self._image_tensor(image, rows)
+        if vision_embedding is None and self._rollout_actor.vision is not None:
+            plan: dict = {}
+            vision_embedding = self._rollout_actor.vision(obs_t, layout_t, image_t, plan_out=plan)
+            bonus = plan.get("pool")
 
         memory = state.memory if state is not None else None
         features = self._rollout_actor.features(
@@ -1153,7 +1184,7 @@ class MappoTrainer:
                 deterministic, self.uniform_goals, image=image_t,
                 plan=self._tensor(state.plan, torch.long).reshape(rows, -1) if cell else None,
                 serial=self._tensor(state.serial, torch.long).reshape(rows) if cell else None,
-                uniform_cells=self.uniform_cells, single=self.single_goal)
+                uniform_cells=self.uniform_cells, single=self.single_goal, bonus=bonus)
             chosen_t = goals["chosen"]
             if slow_before is not None:
                 slow_after = torch.where(chosen_t[:, None], goal_features, slow_before)
@@ -1313,6 +1344,15 @@ class MappoTrainer:
         if not self.look_heads or look is None:
             return None
         return np.asarray(look, dtype=np.int32)
+
+    def set_planner_off(self, off: bool) -> None:
+        """The eval arm no_planner (evaluation.ABLATIONS): the planner's readouts and the cell pointer's bonus zeroed
+        in every decision while set (MapEncoder.planner_off, read by the eager decision; the rollout graph is captured
+        with it off)."""
+        for network in (self.actor, self._rollout_actor):
+            encoder = getattr(network, "vision", None)
+            if encoder is not None and encoder.map is not None:
+                encoder.map.planner_off = bool(off)
 
     def look_entropy_coef(self) -> float:
         """The look's entropy coefficient now: mappo.look_entropy_coef (entropy_coef when None), following
@@ -1528,12 +1568,15 @@ class MappoTrainer:
         duration_t = torch.as_tensor(duration.reshape(-1), device=device)
         dones_seq = torch.as_tensor(ended_between, device=device)
 
+        plan: dict = {}
         with torch.no_grad():
-            # The camera a chunk at a time where mappo.vision_chunk_rows says so (no gradient here either way).
-            seen = self._encode_vision(obs, layout, image) if image is not None else None
+            # The camera a chunk at a time where mappo.vision_chunk_rows says so (no gradient here either way); the
+            # planner's pooled value with it, the cell pointer's bonus at these choices.
+            seen = self._encode_vision(obs, layout, image, plan_out=plan) if image is not None else None
             features = self.actor.features_from(self.actor.encode(obs, layout, vision_embedding=seen, image=image),
                                                 memory)
             inputs = self.actor.with_foresight(features).reshape(length, columns, -1)
+        bonus = plan.get("pool")
 
         counted = targeted.float()
         normalised = advantages[targeted]
@@ -1544,7 +1587,8 @@ class MappoTrainer:
             states = _carry_sequence(self.actor.slow_memory, self.slow_goal_size, inputs, first, dones_seq)
             states = states.reshape(length * columns, -1)
             if slots is not None:
-                _, log_prob, entropy_rows, _ = head.draw(states, obs, layout, False, slots, cells=cells, image=image)
+                _, log_prob, entropy_rows, _ = head.draw(states, obs, layout, False, slots, cells=cells, image=image,
+                                                         bonus=bonus)
             else:
                 logits = head.logits(states, obs, layout)
                 dist = torch.distributions.Categorical(logits=logits)
@@ -1567,13 +1611,14 @@ class MappoTrainer:
                 if hindsight is not None:
                     taken = torch.where(is_cell & (known_t & (reached_t == 0) & hindsight[1]), hindsight[0], taken)
                 if window is None:
-                    cell_lp, cell_valid_at, cell_entropy, any_valid = head.cell_primary(states, image, taken)
+                    cell_lp, cell_valid_at, cell_entropy, any_valid = head.cell_primary(states, image, taken, bonus)
                 else:
                     # Lookback: the block at the next choice (the label above, when the window does not reach it) and
                     # the window's, each scored against the one cell distribution of the choice's row.
                     labels = torch.cat([hindsight[0][:, None], window[0]], dim=1)
                     offered = torch.cat([hindsight[1][:, None], window[1]], dim=1)
-                    many_lp, many_valid, cell_entropy, any_valid = head.cell_primary_many(states, image, labels)
+                    many_lp, many_valid, cell_entropy, any_valid = head.cell_primary_many(states, image, labels,
+                                                                                         bonus)
                 if window is not None:
                     use = offered & many_valid & (is_cell & known_t & (reached_t == 0))[:, None]
                     # A block named twice by one choice counts once (the first naming): standing still in a block for
@@ -1798,17 +1843,26 @@ class MappoTrainer:
             return 0
         return max(length for length in range(1, wanted + 1) if steps % length == 0)
 
-    def _encode_vision(self, obs: torch.Tensor, layout: torch.Tensor, image: torch.Tensor) -> torch.Tensor:
+    def _encode_vision(self, obs: torch.Tensor, layout: torch.Tensor, image: torch.Tensor,
+                       plan_out: dict | None = None) -> torch.Tensor:
         """The shared camera's embedding of a minibatch's rows, for the update. With mappo.vision_chunk_rows and more
         rows than that, it is encoded a chunk at a time without keeping the graph, and _backward_vision encodes each
         chunk again for its gradient: the decoded image and the patch layers' activations then live for one chunk at a
-        time, not the minibatch's (at 128 x 64 a row's decoded planes alone are 393 KB)."""
+        time, not the minibatch's (at 128 x 64 a row's decoded planes alone are 393 KB). `plan_out`: the planner's
+        parts (VisionEncoder.forward), the pointer's "pool" alone when chunked."""
         rows = self.config.vision_chunk_rows
         if rows <= 0 or obs.shape[0] <= rows:
-            return self.actor.vision(obs, layout, image)
+            return self.actor.vision(obs, layout, image, plan_out=plan_out)
         with torch.no_grad():
-            return torch.cat([self.actor.vision(obs[i:i + rows], layout[i:i + rows], image[i:i + rows])
-                              for i in range(0, obs.shape[0], rows)])
+            seen, pools = [], []
+            for i in range(0, obs.shape[0], rows):
+                plan = {} if plan_out is not None else None
+                seen.append(self.actor.vision(obs[i:i + rows], layout[i:i + rows], image[i:i + rows], plan_out=plan))
+                if plan and "pool" in plan:
+                    pools.append(plan["pool"])
+            if plan_out is not None and pools:
+                plan_out["pool"] = torch.cat(pools)
+            return torch.cat(seen)
 
     def _backward_vision(self, seen: torch.Tensor, grad: torch.Tensor, obs: torch.Tensor, layout: torch.Tensor,
                          image: torch.Tensor) -> None:
@@ -1822,6 +1876,80 @@ class MappoTrainer:
             return      # an encoder with nothing to train (its graph was never kept)
         for i in range(0, obs.shape[0], rows):
             self.actor.vision(obs[i:i + rows], layout[i:i + rows], image[i:i + rows]).backward(grad[i:i + rows])
+
+    #: The aux pass's statistics (AuxConfig), as metrics.csv names them.
+    AUX_STATS = ("costmap_loss", "planner_loss", "costmap_iou", "planner_mae_yards", "planner_mae_known")
+
+    def _aux_pass(self, obs: torch.Tensor, layout: torch.Tensor, image: torch.Tensor, labels: torch.Tensor,
+                  counted: torch.Tensor, totals: dict) -> None:
+        """The costmap and planner losses of one minibatch (AuxConfig): `rows` of its samples drawn at random (all of
+        them at 0), encoded again with the planner's graph kept (VisionEncoder.forward grad=True), the losses summed and
+        sent backward into the camera encoder's gradient -- which the caller clips and steps with vision_opt after the
+        critic's share -- and the statistics added to `totals` (sums over the minibatches, with aux_n)."""
+        aux, encoder = self.aux, self.actor.vision
+        if encoder is None or not encoder.planner_on or labels is None \
+                or (aux.costmap_coef <= 0.0 and aux.planner_coef <= 0.0):
+            return
+        rows = torch.nonzero(counted > 0).reshape(-1)
+        if aux.rows > 0 and rows.numel() > aux.rows:
+            rows = rows[torch.randperm(rows.numel(), device=rows.device)[:aux.rows]]
+        if rows.numel() == 0:
+            return
+        plan: dict = {}
+        encoder(obs[rows], layout[rows], image[rows], plan_out=plan, grad=True)
+        picked = labels[rows]
+        n, side, cells = picked.shape[0], LABEL_SIDE, LABEL_SIDE * LABEL_SIDE
+        classes = [picked[:, at:at + cells].long().reshape(n, side, side)
+                   for at in (LABEL_FINE_CLASS, LABEL_COARSE_CLASS)]
+        costs = [picked[:, at:at + 2 * cells].contiguous().view(torch.float16).to(torch.float32).reshape(n, side, side)
+                 for at in (LABEL_FINE_COST, LABEL_COARSE_COST)]
+        # The fine crop's known cells (its code byte): the cells the map itself can say something about.
+        crop = image[rows].reshape(n, -1)[:, encoder.image_bytes:encoder.image_bytes + encoder.map.crop_bytes]
+        crop_known = crop.reshape(n, side, side, -1)[..., 0] != 0
+        device = obs.device
+        costmap_loss = torch.zeros((), device=device)
+        planner_loss = torch.zeros((), device=device)
+        confusion = torch.zeros((TRAV_CLASSES, TRAV_CLASSES), dtype=torch.long, device=device)
+        mae_sum = torch.zeros((), device=device)
+        mae_n = torch.zeros((), device=device)
+        known_sum = torch.zeros((), device=device)
+        known_n = torch.zeros((), device=device)
+        for tier in range(len(plan["costmap"])):
+            logits, target = plan["costmap"][tier].to(torch.float32), classes[tier]
+            labelled = target != 0
+            entropy = nn.functional.cross_entropy(logits, target, reduction="none")
+            costmap_loss = costmap_loss + (entropy * labelled).sum() / labelled.sum().clamp(min=1)
+            with torch.no_grad():
+                predicted = logits.argmax(dim=1)
+                pair = target[labelled] * TRAV_CLASSES + predicted[labelled]
+                confusion += torch.bincount(pair, minlength=TRAV_CLASSES * TRAV_CLASSES).reshape(TRAV_CLASSES,
+                                                                                                  TRAV_CLASSES)
+            cost = costs[tier]
+            reachable = cost < LABEL_UNREACHABLE
+            error = (plan["cost_to_go"][tier].to(torch.float32) - cost).abs() / 100.0
+            planner_loss = planner_loss + (error * reachable).sum() / reachable.sum().clamp(min=1)
+            with torch.no_grad():
+                mae_sum += (error * reachable).sum() * 100.0
+                mae_n += reachable.sum()
+                if tier == 0:
+                    known = reachable & crop_known
+                    known_sum += (error * known).sum() * 100.0
+                    known_n += known.sum()
+        tiers = max(1, len(plan["costmap"]))
+        loss = aux.costmap_coef * costmap_loss / tiers + aux.planner_coef * planner_loss / tiers
+        loss.backward()
+        with torch.no_grad():
+            inter = confusion.diagonal().to(torch.float32)
+            union = (confusion.sum(dim=1) + confusion.sum(dim=0)).to(torch.float32) - inter
+            present = confusion.sum(dim=1) > 0
+            iou = (inter / union.clamp(min=1.0))[present].mean() if bool(present.any()) else torch.zeros((),
+                                                                                                        device=device)
+            values = {"costmap_loss": costmap_loss.detach() / tiers, "planner_loss": planner_loss.detach() / tiers,
+                      "costmap_iou": iou, "planner_mae_yards": mae_sum / mae_n.clamp(min=1.0),
+                      "planner_mae_known": known_sum / known_n.clamp(min=1.0)}
+            for name, value in values.items():
+                totals[f"aux_{name}"] = totals.get(f"aux_{name}", 0.0) + value
+            totals["aux_n"] = totals.get("aux_n", 0.0) + 1.0
 
     def _update_recurrent(self, buffer: RolloutBuffer, auxiliary=None, sync: bool = True) -> dict[str, float]:
         """One PPO update that replays the rollout in order, so the GRU learns what to remember.
@@ -1938,6 +2066,8 @@ class MappoTrainer:
                 # leaf, and the actor's and the critic's gradients there go back through the encoder in one pass after
                 # the critic's (vision_opt below).
                 seen = seen_leaf = None
+                labels_all = data["labels"][:, chunk].reshape(-1, data["labels"].shape[-1]) \
+                    if "labels" in data else None
                 if self.vision_opt is not None:
                     image_all = data["image"][:, chunk].reshape(-1, self.image_bytes)
                     seen = self._encode_vision(obs_all, layout_all, image_all)
@@ -2089,6 +2219,10 @@ class MappoTrainer:
                     # The actor's share of the camera embedding's gradient, before the critic's adds to it.
                     actor_share = seen_leaf.grad.detach().clone()
                     totals["vision_grad_actor"] += actor_share.norm()
+                if self.vision_opt is not None and labels_all is not None:
+                    # The nav stages' auxiliary losses (AuxConfig): into the camera encoder's gradient, with the
+                    # actor's share, ahead of the critic's and the step below.
+                    self._aux_pass(obs_all, layout_all, image_all, labels_all, counted.reshape(-1), auxiliary_stats)
                 actor_parameters = self._actor_parameters()
                 if cfg.rank_sync == "gradients":
                     self.ranks.average_gradients(actor_parameters)
@@ -2196,6 +2330,14 @@ class MappoTrainer:
         if "goal_swap_n" in auxiliary_stats:
             count = auxiliary_stats.pop("goal_swap_n")
             stats["goal_swap_action_change"] = auxiliary_stats.pop("goal_swap_action_change") / max(count, 1.0)
+        # The aux pass (AuxConfig): means over the minibatches that ran it.
+        if "aux_n" in auxiliary_stats:
+            count = auxiliary_stats.pop("aux_n")
+            for name in self.AUX_STATS:
+                stats[name] = auxiliary_stats.pop(f"aux_{name}", 0.0) / max(count, 1.0)
+        if buffer.label_bytes:
+            # The potential term the rollout was paid (RolloutBuffer.finish), per valid decision.
+            stats["reward_potential"] = buffer.mean_potential()
         # Hindsight: the relabelled loss per minibatch that had one, and the rows relabelled over the update.
         if "hindsight_loss" in auxiliary_stats:
             relabelled = auxiliary_stats.pop("hindsight_rows")

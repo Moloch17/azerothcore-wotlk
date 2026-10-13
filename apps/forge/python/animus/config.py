@@ -16,7 +16,7 @@ from typing import Union, get_args, get_origin, get_type_hints
 import yaml
 
 from .human.motion import WINDOW as MOTION_WINDOW
-from .mappo.trainer import MappoConfig
+from .mappo.trainer import AuxConfig, MappoConfig
 from .stages import merges, seed_chain
 
 EXTENDS_KEY = "extends"
@@ -413,7 +413,27 @@ MAX_HINDSIGHT_LOOKBACK = 256
 
 #: The evaluation arms beside the plain one ("all bots"): eval.arms names them (dungeon-curriculum I7).
 EVAL_ARMS = ("with_human", "with_partners", "no_flag", "no_camera", "no_compass", "no_map", "no_memory", "no_goal",
-             "random_goal", "random_cell", "no_plan", "no_searched", "no_coverage", "no_party", "no_recall")
+             "random_goal", "random_cell", "no_plan", "no_searched", "no_coverage", "no_party", "no_recall",
+             "no_planner")
+
+
+@dataclass
+class PotentialConfig:
+    """The potential-based progress term the learner pays itself (vision movement curriculum, CONTRACT.md sec 5;
+    mappo.buffer.compute_potential): at GAE time every step's reward gains gamma x phi(next) - phi(cur), with phi =
+    -min(C, clip x 100) x yards_scale and C the body's route cost-to-go in yards the sim labels each observation with
+    (protocol 31). 0 on a done row and wherever either C is unreachable. Policy-invariant with the learner's own gamma,
+    paid at x1 for the whole curriculum: nothing of it fades. Nothing happens in a stage without labels."""
+
+    enabled: bool = True
+    yards_scale: float = 0.01   # reward per yard of route cost-to-go
+    clip: float = 50.0          # phi is capped at this many hundred yards (5,000 yd: beyond it, a trip is a trip)
+
+    def __post_init__(self) -> None:
+        if not self.yards_scale >= 0.0:
+            raise ValueError(f"potential.yards_scale: expected 0 or more, got {self.yards_scale!r}")
+        if not self.clip > 0.0:
+            raise ValueError(f"potential.clip: expected more than 0 (hundreds of yards), got {self.clip!r}")
 
 
 @dataclass
@@ -705,6 +725,10 @@ class TrainConfig:
     costs: CostLadderConfig = field(default_factory=CostLadderConfig)
     style: StyleConfig = field(default_factory=StyleConfig)
     status: StatusConfig = field(default_factory=StatusConfig)
+    # The nav stages' learner-side terms (vision movement curriculum): the potential-based progress reward and the
+    # costmap / planner auxiliary losses (mappo.trainer.AuxConfig). Both are no-ops in a stage without labels.
+    potential: PotentialConfig = field(default_factory=PotentialConfig)
+    aux: AuxConfig = field(default_factory=AuxConfig)
 
     def __post_init__(self) -> None:
         # Anything else would read as "best" (animus.train.init_from_checkpoint), which a typo must not do quietly.

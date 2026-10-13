@@ -1,0 +1,14 @@
+# N5 -- water (vision movement curriculum PLAN §7, CONTRACT.md sec 4): swim against going round, banks taller than a
+# step are walls, the bed as a goal (breath) and surfacing -- Blackfathom Deeps, the Deadmines' cove, Maraudon's pools
+# (Wailing Caverns' pools held out). A goal on a water cell is at the surface by default, at the bed for PointNav.BedShare
+# of the draws; Drowned (on underwater self damage at death) joins the costs. Episodes of 180 s. Seeds from nav4_beyond.
+extends: nav4_beyond.yaml
+run_name: nav5_water
+
+# A ceiling, not a target: convergence ends the stage.
+total_env_steps: 150000000
+
+status:
+  targets:
+    spl: ">= 0.8"
+    drowned: "<= 0.01"

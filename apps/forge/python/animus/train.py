@@ -450,7 +450,7 @@ class DecisionRows:
 
     FIELDS = ("obs", "state", "mask", "layout", "actions", "log_probs", "values", "present", "foresight", "memory",
               "goal", "goal_log_prob", "goal_chosen", "slow_before", "slow_value", "critic_memory",
-              "goal_slots", "goal_cells", "image", "look", "look_log_prob", "greedy")
+              "goal_slots", "goal_cells", "image", "look", "look_log_prob", "greedy", "labels")
 
     #: A field store_inputs wrote into the rollout buffer itself.
     IN_BUFFER = object()
@@ -518,7 +518,7 @@ class DecisionRows:
                   a.get("goal_slots"), a.get("goal_cells")) if a.get("goal") is not None else None)
         return (a["obs"], a["state"], a["mask"], a["layout"], a["actions"], a["log_probs"], a["values"], a["present"],
                 a.get("foresight"), a.get("memory"), goals, a.get("critic_memory"), a.get("image"),
-                a.get("look"), a.get("look_log_prob"), a.get("greedy"))
+                a.get("look"), a.get("look_log_prob"), a.get("greedy"), a.get("labels"))
 
 
 class RolloutOutcome:
@@ -625,6 +625,7 @@ def make_trainer(config: TrainConfig, spec, inputs: TrainerInputs, ranks=None, d
         rollout_device=device or config.resolved_rollout_device(),
         ranks=ranks,
         vision=inputs.vision,
+        aux=config.aux,
     )
 
 
@@ -766,9 +767,17 @@ class TrainingRun:
                   f"per network; {look}", flush=True)
             if image.get("map") is not None:
                 crop = image["map"]
-                print(f"Mental map: a {crop['width']} x {crop['height']} heading-up crop of {crop['cell']:g}-yard "
-                      f"cells, {crop['channels']} channels ({crop['map_bytes']} bytes an agent), read by the camera's "
-                      f"map encoder", flush=True)
+                tiers = ", ".join(f"{cell:g}" for cell in crop.get("tier_cells", (crop["cell"],)))
+                print(f"Mental map: {crop.get('tiers', 1)} tier(s) of {crop['width']} x {crop['height']} heading-up "
+                      f"crop at {tiers}-yard cells, {crop['channels']} channels ({crop['map_bytes']} bytes an agent), "
+                      f"read by the camera's map encoder"
+                      + ("; the costmap head and the planner" if crop.get("tiers", 1) > 1 else ""), flush=True)
+            if spec.label_bytes:
+                print(f"Labels: {spec.label_bytes} bytes an agent a decision (protocol 31: the traversability classes "
+                      f"and route cost-to-go of both tiers); the potential term is "
+                      f"{'on' if config.potential.enabled else 'off'}, the aux losses at costmap "
+                      f"{config.aux.costmap_coef:g} / planner {config.aux.planner_coef:g} on {config.aux.rows} rows "
+                      f"a minibatch", flush=True)
 
         self.make_trainer = lambda: make_trainer(config, spec, inputs, ranks=self.ranks.update)
         self.trainer = self.make_trainer()
@@ -868,7 +877,7 @@ class TrainingRun:
                                  spec.state_dim, spec.num_actions, self.trainer.foresight_outputs,
                                  self.trainer.recurrent_size, bool(self.trainer.goal_count),
                                  self.trainer.slow_goal_size, self.trainer.goal_slots, spec.camera_bytes,
-                                 len(self.trainer.look_heads))
+                                 len(self.trainer.look_heads), spec.label_bytes)
 
         # What the policy carries between decisions (its memory and the goal it pursues), cleared with an episode.
         self.acting = self.trainer.acting_state(spec.num_envs, spec.agents_per_env)
@@ -942,6 +951,10 @@ class TrainingRun:
             # and 5 s on (mean absolute error, as a share of full health), and the goal reached within 4 s (Brier).
             columns += ["foresight_loss", "forecast_health_8_error", "forecast_health_20_error",
                         "forecast_goal_reached_16_brier"]
+        if spec.label_bytes:
+            # The nav stages (vision movement curriculum): the potential term paid per decision and the costmap and
+            # planner aux pass's losses and quality (MappoTrainer.AUX_STATS).
+            columns += ["reward_potential", *MappoTrainer.AUX_STATS]
         self.logger = RunLogger(self.run_dir, columns, append=self.resume_path is not None) if leader else Silent()
         # eval.report's columns, then the stage's headline measures (status.headline) that it does not list, so forge
         # status always has what the stage is read by.
@@ -1309,7 +1322,8 @@ class TrainingRun:
                                            training_stand_in=self.field_stand_in(),
                                            spec_names=self.spec_names,
                                            categories=self.episode_categories,
-                                           score_column=self.config.eval.score_column(), **options)
+                                           score_column=self.config.eval.score_column(),
+                                           potential=self.eval_potential(), **options)
         parts = self.ranks.gather(result)
         return EvalResult.merged(parts) if self.ranks.leader else None
 
@@ -1392,6 +1406,7 @@ class TrainingRun:
         summary, sampled, heldout = None, False, False
         if leader:
             summary = result.summary(self.report)
+            summary.update(self.aux_summary())
             improved = controller.observe(summary, self.env_steps)
             self.score_motion(result, summary)
             self.save_routes(result, f"eval_motion_{self.env_steps}.npz")
@@ -1561,7 +1576,7 @@ class TrainingRun:
         self.save_routes(result, f"eval_motion_{self.env_steps}_learner_sampled.npz")
         self.save_trace(result)
         summary = result.summary(self.report)
-        fields = [name for name in ("score", "died", "timed_out", "arrived")
+        fields = [name for name in ("score", "died", "timed_out", "arrived", "spl")
                   if name in summary]
         # The gap, sampled minus argmax, kept with the sampled row of eval.jsonl: a wide one says the gated policy is
         # not the one that trained, which is what mappo.entropy_final_fraction is there to close.
@@ -1645,9 +1660,15 @@ class TrainingRun:
                     self.trainer.actor.goal_head is not None and self.trainer.actor.goal_head.cell_on):
                 print(f"Arm {arm}: the stage has no cell goals (stage.json goals.cells); skipped", flush=True)
                 continue
+            if arm == "no_planner" and not (self.trainer.actor.vision is not None
+                                            and self.trainer.actor.vision.planner_on):
+                print(f"Arm {arm}: the stage's map has no planner (one map tier); skipped", flush=True)
+                continue
             self.trainer.uniform_goals = arm == "random_goal"
             self.trainer.uniform_cells = arm == "random_cell"
             self.trainer.single_goal = arm == "no_plan"
+            # no_planner (vision movement curriculum): the planner's readouts and the pointer's bonus zeroed.
+            self.trainer.set_planner_off(arm == "no_planner")
             try:
                 result = self._evaluate_share(choose, episodes, config.eval.seed, arenas=self.arena_names,
                                               action_names=self.action_names,
@@ -1656,6 +1677,7 @@ class TrainingRun:
                 self.trainer.uniform_goals = False
                 self.trainer.uniform_cells = False
                 self.trainer.single_goal = False
+                self.trainer.set_planner_off(False)
             if self.cast is not None or self.partners is not None:
                 self._reset_far_side()
             if not self.ranks.leader:
@@ -1929,7 +1951,12 @@ class TrainingRun:
                       time_scale_decisions=self.foresight_time_decisions,
                       slow_goal=(self.config.mappo.slow_goal_gamma, self.config.mappo.slow_goal_lambda)
                       if trainer.slow_goal_size else None,
-                      obs_targets=trainer.foresight_obs_columns())
+                      obs_targets=trainer.foresight_obs_columns(),
+                      # The potential term (config.potential), where the stage sends labels: phi of the observation
+                      # after the rollout's last step is the next STEP's C(body).
+                      potential=self.potential_terms(),
+                      last_c_body=protocol.c_body_of(self.step.labels)
+                      if self.spec.label_bytes and getattr(self.step, "labels", None) is not None else None)
         # Read before the buffers swap below: log_update runs on the rollout that has just been collected.
         self.rollout_reward = buffer.mean_reward()
         self.rollout_allowed_actions, self.layout_allowed = self.allowed_actions(buffer)
@@ -1998,6 +2025,27 @@ class TrainingRun:
     def style_scale(self) -> float:
         """What the style reward is paid times: the cost ladder's scale in force (style.ladder), else 1."""
         return float(self.cost_scale_now) if self.config.style.ladder else 1.0
+
+    def potential_terms(self) -> tuple[float, float] | None:
+        """(yards_scale, clip) of the potential term (config.potential) where the stage sends labels and it is on;
+        None otherwise (RolloutBuffer.finish pays nothing)."""
+        potential = self.config.potential
+        if not potential.enabled or not self.spec.label_bytes:
+            return None
+        return float(potential.yards_scale), float(potential.clip)
+
+    def eval_potential(self) -> tuple[float, float, float] | None:
+        """run_evaluation's `potential`: (gamma a decision, yards_scale, clip), so an evaluation's episodes carry the
+        learner's reward_potential column (evaluation.run_evaluation); None without labels or with the term off."""
+        terms = self.potential_terms()
+        return None if terms is None else (float(self.discounts[0]), *terms)
+
+    def aux_summary(self) -> dict[str, float]:
+        """The last update's aux pass statistics (MappoTrainer.AUX_STATS) and potential mean, for the evaluation
+        summary (forge status reads them off the headline): {} before the first update or without labels."""
+        last = getattr(self, "last_update_stats", None) or {}
+        return {name: float(last[name]) for name in ("reward_potential_train", *MappoTrainer.AUX_STATS)
+                if name in last}
 
     def add_style(self, buffer: RolloutBuffer) -> None:
         """The style reward of the rollout just collected, into its rewards before its advantages are taken
@@ -2105,7 +2153,8 @@ class TrainingRun:
                      foresight=foresight, memory=memory, goal=goal, goal_log_prob=goal_log_prob,
                      goal_chosen=goal_chosen, slow_before=slow_before, slow_value=slow_value,
                      critic_memory=critic_memory, goal_slots=goal_slots, goal_cells=goal_cells, look=look,
-                     look_log_prob=look_log_prob, greedy=acting.greedy)
+                     look_log_prob=look_log_prob, greedy=acting.greedy,
+                     labels=getattr(part, "labels", None) if self.spec.label_bytes else None)
         send(rows.start, rows.stop - rows.start, actions,
              trainer.wire_goals(goals[0], acting.queue, acting.plan) if goals is not None else None, look)
 
@@ -2278,6 +2327,9 @@ class TrainingRun:
                 row[f"episode_{name}"] = float(value)
             self.log_layout_rows(spec)
         row.update(stats)
+        # Kept for the evaluation summary (aux_summary): the aux pass's quality beside the evaluation's measures.
+        self.last_update_stats = {**stats, **({"reward_potential_train": stats["reward_potential"]}
+                                              if "reward_potential" in stats else {})}
         if self.acting.greedy is not None:
             row["greedy_envs"] = float(self.acting.greedy[:, 0].sum())
             row["greedy_rows_share"] = self.rollout_greedy_share

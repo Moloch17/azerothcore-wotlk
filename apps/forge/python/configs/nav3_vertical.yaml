@@ -1,0 +1,17 @@
+# N3 -- vertical (vision movement curriculum PLAN §7, CONTRACT.md sec 4): step-up against jump against going round,
+# safe against lethal drops, stairs and ramps -- the Deadmines' ramps and decks, Shadowfang's stairs and towers,
+# Gnomeregan's levels and drops, Razorfen Kraul's ramps (Wailing Caverns held out). The costmap's height classes
+# (step_up, jump, drop_safe, drop_hurt, drop_lethal) are the lesson; fall damage (FallHurt, the share of max health
+# lost) and Death join the costs; a dead seat rises at its start after the respawn delay and the potential charges the
+# lost progress. Episodes of 150 s. Seeds from nav2_detour.
+extends: nav2_detour.yaml
+run_name: nav3_vertical
+
+# A ceiling, not a target: convergence ends the stage.
+total_env_steps: 200000000
+
+status:
+  targets:
+    spl: ">= 0.8"
+    falls: "<= 0.05"
+    died: "<= 0.01"

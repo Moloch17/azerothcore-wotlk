@@ -1,0 +1,16 @@
+# N2 -- detour (vision movement curriculum PLAN §7, CONTRACT.md sec 4): the straight line is blocked in view -- doors,
+# pillars, fences -- in the Stockades' rooms, the Deadmines and Shadowfang Keep (Wailing Caverns held out). The ladder
+# opens the detour bins (route / straight 1.0-1.2 up to 2.5) and the length bins (20 to 120 yd); Lost (0.02/s while the
+# body's route cost-to-go exceeds the start's by 40 yd) joins the costs; a timeout pays nothing beyond the clock.
+# Episodes of 120 s. Seeds from nav1_sight (stage.json's seed chain): every block carries by name.
+extends: nav1_sight.yaml
+run_name: nav2_detour
+
+# A ceiling, not a target: convergence ends the stage.
+total_env_steps: 150000000
+
+status:
+  targets:
+    # SPL 0.85 at the 1.6-2.5 detour bin is the PLAN's reading; here the display target is the stage-wide SPL.
+    spl: ">= 0.85"
+    stop_error_yards: null

@@ -10,7 +10,31 @@ from __future__ import annotations
 
 import numpy as np
 
+from ..protocol import LABEL_UNREACHABLE, c_body_of
+
 # Kept where the sim put them when it put them on the device.
+
+
+def compute_potential(c_body: np.ndarray, c_valid: np.ndarray, dones: np.ndarray, last_c_body: np.ndarray,
+                      last_c_valid: np.ndarray, gamma: float, yards_scale: float, clip: float) -> np.ndarray:
+    """The potential-based progress term of every step, [T, E, A] (vision movement curriculum, CONTRACT.md sec 5):
+    gamma x phi(next) - phi(cur) with phi = -min(C, clip x 100) x yards_scale, C the body's route cost-to-go in yards
+    the sim labels each observation with (c_body [T, E, A]; last_c_body [E, A] the observation after the rollout's
+    last step). 0 on a done row (a timeout must not pay the remaining distance; arrival already drives C to ~0) and
+    wherever either C is unreachable (c_valid False). Policy-invariant with the learner's own gamma (Ng, Harada,
+    Russell 1999), which is why the learner and not the sim pays it."""
+    steps = c_body.shape[0]
+    cap = clip * 100.0
+    phi = -np.minimum(c_body, cap).astype(np.float32) * np.float32(yards_scale)
+    phi_last = -np.minimum(last_c_body, cap).astype(np.float32) * np.float32(yards_scale)
+    out = np.zeros_like(phi)
+    for t in range(steps):
+        next_phi = phi_last if t == steps - 1 else phi[t + 1]
+        next_valid = last_c_valid if t == steps - 1 else c_valid[t + 1]
+        term = np.float32(gamma) * next_phi - phi[t]
+        paid = c_valid[t] & next_valid & ~dones[t][:, None]
+        out[t] = np.where(paid, term, 0.0).astype(np.float32)
+    return out
 
 
 def compute_gae(
@@ -144,9 +168,10 @@ def decisions_left(dones: np.ndarray) -> np.ndarray:
 class RolloutBuffer:
     def __init__(self, steps: int, envs: int, agents: int, obs_dim: int, state_dim: int, num_actions: int,
                  foresight: int = 0, recurrent: int = 0, goals: bool = False, slow_goal: int = 0,
-                 goal_slots: int = 1, image_bytes: int = 0, look_heads: int = 0):
+                 goal_slots: int = 1, image_bytes: int = 0, look_heads: int = 0, label_bytes: int = 0):
         self.steps = steps
         self.image_bytes = image_bytes
+        self.label_bytes = label_bytes
         self.look_heads = look_heads
         self.foresight = foresight
         self.recurrent = recurrent
@@ -183,6 +208,13 @@ class RolloutBuffer:
         self.obs = np.zeros((*shape, obs_dim), dtype=np.float32)
         # The camera's images as the sim sent them (protocol 21): bytes, decoded on the device for each pass only.
         self.image = np.zeros((*shape, image_bytes), dtype=np.uint8)
+        # The nav stages' labels (protocol 31): bytes on the host, kept only where the stage sends them, and read off
+        # them the body's route cost-to-go (c_body, yards; c_valid where the sim found a route) that the potential
+        # term (compute_potential) is paid on. `potential` is what finish() added to each step's reward.
+        self.labels = np.zeros((*shape, label_bytes), dtype=np.uint8)
+        self.c_body = np.full(shape, LABEL_UNREACHABLE, dtype=np.float32)
+        self.c_valid = np.zeros(shape, dtype=bool)
+        self.potential = np.zeros(shape, dtype=np.float32)
         self.state = np.zeros((steps, envs, state_dim), dtype=np.float32)
         self.mask = np.zeros((*shape, num_actions), dtype=bool)
         self.layout = np.zeros(shape, dtype=np.int64)
@@ -219,11 +251,15 @@ class RolloutBuffer:
 
     def add_decision(self, obs, state, mask, layout, actions, log_probs, values, present=None,
                      foresight=None, memory=None, goals=None, critic_memory=None, image=None,
-                     look=None, look_log_prob=None, greedy=None) -> None:
+                     look=None, look_log_prob=None, greedy=None, labels=None) -> None:
         """Record what the policy saw and did at step `cursor`; `present` [E, A] marks the agents with a character
         (default: all); `image` [E, A, I] uint8 the camera's bytes, with a camera; `look` [E, A, H] the free look's
-        choices, with look heads."""
+        choices, with look heads; `labels` [E, A, L] uint8 the nav labels (protocol 31), where the stage sends them."""
         t = self.cursor
+        if self.label_bytes and labels is not None:
+            self.labels[t] = labels
+            self.c_body[t] = c_body_of(labels)
+            self.c_valid[t] = self.c_body[t] < LABEL_UNREACHABLE
         for name, value in (("obs", obs), ("state", state), ("mask", mask), ("image", image)):
             if value is not None:       # None: store_rows wrote it already
                 self._store(name, t, value)
@@ -296,7 +332,17 @@ class RolloutBuffer:
 
     def finish(self, last_values: np.ndarray, gamma: float, gae_lambda: float, last_foresight=None,
                foresight_gammas: tuple[float, ...] = (), time_scale_decisions: float = 0.0,
-               slow_goal: tuple[float, float] | None = None, obs_targets=None) -> None:
+               slow_goal: tuple[float, float] | None = None, obs_targets=None,
+               potential: tuple[float, float] | None = None, last_c_body: np.ndarray | None = None) -> None:
+        """`potential` (yards_scale, clip) with `last_c_body` [E, A] (the cost-to-go of the observation after the last
+        step; c_body_of(step.labels)) pays the potential term into the rewards before the advantages are taken, where
+        the stage sends labels."""
+        self.potential[:] = 0.0
+        if potential is not None and self.label_bytes and last_c_body is not None:
+            last = np.asarray(last_c_body, dtype=np.float32)
+            self.potential = compute_potential(self.c_body, self.c_valid, self.dones, last, last < LABEL_UNREACHABLE,
+                                               gamma, potential[0], potential[1])
+            self.rewards += self.potential
         self.advantages, self.returns = compute_gae(
             self.rewards,
             self.values,
@@ -381,6 +427,7 @@ class RolloutBuffer:
         return {
             "obs": self.obs,
             **({"image": self.image} if self.image_bytes else {}),
+            **({"labels": self.labels} if self.label_bytes else {}),
             "state": self.state,
             "mask": self.mask,
             "layout": self.layout,
@@ -404,3 +451,7 @@ class RolloutBuffer:
     def mean_reward(self) -> float:
         """Mean reward per decision over the valid samples (0 when there are none)."""
         return float(self.rewards[self.valid].mean()) if self.valid.any() else 0.0
+
+    def mean_potential(self) -> float:
+        """Mean potential term per decision over the valid samples (reward_potential; 0 without labels)."""
+        return float(self.potential[self.valid].mean()) if self.label_bytes and self.valid.any() else 0.0
