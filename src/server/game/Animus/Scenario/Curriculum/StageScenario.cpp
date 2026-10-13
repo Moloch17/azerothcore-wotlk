@@ -358,13 +358,9 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         for (ClassProfile const& profile : ClassProfiles())
             ClassAssets::For(profile);
 
-    // The owner's slot, after the seats: the party follow's leader (Opposition::PartyFollow): the same slot, moved by the controller, played by a
-    // frozen checkpoint in the episodes that cast it and by the encounter's own keys in the rest. The leader is no
-    // dead code: PartyFollowEncounter builds it in this slot (OwnerAgent) and CastOwnerActive plays it.
-    _castOwner = _stage.AnyArena([](ArenaDefinition const& arena)
-    {
-        return arena.Against == Opposition::PartyFollow;
-    });
+    // The party follow's leader lives in the owner's slot (BuildOwnerSeat) but is no agent: a player walking the
+    // stock path, seen by the server as a player is (move4-follow rework, A3), with no row for the learner to carry.
+    _castOwner = false;
     _spec.AgentsPerEnv = _seatCount + (_castOwner ? 1 : 0);
     for (Layout const& layout : _layouts)
     {
@@ -1079,6 +1075,14 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     {
         return float(seat(env, index).WallMs) / 1000.0f;
     });
+    _info.Add("steep_seconds", [seat](Env const& env, uint32 index)
+    {
+        return float(seat(env, index).SteepMs) / 1000.0f;
+    });
+    _info.Add("edge_seconds", [seat](Env const& env, uint32 index)
+    {
+        return float(seat(env, index).EdgeMs) / 1000.0f;
+    });
     _info.Add("stuck_seconds", [seat](Env const& env, uint32 index)
     {
         return float(seat(env, index).StuckMs) / 1000.0f;
@@ -1357,12 +1361,10 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
         }
     }
 
-    // Agents the sim declares for a frozen checkpoint to play: the owner, where an arena casts it. A party follow's
-    // leader is declared only when PartyFollow.CastShare gives some episodes to a checkpoint: at 0 the leader keeps its
-    // script, its row is never present (AgentPresence) nor trained, and a declaration would make the learner demand a
-    // checkpoint (cast.agents.leader) that nothing plays.
+    // Agents the sim declares for a frozen checkpoint to play: the owner, where an arena casts it. The party
+    // follow's leader is never one (move4-follow rework): a player walked by the encounter, with no row.
     boost::json::array& cast = stageFile["cast"].emplace_array();
-    if (_castOwner && (!_partyFollow || _tuning.PartyFollow.CastShare > 0))
+    if (_castOwner)
     {
         boost::json::object& entry = cast.emplace_back(boost::json::object()).get_object();
         entry["agent"] = OwnerAgent();
@@ -1662,9 +1664,9 @@ bool Animus::Curriculum::StageScenario::CastOwnerActive(Env const& env) const
 {
     if (!_castOwner)
         return false;
-    // The party follow's leader keeps its script in an evaluation.
-    ArenaDefinition const& arena = Arena(env);
-    return !env.Evaluating && arena.Against == Opposition::PartyFollow && _partyFollow && _partyFollow->IsCast(env);
+    // No arena casts its owner today: the party follow's leader is the encounter's, never a checkpoint's (move4-follow
+    // rework), and _castOwner is false for it.
+    return false;
 }
 
 Player* Animus::Curriculum::StageScenario::BuildOwnerSeat(Env& env, Map*& map, uint8 level, Position const& start,
@@ -3310,6 +3312,11 @@ void Animus::Curriculum::StageScenario::TrackController(SeatState& seat, uint32 
     // Pressing into a wall, and held keys getting nowhere for a second or more (a wall, a slope, a ledge's lip).
     if (keys && seat.Mover.TickWall)
         seat.WallMs += diffMs;
+    // ... and what else held keys met: a slope too steep, or nothing at all under the next step (an edge).
+    if (keys && seat.Mover.TickSteep)
+        seat.SteepMs += diffMs;
+    if (keys && seat.Mover.TickVoid)
+        seat.EdgeMs += diffMs;
     bool const stuck = keys && seat.Mover.TickCommanded > 0.01f
         && seat.Mover.TickMoved < 0.1f * seat.Mover.TickCommanded;
     // Counted from the second it began, once it has lasted a second.

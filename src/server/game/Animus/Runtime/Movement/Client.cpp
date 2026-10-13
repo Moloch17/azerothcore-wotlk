@@ -191,6 +191,8 @@ void Mv::Client::Tick(ControlState& control, Speeds const& speeds, Movement::Bod
     WorldScope const scope(*this, shape, world);
     TickMoved = TickCommanded = TickFallHeight = 0.0f;
     TickWall = false;
+    TickSteep = false;
+    TickVoid = false;
     TickJumps = TickLandings = 0;
     if (!_started || !diffMs)
         return;
@@ -276,6 +278,8 @@ void Mv::Client::Tick(ControlState& control, Speeds const& speeds, Movement::Bod
         TickMoved += Body.Moved;
         TickCommanded += Body.Commanded;
         TickWall = TickWall || Body.AgainstWall;
+        TickSteep = TickSteep || Body.SteepSlope;
+        TickVoid = TickVoid || Body.OverVoid;
         if (Body.OverVoid)
         {
             ++Counts.OverVoid;

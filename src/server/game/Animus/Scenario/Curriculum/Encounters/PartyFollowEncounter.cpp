@@ -17,27 +17,30 @@
  */
 
 #include "PartyFollowEncounter.h"
+#include "CombatBlock.h"
 #include "CreatureData.h"
 #include "EncoderSupport.h"
 #include "Encounters.h"
 #include "EnvPool.h"
 #include "EpisodeInfoTable.h"
+#include "Group.h"
+#include "GroupMgr.h"
 #include "InstanceBosses.h"
 #include "Log.h"
 #include "Map.h"
-#include "Standing.h"
-#include "ObjectMgr.h"
 #include "MapMgr.h"
+#include "ObjectMgr.h"
 #include "ObjectPool.h"
-#include "PartyFramesBlock.h"
 #include "PathGenerator.h"
 #include "Player.h"
 #include "Random.h"
+#include "ReportCadence.h"
 #include "SeatView.h"
-#include "Seek.h"
 #include "SightDraw.h"
+#include "Standing.h"
 #include "StageScenario.h"
 #include "StageState.h"
+#include "Unit.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -45,19 +48,22 @@
 
 namespace
 {
-    /// The leader has reached a corner of its hop this close.
-    constexpr float LEADER_ARRIVE = 3.0f;
-    /// A leader that strays this far from the corner it walks to turns for the nearest corner of its hop.
-    constexpr float LEADER_STRAY = 15.0f;
+    /// The leader has reached a corner of its hop, or the point of a step back, this close.
+    constexpr float LEADER_ARRIVE = 0.5f;
     /// Chained calls of the stock PathGenerator for one leg: it stops at MAX_POINT_PATH_LENGTH points (~296 yd).
     constexpr uint32 PATH_LEGS = 16;
     /// A leg whose path ends this far from its stop was cut short (a closed door, a gap in the navmesh).
     constexpr float LEG_SHORT_YARDS = 5.0f;
     /// The party gathers at its start this long before the leader sets off (not a regroup: it starts together).
     constexpr uint32 START_PAUSE_MS = 3000;
-    /// A fall of the leader's this deep counts as a drop it took, and a fall this deep between two corners of the
-    /// way makes that step one-way.
+    /// A fall of the leader's this deep counts as a drop it took, and a step of the way that climbs this much is
+    /// walked downhill only (nothing climbs back up Ragefire's cavern).
     constexpr float DROP_YARDS = 4.0f;
+    /// What a player's controller climbs: the steepest walkable slope (PlayerController's TAN_WALKABLE, tan 50
+    /// degrees) over a step's run, plus the step it takes up at a lip. A step of the way that climbs more than that
+    /// is one the followers cannot climb, so the leader walks it downhill only.
+    constexpr float CLIMB_PER_YARD = 1.19f;
+    constexpr float STEP_UP_YARDS = 1.0f;
     /// A halt shorter than this has no looking round.
     constexpr uint32 LOOK_MIN_STOP_MS = 2500;
     /// With no hop of the drawn length either way, the leader stands this long and draws again.
@@ -66,9 +72,10 @@ namespace
     /// this above it within START_CEILING_YARDS.
     constexpr float START_FLOOR_YARDS = 2.5f;
     constexpr float START_CEILING_YARDS = 20.0f;
-    /// A stuck leader jumps from this long stuck, and side-steps from this long (PartyFollowEncounter::Steer).
-    constexpr uint32 UNSTICK_JUMP_MS = 500;
-    constexpr uint32 UNSTICK_SIDESTEP_MS = 2000;
+    /// A dead leader stands up where it fell after this long.
+    constexpr uint32 LEADER_RISE_MS = 2000;
+    /// The leader's speed is a run's (MOVE_RUN); nothing slower, ever.
+    constexpr UnitMoveType LEADER_MOVE = MOVE_RUN;
 
     /// The corners of the stock PathGenerator's way from `from` to `to` (the smoothed path its creatures walk, a point
     /// every 4 yd), chained while it stops short of the end; the point `from` itself is left out. Empty when there is
@@ -95,8 +102,19 @@ namespace
         }
         return corners;
     }
-    /// A scripted leader that died stands up where it fell after this long.
-    constexpr uint32 LEADER_RISE_MS = 2000;
+
+    /// The signed difference of two yaws, in (-pi, pi].
+    float YawDifference(float a, float b)
+    {
+        return std::atan2(std::sin(a - b), std::cos(a - b));
+    }
+
+    float WrapYaw(float yaw)
+    {
+        constexpr float TWO_PI = 6.2831853f;
+        yaw = std::fmod(yaw, TWO_PI);
+        return yaw < 0.0f ? yaw + TWO_PI : yaw;
+    }
 }
 
 Animus::Curriculum::PartyFollowEncounter::PartyFollowEncounter(StageScenario& scenario, uint32 envs)
@@ -106,18 +124,22 @@ Animus::Curriculum::PartyFollowEncounter::PartyFollowEncounter(StageScenario& sc
 
 Animus::Curriculum::PartyFollowEncounter::Way Animus::Curriculum::PartyFollowEncounter::MakeWay(
     Position const& door, std::vector<Position> const& stops, std::vector<std::vector<Position>> const& legs,
-    float waypointYards, float shortYards, float dropYards)
+    float waypointYards, float shortYards, float dropYards, float climbPerYard, float stepUp)
 {
     Way way;
     way.Chain.push_back(door);
     way.Along.push_back(0.0f);
     std::vector<uint32> ends;
-    // A step onto the chain's next corner: a cut where the path before it stopped short, else a drop or level.
-    auto const add = [&way, dropYards](Position const& corner, bool cut)
+    // A step onto the chain's next corner: a cut where the path before it stopped short; else downhill one way where
+    // it climbs more than a player's controller can; else level enough for either way.
+    auto const add = [&](Position const& corner, bool cut)
     {
         Position const& last = way.Chain.back();
-        Step step = cut ? Step::Cut : last.GetPositionZ() - corner.GetPositionZ() >= dropYards ? Step::Drop
-            : Step::Both;
+        float const run = last.GetExactDist2d(&corner);
+        float const climb = corner.GetPositionZ() - last.GetPositionZ();    // positive: up, going forward
+        bool const tooSteep = std::fabs(climb) >= dropYards || std::fabs(climb) > run * climbPerYard + stepUp;
+        Step const step = cut ? Step::Cut : !tooSteep ? Step::Both : climb < 0.0f ? Step::DownForward
+            : Step::DownBackward;
         way.Steps.push_back(step);
         way.Along.push_back(way.Along.back() + last.GetExactDist(&corner));
         way.Chain.push_back(corner);
@@ -134,10 +156,7 @@ Animus::Curriculum::PartyFollowEncounter::Way Animus::Curriculum::PartyFollowEnc
         // begins at the stop itself.
         bool const reached = !legs[leg].empty() && legs[leg].back().GetExactDist2d(&stops[leg]) <= shortYards;
         if (!reached)
-        {
             add(stops[leg], true);
-            cut = false;
-        }
         ends.push_back(uint32(way.Chain.size() - 1));
     }
 
@@ -156,20 +175,15 @@ bool Animus::Curriculum::PartyFollowEncounter::Walkable(Way const& way, uint32 f
 {
     if (from == to || from >= way.Chain.size() || to >= way.Chain.size())
         return false;
-    // A step the leader could not walk (Way::Blocked), that way, is as a cut.
-    auto const blocked = [&way](uint32 step, uint8 bit)
-    {
-        return step < way.Blocked.size() && (way.Blocked[step].load(std::memory_order_relaxed) & bit);
-    };
     if (from < to)
     {
         for (uint32 step = from; step < to; ++step)
-            if (way.Steps[step] == Step::Cut || blocked(step, BLOCKED_FORWARD))
+            if (way.Steps[step] != Step::Both && way.Steps[step] != Step::DownForward)
                 return false;
         return true;
     }
     for (uint32 step = to; step < from; ++step)
-        if (way.Steps[step] != Step::Both || blocked(step, BLOCKED_BACK))
+        if (way.Steps[step] != Step::Both && way.Steps[step] != Step::DownBackward)
             return false;
     return true;
 }
@@ -187,8 +201,7 @@ bool Animus::Curriculum::PartyFollowEncounter::InTheWay(float leaderX, float lea
     // Right on top of it is in its way whichever way it faces.
     if (distance < 0.25f)
         return true;
-    float const angle = std::atan2(dy, dx) - leaderYaw;
-    float const off = std::fabs(std::atan2(std::sin(angle), std::cos(angle)));
+    float const off = std::fabs(YawDifference(std::atan2(dy, dx), leaderYaw));
     return off <= halfAngle * float(M_PI) / 180.0f;
 }
 
@@ -225,8 +238,7 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::PartyFollowEncou
 {
     // Fidget is the scenario's column already (every stage's noise prices); this encounter pays it too.
     return { RewardTerm::FollowKept, RewardTerm::Settled, RewardTerm::Regroup, RewardTerm::Approach, RewardTerm::Drift,
-        RewardTerm::Lost,
-        RewardTerm::Blocking, RewardTerm::Death, RewardTerm::Stuck, RewardTerm::Wall };
+        RewardTerm::Lost, RewardTerm::Blocking, RewardTerm::Death, RewardTerm::Stuck, RewardTerm::Wall };
 }
 
 void Animus::Curriculum::PartyFollowEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
@@ -234,6 +246,14 @@ void Animus::Curriculum::PartyFollowEncounter::AddEpisodeInfo(EpisodeInfoTable& 
     auto const seatOf = [this](Env const& env, uint32 seat) -> SeatFollow const*
     {
         return seat < GROUP_SEATS ? &_envs[env.Index].Seats[seat] : nullptr;
+    };
+    auto const seconds = [seatOf](uint32 SeatFollow::* member)
+    {
+        return [seatOf, member](Env const& env, uint32 seat)
+        {
+            SeatFollow const* follow = seatOf(env, seat);
+            return follow ? float(follow->*member) / 1000.0f : 0.0f;
+        };
     };
 
     // The stage's measure: the share of the episode each follower spent within the band of the leader.
@@ -247,16 +267,8 @@ void Animus::Curriculum::PartyFollowEncounter::AddEpisodeInfo(EpisodeInfoTable& 
         SeatFollow const* follow = seatOf(env, seat);
         return follow && follow->Samples ? float(follow->DistanceSum / follow->Samples) : 0.0f;
     });
-    table.Add("lost_seconds", [seatOf](Env const& env, uint32 seat)
-    {
-        SeatFollow const* follow = seatOf(env, seat);
-        return follow ? float(follow->LostMs) / 1000.0f : 0.0f;
-    });
-    table.Add("blocking_seconds", [seatOf](Env const& env, uint32 seat)
-    {
-        SeatFollow const* follow = seatOf(env, seat);
-        return follow ? float(follow->BlockingMs) / 1000.0f : 0.0f;
-    });
+    table.Add("lost_seconds", seconds(&SeatFollow::LostMs));
+    table.Add("blocking_seconds", seconds(&SeatFollow::BlockingMs));
     // Waiting with a leader who stands (decision 0033): of the time in the band beside a leader that had stood
     // SettleAfterMs, the share stood still, and the seconds moving about; and the seconds strayed past DriftYards.
     table.Add("settled_share", [seatOf](Env const& env, uint32 seat)
@@ -264,16 +276,8 @@ void Animus::Curriculum::PartyFollowEncounter::AddEpisodeInfo(EpisodeInfoTable& 
         SeatFollow const* follow = seatOf(env, seat);
         return follow && follow->WaitMs ? float(follow->SettledMs) / float(follow->WaitMs) : 0.0f;
     });
-    table.Add("wait_seconds", [seatOf](Env const& env, uint32 seat)
-    {
-        SeatFollow const* follow = seatOf(env, seat);
-        return follow ? float(follow->WaitMs) / 1000.0f : 0.0f;
-    });
-    table.Add("wait_fidget_seconds", [seatOf](Env const& env, uint32 seat)
-    {
-        SeatFollow const* follow = seatOf(env, seat);
-        return follow ? float(follow->FidgetMs) / 1000.0f : 0.0f;
-    });
+    table.Add("wait_seconds", seconds(&SeatFollow::WaitMs));
+    table.Add("wait_fidget_seconds", seconds(&SeatFollow::FidgetMs));
     // The gap past the band closed, less opened (decision 0034): a frozen follower reads about minus the leader's
     // lead; one that keeps up reads near 0 or above.
     table.Add("approach_yards", [seatOf](Env const& env, uint32 seat)
@@ -287,10 +291,16 @@ void Animus::Curriculum::PartyFollowEncounter::AddEpisodeInfo(EpisodeInfoTable& 
         SeatFollow const* follow = seatOf(env, seat);
         return follow ? follow->MovedYards : 0.0f;
     });
-    table.Add("drift_seconds", [seatOf](Env const& env, uint32 seat)
+    table.Add("drift_seconds", seconds(&SeatFollow::DriftMs));
+    // The leader out of the follower's sight (move4-follow rework, B5): neither in its camera's frame nor in its line
+    // of sight, per decision. The minimap's dot still shows it within MinimapYards, as a client's does.
+    table.Add("leader_out_of_sight_seconds", seconds(&SeatFollow::OutOfSightMs));
+    // The wall pin's escalation (B3, the seek stage's rule): the longest run that paid Wall, and what it added.
+    table.Add("wall_pin_max_seconds", seconds(&SeatFollow::WallPinMax));
+    table.Add("wall_extra_charge", [seatOf](Env const& env, uint32 seat)
     {
         SeatFollow const* follow = seatOf(env, seat);
-        return follow ? float(follow->DriftMs) / 1000.0f : 0.0f;
+        return follow ? follow->WallExtra : 0.0f;
     });
     // The regroups: the leader's stops the follower was counted for, those it came back into the band within the
     // window of, their share (per event over regroup_stops) and how long they took (per event over regroups).
@@ -346,15 +356,15 @@ void Animus::Curriculum::PartyFollowEncounter::AddEpisodeInfo(EpisodeInfoTable& 
         SeatFollow const* follow = seatOf(env, seat);
         return follow ? float(follow->Clock.OutMsTotal) / 1000.0f : 0.0f;
     });
-    // How the leader went: hops drawn and walked to their end (and as a share of those ended either way), turned
-    // back, passed through without a stop, stops made, hops given up, sudden stops, halts it looked round at, drops
-    // taken, stood up after dying, cast or scripted; where it began (yards along the way from the door).
+    // How the leader went: hops drawn and walked to their end (and as a share of those drawn), turned back, passed
+    // through without a stop, stops made, sudden stops, halts it looked round at, bursts of speed, drops taken, stood
+    // up after dying; where it began (yards along the way from the door); and how the server saw it (B4, A4): the
+    // movement reports it made and how old the server's copy of its pose was at the decisions.
     table.Add("leader_hops", [this](Env const& env, uint32) { return float(_envs[env.Index].Hops); });
     table.Add("leader_route_share", [this](Env const& env, uint32)
     {
         EnvParty const& party = _envs[env.Index];
-        uint32 const ended = party.HopsDone + party.Skips;
-        return ended ? float(party.HopsDone) / float(ended) : 0.0f;
+        return party.Hops ? float(party.HopsDone) / float(party.Hops) : 0.0f;
     });
     table.Add("leader_reverse_hops", [this](Env const& env, uint32) { return float(_envs[env.Index].ReverseHops); });
     table.Add("leader_pass_hops", [this](Env const& env, uint32) { return float(_envs[env.Index].PassHops); });
@@ -362,15 +372,20 @@ void Animus::Curriculum::PartyFollowEncounter::AddEpisodeInfo(EpisodeInfoTable& 
     {
         return float(_envs[env.Index].StopsReached);
     });
-    table.Add("leader_skips", [this](Env const& env, uint32) { return float(_envs[env.Index].Skips); });
     table.Add("leader_sudden_stops", [this](Env const& env, uint32)
     {
         return float(_envs[env.Index].SuddenStops);
     });
     table.Add("leader_look_stops", [this](Env const& env, uint32) { return float(_envs[env.Index].LookStops); });
+    table.Add("leader_bursts", [this](Env const& env, uint32) { return float(_envs[env.Index].Bursts); });
     table.Add("leader_drops", [this](Env const& env, uint32) { return float(_envs[env.Index].Drops); });
     table.Add("leader_rises", [this](Env const& env, uint32) { return float(_envs[env.Index].LeaderRises); });
-    table.Add("leader_cast", [this](Env const& env, uint32) { return _envs[env.Index].Cast ? 1.0f : 0.0f; });
+    table.Add("leader_reports", [this](Env const& env, uint32) { return float(_envs[env.Index].Reports); });
+    table.Add("leader_report_age_ms", [this](Env const& env, uint32)
+    {
+        EnvParty const& party = _envs[env.Index];
+        return party.ReportAgeSamples ? float(party.ReportAgeSumMs) / float(party.ReportAgeSamples) : 0.0f;
+    });
     table.Add("start_along", [this](Env const& env, uint32) { return _envs[env.Index].StartAlong; });
     // Where it was (the route viewer's map and origin; follow_map as seek_map is the seek stage's).
     table.Add("follow_map", [this](Env const& env, uint32) { return float(_envs[env.Index].MapId); });
@@ -387,8 +402,10 @@ void Animus::Curriculum::PartyFollowEncounter::AddEpisodeInfo(EpisodeInfoTable& 
 
 void Animus::Curriculum::PartyFollowEncounter::ResetEpisode(Env& env)
 {
-    // The leader's character stays until Build replaces it (Deactivate and Teardown send it away).
+    // The old party goes before its members do (the followers' seats are rebuilt or reused after this); the leader's
+    // character stays until Build replaces it (Deactivate and Teardown send it away).
     EnvParty& party = _envs[env.Index];
+    Disband(party);
     bool const built = party.Built;
     party = EnvParty();
     party.Built = built;
@@ -427,7 +444,7 @@ void Animus::Curriculum::PartyFollowEncounter::BeforeLevel(Env& env)
     }
 
     // Anywhere along the way (decision 0033), once the map's way is known (its first episode starts at the door and
-    // works it out): a waypoint drawn, the party facing on along the way.
+    // works it out): a start waypoint drawn, the party facing on along the way.
     Way const* way = WayOf(mapId);
     if (!way || way->Starts.size() < 2 || !Chance(env, _scenario.Tuning().PartyFollow.StartAnywhere))
         return;
@@ -444,20 +461,19 @@ void Animus::Curriculum::PartyFollowEncounter::BeforeLevel(Env& env)
 bool Animus::Curriculum::PartyFollowEncounter::Build(Env& env, Map* map, uint8 level)
 {
     EnvParty& party = _envs[env.Index];
-    CurriculumTuning::PartyFollowTuning const& tuning = _scenario.Tuning().PartyFollow;
     Player* first = _scenario.SeatBot(env, 0);
     if (!first || !map)
         return false;
     // Last episode's leader goes; this one's is built fresh in the owner's slot.
+    Disband(party);
     if (party.Built)
         _scenario.ReleaseOwnerSeat(env);
     party = EnvParty();
     // The dungeon's own game objects -- its doors, levers, chests -- out of the way: the follow is movement alone, and
-    // a closed door (M3's lesson) would stop the leader's script at it.
+    // a closed door (M3's lesson) would stop the leader at it.
     ObjectPool::ClearOwn(map);
     // The ladder's rung, the fade's (an evaluation plays the training rung, as the seek stage's does).
     party.Rung = std::min<uint32>(SightDraw::Rung(_scenario.ShapingScale()), RUNGS - 1);
-    party.Cast = !env.Evaluating && tuning.CastShare > 0 && Chance(env, tuning.CastShare);
     party.MapId = map->GetId();
     party.Start = _scenario.SpawnPointFor(env);
 
@@ -487,12 +503,56 @@ bool Animus::Curriculum::PartyFollowEncounter::Build(Env& env, Map* map, uint8 l
     }
     party.At = std::min<uint32>(_starts[env.Index], uint32(way->Chain.size() - 1));
     party.StartAlong = way->Along[party.At];
+
+    // The leader's true pose starts where the world put it, and the server's copy is that pose at once: the one
+    // report every episode begins with (A4), so no follower sees a stale leader from the episode before.
+    party.X = leader->GetPositionX();
+    party.Y = leader->GetPositionY();
+    party.Z = leader->GetPositionZ();
+    party.Yaw = leader->GetOrientation();
+    party.Moving = false;
+    party.LastUpdateMs = env.EpisodeElapsedMs;
+    Report(env, party, leader, true);
+    party.LastLeaderZ = party.Z;
+    party.HasLeaderZ = true;
+
+    // The party's group: the leader leads it, as a player leads a realm's group; the followers are its members.
+    FormGroup(env, party, leader);
+
     party.Mode = Phase::Stopped;
     party.StopStartMs = env.EpisodeElapsedMs;
     party.StopUntilMs = env.EpisodeElapsedMs + START_PAUSE_MS;
-    party.LegStuckMs = _scenario.Data(env).Seats[_scenario.OwnerAgent()].StuckMs;
     ScheduleSudden(env, party);
     return true;
+}
+
+void Animus::Curriculum::PartyFollowEncounter::FormGroup(Env& env, EnvParty& party, Player* leader)
+{
+    Disband(party);
+    Group* group = new Group();
+    group->SetSimGroup(true);
+    if (!group->Create(leader))
+    {
+        LOG_ERROR("module.animus", "{}: env {} could not create the party's group", _scenario.Name(), env.Index);
+        delete group;
+        return;
+    }
+    sGroupMgr->AddGroup(group);
+    EnvState const& data = _scenario.Data(env);
+    for (uint32 seat = 0; seat < data.ActiveSeats && seat < GROUP_SEATS; ++seat)
+        if (Player* bot = _scenario.SeatBot(env, seat); bot && !group->AddMember(bot))
+            LOG_ERROR("module.animus", "{}: env {} could not add seat {} to the party's group", _scenario.Name(),
+                env.Index, seat);
+    party.PartyGroup = group;
+}
+
+void Animus::Curriculum::PartyFollowEncounter::Disband(EnvParty& party)
+{
+    if (!party.PartyGroup)
+        return;
+    // Disband removes it from the group manager and deletes it.
+    party.PartyGroup->Disband(true);
+    party.PartyGroup = nullptr;
 }
 
 std::vector<Position> Animus::Curriculum::PartyFollowEncounter::RouteStops(uint32 mapId)
@@ -537,12 +597,11 @@ Animus::Curriculum::PartyFollowEncounter::Way const* Animus::Curriculum::PartyFo
         cursor = stop;
     }
     Way& way = _ways[map->GetId()];
-    way = MakeWay(door, stops, legs, _scenario.Tuning().PartyFollow.WaypointYards, LEG_SHORT_YARDS, DROP_YARDS);
-    way.Blocked = std::vector<std::atomic<uint8>>(way.Steps.size());
+    way = MakeWay(door, stops, legs, _scenario.Tuning().PartyFollow.WaypointYards, LEG_SHORT_YARDS, DROP_YARDS,
+        CLIMB_PER_YARD, STEP_UP_YARDS);
     // The way's terrain and collision, loaded now on the base map (every instance of the map reads it), on the world
     // thread: a party started or led far along the way stood on grids nobody had loaded, the loads were deferred past
-    // the decision, and the controller found no floor and fell through the world (2026-10-12). The constructor loads
-    // the stage's spawn points' grids the same way; the way reaches far past them.
+    // the decision, and the controller found no floor and fell through the world (2026-10-12).
     if (Map* base = sMapMgr->CreateBaseMap(map->GetId()))
     {
         constexpr float REACH = 40.0f;
@@ -557,11 +616,9 @@ Animus::Curriculum::PartyFollowEncounter::Way const* Animus::Curriculum::PartyFo
                 }
         for (auto const& [x, y] : grids)
             base->EnsureGridCreated(GridCoord(x, y));
-        LOG_INFO("module.animus", "{}: map {} follow way: {} grids along it loaded", _scenario.Name(), map->GetId(),
-            grids.size());
     }
     // The starts: the waypoints with the ground under them at their own height and no floor just above (the server's
-    // heights; the map's grids load on demand here, on the world thread). The door is always one.
+    // heights; the map's grids are loaded above). The door is always one.
     for (uint32 index : way.Waypoints)
     {
         Position& corner = way.Chain[index];
@@ -575,11 +632,12 @@ Animus::Curriculum::PartyFollowEncounter::Way const* Animus::Curriculum::PartyFo
             way.Starts.push_back(index);
     }
     uint32 const cuts = uint32(std::count(way.Steps.begin(), way.Steps.end(), Step::Cut));
-    uint32 const drops = uint32(std::count(way.Steps.begin(), way.Steps.end(), Step::Drop));
-    LOG_INFO("module.animus", "{}: map {} follow way: {} legs, {} corners, {:.0f} yd, {} waypoints ({} starts: the "
-        "others' ground is not at their height), {} drops, {} cut (the leader never crosses a cut, nor climbs a drop)",
+    uint32 const oneWay = uint32(std::count_if(way.Steps.begin(), way.Steps.end(),
+        [](Step step) { return step == Step::DownForward || step == Step::DownBackward; }));
+    LOG_INFO("module.animus", "{}: map {} follow way: {} legs, {} corners, {:.0f} yd, {} waypoints ({} starts), {} "
+        "steps downhill only (a follower could not climb them back), {} cut (the leader never crosses a cut)",
         _scenario.Name(), map->GetId(), legs.size(), way.Chain.size(), way.Along.empty() ? 0.0f : way.Along.back(),
-        way.Waypoints.size(), way.Starts.size(), drops, cuts);
+        way.Waypoints.size(), way.Starts.size(), oneWay, cuts);
     return &way;
 }
 
@@ -606,6 +664,7 @@ void Animus::Curriculum::PartyFollowEncounter::Stop(Env const& env, EnvParty& pa
 {
     CurriculumTuning::PartyFollowTuning const& tuning = _scenario.Tuning().PartyFollow;
     party.Mode = Phase::Stopped;
+    party.Moving = false;
     party.StopStartMs = env.EpisodeElapsedMs;
     party.StopUntilMs = env.EpisodeElapsedMs + ms;
     party.LookFromMs = 0;
@@ -663,7 +722,7 @@ bool Animus::Curriculum::PartyFollowEncounter::PickHop(Env const& env, EnvParty&
     std::vector<uint32> found = candidates(back);
     if (found.empty())
     {
-        // At an end of the way, or before a drop it cannot climb: the other way.
+        // At an end of the way, or before a step it cannot walk that way: the other way.
         back = !back;
         found = candidates(back);
     }
@@ -684,22 +743,24 @@ bool Animus::Curriculum::PartyFollowEncounter::PickHop(Env const& env, EnvParty&
     uint32 const target = found[std::uniform_int_distribution<std::size_t>(0, found.size() - 1)(Rng(env))];
     party.Target = target;
     party.Hop.clear();
-    party.HopIndex.clear();
     if (target > at)
         for (uint32 index = at + 1; index <= target; ++index)
-        {
             party.Hop.push_back(way->Chain[index]);
-            party.HopIndex.push_back(index);
-        }
     else
         for (uint32 index = at; index-- > target;)
-        {
             party.Hop.push_back(way->Chain[index]);
-            party.HopIndex.push_back(index);
-        }
     party.Corner = 0;
     party.HopStops = !Chance(env, tuning.PassChance);
-    party.HopWalk = party.Rung < tuning.WalkRungs || Chance(env, tuning.WalkChance);
+    // A burst of speed for some of the hop (B4): a Sprint, a Dash, as a player uses them.
+    party.BurstRate = 1.0f;
+    party.BurstUntilMs = 0;
+    if (party.Rung >= tuning.BurstFromRung && Chance(env, tuning.BurstChance))
+    {
+        party.BurstRate = Uniform(env, std::max(1.0f, tuning.BurstMin), std::max(tuning.BurstMin, tuning.BurstMax));
+        party.BurstUntilMs = env.EpisodeElapsedMs + uint32(Uniform(env, tuning.BurstSecondsMin,
+            std::max(tuning.BurstSecondsMin, tuning.BurstSecondsMax)) * 1000.0f);
+        ++party.Bursts;
+    }
     ++party.Hops;
     if (back)
         ++party.ReverseHops;
@@ -708,20 +769,18 @@ bool Animus::Curriculum::PartyFollowEncounter::PickHop(Env const& env, EnvParty&
     return true;
 }
 
-void Animus::Curriculum::PartyFollowEncounter::Steer(Env& env, EnvParty& party, Player* leader)
+void Animus::Curriculum::PartyFollowEncounter::Walk(Env& env, EnvParty& party, Player* leader, uint32 dt)
 {
     CurriculumTuning::PartyFollowTuning const& tuning = _scenario.Tuning().PartyFollow;
-    SeatState& seat = _scenario.Data(env).Seats[_scenario.OwnerAgent()];
     uint32 const now = env.EpisodeElapsedMs;
+    float const seconds = float(dt) / 1000.0f;
+
     // Where it stands in its plan: a stop over (the hop it was on goes on after a sudden stop or a step back; else
-    // the next hop), a sudden stop due, a hop's end reached, a hop given up.
+    // the next hop), a sudden stop due.
     if (party.Mode == Phase::Stopped && now >= party.StopUntilMs)
     {
         if (party.Corner < party.Hop.size() || PickHop(env, party))
-        {
             party.Mode = Phase::Walking;
-            party.LegStuckMs = seat.StuckMs;
-        }
         else
             Stop(env, party, NOWHERE_STOP_MS, false);
     }
@@ -732,41 +791,62 @@ void Animus::Curriculum::PartyFollowEncounter::Steer(Env& env, EnvParty& party, 
             float(std::max(tuning.SuddenStopMinMs, tuning.SuddenStopMaxMs))));
         if (party.Rung >= tuning.BackStepFromRung && Chance(env, tuning.BackStepChance))
         {
-            // A few yards back the way it came, then the stop.
-            float const yaw = leader->GetOrientation() + float(M_PI);
-            party.BackTo.Relocate(leader->GetPositionX() + std::cos(yaw) * tuning.BackStepYards,
-                leader->GetPositionY() + std::sin(yaw) * tuning.BackStepYards, leader->GetPositionZ());
+            // A few yards back the way it came (facing kept, as a player backs up), then the stop.
+            party.BackTo.Relocate(party.X - std::cos(party.Yaw) * tuning.BackStepYards,
+                party.Y - std::sin(party.Yaw) * tuning.BackStepYards, party.Z);
             party.Mode = Phase::BackStep;
             party.BackStopMs = ms;
-            party.LegStuckMs = seat.StuckMs;
         }
         else
             Stop(env, party, ms, true);
         ScheduleSudden(env, party);
     }
-    if (party.Mode == Phase::BackStep && (leader->GetExactDist2d(&party.BackTo) <= 1.0f
-        || seat.StuckMs - std::min(seat.StuckMs, party.LegStuckMs) >= tuning.GiveUpMs))
-        Stop(env, party, party.BackStopMs, true);
-    if (party.Mode == Phase::Walking)
+    if (now >= party.BurstUntilMs)
+        party.BurstRate = 1.0f;
+
+    // The run: at the leader's run speed (a burst on top), along the hop's corners, or back to the point of a step
+    // back; the facing is the way it goes.
+    float const speed = leader->GetSpeed(LEADER_MOVE) * party.BurstRate;
+    auto const toward = [&](Position const& target, float& budget, bool face) -> bool
     {
-        // The corners of the hop, no query: on past each one reached (every one a step carried it past, not only
-        // the next), and the nearest when it has strayed (a fall, a step back).
-        while (party.Corner < party.Hop.size() && leader->GetExactDist2d(&party.Hop[party.Corner]) <= LEADER_ARRIVE)
-            ++party.Corner;
-        if (party.Corner < party.Hop.size() && leader->GetExactDist2d(&party.Hop[party.Corner]) > LEADER_STRAY)
+        float const dx = target.GetPositionX() - party.X;
+        float const dy = target.GetPositionY() - party.Y;
+        float const dz = target.GetPositionZ() - party.Z;
+        float const away = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (face && (dx != 0.0f || dy != 0.0f))
+            party.Yaw = WrapYaw(std::atan2(dy, dx));
+        if (away <= budget || away <= LEADER_ARRIVE)
         {
-            float nearest = std::numeric_limits<float>::max();
-            for (std::size_t corner = 0; corner < party.Hop.size(); ++corner)
-                if (float const away = leader->GetExactDist(&party.Hop[corner]); away < nearest)
-                {
-                    nearest = away;
-                    party.Corner = uint32(corner);
-                }
+            party.X = target.GetPositionX();
+            party.Y = target.GetPositionY();
+            party.Z = target.GetPositionZ();
+            budget -= std::min(budget, away);
+            return true;
         }
-        bool const arrived = party.Corner >= party.Hop.size();
-        bool const stuck = seat.StuckMs - std::min(seat.StuckMs, party.LegStuckMs) >= tuning.GiveUpMs;
-        if (arrived)
+        float const share = budget / away;
+        party.X += dx * share;
+        party.Y += dy * share;
+        party.Z += dz * share;
+        budget = 0.0f;
+        return false;
+    };
+    if (party.Mode == Phase::BackStep)
+    {
+        float budget = speed * seconds;
+        party.Moving = true;
+        if (toward(party.BackTo, budget, false))
+            Stop(env, party, party.BackStopMs, true);
+    }
+    else if (party.Mode == Phase::Walking)
+    {
+        float budget = speed * seconds;
+        party.Moving = true;
+        while (budget > 0.0f && party.Corner < party.Hop.size())
+            if (toward(party.Hop[party.Corner], budget, true))
+                ++party.Corner;
+        if (party.Corner >= party.Hop.size())
         {
+            // The hop's end: a stop there, or straight on to the next.
             party.At = party.Target;
             party.Hop.clear();
             party.Corner = 0;
@@ -777,85 +857,20 @@ void Animus::Curriculum::PartyFollowEncounter::Steer(Env& env, EnvParty& party, 
                 Stop(env, party, uint32(StopSeconds(party.Rung, tuning.StopSecondsFirst, tuning.StopSecondsLast)
                     * Uniform(env, 0.6f, 1.4f) * 1000.0f), true);
             }
-            else if (PickHop(env, party))
-                party.LegStuckMs = seat.StuckMs;
-            else
+            else if (!PickHop(env, party))
                 Stop(env, party, NOWHERE_STOP_MS, false);
         }
-        else if (stuck)
-        {
-            // Given up: the step into the corner it could not reach is blocked that way for good, and it stands where
-            // it is on the way (the nearest corner of the chain it may walk on from) and draws again.
-            ++party.Skips;
-            BlockStep(party);
-            // The first give-ups of each map, told: where the leader stood, the corner it walked to and what lay
-            // between (the leader wandered on the Deadmines and Ragefire ways without finishing a hop, 2026-10-12).
-            bool tell = false;
-            {
-                std::lock_guard<std::mutex> lock(_routesLock);
-                tell = _skipsTold[party.MapId]++ < SKIPS_TOLD;
-            }
-            if (tell && party.Corner < party.Hop.size())
-            {
-                Position const& corner = party.Hop[party.Corner];
-                Map* map = leader->GetMap();
-                LOG_INFO("module.animus", "{}: map {} leader gave up hop {} -> {} at corner {}/{}: leader ({:.1f}, {:.1f}, "
-                    "{:.1f}) ground {:.1f}; corner ({:.1f}, {:.1f}, {:.1f}) ground {:.1f}; {:.1f} yd away, {:.1f} yd "
-                    "up; walking {}, wall {}, keys fwd {} strafe {} turn {:.2f}", _scenario.Name(), party.MapId, party.At,
-                    party.Target, party.Corner, party.Hop.size(), leader->GetPositionX(), leader->GetPositionY(),
-                    leader->GetPositionZ(), map->GetHeight(leader->GetPositionX(), leader->GetPositionY(),
-                    leader->GetPositionZ() + 2.0f), corner.GetPositionX(), corner.GetPositionY(),
-                    corner.GetPositionZ(), map->GetHeight(corner.GetPositionX(), corner.GetPositionY(),
-                    corner.GetPositionZ() + 2.0f), leader->GetExactDist2d(&corner),
-                    corner.GetPositionZ() - leader->GetPositionZ(), party.HopWalk, seat.Mover.TickWall,
-                    int32(seat.Controls.Held.Forward), int32(seat.Controls.Held.Strafe), seat.Controls.Held.TurnRate);
-            }
-            if (Way const* way = WayOf(party.MapId))
-            {
-                float nearest = std::numeric_limits<float>::max();
-                for (uint32 index = 0; index < way->Chain.size(); ++index)
-                    if (float const away = leader->GetExactDist(&way->Chain[index]); away < nearest)
-                    {
-                        nearest = away;
-                        party.At = index;
-                    }
-            }
-            party.Hop.clear();
-            party.Corner = 0;
-            Stop(env, party, NOWHERE_STOP_MS / 5, false);
-        }
     }
-    // The keys: the seek helper's toward the hop's next corner while it walks (or the point a step back); while it
-    // stands, nothing but a look round now and then. Not before the controller has started this episode (a bearing
-    // from a default body would be from nowhere).
-    Movement::ControlState held;
-    if (seat.Mover.Started())
+    else
     {
-        if (party.Mode == Phase::BackStep)
-        {
-            held = Movement::Seek(seat.Mover.Body, party.BackTo.GetPositionX(), party.BackTo.GetPositionY());
-            held.Walk = true;
-        }
-        else if (party.Mode == Phase::Walking && party.Corner < party.Hop.size())
-        {
-            Position const& corner = party.Hop[party.Corner];
-            held = Movement::Seek(seat.Mover.Body, corner.GetPositionX(), corner.GetPositionY());
-            held.Walk = party.HopWalk;
-            // Stuck, as a player gets out of it: a jump at a lip from half a second on, and from two seconds a step
-            // to one side and then the other, a second each (the stock path climbs rock lips a player's controller
-            // walks into, 2026-10-12). GiveUpMs later the hop is given up and the step marked blocked.
-            if (seat.StuckRunMs >= UNSTICK_JUMP_MS)
-                held.Jump = true;
-            if (seat.StuckRunMs >= UNSTICK_SIDESTEP_MS)
-                held.Strafe = (seat.StuckRunMs / 1000) % 2 ? 1 : -1;
-        }
-        else if (party.Mode == Phase::Stopped && party.LookUntilMs)
+        // Standing; looking round now and then, a turn at LookRate, and maybe one back the other way.
+        party.Moving = false;
+        if (party.LookUntilMs)
         {
             if (now >= party.LookFromMs && now < party.LookUntilMs)
-                held.TurnRate = party.LookRate;
+                party.Yaw = WrapYaw(party.Yaw + party.LookRate * seconds);
             else if (now >= party.LookUntilMs && party.LookAgain && now + 1500 < party.StopUntilMs)
             {
-                // The look back the other way.
                 party.LookAgain = false;
                 party.LookFromMs = now + 300;
                 party.LookUntilMs = party.LookFromMs + uint32(Uniform(env, 800.0f, 2000.0f));
@@ -863,33 +878,29 @@ void Animus::Curriculum::PartyFollowEncounter::Steer(Env& env, EnvParty& party, 
             }
         }
     }
-    held.FaceTurnApplied = seat.Controls.Held.FaceTurnApplied;
-    seat.Controls.Held = held;
 }
 
-void Animus::Curriculum::PartyFollowEncounter::BlockStep(EnvParty const& party)
+void Animus::Curriculum::PartyFollowEncounter::Report(Env const& env, EnvParty& party, Player* leader, bool force)
 {
-    if (party.Corner >= party.HopIndex.size())
+    // When a player's client would have sent a movement packet (Movement::Cadence, what the forge's own controller
+    // clients send): a start or a stop at once, a facing turned 0.1 rad from the last report at once, else a
+    // heartbeat every 500 ms while moving. Between reports the server -- and so every follower -- holds the last one.
+    uint32 const now = env.EpisodeElapsedMs;
+    bool const due = force || !party.Reported || party.Moving != party.RepMoving
+        || std::fabs(YawDifference(party.Yaw, party.RepYaw)) >= Movement::Cadence::MOUSE_FACING_THRESHOLD
+        || (party.Moving && now - std::min(now, party.RepMs) >= Movement::Cadence::HEARTBEAT_MS);
+    if (!due)
         return;
-    Way const* way = WayOf(party.MapId);
-    if (!way)
-        return;
-    // The step from the corner before (the hop's start for its first corner) into the corner it could not reach.
-    uint32 const to = party.HopIndex[party.Corner];
-    uint32 const from = party.Corner ? party.HopIndex[party.Corner - 1] : party.At;
-    if (from == to || std::max(from, to) - std::min(from, to) != 1)
-        return;
-    uint32 const step = std::min(from, to);
-    uint8 const bit = to > from ? BLOCKED_FORWARD : BLOCKED_BACK;
-    if (step >= way->Blocked.size())
-        return;
-    uint8 const before = const_cast<Way*>(way)->Blocked[step].fetch_or(bit, std::memory_order_relaxed);
-    if (!(before & bit))
-        LOG_INFO("module.animus", "{}: map {} follow way: step {} ({:.1f}, {:.1f}, {:.1f}) -> ({:.1f}, {:.1f}, {:.1f}) "
-            "blocked {} (the leader could not walk it)", _scenario.Name(), party.MapId, step,
-            way->Chain[step].GetPositionX(), way->Chain[step].GetPositionY(), way->Chain[step].GetPositionZ(),
-            way->Chain[step + 1].GetPositionX(), way->Chain[step + 1].GetPositionY(),
-            way->Chain[step + 1].GetPositionZ(), to > from ? "forward" : "back");
+    leader->UpdatePosition(party.X, party.Y, party.Z, party.Yaw, false);
+    leader->SetUnitMovementFlags(party.Moving ? MOVEMENTFLAG_FORWARD : MOVEMENTFLAG_NONE);
+    party.RepX = party.X;
+    party.RepY = party.Y;
+    party.RepZ = party.Z;
+    party.RepYaw = party.Yaw;
+    party.RepMoving = party.Moving;
+    party.RepMs = now;
+    party.Reported = true;
+    ++party.Reports;
 }
 
 void Animus::Curriculum::PartyFollowEncounter::RespawnFollowers(Env& env, EnvParty& party)
@@ -923,29 +934,36 @@ void Animus::Curriculum::PartyFollowEncounter::Update(Env& env)
     Player* leader = Leader(env);
     if (!leader || !leader->IsInWorld())
         return;
-    uint32 const agent = _scenario.OwnerAgent();
-    SeatState& seat = _scenario.Data(env).Seats[agent];
+    uint32 const now = env.EpisodeElapsedMs;
+    uint32 const dt = now - std::min(now, party.LastUpdateMs);
+    party.LastUpdateMs = now;
+    SeatState& seat = _scenario.Data(env).Seats[_scenario.OwnerAgent()];
     // The leader is the script's, not a seat: a fall that killed it (Ragefire's cavern) stands it up where it fell,
     // and it is never left hurt.
     if (!leader->IsAlive())
     {
         if (!seat.Combat.DeathMs)
-            seat.Combat.DeathMs = std::max<uint32>(1, env.EpisodeElapsedMs);
-        if (env.EpisodeElapsedMs >= seat.Combat.DeathMs + LEADER_RISE_MS)
+            seat.Combat.DeathMs = std::max<uint32>(1, now);
+        if (now >= seat.Combat.DeathMs + LEADER_RISE_MS)
         {
-            Position const here(leader->GetPositionX(), leader->GetPositionY(), leader->GetPositionZ(),
-                leader->GetOrientation());
-            RiseAtEntrance(leader, seat, here, env.EpisodeElapsedMs);
+            Position const here(party.X, party.Y, party.Z, party.Yaw);
+            RiseAtEntrance(leader, seat, here, now);
             seat.Combat.DeathMs = 0;
             ++party.LeaderRises;
+            party.X = leader->GetPositionX();
+            party.Y = leader->GetPositionY();
+            party.Z = leader->GetPositionZ();
+            party.Moving = false;
+            Report(env, party, leader, true);
         }
         return;
     }
     if (leader->GetHealth() < leader->GetMaxHealth())
         leader->SetFullHealth();
+
+    Walk(env, party, leader, dt);
     // Drops the leader took: a fall of DROP_YARDS or more, counted once when it lands.
-    float const z = leader->GetPositionZ();
-    if (party.HasLeaderZ && z < party.LastLeaderZ - 0.5f)
+    if (party.HasLeaderZ && party.Z < party.LastLeaderZ - 0.5f)
     {
         if (!party.Falling)
             party.FallFromZ = party.LastLeaderZ;
@@ -953,31 +971,16 @@ void Animus::Curriculum::PartyFollowEncounter::Update(Env& env)
     }
     else if (party.Falling)
     {
-        if (party.FallFromZ - z >= DROP_YARDS)
+        if (party.FallFromZ - party.Z >= DROP_YARDS)
             ++party.Drops;
         party.Falling = false;
     }
-    party.LastLeaderZ = z;
+    party.LastLeaderZ = party.Z;
     party.HasLeaderZ = true;
-    // A cast leader plays its own row (its objective is its hop's end, View); the script's leader holds its keys.
-    if (party.Cast)
-    {
-        Way const* way = WayOf(party.MapId);
-        bool const reached = way && party.Target < way->Chain.size()
-            && leader->GetExactDist2d(&way->Chain[party.Target]) <= LEADER_ARRIVE;
-        if (party.Hop.empty() || reached)
-        {
-            if (reached)
-            {
-                party.At = party.Target;
-                ++party.HopsDone;
-                ++party.StopsReached;
-            }
-            PickHop(env, party);
-        }
-        return;
-    }
-    Steer(env, party, leader);
+    Report(env, party, leader, false);
+    // How stale the server's copy is at this decision: what the followers observe after this update.
+    party.ReportAgeSumMs += now - std::min(now, party.RepMs);
+    ++party.ReportAgeSamples;
 }
 
 bool Animus::Curriculum::PartyFollowEncounter::SelectTarget(Env const& /*env*/, uint32 /*seat*/, Unit*& target)
@@ -1016,47 +1019,15 @@ float Animus::Curriculum::PartyFollowEncounter::PartyYards(Env const& env, uint3
     return bot->GetExactDist(&middle);
 }
 
-void Animus::Curriculum::PartyFollowEncounter::View(Env const& env, uint32 seat, SeatView& view) const
+void Animus::Curriculum::PartyFollowEncounter::View(Env const& /*env*/, uint32 seat, SeatView& view) const
 {
-    EnvParty const& party = _envs[env.Index];
-    if (seat == _scenario.OwnerAgent())
-    {
-        // The cast leader: its hop's end is its objective, as a marker was in the stage it was trained on.
-        Way const* way = WayOf(party.MapId);
-        view.HasObjective = way && !party.Hop.empty() && party.Target < way->Chain.size();
-        if (view.HasObjective)
-            view.Objective = way->Chain[party.Target];
+    // A follower has no objective point: the leader is found by sight, the minimap's dot and memory. Its party
+    // frames are its group's (PartyFramesBlock::FillFromGroup, in StageScenario::ViewSeat): the group's leader in
+    // the first slot, as a realm's are, read at the minimap's radius.
+    if (seat >= GROUP_SEATS)
         return;
-    }
-    // A follower has no objective point: the leader is found by sight, the minimap's dot and memory.
     view.HasObjective = false;
-    Player* bot = view.Bot;
-    if (!bot)
-        return;
     view.MinimapYards = _scenario.Tuning().PartyFollow.MinimapYards;
-    Movement::BodyState const* body = view.Body;
-    float const selfX = body ? body->X : bot->GetPositionX();
-    float const selfY = body ? body->Y : bot->GetPositionY();
-    // The party has no core group (the leader is the owner's slot), so its frames are the encounter's to name: the
-    // leader, then the other followers in seat order. Each is read as any party frame is (PartyFramesBlock::FillFrame:
-    // the minimap's dot only within its radius, and only on the same map; the seat's memory of where it was seen).
-    view.Frames.fill(SeatView::PartyFrame());
-    ObjectGuid const focus = view.Focus ? *view.Focus : ObjectGuid::Empty;
-    auto const frame = [&](uint32 slot, Player const* member, bool leads)
-    {
-        PartyFramesBlock::FillFrame(view.Frames[slot], member, leads, bot, selfX, selfY, view.Facing,
-            view.MinimapYards, focus, view.Seen, view.Party, view.NowMs);
-    };
-    uint32 slot = 0;
-    if (Player const* leader = Leader(env); leader && leader->IsInWorld())
-        frame(slot++, leader, true);
-    EnvState const& data = _scenario.Data(env);
-    for (uint32 other = 0; other < data.ActiveSeats && slot < GROUP_MEMBERS; ++other)
-    {
-        Player const* member = other == seat ? nullptr : _scenario.SeatBot(env, other);
-        if (member && member->IsInWorld())
-            frame(slot++, member, false);
-    }
 }
 
 void Animus::Curriculum::PartyFollowEncounter::Reward(Env& env, uint32 seatIndex, Player* bot, RewardLedger& ledger)
@@ -1106,34 +1077,54 @@ void Animus::Curriculum::PartyFollowEncounter::Reward(Env& env, uint32 seatIndex
     CurriculumTuning::SeekTuning const& costs = _scenario.Tuning().Seek;
     if (stuckMs)
         ledger.AddFixed(RewardTerm::Stuck, -costs.Stuck * float(stuckMs) / 1000.0f);
+    float charge = 0.0f;
     if (wallMs)
     {
         Movement::ControlState const& held = seat.Controls.Held;
         UnitMoveType const kind = held.Walk ? MOVE_WALK : held.Forward < 0 && !held.Strafe ? MOVE_RUN_BACK : MOVE_RUN;
         float const asked = bot->GetSpeed(kind) * float(_scenario.StepMs(env)) / 1000.0f;
-        float const charge = Standing::WallCharge(float(wallMs) / 1000.0f, moved, asked, costs.Wall,
-            costs.WallSlide);
-        if (charge > 0.0f)
-            ledger.AddFixed(RewardTerm::Wall, -charge);
+        charge = Standing::WallCharge(float(wallMs) / 1000.0f, moved, asked, costs.Wall, costs.WallSlide);
     }
+    // The pin escalates as the seek stage's does (B3): the run of contiguous decisions that paid Wall multiplies the
+    // charge by 1 + t / Seek.WallEscalateSeconds, to Seek.WallEscalateMax; the run ends on a decision that paid none.
+    if (charge > 0.0f)
+    {
+        if (costs.WallEscalateSeconds > 0.0f)
+        {
+            float const run = float(follow.WallRunMs) / 1000.0f;
+            float const mid = run + 0.5f * float(wallMs) / 1000.0f;
+            float const mult = std::min(std::max(1.0f, costs.WallEscalateMax), 1.0f + mid / costs.WallEscalateSeconds);
+            follow.WallExtra += charge * (mult - 1.0f);
+            charge *= mult;
+        }
+        follow.WallRunMs += wallMs;
+        follow.WallPinMax = std::max(follow.WallPinMax, follow.WallRunMs);
+        ledger.AddFixed(RewardTerm::Wall, -charge);
+    }
+    else
+        follow.WallRunMs = 0;
     Player* leader = Leader(env);
     if (!leader || !leader->IsInWorld() || !leader->IsAlive() || leader->GetMapId() != bot->GetMapId())
     {
         follow.LastGap = -1.0f;
         return;
     }
+    // Everything below reads the leader as the server holds it: the pose of its last report (Report), as a follower
+    // on a realm reads a player's.
     float const distance = bot->GetExactDist(leader);
     follow.DistanceSum += distance;
     ++follow.Samples;
-    SeatState const& leaderSeat = _scenario.Data(env).Seats[_scenario.OwnerAgent()];
-    bool const leaderMoving = leaderSeat.Controls.Held.Forward != 0 || leaderSeat.Controls.Held.Strafe != 0;
+    bool const leaderMoving = party.RepMoving;
+    // Out of sight (B5): not in the camera's frame, and no line of sight to it either.
+    if (!CombatBlock::InView(seat.Seen, leader->GetGUID().GetRawValue()) && !bot->IsWithinLOSInMap(leader))
+        follow.OutOfSightMs += stepMs;
     uint32 const band = Standing::Band(distance, tuning.BandMin, tuning.BandMax, tuning.LostYards);
     if (band == 1)
     {
         follow.InBandMs += stepMs;
         ledger.Add(RewardTerm::FollowKept, tuning.Kept * seconds);
     }
-    // Drifting off: past DriftYards, or past DriftMovingYards (the band's edge) while the leader walks away -- watching
+    // Drifting off: past DriftYards, or past DriftMovingYards (the band's edge) while the leader runs away -- watching
     // it go is not waiting (decision 0034).
     else if (band == 2 && (distance > tuning.DriftYards || (leaderMoving && distance > tuning.DriftMovingYards)))
     {
@@ -1156,14 +1147,13 @@ void Animus::Curriculum::PartyFollowEncounter::Reward(Env& env, uint32 seatIndex
     }
     follow.LastGap = gap;
     // Waiting with a leader who has stood a moment (decision 0033): standing still in the band is paid, moving about
-    // in it is charged. Translation alone counts: turning and looking round are free.
+    // in it is charged. Translation alone counts: turning and looking round are free. The speed is the distance
+    // moved over the decision (B2: the body's velocity reads 0 on the ground, which paid every second as settled).
     bool const waiting = party.Mode == Phase::Stopped && !leaderMoving
         && env.EpisodeElapsedMs - std::min(env.EpisodeElapsedMs, party.StopStartMs) >= tuning.SettleAfterMs;
     if (waiting && band == 1)
     {
-        float speed = seconds > 0.0f ? moved / seconds : 0.0f;
-        if (seat.Mover.Started())
-            speed = std::sqrt(seat.Mover.Body.Vx * seat.Mover.Body.Vx + seat.Mover.Body.Vy * seat.Mover.Body.Vy);
+        float const speed = seconds > 0.0f ? moved / seconds : 0.0f;
         follow.WaitMs += stepMs;
         if (speed < tuning.SettleSpeed)
         {
@@ -1231,6 +1221,7 @@ void Animus::Curriculum::PartyFollowEncounter::Deactivate(Env& env)
 void Animus::Curriculum::PartyFollowEncounter::Teardown(Env& env)
 {
     EnvParty& party = _envs[env.Index];
+    Disband(party);
     if (party.Built)
         _scenario.ReleaseOwnerSeat(env);
     party.Built = false;

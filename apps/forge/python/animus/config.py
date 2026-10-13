@@ -245,6 +245,9 @@ class FadeConfig:
     # 2026-10-05: faded to 0 at output ~5 a dummy, then output fell to 1.1). "" = the plateau alone.
     gate_metric: str = ""
     gate_value: float = 0.0
+    # Rising gates (move4-follow rework, B1): one gate per rung the ladder stands on, gate_values[rung] (the last entry
+    # for a rung past the list's end). Empty: gate_value for every rung.
+    gate_values: tuple[float, ...] = ()
     # Off: a rung steps as soon as the gate is met at an evaluation (at least one evaluation at the rung), without
     # waiting for the score to plateau -- the dungeon plan's rule that every ladder steps at once on its gate (M1, 2026-10-06:
     # the fade sat at x1 for ~20M steps on a rising score with the gate long met). Needs a gate_metric.
@@ -260,6 +263,12 @@ class FadeConfig:
         if not rungs or any(not 0.0 <= scale <= 1.0 for scale in rungs) or rungs[-1] != 0.0 \
                 or any(later >= earlier for earlier, later in zip(rungs, rungs[1:])):
             raise ValueError(f"fade.rungs: expected scales strictly falling within [0, 1] to 0, got {self.rungs!r}")
+        gates = tuple(float(value) for value in (self.gate_values or ()))
+        if gates and not self.gate_metric:
+            raise ValueError("fade.gate_values: needs a gate_metric")
+        if any(later < earlier for earlier, later in zip(gates, gates[1:])):
+            raise ValueError(f"fade.gate_values: expected gates that never fall, got {self.gate_values!r}")
+        self.gate_values = gates
         if self.window < 1:
             raise ValueError(f"fade.window: expected at least 1 evaluation, got {self.window!r}")
         if not self.regress_z > 0.0:

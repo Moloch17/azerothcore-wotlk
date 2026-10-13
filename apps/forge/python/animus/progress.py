@@ -176,6 +176,11 @@ class ProgressWriter:
             "best_kind": (controller.measure if controller else "") or "score",
             "best_env_steps": tracker.best_env_steps,
             "evals_since_best": tracker.evals_since_best,
+            # Whether the learning rates may anneal at a plateau now: the cost ladder at full price and the shaping
+            # ladder at its last rung (or a plateau-stepped one). forge status warns of an anneal only when this is
+            # set (move4-follow rework, B7); a gate-stepped ladder still climbing cannot anneal.
+            "anneal_allowed": bool(controller.costs.ready and (controller.fade.require_plateau or controller.fade.settled))
+            if controller is not None and hasattr(controller, "costs") and hasattr(controller, "fade") else None,
             # The convergence rule per class (animus.stage): who is done, who is not, and what the one furthest
             # from done is still missing.
             "converged_layouts": ",".join(controller.converged_layouts()) if controller else "",

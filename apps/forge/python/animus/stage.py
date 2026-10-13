@@ -148,6 +148,7 @@ class ShapingFade:
         self.enabled = bool(fade.enabled) and len(fade.rungs) > 0
         self.gate_metric = str(getattr(fade, "gate_metric", "") or "")
         self.gate_value = float(getattr(fade, "gate_value", 0.0))
+        self.gate_values = tuple(float(value) for value in (getattr(fade, "gate_values", ()) or ()))
         self.require_plateau = bool(getattr(fade, "require_plateau", True)) or not self.gate_metric
         self.gate_seen: float | None = None
         self.rungs = tuple(float(scale) for scale in fade.rungs)
@@ -262,9 +263,17 @@ class ShapingFade:
         self.gate_seen = float(value) if isinstance(value, (int, float)) else None
         self.gate_stderr = gate_stderr(summary, self.gate_metric, self.gate_seen)
 
+    @property
+    def rung_gate(self) -> float:
+        """The gate this rung must meet to step down: gate_values[rung] where the config gives rising gates (the last
+        for a rung past the list), else gate_value for every rung."""
+        if self.gate_values:
+            return self.gate_values[min(self.rung, len(self.gate_values) - 1)]
+        return self.gate_value
+
     def _gated(self) -> bool:
         """The gate metric has reached its value, or there is no gate."""
-        return not self.gate_metric or (self.gate_seen is not None and self.gate_seen >= self.gate_value)
+        return not self.gate_metric or (self.gate_seen is not None and self.gate_seen >= self.rung_gate)
 
     def _plateaued(self, env_steps: int, waited: int) -> bool:
         """The rung has been played long enough and the score has plateaued on it."""
@@ -336,7 +345,7 @@ class ShapingFade:
 
     def _why(self) -> str:
         if self.gate_metric and self.gate_seen is not None:
-            return f"plateaued with {self.gate_metric} {self.gate_seen:.3g} (gate {self.gate_value:g})"
+            return f"plateaued with {self.gate_metric} {self.gate_seen:.3g} (gate {self.rung_gate:g})"
         return "plateaued"
 
     def forget_scores(self) -> None:
@@ -415,7 +424,7 @@ class CostLadder(ShapingFade):
 
     def _why(self) -> str:
         if self.rung == 1 and self.gate_metric and self.gate_seen is not None:
-            return f"({self.gate_metric} {self.gate_seen:.3g} reached {self.gate_value:g})"
+            return f"({self.gate_metric} {self.gate_seen:.3g} reached {self.rung_gate:g})"
         return "plateaued"
 
     @property

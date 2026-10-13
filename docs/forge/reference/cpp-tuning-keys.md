@@ -370,7 +370,6 @@ through to `StandIn.Share`, so its default 0 is never consulted today (the "defe
 | PartyFollow | `PartyFollow.BlockHalfAngle` | 45.0f | float | - | `Encounters/PartyFollowEncounter.cpp:695` | move4_follow |
 | PartyFollow | `PartyFollow.Death` | 3.0f | float | - | `Encounters/PartyFollowEncounter.cpp:623` | move4_follow |
 | PartyFollow | `PartyFollow.MinimapYards` | 60.0f | float | - | `StageScenario.cpp:3211`, `Encounters/PartyFollowEncounter.cpp:573` | move4, group1, dungeon2-3 (every PartyFrames stage) |
-| PartyFollow | `PartyFollow.WalkRungs` | 1 | uint32 | - | `Encounters/PartyFollowEncounter.cpp:429` | move4_follow |
 | PartyFollow | `PartyFollow.SuddenFromRung` | 2 | uint32 | - | `Encounters/PartyFollowEncounter.cpp:312` | move4_follow |
 | PartyFollow | `PartyFollow.BackStepFromRung` | 3 | uint32 | - | `Encounters/PartyFollowEncounter.cpp:318`, `Encounters/PartyFollowEncounter.cpp:360` | move4_follow |
 | PartyFollow | `PartyFollow.StopSecondsFirst` | 8.0f | float | - | `Encounters/PartyFollowEncounter.cpp:390` | move4_follow |
@@ -382,7 +381,6 @@ through to `StandIn.Share`, so its default 0 is never consulted today (the "defe
 | PartyFollow | `PartyFollow.BackStepYards` | 4.0f | float | - | `Encounters/PartyFollowEncounter.cpp:364`, `Encounters/PartyFollowEncounter.cpp:365` | move4_follow |
 | PartyFollow | `PartyFollow.BackStepChance` | 30 | int32 | - | `Encounters/PartyFollowEncounter.cpp:360` | move4_follow |
 | PartyFollow | `PartyFollow.GiveUpMs` | 6000 | uint32 | - | `Encounters/PartyFollowEncounter.cpp:375`, `Encounters/PartyFollowEncounter.cpp:381` | move4_follow |
-| PartyFollow | `PartyFollow.CastShare` | 0 | int32 | - | `Encounters/PartyFollowEncounter.cpp:260` | move4_follow |
 | PartyFollow | `PartyFollow.StartAnywhere` | 75 | int32 | - | `Encounters/PartyFollowEncounter.cpp` (decision 0033) | move4_follow |
 | PartyFollow | `PartyFollow.WaypointYards` | 15.0 | float | - | `Encounters/PartyFollowEncounter.cpp` (decision 0033) | move4_follow |
 | PartyFollow | `PartyFollow.HopMinYards` | 20.0 | float | - | `Encounters/PartyFollowEncounter.cpp` (decision 0033) | move4_follow |
@@ -390,7 +388,6 @@ through to `StandIn.Share`, so its default 0 is never consulted today (the "defe
 | PartyFollow | `PartyFollow.ReverseChance` | 30 | int32 | - | `Encounters/PartyFollowEncounter.cpp` (decision 0033) | move4_follow |
 | PartyFollow | `PartyFollow.ReverseFromRung` | 1 | uint32 | - | `Encounters/PartyFollowEncounter.cpp` (decision 0033) | move4_follow |
 | PartyFollow | `PartyFollow.PassChance` | 35 | int32 | - | `Encounters/PartyFollowEncounter.cpp` (decision 0033) | move4_follow |
-| PartyFollow | `PartyFollow.WalkChance` | 20 | int32 | - | `Encounters/PartyFollowEncounter.cpp` (decision 0033) | move4_follow |
 | PartyFollow | `PartyFollow.LookChance` | 60 | int32 | - | `Encounters/PartyFollowEncounter.cpp` (decision 0033) | move4_follow |
 | PartyFollow | `PartyFollow.LookRate` | 1.2 | float | - | `Encounters/PartyFollowEncounter.cpp` (decision 0033) | move4_follow |
 | PartyFollow | `PartyFollow.Settled` | 0.02 | float | - | `Encounters/PartyFollowEncounter.cpp` (decision 0033) | move4_follow |
@@ -399,6 +396,12 @@ through to `StandIn.Share`, so its default 0 is never consulted today (the "defe
 | PartyFollow | `PartyFollow.SettleSpeed` | 0.5 | float | - | `Encounters/PartyFollowEncounter.cpp` (decision 0033) | move4_follow |
 | PartyFollow | `PartyFollow.DriftYards` | 20.0 | float | - | `Encounters/PartyFollowEncounter.cpp` (decision 0033) | move4_follow |
 | PartyFollow | `PartyFollow.Drift` | 0.01 | float | - | `Encounters/PartyFollowEncounter.cpp` (decision 0033) | move4_follow |
+| PartyFollow | `PartyFollow.BurstFromRung` | 1 | uint32 | - | `Encounters/PartyFollowEncounter.cpp` (move4-follow rework) | move4_follow |
+| PartyFollow | `PartyFollow.BurstChance` | 25 | int32 | - | `Encounters/PartyFollowEncounter.cpp` (move4-follow rework) | move4_follow |
+| PartyFollow | `PartyFollow.BurstMin` | 1.3 | float | - | `Encounters/PartyFollowEncounter.cpp` (move4-follow rework) | move4_follow |
+| PartyFollow | `PartyFollow.BurstMax` | 1.4 | float | - | `Encounters/PartyFollowEncounter.cpp` (move4-follow rework) | move4_follow |
+| PartyFollow | `PartyFollow.BurstSecondsMin` | 3.0 | float | - | `Encounters/PartyFollowEncounter.cpp` (move4-follow rework) | move4_follow |
+| PartyFollow | `PartyFollow.BurstSecondsMax` | 8.0 | float | - | `Encounters/PartyFollowEncounter.cpp` (move4-follow rework) | move4_follow |
 | Seek | `Seek.Arrive` | 3.0f | float | - | `Encounters/SeekEncounter.cpp:550` | move2_seek |
 | Seek | `Seek.StepCost` | 0.00025f | float | per decision scale (halved 2026-10-10, movement pacing M4: a pause costs half what it did; 2.1 a 420 s episode) | `Encounters/SeekEncounter.cpp` (`Reward`) | move2_seek |
 | Seek | `Seek.Death` | 6.0f | float | - | `Encounters/SeekEncounter.cpp:468` | move2_seek |

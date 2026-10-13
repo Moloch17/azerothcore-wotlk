@@ -376,21 +376,27 @@ namespace Animus::Curriculum
         } Respawn;
 
         /// **The party follow** (Opposition::PartyFollow, M4 move4_follow; dungeon-curriculum I5): a party of
-        /// followers keeps with a leader wandering a dungeon's way (decision 0033). The way is the stock PathGenerator's
-        /// path from the door through each boss's place, sampled into waypoints every WaypointYards; an episode starts
+        /// followers keeps with its group's leader wandering a dungeon's way (decision 0033; the move4-follow rework,
+        /// 2026-10-13). The way is the stock PathGenerator's path from the door through each boss's place, sampled
+        /// into waypoints every WaypointYards and kept to the steps a player's controller can walk; an episode starts
         /// at a random one (StartAnywhere percent of episodes; else the door) and the leader hops from waypoint to
         /// waypoint, HopMinYards-HopMaxYards along the way, backwards ReverseChance percent of hops from
-        /// ReverseFromRung (never back up a drop it cannot climb, never across a cut in the way), standing at the end of
-        /// a hop for StopSeconds of the rung or passing on (PassChance percent), until the clock ends. The leader is in
-        /// the owner's slot, moved by the player controller: the script's keys toward the corners of its hop (a script,
-        /// never a bot input: the thing followed, not a teacher, decision 0002) or, a CastShare percent of training
-        /// episodes, a frozen checkpoint's (the learner's cast.agents.leader).
+        /// ReverseFromRung (never back up a drop, never across a cut), standing at the end of a hop for StopSeconds of
+        /// the rung or passing on (PassChance percent), until the clock ends. The leader is a player in the owner's
+        /// slot and the real leader of the party's group (what the followers' party frames read, as on a realm),
+        /// moved along the path by the encounter at run speed: a script, never a bot input (the thing followed, not a
+        /// teacher, decision 0002), and never a learner's row.
         ///
-        /// **The ladder** (the shaping fade's rungs, SightDraw::Rung): the leader walks below WalkRungs and walks
-        /// WalkChance percent of its hops above; from SuddenFromRung it also stops where nobody expects it, for
+        /// **The ladder** (the shaping fade's rungs, SightDraw::Rung; move4-follow rework): the leader always runs.
+        /// Rung 0 hops forward only, standing StopSecondsFirst at a hop's end; from ReverseFromRung it turns back some
+        /// hops and (BurstFromRung) runs in bursts, BurstMin-BurstMax times its speed for BurstSecondsMin-Max seconds,
+        /// BurstChance percent of hops; from SuddenFromRung it also stops where nobody expects it, for
         /// SuddenStopMinMs-SuddenStopMaxMs, every SuddenGapMin-SuddenGapMax seconds; from BackStepFromRung some of
         /// those stops step back BackStepYards first. At LookChance percent of its stops it looks round (turns at
-        /// LookRate rad/s for a second or two, once or twice), as a player at a halt does.
+        /// LookRate rad/s for a second or two, once or twice), as a player at a halt does. The server sees it as it
+        /// sees a player: its position and facing reach the server at a client's report cadence (ReportCadence: at
+        /// once on a start, stop or a facing change of 0.1 rad, else every 500 ms while it moves), and that is what
+        /// the followers' frames, dots, recall and rewards read.
         ///
         /// Paid to each follower: Kept per second within [BandMin, BandMax] yards of the leader (FollowKept,
         /// Outcome); Regroup at each stop of the leader's of at least RegroupMinStopMs, once, on coming into the band,
@@ -417,7 +423,6 @@ namespace Animus::Curriculum
             float BlockHalfAngle = 45.0f;
             float Death = 3.0f;
             float MinimapYards = 60.0f;
-            uint32 WalkRungs = 1;
             uint32 SuddenFromRung = 2;
             uint32 BackStepFromRung = 3;
             float StopSecondsFirst = 8.0f;
@@ -429,7 +434,6 @@ namespace Animus::Curriculum
             float BackStepYards = 4.0f;
             int32 BackStepChance = 30;
             uint32 GiveUpMs = 6000;
-            int32 CastShare = 0;
             // The wandering route (decision 0033).
             int32 StartAnywhere = 75;
             float WaypointYards = 15.0f;
@@ -438,7 +442,6 @@ namespace Animus::Curriculum
             int32 ReverseChance = 30;
             uint32 ReverseFromRung = 1;
             int32 PassChance = 35;
-            int32 WalkChance = 20;
             int32 LookChance = 60;
             float LookRate = 1.2f;
             // Waiting with a still leader, and drifting off (decision 0033).
@@ -448,6 +451,13 @@ namespace Animus::Curriculum
             float SettleSpeed = 0.5f;
             float DriftYards = 20.0f;
             float Drift = 0.01f;
+            // Speed bursts (move4-follow rework, B4).
+            uint32 BurstFromRung = 1;
+            int32 BurstChance = 25;
+            float BurstMin = 1.3f;
+            float BurstMax = 1.4f;
+            float BurstSecondsMin = 3.0f;
+            float BurstSecondsMax = 8.0f;
             // Closing the gap (decision 0034): Shaping per yard of the gap past BandMax closed (and charged per yard
             // opened), the gap capped at ApproachCapYards; Drift from DriftMovingYards while the leader walks.
             float Approach = 0.005f;
@@ -1054,7 +1064,6 @@ namespace Animus::Curriculum
             f("PartyFollow.BlockHalfAngle", tuning.PartyFollow.BlockHalfAngle);
             f("PartyFollow.Death", tuning.PartyFollow.Death);
             f("PartyFollow.MinimapYards", tuning.PartyFollow.MinimapYards);
-            f("PartyFollow.WalkRungs", tuning.PartyFollow.WalkRungs);
             f("PartyFollow.SuddenFromRung", tuning.PartyFollow.SuddenFromRung);
             f("PartyFollow.BackStepFromRung", tuning.PartyFollow.BackStepFromRung);
             f("PartyFollow.StopSecondsFirst", tuning.PartyFollow.StopSecondsFirst);
@@ -1066,7 +1075,6 @@ namespace Animus::Curriculum
             f("PartyFollow.BackStepYards", tuning.PartyFollow.BackStepYards);
             f("PartyFollow.BackStepChance", tuning.PartyFollow.BackStepChance);
             f("PartyFollow.GiveUpMs", tuning.PartyFollow.GiveUpMs);
-            f("PartyFollow.CastShare", tuning.PartyFollow.CastShare);
             f("PartyFollow.StartAnywhere", tuning.PartyFollow.StartAnywhere);
             f("PartyFollow.WaypointYards", tuning.PartyFollow.WaypointYards);
             f("PartyFollow.HopMinYards", tuning.PartyFollow.HopMinYards);
@@ -1074,7 +1082,6 @@ namespace Animus::Curriculum
             f("PartyFollow.ReverseChance", tuning.PartyFollow.ReverseChance);
             f("PartyFollow.ReverseFromRung", tuning.PartyFollow.ReverseFromRung);
             f("PartyFollow.PassChance", tuning.PartyFollow.PassChance);
-            f("PartyFollow.WalkChance", tuning.PartyFollow.WalkChance);
             f("PartyFollow.LookChance", tuning.PartyFollow.LookChance);
             f("PartyFollow.LookRate", tuning.PartyFollow.LookRate);
             f("PartyFollow.Settled", tuning.PartyFollow.Settled);
@@ -1083,6 +1090,12 @@ namespace Animus::Curriculum
             f("PartyFollow.SettleSpeed", tuning.PartyFollow.SettleSpeed);
             f("PartyFollow.DriftYards", tuning.PartyFollow.DriftYards);
             f("PartyFollow.Drift", tuning.PartyFollow.Drift);
+            f("PartyFollow.BurstFromRung", tuning.PartyFollow.BurstFromRung);
+            f("PartyFollow.BurstChance", tuning.PartyFollow.BurstChance);
+            f("PartyFollow.BurstMin", tuning.PartyFollow.BurstMin);
+            f("PartyFollow.BurstMax", tuning.PartyFollow.BurstMax);
+            f("PartyFollow.BurstSecondsMin", tuning.PartyFollow.BurstSecondsMin);
+            f("PartyFollow.BurstSecondsMax", tuning.PartyFollow.BurstSecondsMax);
             f("PartyFollow.Approach", tuning.PartyFollow.Approach);
             f("PartyFollow.ApproachCapYards", tuning.PartyFollow.ApproachCapYards);
             f("PartyFollow.DriftMovingYards", tuning.PartyFollow.DriftMovingYards);

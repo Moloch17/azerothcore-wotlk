@@ -379,9 +379,10 @@ per second beyond 40 yd, `Blocking` 0.05 per second within 2.5 yd ahead of a mov
 3.0,
 `Stuck` and `Wall` 0.02 fixed. No Shaping.
 
-**Ladder.** `fade.rungs [1.0, 0.5, 0.25, 0.0]` = a slow steady leader (walking), running, sudden stops, sudden stops and
-steps back (`PartyFollow.WalkRungs 1, SuddenFromRung 2, BackStepFromRung 3`); gate `follow_kept_share` 0.75,
-`require_plateau: false`; `costs.enabled: false` with its gate removed.
+**Ladder.** `fade.rungs [1.0, 0.5, 0.25, 0.0]` = a running leader hopping forward with long stops, turning back with
+bursts of speed, sudden stops, sudden stops and steps back (`PartyFollow.ReverseFromRung 1, BurstFromRung 1,
+SuddenFromRung 2, BackStepFromRung 3`); rising gates on `follow_kept_share`, `gate_values [0.65, 0.70, 0.75]`
+(decision 0035), `require_plateau: false`; `costs.enabled: false` with its gate removed.
 
 **Evaluation.** Every 10M, 96 episodes (seeded wanderings: decision 0033), Wailing Caverns held out (`wailing`, 48
 episodes every evaluation), arms `no_camera`, `no_map`, `no_memory`, `no_party`, `no_recall` (48 each, every second
@@ -394,8 +395,9 @@ rejoined, leader_route_share, difficulty, wall_seconds, died. Targets: follow_ke
 regroup_seconds <= 5, lost_seconds <= 5, blocking_seconds <= 3, rejoined >= 0.9, wall_seconds <= 2, died <= 0.02.
 `convergence.measure: follow_kept_share`.
 
-**Unproven.** Never trained. The scripted leader is the one remaining script ([decision
-0002](../decisions/0002-no-scripted-teachers.md)).
+**The leader** (decision 0035): a player in the owner's slot, the real leader of the party's group, run along the
+stock path by the encounter and relocated on the server only at a client's report cadence -- the one remaining script
+([decision 0002](../decisions/0002-no-scripted-teachers.md): the thing followed, not a teacher), never a learner row.
 
 **Tests.** None (removed 2026-10-07).
 

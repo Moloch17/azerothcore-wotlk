@@ -25,62 +25,63 @@
 #include "Env.h"
 #include "Position.h"
 #include <array>
-#include <atomic>
 #include <map>
 #include <mutex>
 #include <random>
 #include <vector>
 
+class Group;
+
 namespace Animus::Curriculum
 {
     /// **The party follow** (Opposition::PartyFollow; dungeon-curriculum I5, the M4 stage move4_follow): a party of
-    /// learned followers (ArenaDefinition::PartySize, 1-4) keeps with a leader wandering an emptied dungeon.
+    /// learned followers (ArenaDefinition::PartySize, 1-4) keeps with the leader of its group wandering an emptied
+    /// dungeon (decision 0033; the move4-follow rework, 2026-10-13).
     ///
-    /// **The way** (decision 0033): the stock PathGenerator's path from the dungeon's door through each of its bosses'
-    /// places in turn (InstanceBosses' follow rows), worked out once per map and kept as one chain of corners, each
-    /// step of it marked walkable both ways, a drop (forward only: nothing climbs back up Ragefire's cavern) or a cut
-    /// (where the path stopped short of a stop: neither way). Waypoints sample the chain every PartyFollow.
-    /// WaypointYards and at each boss's place.
+    /// **The way:** the stock PathGenerator's path from the dungeon's door through each of its bosses' places in turn
+    /// (InstanceBosses' follow rows), worked out once per map and kept as one chain of corners, each step of it
+    /// marked walkable both ways, downhill one way only (a drop or a slope a player's controller cannot climb back:
+    /// MakeWay's rule, so the leader never leads where a follower cannot go) or a cut (where the path stopped short of
+    /// a stop: neither way). Waypoints sample the chain every PartyFollow.WaypointYards and at each boss's place.
     ///
-    /// **The leader** is in the owner's slot (StageScenario::OwnerAgent, BuildOwnerSeat), moved by the player
-    /// controller and reported to the server as a client, never a spline. An episode starts at a random waypoint
-    /// (StartAnywhere percent; else the door), so no follower can learn one route by heart; the leader then hops from
-    /// waypoint to waypoint along the chain, HopMinYards-HopMaxYards at a time, backwards ReverseChance percent of
-    /// hops from ReverseFromRung, standing at a hop's end for StopSeconds of the rung or passing on (PassChance), and
-    /// never stops wandering before the clock ends. Scripted, its keys are the seek helper's (Movement::Seek) toward
-    /// the next corner of its hop -- the navmesh drives the one scripted mover, the thing followed, never a policy's
-    /// input or a teacher of it (decisions 0002, 0019 and 0033). At a halt it looks round now and then (LookChance),
-    /// as a player does. PartyFollow.CastShare percent of training episodes hand it to a frozen checkpoint instead
-    /// (stage.json cast "leader"; its objective is its hop's end); evaluations always keep the script. Its draws come
-    /// from the episode's own generator, seeded by the evaluation seed in an evaluation, so an evaluation plays the
-    /// same routes every time.
+    /// **The leader** is a player in the owner's slot (StageScenario::BuildOwnerSeat) and the real leader of the
+    /// party's group (a sim Group it leads, the followers its members, as a realm's group is), so the followers'
+    /// party frames read it the way they read a human leader on a realm (PartyFramesBlock::FillFromGroup). It has no
+    /// learner's row and no controller: the encounter moves it along the way at its run speed, hop by hop -- a
+    /// script, the thing followed and never a teacher of the policy (decisions 0002, 0019); the deliberate exception
+    /// to "controller-only movement", which is for learning seats. An episode starts at a random waypoint
+    /// (StartAnywhere percent; else the door); the leader hops HopMinYards-HopMaxYards along the way, backwards
+    /// ReverseChance percent of hops from ReverseFromRung, passing on without a stop PassChance percent, in bursts of
+    /// speed (BurstFromRung) now and then, standing at a hop's end for StopSeconds of the rung, looking round at some
+    /// halts (LookChance), until the clock ends. Its draws come from the episode's own generator, seeded by the
+    /// evaluation seed in an evaluation, so an evaluation replays the same wanderings.
     ///
-    /// **The ladder** (the shaping fade's rungs, SightDraw::Rung; an evaluation plays the training rung): rung 0 a
-    /// slow, steady leader (walking, long stops, forward hops); rung 1 running, now and then walking, and turning back
-    /// some hops; rung 2 also stopping unannounced; rung 3 stopping unannounced more often and sometimes stepping back
-    /// first.
+    /// **Seen as a player is seen:** the server learns a player's position only from its movement packets. The
+    /// leader's true pose moves every update, but the server's copy of it (its Player's position and facing, which
+    /// every follower's frame, dot, recall, camera and reward reads) is set only when a client would have sent one
+    /// (Movement::Cadence): at once on a start, a stop or a facing change of 0.1 rad, else every 500 ms while it
+    /// moves, and once at the episode's start. leader_report_age_ms says how stale that copy was at the decisions.
     ///
-    /// **What a follower knows of the leader**: the party frames, the minimap's dots and its memory of where each
-    /// member was last seen and at what pace (the party frames block, revision 3), what the camera shows (the entities
-    /// block) and its own recurrent memory -- never a bearing through a wall beyond the minimap.
+    /// **The ladder** (the shaping fade's rungs, SightDraw::Rung; an evaluation plays the training rung): rung 0
+    /// forward hops and long stops; rung 1 turning back and speed bursts; rung 2 also stopping unannounced; rung 3
+    /// stopping unannounced more often and sometimes stepping back first.
     ///
     /// **Death** (dungeon-curriculum I4, EntranceRespawn): a follower that dies is out Respawn.DelayMs, then alive at
     /// the episode's start point (the door, or the waypoint it began at) at full health and power, and walks back; the
-    /// episode never ends on it. A dead scripted leader is stood up where it fell (it is the script's, not a seat).
+    /// episode never ends on it. A dead leader is stood up where it fell (it is the script's, not a seat).
     ///
     /// Paid to each follower (PartyFollow.*): FollowKept per second in the band and Settled per second standing still
-    /// in it beside a leader who stands (Outcome), Regroup at each stop of the leader's (Outcome); Fidget per second
-    /// moving about in the band then, Drift per second straying past DriftYards, Lost per second past LostYards and
-    /// Blocking per second in a moving leader's way (Costs), Death (Cost); Stuck and Wall at their fixed price
-    /// (Seek.*). Nothing is shaped: the stage's purpose is paid only as Outcome.
+    /// in it beside a leader who stands (Outcome), Regroup at each stop of the leader's (Outcome); Approach (Shaping)
+    /// per yard of the gap closed; Fidget per second moving about in the band then, Drift per second straying past
+    /// DriftYards (DriftMovingYards while the leader moves), Lost per second past LostYards and Blocking per second in
+    /// a moving leader's way (Costs), Death (Cost); Stuck and Wall at their fixed price (Seek.*), Wall escalating as
+    /// the seek stage's does (Seek.WallEscalateSeconds). The stage's purpose is paid only as Outcome.
     class PartyFollowEncounter final : public Encounter
     {
     public:
         PartyFollowEncounter(StageScenario& scenario, uint32 envs);
 
-        /// Whether the episode's leader is a frozen checkpoint's (its row is played); else the script's keys.
-        [[nodiscard]] bool IsCast(Env const& env) const { return _envs[env.Index].Cast; }
-        /// Whether the episode has a leader in the owner's slot for the controller to move.
+        /// Whether the episode has a leader in the owner's slot.
         [[nodiscard]] bool HasLeader(Env const& env) const { return _envs[env.Index].Built; }
 
         [[nodiscard]] std::vector<RewardTerm> RewardTerms() const override;
@@ -104,35 +105,30 @@ namespace Animus::Curriculum
         enum class Step : uint8
         {
             Both,           // walkable either way
-            Drop,           // a fall forward: walked down, never back up
+            DownForward,    // a drop, or a slope too steep to climb: walked forward (down), never back
+            DownBackward,   // the same the other way: walked backward (down), never forward
             Cut,            // the path stopped short here: neither way
         };
 
         /// **A dungeon's way**: its chain of corners from the door through each boss's place, the yards along it to
-        /// each, each step's kind (Steps[i]: Chain[i] to Chain[i + 1]) and the waypoints (chain indexes, ascending).
+        /// each, each step's kind (Steps[i]: Chain[i] to Chain[i + 1]), the waypoints (chain indexes, ascending) and
+        /// the ones a party may start at (their ground found at their height, no floor just above).
         struct Way
         {
             std::vector<Position> Chain;
             std::vector<float> Along;
             std::vector<Step> Steps;
             std::vector<uint32> Waypoints;
-            /// The waypoints a party may be spawned at: the ground found under each, at its height, and no floor just
-            /// above it (a path corner's height can be a lower storey's or under the floor: a party spawned there fell
-            /// through the world, 2026-10-12). Hops still go to every waypoint: the leader steers by x and y.
             std::vector<uint32> Starts;
-            /// Steps the leader could not walk (BLOCKED_FORWARD, BLOCKED_BACK, per step): marked when it gave up a hop
-            /// there after jumping and side-stepping -- a rock lip or a ledge the stock path climbs and a player's
-            /// controller does not (2026-10-12) -- and never crossed that way again by any env on the map.
-            std::vector<std::atomic<uint8>> Blocked;
         };
-        static constexpr uint8 BLOCKED_FORWARD = 1;
-        static constexpr uint8 BLOCKED_BACK = 2;
 
         /// The way through `stops` from `door` as `legs` (the corners of each leg, the stock PathGenerator's), with
         /// waypoints every `waypointYards` and at each leg's end; a leg that ended more than `shortYards` from its
-        /// stop is cut there, and a fall of `dropYards` or more between two corners is a drop.
+        /// stop is cut there. A step that climbs `dropYards` or more, or more than `climbPerYard` of its run plus
+        /// `stepUp` (what a player's controller steps up), is walked downhill only.
         [[nodiscard]] static Way MakeWay(Position const& door, std::vector<Position> const& stops,
-            std::vector<std::vector<Position>> const& legs, float waypointYards, float shortYards, float dropYards);
+            std::vector<std::vector<Position>> const& legs, float waypointYards, float shortYards, float dropYards,
+            float climbPerYard, float stepUp);
         /// Whether the leader may walk the chain from index `from` to index `to` (either way along it).
         [[nodiscard]] static bool Walkable(Way const& way, uint32 from, uint32 to);
 
@@ -164,6 +160,7 @@ namespace Animus::Curriculum
             uint32 WaitMs = 0;                  // in the band beside a leader who has stood SettleAfterMs
             uint32 SettledMs = 0;               // ... standing still
             uint32 FidgetMs = 0;                // ... moving about
+            uint32 OutOfSightMs = 0;            // the leader neither in the camera's frame nor in line of sight
             float LastGap = -1.0f;              // the capped gap past the band at the last reward, -1 none yet
             float ApproachYards = 0.0f;         // the gap's yards closed, less opened, this episode
             float MovedYards = 0.0f;            // yards walked this episode (alive, between rewards)
@@ -176,6 +173,9 @@ namespace Animus::Curriculum
             uint32 LastRewardMs = 0;
             uint32 LastStuckMs = 0;
             uint32 LastWallMs = 0;
+            uint32 WallRunMs = 0;               // contiguous decisions that paid Wall (the escalation's run)
+            uint32 WallPinMax = 0;              // the longest such run
+            float WallExtra = 0.0f;             // what the escalation added
             float LastX = 0.0f;
             float LastY = 0.0f;
             bool HasLastPos = false;
@@ -184,9 +184,9 @@ namespace Animus::Curriculum
         struct EnvParty
         {
             bool Built = false;
-            bool Cast = false;
             uint32 Rung = 0;
             uint32 MapId = 0;
+            Group* PartyGroup = nullptr;
             /// Where the episode began, and where a dead follower rises: the door, or the waypoint drawn.
             Position Start;
             float StartAlong = 0.0f;            // yards along the way from the door
@@ -196,11 +196,8 @@ namespace Animus::Curriculum
             uint32 At = 0;
             uint32 Target = 0;
             std::vector<Position> Hop;
-            std::vector<uint32> HopIndex;       // each hop corner's chain index
             uint32 Corner = 0;
             bool HopStops = true;
-            bool HopWalk = true;
-            uint32 LegStuckMs = 0;              // the leader's controller-stuck time when the hop began
             Phase Mode = Phase::Stopped;
             uint32 StopUntilMs = 0;
             uint32 StopStartMs = 0;
@@ -212,16 +209,38 @@ namespace Animus::Curriculum
             uint32 LookUntilMs = 0;
             float LookRate = 0.0f;
             bool LookAgain = false;
+            // A burst of speed: the rate on its run speed until BurstUntilMs.
+            uint32 BurstUntilMs = 0;
+            float BurstRate = 1.0f;
+
+            // The leader's true pose, moved every update, and the pose the server holds of it: set at a player's
+            // report cadence (Report), what everything the followers read comes from.
+            float X = 0.0f;
+            float Y = 0.0f;
+            float Z = 0.0f;
+            float Yaw = 0.0f;
+            bool Moving = false;
+            float RepX = 0.0f;
+            float RepY = 0.0f;
+            float RepZ = 0.0f;
+            float RepYaw = 0.0f;
+            bool RepMoving = false;
+            uint32 RepMs = 0;                   // when the server's copy was last set
+            bool Reported = false;              // ... at all this episode
+            uint32 LastUpdateMs = 0;            // the clock at the last Update (its dt)
+            uint64 ReportAgeSumMs = 0;          // the copy's age at each update, summed
+            uint32 ReportAgeSamples = 0;
 
             uint32 Hops = 0;
             uint32 HopsDone = 0;
             uint32 ReverseHops = 0;
             uint32 PassHops = 0;
             uint32 StopsReached = 0;
-            uint32 Skips = 0;
             uint32 SuddenStops = 0;
             uint32 RegroupStops = 0;
             uint32 LookStops = 0;
+            uint32 Bursts = 0;
+            uint32 Reports = 0;
             uint32 Drops = 0;
             uint32 LeaderRises = 0;
             float LastLeaderZ = 0.0f;
@@ -243,6 +262,9 @@ namespace Animus::Curriculum
         /// MapMgr::Update or inside the map's own task (a PartyFollow stage resets on the world thread: StageScenario::
         /// ResetsStayOnMap).
         Way const* WorkOutWay(Map* map, Player* walker, Position const& door);
+        /// The party's group: the leader leading, the followers its members (Build); gone with Disband.
+        void FormGroup(Env& env, EnvParty& party, Player* leader);
+        void Disband(EnvParty& party);
         /// Yards from seat `seat` to the party: to the leader while it is alive, else to the living others' centroid;
         /// negative with nobody to be with.
         [[nodiscard]] float PartyYards(Env const& env, uint32 seat, Player const* bot) const;
@@ -253,11 +275,10 @@ namespace Animus::Curriculum
         void ScheduleSudden(Env const& env, EnvParty& party) const;
         /// Draws the leader's next hop from where it stands (party.At); false when the way has nowhere to go.
         bool PickHop(Env const& env, EnvParty& party) const;
-        /// The leader's keys this decision (the script's).
-        void Steer(Env& env, EnvParty& party, Player* leader);
-        /// The leader gave its hop up at its current corner: the step into that corner is marked blocked that way
-        /// (Way::Blocked), for every env on the map.
-        void BlockStep(EnvParty const& party);
+        /// Moves the leader's true pose by `dt` ms along its plan (the script).
+        void Walk(Env& env, EnvParty& party, Player* leader, uint32 dt);
+        /// Sets the server's copy of the leader's pose when a client would have reported it (or at `force`).
+        void Report(Env const& env, EnvParty& party, Player* leader, bool force);
         void RespawnFollowers(Env& env, EnvParty& party);
 
         /// The episode's generator (seeded in BeforeLevel: from the evaluation seed in an evaluation).
@@ -272,9 +293,6 @@ namespace Animus::Curriculum
         mutable std::mutex _routesLock;
         std::map<uint32, std::vector<Position>> _routes;
         std::map<uint32, Way> _ways;
-        /// Give-ups told per map (the first SKIPS_TOLD of each, in the log).
-        std::map<uint32, uint32> _skipsTold;
-        static constexpr uint32 SKIPS_TOLD = 25;
     };
 }
 

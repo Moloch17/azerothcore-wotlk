@@ -22,9 +22,8 @@ seed_from: latest
 # A ceiling, not a target: convergence ends the stage.
 total_env_steps: 250000000
 
-# The leader's row is the script's: no checkpoint walks dungeon routes yet, so PartyFollow.CastShare is 0 and no cast
-# is configured. stage.json declares no "leader" cast entry at CastShare 0, and the scripted leader's row is never
-# present, so nothing trains it. When a checkpoint exists: CastShare > 0 and cast.agents.leader.
+# The leader is a player in the owner's slot and the real leader of the party's group, moved along the stock path by
+# the encounter (move4-follow rework): no learner row, no cast.
 
 mappo:
   # Episodes of 300 s with the plan's longer horizon (perception-goals §3: 0.999 from M4).
@@ -87,9 +86,11 @@ eval:
   report: [follow_kept_share, follow_distance_mean, settled_share, wait_seconds, wait_fidget_seconds, drift_seconds,
            regroup_share, regroup_seconds, regroups, regroup_stops, lost_seconds, blocking_seconds, deaths, rises,
            rejoins, rejoin_seconds, rejoined, dead_seconds, leader_route_share, leader_hops, leader_reverse_hops,
-           leader_pass_hops, leader_stops_reached, leader_skips, leader_sudden_stops, leader_look_stops, leader_drops,
-           leader_rises, leader_cast, start_along, difficulty, at_top_rung, course_kinks, control_changes_per_minute,
-           wall_seconds, stuck_seconds, died, reward_follow_kept, reward_settled, reward_regroup, reward_drift,
+           leader_pass_hops, leader_stops_reached, leader_sudden_stops, leader_look_stops, leader_bursts, leader_drops,
+           leader_rises, leader_reports, leader_report_age_ms, leader_out_of_sight_seconds, start_along, difficulty,
+           at_top_rung, course_kinks, control_changes_per_minute, wall_seconds, steep_seconds, edge_seconds,
+           wall_pin_max_seconds, wall_extra_charge, stuck_seconds, died, reward_follow_kept, reward_settled,
+           reward_regroup, reward_drift,
            reward_lost, reward_blocking, reward_death, reward_fidget, reward_stuck, reward_wall, reward_jitter,
            reward_effort, reward_repeat, approach_yards, follower_yards, reward_approach]
 
@@ -98,8 +99,9 @@ eval:
 # deaths and rejoins, the leader's progress along its hops, and the rung. Targets are a readout, never a gate.
 status:
   headline: [follow_kept_share, settled_share, regroup_share, regroup_seconds, drift_seconds, lost_seconds,
-             blocking_seconds, deaths, rejoin_seconds, rejoined, leader_route_share, difficulty, wall_seconds, died,
-             follower_yards, approach_yards]
+             blocking_seconds, deaths, rejoin_seconds, rejoined, leader_route_share, leader_report_age_ms,
+             leader_out_of_sight_seconds, difficulty, wall_seconds, steep_seconds, edge_seconds, died, follower_yards,
+             approach_yards]
   targets:
     # M2's targets are not M4's measures (null drops an inherited key; a target must be in the headline).
     found: null
@@ -138,14 +140,17 @@ convergence:
   # its ladder (at_top_rung).
   measure: follow_kept_share
 
-# The ladder (a slow, steady leader -> running and turning back -> sudden stops -> sudden stops and steps back) is the
-# fade's: the stage pays no shaping, so the fade moves the rung alone. It steps as soon as the kept share at the rung is
-# 0.75 or more at an evaluation -- the gate alone, never waiting on a plateau (require_plateau: false) or on the cost
-# ladder.
+# The ladder (a running leader hopping forward with long stops -> turning back, speed bursts -> sudden stops -> sudden
+# stops and steps back) is the fade's: the stage pays no shaping, so the fade moves the rung alone. It steps as soon as
+# the kept share at the rung meets the rung's gate at an evaluation -- the gate alone, never waiting on a plateau
+# (require_plateau: false) or on the cost ladder.
 fade:
   rungs: [1.0, 0.5, 0.25, 0.0]
   gate_metric: follow_kept_share
+  # Rising gates (move4-follow rework, B1): the ladder steps off rung 0 at 0.65 kept, off rung 1 at 0.70, off rung 2 at
+  # 0.75 -- so it can start climbing, and still ends where the plan's bar is.
   gate_value: 0.75
+  gate_values: [0.65, 0.70, 0.75]
   require_plateau: false
 
 # No cost ladder: Stuck, Wall, Drift, Lost, Fidget, Blocking and Death are at their fixed price from the first step

@@ -73,7 +73,7 @@ user = "eli"
 address = "192.168.0.65"
 role = "worker"
 path = "~/animus-forge"
-in_cluster = true    # back 2026-10-11 (owner: "rebuild, and bring in the whole cluster")
+in_cluster = false     # out since the move4-follow rework (2026-10-13): ~250 sps on 4 cores cost the host more than it added
 
 [doctor]                # thresholds for `forgectl doctor` (a key left out takes the default shown)
 disk_min_gb = 30                 # free space under a checkout below this is a FAIL (the deploy gate's number)

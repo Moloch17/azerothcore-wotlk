@@ -550,7 +550,11 @@ void AnimusForge::ProgressMonitor::ReportTraining(ForgeConfig const& config, Sim
                     uint32(needed), needed == 1 ? "" : "s") });
         }
 
-        if (sinceBest && *sinceBest > 0 && *patience - *sinceBest <= 1 && evals && *evals > 0)
+        // Only where an anneal can happen: a gate-stepped shaping ladder still climbing holds the learning rates
+        // whatever the patience count says (the learner's anneal_allowed; an older progress.json has none: warn).
+        std::optional<double> const annealAllowed = progress->Number("anneal_allowed");
+        if (sinceBest && *sinceBest > 0 && *patience - *sinceBest <= 1 && evals && *evals > 0
+            && (!annealAllowed || *annealAllowed > 0))
             warnings.push_back(Acore::StringFormat("Convergence: {} of {} evaluations without a new overall best; "
                 "the learning rates anneal from here", uint32(*sinceBest), uint32(*patience)));
     }

@@ -6454,24 +6454,28 @@ AnimusForge.Curriculum.Respawn.RejoinYards = 15.0
 
 #
 #    AnimusForge.Curriculum.PartyFollow.*
-#        The party follow (move4_follow; dungeon-curriculum I5; decision 0033): a party keeps with a leader wandering
-#        a dungeon's way -- the stock path from the door through its bosses' places, sampled into waypoints every
-#        WaypointYards. StartAnywhere percent of episodes start at a random waypoint (else the door); the leader hops
-#        HopMinYards-HopMaxYards along the way at a time, backwards ReverseChance percent of hops from ReverseFromRung
-#        (never back up a drop, never across a cut), standing StopSecondsFirst (rung 0) to StopSecondsLast (top rung)
-#        at a hop's end, or passing on PassChance percent of hops, until the clock ends. It walks below WalkRungs and
-#        WalkChance percent of its hops above; from SuddenFromRung it also stops unannounced for
+#        The party follow (move4_follow; dungeon-curriculum I5; decisions 0033, 0034; the move4-follow rework,
+#        2026-10-13): a party keeps with its group's leader, a player the encounter runs along the dungeon's way --
+#        the stock path from the door through its bosses' places, sampled into waypoints every WaypointYards and kept
+#        to the steps a player's controller can walk. StartAnywhere percent of episodes start at a random waypoint
+#        (else the door); the leader hops HopMinYards-HopMaxYards along the way at a time, always at run speed,
+#        backwards ReverseChance percent of hops from ReverseFromRung, standing StopSecondsFirst (rung 0) to
+#        StopSecondsLast (top rung) at a hop's end, or passing on PassChance percent of hops, until the clock ends.
+#        From BurstFromRung, BurstChance percent of hops run BurstMin-BurstMax times its speed for
+#        BurstSecondsMin-BurstSecondsMax s; from SuddenFromRung it also stops unannounced for
 #        SuddenStopMinMs-SuddenStopMaxMs every SuddenGapMin-SuddenGapMax s; from BackStepFromRung BackStepChance
 #        percent of those stops step back BackStepYards first. At LookChance percent of its halts it looks round at
-#        LookRate rad/s. A hop the leader is stuck on for GiveUpMs is given up. CastShare percent of training
-#        episodes give the leader to a frozen checkpoint (cast.agents.leader; 0 until one exists that walks dungeons).
+#        LookRate rad/s. The server holds its pose as a player's, from reports at a client's cadence (a start, a stop
+#        or a 0.1 rad turn at once, else every 500 ms while moving): what the followers' frames, dots, recall and
+#        rewards read.
 #        Paid: Kept per second within [BandMin, BandMax] yd of the leader (Outcome); Settled per second standing still
 #        (under SettleSpeed yd/s) in the band once the leader has stood SettleAfterMs (Outcome), Fidget per second
 #        moving about in the band then (Cost); Regroup once per leader stop of RegroupMinStopMs or more, on coming
-#        into the band, x (1 - seconds/RegroupWindow) (Outcome); Drift per second between DriftYards and LostYards,
-#        Lost per second past LostYards and Blocking per second within BlockYards ahead of a moving leader, inside
-#        BlockHalfAngle degrees of its facing (Costs); Death per death (Cost). Party members within MinimapYards are
-#        the minimap's dots (the party frames block).
+#        into the band, x (1 - seconds/RegroupWindow) (Outcome); Approach (Shaping) per yard of the gap past BandMax
+#        closed (charged per yard opened, the gap capped at ApproachCapYards); Drift per second between DriftYards and
+#        LostYards (from DriftMovingYards while the leader moves), Lost per second past LostYards and Blocking per
+#        second within BlockYards ahead of a moving leader, inside BlockHalfAngle degrees of its facing (Costs); Death
+#        per death (Cost). Party members within MinimapYards are the minimap's dots (the party frames block).
 AnimusForge.Curriculum.PartyFollow.BandMin = 3.0
 AnimusForge.Curriculum.PartyFollow.BandMax = 10.0
 AnimusForge.Curriculum.PartyFollow.LostYards = 40.0
@@ -6485,7 +6489,6 @@ AnimusForge.Curriculum.PartyFollow.BlockYards = 2.5
 AnimusForge.Curriculum.PartyFollow.BlockHalfAngle = 45.0
 AnimusForge.Curriculum.PartyFollow.Death = 3.0
 AnimusForge.Curriculum.PartyFollow.MinimapYards = 60.0
-AnimusForge.Curriculum.PartyFollow.WalkRungs = 1
 AnimusForge.Curriculum.PartyFollow.SuddenFromRung = 2
 AnimusForge.Curriculum.PartyFollow.BackStepFromRung = 3
 AnimusForge.Curriculum.PartyFollow.StopSecondsFirst = 8.0
@@ -6497,7 +6500,6 @@ AnimusForge.Curriculum.PartyFollow.SuddenGapMax = 30.0
 AnimusForge.Curriculum.PartyFollow.BackStepYards = 4.0
 AnimusForge.Curriculum.PartyFollow.BackStepChance = 30
 AnimusForge.Curriculum.PartyFollow.GiveUpMs = 6000
-AnimusForge.Curriculum.PartyFollow.CastShare = 0
 AnimusForge.Curriculum.PartyFollow.StartAnywhere = 75
 AnimusForge.Curriculum.PartyFollow.WaypointYards = 15.0
 AnimusForge.Curriculum.PartyFollow.HopMinYards = 20.0
@@ -6505,7 +6507,6 @@ AnimusForge.Curriculum.PartyFollow.HopMaxYards = 90.0
 AnimusForge.Curriculum.PartyFollow.ReverseChance = 30
 AnimusForge.Curriculum.PartyFollow.ReverseFromRung = 1
 AnimusForge.Curriculum.PartyFollow.PassChance = 35
-AnimusForge.Curriculum.PartyFollow.WalkChance = 20
 AnimusForge.Curriculum.PartyFollow.LookChance = 60
 AnimusForge.Curriculum.PartyFollow.LookRate = 1.2
 AnimusForge.Curriculum.PartyFollow.Settled = 0.02
@@ -6514,6 +6515,14 @@ AnimusForge.Curriculum.PartyFollow.SettleAfterMs = 1500
 AnimusForge.Curriculum.PartyFollow.SettleSpeed = 0.5
 AnimusForge.Curriculum.PartyFollow.DriftYards = 20.0
 AnimusForge.Curriculum.PartyFollow.Drift = 0.01
+#   speed bursts from BurstFromRung (move4-follow rework): BurstChance percent of hops run BurstMin-BurstMax times the
+#   speed for BurstSecondsMin-BurstSecondsMax seconds
+AnimusForge.Curriculum.PartyFollow.BurstFromRung = 1
+AnimusForge.Curriculum.PartyFollow.BurstChance = 25
+AnimusForge.Curriculum.PartyFollow.BurstMin = 1.3
+AnimusForge.Curriculum.PartyFollow.BurstMax = 1.4
+AnimusForge.Curriculum.PartyFollow.BurstSecondsMin = 3.0
+AnimusForge.Curriculum.PartyFollow.BurstSecondsMax = 8.0
 #   closing the gap (decision 0034, Shaping: fades up the ladder): Approach per yard of the gap past BandMax closed,
 #   charged per yard opened, the gap capped at ApproachCapYards; Drift from DriftMovingYards while the leader walks
 AnimusForge.Curriculum.PartyFollow.Approach = 0.005

@@ -255,6 +255,8 @@ namespace Animus::Curriculum
         /// kinks (the course turning more than 20 degrees within a tick), and control changes.
         Movement::Client::Counters MoverAtStart;
         uint32 WallMs = 0;
+        uint32 SteepMs = 0;                 // held keys refused for a slope (move4-follow rework, B3)
+        uint32 EdgeMs = 0;                  // ... refused over nothing at all: a void edge
         uint32 StuckMs = 0;
         uint32 StuckRunMs = 0;
         uint32 CourseKinks = 0;
@@ -607,6 +609,8 @@ namespace Animus::Curriculum
             Mover.Stop();
             MoverAtStart = Mover.Counts;
             WallMs = 0;
+            SteepMs = 0;
+            EdgeMs = 0;
             StuckMs = 0;
             StuckRunMs = 0;
             CourseKinks = 0;
