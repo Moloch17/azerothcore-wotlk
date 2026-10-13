@@ -62,11 +62,12 @@ Animus::Curriculum::CurriculumTuning Animus::Curriculum::CurriculumTuning::Load(
     {
         // Every key is optional: a missing one keeps its default without a "missing property" warning.
         auto const loaded = sConfigMgr->GetOption(prefix + key, value, false);
-        if (std::is_floating_point_v<std::decay_t<decltype(value)>> && !std::isfinite(loaded))
-        {
-            LOG_WARN("module.animus", "{}{} is not a finite number; using {}", prefix, key, value);
-            return;
-        }
+        if constexpr (std::is_floating_point_v<std::decay_t<decltype(value)>>)
+            if (!std::isfinite(loaded))
+            {
+                LOG_WARN("module.animus", "{}{} is not a finite number; using {}", prefix, key, value);
+                return;
+            }
 
         value = loaded;
     });
@@ -95,16 +96,15 @@ boost::json::object Animus::Curriculum::CurriculumTuning::Json() const
     Visit(*this, [&json](char const* key, auto const& value)
     {
         using Value = std::decay_t<decltype(value)>;
-        if (!std::is_floating_point_v<Value>)
-        {
+        if constexpr (!std::is_floating_point_v<Value>)
             json[key] = value;
-            return;
+        else
+        {
+            // The float's shortest decimal (0.03, not 0.029999999329447746), as a double.
+            char buffer[32];
+            auto const result = std::to_chars(buffer, buffer + sizeof(buffer), value);
+            json[key] = std::strtod(std::string(buffer, result.ptr).c_str(), nullptr);
         }
-
-        // The float's shortest decimal (0.03, not 0.029999999329447746), as a double.
-        char buffer[32];
-        auto const result = std::to_chars(buffer, buffer + sizeof(buffer), value);
-        json[key] = std::strtod(std::string(buffer, result.ptr).c_str(), nullptr);
     });
 
     return json;
