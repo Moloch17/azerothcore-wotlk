@@ -98,6 +98,8 @@ std::string_view Animus::Curriculum::RewardTermName(RewardTerm term)
         case RewardTerm::Recovered:             return "recovered";
         case RewardTerm::Settled:               return "settled";
         case RewardTerm::Drift:                 return "drift";
+        case RewardTerm::FallHurt:              return "fall_hurt";
+        case RewardTerm::Drowned:               return "drowned";
         case RewardTerm::Count:                 break;
     }
 

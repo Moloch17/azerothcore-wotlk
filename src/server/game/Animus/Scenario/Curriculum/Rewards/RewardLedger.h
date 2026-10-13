@@ -187,6 +187,10 @@ namespace Animus::Curriculum
         /// numbers.
         Settled,
         Drift,
+        /// The nav stages (vision movement curriculum, decision 0036): health lost to falls as a share of the
+        /// maximum (PointNav.FallHurt, Cost) and a death under water (PointNav.Drowned, Cost). Appended.
+        FallHurt,
+        Drowned,
         Count
     };
 
@@ -292,6 +296,9 @@ namespace Animus::Curriculum
             case RewardTerm::Stale:
             // ... and ground stood on again (general search).
             case RewardTerm::Revisit:
+            // The nav stages' falls and drownings (decision 0036).
+            case RewardTerm::FallHurt:
+            case RewardTerm::Drowned:
                 return RewardCategory::Cost;
             // The seek stage's room goals: a teaching aid on the progress-linear aid scale.
             case RewardTerm::RoomGoal:

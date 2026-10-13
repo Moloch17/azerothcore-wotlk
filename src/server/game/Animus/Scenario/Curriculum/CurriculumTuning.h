@@ -465,6 +465,44 @@ namespace Animus::Curriculum
             float DriftMovingYards = 10.0f;
         } PartyFollow;
 
+        /// The nav stages (Opposition::PointNav, PointNavEncounter; vision movement curriculum, decision 0036): a point
+        /// goal shown as the compass (the minimap marker), the route unknown. Arrive (Outcome) once, stopped within
+        /// ArriveYards of the goal (2D) and ArriveRise of its height; StepCost per decision, Death, FallHurt per share
+        /// of maximum health a fall took, Drowned on a death under water, Lost per second while the route distance to
+        /// the goal exceeds the start's by LostYards, Revisit per second on ground stood on before (arenas that ask;
+        /// Costs). No shaping from the sim: the learner pays the potential on the route distance it is sent.
+        /// Pairs are drawn by bins (comma lists; a rung opens bins up to RungBins<rung> = "detour,length" indexes):
+        /// the goal first, one Dijkstra, then a start whose route length and detour (route / straight) fall in the
+        /// bins. ReplayShare percent of training episodes start where a seat failed (pinned, fell, drowned, timed
+        /// out) with that goal. SightOnly arenas draw starts in line of sight of the goal. Nav5 draws a goal on a
+        /// water cell's bed BedShare percent of the time. DropHurtYards prices a damaging drop's edge in the bake:
+        /// the fall's share of health times it, in yards of walking.
+        struct PointNavTuning
+        {
+            float ArriveYards = 1.0f;
+            float ArriveRise = 2.0f;
+            float StopMoved = 0.05f;
+            float Arrive = 3.0f;
+            float StepCost = 0.002f;
+            float Death = 3.0f;
+            float FallHurt = 2.0f;
+            float Drowned = 3.0f;
+            float Lost = 0.02f;
+            float LostYards = 40.0f;
+            float Revisit = 0.002f;
+            int32 ReplayShare = 20;
+            int32 BedShare = 30;
+            float DropHurtYards = 100.0f;
+            std::string DetourBins = "1.0,1.2,1.6,2.5,4.0";
+            std::string LengthBins = "5,20,60,120,250,400";
+            std::string RungBins0 = "1,2";
+            std::string RungBins1 = "2,3";
+            std::string RungBins2 = "3,4";
+            std::string RungBins3 = "4,5";
+            uint32 PinSeconds = 4;
+            uint32 FailurePool = 512;
+        } PointNav;
+
         /// The seek stage (Opposition::Seek, M2: SeekEncounter): one real object in one of the Stockades' rooms, found
         /// by sight. Arrive (Outcome) is paid once, on stopping within the arena's SeekRadius of the object (on its
         /// floor: within ArriveRise yards of its height). StepCost (Cost, per 50 ms of tuning) prices the time: a
@@ -1317,6 +1355,28 @@ namespace Animus::Curriculum
             f("StandIn.LeadChance", tuning.StandIn.LeadChance);
             f("StandIn.TankChance", tuning.StandIn.TankChance);
             f("StandIn.HealerChance", tuning.StandIn.HealerChance);
+            f("PointNav.ArriveYards", tuning.PointNav.ArriveYards);
+            f("PointNav.ArriveRise", tuning.PointNav.ArriveRise);
+            f("PointNav.StopMoved", tuning.PointNav.StopMoved);
+            f("PointNav.Arrive", tuning.PointNav.Arrive);
+            f("PointNav.StepCost", tuning.PointNav.StepCost);
+            f("PointNav.Death", tuning.PointNav.Death);
+            f("PointNav.FallHurt", tuning.PointNav.FallHurt);
+            f("PointNav.Drowned", tuning.PointNav.Drowned);
+            f("PointNav.Lost", tuning.PointNav.Lost);
+            f("PointNav.LostYards", tuning.PointNav.LostYards);
+            f("PointNav.Revisit", tuning.PointNav.Revisit);
+            f("PointNav.ReplayShare", tuning.PointNav.ReplayShare);
+            f("PointNav.BedShare", tuning.PointNav.BedShare);
+            f("PointNav.DropHurtYards", tuning.PointNav.DropHurtYards);
+            f("PointNav.DetourBins", tuning.PointNav.DetourBins);
+            f("PointNav.LengthBins", tuning.PointNav.LengthBins);
+            f("PointNav.RungBins0", tuning.PointNav.RungBins0);
+            f("PointNav.RungBins1", tuning.PointNav.RungBins1);
+            f("PointNav.RungBins2", tuning.PointNav.RungBins2);
+            f("PointNav.RungBins3", tuning.PointNav.RungBins3);
+            f("PointNav.PinSeconds", tuning.PointNav.PinSeconds);
+            f("PointNav.FailurePool", tuning.PointNav.FailurePool);
         }
 
         /// The values of the config keys <prefix><key>, each defaulting to the value above; min/max pairs are
