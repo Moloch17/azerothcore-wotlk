@@ -100,7 +100,7 @@ mappo:
 # never fades (the fade below is the difficulty ladder alone).
 potential:
   enabled: true
-  yards_scale: 0.01
+  yards_scale: 0.05
   clip: 50
 
 # The costmap head's cross-entropy and the planner's L1 (CONTRACT.md sec 5), each at half the policy loss's weight,
