@@ -160,8 +160,15 @@ def _episode_rows(run, steps, policy):
 FOLLOW_KEPT = 0.75
 
 
+def _is_nav(r):
+    """A nav stage's episode (decision 0036: PointNavEncounter): a point goal, its route known to the sim."""
+    return r.get("nav_rung") is not None and r.get("goal_x") is not None
+
+
 def _map_of(r):
-    """The episode's map: the seek stage's seek_map, the follow stage's follow_map."""
+    """The episode's map: the seek stage's seek_map, the follow stage's follow_map, a nav stage's map."""
+    if _is_nav(r) and r.get("follow_map") is None:
+        return int(_num(r.get("map"), 0))
     return int(_num(r.get("seek_map"), _num(r.get("follow_map"), 0)))
 
 
@@ -172,7 +179,7 @@ def map_points(run, steps, policy, map_id):
     for r in _episode_rows(run, steps, policy):
         if _map_of(r) != map_id:
             continue
-        for p in ("object", "end", "start"):
+        for p in ("object", "end", "start", "goal"):
             xyz = [_num(r.get(f"{p}_{a}")) for a in "xyz"]
             if None not in xyz:
                 pts.append(xyz)
@@ -190,8 +197,24 @@ def episodes(run, steps, policy):
         room_i, obj_i = _num(r.get("seek_room")), _num(r.get("seek_object"))
         kept = _num(r.get("follow_kept_share"))
         follow = r.get("follow_map") is not None and r.get("seek_map") is None
+        nav = _is_nav(r) and not follow
         summary = None
-        if follow:
+        if nav:
+            # A nav episode: "found" is arrived, its object the goal point, and its line the route numbers.
+            spl, optimal = _num(r.get("spl")), _num(r.get("optimal_yards"))
+            detour, travelled = _num(r.get("detour_factor")), _num(r.get("travelled_yards"))
+            parts = [f"spl {spl:.2f}" if spl is not None else "spl -"]
+            if optimal is not None:
+                parts.append(f"route {round(optimal)} yd" + (f" x{detour:.2f}" if detour else ""))
+            if travelled is not None:
+                parts.append(f"walked {round(travelled)} yd")
+            stop = _num(r.get("stop_error_yards"))
+            if _num(r.get("arrived"), 0) and stop is not None:
+                parts.append(f"stopped {stop:.1f} yd off")
+            if _num(r.get("died"), 0):
+                parts.append("died")
+            summary = " · ".join(parts)
+        elif follow:
             # A follow episode: "found" is kept with the leader, its object the start, and its line the follow numbers.
             parts = [f"kept {round((kept or 0) * 100)}%"]
             for key, label in (("settled_share", "settled"), ("regroup_share", "regrouped")):
@@ -205,18 +228,20 @@ def episodes(run, steps, policy):
         out.append({
             "seed": int(r.get("seed", -1)), "agent": int(r.get("agent", 0) or 0),
             "map": _map_of(r),
-            "found": (kept or 0) >= FOLLOW_KEPT if follow else bool(_num(r.get("found"), 0)),
+            "found": (bool(_num(r.get("arrived"), 0)) if nav else (kept or 0) >= FOLLOW_KEPT if follow
+                      else bool(_num(r.get("found"), 0))),
             "timed_out": bool(_num(r.get("timed_out"), 0)),
             "find_seconds": _num(r.get("find_seconds")),
             "summary": summary,
             "class": r.get("layout") or r.get("class") or "?", "race": RACES.get(int(_num(r.get("race"), 0)), r.get("race")), "level": _num(r.get("level")),
             "room": rooms[int(room_i)] if room_i is not None and 0 <= int(room_i) < len(rooms) else None,
             "object": objects[int(obj_i)] if obj_i is not None and 0 <= int(obj_i) < len(objects) else None,
-            "object_xyz": ([_num(r.get("start_x")), _num(r.get("start_y")), _num(r.get("start_z"))] if follow else
+            "object_xyz": ([_num(r.get("goal_x")), _num(r.get("goal_y")), _num(r.get("goal_z"))] if nav else
+                           [_num(r.get("start_x")), _num(r.get("start_y")), _num(r.get("start_z"))] if follow else
                            [_num(r.get("object_x")), _num(r.get("object_y")), _num(r.get("object_z"))]),
             "end_xyz": [_num(r.get("end_x")), _num(r.get("end_y")), _num(r.get("end_z"))],
             "pin_events": _num(r.get("pin_events")), "wall_seconds": _num(r.get("wall_seconds")),
-            "return": _num(r.get("return")), "rung": _num(r.get("seek_rung")),
+            "return": _num(r.get("return")), "rung": _num(r.get("nav_rung") if nav else r.get("seek_rung")),
             # Systematic search (decision 0030): the rung's rooms covered, the seconds to half of them, wasted travel.
             "checked_share": _num(r.get("checked_share")), "half_checked_s": _num(r.get("half_checked_s")),
             "searched_revisit_s": _num(r.get("searched_revisit_s")),
