@@ -956,7 +956,7 @@ class TrainingRun:
         if spec.label_bytes:
             # The nav stages (vision movement curriculum): the potential term paid per decision and the costmap and
             # planner aux pass's losses and quality (MappoTrainer.AUX_STATS).
-            columns += ["reward_potential", *MappoTrainer.AUX_STATS]
+            columns += ["reward_potential", *MappoTrainer.AUX_STATS, *MappoTrainer.AUX_CLASS_STATS]
         self.logger = RunLogger(self.run_dir, columns, append=self.resume_path is not None) if leader else Silent()
         # eval.report's columns, then the stage's headline measures (status.headline) that it does not list, so forge
         # status always has what the stage is read by.
@@ -2048,7 +2048,8 @@ class TrainingRun:
         """The last update's aux pass statistics (MappoTrainer.AUX_STATS) and potential mean, for the evaluation
         summary (forge status reads them off the headline): {} before the first update or without labels."""
         last = getattr(self, "last_update_stats", None) or {}
-        return {name: float(last[name]) for name in ("reward_potential_train", *MappoTrainer.AUX_STATS)
+        return {name: float(last[name])
+                for name in ("reward_potential_train", *MappoTrainer.AUX_STATS, *MappoTrainer.AUX_CLASS_STATS)
                 if name in last}
 
     def add_style(self, buffer: RolloutBuffer) -> None:
