@@ -93,6 +93,14 @@ mappo:
   target_kl: 0.02
   # The camera's update chunked where the card needs it (train.choose_vision_chunk_rows).
   vision_chunk_rows: auto
+  # The movement shared across the classes (LayoutActor._attach_sharing): the move block's columns and its 25 controls,
+  # the compass and the goal block -- the same in every class -- read and written by one set of actor weights, so what
+  # one class learns about moving reaches all ten. The camera, entity and map columns are the encoders' already. A run
+  # trained without sharing resumes with the shared weights taken from the rogue's (2026-10-14: the strongest single
+  # walker, 92% arrived; averaging four classes' different motions -- rogues strafe, warriors back up -- gave every
+  # class a blend that did none of them).
+  shared_blocks: [move, compass, goal]
+  shared_init_layouts: [rogue]
 
 # The potential-based progress term (CONTRACT.md sec 5; the PLAN's §3), paid by the learner on the sim's C(body)
 # labels with the learner's own gamma: every yard toward the goal by the best route pays, standing still pays 0,

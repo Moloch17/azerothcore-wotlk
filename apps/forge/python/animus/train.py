@@ -46,7 +46,7 @@ from .evaluation import (ABLATIONS, ConvergenceTracker, EvalResult, ablation_cho
 from .mappo.buffer import RolloutBuffer
 from .mappo.trainer import (LOOK_COMMANDS, VISION_CHUNK_AUTO, VISION_CHUNK_FALLBACK, MappoTrainer, horizon_seconds,
                             per_decision, schedule)
-from .mappo.networks import VisionEncoder, check_image_bytes, check_look_heads, vision_of
+from .mappo.networks import VisionEncoder, check_image_bytes, check_look_heads, sharing_of, vision_of
 from .progress import ProgressWriter
 from . import blas, episode_means, protocol
 from .async_sync import Hub, Link, fetch_shared, shared_listing
@@ -537,10 +537,12 @@ class RolloutOutcome:
 
 @dataclass
 class TrainerInputs:
-    """What the networks of a stage are built from besides the layouts' widths: the camera (stage.json's blocks).
-    TrainingRun builds them, and so does resume_check."""
+    """What the networks of a stage are built from besides the layouts' widths: the camera (stage.json's blocks) and
+    the actor's shared movement (mappo.shared_blocks over stage.json's blocks; None without). TrainingRun builds them,
+    and so does resume_check."""
 
     vision: list | None
+    sharing: dict | None = None
 
 
 def trainer_inputs(config: TrainConfig, spec, stage: dict | None) -> TrainerInputs:
@@ -555,7 +557,11 @@ def trainer_inputs(config: TrainConfig, spec, stage: dict | None) -> TrainerInpu
         check_look_heads(vision, spec.look_heads)
     except ValueError as error:
         raise SystemExit(f"vision: {error}") from None
-    return TrainerInputs(vision)
+    try:
+        sharing = sharing_of(stage, names, config.mappo.shared_blocks, config.mappo.shared_init_layouts)
+    except ValueError as error:
+        raise SystemExit(str(error)) from None
+    return TrainerInputs(vision, sharing)
 
 
 #: choose_vision_chunk_rows: the share of free device memory the camera's update may plan on (the rest is the
@@ -628,6 +634,7 @@ def make_trainer(config: TrainConfig, spec, inputs: TrainerInputs, ranks=None, d
         ranks=ranks,
         vision=inputs.vision,
         aux=config.aux,
+        sharing=inputs.sharing,
     )
 
 

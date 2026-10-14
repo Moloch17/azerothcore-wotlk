@@ -71,6 +71,17 @@ class MappoConfig:
     # way (the dropped encoders are simply not built): a training-time ablation, where the eval arms no_map and
     # no_coverage zero the same inputs at evaluation only. () reads everything the stage has.
     drop_inputs: tuple[str, ...] = ()
+    # **The shared movement** (LayoutActor._attach_sharing): the stage.json blocks every class layout has identically
+    # whose actor weights are one set for every layout -- the blocks' observation columns read by one shared input
+    # Linear (summed with the layout's own adapter over its other columns; columns blind to the adapters, the camera's,
+    # are left out) and their actions written by one shared output Linear over the layout's own head. A block must
+    # have the same width, column names and action names in every layout (networks.sharing_of). The critic, the
+    # normalisers and the export's format are unchanged: the export writes the shared weights into every layout's own
+    # matrices. () (the default): every layout's adapter and head are its own alone, as before.
+    shared_blocks: tuple[str, ...] = ()
+    # The layouts whose own weights the shared ones start from, averaged, when the networks loaded have none (a resume
+    # or a seed from a checkpoint trained without sharing): the classes that already do it best. () = every layout.
+    shared_init_layouts: tuple[str, ...] = ()
     value_coef: float = 1.0
     actor_lr: float = 5e-4
     critic_lr: float = 5e-4
@@ -734,9 +745,11 @@ class MappoTrainer:
         ranks=None,
         vision=None,
         aux: "AuxConfig | None" = None,
+        sharing=None,
     ):
         """layouts: (obs dim, action count) per agent layout, in the sim's layout order. `aux`: the nav stages'
-        auxiliary losses (AuxConfig; the defaults without one)."""
+        auxiliary losses (AuxConfig; the defaults without one). `sharing`: the actor's shared movement
+        (networks.sharing_of from the stage and mappo.shared_blocks), None for none."""
         skip_distribution_checks()
         self.aux = aux if aux is not None else AuxConfig()
         if config.vision_chunk_rows == VISION_CHUNK_AUTO:
@@ -798,8 +811,8 @@ class MappoTrainer:
         self.actor = LayoutActor(self.layouts, hidden, self.foresight_outputs, self.recurrent_size,
                                  self.goal_kinds, self.goal_targets, self.slow_goal_size, config.foresight_feedback,
                                  config.goal_lookahead, self.goal_slots,
-                                 self.vision, tuple(config.drop_inputs), max(1, int(config.planner_k))).to(
-            self.train_device)
+                                 self.vision, tuple(config.drop_inputs), max(1, int(config.planner_k)),
+                                 sharing=sharing).to(self.train_device)
         # (readout width, pool width) of the cached plan a row (VisionEncoder.planner_widths), (0, 0) without one.
         self.planner_widths = self.actor.vision.planner_widths if self.actor.vision is not None else (0, 0)
         if self.actor.goal_head is not None:
@@ -2537,6 +2550,33 @@ class MappoTrainer:
             **({"slow_opt": self.slow_opt.state_dict()} if self.slow_opt is not None else {}),
         }
 
+    def _load_actor_optimizer(self, saved: dict, actor_state: dict) -> None:
+        """The actor's optimizer from a checkpoint. The shared movement's parameters (mappo.shared_blocks) are the
+        last of the actor's (LayoutActor): one saved without them that this actor has loads its moments for every
+        other parameter and the shared ones start fresh; one saved with them that this actor has not (sharing turned
+        off since) drops theirs. Anything else loads as torch loads it."""
+        from .networks import SHARED_PARAMETER_KEYS
+        mine = {id(parameter) for parameter in self._actor_parameters()}
+        names = [name for name, parameter in self.actor.named_parameters() if id(parameter) in mine]
+        groups = saved.get("param_groups") or []
+        added = [name for name in names if name in SHARED_PARAMETER_KEYS and name not in actor_state]
+        dropped = [key for key in SHARED_PARAMETER_KEYS if key in actor_state and key not in names]
+        if len(groups) == 1 and added and names[-len(added):] == added \
+                and len(groups[0]["params"]) + len(added) == len(names):
+            # The saved ids are positions; the new parameters follow them, with no state.
+            first = max(groups[0]["params"], default=-1) + 1
+            saved = {**saved, "param_groups": [{**groups[0], "params": [*groups[0]["params"],
+                                                                        *range(first, first + len(added))]}]}
+            print(f"Resume: the actor's optimizer moments loaded; the shared movement's new parameters "
+                  f"({', '.join(added)}) start with fresh moments", flush=True)
+        elif len(groups) == 1 and dropped and len(groups[0]["params"]) == len(names) + len(dropped):
+            kept, gone = groups[0]["params"][:len(names)], set(groups[0]["params"][len(names):])
+            saved = {**saved, "param_groups": [{**groups[0], "params": kept}],
+                     "state": {key: value for key, value in saved["state"].items() if key not in gone}}
+            print(f"Resume: the checkpoint's shared movement ({', '.join(dropped)}) is not this actor's; its optimizer "
+                  f"moments are dropped", flush=True)
+        self.actor_opt.load_state_dict(saved)
+
     def load_state_dict(self, state: dict, load_optimizers: bool = True) -> None:
         from .networks import BLIND_KEEP_PREFIXES, grow_goal_rows, without_blind_columns
         grown = load_actor_state(self.actor, state["actor"])
@@ -2556,7 +2596,7 @@ class MappoTrainer:
         if self.value_norm is not None and state.get("value_norm") is not None:
             self.value_norm.load_state_dict(state["value_norm"])
         if load_optimizers:
-            self.actor_opt.load_state_dict(state["actor_opt"])
+            self._load_actor_optimizer(state["actor_opt"], state["actor"])
             self.critic_opt.load_state_dict(state["critic_opt"])
             if self.vision_opt is not None and "vision_opt" in state:
                 self.vision_opt.load_state_dict(state["vision_opt"])

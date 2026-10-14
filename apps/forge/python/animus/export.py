@@ -761,6 +761,10 @@ def export_layouts(
     has none (a checkpoint carries its own).
     """
     out_dir = Path(out_dir)
+    # The actor's shared movement (mappo.shared_blocks) written into every layout's own adapter and head: the same
+    # map, in the format every reader already has.
+    from .mappo.networks import materialised_state
+    actor_state = materialised_state(actor_state, drop=True)
     manifests = Path(manifest_dir) if manifest_dir is not None else Path("layouts") / spec["scenario"]
     stage_path = manifests / STAGE_FILE
     if stage_path.is_file():

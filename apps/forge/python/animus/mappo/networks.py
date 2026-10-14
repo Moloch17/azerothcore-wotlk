@@ -2626,18 +2626,105 @@ def grow_goal_rows(state: dict, current: dict) -> tuple[dict, list[str]]:
     return grown, names
 
 
+#: The actor's movement shared across class layouts (mappo.shared_blocks, LayoutActor's sharing): one input Linear over
+#: the shared blocks' columns, one output Linear over their actions. The index buffers say where each layout has them;
+#: they are always the network's own (the stage's), never a checkpoint's.
+SHARED_PARAMETER_KEYS = ("shared_adapter.weight", "shared_head.weight", "shared_head.bias")
+SHARED_INDEX_KEYS = ("shared_columns", "shared_slots")
+
+
+def sharing_of(stage: dict | None, layout_names: Sequence[str], blocks: Sequence[str],
+               init_layouts: Sequence[str] = ()) -> dict | None:
+    """Where every layout has the blocks `blocks` (mappo.shared_blocks), from stage.json: {"blocks", "obs" (per layout
+    its columns of those blocks, in block order), "actions" (its action indices), "action_names", "init" (the layout
+    indices the shared weights are first averaged from: mappo.shared_init_layouts, every layout when empty)}. None
+    without blocks. Refused (ValueError): a layout without one of the blocks, or a block whose width, column names or
+    action names differ between layouts -- the columns and actions must mean the same thing in every class."""
+    blocks = [str(block) for block in blocks or ()]
+    if not blocks:
+        return None
+    if not stage or not stage.get("layouts"):
+        raise ValueError("mappo.shared_blocks: the stage has no stage.json layouts to find the blocks in")
+    names = list(layout_names)
+    unknown = [name for name in init_layouts if name not in names]
+    if unknown:
+        raise ValueError(f"mappo.shared_init_layouts: {unknown} are not layouts of this stage ({names})")
+    obs, actions, reference = [], [], {}
+    for name in names:
+        entry = stage["layouts"].get(name)
+        if entry is None:
+            raise ValueError(f"mappo.shared_blocks: stage.json has no layout {name}")
+        by_name = {block["name"]: block for block in entry.get("blocks", ())}
+        action_names = list(entry.get("action_names") or ())
+        columns, slots = [], []
+        for block in blocks:
+            described = by_name.get(block)
+            if described is None:
+                raise ValueError(f"mappo.shared_blocks: layout {name} has no block {block}")
+            (obs_first, obs_count), (action_first, action_count) = described["obs"], described["actions"]
+            seen = (int(obs_count), described.get("obs_names"), action_names[action_first:action_first + action_count])
+            if len(seen[2]) != action_count:
+                raise ValueError(f"mappo.shared_blocks: layout {name}'s block {block} has {action_count} actions, "
+                                 f"its action_names {len(seen[2])}")
+            if reference.setdefault(block, seen) != seen:
+                raise ValueError(f"mappo.shared_blocks: block {block} of layout {name} is not the same as in "
+                                 f"{names[0]} (width, column names or action names differ): it cannot be shared")
+            columns += range(obs_first, obs_first + obs_count)
+            slots += range(action_first, action_first + action_count)
+        obs.append(columns)
+        actions.append(slots)
+    return {"blocks": blocks, "obs": obs, "actions": actions,
+            "action_names": [action for block in blocks for action in reference[block][2]],
+            "init": [names.index(name) for name in init_layouts] or list(range(len(names)))}
+
+
+def materialised_state(state: dict, drop: bool = False) -> dict:
+    """A saved actor's state with its shared weights (SHARED_PARAMETER_KEYS) written into every layout's own adapter
+    columns and head rows (shared_columns, shared_slots): each layout's adapter and head are then the whole map the
+    sharing actor computes, as an actor without sharing reads them -- the export, a seed, a teacher. With `drop` the
+    shared keys are left out. A state without sharing is returned as it is."""
+    if "shared_columns" not in state:
+        return state
+    out = dict(state)
+    columns, slots = state["shared_columns"].long(), state["shared_slots"].long()
+    for index in range(columns.shape[0]):
+        if "shared_adapter.weight" in state and columns.shape[1]:
+            weight = out[f"adapters.{index}.weight"].clone()
+            weight[:, columns[index].to(weight.device)] = state["shared_adapter.weight"].to(weight.device, weight.dtype)
+            out[f"adapters.{index}.weight"] = weight
+        if "shared_head.weight" in state and slots.shape[1]:
+            for part in ("weight", "bias"):
+                own = out[f"heads.{index}.{part}"].clone()
+                own[slots[index].to(own.device)] = state[f"shared_head.{part}"].to(own.device, own.dtype)
+                out[f"heads.{index}.{part}"] = own
+    if drop:
+        out = {key: value for key, value in out.items()
+               if key not in SHARED_PARAMETER_KEYS and key not in SHARED_INDEX_KEYS}
+    return out
+
+
 def load_actor_state(actor: nn.Module, state: dict) -> list[str]:
     """actor.load_state_dict(state), except that an actor saved before the goal scale existed loads with it at zero,
     one saved before the goal head's pointer existed loads with the pointer as initialised (a no-op), and one saved with
     fewer goal kinds loads with the new kinds' rows as initialised (grow_goal_rows). Returns the goal tensors grown
-    (empty for a same-shape checkpoint): a caller that restores optimiser moments must not, then."""
+    (empty for a same-shape checkpoint): a caller that restores optimiser moments must not, then.
+
+    The shared movement (mappo.shared_blocks): an actor without sharing reads a sharing checkpoint materialised
+    (materialised_state: the same map, in every layout's own weights); a sharing actor reads one saved without sharing
+    with its shared weights averaged from the layouts' own (LayoutActor.share_from_layouts), and a sharing checkpoint
+    as it is. The index buffers are always the actor's own."""
+    sharing = getattr(actor, "shared_columns", None) is not None
+    # Materialised either way, so the layouts' own weights are whole whatever the checkpoint shared.
+    state = materialised_state(state, drop=not sharing)
+    state = {key: value for key, value in state.items() if key not in SHARED_INDEX_KEYS}
     state, grown = grow_goal_rows(without_blind_columns(state), actor.state_dict())
     missing, unexpected = actor.load_state_dict(state, strict=False)
     # The blind-column masks are never taken from a checkpoint: an actor built with seat sets has its own already (the
     # stage's), which a resume keeps.
     wrong = [key for key in missing
              if key not in _GOAL_SCALE_KEYS and not key.startswith(_GOAL_POINTER_PREFIXES)
-             and not key.split(".")[-1].startswith(BLIND_KEEP_PREFIXES)]
+             and not key.split(".")[-1].startswith(BLIND_KEEP_PREFIXES)
+             and key not in SHARED_PARAMETER_KEYS and key not in SHARED_INDEX_KEYS]
     if wrong or unexpected:
         raise RuntimeError(f"Error(s) in loading state_dict for {type(actor).__name__}: missing {wrong}, "
                            f"unexpected {list(unexpected)}")
@@ -2646,6 +2733,11 @@ def load_actor_state(actor: nn.Module, state: dict) -> list[str]:
         for key in missing:
             if key in _GOAL_SCALE_KEYS:
                 parameters[key].zero_()
+    if sharing:
+        if any(key in missing for key in SHARED_PARAMETER_KEYS):
+            actor.share_from_layouts()
+        else:
+            actor.clear_shared_slices()
     return grown
 
 
@@ -2664,7 +2756,7 @@ class LayoutActor(nn.Module):
     def __init__(self, layouts: Sequence[tuple[int, int]], hidden: Sequence[int], foresight_outputs: int = 0,
                  recurrent_size: int = 0, goal_count: int = 0, goal_targets: int = 1, slow_size: int = 0,
                  foresight_feedback: bool = False, lookahead: bool = False, goal_slots: int = 1,
-                 vision=None, drop_inputs: Sequence[str] = (), planner_k: int = Planner.K):
+                 vision=None, drop_inputs: Sequence[str] = (), planner_k: int = Planner.K, sharing=None):
         """layouts: (obs dim, action count) per layout; hidden: widths, the first being the adapters' output.
 
         `foresight_outputs` adds a head on the trunk that predicts what happens after this decision (mappo.trainer's
@@ -2675,6 +2767,9 @@ class LayoutActor(nn.Module):
         `recurrent_size` puts a GRU between the trunk and the heads, carried from decision to decision and cleared when
         an episode ends: the policy's own memory of what it has already done and seen, which no observation of the
         moment can hold (who was crowd-controlled, that the enemy has spent its trinket, where the adds came from).
+
+        `sharing` (sharing_of: mappo.shared_blocks) shares the movement across the class layouts: see _attach_sharing.
+        None: every layout's adapter and head are its own alone, exactly as before.
         """
         super().__init__()
         if not hidden:
@@ -2729,6 +2824,114 @@ class LayoutActor(nn.Module):
         # Its free look (LookHead), where the vision block has look heads (revision 4): the actor's own, not shared.
         look_heads = vision_look_heads(vision)
         self.look_head = LookHead(head_width, look_heads, self.vision.has_vision) if look_heads else None
+        # The movement shared across the layouts (mappo.shared_blocks): registered last, so that without it the
+        # parameters, their order and the random draws are exactly an actor's without, and with it the shared
+        # parameters follow every other (an optimiser saved without them still lines up: MappoTrainer.load_state_dict).
+        self.shared_adapter: nn.Linear | None = None
+        self.shared_head: nn.Linear | None = None
+        self.register_buffer("shared_columns", None)
+        self.register_buffer("shared_slots", None)
+        self.shared_init: list[int] = []
+        # The rollout copy's: the shared weights written into the layouts' own (materialise_shared), not added again.
+        self.shared_folded = False
+        if sharing is not None:
+            self._attach_sharing(sharing, hidden[0], head_width)
+
+    def _attach_sharing(self, sharing: dict, width: int, head_width: int) -> None:
+        """**The shared movement** (mappo.shared_blocks): the blocks every class has identically -- the movement
+        block's columns and its 25 controls, the compass, the goal block -- read and written by one set of weights
+        for every layout, so what one class learns about moving reaches all of them.
+
+        - `shared_adapter`, Linear(shared columns -> width, no bias), reads the shared blocks' normalised columns of
+          every layout (shared_columns [L, C], their place in each layout's row; the columns blind to the adapters --
+          the camera's -- left out), summed with the layout's own adapter, which reads its row with those columns
+          zeroed: its weights there take no gradient and do nothing.
+        - `shared_head`, Linear(head width -> shared actions), writes the shared actions' logits over the layout's own
+          head's at each layout's slots (shared_slots [L, A]): the layout's rows there take no gradient either.
+
+        The normalisers stay per layout. The layouts' own weights at the shared places are kept at zero
+        (clear_shared_slices) though nothing reads them. A rollout copy and the export write the shared weights into
+        the layouts' own (materialise_shared, materialised_state), so the dense rollout, the graphs and the .amdl
+        are the plain per-layout maps they always were."""
+        layouts = len(self.adapters)
+        blind = {index: set(columns) for index, columns in (self.vision.blind.items() if self.vision is not None
+                                                            else ())}
+        obs = [list(columns) for columns in sharing["obs"]]
+        actions = [list(slots) for slots in sharing["actions"]]
+        if len(obs) != layouts or len(actions) != layouts:
+            raise ValueError(f"mappo.shared_blocks: sharing for {len(obs)} layouts, the actor has {layouts}")
+        # A column is shared where no layout's adapter is blind to it (the camera's are read by the encoders).
+        keep = [offset for offset in range(len(obs[0]))
+                if not any(obs[index][offset] in blind.get(index, ()) for index in range(layouts))]
+        for index in range(layouts):
+            if any(column >= self.obs_dims[index] for column in obs[index]) or \
+                    any(slot >= self.action_counts[index] for slot in actions[index]):
+                raise ValueError(f"mappo.shared_blocks: layout {index}'s shared columns or actions are past its "
+                                 f"{self.obs_dims[index]} columns or {self.action_counts[index]} actions")
+        device = self.adapters[0].weight.device
+        self.register_buffer("shared_columns", torch.tensor([[obs[index][offset] for offset in keep]
+                                                             for index in range(layouts)], dtype=torch.long,
+                                                            device=device).reshape(layouts, len(keep)))
+        self.register_buffer("shared_slots", torch.tensor(actions, dtype=torch.long,
+                                                          device=device).reshape(layouts, -1))
+        self.shared_init = [int(index) for index in sharing.get("init") or range(layouts)]
+        if keep:
+            self.shared_adapter = nn.Linear(len(keep), width, bias=False, device=device)
+            nn.init.orthogonal_(self.shared_adapter.weight, gain=math.sqrt(2))
+        if self.shared_slots.shape[1]:
+            self.shared_head = _linear(head_width, self.shared_slots.shape[1], 0.01).to(device)
+        self.clear_shared_slices()
+
+    @torch.no_grad()
+    def clear_shared_slices(self) -> None:
+        """Zero every layout's own adapter columns and head rows at the shared places (_attach_sharing)."""
+        if self.shared_columns is None:
+            return
+        for index in range(len(self.adapters)):
+            if self.shared_adapter is not None:
+                self.adapters[index].weight[:, self.shared_columns[index]] = 0.0
+            if self.shared_head is not None:
+                self.heads[index].weight[self.shared_slots[index]] = 0.0
+                self.heads[index].bias[self.shared_slots[index]] = 0.0
+
+    @torch.no_grad()
+    def share_from_layouts(self) -> None:
+        """The shared weights as the mean of the layouts' own at the shared places, over the layouts shared_init names
+        (mappo.shared_init_layouts) -- the head's rows matched by action name, the adapter's by column -- and those
+        places then cleared: an actor trained without sharing carries on with it (a resume, a seed). Computed in
+        double precision on the host, so every rank resuming from the same checkpoint starts from the same weights."""
+        if self.shared_columns is None:
+            return
+        init = self.shared_init or list(range(len(self.adapters)))
+        if self.shared_adapter is not None:
+            mean = torch.stack([self.adapters[index].weight[:, self.shared_columns[index]].detach().double().cpu()
+                                for index in init]).mean(dim=0)
+            self.shared_adapter.weight.copy_(mean.to(self.shared_adapter.weight))
+        if self.shared_head is not None:
+            for part in ("weight", "bias"):
+                mean = torch.stack([getattr(self.heads[index], part)[self.shared_slots[index]].detach().double().cpu()
+                                    for index in init]).mean(dim=0)
+                getattr(self.shared_head, part).copy_(mean.to(getattr(self.shared_head, part)))
+        self.clear_shared_slices()
+
+    @torch.no_grad()
+    def materialise_shared(self) -> None:
+        """Write the shared weights into every layout's own adapter columns and head rows and stop adding them
+        (shared_folded): for the rollout copy only, before its normalisers are folded, every sync (the copy brings the
+        layouts' cleared places back each time)."""
+        if self.shared_columns is None:
+            return
+        for index in range(len(self.adapters)):
+            if self.shared_adapter is not None:
+                self.adapters[index].weight[:, self.shared_columns[index]] = self.shared_adapter.weight
+            if self.shared_head is not None:
+                self.heads[index].weight[self.shared_slots[index]] = self.shared_head.weight
+                self.heads[index].bias[self.shared_slots[index]] = self.shared_head.bias
+        self.shared_folded = True
+
+    def _sharing_live(self) -> bool:
+        """Whether the forward adds the shared weights (an actor with sharing, not a materialised rollout copy)."""
+        return self.shared_columns is not None and not self.shared_folded
 
     def forward(self, obs: torch.Tensor, layout: torch.Tensor, mask: torch.Tensor, groups=None,
                 memory: torch.Tensor | None = None, image: torch.Tensor | None = None) -> Categorical:
@@ -2751,13 +2954,17 @@ class LayoutActor(nn.Module):
 
     def fold_normalisation(self) -> None:
         """Fold every layout's RunningNorm into its adapter (fold_into): for the rollout copy only, which is
-        overwritten from the trained network at every sync and folded again."""
+        overwritten from the trained network at every sync and folded again. The shared movement is written into the
+        layouts' own weights first (materialise_shared): the normaliser folds into the whole adapter."""
+        self.materialise_shared()
         for norm, adapter in zip(self.norms, self.adapters):
             fold_into(norm, adapter)
 
     def densify(self, obs_width: int) -> None:
         """Adapters and heads as DenseLayouts, after fold_normalisation: for a rollout copy on the GPU only. Once
         built they are refreshed in place (DenseLayouts.refresh)."""
+        if self._sharing_live():
+            raise RuntimeError("densify: the shared movement is not materialised (fold_normalisation first)")
         if self.dense_adapters is None:
             self.dense_adapters = DenseLayouts(self.adapters, obs_width)
             self.dense_heads = DenseLayouts(self.heads, self.head_width)
@@ -2783,10 +2990,18 @@ class LayoutActor(nn.Module):
         groups = groups if groups is not None else _per_layout(layout, len(self.adapters))
         width = self.adapters[0].out_features
         hidden = obs.new_zeros(obs.shape[0], width)
+        shared = self.shared_adapter if self._sharing_live() else None
         for index, rows in groups:
+            normalised = self.norms[index](obs[rows, : self.obs_dims[index]])
+            if shared is None:
+                own = self.adapters[index](normalised)
+            else:
+                # The shared columns through the shared adapter, the rest through the layout's own (_attach_sharing).
+                columns = self.shared_columns[index]
+                own = self.adapters[index](normalised.index_fill(1, columns, 0.0)) + shared(
+                    normalised.index_select(1, columns))
             # Cast on the way in: the rows' dtype is the adapters', the zeros' the observation's.
-            hidden[rows] = self.adapters[index](self.norms[index](obs[rows, : self.obs_dims[index]])).to(
-                hidden.dtype)
+            hidden[rows] = own.to(hidden.dtype)
         if extra is not None:
             hidden = hidden + extra.to(hidden.dtype)
         return self.trunk(hidden)
@@ -2868,6 +3083,10 @@ class LayoutActor(nn.Module):
         logits = features.new_full((features.shape[0], mask.shape[-1]), MASKED_LOGIT)
         for index, rows in groups:
             logits[rows, : self.action_counts[index]] = self.heads[index](features[rows]).to(logits.dtype)
+        if self.shared_head is not None and self._sharing_live():
+            # The shared actions' logits over the layouts' own at each row's slots (_attach_sharing).
+            slots = self.shared_slots[layout.reshape(-1).long()]
+            logits = logits.scatter(1, slots, self.shared_head(features).to(logits.dtype))
         return masked_logits(self._with_sight_pointers(logits, features, layout, obs), mask)
 
     def _with_sight_pointers(self, logits: torch.Tensor, features: torch.Tensor, layout: torch.Tensor,

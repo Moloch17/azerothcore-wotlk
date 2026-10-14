@@ -144,12 +144,15 @@ def state_keys(module, state: dict) -> tuple[list[str], list[str], list[str]]:
     """(missing, unexpected, tolerated) of `state` against `module`, as the trainer loads it: the blind-column masks
     are never taken from a checkpoint and an actor from before the goal scale loads it at zero, so those are
     tolerated and listed apart."""
-    from animus.mappo.networks import BLIND_KEEP_PREFIXES, _GOAL_SCALE_KEYS, without_blind_columns
+    from animus.mappo.networks import (BLIND_KEEP_PREFIXES, SHARED_INDEX_KEYS, SHARED_PARAMETER_KEYS, _GOAL_SCALE_KEYS,
+                                       without_blind_columns)
 
     have = set(module.state_dict())
     given = set(without_blind_columns(state))
     missing = sorted(have - given)
-    tolerated = [key for key in missing if key in _GOAL_SCALE_KEYS or key.split(".")[-1].startswith(BLIND_KEEP_PREFIXES)]
+    # The shared movement (mappo.shared_blocks) is averaged from the layouts' own weights when a checkpoint has none.
+    tolerated = [key for key in missing if key in _GOAL_SCALE_KEYS or key.split(".")[-1].startswith(BLIND_KEEP_PREFIXES)
+                 or key in SHARED_PARAMETER_KEYS or key in SHARED_INDEX_KEYS]
     return [key for key in missing if key not in tolerated], sorted(given - have), tolerated
 
 
@@ -231,7 +234,7 @@ def check_resume(run_dir: Path, stage_json: Path, config_path: Path, checkpoint_
                    f"missing {len(missing)}: {', '.join(missing[:10]) or '-'}",
                    f"unexpected {len(unexpected)}: {', '.join(unexpected[:10]) or '-'}",
                    f"wrong shape {len(shapes)}: {', '.join(shapes[:10]) or '-'}",
-                   f"tolerated by the loader (blind-column masks, goal scale): {len(tolerated)}")
+                   f"tolerated by the loader (blind-column masks, goal scale, shared movement): {len(tolerated)}")
     try:
         trainer.load_state_dict(state)
         report.add("PASS", "MappoTrainer.load_state_dict (the call the resume makes, optimizers included)")

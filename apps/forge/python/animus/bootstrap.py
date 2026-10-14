@@ -34,7 +34,7 @@ import io
 
 import torch
 
-from .mappo.networks import grow_goal_rows
+from .mappo.networks import grow_goal_rows, materialised_state
 from .stages import Span, block_revisions, block_spans
 
 
@@ -837,8 +837,11 @@ def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, ove
     old_names = [layout["name"] for layout in checkpoint["spec"].get("layouts", ())]
     old_stage = checkpoint.get("stage")
     old = checkpoint["trainer"]
+    # The shared movement (mappo.shared_blocks) in every layout's own weights, the checkpoint's and these networks':
+    # the layouts are seeded whole, and the shared weights taken from them after (_reshare).
+    old = {**old, "actor": materialised_state(old["actor"])}
 
-    actor = {key: tensor.clone() for key, tensor in trainer.actor.state_dict().items()}
+    actor = materialised_state({key: tensor.clone() for key, tensor in trainer.actor.state_dict().items()})
     critic = {key: tensor.clone() for key, tensor in trainer.critic.state_dict().items()}
 
     if not overlay:
@@ -935,8 +938,17 @@ def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, ove
 
     trainer.actor.load_state_dict(actor)
     trainer.critic.load_state_dict(critic)
+    _reshare(trainer)
     trainer._sync_rollout()
     return seeded
+
+
+def _reshare(trainer) -> None:
+    """After a seed wrote the layouts' own weights whole (materialised_state): an actor with the shared movement
+    (mappo.shared_blocks) takes its shared weights from them (LayoutActor.share_from_layouts, over
+    mappo.shared_init_layouts), which for a parent that shared is exactly its shared weights."""
+    if getattr(trainer.actor, "shared_columns", None) is not None:
+        trainer.actor.share_from_layouts()
 
 
 def _merge_by_name(wanted: dict, merge_stage: dict | None, stage: dict | None, layout: str, filled_obs: set,
@@ -994,7 +1006,7 @@ def seed_merges(trainer, merges: list[dict], spec, stage: dict | None, base: dic
     (revision 1) into revision 2's this way, the overseer's second-source ruling. Each carried column's normaliser mean
     and variance (actor's and critic's) come with it, so its weights read it at the scale they were trained on; the
     trunk and everything the base seeded stay the base's."""
-    actor = {key: tensor.clone() for key, tensor in trainer.actor.state_dict().items()}
+    actor = materialised_state({key: tensor.clone() for key, tensor in trainer.actor.state_dict().items()})
     critic = {key: tensor.clone() for key, tensor in trainer.critic.state_dict().items()}
     seeded: dict[str, list[str]] = {}
     base_stage = base.get("stage")
@@ -1029,7 +1041,7 @@ def seed_merges(trainer, merges: list[dict], spec, stage: dict | None, base: dic
             if not segments:
                 continue
 
-            old = merge["trainer"]
+            old = {**merge["trainer"], "actor": materialised_state(merge["trainer"]["actor"])}
             for network, old_network in ((actor, old["actor"]), (critic, old["critic"])):
                 new_w, old_w = network[f"adapters.{index}.weight"], old_network[f"adapters.{old_index}.weight"]
                 if new_w.shape[0] != old_w.shape[0]:
@@ -1064,5 +1076,6 @@ def seed_merges(trainer, merges: list[dict], spec, stage: dict | None, base: dic
 
     trainer.actor.load_state_dict(actor)
     trainer.critic.load_state_dict(critic)
+    _reshare(trainer)
     trainer._sync_rollout()
     return seeded
