@@ -632,8 +632,10 @@ class ConvergenceController:
         self.costs_message = self.costs.observe(summary["score"], stderr, env_steps, ladders_settled,
                                                 anneal_starting)
         # The shaping ladder waits for the cost ladder: two scales moving at once cannot be told apart in the score.
+        fade_waits = self.config.fade.wait_for_costs
         self.fade_message = self.fade.observe(summary["score"], stderr, env_steps,
-                                              ladders_settled and costs_ready and self.costs_message is None,
+                                              ladders_settled and (not fade_waits
+                                                                   or (costs_ready and self.costs_message is None)),
                                               anneal_starting)
 
         rows = summary.get("layouts", {})

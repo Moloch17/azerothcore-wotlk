@@ -203,6 +203,8 @@ fade:
   gate_value: 0.8
   gate_values: [0.6, 0.7, 0.8]
   require_plateau: false
+  # A difficulty ladder: it steps on its gate whatever the cost ladder is doing (nothing to fade).
+  wait_for_costs: false
 
 # No cost ladder: StepCost, Stuck, Wall, Death and the noise prices are at full price from the first step (the dungeon
 # plan's rule; M1's stall on a ladder that waited).
