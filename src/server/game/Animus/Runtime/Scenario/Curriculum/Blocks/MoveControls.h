@@ -39,8 +39,10 @@ namespace Animus::Curriculum::MoveControls
     /// compass is not told where its objective is. Seeding from 4 maps the kept columns by name (bootstrap).
     /// compass is not told where its objective is. Seeding from 4 maps the kept columns by name (bootstrap). 6: the
     /// contact-side columns contact_side, blocked_ahead, hold_age and pinned_age appended (movement pacing M1,
-    /// decision 0027); the earlier columns carry by name, the four start at zero.
-    constexpr uint32_t REVISION = 6;
+    /// decision 0027); the earlier columns carry by name, the four start at zero. 7: walk_toggle removed (the user,
+    /// 2026-10-14: "walking speed should never be an option"); it was the last action, so the other 24 keep their
+    /// indexes and carry by name, and the walk state stays at run.
+    constexpr uint32_t REVISION = 7;
 
     /// Turn rates, degrees a second, + left (counter-clockwise, the client's yaw direction): the mouse's, not slowed
     /// while moving. 0 lets go of the turn.
@@ -73,10 +75,9 @@ namespace Animus::Curriculum::MoveControls
         ACTION_DESCEND,
         ACTION_VERTICAL_STOP,
         ACTION_JUMP,
-        ACTION_WALK_TOGGLE,
         ACTION_COUNT
     };
-    static_assert(ACTION_COUNT == 25, "the plan's 25 actions (§4)");
+    static_assert(ACTION_COUNT == 24, "the plan's 25 actions (§4) less walk_toggle (revision 7)");
 
     constexpr std::array<char const*, ACTION_COUNT> NAMES =
     {
@@ -84,7 +85,7 @@ namespace Animus::Curriculum::MoveControls
         "turn_right_360", "turn_right_180", "turn_right_90", "turn_right_30", "turn_stop",
         "turn_left_30", "turn_left_90", "turn_left_180", "turn_left_360",
         "pitch_down_90", "pitch_down_30", "pitch_stop", "pitch_up_30", "pitch_up_90",
-        "ascend", "descend", "vertical_stop", "jump", "walk_toggle",
+        "ascend", "descend", "vertical_stop", "jump",
     };
 
     [[nodiscard]] constexpr bool IsTurn(uint32_t action)
@@ -250,10 +251,6 @@ namespace Animus::Curriculum::MoveControls
             case ACTION_VERTICAL_STOP: feet(held.Vertical, 0, controls.LastVertical, controls.VerticalMs, true); break;
             case ACTION_JUMP:
                 held.Jump = true;
-                out.Changed = true;
-                break;
-            case ACTION_WALK_TOGGLE:
-                held.Walk = !held.Walk;
                 out.Changed = true;
                 break;
             default:

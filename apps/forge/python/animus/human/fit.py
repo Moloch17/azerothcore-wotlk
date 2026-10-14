@@ -105,12 +105,12 @@ class Space:
 
 
 def _controller() -> tuple:
-    """No press, then MoveControls.h's 25 actions in their order."""
+    """No press, then MoveControls.h's 24 actions in their order (revision 7: no walk toggle)."""
     acts = [(NOOP, 0.0), (FORWARD, 1.0), (FORWARD, -1.0), (FORWARD, 0.0), (STRAFE, -1.0), (STRAFE, 1.0),
             (STRAFE, 0.0)]
     acts += [(TURN, math.radians(r)) for r in TURN_RATES_DEG]
     acts += [(PITCH, math.radians(r)) for r in PITCH_RATES_DEG]
-    acts += [(VERTICAL, 1.0), (VERTICAL, -1.0), (VERTICAL, 0.0), (JUMP, 0.0), (WALK, 0.0)]
+    acts += [(VERTICAL, 1.0), (VERTICAL, -1.0), (VERTICAL, 0.0), (JUMP, 0.0)]
     return tuple(acts)
 
 

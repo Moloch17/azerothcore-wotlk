@@ -3,7 +3,7 @@
 **Movement.** A clip on the decision grid is reproduced through the fit emulator (fit.beam_fit, the player
 controller's held keys and mouse, segments of SEGMENT_SECONDS re-anchored on the human), and each decision's chosen
 action is the mapping: a key or mouse-rate press, or no movement press at all. The action is reported as the move
-block's local action index (MoveControls.h, revision 2: move_forward 0 ... walk_toggle 24; fit's action i + 1), or
+block's local action index (MoveControls.h, revision 2: move_forward 0 ... jump 23; walk_toggle 24 until revision 7 removed it; fit's action i + 1), or
 None for no press.
 The **confidence** of a decision is how much worse the best alternative action would have done there, the rest of
 the sequence kept, over the next LOOKAHEAD decisions: (c_alt - c_fit) / (c_alt + c_fit + CONF_SCALE), in [0, 1].

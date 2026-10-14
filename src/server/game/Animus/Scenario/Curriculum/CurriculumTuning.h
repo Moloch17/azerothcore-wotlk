@@ -483,10 +483,12 @@ namespace Animus::Curriculum
             float ArriveRise = 2.0f;
             float StopMoved = 0.05f;
             float Arrive = 3.0f;
-            /// 1: Arrive is paid times the episode's SPL (the route over the yards walked, 1 at best), so a wandering
-            /// arrival earns its share and a straight one the whole (2026-10-14: a flat Arrive let nav1 reach the
-            /// point by spinning and drifting at 4.5x the optimal time). 0: Arrive in full however the seat got there.
-            uint32 ArriveBySpl = 1;
+            /// What Arrive is paid times: 0 nothing (in full however the seat got there); 1 the episode's SPL, the
+            /// route over the yards walked (2026-10-14: a flat Arrive let nav1 reach the point by spinning and
+            /// drifting); 2 its time efficiency, the route run at run speed over the seconds it took, at most 1
+            /// (2026-10-14: SPL paid a straight backpedal in full, and nav1 backpedalled 85% of its travel at 4.5
+            /// yd/s against the run's 7). Time takes in the path as well: a longer one takes longer.
+            uint32 ArriveWeight = 2;
             float StepCost = 0.002f;
             float Death = 3.0f;
             float FallHurt = 2.0f;
@@ -1363,7 +1365,7 @@ namespace Animus::Curriculum
             f("PointNav.ArriveRise", tuning.PointNav.ArriveRise);
             f("PointNav.StopMoved", tuning.PointNav.StopMoved);
             f("PointNav.Arrive", tuning.PointNav.Arrive);
-            f("PointNav.ArriveBySpl", tuning.PointNav.ArriveBySpl);
+            f("PointNav.ArriveWeight", tuning.PointNav.ArriveWeight);
             f("PointNav.StepCost", tuning.PointNav.StepCost);
             f("PointNav.Death", tuning.PointNav.Death);
             f("PointNav.FallHurt", tuning.PointNav.FallHurt);
