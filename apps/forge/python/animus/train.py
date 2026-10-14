@@ -2029,19 +2029,20 @@ class TrainingRun:
         """What the style reward is paid times: the cost ladder's scale in force (style.ladder), else 1."""
         return float(self.cost_scale_now) if self.config.style.ladder else 1.0
 
-    def potential_terms(self) -> tuple[float, float] | None:
-        """(yards_scale, clip) of the potential term (config.potential) where the stage sends labels and it is on;
-        None otherwise (RolloutBuffer.finish pays nothing)."""
+    def potential_terms(self) -> tuple[float, float, float] | None:
+        """(yards_scale, clip, discount) of the potential term (config.potential) where the stage sends labels and it
+        is on; None otherwise (RolloutBuffer.finish pays nothing)."""
         potential = self.config.potential
         if not potential.enabled or not self.spec.label_bytes:
             return None
-        return float(potential.yards_scale), float(potential.clip)
+        return float(potential.yards_scale), float(potential.clip), float(potential.discount)
 
     def eval_potential(self) -> tuple[float, float, float] | None:
-        """run_evaluation's `potential`: (gamma a decision, yards_scale, clip), so an evaluation's episodes carry the
-        learner's reward_potential column (evaluation.run_evaluation); None without labels or with the term off."""
+        """run_evaluation's `potential`: (the difference's discount, yards_scale, clip), so an evaluation's episodes
+        carry the learner's reward_potential column (evaluation.run_evaluation); None without labels or with the term
+        off."""
         terms = self.potential_terms()
-        return None if terms is None else (float(self.discounts[0]), *terms)
+        return None if terms is None else (terms[2], terms[0], terms[1])
 
     def aux_summary(self) -> dict[str, float]:
         """The last update's aux pass statistics (MappoTrainer.AUX_STATS) and potential mean, for the evaluation

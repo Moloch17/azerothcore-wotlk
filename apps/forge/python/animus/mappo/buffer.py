@@ -352,7 +352,8 @@ class RolloutBuffer:
         if potential is not None and self.label_bytes and last_c_body is not None:
             last = np.asarray(last_c_body, dtype=np.float32)
             self.potential = compute_potential(self.c_body, self.c_valid, self.dones, last, last < LABEL_UNREACHABLE,
-                                               gamma, potential[0], potential[1])
+                                               potential[2] if len(potential) > 2 else gamma, potential[0],
+                                               potential[1])
             self.rewards += self.potential
         self.advantages, self.returns = compute_gae(
             self.rewards,

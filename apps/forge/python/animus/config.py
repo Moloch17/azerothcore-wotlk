@@ -428,10 +428,18 @@ class PotentialConfig:
     enabled: bool = True
     yards_scale: float = 0.01   # reward per yard of route cost-to-go
     clip: float = 50.0          # phi is capped at this many hundred yards (5,000 yd: beyond it, a trip is a trip)
+    # The gamma inside the difference: discount x phi(next) - phi(cur). 1 (the default): the plain difference, which
+    # telescopes to the route yards closed and pays nothing for standing still. The learner's gamma (Ng's invariance)
+    # needs phi = 0 where an episode ends; nav episodes end on the clock with the term zeroed, so with phi negative
+    # it paid C x yards_scale x (1 - gamma) every step for standing C yards away: about 2 an episode at 23 yd,
+    # which nav1 (2026-10-13) learned to keep by not approaching.
+    discount: float = 1.0
 
     def __post_init__(self) -> None:
         if not self.yards_scale >= 0.0:
             raise ValueError(f"potential.yards_scale: expected 0 or more, got {self.yards_scale!r}")
+        if not 0.0 < self.discount <= 1.0:
+            raise ValueError(f"potential.discount: expected (0, 1], got {self.discount!r}")
         if not self.clip > 0.0:
             raise ValueError(f"potential.clip: expected more than 0 (hundreds of yards), got {self.clip!r}")
 
