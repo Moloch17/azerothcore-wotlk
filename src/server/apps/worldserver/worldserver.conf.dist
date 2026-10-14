@@ -6580,6 +6580,13 @@ AnimusForge.Curriculum.PointNav.ArriveRise = 2.0
 AnimusForge.Curriculum.PointNav.StopMoved = 0.05
 #   the outcome and the costs
 AnimusForge.Curriculum.PointNav.Arrive = 3.0
+
+#    AnimusForge.Curriculum.PointNav.ArriveBySpl
+#        Description: 1: Arrive is paid times the episode's SPL (the best route over the yards walked), so a
+#                     wandering arrival earns its share of it and a straight one all of it. 0: in full.
+#        Default:     1
+
+AnimusForge.Curriculum.PointNav.ArriveBySpl = 1
 AnimusForge.Curriculum.PointNav.StepCost = 0.002
 AnimusForge.Curriculum.PointNav.Death = 3.0
 AnimusForge.Curriculum.PointNav.FallHurt = 2.0

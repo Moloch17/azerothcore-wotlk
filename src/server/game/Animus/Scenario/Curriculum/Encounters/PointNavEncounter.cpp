@@ -721,7 +721,11 @@ void Animus::Curriculum::PointNavEncounter::Reward(Env& env, uint32 seatIndex, P
     seat.Reached = true;
     seat.ArriveMs = env.EpisodeElapsedMs;
     seat.StopError = distance;
-    ledger.Add(RewardTerm::Arrive, tuning.Arrive);
+    // Paid by the stage's own measure (PointNav.ArriveBySpl): the route over the yards walked, as the spl column.
+    float share = 1.0f;
+    if (tuning.ArriveBySpl && nav.CStart < Vision::TRAV_UNREACHABLE)
+        share = nav.CStart / std::max(nav.CStart, std::max(seat.Travelled, 0.01f));
+    ledger.Add(RewardTerm::Arrive, tuning.Arrive * share);
 }
 
 void Animus::Curriculum::PointNavEncounter::WriteState(Env const& env, float* state) const
