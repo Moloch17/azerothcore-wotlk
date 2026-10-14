@@ -199,7 +199,13 @@ fade:
 # No cost ladder: StepCost, Stuck, Wall, Death and the noise prices are at full price from the first step (the dungeon
 # plan's rule; M1's stall on a ladder that waited).
 costs:
-  enabled: false
+  # Noise prices (Repeat, Jitter, Aimless, Effort, Fidget, Stuck, Wall) start free and climb once arriving is learned:
+  # at full price from step 0 they cost ~3 an episode against a potential worth ~1, and nav1 stood still (2026-10-13),
+  # as stage1 did on 2026-10-04. The ladder ends at full price.
+  enabled: true
+  rungs: [0.0, 0.25, 0.5, 1.0]
+  gate_metric: arrived
+  gate_value: 0.8
 
 entropy_floor:
   fraction: 0.3

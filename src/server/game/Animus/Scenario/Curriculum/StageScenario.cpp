@@ -5632,12 +5632,16 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
         seat.Rewards.Add(RewardTerm::GoalProgress, paid);
         hold.Potential = potential;
     }
-    if (seat.Holds[1].Goal != NO_GOAL)
+    // The nav stages' goal head re-picks a waypoint on its clock by design (decision 0036): a switch there is the
+    // mechanism, not indecision, and charging it (0.15 a re-pick, about 3 an episode) stood nav1's seats still.
+    bool const waypoints = Arena(env).Against == Opposition::PointNav || Arena(env).LabelsOnly;
+    if (seat.Holds[1].Goal != NO_GOAL && !waypoints)
     {
         seat.Rewards.Add(RewardTerm::GoalSwitch, -_tuning.Goals.Secondary);
     }
 
-    seat.Rewards.Add(RewardTerm::GoalSwitch, -_tuning.Goals.Switch * float(seat.StepGoalSwitches));
+    if (!waypoints)
+        seat.Rewards.Add(RewardTerm::GoalSwitch, -_tuning.Goals.Switch * float(seat.StepGoalSwitches));
     seat.StepGoalSwitches = 0;
     if (seat.StepRoomSwitches)
         seat.Rewards.Add(RewardTerm::RoomSwitch, -_tuning.Seek.RoomSwitch * float(seat.StepRoomSwitches));
