@@ -1003,7 +1003,9 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
                     for a in range(agents):
                         if (present is None or step.episode_info[e, a, present] > 0.0) and len(track[a]) > 1:
                             motion_tracks.append(track[a])
-                            motion_ids.append((index, a, names[int(layout[e, a])], step.episode_info[e, a].copy()))
+                            motion_ids.append((index, a, names[int(layout[e, a])],
+                                               with_potential(step.episode_info[e, a].copy(),
+                                                              float(potential_sum[e, a]))))
                 moving[e] = [np.array(step.kinematics[e])]
             if counted:
                 dropped = excluded(int(e)) if excluded is not None else np.zeros(agents, dtype=bool)
