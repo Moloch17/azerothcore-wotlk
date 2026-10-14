@@ -714,9 +714,11 @@ def tail_weights(actor_state: dict[str, torch.Tensor], stage: dict, names: list[
                     raise ValueError("the actor has a planner (vision.map.planner.*) but this layout's map has one "
                                      "tier: not exporting")
                 compass = own.get("compass") or {}
+                # K from the checkpoint's buffer (mappo.planner_k); a checkpoint from before it ran the old 40.
+                k = int(actor_state["vision.map.planner.k"]) if "vision.map.planner.k" in actor_state else 40
                 tail["planner"] = {
                     "tiers": tiers, "classes": int(actor_state["vision.map.costmap.out.weight"].shape[0]),
-                    "vision": CostmapHead.VISION, "hidden": CostmapHead.HIDDEN, "k": Planner.K,
+                    "vision": CostmapHead.VISION, "hidden": CostmapHead.HIDDEN, "k": k,
                     "channels": Planner.CHANNELS,
                     "planes": int(actor_state["vision.map.costmap.conv1.weight"].shape[1]) - CostmapHead.VISION,
                     "readout": MapEncoder.READOUT, "readout_first": MapEncoder.READOUT_FIRST,

@@ -1556,13 +1556,17 @@ class Planner(nn.Module):
     Under a gradient the iterations are checkpointed SEGMENT at a time (torch.utils.checkpoint), so the update keeps
     SEGMENT iterations' activations a row rather than K; the rollout runs it without one."""
 
-    K = 40
+    K = 20
     CHANNELS = 8
     SEGMENT = 8
 
-    def __init__(self, planes: int):
+    def __init__(self, planes: int, k: int = K):
         super().__init__()
         self.planes = planes
+        # The iterations (mappo.planner_k): a buffer, so a checkpoint and the export carry it; the host copy is what
+        # forward reads (a captured graph cannot read the device).
+        self.iterations = max(1, int(k))
+        self.register_buffer("k", torch.tensor(self.iterations, dtype=torch.long))
         self.fixed = nn.Conv2d(planes, self.CHANNELS, 3, padding=1)
         self.recur = nn.Conv2d(1, self.CHANNELS, 3, padding=1, bias=False)
         with torch.no_grad():
@@ -1573,6 +1577,11 @@ class Planner(nn.Module):
             for channel in range(self.CHANNELS):
                 r, c = neighbours[channel % len(neighbours)]
                 self.recur.weight[channel, 0, r, c] = 1.0
+
+    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
+        super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
+        # A checkpoint from before the buffer keeps this network's own K (load_actor_state tolerates the missing key).
+        self.iterations = max(1, int(self.k))
 
     def _iterate(self, value: torch.Tensor, fixed: torch.Tensor, count: int) -> torch.Tensor:
         for _ in range(count):
@@ -1585,8 +1594,8 @@ class Planner(nn.Module):
         fixed = self.fixed(planes.to(self.fixed.weight.dtype))
         value = fixed.new_zeros((planes.shape[0], 1, planes.shape[-2], planes.shape[-1]))
         done = 0
-        while done < self.K:
-            count = min(self.SEGMENT, self.K - done)
+        while done < self.iterations:
+            count = min(self.SEGMENT, self.iterations - done)
             if torch.is_grad_enabled() and fixed.requires_grad:
                 from torch.utils.checkpoint import checkpoint
                 value = checkpoint(self._iterate, value, fixed, count, use_reentrant=False)
@@ -1640,7 +1649,7 @@ class MapEncoder(nn.Module):
     READOUT_FIRST = 22
 
     def __init__(self, crop: dict, class_embedding: nn.Embedding, out_width: int, starts: Sequence[int],
-                 compass: Sequence[dict | None] = ()):
+                 compass: Sequence[dict | None] = (), planner_k: int = Planner.K):
         super().__init__()
         self.height, self.width = crop["height"], crop["width"]
         if self.height % self.PATCH or self.width % self.PATCH:
@@ -1674,7 +1683,7 @@ class MapEncoder(nn.Module):
         if self.tiers > 1:
             self.tier_embed = nn.Parameter(torch.zeros(self.tiers, self.WIDTHS[1]))
             self.costmap = CostmapHead(self.planes_per_cell, out_width, self.tiers)
-            self.planner = Planner(TRAV_CLASSES + self.planes_per_cell + 1)
+            self.planner = Planner(TRAV_CLASSES + self.planes_per_cell + 1, planner_k)
             self.planner_join = _linear(self.tiers * self.READOUT, out_width, math.sqrt(2))
             # Per layout the compass block's columns (present, bearing sin, cos, distance; compass_of), -1 without:
             # the goal plane reads them. Derived from stage.json, not learned.
@@ -1755,11 +1764,24 @@ class MapEncoder(nn.Module):
             plan_out.update(out)
         return out["readout"]
 
+    @property
+    def readout_width(self) -> int:
+        """The planner's readouts a row (tiers x READOUT), 0 without a planner."""
+        return self.tiers * self.READOUT if self.planner_on else 0
+
+    @property
+    def pool_width(self) -> int:
+        """The pointer's bonus a row (the fine tier pooled CELL_POOL x CELL_POOL), 0 without a planner."""
+        return (self.height // CELL_POOL) * (self.width // CELL_POOL) if self.planner_on else 0
+
     def forward(self, obs: torch.Tensor, layout: torch.Tensor, crops: torch.Tensor,
-                camera: torch.Tensor | None = None, plan_out: dict | None = None, grad: bool = False) -> torch.Tensor:
+                camera: torch.Tensor | None = None, plan_out: dict | None = None, grad: bool = False,
+                planner: dict | None = None) -> torch.Tensor:
         """What the map adds to the camera's embedding (before its SiLU), [N, out_width]. `camera` [N, out_width] is
         the camera's own embedding (the costmap head reads it; None skips the planner), `plan_out` and `grad` as
-        plan()'s: the planner runs without a graph unless `grad`."""
+        plan()'s: the planner runs without a graph unless `grad`. `planner` ({"readout" [N, readout_width], "pool"
+        [N, pool_width]}: the rows' cached plan, MappoTrainer's acting state) is read instead of running it -- the
+        planner runs every mappo.planner_every decisions and its readouts are reused in between."""
         silu = nn.functional.silu
         layout = layout.reshape(-1).long()
         columns = (self.start[layout].clamp(min=0)[:, None] + self.offsets[None, :]).clamp(max=obs.shape[-1] - 1)
@@ -1774,7 +1796,15 @@ class MapEncoder(nn.Module):
             grid = features.transpose(1, 2).reshape(features.shape[0], -1, *self.grid)
             pooled += [_spatial_softmax(grid, self.grid_x, self.grid_y), features.mean(dim=1)]
         out = self.join(silu(self.embed(torch.cat([*pooled, scalars], dim=-1))))
-        if self.planner_on and camera is not None:
+        if self.planner_on and planner is not None:
+            readout = planner["readout"].to(torch.float32)
+            if self.planner_off:
+                readout = torch.zeros_like(readout)
+            if plan_out is not None:
+                pool = planner["pool"].to(torch.float32)
+                plan_out.update(readout=readout, pool=torch.zeros_like(pool) if self.planner_off else pool)
+            out = out + self.planner_join(readout.to(self.planner_join.weight.dtype)).to(out.dtype)
+        elif self.planner_on and camera is not None:
             # The planner without a graph unless asked (the aux pass): its readouts are detached either way, and the
             # join learns from the return outside the no_grad.
             with torch.set_grad_enabled(grad and torch.is_grad_enabled()):
@@ -2156,13 +2186,18 @@ class VisionEncoder(nn.Module):
         """Whether the map's encoder carries the costmap head and the planner (a two-tier map)."""
         return self.map is not None and self.map.planner_on
 
+    @property
+    def planner_widths(self) -> tuple[int, int]:
+        """(readout width, pool width) of the cached plan a row (MapEncoder), (0, 0) without a planner."""
+        return (self.map.readout_width, self.map.pool_width) if self.planner_on else (0, 0)
+
     #: The camera-side inputs a trainer may leave unread (mappo.drop_inputs): "map", the mental map's crop and its
     #: scalars (no MapEncoder: the crop's bytes still travel and are skipped), and "coverage", the coarse coverage
     #: grid (no CoverageEncoder). "map" takes "coverage" with it (the sim's rule: a coverage block needs the map).
     #: The dropped columns stay blind to the adapters, so a network with and without reads the same checkpoint.
     DROPPABLE = ("map", "coverage")
 
-    def __init__(self, descriptors: Sequence[dict | None], drop: Sequence[str] = ()):
+    def __init__(self, descriptors: Sequence[dict | None], drop: Sequence[str] = (), planner_k: int = Planner.K):
         super().__init__()
         unknown = sorted(set(drop) - set(self.DROPPABLE))
         if unknown:
@@ -2220,7 +2255,8 @@ class VisionEncoder(nn.Module):
             if "map" not in self.dropped:
                 self.map = MapEncoder(crop, self.class_embed, self.EMBED,
                                       [c["first"] if c is not None else -1 for c in crops],
-                                      [entry.get("compass") if entry is not None else None for entry in descriptors])
+                                      [entry.get("compass") if entry is not None else None for entry in descriptors],
+                                      planner_k)
         # The coarse coverage grid (general search sec 5), where the layouts have the block: its columns are read raw
         # by its own small encoder, whose join adds to the embedding as the map's does.
         grids = [entry.get("coverage") if entry is not None else None for entry in descriptors]
@@ -2305,16 +2341,17 @@ class VisionEncoder(nn.Module):
         return torch.cat([x, y], dim=-1)
 
     def forward(self, obs: torch.Tensor, layout: torch.Tensor, image: torch.Tensor | None,
-                plan_out: dict | None = None, grad: bool = False) -> torch.Tensor:
+                plan_out: dict | None = None, grad: bool = False, planner: dict | None = None) -> torch.Tensor:
         """The camera's embedding of rows `obs` [N, O] with their images `image` [N, I] uint8, [N, 256] (a layout
         without the camera's rows are zeroed by the join). `plan_out` and `grad`: the planner's parts, left in the dict
-        (MapEncoder.plan), and whether the planner keeps a graph (the trainer's aux pass)."""
+        (MapEncoder.plan), and whether the planner keeps a graph (the trainer's aux pass); `planner`: the rows' cached
+        plan read instead of running it (MapEncoder.forward)."""
         decoded, scalars = self.gather(obs, layout, image)
         features = self.features(self.patches(self.planes(decoded)))
         out = self.embed(torch.cat([self.keypoints(features), scalars], dim=-1))
         if self.map is not None:
             crops = image.reshape(-1, self.image_bytes + self.map_bytes)[:, self.image_bytes:]
-            out = out + self.map(obs, layout, crops, out, plan_out, grad).to(out.dtype)
+            out = out + self.map(obs, layout, crops, out, plan_out, grad, planner).to(out.dtype)
         if self.coverage is not None:
             out = out + self.coverage(obs, layout).to(out.dtype)
         if self.entities is not None:
@@ -2416,7 +2453,7 @@ class LookHead(nn.Module):
 
 
 def _attach_vision(network: nn.Module, vision, encoder: "VisionEncoder | None" = None,
-                   drop: Sequence[str] = ()) -> None:
+                   drop: Sequence[str] = (), planner_k: int = Planner.K) -> None:
     """Give an actor or critic the camera: the encoder (VisionEncoder) and its own join (VisionJoin), and keep the
     camera's columns -- image and scalars -- out of every layout's adapter (attach_blind_columns, tag "vision") and
     normaliser (RunningNorm.hide). `vision` is vision_of()'s per-layout image, or None (no camera: nothing changes).
@@ -2429,7 +2466,7 @@ def _attach_vision(network: nn.Module, vision, encoder: "VisionEncoder | None" =
     if vision is None:
         return
     if encoder is None:
-        network.vision = VisionEncoder(vision, drop)
+        network.vision = VisionEncoder(vision, drop, planner_k)
     else:
         share_vision(network, encoder)
     network.vision_join = VisionJoin(network.vision.has_vision, network.adapters[0].out_features)
@@ -2530,7 +2567,8 @@ _GOAL_SCALE_KEYS = ("goal_embedding.kind_scale.weight", "goal_embedding.target_s
 #: The same for the cell head (GoalHead.cell, free-choice-goals): an actor or critic saved before it loads with
 #: goal_head.cell.* as initialised (the score at zero: a uniform draw over the choosable blocks) and no cells until the
 #: manifest says (cell_spec).
-_GOAL_POINTER_PREFIXES = ("goal_head.pointer.", "goal_head.place_spec", "goal_head.cell.", "goal_head.cell_spec")
+_GOAL_POINTER_PREFIXES = ("goal_head.pointer.", "goal_head.place_spec", "goal_head.cell.", "goal_head.cell_spec",
+                          "vision.map.planner.k")
 
 
 #: The blind-column masks' buffer names (attach_blind_columns' tags): "blind_keep_" (a checkpoint from before the hint
@@ -2617,7 +2655,7 @@ class LayoutActor(nn.Module):
     def __init__(self, layouts: Sequence[tuple[int, int]], hidden: Sequence[int], foresight_outputs: int = 0,
                  recurrent_size: int = 0, goal_count: int = 0, goal_targets: int = 1, slow_size: int = 0,
                  foresight_feedback: bool = False, lookahead: bool = False, goal_slots: int = 1,
-                 vision=None, drop_inputs: Sequence[str] = ()):
+                 vision=None, drop_inputs: Sequence[str] = (), planner_k: int = Planner.K):
         """layouts: (obs dim, action count) per layout; hidden: widths, the first being the adapters' output.
 
         `foresight_outputs` adds a head on the trunk that predicts what happens after this decision (mappo.trainer's
@@ -2675,7 +2713,7 @@ class LayoutActor(nn.Module):
         self.foresight_proj = _linear(foresight_outputs, head_width, 0.01) if self.foresight_feedback else None
         # The camera (VisionEncoder; vision_of(stage.json), None = no layout has one), less the inputs dropped
         # (mappo.drop_inputs).
-        _attach_vision(self, vision, drop=drop_inputs)
+        _attach_vision(self, vision, drop=drop_inputs, planner_k=planner_k)
         # The sight list's pointer heads (SightPointers), where the layouts have a sight block: the actor's own.
         sight = self.vision.sight if self.vision is not None else None
         self.sight_pointers = SightPointers(sight.presses, head_width) if sight is not None else None

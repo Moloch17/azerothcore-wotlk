@@ -218,6 +218,13 @@ class MappoConfig:
     # learned from the chosen goals' outcomes (lookahead_coef) and read by the goal choice.
     goal_lookahead: bool = False
     lookahead_coef: float = 0.5
+    # The planner (vision movement curriculum, MapEncoder.plan; only with a two-tier map): its value iterations, and
+    # how often it runs -- every this many decisions of a seat (0 = goal_every_decisions, the waypoint's clock), its
+    # readouts and the pointer's bonus cached in the acting state and reused in between (MappoTrainer._replan; a new
+    # episode plans at its first decision). The planner at K=40 every decision was 85% of the learner's decision time
+    # (134.7 ms on dev, 2026-10-13); at K=20 every 8th it is amortised to a fraction of the camera's.
+    planner_k: int = 20
+    planner_every: int = 0
 
 
 @dataclass
@@ -235,7 +242,10 @@ class AuxConfig:
 
     costmap_coef: float = 0.5
     planner_coef: float = 0.5
-    rows: int = 512
+    rows: int = 256
+    # The pass runs on every this many minibatches of an update (1 = all of them): the statistics are the mean over
+    # the minibatches it ran on.
+    every: int = 2
 
 
 #: The foresight's observation targets (MappoConfig.foresight_obs_targets): the seat's health 8 and 20 decisions on
@@ -272,6 +282,12 @@ class ActingState:
     # Which seats act with the argmax [E, A] bool (MappoConfig.greedy_env_fraction): set once by the training Run's
     # acting state, never by an evaluation's; clear() leaves it alone (it is a property of the env, not the episode).
     greedy: np.ndarray | None = None
+    # The planner's cached plan (MappoConfig.planner_every; MapEncoder.plan): its readouts [E, A, readout_width], the
+    # pointer's bonus [E, A, pool_width] and the decisions since it was made [E, A] (-1: none yet, so the next
+    # decision plans). None without a planner. The decision just taken used these, so the rollout buffer records them.
+    planner_readout: np.ndarray | None = None
+    planner_pool: np.ndarray | None = None
+    planner_age: np.ndarray | None = None
 
     def take(self, rows: slice) -> "ActingState":
         """A copy of these envs' state, for acting on them alone (a half-batch group); put() writes it back."""
@@ -298,6 +314,10 @@ class ActingState:
         if self.plan is not None:
             self.plan[done] = 0
             self.serial[done] = 0
+        if self.planner_age is not None:
+            self.planner_readout[done] = 0.0
+            self.planner_pool[done] = 0.0
+            self.planner_age[done] = -1
         if self.slow_memory is not None:
             self.slow_memory[done] = 0.0
 
@@ -476,6 +496,11 @@ class _RolloutGraph:
                           ("serial", (envs, agents), torch.long)]
         if trainer.slow_goal_size:
             specs += [("slow_memory", (envs, agents, trainer.slow_goal_size), torch.float32)]
+        if trainer.planner_widths[0]:
+            # The cached plan (MappoTrainer._replan runs the planner outside the graph, every planner_every decisions).
+            readout_width, pool_width = trainer.planner_widths
+            specs += [("planner_readout", (envs, agents, readout_width), torch.float32),
+                      ("planner_pool", (envs, agents, pool_width), torch.float32)]
         self.inputs = _Packed(specs, device)
         self.host_in = {**self.inputs.host, **self.large.host}
         self.outputs: _Packed | None = None     # laid out by the first warm-up, once the results' shapes are known
@@ -524,7 +549,9 @@ class _RolloutGraph:
         # join reads it.
         plan: dict = {}
         if actor.vision is not None:
-            seen = actor.vision(obs_t, layout_t, inputs["image"].reshape(rows, -1), plan_out=plan)
+            cached = ({"readout": inputs["planner_readout"].reshape(rows, -1),
+                       "pool": inputs["planner_pool"].reshape(rows, -1)} if "planner_readout" in inputs else None)
+            seen = actor.vision(obs_t, layout_t, inputs["image"].reshape(rows, -1), plan_out=plan, planner=cached)
             actor_own = actor_own + vision_term(actor, obs_t, layout_t, seen).to(actor_own.dtype)
             critic_own = critic_own + vision_term(critic, obs_t, layout_t, seen).to(critic_own.dtype)
         features = actor.features_from(actor.trunk(actor_own), memory)
@@ -640,6 +667,9 @@ class _RolloutGraph:
                 np.copyto(host["serial"].numpy(), state.serial, casting="unsafe")
         if trainer.slow_goal_size:
             np.copyto(host["slow_memory"].numpy(), state.slow_memory)
+        if "planner_readout" in host:
+            np.copyto(host["planner_readout"].numpy(), state.planner_readout)
+            np.copyto(host["planner_pool"].numpy(), state.planner_pool)
 
         self.graph.replay()
         trainer._rollout_stream.synchronize()
@@ -750,6 +780,9 @@ class MappoTrainer:
         self.uniform_cells = False
         self.single_goal = False
         self.goal_slots = max(1, config.goal_slots) if self.goal_count else 1
+        # The planner's clock (mappo.planner_every; 0 = the goal clock): _replan runs it every this many decisions of
+        # a seat and the acting state carries the plan in between.
+        self.planner_every = max(1, int(config.planner_every) or int(config.goal_every_decisions))
         # The slots are drawn and scored by the slow loop's own update (_update_goals); a queue needs two slots behind
         # the pair held.
         if self.goal_slots > 1 and (not self.slow_goal_size or self.goal_slots < 3):
@@ -757,7 +790,10 @@ class MappoTrainer:
         self.actor = LayoutActor(self.layouts, hidden, self.foresight_outputs, self.recurrent_size,
                                  self.goal_kinds, self.goal_targets, self.slow_goal_size, config.foresight_feedback,
                                  config.goal_lookahead, self.goal_slots,
-                                 self.vision, tuple(config.drop_inputs)).to(self.train_device)
+                                 self.vision, tuple(config.drop_inputs), max(1, int(config.planner_k))).to(
+            self.train_device)
+        # (readout width, pool width) of the cached plan a row (VisionEncoder.planner_widths), (0, 0) without one.
+        self.planner_widths = self.actor.vision.planner_widths if self.actor.vision is not None else (0, 0)
         if self.actor.goal_head is not None:
             self.actor.goal_head.slot_entropy_weight = config.goal_slot_entropy_weight
             self.actor.goal_head.cell_entropy_weight = config.goal_cell_entropy_weight
@@ -1087,6 +1123,8 @@ class MappoTrainer:
         last three [E, A, H + 1], (goal, goal log prob, whether this decision chose it)."""
         with self._rollout_context():
             envs, agents = layout.shape
+            # The planner for the seats due one (outside the graph), its plan into the acting state first.
+            self._replan(state, obs, layout, image)
             graph = self._rollout_graph(obs, mask, layout, state_features, deterministic, state)
             self.device_inputs = None
             if graph is not None:
@@ -1108,7 +1146,8 @@ class MappoTrainer:
             # The camera (and the map) encoded once, for the actor and the critic both: the rollout copies share the
             # one encoder, as the graph path (_RolloutGraph) and the update do.
             plan: dict = {}
-            seen = (self._rollout_actor.vision(obs_t, layout_t, image_t, plan_out=plan)
+            seen = (self._rollout_actor.vision(obs_t, layout_t, image_t, plan_out=plan,
+                                               planner=self._planner_cache(state, rows))
                     if self._rollout_actor.vision is not None else None)
             decided = self._decide(obs, mask, layout, deterministic, state, (obs_t, layout_t, groups), downloads,
                                    image=image_t, vision_embedding=seen, bonus=plan.get("pool"))
@@ -1157,8 +1196,11 @@ class MappoTrainer:
         mask_t = self._tensor(mask).reshape(rows, -1)
         image_t = self._image_tensor(image, rows)
         if vision_embedding is None and self._rollout_actor.vision is not None:
+            # The evaluation's path (act): the planner for the seats due one, then the camera on the cached plan.
+            self._replan(state, obs, layout, image)
             plan: dict = {}
-            vision_embedding = self._rollout_actor.vision(obs_t, layout_t, image_t, plan_out=plan)
+            vision_embedding = self._rollout_actor.vision(obs_t, layout_t, image_t, plan_out=plan,
+                                                          planner=self._planner_cache(state, rows))
             bonus = plan.get("pool")
 
         memory = state.memory if state is not None else None
@@ -1320,7 +1362,46 @@ class MappoTrainer:
             serial=np.zeros((envs, agents), dtype=np.int64) if self.goal_slots > 1 and self.goal_count else None,
             look=np.zeros((envs, agents, len(self.look_heads)), dtype=np.int8) if self.look_heads else None,
             look_log_prob=np.zeros((envs, agents), dtype=np.float32) if self.look_heads else None,
+            planner_readout=(np.zeros((envs, agents, self.planner_widths[0]), dtype=np.float32)
+                             if self.planner_widths[0] else None),
+            planner_pool=(np.zeros((envs, agents, self.planner_widths[1]), dtype=np.float32)
+                          if self.planner_widths[0] else None),
+            planner_age=np.full((envs, agents), -1, dtype=np.int64) if self.planner_widths[0] else None,
         )
+
+    def _planner_cache(self, state: "ActingState | None", rows: int) -> dict | None:
+        """The acting state's cached plan as the encoder reads it ({"readout", "pool"} tensors of `rows` rows), or
+        None (no planner, or no acting state: the encoder then plans every decision)."""
+        if state is None or state.planner_readout is None:
+            return None
+        return {"readout": self._tensor(state.planner_readout).reshape(rows, -1),
+                "pool": self._tensor(state.planner_pool).reshape(rows, -1)}
+
+    @torch.no_grad()
+    def _replan(self, state: "ActingState | None", obs, layout: np.ndarray, image) -> None:
+        """Run the planner for the seats whose plan is due (mappo.planner_every decisions since the last, or none yet:
+        a new episode's first decision) and write its readouts and pool into the acting state, which the decision
+        then reads instead of planning (MapEncoder.forward's `planner`). Eager, on the rows due alone: the planner is
+        the one part of the decision that does not run every time, so it stays out of the captured graph."""
+        if state is None or state.planner_readout is None:
+            return
+        due = (state.planner_age < 0) | (state.planner_age >= self.planner_every)
+        state.planner_age = np.where(due, 1, state.planner_age + 1)
+        rows = np.flatnonzero(due.reshape(-1))
+        if rows.size == 0:
+            return
+        envs, agents = layout.shape
+        total = envs * agents
+        index = torch.as_tensor(rows, device=self.rollout_device)
+        obs_t = (obs.reshape(total, -1)[index] if isinstance(obs, torch.Tensor)
+                 else self._tensor(np.ascontiguousarray(np.asarray(obs).reshape(total, -1)[rows])))
+        layout_t = self._tensor(np.asarray(layout).reshape(-1)[rows], torch.long)
+        image_t = (image.reshape(total, -1)[index] if isinstance(image, torch.Tensor)
+                   else self._tensor(np.ascontiguousarray(np.asarray(image).reshape(total, -1)[rows]), torch.uint8))
+        plan: dict = {}
+        self._rollout_actor.vision(obs_t, layout_t, image_t, plan_out=plan)
+        state.planner_readout.reshape(total, -1)[rows] = plan["readout"].float().cpu().numpy()
+        state.planner_pool.reshape(total, -1)[rows] = plan["pool"].float().cpu().numpy()
 
     def greedy_envs(self, envs: int, agents: int) -> np.ndarray | None:
         """The seats that act with the argmax (mappo.greedy_env_fraction), [E, A] bool, or None when the share is 0:
@@ -1364,7 +1445,8 @@ class MappoTrainer:
 
     @torch.no_grad()
     def value(self, state: np.ndarray, obs: np.ndarray, layout: np.ndarray,
-              goal: np.ndarray | None = None, memory: np.ndarray | None = None, image=None) -> np.ndarray:
+              goal: np.ndarray | None = None, memory: np.ndarray | None = None, image=None,
+              planner: "ActingState | None" = None) -> np.ndarray:
         """state [E, S], obs [E, A, O], layout [E, A], goal [E, A] (with a goal head) -> denormalised V per agent
         [E, A]. The value depends on the goal the actor is pursuing, so pass the same goal the decision used, and on
         what the critic remembers of the episode, so pass the memory those decisions left (bootstrapping a truncated
@@ -1379,9 +1461,17 @@ class MappoTrainer:
                         if self.recurrent_size else None)
             layout_t = self._tensor(layout, torch.long)
             image_t = self._image_tensor(image, envs * agents)
-            values = self._rollout_critic(state_t, self._tensor(obs), layout_t, goal_t,
-                                          self._groups(layout, layout_t.reshape(-1)), memory=memory_t,
-                                          image=None if image_t is None else image_t.reshape(envs, agents, -1))
+            # The cached plan of these rows (`planner`, an acting state of the same rows) where the caller has it; else
+            # the critic's encoder plans them (the ended episodes' last rows).
+            seen = None
+            if image_t is not None and self._rollout_critic.vision is not None:
+                seen = self._rollout_critic.vision(self._tensor(obs).reshape(envs * agents, -1),
+                                                   layout_t.reshape(-1), image_t,
+                                                   planner=self._planner_cache(planner, envs * agents))
+            values = self._rollout_critic.step(state_t, self._tensor(obs), layout_t, goal_t,
+                                               self._groups(layout, layout_t.reshape(-1)), memory=memory_t,
+                                               image=None if image_t is None else image_t.reshape(envs, agents, -1),
+                                               vision_embedding=seen)[0]
             if self._rollout_value_norm is not None:
                 values = self._rollout_value_norm.denormalize(values)
             downloads.add(values)
@@ -1568,15 +1658,18 @@ class MappoTrainer:
         duration_t = torch.as_tensor(duration.reshape(-1), device=device)
         dones_seq = torch.as_tensor(ended_between, device=device)
 
-        plan: dict = {}
+        # The plan these choices were made with (the rollout buffer's cached readouts and pool): the camera reads it,
+        # and the pool is the cell pointer's bonus at these choices.
+        recorded = ({"readout": rows(buffer.planner_readout).float().reshape(length * columns, -1),
+                     "pool": rows(buffer.planner_pool).float().reshape(length * columns, -1)}
+                    if buffer.planner_widths[0] and image is not None else None)
         with torch.no_grad():
-            # The camera a chunk at a time where mappo.vision_chunk_rows says so (no gradient here either way); the
-            # planner's pooled value with it, the cell pointer's bonus at these choices.
-            seen = self._encode_vision(obs, layout, image, plan_out=plan) if image is not None else None
+            # The camera a chunk at a time where mappo.vision_chunk_rows says so (no gradient here either way).
+            seen = self._encode_vision(obs, layout, image, planner=recorded) if image is not None else None
             features = self.actor.features_from(self.actor.encode(obs, layout, vision_embedding=seen, image=image),
                                                 memory)
             inputs = self.actor.with_foresight(features).reshape(length, columns, -1)
-        bonus = plan.get("pool")
+        bonus = recorded["pool"] if recorded is not None else None
 
         counted = targeted.float()
         normalised = advantages[targeted]
@@ -1844,20 +1937,23 @@ class MappoTrainer:
         return max(length for length in range(1, wanted + 1) if steps % length == 0)
 
     def _encode_vision(self, obs: torch.Tensor, layout: torch.Tensor, image: torch.Tensor,
-                       plan_out: dict | None = None) -> torch.Tensor:
+                       plan_out: dict | None = None, planner: dict | None = None) -> torch.Tensor:
         """The shared camera's embedding of a minibatch's rows, for the update. With mappo.vision_chunk_rows and more
         rows than that, it is encoded a chunk at a time without keeping the graph, and _backward_vision encodes each
         chunk again for its gradient: the decoded image and the patch layers' activations then live for one chunk at a
         time, not the minibatch's (at 128 x 64 a row's decoded planes alone are 393 KB). `plan_out`: the planner's
-        parts (VisionEncoder.forward), the pointer's "pool" alone when chunked."""
+        parts (VisionEncoder.forward), the pointer's "pool" alone when chunked; `planner`: the rows' recorded plan
+        (the rollout buffer's), read instead of planning them again."""
         rows = self.config.vision_chunk_rows
         if rows <= 0 or obs.shape[0] <= rows:
-            return self.actor.vision(obs, layout, image, plan_out=plan_out)
+            return self.actor.vision(obs, layout, image, plan_out=plan_out, planner=planner)
         with torch.no_grad():
             seen, pools = [], []
             for i in range(0, obs.shape[0], rows):
                 plan = {} if plan_out is not None else None
-                seen.append(self.actor.vision(obs[i:i + rows], layout[i:i + rows], image[i:i + rows], plan_out=plan))
+                part = ({key: value[i:i + rows] for key, value in planner.items()} if planner is not None else None)
+                seen.append(self.actor.vision(obs[i:i + rows], layout[i:i + rows], image[i:i + rows], plan_out=plan,
+                                              planner=part))
                 if plan and "pool" in plan:
                     pools.append(plan["pool"])
             if plan_out is not None and pools:
@@ -2070,7 +2166,11 @@ class MappoTrainer:
                     if "labels" in data else None
                 if self.vision_opt is not None:
                     image_all = data["image"][:, chunk].reshape(-1, self.image_bytes)
-                    seen = self._encode_vision(obs_all, layout_all, image_all)
+                    # The plan each decision acted on (the buffer's), not planned again.
+                    planner_all = ({"readout": data["planner_readout"][:, chunk].reshape(rows_here * steps, -1),
+                                    "pool": data["planner_pool"][:, chunk].reshape(rows_here * steps, -1)}
+                                   if "planner_readout" in data else None)
+                    seen = self._encode_vision(obs_all, layout_all, image_all, planner=planner_all)
                     seen_leaf = seen.detach().requires_grad_(True)
                 encoded = self.actor.encode(obs_all, layout_all, groups, seen_leaf).reshape(steps, rows_here, -1)
                 memory = data["memory"][0][chunk].reshape(rows_here, -1)
@@ -2219,9 +2319,10 @@ class MappoTrainer:
                     # The actor's share of the camera embedding's gradient, before the critic's adds to it.
                     actor_share = seen_leaf.grad.detach().clone()
                     totals["vision_grad_actor"] += actor_share.norm()
-                if self.vision_opt is not None and labels_all is not None:
-                    # The nav stages' auxiliary losses (AuxConfig): into the camera encoder's gradient, with the
-                    # actor's share, ahead of the critic's and the step below.
+                if self.vision_opt is not None and labels_all is not None \
+                        and updates % max(1, self.aux.every) == 0:
+                    # The nav stages' auxiliary losses (AuxConfig, every aux.every minibatches): into the camera
+                    # encoder's gradient, with the actor's share, ahead of the critic's and the step below.
                     self._aux_pass(obs_all, layout_all, image_all, labels_all, counted.reshape(-1), auxiliary_stats)
                 actor_parameters = self._actor_parameters()
                 if cfg.rank_sync == "gradients":

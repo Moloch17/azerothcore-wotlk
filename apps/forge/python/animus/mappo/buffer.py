@@ -168,10 +168,12 @@ def decisions_left(dones: np.ndarray) -> np.ndarray:
 class RolloutBuffer:
     def __init__(self, steps: int, envs: int, agents: int, obs_dim: int, state_dim: int, num_actions: int,
                  foresight: int = 0, recurrent: int = 0, goals: bool = False, slow_goal: int = 0,
-                 goal_slots: int = 1, image_bytes: int = 0, look_heads: int = 0, label_bytes: int = 0):
+                 goal_slots: int = 1, image_bytes: int = 0, look_heads: int = 0, label_bytes: int = 0,
+                 planner_widths: tuple[int, int] = (0, 0)):
         self.steps = steps
         self.image_bytes = image_bytes
         self.label_bytes = label_bytes
+        self.planner_widths = tuple(planner_widths)
         self.look_heads = look_heads
         self.foresight = foresight
         self.recurrent = recurrent
@@ -215,6 +217,10 @@ class RolloutBuffer:
         self.c_body = np.full(shape, LABEL_UNREACHABLE, dtype=np.float32)
         self.c_valid = np.zeros(shape, dtype=bool)
         self.potential = np.zeros(shape, dtype=np.float32)
+        # The plan each decision acted on (MappoTrainer._replan's cache: the planner's readouts and the pointer's
+        # bonus), so the update replays the decision on the same plan rather than planning again.
+        self.planner_readout = np.zeros((*shape, self.planner_widths[0]), dtype=np.float32)
+        self.planner_pool = np.zeros((*shape, self.planner_widths[1]), dtype=np.float32)
         self.state = np.zeros((steps, envs, state_dim), dtype=np.float32)
         self.mask = np.zeros((*shape, num_actions), dtype=bool)
         self.layout = np.zeros(shape, dtype=np.int64)
@@ -251,11 +257,16 @@ class RolloutBuffer:
 
     def add_decision(self, obs, state, mask, layout, actions, log_probs, values, present=None,
                      foresight=None, memory=None, goals=None, critic_memory=None, image=None,
-                     look=None, look_log_prob=None, greedy=None, labels=None) -> None:
+                     look=None, look_log_prob=None, greedy=None, labels=None, planner_readout=None,
+                     planner_pool=None) -> None:
         """Record what the policy saw and did at step `cursor`; `present` [E, A] marks the agents with a character
         (default: all); `image` [E, A, I] uint8 the camera's bytes, with a camera; `look` [E, A, H] the free look's
-        choices, with look heads; `labels` [E, A, L] uint8 the nav labels (protocol 31), where the stage sends them."""
+        choices, with look heads; `labels` [E, A, L] uint8 the nav labels (protocol 31), where the stage sends them;
+        `planner_readout` [E, A, R] and `planner_pool` [E, A, B] the cached plan the decision used, with a planner."""
         t = self.cursor
+        if self.planner_widths[0] and planner_readout is not None:
+            self.planner_readout[t] = planner_readout
+            self.planner_pool[t] = planner_pool
         if self.label_bytes and labels is not None:
             self.labels[t] = labels
             self.c_body[t] = c_body_of(labels)
@@ -428,6 +439,8 @@ class RolloutBuffer:
             "obs": self.obs,
             **({"image": self.image} if self.image_bytes else {}),
             **({"labels": self.labels} if self.label_bytes else {}),
+            **({"planner_readout": self.planner_readout, "planner_pool": self.planner_pool}
+               if self.planner_widths[0] else {}),
             "state": self.state,
             "mask": self.mask,
             "layout": self.layout,

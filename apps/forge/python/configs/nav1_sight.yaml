@@ -59,6 +59,11 @@ mappo:
   slow_goal_lr: 0.0003
   goal_cell_hindsight_lookback: 8
   goal_cell_hindsight_coef: 0.15
+  # The planner: 20 value iterations, run every 8 decisions of a seat (the waypoint's clock) with its readouts and
+  # the pointer's bonus cached in between (MappoTrainer._replan). At K=40 every decision it was 85% of the learner's
+  # decision time (2026-10-13: 134.7 ms on dev).
+  planner_k: 20
+  planner_every: 8
   foresight_obs_targets: true
   foresight_feedback: true
   goal_lookahead: true
@@ -99,11 +104,13 @@ potential:
   clip: 50
 
 # The costmap head's cross-entropy and the planner's L1 (CONTRACT.md sec 5), each at half the policy loss's weight,
-# never faded, on 512 rows of every minibatch (the VIN's backward is memory-bound).
+# never faded, on 256 rows of every second minibatch (the VIN's backward is memory- and time-bound: the pass was the
+# update's limit once the rollout's planner was amortised).
 aux:
   costmap_coef: 0.5
   planner_coef: 0.5
-  rows: 512
+  rows: 256
+  every: 2
 
 # Seeded evaluation every 10M steps: 256 trips at the training rung's bins over the two training dungeons (the pairs
 # seeded by EpisodeSeed, no failure replay), argmax; the sampled policy on the same seeds at every evaluation (the

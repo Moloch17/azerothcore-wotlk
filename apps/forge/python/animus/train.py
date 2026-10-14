@@ -450,7 +450,8 @@ class DecisionRows:
 
     FIELDS = ("obs", "state", "mask", "layout", "actions", "log_probs", "values", "present", "foresight", "memory",
               "goal", "goal_log_prob", "goal_chosen", "slow_before", "slow_value", "critic_memory",
-              "goal_slots", "goal_cells", "image", "look", "look_log_prob", "greedy", "labels")
+              "goal_slots", "goal_cells", "image", "look", "look_log_prob", "greedy", "labels", "planner_readout",
+              "planner_pool")
 
     #: A field store_inputs wrote into the rollout buffer itself.
     IN_BUFFER = object()
@@ -518,7 +519,8 @@ class DecisionRows:
                   a.get("goal_slots"), a.get("goal_cells")) if a.get("goal") is not None else None)
         return (a["obs"], a["state"], a["mask"], a["layout"], a["actions"], a["log_probs"], a["values"], a["present"],
                 a.get("foresight"), a.get("memory"), goals, a.get("critic_memory"), a.get("image"),
-                a.get("look"), a.get("look_log_prob"), a.get("greedy"), a.get("labels"))
+                a.get("look"), a.get("look_log_prob"), a.get("greedy"), a.get("labels"), a.get("planner_readout"),
+                a.get("planner_pool"))
 
 
 class RolloutOutcome:
@@ -877,7 +879,7 @@ class TrainingRun:
                                  spec.state_dim, spec.num_actions, self.trainer.foresight_outputs,
                                  self.trainer.recurrent_size, bool(self.trainer.goal_count),
                                  self.trainer.slow_goal_size, self.trainer.goal_slots, spec.camera_bytes,
-                                 len(self.trainer.look_heads), spec.label_bytes)
+                                 len(self.trainer.look_heads), spec.label_bytes, self.trainer.planner_widths)
 
         # What the policy carries between decisions (its memory and the goal it pursues), cleared with an episode.
         self.acting = self.trainer.acting_state(spec.num_envs, spec.agents_per_env)
@@ -1943,7 +1945,8 @@ class TrainingRun:
         rollout_seconds = time.perf_counter() - started
         self.add_style(buffer)
         buffer.finish(trainer.value(self.step.state, self.step.obs, self.step.layout, self.acting.goal,
-                                    self.acting.critic_memory, getattr(self.step, "image", None)),
+                                    self.acting.critic_memory, getattr(self.step, "image", None),
+                                    planner=self.acting),
                       *self.discounts,
                       last_foresight=trainer.foresight_of(self.step.obs, self.step.layout, self.acting.memory,
                                                           getattr(self.step, "image", None)),
@@ -2154,7 +2157,9 @@ class TrainingRun:
                      goal_chosen=goal_chosen, slow_before=slow_before, slow_value=slow_value,
                      critic_memory=critic_memory, goal_slots=goal_slots, goal_cells=goal_cells, look=look,
                      look_log_prob=look_log_prob, greedy=acting.greedy,
-                     labels=getattr(part, "labels", None) if self.spec.label_bytes else None)
+                     labels=getattr(part, "labels", None) if self.spec.label_bytes else None,
+                     # The plan the decision acted on (the acting state's cache, refreshed by _replan before it).
+                     planner_readout=acting.planner_readout, planner_pool=acting.planner_pool)
         send(rows.start, rows.stop - rows.start, actions,
              trainer.wire_goals(goals[0], acting.queue, acting.plan) if goals is not None else None, look)
 
