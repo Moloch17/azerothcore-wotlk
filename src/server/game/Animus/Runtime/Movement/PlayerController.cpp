@@ -376,7 +376,11 @@ namespace
             return;
         }
         body.Z = floor;
-        body.Vx = body.Vy = body.Vz = 0.0f;
+        // The ground velocity is the step's own (it was zeroed, so the move block's velocity columns read 0 on the
+        // ground and a body's "moving" test never fired, 2026-10-14); a jump launched from here takes its direction.
+        body.Vx = dt > 0.0f ? dx / dt : 0.0f;
+        body.Vy = dt > 0.0f ? dy / dt : 0.0f;
+        body.Vz = 0.0f;
 
         if (!speeds.WaterWalk && !liquid.Deadly && SwimDepth(liquid, floor, body.Z, shape, Mv::SWIM_ENTER))
             body.Kind = Mv::Mode::Swimming;

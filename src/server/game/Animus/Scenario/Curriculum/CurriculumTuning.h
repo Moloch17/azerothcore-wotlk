@@ -506,6 +506,9 @@ namespace Animus::Curriculum
             std::string RungBins2 = "3,4";
             std::string RungBins3 = "4,5";
             uint32 PinSeconds = 4;
+            /// Per second of a held turn at one full turn a second (360 deg/s), in proportion to the rate: a turn
+            /// held at 360 deg/s for a whole 60 s episode costs 1.2, a normal trip's turning about 0.01.
+            float Turning = 0.02f;
             uint32 FailurePool = 512;
         } PointNav;
 
@@ -1383,6 +1386,7 @@ namespace Animus::Curriculum
             f("PointNav.RungBins2", tuning.PointNav.RungBins2);
             f("PointNav.RungBins3", tuning.PointNav.RungBins3);
             f("PointNav.PinSeconds", tuning.PointNav.PinSeconds);
+            f("PointNav.Turning", tuning.PointNav.Turning);
             f("PointNav.FailurePool", tuning.PointNav.FailurePool);
         }
 

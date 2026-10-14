@@ -6609,6 +6609,13 @@ AnimusForge.Curriculum.PointNav.RungBins2 = "3,4"
 AnimusForge.Curriculum.PointNav.RungBins3 = "4,5"
 #   the failure pool: a pin this long is a failure; the ring holds this many per arena
 AnimusForge.Curriculum.PointNav.PinSeconds = 4
+
+#    AnimusForge.Curriculum.PointNav.Turning
+#        Description: Price per second of a held body turn at one full turn a second, in proportion to the rate
+#                     (full price from the first step, off the cost ladder). The look head turns the camera free.
+#        Default:     0.02
+
+AnimusForge.Curriculum.PointNav.Turning = 0.02
 AnimusForge.Curriculum.PointNav.FailurePool = 512
 
 #

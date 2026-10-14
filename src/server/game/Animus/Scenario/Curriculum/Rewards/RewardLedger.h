@@ -191,6 +191,9 @@ namespace Animus::Curriculum
         /// maximum (PointNav.FallHurt, Cost) and a death under water (PointNav.Drowned, Cost). Appended.
         FallHurt,
         Drowned,
+        /// The nav stages' price on a held turn (PointNav.Turning, Cost): per second, times the turn rate in full
+        /// turns a second -- a player does not spin (2026-10-14: nav1's seats held a turn 88-99% of the time).
+        Turning,
         Count
     };
 
@@ -299,6 +302,7 @@ namespace Animus::Curriculum
             // The nav stages' falls and drownings (decision 0036).
             case RewardTerm::FallHurt:
             case RewardTerm::Drowned:
+            case RewardTerm::Turning:
                 return RewardCategory::Cost;
             // The seek stage's room goals: a teaching aid on the progress-linear aid scale.
             case RewardTerm::RoomGoal:

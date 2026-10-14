@@ -5623,6 +5623,9 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
     // away from the fight the second largest earner in the stage (2026-09-17: +0.93 an episode). Closing on it is
     // paid here, potential-based: what moving toward it earns, moving away gives back.
     // The secondary at Goals.SecondaryShare, and charged Goals.Secondary for being held at all.
+    // The nav stages pay progress on the route themselves (the learner's potential on the route cost-to-go): the
+    // straight-line goal progress is not paid there (2026-10-14).
+    bool const navArena = Arena(env).Against == Opposition::PointNav || Arena(env).LabelsOnly;
     for (uint32 slot = 0; slot < GOAL_SLOTS; ++slot)
     {
         GoalHold& hold = seat.Holds[slot];
@@ -5630,7 +5633,8 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
             continue;
         float const potential = GoalPotential(env, seat, hold, bot, target);
         // A healer's Fight goal is damage by another name: none of it is paid.
-        bool const unpaid = GroupHealer(env, seat) && SeatGoal(GoalKindOf(hold.Goal)) == SeatGoal::Fight;
+        bool const unpaid = navArena
+            || (GroupHealer(env, seat) && SeatGoal(GoalKindOf(hold.Goal)) == SeatGoal::Fight);
         float const paid = unpaid ? 0.0f : _tuning.Goals.Progress * (slot ? _tuning.Goals.SecondaryShare : 1.0f)
             * (_tuning.Goals.ProgressGamma * potential - hold.Potential);
         seat.Rewards.Add(RewardTerm::GoalProgress, paid);
@@ -5638,7 +5642,7 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
     }
     // The nav stages' goal head re-picks a waypoint on its clock by design (decision 0036): a switch there is the
     // mechanism, not indecision, and charging it (0.15 a re-pick, about 3 an episode) stood nav1's seats still.
-    bool const waypoints = Arena(env).Against == Opposition::PointNav || Arena(env).LabelsOnly;
+    bool const waypoints = navArena;
     if (seat.Holds[1].Goal != NO_GOAL && !waypoints)
     {
         seat.Rewards.Add(RewardTerm::GoalSwitch, -_tuning.Goals.Secondary);

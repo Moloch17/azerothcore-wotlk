@@ -70,7 +70,7 @@ Animus::Curriculum::PointNavEncounter::PointNavEncounter(StageScenario& scenario
 std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::PointNavEncounter::RewardTerms() const
 {
     return { RewardTerm::Arrive, RewardTerm::StepCost, RewardTerm::Death, RewardTerm::FallHurt, RewardTerm::Drowned,
-        RewardTerm::Lost, RewardTerm::Revisit, RewardTerm::Stuck, RewardTerm::Wall };
+        RewardTerm::Lost, RewardTerm::Revisit, RewardTerm::Stuck, RewardTerm::Wall, RewardTerm::Turning };
 }
 
 std::vector<float> Animus::Curriculum::PointNavEncounter::ParseList(std::string const& list)
@@ -157,6 +157,7 @@ void Animus::Curriculum::PointNavEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     });
     add("stuck_seconds", [seatOf](Env const& env, uint32 seat) { return float(seatOf(env, seat).StuckMs) / 1000.0f; });
     add("wall_seconds", [seatOf](Env const& env, uint32 seat) { return float(seatOf(env, seat).WallMs) / 1000.0f; });
+    add("turn_held_seconds", [seatOf](Env const& env, uint32 seat) { return seatOf(env, seat).TurnSeconds; });
     add("lost_seconds", [seatOf](Env const& env, uint32 seat) { return float(seatOf(env, seat).LostMs) / 1000.0f; });
     add("revisit_seconds", [seatOf](Env const& env, uint32 seat)
     {
@@ -644,18 +645,28 @@ void Animus::Curriculum::PointNavEncounter::Reward(Env& env, uint32 seatIndex, P
     if (!bot->IsAlive() || seat.Clock.Out)
         return;
 
-    // How far the body went since the last decision, on the server's applied position.
+    // Where the body is: the controller's own (a client's), not the server's copy. The server's copy moves only with
+    // the client's reports -- every 0.1 rad of turning, but every 500 ms on a straight run -- so a straight runner
+    // read 0 and 3.5 yd on alternate decisions and was charged as pinned on the 0s, while a spinning seat was read
+    // exactly (2026-10-14: nav1's seats learned to spin and never ran forward).
+    Movement::BodyState const& body = state.Mover.Body;
+    bool const own = state.Mover.Started();
+    float const bodyX = own ? body.X : bot->GetPositionX();
+    float const bodyY = own ? body.Y : bot->GetPositionY();
+    float const bodyZ = own ? body.Z : bot->GetPositionZ();
+
+    // How far the body went since the last decision.
     float moved = 0.0f;
     if (seat.HasLastPos)
     {
-        float const dx = bot->GetPositionX() - seat.LastX;
-        float const dy = bot->GetPositionY() - seat.LastY;
+        float const dx = bodyX - seat.LastX;
+        float const dy = bodyY - seat.LastY;
         moved = std::sqrt(dx * dx + dy * dy);
         seat.Travelled += moved;
     }
     bool const firstLook = !seat.HasLastPos;
-    seat.LastX = bot->GetPositionX();
-    seat.LastY = bot->GetPositionY();
+    seat.LastX = bodyX;
+    seat.LastY = bodyY;
     seat.HasLastPos = true;
 
     // Wall and Stuck at their fixed price (as M1), and a pin PinSeconds long into the failure pool, once per pin.
@@ -670,12 +681,21 @@ void Animus::Curriculum::PointNavEncounter::Reward(Env& env, uint32 seatIndex, P
     if (wallMs)
     {
         Movement::ControlState const& held = state.Controls.Held;
-        UnitMoveType const kind = held.Walk ? MOVE_WALK : held.Forward < 0 && !held.Strafe ? MOVE_RUN_BACK : MOVE_RUN;
+        // Back with or without a strafe moves at the back speed (WishOf), so that is what was asked.
+        UnitMoveType const kind = held.Walk ? MOVE_WALK : held.Forward < 0 ? MOVE_RUN_BACK : MOVE_RUN;
         float const asked = bot->GetSpeed(kind) * seconds;
         float const charge = Standing::WallCharge(float(wallMs) / 1000.0f, moved, asked, controls.Wall,
             controls.WallSlide);
         if (charge > 0.0f)
             ledger.AddFixed(RewardTerm::Wall, -charge);
+    }
+    // A held turn, priced per second by its rate (PointNav.Turning; full price from the first step, off the cost
+    // ladder): the look head turns the camera for free, the body's turn is what costs.
+    float const turns = std::fabs(state.Controls.Held.TurnRate) / (2.0f * float(M_PI));
+    if (turns > 0.0f && tuning.Turning > 0.0f)
+    {
+        seat.TurnSeconds += seconds;
+        ledger.AddFixed(RewardTerm::Turning, -tuning.Turning * turns * seconds);
     }
     if (state.StuckRunMs >= tuning.PinSeconds * 1000)
     {
@@ -691,13 +711,13 @@ void Animus::Curriculum::PointNavEncounter::Reward(Env& env, uint32 seatIndex, P
     // The route distance where the body stands: Lost while it exceeds the start's by LostYards (off the bake is
     // lost too); Revisit on stepping onto a bake cell stood on before, in the arenas that ask -- a step, not a
     // dwell: standing still on one's own cell costs nothing (the plan's standing-still-pays-0).
-    seat.CBody = CostAt(nav, bot->GetPositionX(), bot->GetPositionY());
+    seat.CBody = CostAt(nav, bodyX, bodyY);
     if (seat.CBody > nav.CStart + tuning.LostYards)
     {
         seat.LostMs += stepMs;
         ledger.Add(RewardTerm::Lost, -tuning.Lost * seconds);
     }
-    uint32 const cell = nav.Grid->CellOf(bot->GetPositionX(), bot->GetPositionY());
+    uint32 const cell = nav.Grid->CellOf(bodyX, bodyY);
     if (!seat.Stood.empty() && cell != Vision::TRAV_NO_CELL)
     {
         if (cell != seat.LastCell && seat.Stood[cell])
@@ -712,9 +732,9 @@ void Animus::Curriculum::PointNavEncounter::Reward(Env& env, uint32 seatIndex, P
 
     // Arriving: stopped within ArriveYards of the goal (2D) and ArriveRise of its height. The first look is at
     // rest and is no stop.
-    float const distance = bot->GetExactDist2d(&nav.Goal);
+    float const distance = std::hypot(bodyX - nav.Goal.GetPositionX(), bodyY - nav.Goal.GetPositionY());
     bool const inside = distance <= tuning.ArriveYards
-        && std::fabs(bot->GetPositionZ() - nav.Goal.GetPositionZ()) <= tuning.ArriveRise;
+        && std::fabs(bodyZ - nav.Goal.GetPositionZ()) <= tuning.ArriveRise;
     bool const stopped = Standing::Stopped(bot->GetUnitMovementFlags(), moved, tuning.StopMoved);
     if (firstLook || !(stopped && inside))
         return;
