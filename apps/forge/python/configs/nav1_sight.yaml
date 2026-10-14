@@ -22,7 +22,7 @@ init_from: auto
 seed_from: latest
 
 # A ceiling, not a target: convergence ends the stage (no pass gates).
-total_env_steps: 50000000
+total_env_steps: 150000000
 rollout_length: 128
 
 overlap_updates: true
