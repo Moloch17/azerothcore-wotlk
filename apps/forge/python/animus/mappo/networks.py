@@ -416,9 +416,17 @@ CELL_POOL = 2
 CELL_FEATURES = 22
 CELL_HIDDEN = 32
 CELL_CHAIN_HIDDEN = 16
-#: A block is choosable when it has at least this many floor-like cells, all within CELL_RISE_UNITS (4 yd) of the feet.
+#: A block is choosable when it has at least this many floor-like (or unknown) cells; CELL_RISE_UNITS (4 yd) is no
+#: longer a limit (cell_valid, I8) but still the scale of the block's mean-height feature (cell_features).
 CELL_MIN_FLOOR = 2
 CELL_RISE_UNITS = 16
+
+
+def rise_scale(rise: int) -> float:
+    """The height units the cell features are scaled by: `rise`, or CELL_RISE_UNITS where the manifest says 0 (the
+    opened cell grid, I8: no height limit). 0 divided the features (sarah's and the leader's nav1 runs, 2026-10-14:
+    NaN cell features, a NaN slow goal loss, every slow parameter non-finite from the first update)."""
+    return float(rise) if rise > 0 else float(CELL_RISE_UNITS)
 #: The block offsets are scaled by this (the grid of the contract's pool 2).
 CELL_OFFSET_SCALE = 24.0
 #: A cell word is (ticket << CELL_BITS) | (cell + 1); tickets are 1..2^TICKET_BITS - 1.
@@ -486,7 +494,7 @@ def cell_features(crops: torch.Tensor, grid: int = CELL_GRID, pool: int = CELL_P
     newest = age.reshape(n, grid, pool, grid, pool).amin(dim=(2, 4)) / 255.0
     never = (_block_sum(seen.to(torch.float32), grid, pool) == 0).to(torch.float32)
     like = (code == MAP_FLOOR) | (code == MAP_DOOR)
-    rise_over = ((height - MAP_HEIGHT_ZERO).to(torch.float32) / float(rise)) * like.to(torch.float32)
+    rise_over = ((height - MAP_HEIGHT_ZERO).to(torch.float32) / rise_scale(rise)) * like.to(torch.float32)
     like_count = _block_sum(like.to(torch.float32), grid, pool)
     mean_height = (_block_sum(rise_over, grid, pool) / like_count.clamp(min=1.0)).clamp(-1.0, 1.0)
     around = nn.functional.avg_pool2d(torch.stack([floor, wall, unknown, frontier], dim=1), 3, stride=1, padding=1,
@@ -694,7 +702,8 @@ class GoalHead(nn.Module):
         if not 0 <= joint < self.count or joint % self.targets != target or not 0 <= target < self.targets:
             raise ValueError(f"goals.cells: joint {joint} / target {target} is not in the {self.kinds} x "
                              f"{self.targets} goal space")
-        self.cell_rise = int(cells.get("rise_units", CELL_RISE_UNITS))
+        # 0 from a manifest of the opened grid (no height limit): the features keep the default scale (rise_scale).
+        self.cell_rise = int(cells.get("rise_units", CELL_RISE_UNITS)) or CELL_RISE_UNITS
         self.cell_min_floor = int(cells.get("min_floor_cells", CELL_MIN_FLOOR))
         columns = (goals or {}).get("columns") or {}
         width = int(columns.get("width", 0))

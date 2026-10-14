@@ -2349,8 +2349,11 @@ class TrainingRun:
         self.logger.log(self.update, row)
         self.progress.training(row, undefined)
         self.progress.write("training", self.update, self.env_steps)
+        # The losses and gradient norms beside the episode means: a follower's update line is all its log has of them.
         summary = ", ".join(
-            f"{k} {v:.4g}" for k, v in row.items() if k.startswith("episode_") or k in ("entropy", "value_loss")
+            f"{k} {v:.4g}" for k, v in row.items() if k.startswith("episode_") or k in (
+                "entropy", "value_loss", "policy_loss", "approx_kl", "actor_grad_norm", "critic_grad_norm",
+                "vision_grad_norm", "reward_potential", "slow_policy_loss")
         )
         # Each rank's own clock, so a cluster's slow rank and phase show in its learner log.
         timing = (f"rollout {rollout_seconds:.2f}s compute {float(stats.get('update_compute_seconds', 0.0)):.2f}s"

@@ -1961,9 +1961,10 @@ class MappoTrainer:
             return torch.cat(seen)
 
     def _backward_vision(self, seen: torch.Tensor, grad: torch.Tensor, obs: torch.Tensor, layout: torch.Tensor,
-                         image: torch.Tensor) -> None:
+                         image: torch.Tensor, planner: dict | None = None) -> None:
         """The camera embedding's gradient `grad` back through the encoder: through `seen`'s graph, or chunk by chunk
-        again where _encode_vision kept none."""
+        again where _encode_vision kept none -- on the same recorded plan (`planner`) the forward read, so the
+        re-encoded embedding is the one the losses were taken on."""
         if seen.requires_grad:
             seen.backward(grad)
             return
@@ -1971,7 +1972,9 @@ class MappoTrainer:
         if rows <= 0:
             return      # an encoder with nothing to train (its graph was never kept)
         for i in range(0, obs.shape[0], rows):
-            self.actor.vision(obs[i:i + rows], layout[i:i + rows], image[i:i + rows]).backward(grad[i:i + rows])
+            part = {key: value[i:i + rows] for key, value in planner.items()} if planner is not None else None
+            self.actor.vision(obs[i:i + rows], layout[i:i + rows], image[i:i + rows],
+                              planner=part).backward(grad[i:i + rows])
 
     #: The aux pass's statistics (AuxConfig), as metrics.csv names them.
     AUX_STATS = ("costmap_loss", "planner_loss", "costmap_iou", "planner_mae_yards", "planner_mae_known")
@@ -2364,7 +2367,7 @@ class MappoTrainer:
                     if seen_leaf.grad is not None:
                         critic_share = seen_leaf.grad if actor_share is None else seen_leaf.grad - actor_share
                         totals["vision_grad_critic"] += critic_share.detach().norm()
-                        self._backward_vision(seen, seen_leaf.grad, obs_all, layout_all, image_all)
+                        self._backward_vision(seen, seen_leaf.grad, obs_all, layout_all, image_all, planner_all)
                     vision_parameters = self.vision_parameters()
                     if cfg.rank_sync == "gradients":
                         self.ranks.average_gradients(vision_parameters)

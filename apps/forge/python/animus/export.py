@@ -662,7 +662,8 @@ def tail_weights(actor_state: dict[str, torch.Tensor], stage: dict, names: list[
                 raise ValueError(f"the cell pointer's crop at image byte {at} is not inside the map's crop")
             described = goals.get("cells") or {}
             tail["cells"] = {"crop_offset": offset, "grid": grid, "pool": pool, "joint": joint,
-                             "rise": int(described.get("rise_units", CELL_RISE_UNITS)),
+                             # 0 (the opened grid) is written as the feature scale the learner used (rise_scale).
+                             "rise": int(described.get("rise_units", CELL_RISE_UNITS)) or CELL_RISE_UNITS,
                              "min_floor": int(described.get("min_floor_cells", CELL_MIN_FLOOR)),
                              "features": CELL_FEATURES, "hidden": CELL_HIDDEN, "chain_hidden": CELL_CHAIN_HIDDEN,
                              **{name: array(f"goal_head.cell.{key}") for name, key in _CELL_KEYS.items()}}

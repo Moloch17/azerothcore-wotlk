@@ -57,6 +57,25 @@ def _tensors(modules) -> list[torch.Tensor]:
             + [buffer for module in present for buffer in module.buffers() if buffer.is_floating_point()])
 
 
+def nonfinite_names(modules) -> list[str]:
+    """The tensors of flatten()'s vector that hold a non-finite value, named ("actor.vision.map.embed.weight: 3 of
+    8320"), for the repair line: which weight went, not only that one did."""
+    out = []
+    labels = ("actor", "critic", "value_norm", "disc")
+    with torch.no_grad():
+        for index, module in enumerate(modules):
+            if module is None:
+                continue
+            label = labels[index] if index < len(labels) else f"module{index}"
+            named = list(module.named_parameters()) + [(name, buffer) for name, buffer in module.named_buffers()
+                                                        if buffer.is_floating_point()]
+            for name, tensor in named:
+                bad = int((~torch.isfinite(tensor)).sum())
+                if bad:
+                    out.append(f"{label}.{name}: {bad} of {tensor.numel()}")
+    return out
+
+
 def parameter_count(modules) -> int:
     """How much of flatten()'s vector is parameters (traded as deltas); the rest is the leader's statistics."""
     return sum(parameter.numel() for module in modules if module is not None for parameter in module.parameters())
@@ -459,12 +478,23 @@ class Link:
     def _repair(self, run, center: np.ndarray, what: str) -> None:
         """Take `center` whole (parameters and statistics) and start the optimisers' moments afresh: they hold the
         same non-finite numbers the weights do, and would put them straight back."""
+        # Which tensors went, and the last logged update's statistics (the one before this: the run logs an update
+        # after this safe point), before the centre overwrites them: a repair that happens every update (sarah's
+        # nav1, 2026-10-14) has to say where the numbers come from.
+        names = nonfinite_names(self.modules)
+        stats = getattr(run, "last_update_stats", None) or {}
+        shown = ", ".join(f"{key} {value:.4g}" for key, value in stats.items()
+                          if isinstance(value, (int, float)) and (key.endswith(("_loss", "_norm", "_kl"))
+                                                                   or key in ("entropy", "reward_potential")))
         assign(self.modules, center)
         run.trainer.clear_optimizer_state()
         run.trainer.sync_rollout()
         self.repaired += 1
         print(f"Async learners: rank {self.rank} ({socket.gethostname()}) found non-finite weights in {what} at "
-              f"update {run.update}; took the centre's weights whole ({self.repaired} repair(s) so far)", flush=True)
+              f"update {run.update}; took the centre's weights whole ({self.repaired} repair(s) so far); non-finite "
+              f"tensors: {'; '.join(names[:12]) or 'none now (the exchange)'}"
+              + (f" (and {len(names) - 12} more)" if len(names) > 12 else "")
+              + (f"; last logged update: {shown}" if shown else ""), flush=True)
 
     def close(self) -> None:
         with self.ready:
