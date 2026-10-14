@@ -314,6 +314,10 @@ namespace Animus::Curriculum
         /// minimum (a death knight's 55). 0 = drawn as usual. The user's M1 (2026-10-05): level 1, so a class's kit is
         /// one or two spells and the lesson is the movement alone.
         uint8 Level = 0;
+        /// Every level of a class's range equally likely (its minimum, a death knight's 55, to 80), training and
+        /// evaluation alike: the draw's usual lean to the high and low bands (Characters.HighLevelChance and
+        /// LowLevelChance) is off. The movement stages (the user, 2026-10-13: "evenly train all classes and levels").
+        bool EvenLevels = false;
         /// Tiers of the mental map's crop in the map block (1: the 2-yd crop; 2: and the 8-yd coarse tier, map
         /// block revision 5, the nav stages).
         uint8 MapTiers = 1;

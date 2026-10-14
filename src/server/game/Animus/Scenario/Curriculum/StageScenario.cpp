@@ -2375,6 +2375,10 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
         : _stage.Level ? std::clamp<uint8>(_stage.Level, minLevel, DEFAULT_MAX_LEVEL)
         : keptLevel ? keptLevel
         : focus || focusEval ? uint8(urand(std::max<uint8>(minLevel, _stage.FocusLevelFirst), _stage.FocusLevelLast))
+        // Even levels (the movement stages): uniform over the class's range in training; an evaluation keeps
+        // RandomLevel's seeded bands, which are already even over 1-80.
+        : _stage.EvenLevels && !_level && env.EpisodeSeedIndex == NO_EPISODE_SEED
+            ? uint8(urand(minLevel, DEFAULT_MAX_LEVEL))
         : RandomLevel(minLevel, _level, _tuning.Characters, env.EpisodeSeedIndex, uint32(_layouts.size()));
 
     // The first build opens a new instance (or a phase of the continent); every later one reuses it. An env whose

@@ -212,11 +212,12 @@ entropy_floor:
   max_boost: 4.0
   rate: 0.05
 
-# More episodes for the classes arriving least; no replay of the evaluation's seeds (they are held out).
+# Every class equally often (the user, 2026-10-13: "evenly train all classes and levels"): no reweighting toward the
+# classes arriving least. The levels are even in the sim (StageDefinition::EvenLevels). The nav stages inherit this.
 layout_sampling:
-  enabled: true
-  strength: 1.0
-  max_ratio: 4.0
+  enabled: false
+  strength: 0.0
+  max_ratio: 1.0
   metric: spl
   replay_fraction: 0.0
 
