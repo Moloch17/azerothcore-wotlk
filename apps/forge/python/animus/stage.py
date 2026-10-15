@@ -162,6 +162,9 @@ class ShapingFade:
         # The score and its standard error at the last step down, which a regression is measured from.
         self.step_score: float | None = None
         self.step_stderr = 0.0
+        # The other ladder moved since the step (rebase): the scores of this rung's next `window` evaluations, which
+        # become the reference once there are that many. None when nothing is pending.
+        self.rebase_scores: list[tuple[float, float]] | None = None
         self.falls: dict[int, int] = {}  # rung -> times the ladder fell back to it
         self.steps = 0
         # The collapse alarm (gate-stepped ladders, which never step back): the gate metric at this rung, and the last
@@ -221,6 +224,13 @@ class ShapingFade:
         self.tracker.observe(score, env_steps, stderr)
         self.evals_at_rung += 1
         waited = self.evals_at_rung
+        if self.rebase_scores is not None:
+            self.rebase_scores.append((score, stderr))
+            if len(self.rebase_scores) >= self.window:
+                count = len(self.rebase_scores)
+                self.step_score = sum(point[0] for point in self.rebase_scores) / count
+                self.step_stderr = sum(point[1] ** 2 for point in self.rebase_scores) ** 0.5 / count
+                self.rebase_scores = None
         self._watch_collapse()
         self._watch_stall(env_steps)
 
@@ -286,7 +296,18 @@ class ShapingFade:
             return waited >= 1 and self._gated()
         return self._plateaued(env_steps, waited) and self._gated()
 
+    def rebase(self) -> None:
+        """The other ladder moved: the score at this ladder's step was another game's, so a regression read against it
+        is that ladder's doing (nav1, 2026-10-15: the difficulty doubled the trips and the cost ladder fell back from
+        x0.25 to x0 on a score 0.6 -> 0.09 that no price had caused). The reference starts over from this rung's next
+        `window` evaluations; no regression is read until then."""
+        if self.enabled and (self.step_score is not None or self.rebase_scores is not None):
+            self.step_score = None
+            self.step_stderr = 0.0
+            self.rebase_scores = []
+
     def _moved(self) -> None:
+        self.rebase_scores = None
         self.steps += 1
         self.evals_at_rung = 0
         self.tracker = self._new_tracker()
@@ -354,6 +375,7 @@ class ShapingFade:
         self.evals_at_rung = 0
         self.step_score = None
         self.step_stderr = 0.0
+        self.rebase_scores = None
 
     def report(self) -> dict:
         return {"scale": self.scale, "rung": self.rung, "settled": self.settled, "steps": self.steps,
@@ -362,6 +384,7 @@ class ShapingFade:
     def state_dict(self) -> dict:
         return {"rung": self.rung, "tracker": self.tracker.state_dict(), "evals_at_rung": self.evals_at_rung,
                 "step_score": self.step_score, "step_stderr": self.step_stderr,
+                "rebase_scores": None if self.rebase_scores is None else [list(point) for point in self.rebase_scores],
                 "falls": {str(rung): count for rung, count in self.falls.items()}, "steps": self.steps,
                 "rung_gates": list(self.rung_gates), "lower_gate": self.lower_gate, "collapsed": self.collapsed,
                 "gate_best": self.gate_best, "gate_best_steps": self.gate_best_steps,
@@ -375,6 +398,8 @@ class ShapingFade:
         self.evals_at_rung = int(state.get("evals_at_rung", 0))
         self.step_score = state.get("step_score")
         self.step_stderr = float(state.get("step_stderr", 0.0))
+        pending = state.get("rebase_scores")
+        self.rebase_scores = None if pending is None else [(float(score), float(error)) for score, error in pending]
         self.falls = {int(rung): int(count) for rung, count in (state.get("falls") or {}).items()}
         self.steps = int(state.get("steps", 0))
         self.rung_gates = [float(value) for value in state.get("rung_gates") or []]
@@ -415,6 +440,7 @@ class CostLadder(ShapingFade):
             self.tracker = self._new_tracker()
             self.step_score = None
             self.step_stderr = 0.0
+            self.rebase_scores = None
 
     def _earned(self, env_steps: int, waited: int) -> bool:
         # The gate replaces the plateau off the first rung only; later rungs step on a plateau alone.
@@ -637,6 +663,11 @@ class ConvergenceController:
                                               ladders_settled and (not fade_waits
                                                                    or (costs_ready and self.costs_message is None)),
                                               anneal_starting)
+        # A ladder that moved changed the game the other one's step score was read in.
+        if self.fade_message is not None:
+            self.costs.rebase()
+        if self.costs_message is not None:
+            self.fade.rebase()
 
         rows = summary.get("layouts", {})
         if not rows and len(self.layouts) == 1:
