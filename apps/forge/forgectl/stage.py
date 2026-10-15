@@ -28,7 +28,9 @@ def check_names(names: list[str]) -> None:
 
 
 def console_line(action: str, stages: list[str]) -> str:
-    return " ".join(["forge", action, *stages])
+    # pause and cancel act on the whole plan and take no names: the stage named to forgectl is only checked against
+    # the host's status (run), and typed along it made the line a usage error the console answered without acting.
+    return " ".join(["forge", action, *([] if action in ("pause", "cancel") else stages)])
 
 
 def send_checked(config: Config, machine: Machine, line: str, timeout: float = 25) -> console.ConsoleResult:
@@ -38,6 +40,10 @@ def send_checked(config: Config, machine: Machine, line: str, timeout: float = 2
         raise Failure(f"{machine.name}: the console did not finish answering `{line}` within {timeout:.0f} s"
                       + (f"; got: {result.text[:300]!r}" if result.lines else " (no reply at all: is the "
                          "worldserver container up, and is ssh working?)"))
+    # A handler that returns false gets the usage text appended; "Nothing is running." is a pause or cancel that found
+    # the plan already stopped (a worker the host's cancel reached first), not a refusal.
+    if "### USAGE:" in result.text and "Nothing is running." not in result.text:
+        raise Failure(f"{machine.name}: the console refused `{line}` as a usage error: {result.text[:300]!r}")
     return result
 
 
