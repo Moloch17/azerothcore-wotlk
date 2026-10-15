@@ -189,7 +189,7 @@ void Mv::Client::Tick(ControlState& control, Speeds const& speeds, Movement::Bod
     WorldQuery const& world, uint32_t diffMs, uint32_t nowMs, ServerLink& link)
 {
     WorldScope const scope(*this, shape, world);
-    TickMoved = TickCommanded = TickFallHeight = 0.0f;
+    TickMoved = TickCommanded = TickTurned = TickFallHeight = 0.0f;
     TickWall = false;
     TickSteep = false;
     TickVoid = false;
@@ -239,10 +239,15 @@ void Mv::Client::Tick(ControlState& control, Speeds const& speeds, Movement::Bod
             }
         // Turn to camera (ControlState::FaceTurn): the facing snaps at the step's start and the client says so with
         // one MSG_MOVE_SET_FACING there, through the server's handler as a mouse-look facing is -- never a server-side
-        // SetFacing. The held turn rate then runs on from the new facing, its crossings counted from this report.
+        // SetFacing. The held turn rate then runs on from the new facing, its crossings counted from this report. The
+        // policy's heading turns with it: its angle is from the facing, and the snap moves the facing it was taken
+        // from, so the body is not eased straight back from where the camera put it (the angle then counts from
+        // the camera's direction). A snap dropped while the server imposes leaves the heading as it was set.
         if (control.FaceTurn != 0.0f)
         {
             Body.Yaw = WrapYaw(Body.Yaw + control.FaceTurn);
+            if (control.HasTargetYaw)
+                control.TargetYaw = WrapYaw(control.TargetYaw + control.FaceTurn);
             control.FaceTurnApplied += control.FaceTurn;
             control.FaceTurn = 0.0f;
             if (!Send(Snapshot(Cd::Op::SET_FACING, startMs, before), link))
@@ -270,13 +275,20 @@ void Mv::Client::Tick(ControlState& control, Speeds const& speeds, Movement::Bod
         float const yaw0 = Body.Yaw;
         float const pitch0 = Body.Pitch;
         bool const steered = Body.Kind == Mode::Swimming || Body.Kind == Mode::Flying;
-        float const yawRate = control.KeyboardTurn ? 0.0f : control.TurnRate;
+        float yawRate = control.KeyboardTurn ? 0.0f : control.TurnRate;
         float const pitchRate = control.KeyboardTurn || !steered ? 0.0f : control.PitchRate;
 
         Step(Body, control, speeds, shape, world, h);
+        // The policy's heading (ControlState::TargetYaw) has no rate held: the mouse moved the body by what the step
+        // turned, which is reported on the same 0.1 rad rule as a held rate, at the step's mean rate (the reports
+        // between its ends are interpolated linearly, as `at` does). Without it no SET_FACING went out for a heading
+        // turn, and the server's facing stood still while the body turned.
+        if (control.HasTargetYaw)
+            yawRate = h > 0.0f ? TurnBetween(yaw0, Body.Yaw) / h : 0.0f;
         uint32_t const after = FlagsOf(control, speeds);
         TickMoved += Body.Moved;
         TickCommanded += Body.Commanded;
+        TickTurned += Body.Turned;
         TickWall = TickWall || Body.AgainstWall;
         TickSteep = TickSteep || Body.SteepSlope;
         TickVoid = TickVoid || Body.OverVoid;

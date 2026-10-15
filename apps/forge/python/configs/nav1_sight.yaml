@@ -76,6 +76,12 @@ mappo:
   entropy_coef: 0.01
   # The look head at 0.4 of movement's (move2_seek's reading, 2026-10-11).
   look_entropy_coef: 0.004
+  # The continuous heading (HeadingHead, heading.CONTRACT.md; on because stage.json's "continuous" names it, no switch
+  # here): its own entropy bonus on the mixture's entropy surrogate (at most ln 2pi + ln 3 = 2.9 nats), apart from
+  # entropy_coef's schedule, annealing to a tenth like entropy_final_fraction below, so the mode the evaluation and the
+  # export play is the heading training drew.
+  heading_entropy_coef: 0.003
+  heading_entropy_final_fraction: 0.1
   value_coef: 1.0
   actor_lr: 0.00015
   critic_lr: 0.00015

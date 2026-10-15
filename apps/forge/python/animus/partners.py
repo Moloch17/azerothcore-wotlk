@@ -462,13 +462,19 @@ def with_partners_chooser(choose, partners: Partners):
     def chooser(step):
         partners.clear(step.done)
         chosen = choose(step)
-        # (actions), (actions, goals) or (actions, goals, look): run_evaluation's shapes.
-        actions, goals, look = (tuple(chosen) + (None,) * (3 - len(chosen)) if isinstance(chosen, tuple)
-                                else (chosen, None, None))
+        # (actions), (actions, goals), (actions, goals, look) or (actions, goals, look, heading): run_evaluation's
+        # shapes.
+        actions, goals, look, heading = (tuple(chosen) + (None,) * (4 - len(chosen)) if isinstance(chosen, tuple)
+                                         else (chosen, None, None, None))
         rows = partners.rows(step)
         if rows.any():
             actions, look = partners.act_and_look(step, np.asarray(actions), rows,
                                                   None if look is None else np.asarray(look))
+            if heading is not None:
+                # A partner's row holds its heading (0): the learner's is not its to steer by.
+                heading = np.where(rows[..., None], np.float32(0.0), np.asarray(heading)).astype(np.float32)
+        if heading is not None:
+            return actions, goals, look, heading
         if look is not None:
             return actions, goals, look
         return (actions, goals) if goals is not None else actions

@@ -157,7 +157,7 @@ void Animus::Curriculum::PointNavEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     });
     add("stuck_seconds", [seatOf](Env const& env, uint32 seat) { return float(seatOf(env, seat).StuckMs) / 1000.0f; });
     add("wall_seconds", [seatOf](Env const& env, uint32 seat) { return float(seatOf(env, seat).WallMs) / 1000.0f; });
-    add("turn_held_seconds", [seatOf](Env const& env, uint32 seat) { return seatOf(env, seat).TurnSeconds; });
+    add("turn_radians", [seatOf](Env const& env, uint32 seat) { return seatOf(env, seat).TurnRadians; });
     add("lost_seconds", [seatOf](Env const& env, uint32 seat) { return float(seatOf(env, seat).LostMs) / 1000.0f; });
     add("revisit_seconds", [seatOf](Env const& env, uint32 seat)
     {
@@ -689,14 +689,15 @@ void Animus::Curriculum::PointNavEncounter::Reward(Env& env, uint32 seatIndex, P
         if (charge > 0.0f)
             ledger.AddFixed(RewardTerm::Wall, -charge);
     }
-    // A held turn, priced per second by its rate (PointNav.Turning; full price from the first step, off the cost
-    // ladder): the look head turns the camera for free, the body's turn is what costs.
-    float const turns = std::fabs(state.Controls.Held.TurnRate) / (2.0f * float(M_PI));
-    if (turns > 0.0f && tuning.Turning > 0.0f)
-    {
-        seat.TurnSeconds += seconds;
-        ledger.AddFixed(RewardTerm::Turning, -tuning.Turning * turns * seconds);
-    }
+    // The body's turning, priced per radian it actually turned since the last decision, either way (PointNav.Turning;
+    // full price from the first step, off the cost ladder): the look head turns the camera for free, the body's turn
+    // is what costs. Per radian rather than per second held (heading.CONTRACT.md sec 3): the policy names a heading
+    // and the controller eases to it, so a turn costs what it swept, and holding a heading costs nothing.
+    float const turned = std::max(0.0f, state.TurnedRadians - seat.LastTurned);
+    seat.LastTurned = state.TurnedRadians;
+    seat.TurnRadians += turned;
+    if (turned > 0.0f && tuning.Turning > 0.0f)
+        ledger.AddFixed(RewardTerm::Turning, -tuning.Turning * turned);
     if (state.StuckRunMs >= tuning.PinSeconds * 1000)
     {
         if (!seat.PinNoted)

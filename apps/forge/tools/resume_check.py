@@ -325,7 +325,7 @@ def fresh_spec(stage: dict, state_dim: int, goal_count: int):
     camera's and the map's bytes, the look heads, the episode length), with the critic's width and the goal count
     resolved by the caller (`state_dim_of`, `goal_count_of`, or the operator's override)."""
     from animus.mappo.networks import vision_of
-    from animus.protocol import Layout, Spec
+    from animus.protocol import Layout, Spec, continuous_of
 
     layouts = stage.get("layouts") or {}
     if not layouts:
@@ -344,7 +344,7 @@ def fresh_spec(stage: dict, state_dim: int, goal_count: int):
                 layouts=tuple(Layout(name, layouts[name]["obs_dim"], layouts[name]["num_actions"]) for name in names),
                 image_bytes=int(camera["image_bytes"]) if camera else 0,
                 look_heads=len(camera.get("look", ())) if camera else 0,
-                map_bytes=int(crop["map_bytes"]) if crop else 0)
+                map_bytes=int(crop["map_bytes"]) if crop else 0, continuous_count=len(continuous_of(stage)))
 
 
 def _read_stage(path: Path, expected: str):

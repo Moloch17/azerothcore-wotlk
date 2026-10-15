@@ -696,7 +696,10 @@ TRACE_FIELDS = (
     ("held_forward", np.int8), ("held_strafe", np.int8), ("goal_x", np.float32), ("goal_y", np.float32),
     # The map block's searched_cells scalar (the 1-yd cells looked at this episode, over its scale): the coverage
     # curve the route viewer draws beside a replay (decision 0030).
-    ("searched", np.float32))
+    ("searched", np.float32),
+    # The heading the decision chose (protocol 32, HeadingHead): radians relative to the body's facing, NaN for a
+    # policy or a layout without one.
+    ("heading", np.float32))
 TRACE_FIELD_NAMES = tuple(name for name, _ in TRACE_FIELDS)
 #: Where each trace field that reads an observation column finds it: (block, column name or scalar index).
 TRACE_COLUMNS = {
@@ -758,8 +761,9 @@ class TraceCollector:
         values = np.take_along_axis(obs, np.maximum(column, 0)[..., None], axis=-1)[..., 0].astype(np.float32)
         return np.where(column >= 0, values, np.float32("nan"))
 
-    def record(self, step, actions, goals) -> None:
-        """One decision: the STEP the policy chose from and what it chose."""
+    def record(self, step, actions, goals, heading=None) -> None:
+        """One decision: the STEP the policy chose from and what it chose (`heading` [E, A, 1] or [E, A] radians, the
+        ACT's continuous section, where the policy steers by one)."""
         layout = np.asarray(host(step.layout)).astype(np.int64)
         obs = np.asarray(host(step.obs))
         block = np.full((self.envs, self.agents, len(TRACE_FIELDS)), np.nan, dtype=np.float32)
@@ -788,12 +792,15 @@ class TraceCollector:
         # The held goal's point: yards = dist x 500 along (the body's yaw + the goal's bearing); NaN with none held.
         present = self._read(obs, layout, "goal_present")
         reach = self._read(obs, layout, "goal_dist") * GOAL_HELD_DIST_SCALE
-        heading = block[..., at["yaw"]] + np.arctan2(self._read(obs, layout, "goal_sin"),
-                                                         self._read(obs, layout, "goal_cos"))
+        bearing = block[..., at["yaw"]] + np.arctan2(self._read(obs, layout, "goal_sin"),
+                                                     self._read(obs, layout, "goal_cos"))
         held = present > 0.5
-        block[..., at["goal_x"]] = np.where(held, block[..., at["x"]] + reach * np.cos(heading), np.nan)
-        block[..., at["goal_y"]] = np.where(held, block[..., at["y"]] + reach * np.sin(heading), np.nan)
+        block[..., at["goal_x"]] = np.where(held, block[..., at["x"]] + reach * np.cos(bearing), np.nan)
+        block[..., at["goal_y"]] = np.where(held, block[..., at["y"]] + reach * np.sin(bearing), np.nan)
         block[..., at["reward"]] = 0.0
+        if heading is not None:
+            heading = np.asarray(heading, dtype=np.float32)
+            block[..., at["heading"]] = heading[..., 0] if heading.ndim == 3 else heading
         self.pending.append(block)
 
     def reward(self, reward) -> None:
@@ -821,9 +828,10 @@ def write_trace(path, blocks: list, names: dict[str, list[str]], layouts: list[s
     """eval_trace_<env_steps>_<policy>.npz: one row per decision of a seat, flat over the seats in `blocks` order.
     Arrays: the TRACE_FIELDS (layout i2, action i2 -- the index into the layout's action names, `meta.action_names`
     --, goal i2, reward f4, x y z yaw f4, cam_yaw cam_pitch f4, flag_pixels i2, against_wall moving i1, speed f4,
-    held_forward held_strafe i1, goal_x goal_y f4), then `seed` i4, `agent` i1 and `decision` i4 (the index in the
-    episode) per row, `starts` i8 [S + 1] (seat i is rows starts[i]:starts[i + 1]) and `meta` (JSON text: the
-    policy, steps, the layouts' names and each layout's action names). Written beside and renamed over."""
+    held_forward held_strafe i1, goal_x goal_y f4, searched f4, heading f4 -- radians, NaN without one), then `seed`
+    i4, `agent` i1 and `decision` i4 (the index in the episode) per row, `starts` i8 [S + 1] (seat i is rows
+    starts[i]:starts[i + 1]) and `meta` (JSON text: the policy, steps, the layouts' names and each layout's action
+    names). Written beside and renamed over."""
     from pathlib import Path
     path = Path(path)
     partial = path.with_name(path.name + ".partial.npz")
@@ -864,7 +872,9 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
 
     choose_actions(step) -> [E, A] actions, or (actions, goals) from a policy with a goal head (the goals go to the
     sim, which scores and reports them), or (actions, goals or None, look) from one with the free look (protocol 22;
-    a baseline's evaluation sends the hold look); ignored by the sim when `baseline` names a policy ("random"). `arenas` are the stage's arena names, for the per-arena summary.
+    a baseline's evaluation sends the hold look), or (actions, goals or None, look or None, heading [E, A, 1]) from one
+    with the heading (protocol 32; a baseline's sends the heading held); ignored by the sim when `baseline` names a
+    policy ("random"). `arenas` are the stage's arena names, for the per-arena summary.
     `action_names` names each layout's actions in the per-episode log's action counts. `trace_episodes` records every
     decision of the episodes with the first seed indexes, in EvalResult.trace.
 
@@ -954,9 +964,10 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
 
     while playing():
         chosen = np.zeros((envs, agents), dtype=np.int32) if baseline else choose_actions(step)
-        # (actions, goals) from a goal head, (actions, goals or None, look) with the free look (protocol 22).
-        actions, goals, look = (tuple(chosen) + (None,) * (3 - len(chosen)) if isinstance(chosen, tuple)
-                                else (chosen, None, None))
+        # (actions, goals) from a goal head, (actions, goals or None, look) with the free look (protocol 22), and
+        # (actions, goals or None, look or None, heading [E, A, 1]) with the heading (protocol 32).
+        actions, goals, look, heading = (tuple(chosen) + (None,) * (4 - len(chosen)) if isinstance(chosen, tuple)
+                                         else (chosen, None, None, None))
         # The episode's layouts: after a done, the next STEP already carries the new episode's.
         layout = step.layout
         if not baseline:
@@ -974,11 +985,17 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
                         "action": (action_names or {}).get(layout_name, [])[action]
                         if action < len((action_names or {}).get(layout_name, [])) else str(action),
                         "goal": int(goals[e, a, 0] if goals.ndim == 3 else goals[e, a]) if goals is not None else -1,
+                        # The heading chosen (protocol 32), degrees relative to the body's facing; absent without one.
+                        **({"heading": round(float(np.degrees(np.asarray(heading)[e, a].reshape(-1)[0])), 2)}
+                           if heading is not None else {}),
                     })
 
         if tracer is not None:
-            tracer.record(step, actions, goals)
-        step = env.step(actions, goals, look) if look is not None else env.step(actions, goals)
+            tracer.record(step, actions, goals, heading)
+        if heading is not None:
+            step = env.step(actions, goals, look, heading)
+        else:
+            step = env.step(actions, goals, look) if look is not None else env.step(actions, goals)
         decisions += 1
         if tracer is not None:
             tracer.reward(step.reward)

@@ -277,13 +277,38 @@ namespace
         return liquid.Level - bottom >= share * shape.Height;
     }
 
+    /// The turn toward the policy's heading over `dt` (heading.CONTRACT.md sec 1): at most HEADING_MAX_TURN, at least
+    /// HEADING_MIN_TURN, in between HEADING_EASE times what is left, never past the target. Within HEADING_SNAP the
+    /// yaw is put on the target itself (not added to), so it reads the target to the bit and turns no more.
+    void TurnToward(Mv::BodyState& body, float target, float dt)
+    {
+        float const remaining = std::remainder(target - body.Yaw, TWO_PI);
+        float const left = std::fabs(remaining);
+        if (left < Mv::HEADING_SNAP)
+        {
+            body.Yaw = WrapYaw(target);
+            body.Turned += left;
+            return;
+        }
+        float const step = std::min({ left, Mv::HEADING_MAX_TURN * dt,
+            Mv::HEADING_EASE * left * dt + Mv::HEADING_MIN_TURN * dt });
+        body.Yaw = WrapYaw(body.Yaw + (remaining < 0.0f ? -step : step));
+        body.Turned += step;
+    }
+
     void Turn(Mv::BodyState& body, Mv::ControlState const& control, float dt)
     {
-        float rate = control.TurnRate;
-        bool const moving = control.Forward != 0 || control.Strafe != 0;
-        if (control.KeyboardTurn && moving)
-            rate *= Mv::KEYBOARD_TURN_WHILE_MOVING;
-        body.Yaw = WrapYaw(body.Yaw + rate * dt);
+        if (control.HasTargetYaw)
+            TurnToward(body, control.TargetYaw, dt);
+        else
+        {
+            float rate = control.TurnRate;
+            bool const moving = control.Forward != 0 || control.Strafe != 0;
+            if (control.KeyboardTurn && moving)
+                rate *= Mv::KEYBOARD_TURN_WHILE_MOVING;
+            body.Yaw = WrapYaw(body.Yaw + rate * dt);
+            body.Turned += std::fabs(rate * dt);
+        }
         if (body.Kind == Mv::Mode::Swimming || body.Kind == Mv::Mode::Flying)
             body.Pitch = std::clamp(body.Pitch + control.PitchRate * dt, -Mv::PITCH_LIMIT, Mv::PITCH_LIMIT);
     }
@@ -681,6 +706,7 @@ void Animus::Movement::Step(BodyState& body, ControlState& control, Speeds const
     body.FallHeight = 0.0f;
     body.Moved = 0.0f;
     body.Commanded = 0.0f;
+    body.Turned = 0.0f;
     if (!(dt > 0.0f))
         return;
     uint32_t const steps = std::max<uint32_t>(1, uint32_t(std::ceil(dt / MAX_SUBSTEP - 1e-4f)));

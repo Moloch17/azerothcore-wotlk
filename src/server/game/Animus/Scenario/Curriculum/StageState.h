@@ -259,6 +259,8 @@ namespace Animus::Curriculum
         uint32 EdgeMs = 0;                  // ... refused over nothing at all: a void edge
         uint32 StuckMs = 0;
         uint32 StuckRunMs = 0;
+        /// Radians the body turned this episode, either way (Client::TickTurned summed): what PointNav.Turning prices.
+        float TurnedRadians = 0.0f;
         uint32 CourseKinks = 0;
         float LastCourse = 0.0f;
         bool HasCourse = false;
@@ -517,10 +519,9 @@ namespace Animus::Curriculum
         std::vector<std::vector<uint32>> PressTimes;
         uint32 StepRepeats = 0;
         uint32 RepeatedPresses = 0;
-        // Jitter (ActionTuning::Jitter): what is charged at the next reward, and the episode's turn reversals and
-        // bearing swings (in half turns).
+        // Jitter (ActionTuning::Jitter): what is charged at the next reward, and the episode's pitch reversals and
+        // bearing swings (in half turns). No turn reversals since the heading stopped being a press (revision 8).
         float StepJitter = 0.0f;
-        uint32 TurnReversals = 0;
         float BearingFlips = 0.0f;
         uint32 PitchReversals = 0;
         // Intent (ActionTuning::Aimless, Effort, Fidget, StageScenario::JudgePress): what is charged at the next
@@ -613,6 +614,7 @@ namespace Animus::Curriculum
             EdgeMs = 0;
             StuckMs = 0;
             StuckRunMs = 0;
+            TurnedRadians = 0.0f;
             CourseKinks = 0;
             HasCourse = false;
             HasCoursePos = false;
@@ -749,7 +751,6 @@ namespace Animus::Curriculum
             StepRepeats = 0;
             RepeatedPresses = 0;
             StepJitter = 0.0f;
-            TurnReversals = 0;
             BearingFlips = 0.0f;
             PitchReversals = 0;
             StepAimless = 0;

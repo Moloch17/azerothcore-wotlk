@@ -378,6 +378,10 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     _spec.ImageBytes = _stage.Has(BlockId::Vision) ? Vision::ImageBytes(Vision::Current()) : 0;
     // ... and its look head's choices come back with the actions (free look, protocol 22).
     _spec.LookHeads = _stage.Has(BlockId::Vision) ? Vision::FreeLook::HEADS : 0;
+    // ... and the heading, a float an agent after them, where the stage moves its seats with the player controller
+    // (move block revision 8, protocol 32): every row carries one, applied only to the seats whose layout has a move
+    // block (ApplyContinuous).
+    _spec.ContinuousCount = _stage.Has(BlockId::Move) ? 1 : 0;
     // The mental map's crop travels as bytes too, in a section of its own (perception-goals REDESIGN §3, protocol 24).
     // ... in as many tiers as the stage asks (StageDefinition::MapTiers; map block revision 5), fine first.
     _spec.MapBytes = _stage.Has(BlockId::Map) ? Vision::CROP_BYTES * std::max<uint32>(1, _stage.MapTiers) : 0;
@@ -1059,12 +1063,9 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     {
         return float(seat(env, index).RepeatedPresses);
     });
-    // Steering that did not commit (Actions.Jitter, MoveControls::Press): turn rates reversed within the window, and
-    // the feet reversed within it (forward to back, left to right; bearing_flips).
-    _info.Add("turn_reversals", [seat](Env const& env, uint32 index)
-    {
-        return float(seat(env, index).TurnReversals);
-    });
+    // Steering that did not commit (Actions.Jitter, MoveControls::Press): the feet reversed within the window (forward
+    // to back, left to right; bearing_flips) and pitch rates or climbs reversed. turn_reversals went with the turn
+    // rates (move block revision 8): the heading is no press, and the turning it costs is PointNav's turn_radians.
     _info.Add("bearing_flips", [seat](Env const& env, uint32 index)
     {
         return seat(env, index).BearingFlips;
@@ -1118,8 +1119,8 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     // run's first leg; p90 from quarter-second bins), the pauses (runs of 750 ms or more with no movement key and
     // the body still: their count, per minute, mean seconds, and the share in which the camera's yaw offset or the
     // body's yaw swept 30 degrees or more -- per event over `pauses`), the camera moves per minute (decisions the
-    // look head changed a rate, the zoom or the offset), the share of the episode turning in place (a turn rate
-    // held, no movement key, still), the pin events (Stuck runs of a second or more) and the share whose body had
+    // look head changed a rate, the zoom or the offset), the share of the episode turning in place (the body
+    // turning, no movement key, still), the pin events (Stuck runs of a second or more) and the share whose body had
     // turned 30 degrees or more in the second before, the escapes (a pin ended by 4 yd of net displacement within
     // 20 s) and the mean seconds from the onset to the escape (per event over contact_escapes).
     _info.Add("straight_run_mean_s", [seat](Env const& env, uint32 index)
@@ -1397,6 +1398,19 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
     boost::json::array& merges = stageFile["merges"].emplace_array();
     for (std::string const& merge : _stage.Merges)
         merges.push_back(boost::json::string(merge));
+
+    // ACT's continuous outputs (protocol 32; heading.CONTRACT.md sec 4), in their order in an agent's section: the
+    // heading, an angle from the body's facing in (-pi, pi], where the stage has a move block. Empty without one, and
+    // as long as SPEC's ContinuousCount always.
+    boost::json::array& continuous = stageFile["continuous"].emplace_array();
+    if (_spec.ContinuousCount)
+    {
+        boost::json::object& heading = continuous.emplace_back(boost::json::object()).get_object();
+        heading["name"] = "heading";
+        heading["kind"] = "angle";
+        heading["low"] = -M_PI;
+        heading["high"] = M_PI;
+    }
 
     // The STEP's labels (protocol 31; vision movement curriculum, CONTRACT.md sec 3.1): bytes per agent, 0 without a
     // nav encounter, and the layout of a row: the traversability classes of the fine (2 yd) and coarse (8 yd) crop
@@ -3077,6 +3091,45 @@ void Animus::Curriculum::StageScenario::ApplyLook(Env& env, int32 const* look)
         take(OwnerAgent());
 }
 
+void Animus::Curriculum::StageScenario::ApplyContinuous(Env& env, float const* continuous)
+{
+    if (!_spec.ContinuousCount)
+        return;
+    EnvState& data = Data(env);
+    constexpr float TWO_PI = 2.0f * float(M_PI);
+    // The heading (heading.CONTRACT.md sec 1): theta, the angle from the body's facing at this decision, becomes the
+    // target the controller eases the body to (Movement::ControlState::TargetYaw) until the next decision's. Never
+    // trusted off the wire: a non-finite angle holds the facing, any other wraps into (-pi, pi]. No press, so nothing
+    // prices, repeats or judges it here; the turning it causes is priced where the stage asks (PointNav.Turning).
+    // Only the rows ApplyLook would take, and of them only the seats whose layout moves with the player controller.
+    auto const take = [&](uint32 agent)
+    {
+        SeatState& seat = data.Seats[agent];
+        if (!seat.L || !seat.L->Has(BlockId::Move))
+            return;
+        float theta = continuous[std::size_t(agent) * _spec.ContinuousCount];
+        if (!std::isfinite(theta))
+            theta = 0.0f;
+        theta = std::remainder(theta, TWO_PI);
+        if (theta <= -float(M_PI))
+            theta = float(M_PI);
+        // The facing the policy saw: the controller's own body, which the observation read (MoveBlock). A turn to
+        // camera this decision (ApplyLook's FaceTurn, not taken yet) moves the target with the facing when the client
+        // takes it (Client::Tick), so the angle counts from where the camera turned the body.
+        float const facing = seat.Mover.Started() ? seat.Mover.Body.Yaw : seat.Facing;
+        float target = std::fmod(facing + theta, TWO_PI);
+        if (target < 0.0f)
+            target += TWO_PI;
+        Movement::ControlState& held = seat.Controls.Held;
+        held.HasTargetYaw = true;
+        held.TargetYaw = target;
+    };
+    for (uint32 seat = 0; seat < _seatCount; ++seat)
+        take(seat);
+    if (CastOwnerActive(env))
+        take(OwnerAgent());
+}
+
 std::pair<uint32, uint32> Animus::Curriculum::StageScenario::CameraRenderSize(Env const& env, uint32 agent) const
 {
     if (!_stage.Has(BlockId::Vision))
@@ -3372,6 +3425,8 @@ void Animus::Curriculum::StageScenario::TrackController(SeatState& seat, uint32 
     // Counted from the second it began, once it has lasted a second.
     uint32 const before = seat.StuckRunMs;
     seat.StuckRunMs = stuck ? seat.StuckRunMs + diffMs : 0;
+    // The turning the body did, either way (the policy's heading eased to, or a replay's rate): PointNav.Turning.
+    seat.TurnedRadians += seat.Mover.TickTurned;
     if (seat.StuckRunMs >= 1000)
         seat.StuckMs += before < 1000 ? seat.StuckRunMs : diffMs;
     // Jumps taken, and the falls the server landed: a drop is a landing from two yards or more; what the landings
@@ -3392,13 +3447,13 @@ void Animus::Curriculum::StageScenario::TrackController(SeatState& seat, uint32 
     // The course turning more than 20 degrees within a tick while moving: a kink a watcher sees. Read from the
     // body's way between ticks, not its velocity, which the ground step zeroes every step (only a fall carries one):
     // read off the velocity, course_kinks was 0 for every seat on the ground (dry check, 2026-10-05).
-    TrackPacing(seat, body, held, keys, stuck, diffMs);
+    TrackPacing(seat, body, keys, stuck, diffMs);
     if (CourseKink(seat, body.X, body.Y, diffMs))
         ++seat.CourseKinks;
 }
 
-void Animus::Curriculum::StageScenario::TrackPacing(SeatState& seat, Movement::BodyState const& body,
-    Movement::ControlState const& held, bool keys, bool stuck, uint32 diffMs)
+void Animus::Curriculum::StageScenario::TrackPacing(SeatState& seat, Movement::BodyState const& body, bool keys,
+    bool stuck, uint32 diffMs)
 {
     // **Movement pacing** (M7, decision 0027), from the controller's body between ticks (CourseX/Y hold the last
     // tick's), never the server's position, which is credited only from the client's reports: a straight run reads
@@ -3486,8 +3541,9 @@ void Animus::Curriculum::StageScenario::TrackPacing(SeatState& seat, Movement::B
             seat.PauseSeconds += float(seat.PauseRunMs) / 1000.0f;
         seat.PauseRunMs = 0;
     }
-    // Turning in place: a turn rate held, no movement key, the body still.
-    if (held.TurnRate != 0.0f && still)
+    // Turning in place: the body turned this tick (toward the policy's heading, or at a replay's rate), no movement
+    // key, the body still.
+    if (seat.Mover.TickTurned > 0.0f && still)
         seat.TurnInPlaceMs += diffMs;
 
     // The body's yaw over the last second (eight slots of 125 ms), for the pin onset's turning.
@@ -3894,7 +3950,6 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     seat.SpellCasts += result.SpellCasts;
     seat.BreathingCasts += result.BreathingCasts;
     seat.ControlChanges += result.ControlChanged ? 1 : 0;
-    seat.TurnReversals += result.TurnReversals;
     seat.BearingFlips += result.BearingFlip;
     seat.PitchReversals += result.PitchReversals;
     seat.Weaves += result.Weaves;
@@ -4751,14 +4806,14 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
     if (*block == BlockId::Move)
     {
         // A step (forward, back, a strafe, a climb or dive, a jump) is judged at the reward, by the gap it closed or
-        // opened (SettleIntent). Rates, stops and walk are neutral: the jitter charge prices a head that cannot
-        // settle.
+        // opened (SettleIntent). Pitch rates and stops are neutral: the jitter charge prices a head that cannot
+        // settle. The heading is no press (revision 8) and never comes here.
         bool const step = MoveControls::IsStep(local);
         if (step && !Encoding::StandingInHazards(bot, nullptr))
             seat.MoveGap = GoalGap(seat, bot, target);
-        // A repeated step waits for its verdict; a repeated stop served nothing. Turn and pitch rates are steering
+        // A repeated step waits for its verdict; a repeated stop served nothing. Pitch rates are steering
         // corrections, which come in runs: the jitter charge prices the ones that undo each other.
-        bool const steer = MoveControls::IsTurn(local) || MoveControls::IsPitch(local);
+        bool const steer = MoveControls::IsPitch(local);
         if (seat.PendingRepeat && seat.MoveGap < 0.0f && !steer)
             chargeRepeat();
         seat.MoveRepeat = seat.PendingRepeat && seat.MoveGap >= 0.0f;

@@ -148,6 +148,19 @@ The .amdl format (little-endian); a reader must follow it exactly, and a change 
              columns readout_first..+2) added to the camera's embedding before its SiLU
         f32  pointer_weight                 the cell pointer's bonus: value averaged over each pool x pool block
                                             of the fine tier times this, added to every cell score
+    (version 12 on: a file of 12 is written only for a policy with the heading; every other policy is still 11, 10 or
+    9. The camera's flag and, without a camera, the planner's 0 flag come before it as in version 11)
+    u8       heading                        the continuous heading (HeadingHead, heading.CONTRACT.md sec 5)
+    if heading:
+        u32  components (K, 3), feature_width
+        f32  kappa_min (0.5), kappa_max (200), weight_floor (0.02)
+        f32  weight[4K * feature_width], bias[4K]      one Linear on the action head's features (with the goal's
+                                            conditioning, as the free look's); its 4K outputs in this order:
+                                            [0, 2K) component k's mean direction (x, y) at 2k, 2k + 1;
+                                            [2K, 3K) kappa_k = clamp(softplus(.) + kappa_min, kappa_min, kappa_max);
+                                            [3K, 4K) the mixture logits, w = floor + (1 - K floor) softmax(.)
+        The realm plays the mode: theta = atan2(y_k, x_k) of the component k with the largest mixture logit (the
+        first of equals), radians in (-pi, pi], the target heading relative to the body's facing (0 holds it).
 
 The camera (version 10, mappo.networks.VisionEncoder): the image's bytes [height][width][4] -- distance, height, normal,
 class byte -- are decoded as the sim's Vision::DecodePixel (255 -> 1.0 else b / 254; (b - 128) / 125; b / 255; the
@@ -207,8 +220,13 @@ AMDL_MAGIC = b"AMDL"
 # head, the VIN, its join and the pointer's bonus) after the camera's tail (vision movement curriculum, CONTRACT.md
 # sec 5). Written only for a policy with the planner; every other policy is still 10 or 9. A checkpoint with a planner
 # is never written as 10 (write_amdl refuses).
-AMDL_VERSION = 11
-AMDL_VERSIONS = (7, 8, 9, 10, 11)
+# 12: the continuous heading (HeadingHead, heading.CONTRACT.md sec 5): a section after the planner's. Written only for a
+# policy with the heading; every other policy is still 11, 10 or 9. A checkpoint with a heading head is never written
+# as 11 or below (write_amdl refuses).
+AMDL_VERSION = 12
+AMDL_VERSIONS = (7, 8, 9, 10, 11, 12)
+#: The version a policy with the planner and no heading is written as.
+AMDL_PLANNER_VERSION = 11
 #: The version a policy without the tail is written as, and the one with the camera tail and no planner.
 AMDL_PLAIN_VERSION = 9
 AMDL_CAMERA_VERSION = 10
@@ -286,7 +304,8 @@ def write_amdl(
     seat_sets: dict | None = None,
     tail: dict | None = None,
 ) -> None:
-    """Write one model. `tail` is the version 10 tail (tail_weights); without one the file is version 9."""
+    """Write one model. `tail` is the version 10 tail (tail_weights); without one the file is version 9. A tail with a
+    heading is version 12, one with a planner (and no heading) 11."""
     if layers[0][0].shape[1] != obs_dim + num_agents:
         raise ValueError(f"first layer takes {layers[0][0].shape[1]} inputs, expected {obs_dim} + {num_agents}")
     if memory is not None and layers[-1][0].shape[1] != memory["weight_hh"].shape[1]:
@@ -296,9 +315,13 @@ def write_amdl(
 
     encoded = name.encode("utf-8")
     planner = bool(tail and tail.get("planner"))
-    version = AMDL_VERSION if planner else (AMDL_CAMERA_VERSION if tail else AMDL_PLAIN_VERSION)
-    if planner and version < AMDL_VERSION:
-        raise ValueError("a policy with a planner is written as version 11, never 10")
+    heading = bool(tail and tail.get("heading"))
+    version = (AMDL_VERSION if heading else AMDL_PLANNER_VERSION if planner
+               else (AMDL_CAMERA_VERSION if tail else AMDL_PLAIN_VERSION))
+    if planner and version < AMDL_PLANNER_VERSION:
+        raise ValueError("a policy with a planner is written as version 11 or 12, never 10")
+    if heading and version < AMDL_VERSION:
+        raise ValueError("a policy with a heading head is written as version 12, never 11 or below")
     with open(path, "wb") as out:
         out.write(AMDL_MAGIC)
         out.write(struct.pack("<IH", version, len(encoded)))
@@ -390,7 +413,24 @@ def _floats(out, *arrays) -> None:
 
 
 def _write_tail(out, tail: dict, version: int = AMDL_CAMERA_VERSION) -> None:
-    """The version 10 tail (see the format above), and the version 11 map tiers and planner section with one."""
+    """The version 10 tail (see the format above), the version 11 map tiers and planner section with one, and the
+    version 12 heading section with one."""
+    _write_camera_tail(out, tail, version)
+    if version < AMDL_VERSION:
+        if tail.get("heading"):
+            raise ValueError("a policy with a heading head is written as version 12, never 11 or below")
+        return
+    heading = tail.get("heading")
+    out.write(struct.pack("<B", 1 if heading else 0))
+    if heading:
+        out.write(struct.pack("<2I", int(heading["components"]), int(heading["width"])))
+        out.write(struct.pack("<3f", float(heading["kappa_min"]), float(heading["kappa_max"]),
+                              float(heading["weight_floor"])))
+        _floats(out, heading["weight"], heading["bias"])
+
+
+def _write_camera_tail(out, tail: dict, version: int) -> None:
+    """The version 10 tail and the version 11 sections in it (_write_tail)."""
     out.write(struct.pack("<B", 1 if tail["goal_space"] else 0))
     pointer = tail.get("place_pointer")
     out.write(struct.pack("<B", 1 if pointer else 0))
@@ -405,7 +445,7 @@ def _write_tail(out, tail: dict, version: int = AMDL_CAMERA_VERSION) -> None:
     camera = tail.get("camera")
     out.write(struct.pack("<B", 1 if camera else 0))
     if not camera:
-        if version >= AMDL_VERSION:
+        if version >= AMDL_PLANNER_VERSION:
             out.write(struct.pack("<B", 0))     # no camera: no planner
         return
     out.write(struct.pack("<6I", *(int(camera[key]) for key in ("height", "width", "patch", "scalars", "first",
@@ -434,7 +474,7 @@ def _write_tail(out, tail: dict, version: int = AMDL_CAMERA_VERSION) -> None:
         out.write(struct.pack("<3I", crop["patch_weight"].shape[0], crop["mix_weight"].shape[0],
                               crop["embed_weight"].shape[0]))
         tiers = int(crop.get("tiers", 1))
-        if version >= AMDL_VERSION:
+        if version >= AMDL_PLANNER_VERSION:
             out.write(struct.pack("<I", tiers))
         elif tiers > 1:
             raise ValueError("a two-tier map is written as version 11, never 10")
@@ -446,7 +486,7 @@ def _write_tail(out, tail: dict, version: int = AMDL_CAMERA_VERSION) -> None:
     out.write(struct.pack("<I", len(heads)))
     out.write(struct.pack(f"<{len(heads)}I", *heads))
     _floats(out, camera["look_weight"], camera["look_bias"])
-    if version < AMDL_VERSION:
+    if version < AMDL_PLANNER_VERSION:
         return
     planner = tail.get("planner")
     out.write(struct.pack("<B", 1 if planner else 0))
@@ -743,7 +783,34 @@ def tail_weights(actor_state: dict[str, torch.Tensor], stage: dict, names: list[
                 np.zeros((0,), "<f4")
         tail["camera"] = camera
         needed = True
+    heading = heading_weights(actor_state, stage, names, layout)
+    if heading is not None:
+        tail["heading"] = heading
+        needed = True
     return tail if needed else None
+
+
+def heading_weights(actor_state: dict[str, torch.Tensor], stage: dict, names: list[str], layout: int) -> dict | None:
+    """The version 12 heading section of one layout's model (HeadingHead), or None when the actor has no heading head
+    or this layout has no move block (networks.heading_of). Refused (ValueError): heading weights without the
+    stage.json "continuous" list that turns them on."""
+    if "heading_head.linear.weight" not in actor_state:
+        return None
+    from .mappo.networks import (HEADING_COMPONENTS, HEADING_KAPPA_MAX, HEADING_KAPPA_MIN, HEADING_WEIGHT_FLOOR,
+                                 heading_of)
+    steering = heading_of(stage, names) if stage else None
+    if steering is None:
+        raise ValueError("the actor has a heading head (heading_head.* weights) but no stage.json names the heading "
+                         "among its continuous outputs: not exporting")
+    if not steering[layout]:
+        return None
+    weight = actor_state["heading_head.linear.weight"].detach().cpu().numpy().astype("<f4")
+    bias = actor_state["heading_head.linear.bias"].detach().cpu().numpy().astype("<f4")
+    if weight.shape[0] != 4 * HEADING_COMPONENTS:
+        raise ValueError(f"the heading head has {weight.shape[0]} outputs, the learner's {HEADING_COMPONENTS} "
+                         f"components make {4 * HEADING_COMPONENTS}")
+    return {"components": HEADING_COMPONENTS, "width": int(weight.shape[1]), "kappa_min": HEADING_KAPPA_MIN,
+            "kappa_max": HEADING_KAPPA_MAX, "weight_floor": HEADING_WEIGHT_FLOOR, "weight": weight, "bias": bias}
 
 
 def export_layouts(
@@ -1055,6 +1122,15 @@ def read_amdl(path: str | Path) -> dict:
             for key in PLANNER_ARRAYS:
                 planner[key] = floats(int(np.prod(shapes[key])), *shapes[key])
             tail["planner"] = planner
+        if version >= 12 and flag():
+            components, heading_width = u32s(2)
+            kappa_min, kappa_max, weight_floor = struct.unpack_from("<3f", data, offset)
+            offset += 12
+            outputs = 4 * components
+            tail["heading"] = {"components": components, "width": heading_width, "kappa_min": kappa_min,
+                               "kappa_max": kappa_max, "weight_floor": weight_floor,
+                               "weight": floats(outputs * heading_width, outputs, heading_width),
+                               "bias": floats(outputs, outputs)}
 
     if offset != len(data):
         raise ValueError(f"{len(data) - offset} trailing bytes")
@@ -1073,6 +1149,17 @@ def read_amdl(path: str | Path) -> dict:
         "slow": slow,
         "seat_sets": seat_sets,
     }
+
+
+def reference_heading(heading: dict, features: np.ndarray) -> float:
+    """The realm's heading from a version 12 model's heading section and the action head's features [feature_width]
+    (the goal's conditioning in them): the mode, theta = atan2(y_k, x_k) of the component k with the largest mixture
+    logit (the first of equals), radians in (-pi, pi], relative to the body's facing. The reference for the C++ reader;
+    animus.golden checks it against the learner's own."""
+    k = int(heading["components"])
+    raw = heading["weight"].astype(np.float64) @ np.asarray(features, dtype=np.float64) + heading["bias"]
+    best = int(np.argmax(raw[3 * k:4 * k]))
+    return float(np.arctan2(raw[2 * best + 1], raw[2 * best]))
 
 
 def reference_decide(model: dict, obs: np.ndarray, mask: np.ndarray, agent: int = 0,

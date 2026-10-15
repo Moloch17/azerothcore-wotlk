@@ -778,6 +778,8 @@ def _seed_sight(new: dict, old: dict, new_stage: dict | None = None, old_stage: 
 
 #: The free look's head (LookHead, camera-vision.FREELOOK.md D): the actor's own, not a shared part.
 LOOK_HEAD = "look_head."
+#: The heading head's keys (HeadingHead), carried by _seed_heading.
+HEADING_HEAD = "heading_head."
 
 
 def _seed_look(new: dict, old: dict, new_stage: dict | None, old_stage: dict | None) -> str | None:
@@ -793,6 +795,21 @@ def _seed_look(new: dict, old: dict, new_stage: dict | None, old_stage: dict | N
         return f"fresh (vision revision {_vision_revision(old_stage)} -> {_vision_revision(new_stage)})"
     if not all(key in old and old[key].shape == new[key].shape for key in keys):
         return "fresh (its heads changed)"
+    for key in keys:
+        new[key].copy_(old[key])
+    return "carried"
+
+
+def _seed_heading(new: dict, old: dict) -> str | None:
+    """Carry the heading head (HeadingHead) from a checkpoint that has one of the same shape; else it starts as
+    initialised (mostly holding the heading). None when this actor has no heading head."""
+    keys = [key for key in new if key.startswith(HEADING_HEAD)]
+    if not keys:
+        return None
+    if not any(key.startswith(HEADING_HEAD) for key in old):
+        return "fresh (the checkpoint has none)"
+    if not all(key in old and old[key].shape == new[key].shape for key in keys):
+        return "fresh (its shape changed)"
     for key in keys:
         new[key].copy_(old[key])
     return "carried"
@@ -878,6 +895,9 @@ def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, ove
         look = _seed_look(actor, old["actor"], stage, old_stage)
         if look is not None:
             print(f"  look head: {look}", flush=True)
+        heading = _seed_heading(actor, old["actor"])
+        if heading is not None:
+            print(f"  heading head: {heading}", flush=True)
 
     # Every layout this run has must be in the checkpoint it is seeding from. A missing one is not a thing to work
     # around quietly: the alternative is starting that class from scratch in the middle of a curriculum, which looks

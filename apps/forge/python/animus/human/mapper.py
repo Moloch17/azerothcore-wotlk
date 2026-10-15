@@ -1,10 +1,12 @@
 """The inverse action mapper (plan §6.5): per decision, the nearest bot action to what a human did, with a confidence.
 
 **Movement.** A clip on the decision grid is reproduced through the fit emulator (fit.beam_fit, the player
-controller's held keys and mouse, segments of SEGMENT_SECONDS re-anchored on the human), and each decision's chosen
-action is the mapping: a key or mouse-rate press, or no movement press at all. The action is reported as the move
-block's local action index (MoveControls.h, revision 2: move_forward 0 ... jump 23; walk_toggle 24 until revision 7 removed it; fit's action i + 1), or
-None for no press.
+controller's held keys and heading, segments of SEGMENT_SECONDS re-anchored on the human), and each decision's chosen
+action is the mapping: a key or pitch-rate press, or no movement press at all. The action is reported as the move
+block's local action index (MoveControls.h, revision 8: move_forward 0 ... jump 14; fit's action i + 1), or None for
+no press. The heading -- the policy's continuous output since revision 8, the angle from the facing the body is eased
+to -- is reported beside it (`heading`, radians, + left): the angle that turns the body onto the human's next facing
+(fit.theta_toward), not a press.
 The **confidence** of a decision is how much worse the best alternative action would have done there, the rest of
 the sequence kept, over the next LOOKAHEAD decisions: (c_alt - c_fit) / (c_alt + c_fit + CONF_SCALE), in [0, 1].
 
@@ -61,12 +63,13 @@ class MovementMapping:
     local: list[int | None]         # the move block's local action per decision
     confidence: np.ndarray          # [K]
     pos_err: np.ndarray             # [K + 1]
+    heading: np.ndarray             # [K] the heading taken each decision (theta, radians from the facing, + left)
 
 
 def _costs(space: fit.Space, state: fit.State, kinds: np.ndarray, values: np.ndarray, human: np.ndarray, k: int,
            tail: list[int], lookahead: int) -> np.ndarray:
     """Cost over decisions k..k+lookahead of each first action (kinds/values, one per state row), the fitted
-    `tail` after it."""
+    `tail` after it. Every decision's heading turns onto the human's next facing, as the fit's does."""
     akinds = np.array([a[0] for a in space.actions])
     avalues = np.array([a[1] for a in space.actions], dtype=np.float64)
     total = np.zeros(len(kinds))
@@ -81,8 +84,9 @@ def _costs(space: fit.Space, state: fit.State, kinds: np.ndarray, values: np.nda
             kk, vv = np.full(len(kinds), akinds[a]), np.full(len(kinds), avalues[a])
         h = human[k + j]
         speed = float(h[motion.SPEED]) if h[motion.SPEED] > 0.1 else motion.DEFAULT_SPEED
-        s, allowed = fit.step(s, kk, vv, int(h[motion.MODE]), speed, space)
         target = human[k + j + 1]
+        theta = fit.theta_toward(s.facing, target[motion.YAW], space.dt)
+        s, allowed = fit.step(s, kk, vv, int(h[motion.MODE]), speed, space, theta)
         if int(target[motion.MODE]) in (motion.MODE_SWIM, motion.MODE_FLY):
             err2 = (s.x - target[motion.X]) ** 2 + (s.y - target[motion.Y]) ** 2 + (s.z - target[motion.Z]) ** 2
         else:
@@ -107,6 +111,7 @@ def map_movement(samples: np.ndarray, space: fit.Space | None = None, beam: int 
     seg = int(round(SEGMENT_SECONDS / space.dt))
     actions: list[int] = []
     conf: list[float] = []
+    headings: list[float] = []
     errs = [0.0]
     akinds = np.array([a[0] for a in space.actions])
     avalues = np.array([a[1] for a in space.actions], dtype=np.float64)
@@ -118,6 +123,7 @@ def map_movement(samples: np.ndarray, space: fit.Space | None = None, beam: int 
         got = fit.beam_fit(space, part, beam, known,
                            None if jumps is None else np.asarray(jumps[first:first + len(part) - 1], dtype=bool))
         errs += list(got.pos_err[1:])
+        headings += list(got.thetas)
         # Replay to each decision's state, and price every alternative there.
         state = fit.State.start(1, part[0, motion.X], part[0, motion.Y], part[0, motion.Z], part[0, motion.YAW],
                                 part[0, motion.PITCH], got.start_feet)
@@ -134,12 +140,14 @@ def map_movement(samples: np.ndarray, space: fit.Space | None = None, beam: int 
             conf.append(1.0 if not math.isfinite(alt) else float(np.clip((alt - mine) / (alt + mine + CONF_SCALE),
                                                                            0.0, 1.0)))
             speed = float(part[k, motion.SPEED]) if part[k, motion.SPEED] > 0.1 else motion.DEFAULT_SPEED
+            theta = fit.theta_toward(state.facing, part[k + 1, motion.YAW], space.dt)
             state, _ = fit.step(state, np.array([akinds[a]]), np.array([avalues[a]]), int(part[k, motion.MODE]),
-                                speed, space)
+                                speed, space, theta)
             if int(part[k + 1, motion.MODE]) not in (motion.MODE_SWIM, motion.MODE_FLY):
                 state.z[:] = part[k + 1, motion.Z]
         actions += got.actions
-    return MovementMapping(actions, [move_local(space, a) for a in actions], np.asarray(conf), np.asarray(errs))
+    return MovementMapping(actions, [move_local(space, a) for a in actions], np.asarray(conf), np.asarray(errs),
+                           np.asarray(headings))
 
 
 # Casts.
@@ -236,14 +244,15 @@ def export_spell_ranks(out_csv: str | Path, container: str = DB_CONTAINER, env_f
 # Validation.
 
 def random_sequence(space: fit.Space, n: int, rng: np.random.Generator, mode: int = motion.MODE_GROUND
-                    ) -> tuple[list[int], tuple[int, int]]:
-    """A policy-like movement sequence: mostly holding, sometimes a key (forward, back, a strafe or their stops), a
-    mouse rate, a walk toggle or a jump; presses that change nothing (the value already held, a stop with nothing
-    held) are not made, nor any press mid-jump. Returns the actions and the feet's start state."""
+                    ) -> tuple[list[int], tuple[int, int], np.ndarray]:
+    """A policy-like movement sequence: mostly holding, sometimes a key (forward, back, a strafe or their stops) or
+    a jump; presses that change nothing (the value already held, a stop with nothing held) are not made, nor any
+    press mid-jump. Beside it a heading per decision: mostly held (0), sometimes a new angle anywhere in (-pi, pi].
+    Returns the actions, the feet's start state and the headings."""
     index = {space.actions[i]: i for i in range(len(space.actions))}
     noop = index[(fit.NOOP, 0.0)]
     forward, strafe = start = fit.FEET[int(rng.integers(len(fit.FEET)))]
-    turn = 0.0
+    thetas = np.where(rng.random(n) < 0.15, rng.uniform(-math.pi, math.pi, n), 0.0)
     jumping = 0
     out = []
     for _ in range(n):
@@ -257,18 +266,12 @@ def random_sequence(space: fit.Space, n: int, rng: np.random.Generator, mode: in
         elif roll < 0.18:
             value = float(rng.choice([v for v in (-1.0, 1.0, 0.0) if v != strafe]))
             strafe, a = value, index[(fit.STRAFE, value)]
-        elif roll < 0.33:
-            rates = [v for k, v in space.actions if k == fit.TURN and abs(v - turn) > 1e-9]
-            turn = float(rng.choice(rates))
-            a = index[(fit.TURN, turn)]
-        elif roll < 0.35 and (forward or strafe):
-            a = index[(fit.WALK, 0.0)]
-        elif roll < 0.37 and mode == motion.MODE_GROUND:
+        elif roll < 0.20 and mode == motion.MODE_GROUND:
             a = index[(fit.JUMP, 0.0)]
             jumping = int(math.ceil(fit.JUMP_SECONDS / space.dt)) + 1
         out.append(a)
         jumping = max(0, jumping - 1)
-    return out, (int(start[0]), int(start[1]))
+    return out, (int(start[0]), int(start[1])), thetas
 
 
 def validate_movement(space: fit.Space | None = None, sequences: int = 20, length: int = 40, noise_yards: float = 0.0,
@@ -279,11 +282,11 @@ def validate_movement(space: fit.Space | None = None, sequences: int = 20, lengt
     total = correct = pressed = pressed_ok = unobservable = 0
     confusions: dict[str, int] = {}
     for _ in range(sequences):
-        acts, start_feet = random_sequence(space, length, rng)
+        acts, start_feet, thetas = random_sequence(space, length, rng)
         n = len(acts) + 1
         start = {"x": float(rng.normal(0, 100)), "y": float(rng.normal(0, 100)),
                  "facing": float(rng.uniform(0, 2 * math.pi)), "feet": start_feet}
-        path = fit.rollout(space, acts, start, np.zeros(n), np.full(n, 7.0))
+        path = fit.rollout(space, acts, start, np.zeros(n), np.full(n, 7.0), thetas)
         h = np.zeros((n, motion.SAMPLE_DIM))
         h[:, motion.T] = np.arange(n) * space.dt
         h[:, motion.X:motion.Z + 1] = path[:, :3] + rng.normal(0, noise_yards, (n, 3)) * (noise_yards > 0)
@@ -296,7 +299,8 @@ def validate_movement(space: fit.Space | None = None, sequences: int = 20, lengt
         for i, (t, g) in enumerate(zip(truth, got.local)):
             if t is not None:
                 # A press with no effect on the motion (a walk toggle while standing, say) cannot be seen.
-                alt = fit.rollout(space, acts[:i] + [noop] + acts[i + 1:], start, np.zeros(n), np.full(n, 7.0))
+                alt = fit.rollout(space, acts[:i] + [noop] + acts[i + 1:], start, np.zeros(n), np.full(n, 7.0),
+                                  thetas)
                 if np.abs(alt - path).max() < 1e-6:
                     unobservable += 1
                     continue

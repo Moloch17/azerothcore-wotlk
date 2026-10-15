@@ -506,9 +506,9 @@ namespace Animus::Curriculum
             std::string RungBins2 = "3,4";
             std::string RungBins3 = "4,5";
             uint32 PinSeconds = 4;
-            /// Per second of a held turn at one full turn a second (360 deg/s), in proportion to the rate: a turn
-            /// held at 360 deg/s for a whole 60 s episode costs 1.2, a normal trip's turning about 0.01.
-            float Turning = 0.02f;
+            /// Per radian the body actually turns, either way (heading.CONTRACT.md sec 3): a full turn costs 0.063,
+            /// spinning at the controller's fastest (360 deg/s) for a whole 60 s episode 3.8.
+            float Turning = 0.01f;
             uint32 FailurePool = 512;
         } PointNav;
 

@@ -11,7 +11,12 @@ from enum import IntEnum
 
 import numpy as np
 
-PROTOCOL_VERSION = 31
+PROTOCOL_VERSION = 32
+# 32: continuous outputs (heading.CONTRACT.md sec 4): SPEC ends with the continuous values per agent
+# (Spec.continuous_count: 1 in a stage whose layouts have a move block -- the heading -- else 0), and every ACT carries,
+# after the look, float32 continuous[E, A, continuous_count] in stage.json's top-level "continuous" order: the heading
+# is the target yaw relative to the body's facing at that decision, radians in (-pi, pi] (0 holds the heading; the
+# sim wraps or zeroes anything else). The move block's nine turn-rate actions are gone (revision 8). SPEC is 116 bytes.
 # 31: the nav stages' labels (vision movement curriculum, decision 0036; CONTRACT.md sec 3.1): SPEC ends with the label
 # bytes per agent (Spec.label_bytes, 0 for a stage without a labelling encounter), and a stage with labels ends each
 # STEP -- after everything else, the map section included -- with every agent's labels [E, A, label_bytes] uint8 (the
@@ -82,12 +87,14 @@ class MsgType(IntEnum):
 HEADER = struct.Struct("<II")  # type, payload length
 HELLO = struct.Struct("<III")  # version, this learner's rank, data-parallel learners (0 and 1 alone)
 # ..., scenario name, kinematics width (20), image bytes per agent (21), look heads (22), map bytes per agent (24)
-# ..., the tick jitter's body ms, largest spike ms and spike probability (27), label bytes per agent (31)
-SPEC = struct.Struct(f"<12I{SCENARIO_NAME_SIZE}s4I2IfI")
+# ..., the tick jitter's body ms, largest spike ms and spike probability (27), label bytes per agent (31), continuous
+# values per agent (32)
+SPEC = struct.Struct(f"<12I{SCENARIO_NAME_SIZE}s4I2IfII")
 LAYOUT_COUNT = struct.Struct("<I")
 LAYOUT = struct.Struct(f"<II{LAYOUT_NAME_SIZE}s")  # obs dim, actions, name
 STEP_HEADER = struct.Struct("<QII")  # decision counter, first env, env count
-# first env, env count; then that many envs' actions, their goals (with a goal head) and their look (protocol 22)
+# first env, env count; then that many envs' actions, their goals (with a goal head), their look (protocol 22) and
+# their continuous values (protocol 32, float32)
 ACT_HEADER = struct.Struct("<II")
 #: The plan positions an ACT carries goals for (primary, secondary, queue 0, queue 1) and the int32 an agent's goal
 #: section takes (protocol 28): the four joint goal ids, then the four cell words ((ticket << 12) | (cell + 1), 0 none).
@@ -140,6 +147,9 @@ NO_FRAME_PIXEL = (255, 128, 0, 0)
 # The look choice that changes nothing (protocol 22, revision 4's heads [7, 5, 5]): yaw rate 0, pitch rate 0, hold.
 # What an ACT carries for agents nobody chose a look for (a scripted baseline's evaluation): in range, and still.
 LOOK_HOLD = (3, 2, 0)
+#: The continuous output the heading is (protocol 32, stage.json's "continuous"): a value that holds the heading.
+HEADING = "heading"
+HEADING_HOLD = 0.0
 
 
 @dataclass(frozen=True)
@@ -193,6 +203,9 @@ class Spec:
     # Bytes per agent of each STEP's labels (protocol 31): LABEL_BYTES in a nav stage, 0 without labels. Socket only,
     # never a device buffer (extra_bytes leaves them out), never part of the camera's row.
     label_bytes: int = 0
+    # Continuous values per agent each ACT carries after the look (protocol 32): stage.json's "continuous" list, in its
+    # order -- 1 (the heading) in a stage whose layouts have a move block, else 0.
+    continuous_count: int = 0
 
     @property
     def mean_decision_ms(self) -> float:
@@ -407,6 +420,7 @@ def encode_spec(spec: Spec) -> bytes:
         spec.spike_max_ms,
         spec.spike_prob,
         spec.label_bytes,
+        spec.continuous_count,
     )
     body += LAYOUT_COUNT.pack(len(spec.layouts))
     for layout in spec.layouts:
@@ -437,6 +451,7 @@ def decode_spec(payload: bytes) -> Spec:
         spike_max_ms=fields[18],
         spike_prob=float(fields[19]),
         label_bytes=fields[20],
+        continuous_count=fields[21],
         layouts=tuple(layouts),
         episode_info_names=tuple(names.split(",")) if names else (),
     )
@@ -537,12 +552,36 @@ def look_hold(count: int, agents: int, look_heads: int) -> np.ndarray:
     return np.broadcast_to(np.array(hold, dtype="<i4"), (count, agents, look_heads)).copy()
 
 
+def continuous_hold(count: int, agents: int, continuous_count: int) -> np.ndarray:
+    """[count, agents, continuous_count] float32 continuous values that change nothing: the heading held (0)."""
+    return np.full((count, agents, continuous_count), HEADING_HOLD, dtype="<f4")
+
+
+def continuous_of(stage: dict | None) -> list[str]:
+    """The names of stage.json's top-level "continuous" outputs (protocol 32), in ACT order; [] without any (an older
+    stage.json too)."""
+    return [str(entry["name"]) for entry in ((stage or {}).get("continuous") or ())]
+
+
+def check_continuous(stage: dict | None, spec_continuous_count: int) -> None:
+    """Refuse a sim and a stage.json that disagree about the continuous outputs: SPEC's ContinuousCount against the
+    manifest's "continuous" list, and a list naming an output this learner does not have (only the heading, and only
+    first)."""
+    names = continuous_of(stage)
+    if len(names) != int(spec_continuous_count):
+        raise ValueError(f"the sim's SPEC announces {spec_continuous_count} continuous outputs, stage.json's "
+                         f"\"continuous\" has {len(names)} ({names})")
+    if names and names != [HEADING]:
+        raise ValueError(f"stage.json's continuous outputs are {names}; this learner has the heading alone")
+
+
 def encode_act(env_begin: int, actions: np.ndarray, goals: np.ndarray | None = None,
-               look: np.ndarray | None = None) -> bytes:
+               look: np.ndarray | None = None, continuous: np.ndarray | None = None) -> bytes:
     """ACT payload for envs [env_begin, env_begin + len(actions)): [E, A] actions, then the goals when the policy has a
     goal head: [E, A, GOAL_WIRE_INTS] int32, the four plan positions' joint goal ids (-1 none) then their cell words
     (0 none; MappoTrainer.wire_goals) -- protocol 28 (17: two goals); then, in a stage
-    with look heads (protocol 22), the look [E, A, LookHeads], agent-major in the actions' order."""
+    with look heads (protocol 22), the look [E, A, LookHeads], agent-major in the actions' order; then, in a stage with
+    continuous outputs (protocol 32), the continuous values [E, A, ContinuousCount] float32 (the heading, radians)."""
     actions = np.ascontiguousarray(actions, dtype="<i4")
     payload = ACT_HEADER.pack(env_begin, actions.shape[0]) + actions.tobytes()
     if goals is not None:
@@ -552,28 +591,35 @@ def encode_act(env_begin: int, actions: np.ndarray, goals: np.ndarray | None = N
         if look.shape[:2] != actions.shape:
             raise ValueError(f"look of shape {look.shape} for actions of shape {actions.shape}")
         payload += look.tobytes()
+    if continuous is not None:
+        continuous = np.ascontiguousarray(continuous, dtype="<f4")
+        if continuous.ndim != 3 or continuous.shape[:2] != actions.shape:
+            raise ValueError(f"continuous values of shape {continuous.shape} for actions of shape {actions.shape}")
+        payload += continuous.tobytes()
     return payload
 
 
-def decode_act(payload: bytes | bytearray | memoryview, agents: int, goals: bool = False,
-               look_heads: int = 0) -> tuple[int, np.ndarray, np.ndarray | None, np.ndarray | None]:
+def decode_act(payload: bytes | bytearray | memoryview, agents: int, goals: bool = False, look_heads: int = 0,
+               continuous_count: int = 0) -> tuple[int, np.ndarray, np.ndarray | None, np.ndarray | None,
+                                                   np.ndarray | None]:
     """An ACT as the sim reads it: (first env, actions [E, A], goals [E, A, GOAL_WIRE_INTS] or None, look [E, A, H] or
-    None).
+    None, continuous [E, A, C] float32 or None).
     Raises ValueError when the payload is not the size those make."""
     env_begin, envs = ACT_HEADER.unpack_from(payload)
-    sizes = [("actions", envs * agents), ("goals", envs * agents * GOAL_WIRE_INTS if goals else 0),
-             ("look", envs * agents * look_heads)]
-    expected = ACT_HEADER.size + 4 * sum(size for _, size in sizes)
+    sizes = [("actions", envs * agents, "<i4"), ("goals", envs * agents * GOAL_WIRE_INTS if goals else 0, "<i4"),
+             ("look", envs * agents * look_heads, "<i4"), ("continuous", envs * agents * continuous_count, "<f4")]
+    expected = ACT_HEADER.size + 4 * sum(size for _, size, _ in sizes)
     if len(payload) != expected:
         raise ValueError(f"ACT of {len(payload)} bytes, expected {expected} ({envs} envs x {agents} agents, goals "
-                         f"{goals}, look heads {look_heads})")
+                         f"{goals}, look heads {look_heads}, continuous {continuous_count})")
     offset, out = ACT_HEADER.size, {}
-    for name, size in sizes:
-        out[name] = np.frombuffer(payload, dtype="<i4", count=size, offset=offset).copy() if size else None
+    for name, size, dtype in sizes:
+        out[name] = np.frombuffer(payload, dtype=dtype, count=size, offset=offset).copy() if size else None
         offset += 4 * size
     return (env_begin, out["actions"].reshape(envs, agents),
             None if out["goals"] is None else out["goals"].reshape(envs, agents, GOAL_WIRE_INTS),
-            None if out["look"] is None else out["look"].reshape(envs, agents, look_heads))
+            None if out["look"] is None else out["look"].reshape(envs, agents, look_heads),
+            None if out["continuous"] is None else out["continuous"].reshape(envs, agents, continuous_count))
 
 
 def encode_mode(evaluate: bool, seed_base: int = 0, episodes: int = 0, baseline: str = "",

@@ -2564,6 +2564,8 @@ void AnimusForge::Forge::RemoteDecision(uint32 group)
     uint32 const agents = _pool->Spec().AgentsPerEnv;
     // The look head's choices per agent in ACT (protocol 22): 0 without a camera, and ACT is protocol 21's.
     uint32 const lookHeads = _pool->Spec().LookHeads;
+    // The continuous outputs per agent after them (protocol 32): the heading with a move block, 0 without.
+    uint32 const continuousCount = _pool->Spec().ContinuousCount;
 
     // Every learner's answer for the group awaited, rank by rank: an ACT for its share, or a MODE, WEIGHTS or REPLAY
     // first. A mode switch resets every env and answers with every group's fresh STEP before the ACT -- once every
@@ -2577,7 +2579,7 @@ void AnimusForge::Forge::RemoteDecision(uint32 group)
         std::vector<char> payload;
         auto const waitFrom = std::chrono::steady_clock::now();
         bool const received = _server.ReceiveAny(type, payload,
-            std::max({ sizeof(ActHeader) + (1 + Animus::GOAL_WIRE_INTS + lookHeads) * actionBytes,
+            std::max({ sizeof(ActHeader) + (1 + Animus::GOAL_WIRE_INTS + lookHeads + continuousCount) * actionBytes,
                 sizeof(ModeMsg), weightBytes, replayBytes }),
             onIdle);
         WaitedForLearner(waitFrom);
@@ -2598,7 +2600,7 @@ void AnimusForge::Forge::RemoteDecision(uint32 group)
         std::size_t const groupBytes = groupRows * sizeof(int32);
         std::size_t const body = payload.size() - std::min(payload.size(), sizeof(act));
         std::size_t const goalBytes = groupBytes * Animus::GOAL_WIRE_INTS;
-        ActCut const cut = CutAct(body, groupRows, lookHeads);
+        ActCut const cut = CutAct(body, groupRows, lookHeads, continuousCount);
         if (type == MsgType::Act && modes.empty() && act.EnvBegin == rows.Local && act.EnvCount == rows.Count
             && cut.Valid)
         {
@@ -2626,6 +2628,12 @@ void AnimusForge::Forge::RemoteDecision(uint32 group)
                 }
                 std::copy(look.begin(), look.end(), _pool->Look.begin() + first * lookHeads);
             }
+            // The continuous section (protocol 32), taken as sent: any float is a value the scenario can sanitise (a
+            // non-finite heading is 0, any other wraps into (-pi, pi]: StageScenario::ApplyContinuous), so none is a
+            // protocol error, unlike a look choice out of range.
+            if (continuousCount)
+                std::memcpy(_pool->Continuous.data() + first * continuousCount, actions + cut.ContinuousOffset,
+                    groupRows * continuousCount * sizeof(float));
             std::memcpy(_pool->Actions.data() + first, actions, groupBytes);
             // The goals, when the policy has a goal head: per agent the four plan positions' joint ids, then their
             // cell words (protocol 28). Without one: no goal (-1) and no cell word (0).
@@ -2841,6 +2849,8 @@ bool AnimusForge::Forge::SendSpec(uint32 rank)
     msg.SpikeProb = _jitterOn ? RunConfig().Jitter.SpikeProb : 0.0f;
     // The nav stages' training labels per agent (protocol 31); 0 for every other stage.
     msg.LabelBytes = spec.LabelBytes;
+    // The continuous outputs per agent in ACT (protocol 32): 1, the heading, in a stage with a move block.
+    msg.ContinuousCount = spec.ContinuousCount;
 
     uint32 const layoutCount = uint32(spec.Layouts.size());
     std::vector<LayoutMsg> layouts(layoutCount);

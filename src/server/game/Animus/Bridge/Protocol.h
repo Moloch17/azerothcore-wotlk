@@ -35,7 +35,10 @@
  *                            with a vision block, 0 without one (protocol 22); then u32 MapBytes, the bytes per
  *                            agent of each STEP's mental map crops, M below: the map block's 48 x 48 x 6 (13,824), 0
  *                            for a stage without one (protocol 24); then u32 JitterMs, u32 SpikeMaxMs and f32 SpikeProb,
- *                            the run's tick jitter (AnimusForge.Decision.*, protocol 27), all zero without one.
+ *                            the run's tick jitter (AnimusForge.Decision.*, protocol 27), all zero without one;
+ *                            then u32 LabelBytes, the bytes per agent of each STEP's labels (protocol 31); then u32
+ *                            ContinuousCount, the floats per agent of ACT's continuous section, C below: 1 (the
+ *                            heading, move block revision 8) in a stage with a move block, else 0 (protocol 32).
  *   server -> client  STEP   { u64 decision } then, in order, with E envs, A agents per env,
  *                            O obs dim, S state dim, N actions, K episode info dim:
  *                              f32 obs[E*A*O]         observation after any auto-reset
@@ -108,6 +111,14 @@
  *                                                     Required, and every value in range: anything else is a
  *                                                     protocol error and drops the learner.
  *                            A stage without one sends exactly protocol 21's ACT.
+ *                            With ContinuousCount C > 0 (a stage with a move block; protocol 32) all of that is
+ *                            followed by
+ *                              f32 continuous[E*A*C]  each agent's continuous outputs, agent-major in the actions'
+ *                                                     order: the heading, theta, the angle from the body's facing
+ *                                                     at the decision to turn it to (+ left, (-pi, pi]; 0 holds the
+ *                                                     facing). Rows without a move block send 0s, never applied.
+ *                                                     Required; never a protocol error by its value: the sim zeroes
+ *                                                     a non-finite one and wraps any other into (-pi, pi].
  *   client -> server  MODE   ModeMsg (instead of ACT) -- switch between training and evaluation; the server
  *                            resets every env and answers with a fresh STEP (zero reward and done)
  *   client -> server  WEIGHTS { u32 count, f32 weight[count] } (instead of ACT) -- how often training episodes
@@ -216,7 +227,10 @@ namespace AnimusForge
     // and route cost-to-go of both map tiers, training-only; CONTRACT.md sec 3.1). A stage without labels has
     // protocol 30's STEP; every SPEC is four bytes longer. The map section may carry two tiers (map block revision 5;
     // MapBytes says so).
-    constexpr uint32 PROTOCOL_VERSION = 31;
+    // 32: the continuous heading (heading.CONTRACT.md, move block revision 8: the nine turn-rate actions are gone):
+    // SPEC ends with ContinuousCount, and a stage with a move block ends each ACT with every agent's heading, a float
+    // an agent after the look section. A stage without one has protocol 31's ACT; every SPEC is four bytes longer.
+    constexpr uint32 PROTOCOL_VERSION = 32;
     constexpr uint32 SCENARIO_NAME_SIZE = 32;
     constexpr uint32 POLICY_NAME_SIZE = 32;
     constexpr uint32 LAYOUT_NAME_SIZE = 48;
@@ -300,9 +314,12 @@ namespace AnimusForge
         /// Bytes per agent of each STEP's labels (ScenarioSpec::LabelBytes; 0 without a labelling encounter;
         /// protocol 31): the traversability classes and route cost-to-go the nav stages train their heads on.
         uint32 LabelBytes;
+        /// Floats per agent of ACT's continuous section (ScenarioSpec::ContinuousCount; 0 without a move block;
+        /// protocol 32): the heading. stage.json's "continuous" names them.
+        uint32 ContinuousCount;
     };
-    // The learner's SPEC (protocol.py): "<12I32s4I2IfI", 112 bytes.
-    static_assert(sizeof(SpecMsg) == 12 * 4 + SCENARIO_NAME_SIZE + 4 * 4 + 3 * 4 + 4 && sizeof(SpecMsg) == 112);
+    // The learner's SPEC (protocol.py): "<12I32s4I2IfII", 116 bytes.
+    static_assert(sizeof(SpecMsg) == 12 * 4 + SCENARIO_NAME_SIZE + 4 * 4 + 3 * 4 + 4 + 4 && sizeof(SpecMsg) == 116);
 
     struct LayoutMsg
     {
@@ -376,7 +393,8 @@ namespace AnimusForge
     };
 
     /// ACT payload: this header, then EnvCount x AgentsPerEnv int32 actions, then GOAL_WIRE_INTS as many goals
-    /// when the policy has a goal head, then LookHeads as many look choices when the stage has a camera.
+    /// when the policy has a goal head, then LookHeads as many look choices when the stage has a camera, then
+    /// ContinuousCount as many float32 continuous outputs when the stage has a move block.
     struct ActHeader
     {
         uint32 EnvBegin;
@@ -385,25 +403,29 @@ namespace AnimusForge
 #pragma pack(pop)
 
     /// How an ACT's body (after its header) is cut, for `rows` agent rows: whether its length is one the stage
-    /// takes, whether it carries goals, and where its look section starts. With lookHeads > 0 the look section is
-    /// required; without, it is protocol 21's ACT exactly.
+    /// takes, whether it carries goals, and where its look and continuous sections start. With lookHeads > 0 the look
+    /// section is required, and with continuousCount > 0 the continuous one after it (protocol 32); without either,
+    /// it is protocol 21's ACT exactly.
     struct ActCut
     {
         bool Valid = false;
         bool Goals = false;
-        std::size_t LookOffset = 0;     // bytes into the body
+        std::size_t LookOffset = 0;         // bytes into the body
+        std::size_t ContinuousOffset = 0;   // bytes into the body
     };
 
-    [[nodiscard]] inline ActCut CutAct(std::size_t body, std::size_t rows, uint32 lookHeads)
+    [[nodiscard]] inline ActCut CutAct(std::size_t body, std::size_t rows, uint32 lookHeads, uint32 continuousCount)
     {
+        static_assert(sizeof(float) == sizeof(int32), "the continuous section is one float32 a value");
         std::size_t const actionBytes = rows * sizeof(int32);
         std::size_t const goalBytes = actionBytes * Animus::GOAL_WIRE_INTS;
         std::size_t const lookBytes = actionBytes * lookHeads;
+        std::size_t const continuousBytes = rows * sizeof(float) * continuousCount;
         ActCut cut;
-        if (body == actionBytes + lookBytes)
-            cut = { true, false, actionBytes };
-        else if (body == actionBytes + goalBytes + lookBytes)
-            cut = { true, true, actionBytes + goalBytes };
+        if (body == actionBytes + lookBytes + continuousBytes)
+            cut = { true, false, actionBytes, actionBytes + lookBytes };
+        else if (body == actionBytes + goalBytes + lookBytes + continuousBytes)
+            cut = { true, true, actionBytes + goalBytes, actionBytes + goalBytes + lookBytes };
         return cut;
     }
 

@@ -19,7 +19,7 @@ from dataclasses import dataclass
 import torch
 
 
-from .mappo.networks import (LayoutActor, MASKED_LOGIT, load_actor_state, vision_image_bytes,
+from .mappo.networks import (LayoutActor, MASKED_LOGIT, heading_of, load_actor_state, vision_image_bytes,
                               vision_look_heads, vision_of)
 from .stages import Span, arena_names, arena_state_span, block_spans, revised_blocks
 
@@ -110,7 +110,8 @@ def frozen_actor(checkpoint: dict, device) -> LayoutActor:
         raise ValueError("the checkpoint's actor has a camera (vision.* weights) but no stage.json describes it")
     actor = LayoutActor(t_layouts, hidden, foresight_outputs, recurrent_size, goal_count, goal_targets, slow_size,
                         bool(mappo.get("foresight_feedback", False)), bool(mappo.get("goal_lookahead", False)),
-                        goal_slots=int(mappo.get("goal_slots", 1) or 1), vision=vision)
+                        goal_slots=int(mappo.get("goal_slots", 1) or 1), vision=vision,
+                        heading=heading_of(t_stage, t_names))
     load_actor_state(actor, checkpoint["trainer"]["actor"])
     actor.to(device).eval()
     for param in actor.parameters():

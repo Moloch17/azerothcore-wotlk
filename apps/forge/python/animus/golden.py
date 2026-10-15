@@ -6,7 +6,8 @@ against it.
 
 For each layout it writes <model>.amdl (animus.export) and <model>.golden: one seat's decisions from a cleared state,
 each its inputs and what the learner decided -- exactly as the trainer's acting path decides at evaluation
-(MappoTrainer._decide with deterministic=True: the goals, the cells, the action and the free look all argmax). The
+(MappoTrainer._decide with deterministic=True: the goals, the cells, the action and the free look all argmax, the
+heading its mode). The
 oracle is the network itself (distill.frozen_actor), not a numpy copy of it.
 
 The inputs are synthetic but in range (no recorded observations or images are kept by a run): the observation drawn
@@ -17,21 +18,24 @@ branch of the goal decision is taken.
 
 The .golden format (little-endian):
 
-    char[4] "AGLD", u32 version (1)
+    char[4] "AGLD", u32 version (1; 2 for a layout that steers by a heading, which alone has the fields marked (2))
     u32 obs_dim, num_actions, image_bytes, crop_bytes, look_total, look_heads, recurrent, slow, features, camera_term,
-        steps
+        steps, (2) heading_components (K)
     per step:
         inputs:   f32 obs[obs_dim], u8 mask[num_actions], u8 image[image_bytes], u8 crop[crop_bytes]
         expected: f32 logits[num_actions] (unmasked), i32 action, f32 look_logits[look_total], i32 look[look_heads],
                   u8 chosen, i32 goal (the pair held), i32 queue[2], i32 cells[4] (-1 where the step chose nothing),
                   u32 plan[4], u32 serial, u32 age, f32 memory[recurrent], f32 slow[slow], f32 features[features] (the
-                  action head's input), f32 camera_term[camera_term] (what the camera adds to the first layer)
+                  action head's input), f32 camera_term[camera_term] (what the camera adds to the first layer),
+                  (2) f32 heading_raw[4K] (the heading head's Linear on those features, unclamped, in the .amdl's
+                  order), f32 heading (the mode, radians: export.reference_heading of heading_raw's inputs)
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import struct
 from pathlib import Path
 
@@ -39,11 +43,15 @@ import numpy as np
 import torch
 
 from .distill import frozen_actor
-from .export import export_layouts, read_amdl
+from .export import export_layouts, read_amdl, reference_heading
 from .mappo.networks import vision_term
 
 GOLDEN_MAGIC = b"AGLD"
 GOLDEN_VERSION = 1
+#: The version of a layout that steers by a heading (HeadingHead): the header's heading_components, each step's heading.
+GOLDEN_HEADING_VERSION = 2
+#: How far the exported heading section's mode (float64 numpy) may be from the learner's (float32 torch), radians.
+HEADING_TOLERANCE = 1e-3
 
 
 def _image(rng: np.random.Generator, height: int, width: int, patch: int, classes: list[int]) -> np.ndarray:
@@ -158,8 +166,10 @@ def _observation(rng: np.random.Generator, actor, index: int, vision: dict, step
 
 
 def golden_layout(actor, layout_name: str, index: int, vision: dict, num_actions: int, steps: int, goal_every: int,
-                  seed: int, path: Path) -> None:
-    """Run `steps` decisions of one seat of layout `index` from a cleared state and write them to `path`."""
+                  seed: int, path: Path, model: dict | None = None) -> None:
+    """Run `steps` decisions of one seat of layout `index` from a cleared state and write them to `path`. With the
+    exported `model` (read_amdl) its heading section is checked against the learner's mode at every step
+    (export.reference_heading): a mismatch over HEADING_TOLERANCE radians is refused."""
     rng = np.random.default_rng(seed)
     image_bytes = vision["image_bytes"]
     crop_bytes = vision["map"]["map_bytes"] if vision.get("map") else 0
@@ -169,6 +179,8 @@ def golden_layout(actor, layout_name: str, index: int, vision: dict, num_actions
     camera_width = actor.adapters[0].out_features
     obs_dim = actor.obs_dims[index]
     head = actor.goal_head
+    steering = actor.heading_head is not None and bool(actor.heading_head.has_heading[index])
+    components = actor.heading_head.components if steering else 0
 
     memory = np.zeros(recurrent, np.float32)
     slow = np.zeros(slow_size, np.float32)
@@ -179,8 +191,11 @@ def golden_layout(actor, layout_name: str, index: int, vision: dict, num_actions
 
     with open(path, "wb") as out:
         out.write(GOLDEN_MAGIC)
-        out.write(struct.pack("<12I", GOLDEN_VERSION, obs_dim, num_actions, image_bytes, crop_bytes, sum(look_heads),
-                              len(look_heads), recurrent, slow_size, width, camera_width, steps))
+        header = [GOLDEN_HEADING_VERSION if steering else GOLDEN_VERSION, obs_dim, num_actions, image_bytes,
+                  crop_bytes, sum(look_heads), len(look_heads), recurrent, slow_size, width, camera_width, steps]
+        if steering:
+            header.append(components)
+        out.write(struct.pack(f"<{len(header)}I", *header))
         for step in range(steps):
             obs = _observation(rng, actor, index, vision, step, steps)
             mask = (rng.random(num_actions) < 0.7).astype(np.uint8)
@@ -213,6 +228,8 @@ def golden_layout(actor, layout_name: str, index: int, vision: dict, num_actions
                 look_logits = actor.look_head.linear(policy)[0] if actor.look_head is not None else torch.zeros(0)
                 look = actor.look(features, layout_t, goal_t, True)[0][0] if actor.look_head is not None else \
                     torch.zeros(0, dtype=torch.long)
+                heading_raw = actor.heading_head.linear(policy)[0] if steering else torch.zeros(0)
+                heading = float(actor.heading(features, layout_t, goal_t, True)[0][0]) if steering else 0.0
 
             cells = decided["cells"][0].numpy() if "cells" in decided and chosen else np.full(4, -1)
             cells = np.concatenate([cells, np.full(4 - len(cells), -1)]) if len(cells) < 4 else cells
@@ -246,8 +263,19 @@ def golden_layout(actor, layout_name: str, index: int, vision: dict, num_actions
             out.write(slow.astype("<f4").tobytes())
             out.write(policy[0].numpy().astype("<f4").tobytes())
             out.write(term.numpy().astype("<f4").tobytes())
+            if steering:
+                out.write(heading_raw.numpy().astype("<f4").tobytes())
+                out.write(struct.pack("<f", heading))
+                exported = (model or {}).get("tail") or {}
+                if exported.get("heading") is not None:
+                    theirs = reference_heading(exported["heading"], policy[0].numpy())
+                    off = abs(math.remainder(theirs - heading, 2.0 * math.pi))
+                    if off > HEADING_TOLERANCE:
+                        raise ValueError(f"{layout_name} step {step}: the exported heading's mode is {theirs:.6f}, "
+                                         f"the learner's {heading:.6f}")
             print(f"  {layout_name} step {step:2d}: action {action:3d} goal {goal:5d} chosen {int(chosen)} "
-                  f"queue {padded.tolist()} cells {cells[:4].tolist()} look {look.tolist()}")
+                  f"queue {padded.tolist()} cells {cells[:4].tolist()} look {look.tolist()}"
+                  + (f" heading {np.degrees(heading):7.2f}" if steering else ""))
 
 
 def main() -> None:
@@ -294,7 +322,7 @@ def main() -> None:
                   f"at most {float(state[f'adapters.{index}.weight'][:, blind].abs().max()):.3g}")
         golden = path.with_suffix(".golden")
         golden_layout(actor, layout_name, index, actor.frozen_vision[index], spec["layouts"][index]["num_actions"],
-                      args.steps, goal_every, args.seed + index, golden)
+                      args.steps, goal_every, args.seed + index, golden, model)
         print(f"Wrote {path} and {golden}")
 
 

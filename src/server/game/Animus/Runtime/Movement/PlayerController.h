@@ -81,6 +81,19 @@ namespace Animus::Movement
     /// along the wanted direction.
     constexpr float SLIDE_ANGLES[] = { 30.0f, -30.0f, 60.0f, -60.0f };
 
+    // ------------------------------------------------------------------- the policy's heading (heading.CONTRACT.md)
+    /// The policy steers by a heading, not a rate (move block revision 8): each decision it names an angle from the
+    /// facing, and the controller turns the body to it like a mouse drawn to a point -- fast while far, easing out as
+    /// it closes. The fastest it turns, rad/s: 360 degrees a second, the old fastest held rate, so no heading is a
+    /// teleport and a half turn takes half a second.
+    constexpr float HEADING_MAX_TURN = 6.2831853f;
+    /// The ease-out, 1/s: the rate is this times what is left (10: a tenth of a second's time constant).
+    constexpr float HEADING_EASE = 10.0f;
+    /// The slowest it turns while not there, rad/s (20 degrees a second): an ease alone would approach for ever.
+    constexpr float HEADING_MIN_TURN = 0.34906585f;
+    /// Closer than this, radians (a quarter degree), the body is put on the target and stops turning.
+    constexpr float HEADING_SNAP = 0.0043633231f;
+
     enum class Mode : uint8_t
     {
         Ground,
@@ -96,13 +109,21 @@ namespace Animus::Movement
         int8_t Forward = 0;         // +1 forward, -1 back, 0 neither
         int8_t Strafe = 0;          // +1 right, -1 left
         int8_t Vertical = 0;        // +1 ascend, -1 descend (water and air)
-        float TurnRate = 0.0f;      // rad/s, + left (counter-clockwise, the client's yaw direction)
+        /// rad/s, + left (counter-clockwise, the client's yaw direction). Replays of a human's captures only
+        /// (Replay.cpp) and scripted drivers: the policy steers by TargetYaw (move block revision 8).
+        float TurnRate = 0.0f;
         float PitchRate = 0.0f;     // rad/s, + up
         bool Jump = false;
         bool Walk = false;
         /// Turning by the keyboard (the turn keys), which the client slows while moving; the policy's turn rates are
         /// the mouse's and are not slowed. Set by replays of a human's TURN_LEFT/RIGHT flags (C6).
         bool KeyboardTurn = false;
+        /// The heading the policy asked for (heading.CONTRACT.md sec 1): absolute yaw, radians 0..2pi, which the body
+        /// is turned toward every sub-step (HEADING_*) until the next decision sets another. While HasTargetYaw the
+        /// TurnRate is not used. Set by StageScenario::ApplyContinuous; a new episode, a respawn, a cleared control
+        /// state has none, and the body holds the facing it has.
+        bool HasTargetYaw = false;
+        float TargetYaw = 0.0f;
         /// One-shot, like `jump`: turn the facing by this much (radians, + left) at the next step's start -- the
         /// camera's "turn to camera" snap (Vision::FreeLook's face choice, a right-click in the client) -- reported
         /// as one SET_FACING there (Client::Tick). Cleared by the tick that takes it, or drops it while the server
@@ -163,6 +184,7 @@ namespace Animus::Movement
         bool OverVoid = false;      // a step was refused for nothing at all below it: no floor, no terrain, no water
         float Moved = 0.0f;         // yards actually travelled this step (3D)
         float Commanded = 0.0f;     // yards the held controls asked for this step
+        float Turned = 0.0f;        // radians the body's yaw turned this step, either way (|change| summed)
         /// What the last blocked move found (movement pacing M1, decision 0027): which side's slide was clear
         /// (+1 left, -1 right, 0 none or no block this step) and how much of the straight move the wall took
         /// (1 - the free share; 0 with no block). Reset by each Step, like AgainstWall.

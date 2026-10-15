@@ -110,15 +110,10 @@ void Animus::Curriculum::MoveBlock::DescribeManifest(Layout const& /*layout*/, b
     block["controls"] = "player-controller";
     block["trail_samples"] = uint32(TRAIL_SAMPLES);
     block["trail_interval_ms"] = uint32(MovementTrail::INTERVAL_MS);
-    boost::json::array turns;
-    for (float rate : MC::TURN_RATES_DEG)
-        turns.push_back(double(rate));
-    block["turn_rates_deg"] = std::move(turns);
     boost::json::array pitches;
     for (float rate : MC::PITCH_RATES_DEG)
         pitches.push_back(double(rate));
     block["pitch_rates_deg"] = std::move(pitches);
-    block["turn_rate_max"] = double(MC::TURN_RATE_MAX);
     block["pitch_rate_max"] = double(MC::PITCH_RATE_MAX);
     block["jump_speed"] = double(Mv::JUMP_SPEED);
     block["swim_jump_speed"] = double(Mv::SWIM_JUMP_SPEED);
@@ -130,6 +125,13 @@ void Animus::Curriculum::MoveBlock::DescribeManifest(Layout const& /*layout*/, b
     // The contact-side columns' scales (revision 6).
     block["hold_age_scale_s"] = double(HOLD_AGE_SCALE_S);
     block["pinned_age_scale_s"] = double(PINNED_AGE_SCALE_S);
+    // The heading the controller eases the body to (revision 8; the stage's "continuous" list names the output): its
+    // fastest and slowest turns (rad/s), the ease (1/s) and the snap (radians).
+    boost::json::object& heading = block["heading"].emplace_object();
+    heading["max_turn"] = double(Mv::HEADING_MAX_TURN);
+    heading["ease"] = double(Mv::HEADING_EASE);
+    heading["min_turn"] = double(Mv::HEADING_MIN_TURN);
+    heading["snap"] = double(Mv::HEADING_SNAP);
 }
 
 std::string Animus::Curriculum::MoveBlock::ColumnName(uint32 column)
@@ -146,7 +148,7 @@ std::string Animus::Curriculum::MoveBlock::ColumnName(uint32 column)
         case OBS_HELD_FORWARD:          return "held_forward";
         case OBS_HELD_STRAFE:           return "held_strafe";
         case OBS_HELD_VERTICAL:         return "held_vertical";
-        case OBS_HELD_TURN:             return "held_turn";
+        case OBS_TARGET_REMAINING_SIN:  return "target_remaining_sin";
         case OBS_HELD_PITCH:            return "held_pitch";
         case OBS_HELD_WALK:             return "held_walk";
         case OBS_VELOCITY_AHEAD:        return "velocity_ahead";
@@ -178,6 +180,7 @@ std::string Animus::Curriculum::MoveBlock::ColumnName(uint32 column)
         case OBS_BLOCKED_AHEAD:         return "blocked_ahead";
         case OBS_HOLD_AGE:              return "hold_age";
         case OBS_PINNED_AGE:            return "pinned_age";
+        case OBS_TARGET_REMAINING_COS:  return "target_remaining_cos";
         default:                        break;
     }
     if (column >= OBS_MODE_FIRST && column < OBS_MODE_FIRST + OBS_MODE_COUNT)
@@ -236,10 +239,16 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
             out[OBS_HELD_FORWARD] = float(held->Forward);
             out[OBS_HELD_STRAFE] = float(held->Strafe);
             out[OBS_HELD_VERTICAL] = float(held->Vertical);
-            out[OBS_HELD_TURN] = std::clamp(held->TurnRate / MC::TURN_RATE_MAX, -1.0f, 1.0f);
             out[OBS_HELD_PITCH] = std::clamp(held->PitchRate / MC::PITCH_RATE_MAX, -1.0f, 1.0f);
             out[OBS_HELD_WALK] = held->Walk ? 1.0f : 0.0f;
         }
+        // The heading still to turn, off the controller's own yaw (the facing the policy's angle was taken from):
+        // 0 and 1 -- nothing left -- with no heading set, or none to turn to.
+        float remaining = 0.0f;
+        if (held && held->HasTargetYaw)
+            remaining = std::remainder(held->TargetYaw - (body ? body->Yaw : facing), 2.0f * float(M_PI));
+        out[OBS_TARGET_REMAINING_SIN] = std::sin(remaining);
+        out[OBS_TARGET_REMAINING_COS] = std::cos(remaining);
 
         if (body)
         {
@@ -354,7 +363,6 @@ void Animus::Curriculum::MoveBlock::Apply(SeatView& view, uint32 local, SeatActi
     result.ControlChanged = true;
     result.JitterWeight += pressed.JitterWeight;
     result.BearingFlip += pressed.FeetFlip;
-    result.TurnReversals += pressed.TurnReversals;
     result.PitchReversals += pressed.PitchReversals;
     result.Weaves += pressed.Weaves;
     result.EffortWeight = pressed.Effort;

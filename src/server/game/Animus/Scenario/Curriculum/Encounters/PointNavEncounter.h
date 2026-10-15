@@ -101,7 +101,8 @@ namespace Animus::Curriculum
             uint32 ArriveMs = 0;
             float StopError = 0.0f;
             float Travelled = 0.0f;
-            float TurnSeconds = 0.0f;        // seconds a turn was held (PointNav.Turning)
+            float TurnRadians = 0.0f;       // radians the body turned this episode (PointNav.Turning)
+            float LastTurned = 0.0f;        // SeatState::TurnedRadians at the last reward
             float LastX = 0.0f;
             float LastY = 0.0f;
             bool HasLastPos = false;

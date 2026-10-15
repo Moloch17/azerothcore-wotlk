@@ -24,7 +24,7 @@
 #include <array>
 #include <cstdint>
 
-/// **The move block's action space** (player-controller plan §4, C3): a player's keys and mouse, held until changed.
+/// **The move block's action space** (player-controller plan §4, C3): a player's keys and pitch, held until changed.
 /// Each action changes one control of the seat's ControlState; the player controller (Animus/Movement) turns the held
 /// controls into motion every world tick. Pure -- no core types -- so the presses, the masks and their pricing are
 /// tested on their own (MoveControlsTest), and MoveBlock is the thin part that reads a Player.
@@ -36,27 +36,24 @@ namespace Animus::Curriculum::MoveControls
     /// ground probe measured live, the clearance columns gone. 4: no ground rays, flight rays or clearance at all --
     /// the camera (the vision block, free look) is how a seat sees; the probe they came from is gone. 5: the objective's
     /// presence, bearing and distances left for the compass block (perception-goals P1): a stage without the
-    /// compass is not told where its objective is. Seeding from 4 maps the kept columns by name (bootstrap).
     /// compass is not told where its objective is. Seeding from 4 maps the kept columns by name (bootstrap). 6: the
     /// contact-side columns contact_side, blocked_ahead, hold_age and pinned_age appended (movement pacing M1,
     /// decision 0027); the earlier columns carry by name, the four start at zero. 7: walk_toggle removed (the user,
     /// 2026-10-14: "walking speed should never be an option"); it was the last action, so the other 24 keep their
-    /// indexes and carry by name, and the walk state stays at run.
-    constexpr uint32_t REVISION = 7;
+    /// indexes and carry by name, and the walk state stays at run. 8: the nine turn-rate actions (turn_stop with
+    /// them) removed (heading.CONTRACT.md, 2026-10-15): the body's heading is the policy's continuous output, an
+    /// angle from the facing the controller eases the body to (ControlState::TargetYaw), because held turn rates were
+    /// held for good and nav1's seats spun rather than run. The pitch actions and everything after them move down
+    /// nine indexes; held_turn's column is target_remaining_sin, and target_remaining_cos is appended.
+    constexpr uint32_t REVISION = 8;
 
-    /// Turn rates, degrees a second, + left (counter-clockwise, the client's yaw direction): the mouse's, not slowed
-    /// while moving. 0 lets go of the turn.
-    constexpr uint32_t TURN_COUNT = 9;
-    constexpr std::array<float, TURN_COUNT> TURN_RATES_DEG = { -360.0f, -180.0f, -90.0f, -30.0f, 0.0f, 30.0f, 90.0f,
-        180.0f, 360.0f };
-    constexpr uint32_t TURN_STOP_INDEX = 4;
     /// Pitch rates, degrees a second, + up (water and air). 0 lets go.
     constexpr uint32_t PITCH_COUNT = 5;
     constexpr std::array<float, PITCH_COUNT> PITCH_RATES_DEG = { -90.0f, -30.0f, 0.0f, 30.0f, 90.0f };
     constexpr uint32_t PITCH_STOP_INDEX = 2;
     constexpr float DEG = 0.017453292f;
-    /// The fastest rate of each, for the observation's scale.
-    constexpr float TURN_RATE_MAX = 360.0f * DEG;
+    /// The fastest pitch rate, for the observation's scale. Turning has no rate any more (revision 8): the heading is
+    /// an angle (Movement::HEADING_*).
     constexpr float PITCH_RATE_MAX = 90.0f * DEG;
 
     enum Action : uint32_t
@@ -67,9 +64,7 @@ namespace Animus::Curriculum::MoveControls
         ACTION_STRAFE_LEFT,
         ACTION_STRAFE_RIGHT,
         ACTION_STRAFE_STOP,
-        ACTION_TURN_FIRST,
-        ACTION_TURN_STOP = ACTION_TURN_FIRST + TURN_STOP_INDEX,
-        ACTION_PITCH_FIRST = ACTION_TURN_FIRST + TURN_COUNT,
+        ACTION_PITCH_FIRST,
         ACTION_PITCH_STOP = ACTION_PITCH_FIRST + PITCH_STOP_INDEX,
         ACTION_ASCEND = ACTION_PITCH_FIRST + PITCH_COUNT,
         ACTION_DESCEND,
@@ -77,21 +72,15 @@ namespace Animus::Curriculum::MoveControls
         ACTION_JUMP,
         ACTION_COUNT
     };
-    static_assert(ACTION_COUNT == 24, "the plan's 25 actions (§4) less walk_toggle (revision 7)");
+    static_assert(ACTION_COUNT == 15, "the plan's 25 actions (§4) less walk_toggle (revision 7) and the nine turn "
+        "rates (revision 8)");
 
     constexpr std::array<char const*, ACTION_COUNT> NAMES =
     {
         "move_forward", "move_back", "move_stop", "strafe_left", "strafe_right", "strafe_stop",
-        "turn_right_360", "turn_right_180", "turn_right_90", "turn_right_30", "turn_stop",
-        "turn_left_30", "turn_left_90", "turn_left_180", "turn_left_360",
         "pitch_down_90", "pitch_down_30", "pitch_stop", "pitch_up_30", "pitch_up_90",
         "ascend", "descend", "vertical_stop", "jump",
     };
-
-    [[nodiscard]] constexpr bool IsTurn(uint32_t action)
-    {
-        return action >= ACTION_TURN_FIRST && action < ACTION_TURN_FIRST + TURN_COUNT;
-    }
 
     [[nodiscard]] constexpr bool IsPitch(uint32_t action)
     {
@@ -140,8 +129,6 @@ namespace Animus::Curriculum::MoveControls
         uint64_t StrafeMs = 0;
         int8_t LastVertical = 0;
         uint64_t VerticalMs = 0;
-        float LastTurn = 0.0f;
-        uint64_t TurnMs = 0;
         float LastPitch = 0.0f;
         uint64_t PitchMs = 0;
         /// When any control last changed (a press that took: Press's Changed), for the move block's hold_age.
@@ -156,7 +143,6 @@ namespace Animus::Curriculum::MoveControls
         bool Changed = false;           // false: the value already held, pressed again -- a no-op, not charged
         float JitterWeight = 0.0f;      // quarter turns' worth taken back, weighed by recency (Actions.Jitter)
         float FeetFlip = 0.0f;          // forward/back or left/right reversed within MovePrice::COUNT_MS
-        uint32_t TurnReversals = 0;     // ... a turn rate against the last one
         uint32_t PitchReversals = 0;    // ... a pitch rate or a climb against the last one
         uint32_t Weaves = 0;            // any of them 1.5 to 4 s on
         float Effort = 1.0f;            // the share of a full press (Actions.Effort): a rate by its size
@@ -189,8 +175,10 @@ namespace Animus::Curriculum::MoveControls
 
     /// Apply `action` to the held controls at `nowMs`, pricing a reversal of a recent choice by what it takes back
     /// (in quarter turns, as every steering reversal is: MovePrice) weighed by its recency on `decayMs`. A reversal of
-    /// the feet (forward to back, left to right) or of a climb is half a turn, two quarters; of a turn or a pitch rate,
-    /// the smaller rate over a quarter turn a second. JUMP is one-shot (the controller clears it when it takes it).
+    /// the feet (forward to back, left to right) or of a climb is half a turn, two quarters; of a pitch rate, the
+    /// smaller rate over a quarter turn a second. JUMP is one-shot (the controller clears it when it takes it). The
+    /// heading is no press (revision 8): it is set every decision (StageScenario::ApplyContinuous), so a new angle is
+    /// not a key changed, and what it costs is the turning the body actually does (PointNav.Turning).
     inline PressOutcome Press(SeatControls& controls, uint32_t action, uint64_t nowMs, uint32_t decayMs)
     {
         PressOutcome out;
@@ -254,10 +242,7 @@ namespace Animus::Curriculum::MoveControls
                 out.Changed = true;
                 break;
             default:
-                if (IsTurn(action))
-                    rate(held.TurnRate, TURN_RATES_DEG[action - ACTION_TURN_FIRST] * DEG, controls.LastTurn,
-                        controls.TurnMs, out.TurnReversals, TURN_RATE_MAX / 2.0f);
-                else if (IsPitch(action))
+                if (IsPitch(action))
                     rate(held.PitchRate, PITCH_RATES_DEG[action - ACTION_PITCH_FIRST] * DEG, controls.LastPitch,
                         controls.PitchMs, out.PitchReversals, PITCH_RATE_MAX);
                 break;

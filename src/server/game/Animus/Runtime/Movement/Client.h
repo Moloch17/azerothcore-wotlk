@@ -122,6 +122,9 @@ namespace Animus::Movement
         /// jumps taken and landings, and the highest fall landed.
         float TickMoved = 0.0f;
         float TickCommanded = 0.0f;
+        /// Radians the body's yaw turned this tick, either way, over its sub-steps (BodyState::Turned): the turning
+        /// the nav stages price (PointNav.Turning). The turn to camera's snap (FaceTurn) is not in it: looking is free.
+        float TickTurned = 0.0f;
         bool TickWall = false;
         bool TickSteep = false;         // a rise refused for its slope this tick (BodyState::SteepSlope)
         bool TickVoid = false;          // a step refused over nothing at all this tick (BodyState::OverVoid)

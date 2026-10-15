@@ -46,7 +46,8 @@ from .evaluation import (ABLATIONS, ConvergenceTracker, EvalResult, ablation_cho
 from .mappo.buffer import RolloutBuffer
 from .mappo.trainer import (LOOK_COMMANDS, VISION_CHUNK_AUTO, VISION_CHUNK_FALLBACK, MappoTrainer, horizon_seconds,
                             per_decision, schedule)
-from .mappo.networks import VisionEncoder, check_image_bytes, check_look_heads, sharing_of, vision_of
+from .mappo.networks import (VisionEncoder, check_image_bytes, check_look_heads, heading_of, sharing_of,
+                             vision_of)
 from .progress import ProgressWriter
 from . import blas, episode_means, protocol
 from .async_sync import Hub, Link, fetch_shared, shared_listing
@@ -451,7 +452,7 @@ class DecisionRows:
     FIELDS = ("obs", "state", "mask", "layout", "actions", "log_probs", "values", "present", "foresight", "memory",
               "goal", "goal_log_prob", "goal_chosen", "slow_before", "slow_value", "critic_memory",
               "goal_slots", "goal_cells", "image", "look", "look_log_prob", "greedy", "labels", "planner_readout",
-              "planner_pool")
+              "planner_pool", "heading", "heading_log_prob")
 
     #: A field store_inputs wrote into the rollout buffer itself.
     IN_BUFFER = object()
@@ -520,7 +521,7 @@ class DecisionRows:
         return (a["obs"], a["state"], a["mask"], a["layout"], a["actions"], a["log_probs"], a["values"], a["present"],
                 a.get("foresight"), a.get("memory"), goals, a.get("critic_memory"), a.get("image"),
                 a.get("look"), a.get("look_log_prob"), a.get("greedy"), a.get("labels"), a.get("planner_readout"),
-                a.get("planner_pool"))
+                a.get("planner_pool"), a.get("heading"), a.get("heading_log_prob"))
 
 
 class RolloutOutcome:
@@ -543,6 +544,8 @@ class TrainerInputs:
 
     vision: list | None
     sharing: dict | None = None
+    # Per layout whether it steers by a continuous heading (networks.heading_of; protocol 32), None for none.
+    heading: list | None = None
 
 
 def trainer_inputs(config: TrainConfig, spec, stage: dict | None) -> TrainerInputs:
@@ -561,7 +564,13 @@ def trainer_inputs(config: TrainConfig, spec, stage: dict | None) -> TrainerInpu
         sharing = sharing_of(stage, names, config.mappo.shared_blocks, config.mappo.shared_init_layouts)
     except ValueError as error:
         raise SystemExit(str(error)) from None
-    return TrainerInputs(vision, sharing)
+    # The continuous heading (protocol 32): on wherever stage.json's "continuous" names it, in the layouts with a move
+    # block; the SPEC must announce the same.
+    try:
+        protocol.check_continuous(stage, getattr(spec, "continuous_count", 0))
+    except ValueError as error:
+        raise SystemExit(f"continuous: {error}") from None
+    return TrainerInputs(vision, sharing, heading_of(stage, names))
 
 
 #: choose_vision_chunk_rows: the share of free device memory the camera's update may plan on (the rest is the
@@ -635,6 +644,7 @@ def make_trainer(config: TrainConfig, spec, inputs: TrainerInputs, ranks=None, d
         vision=inputs.vision,
         aux=config.aux,
         sharing=inputs.sharing,
+        heading=inputs.heading,
     )
 
 
@@ -787,6 +797,11 @@ class TrainingRun:
                       f"{'on' if config.potential.enabled else 'off'}, the aux losses at costmap "
                       f"{config.aux.costmap_coef:g} / planner {config.aux.planner_coef:g} on {config.aux.rows} rows "
                       f"a minibatch", flush=True)
+        if inputs.heading is not None:
+            print(f"Heading: a continuous target heading (a mixture of von Mises, protocol 32) in "
+                  f"{sum(inputs.heading)} of {len(names)} layouts, entropy coefficient "
+                  f"{config.mappo.heading_entropy_coef:g} falling to {config.mappo.heading_entropy_final_fraction:g} "
+                  f"of itself", flush=True)
 
         self.make_trainer = lambda: make_trainer(config, spec, inputs, ranks=self.ranks.update)
         self.trainer = self.make_trainer()
@@ -886,7 +901,8 @@ class TrainingRun:
                                  spec.state_dim, spec.num_actions, self.trainer.foresight_outputs,
                                  self.trainer.recurrent_size, bool(self.trainer.goal_count),
                                  self.trainer.slow_goal_size, self.trainer.goal_slots, spec.camera_bytes,
-                                 len(self.trainer.look_heads), spec.label_bytes, self.trainer.planner_widths)
+                                 len(self.trainer.look_heads), spec.label_bytes, self.trainer.planner_widths,
+                                 self.trainer.heading)
 
         # What the policy carries between decisions (its memory and the goal it pursues), cleared with an episode.
         self.acting = self.trainer.acting_state(spec.num_envs, spec.agents_per_env)
@@ -948,6 +964,10 @@ class TrainingRun:
             # ... and which command its zoom head chose (hold, in, out, recentre, face), as shares of the decisions.
             if self.trainer.look_heads[-1] == len(LOOK_COMMANDS):
                 columns += list(LOOK_COMMANDS)
+        if self.trainer.heading:
+            # The heading (HeadingHead): its entropy surrogate, its mean concentration (the mixture-weighted kappa) and
+            # how far it steers (mean |theta|, degrees) over the rows with a move block.
+            columns += ["heading_entropy", "heading_kappa_mean", "heading_abs_theta_mean"]
         if self.trainer.slow_goal_size:
             # The slow goal loop (Component D) and its goal-level predictions (Component P layer 3): its own
             # losses, and how well it foresees a goal being reached -- the Brier score against always predicting the
@@ -1307,8 +1327,12 @@ class TrainingRun:
             actions = self.trainer.act(step.obs, mask, step.layout, deterministic, acting, image)[0]
             goals = (self.trainer.wire_goals(acting.goal, acting.queue, acting.plan)
                      if acting.goal is not None else None)
-            # The free look (protocol 22), deterministic with the actions when the evaluation is.
+            # The free look (protocol 22) and the heading (protocol 32), deterministic with the actions when the
+            # evaluation is.
             look = self.trainer.wire_look(acting.look)
+            heading = self.trainer.wire_heading(acting.heading)
+            if heading is not None:
+                return actions, goals, look, heading
             if look is not None:
                 return actions, goals, look
             return (actions, goals) if goals is not None else actions
@@ -1900,11 +1924,11 @@ class TrainingRun:
         sent: dict[str, np.ndarray | None] = {}
 
         def send(begin: int, count: int, actions: np.ndarray, goals: np.ndarray | None,
-                 look: np.ndarray | None = None) -> None:
+                 look: np.ndarray | None = None, continuous: np.ndarray | None = None) -> None:
             if pipelined:
-                self.env.send_act(begin, actions, goals, look)
+                self.env.send_act(begin, actions, goals, look, continuous)
             else:
-                sent["actions"], sent["goals"], sent["look"] = actions, goals, look
+                sent["actions"], sent["goals"], sent["look"], sent["continuous"] = actions, goals, look, continuous
 
         def receive(begin: int, count: int) -> protocol.Step:
             if pipelined:
@@ -1913,7 +1937,7 @@ class TrainingRun:
                     raise ConnectionError(f"expected the STEP of envs {begin}+{count}, got {part.env_begin}+"
                                           f"{part.done.shape[0]}")
                 return part
-            return self.env.step(sent["actions"], sent["goals"], sent.get("look"))
+            return self.env.step(sent["actions"], sent["goals"], sent.get("look"), sent.get("continuous"))
 
         if self.style is not None:
             self.style.begin(self.step)
@@ -1992,6 +2016,9 @@ class TrainingRun:
         # steps alone).
         trainer.goal_entropy_factor = self.config.mappo.goal_entropy_scale * schedule(
             self.config.mappo.goal_entropy_final_fraction, self.env_steps, self.config.total_env_steps)
+        # The heading's (mappo.heading_entropy_coef) on its own, likewise.
+        trainer.heading_entropy_factor = schedule(self.config.mappo.heading_entropy_final_fraction, self.env_steps,
+                                                  self.config.total_env_steps)
         # With an overlapped update this applies to the update submitted below: a rollout's worth late, which a
         # schedule over hundreds of millions of steps does not notice. The scale is the controller's: held at full
         # until the score first plateaus, so the KL it reads is the policy's and not the schedule's.
@@ -2110,6 +2137,10 @@ class TrainingRun:
         # The free look the decision chose (protocol 22), sent with the actions and kept with them.
         look = trainer.wire_look(acting.look)
         look_log_prob = acting.look_log_prob
+        # And the heading (protocol 32): [E, A] radians kept with the decision, [E, A, 1] on the wire.
+        heading = acting.heading
+        heading_log_prob = acting.heading_log_prob
+        frozen_rows = None
         # A converged class still plays (its rows are needed to act and to carry the recurrence) but is not a
         # sample: its adapter and head are frozen, and the trunk is trained on the classes still learning.
         present = part.present
@@ -2124,12 +2155,18 @@ class TrainingRun:
                 # its own camera; one without holds it.
                 actions, look = self.cast.act_and_look(part, actions, cast_rows, look)
                 present = present & ~cast_rows
+                frozen_rows = cast_rows
         # A co-op partner's row (animus.partners) likewise takes its frozen actor's action and is no sample.
         if self.partners is not None:
             partner_rows = self.partners.rows(part)
             if partner_rows.any():
                 actions, look = self.partners.act_and_look(part, actions, partner_rows, look)
                 present = present & ~partner_rows
+                frozen_rows = partner_rows if frozen_rows is None else frozen_rows | partner_rows
+        if heading is not None and frozen_rows is not None:
+            # A frozen actor's row holds its heading (0): the live policy's heading is not its to steer by, and
+            # neither a cast nor a partner chooses one of its own yet.
+            heading = np.where(frozen_rows, np.float32(0.0), heading).astype(np.float32)
         # Nor is the "human" stand-in's row, whoever plays it (a partner; the live policy where no member has its
         # layout): the policy never trains on it.
         stand_in = getattr(part, "stand_in", None)
@@ -2165,12 +2202,14 @@ class TrainingRun:
                      foresight=foresight, memory=memory, goal=goal, goal_log_prob=goal_log_prob,
                      goal_chosen=goal_chosen, slow_before=slow_before, slow_value=slow_value,
                      critic_memory=critic_memory, goal_slots=goal_slots, goal_cells=goal_cells, look=look,
-                     look_log_prob=look_log_prob, greedy=acting.greedy,
+                     look_log_prob=look_log_prob, greedy=acting.greedy, heading=heading,
+                     heading_log_prob=heading_log_prob,
                      labels=getattr(part, "labels", None) if self.spec.label_bytes else None,
                      # The plan the decision acted on (the acting state's cache, refreshed by _replan before it).
                      planner_readout=acting.planner_readout, planner_pool=acting.planner_pool)
         send(rows.start, rows.stop - rows.start, actions,
-             trainer.wire_goals(goals[0], acting.queue, acting.plan) if goals is not None else None, look)
+             trainer.wire_goals(goals[0], acting.queue, acting.plan) if goals is not None else None, look,
+             trainer.wire_heading(heading))
 
     def _take_outcome_of(self, part: protocol.Step, rows: slice, decision: DecisionRows,
                          outcome: RolloutOutcome):

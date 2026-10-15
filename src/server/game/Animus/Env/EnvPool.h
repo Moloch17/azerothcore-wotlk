@@ -248,6 +248,9 @@ namespace Animus
         /// The look head's choices ACT sent (free look, protocol 22): Spec().LookHeads per agent, agent-major, each in
         /// range (ACT refuses any other). Vision::FreeLook::NEUTRAL until one arrives; empty without a camera.
         std::vector<int32> Look;
+        /// The continuous outputs ACT sent (protocol 32): Spec().ContinuousCount per agent, agent-major, as sent (the
+        /// scenario sanitises them). 0 -- hold the facing -- until one arrives; empty without a move block.
+        std::vector<float> Continuous;
 
         /// Agent `agent` of env `e`'s place in its party (Scenario::FilmedRole): 1 tank, 2 healer, 3 damage, 0 none.
         /// For the world thread between map updates (the evaluation videos).

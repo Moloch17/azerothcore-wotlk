@@ -6611,11 +6611,12 @@ AnimusForge.Curriculum.PointNav.RungBins3 = "4,5"
 AnimusForge.Curriculum.PointNav.PinSeconds = 4
 
 #    AnimusForge.Curriculum.PointNav.Turning
-#        Description: Price per second of a held body turn at one full turn a second, in proportion to the rate
-#                     (full price from the first step, off the cost ladder). The look head turns the camera free.
-#        Default:     0.02
+#        Description: Price per radian the body actually turns, either way, toward the policy's heading (full
+#                     price from the first step, off the cost ladder): a full turn costs 0.063. Holding a heading
+#                     costs nothing; the look head turns the camera free.
+#        Default:     0.01
 
-AnimusForge.Curriculum.PointNav.Turning = 0.02
+AnimusForge.Curriculum.PointNav.Turning = 0.01
 AnimusForge.Curriculum.PointNav.FailurePool = 512
 
 #

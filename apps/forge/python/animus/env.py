@@ -83,10 +83,12 @@ class ForgeEnv:
             self._pending = self._receive_decision()
         return self._pending
 
-    def step(self, actions: np.ndarray, goals: np.ndarray | None = None, look: np.ndarray | None = None) -> p.Step:
+    def step(self, actions: np.ndarray, goals: np.ndarray | None = None, look: np.ndarray | None = None,
+             continuous: np.ndarray | None = None) -> p.Step:
         """Send [E, A] actions, with the goals each agent is pursuing when the policy has a goal head, and return the
         next STEP. Goals are what the sim scores, reports and shows a party's teammates; they mask nothing. `look`
-        [E, A, LookHeads]: the camera's choices in a stage with look heads (protocol 22); None sends LOOK_HOLD."""
+        [E, A, LookHeads]: the camera's choices in a stage with look heads (protocol 22); None sends LOOK_HOLD.
+        `continuous` [E, A, ContinuousCount]: the heading in a stage with one (protocol 32); None holds it (0)."""
         expected = (self.spec.num_envs, self.spec.agents_per_env)
         if np.shape(actions) != expected:
             raise ValueError(f"actions must have shape {expected}, got {np.shape(actions)}")
@@ -99,15 +101,27 @@ class ForgeEnv:
         for begin, count in self.groups:
             rows = slice(begin, begin + count)
             self.send_act(begin, actions[rows], goals[rows] if goals is not None else None,
-                          look[rows] if look is not None else None)
+                          look[rows] if look is not None else None,
+                          continuous[rows] if continuous is not None else None)
         self._pending = self._receive_decision()
         return self._pending
 
     def send_act(self, env_begin: int, actions: np.ndarray, goals: np.ndarray | None = None,
-                 look: np.ndarray | None = None) -> None:
+                 look: np.ndarray | None = None, continuous: np.ndarray | None = None) -> None:
         """Answer one group's STEP: [count, A] actions (and goals, and in a stage with look heads the look [count, A,
         LookHeads]) for envs [env_begin, env_begin + count). A stage with look heads always sends a look: LOOK_HOLD
-        where the caller has none; a stage without them never does (protocol 21's ACT, byte for byte)."""
+        where the caller has none; a stage without them never does (protocol 21's ACT, byte for byte). Likewise the
+        continuous values (protocol 32, [count, A, ContinuousCount] float32): the heading held (0) where the caller
+        has none, nothing in a stage without them."""
+        width = self.spec.continuous_count
+        if width:
+            count, agents = np.shape(actions)
+            if continuous is None:
+                continuous = p.continuous_hold(count, agents, width)
+            elif np.shape(continuous) != (count, agents, width):
+                raise ValueError(f"continuous must have shape {(count, agents, width)}, got {np.shape(continuous)}")
+        else:
+            continuous = None
         heads = self.spec.look_heads
         if heads:
             count, agents = np.shape(actions)
@@ -117,7 +131,7 @@ class ForgeEnv:
                 raise ValueError(f"look must have shape {(count, agents, heads)}, got {np.shape(look)}")
         else:
             look = None
-        payload = p.encode_act(env_begin, actions, goals, look)
+        payload = p.encode_act(env_begin, actions, goals, look, continuous)
         self.sock.sendall(p.encode_header(p.MsgType.ACT, len(payload)) + payload)
 
     def receive_step(self) -> p.Step:
@@ -395,24 +409,26 @@ class ClusterEnv:
         self._next_group = 0
         return self._joined([self._whole(index, lambda sim: sim.reset()) for index in range(len(self.sims))])
 
-    def step(self, actions: np.ndarray, goals: np.ndarray | None = None, look: np.ndarray | None = None) -> p.Step:
+    def step(self, actions: np.ndarray, goals: np.ndarray | None = None, look: np.ndarray | None = None,
+             continuous: np.ndarray | None = None) -> p.Step:
         # Every sim's answers go out before any STEP is read, so the sims tick together.
         for begin, count in self.groups:
             rows = slice(begin, begin + count)
             self.send_act(begin, actions[rows], goals[rows] if goals is not None else None,
-                          look[rows] if look is not None else None)
+                          look[rows] if look is not None else None,
+                          continuous[rows] if continuous is not None else None)
         self._next_group = 0
         return self._joined([self._whole(index, lambda sim: sim._receive_decision())
                              for index in range(len(self.sims))])
 
     def send_act(self, env_begin: int, actions: np.ndarray, goals: np.ndarray | None = None,
-                 look: np.ndarray | None = None) -> None:
+                 look: np.ndarray | None = None, continuous: np.ndarray | None = None) -> None:
         index, local = self._owner(env_begin)
         sim = self.sims[index]
         if sim is None:
             return
         try:
-            sim.send_act(local, actions, goals, look)
+            sim.send_act(local, actions, goals, look, continuous)
         except OSError as error:
             self._drop(index, error)
 

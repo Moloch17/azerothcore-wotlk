@@ -28,7 +28,7 @@ import torch
 from torch import nn
 from torch.distributions import Categorical
 
-from ..protocol import TRAV_CLASS_NAMES, TRAV_CLASSES
+from ..protocol import HEADING, TRAV_CLASS_NAMES, TRAV_CLASSES, continuous_of
 
 MASKED_LOGIT = -1e9
 
@@ -1442,6 +1442,17 @@ def check_look_heads(vision: list[dict | None] | None, spec_look_heads: int) -> 
                          f"{len(heads)} ({list(heads)})")
 
 
+def heading_of(stage: dict | None, layout_names: Sequence[str]) -> list[bool] | None:
+    """Which layouts steer by a continuous heading (HeadingHead; heading.CONTRACT.md): where stage.json's top-level
+    "continuous" list names the heading, every layout with a move block. None when no layout does (no heading head)."""
+    if HEADING not in continuous_of(stage):
+        return None
+    layouts = (stage or {}).get("layouts") or {}
+    has = [any(block.get("name") == "move" for block in ((layouts.get(name) or {}).get("blocks") or ()))
+           for name in layout_names]
+    return has if any(has) else None
+
+
 def check_image_bytes(vision: list[dict | None] | None, spec_image_bytes: int, spec_map_bytes: int = 0) -> None:
     """Refuse a sim and a stage.json that disagree about the camera: SPEC's image bytes per agent against stage.json's
     height x width x bytes a pixel, or one side with a camera and the other without; and about the mental map's crop
@@ -2461,6 +2472,160 @@ class LookHead(nn.Module):
         return torch.where(seeing, log_prob, zero), torch.where(seeing, entropy, zero)
 
 
+#: **The heading** (heading.CONTRACT.md sec 5, HeadingHead): a mixture of HEADING_COMPONENTS von Mises over the target
+#: heading relative to the body's facing, each component's concentration clamped to [KAPPA_MIN, KAPPA_MAX] and its
+#: weight floored at HEADING_WEIGHT_FLOOR; HEADING_PROPOSALS Best-Fisher proposals a draw.
+HEADING_COMPONENTS = 3
+HEADING_KAPPA_MIN = 0.5
+HEADING_KAPPA_MAX = 200.0
+HEADING_WEIGHT_FLOOR = 0.02
+HEADING_PROPOSALS = 8
+#: As initialised: component k's mean at 2 pi k / K (0, +120, -120 degrees) with concentration HEADING_INIT_KAPPA, and
+#: component 0 -- theta 0, the heading held -- narrower (HEADING_HOLD_KAPPA, about +-20 degrees) and favoured by
+#: HEADING_HOLD_BIAS on its mixture logit (weight 0.56 of 1), as the look's hold choice is (LOOK_HOLD_BIAS): a fresh
+#: policy mostly keeps roughly its heading rather than spinning, and still turns about a third of the time.
+HEADING_INIT_KAPPA = 2.0
+HEADING_HOLD_KAPPA = 8.0
+HEADING_HOLD_BIAS = 1.0
+_HEADING_NORM_EPSILON = 1e-6
+_LOG_TWO_PI = math.log(2.0 * math.pi)
+
+
+class HeadingHead(nn.Module):
+    """**The heading** (heading.CONTRACT.md sec 5): the target heading theta in (-pi, pi] relative to the body's facing
+    at the decision (0 holds it), as a mixture of K von Mises over the policy features the action head reads -- one head
+    for every layout, as the shared movement is. One Linear(features -> 4K), its outputs in this order (the .amdl's and
+    the realm's too):
+
+    - [0, 2K): component k's mean direction (x, y) at 2k, 2k + 1, normalised to a unit vector: mu_k = atan2(y, x);
+    - [2K, 3K): kappa_k = clamp(softplus(.) + KAPPA_MIN, KAPPA_MIN, KAPPA_MAX);
+    - [3K, 4K): the mixture logits: w = floor + (1 - K floor) softmax(.), every component at least the floor.
+
+    A draw picks the component by Gumbel-max over log w and its offset from the mean by Best-Fisher's rejection sampler
+    with HEADING_PROPOSALS proposals at once, the first accepted kept and the mean where none is (P < 0.35^8): fixed
+    shapes, no read back, so a rollout graph captures it. Deterministic (evaluation, the export) is the heaviest
+    component's mean. Only rows whose layout has a move block steer: elsewhere theta is 0 (held) and its log
+    probability, entropy and concentration 0 with no gradient. Nothing is masked."""
+
+    def __init__(self, width: int, layouts_with: torch.Tensor, components: int = HEADING_COMPONENTS):
+        super().__init__()
+        self.components = int(components)
+        k = self.components
+        self.linear = _linear(width, 4 * k, 0.01)
+        with torch.no_grad():
+            for index in range(k):
+                angle = 2.0 * math.pi * index / k
+                self.linear.bias[2 * index] = math.cos(angle)
+                self.linear.bias[2 * index + 1] = math.sin(angle)
+            # softplus^-1(kappa - KAPPA_MIN)
+            self.linear.bias[2 * k:3 * k] = math.log(math.expm1(HEADING_INIT_KAPPA - HEADING_KAPPA_MIN))
+            self.linear.bias[2 * k] = math.log(math.expm1(HEADING_HOLD_KAPPA - HEADING_KAPPA_MIN))
+            self.linear.bias[3 * k] = HEADING_HOLD_BIAS
+        self.register_buffer("has_heading", layouts_with.clone(), persistent=False)
+
+    def _steering(self, layout: torch.Tensor) -> torch.Tensor:
+        return self.has_heading[layout.reshape(-1).long()]
+
+    def mixture(self, features: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """(mu [N, K, 2] unit vectors (cos, sin), kappa [N, K], log w [N, K], the mixture logits [N, K]) for flat rows,
+        in float32."""
+        k = self.components
+        raw = self.linear(features).float()
+        xy = raw[:, :2 * k].reshape(-1, k, 2)
+        mu = xy / xy.norm(dim=-1, keepdim=True).clamp(min=_HEADING_NORM_EPSILON)
+        kappa = (nn.functional.softplus(raw[:, 2 * k:3 * k]) + HEADING_KAPPA_MIN).clamp(HEADING_KAPPA_MIN,
+                                                                                         HEADING_KAPPA_MAX)
+        logits = raw[:, 3 * k:]
+        weight = HEADING_WEIGHT_FLOOR + (1.0 - k * HEADING_WEIGHT_FLOOR) * torch.softmax(logits, dim=-1)
+        return mu, kappa, weight.log(), logits
+
+    @staticmethod
+    def mode_of(mu: torch.Tensor, logits: torch.Tensor) -> torch.Tensor:
+        """The heaviest component's mean angle [N]: the component with the largest mixture logit (the first of equals;
+        the weights are monotone in the logits, and the realm reads the logits)."""
+        heaviest = logits.argmax(dim=-1)
+        chosen = mu.gather(1, heaviest[:, None, None].expand(-1, 1, 2))[:, 0]
+        return torch.atan2(chosen[:, 1], chosen[:, 0])
+
+    @staticmethod
+    def log_prob_of(mu: torch.Tensor, kappa: torch.Tensor, log_w: torch.Tensor, theta: torch.Tensor) -> torch.Tensor:
+        """log p(theta) [N] under the mixture: logsumexp_k [log w_k + kappa_k cos(theta - mu_k) - log 2 pi - log I0(
+        kappa_k)], with cos(theta - mu) = cos theta mu_x + sin theta mu_y and log I0(kappa) = log i0e(kappa) + kappa."""
+        theta = theta.float()[:, None]
+        cosine = torch.cos(theta) * mu[..., 0] + torch.sin(theta) * mu[..., 1]
+        log_i0 = torch.log(torch.special.i0e(kappa)) + kappa
+        return torch.logsumexp(log_w + kappa * cosine - _LOG_TWO_PI - log_i0, dim=-1)
+
+    @staticmethod
+    def entropy_of(kappa: torch.Tensor, log_w: torch.Tensor) -> torch.Tensor:
+        """The entropy surrogate [N] (an upper bound on the mixture's): sum_k w_k H(vM(kappa_k)) + H(w), with
+        H(vM(kappa)) = log(2 pi I0(kappa)) - kappa I1(kappa) / I0(kappa)."""
+        i0e = torch.special.i0e(kappa)
+        component = _LOG_TWO_PI + torch.log(i0e) + kappa - kappa * torch.special.i1e(kappa) / i0e
+        weight = log_w.exp()
+        return (weight * component).sum(-1) - (weight * log_w).sum(-1)
+
+    @staticmethod
+    def offsets(kappa: torch.Tensor, proposals: int = HEADING_PROPOSALS) -> torch.Tensor:
+        """Draws [N] from von Mises(0, kappa [N]) by Best and Fisher's (1979) rejection sampler, `proposals` proposals a
+        row at once, in double precision: the first accepted, 0 (the mean) where none is."""
+        kappa = kappa.detach().double()
+        tau = 1.0 + torch.sqrt(1.0 + 4.0 * kappa * kappa)
+        rho = (tau - torch.sqrt(2.0 * tau)) / (2.0 * kappa)
+        r = ((1.0 + rho * rho) / (2.0 * rho))[:, None]
+        uniform = torch.rand((kappa.shape[0], proposals, 3), dtype=torch.float64, device=kappa.device)
+        u1, u2, u3 = uniform.unbind(dim=-1)
+        z = torch.cos(math.pi * u1)
+        f = ((1.0 + r * z) / (r + z)).clamp(-1.0, 1.0)
+        c = kappa[:, None] * (r - f)
+        accept = (c * (2.0 - c) - u2 > 0.0) | (torch.log(c / u2) + 1.0 - c >= 0.0)
+        drawn = ((u3 >= 0.5).double() * 2.0 - 1.0) * torch.acos(f)
+        # The first accepted proposal: the largest of (proposals - index) over the accepted, unique where any is.
+        rank = accept.to(torch.int64) * torch.arange(proposals, 0, -1, device=kappa.device)
+        first = rank.argmax(dim=-1, keepdim=True)
+        return torch.where(accept.any(dim=-1), drawn.gather(1, first)[:, 0], torch.zeros_like(kappa))
+
+    def sample(self, features: torch.Tensor, layout: torch.Tensor, deterministic: bool,
+               greedy: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+        """(theta [N] float32 in (-pi, pi], its log probability [N]) for flat rows; 0 and 0 for a row without a move
+        block. Deterministic is the mode (the heaviest component's mean); `greedy` [N] bool takes it for those rows
+        alone (the draw is made for every row either way, as sample_logits does)."""
+        steering = self._steering(layout)
+        mu, kappa, log_w, logits = self.mixture(features)
+        mode = self.mode_of(mu, logits)
+        if deterministic:
+            theta = mode
+        else:
+            gumbel = -torch.log(-torch.log(torch.rand_like(log_w)))
+            component = (log_w + gumbel).argmax(dim=-1, keepdim=True)
+            chosen = mu.gather(1, component[:, :, None].expand(-1, 1, 2))[:, 0]
+            angle = torch.atan2(chosen[:, 1], chosen[:, 0]) + self.offsets(kappa.gather(1, component)[:, 0]).float()
+            theta = torch.atan2(torch.sin(angle), torch.cos(angle))
+            if greedy is not None:
+                theta = torch.where(greedy.reshape(-1), mode, theta)
+        log_prob = self.log_prob_of(mu, kappa, log_w, theta)
+        zero = torch.zeros_like(theta)
+        return torch.where(steering, theta, zero), torch.where(steering, log_prob, zero)
+
+    def evaluate(self, features: torch.Tensor, layout: torch.Tensor,
+                 theta: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """(log probability [N], entropy surrogate [N], mean concentration sum_k w_k kappa_k [N]) of the headings
+        `theta` [N] taken; 0 with no gradient for a row without a move block."""
+        steering = self._steering(layout)
+        mu, kappa, log_w, _ = self.mixture(features)
+        log_prob = self.log_prob_of(mu, kappa, log_w, theta.reshape(-1))
+        entropy = self.entropy_of(kappa, log_w)
+        concentration = (log_w.exp() * kappa).sum(-1).detach()
+        zero = torch.zeros_like(log_prob)
+        return (torch.where(steering, log_prob, zero), torch.where(steering, entropy, zero),
+                torch.where(steering, concentration, zero))
+
+    def mode(self, features: torch.Tensor) -> torch.Tensor:
+        """The deterministic heading [N] for flat rows, whatever their layout (the golden vectors' oracle)."""
+        mu, _, _, logits = self.mixture(features)
+        return self.mode_of(mu, logits)
+
+
 def _attach_vision(network: nn.Module, vision, encoder: "VisionEncoder | None" = None,
                    drop: Sequence[str] = (), planner_k: int = Planner.K) -> None:
     """Give an actor or critic the camera: the encoder (VisionEncoder) and its own join (VisionJoin), and keep the
@@ -2578,6 +2743,9 @@ _GOAL_SCALE_KEYS = ("goal_embedding.kind_scale.weight", "goal_embedding.target_s
 #: manifest says (cell_spec).
 _GOAL_POINTER_PREFIXES = ("goal_head.pointer.", "goal_head.place_spec", "goal_head.cell.", "goal_head.cell_spec",
                           "vision.map.planner.k")
+#: The heading head's weights (HeadingHead): an actor saved without one loads with the head as initialised (it holds the
+#: heading, mostly); one saved with it into an actor without a heading (a stage with no move block) drops them.
+HEADING_PREFIX = "heading_head."
 
 
 #: The blind-column masks' buffer names (attach_blind_columns' tags): "blind_keep_" (a checkpoint from before the hint
@@ -2718,16 +2886,25 @@ def load_actor_state(actor: nn.Module, state: dict) -> list[str]:
     state = materialised_state(state, drop=not sharing)
     state = {key: value for key, value in state.items() if key not in SHARED_INDEX_KEYS}
     state, grown = grow_goal_rows(without_blind_columns(state), actor.state_dict())
+    if getattr(actor, "heading_head", None) is None:
+        dropped = [key for key in state if key.startswith(HEADING_PREFIX)]
+        if dropped:
+            print(f"Load: the checkpoint's heading head ({len(dropped)} tensors) is not this actor's (no layout of the "
+                  f"stage steers by a heading); dropped", flush=True)
+            state = {key: value for key, value in state.items() if not key.startswith(HEADING_PREFIX)}
     missing, unexpected = actor.load_state_dict(state, strict=False)
     # The blind-column masks are never taken from a checkpoint: an actor built with seat sets has its own already (the
     # stage's), which a resume keeps.
     wrong = [key for key in missing
              if key not in _GOAL_SCALE_KEYS and not key.startswith(_GOAL_POINTER_PREFIXES)
              and not key.split(".")[-1].startswith(BLIND_KEEP_PREFIXES)
-             and key not in SHARED_PARAMETER_KEYS and key not in SHARED_INDEX_KEYS]
+             and key not in SHARED_PARAMETER_KEYS and key not in SHARED_INDEX_KEYS
+             and not key.startswith(HEADING_PREFIX)]
     if wrong or unexpected:
         raise RuntimeError(f"Error(s) in loading state_dict for {type(actor).__name__}: missing {wrong}, "
                            f"unexpected {list(unexpected)}")
+    if any(key.startswith(HEADING_PREFIX) for key in missing):
+        print("Load: the checkpoint has no heading head; the actor's starts as initialised", flush=True)
     parameters = dict(actor.named_parameters())
     with torch.no_grad():
         for key in missing:
@@ -2756,7 +2933,8 @@ class LayoutActor(nn.Module):
     def __init__(self, layouts: Sequence[tuple[int, int]], hidden: Sequence[int], foresight_outputs: int = 0,
                  recurrent_size: int = 0, goal_count: int = 0, goal_targets: int = 1, slow_size: int = 0,
                  foresight_feedback: bool = False, lookahead: bool = False, goal_slots: int = 1,
-                 vision=None, drop_inputs: Sequence[str] = (), planner_k: int = Planner.K, sharing=None):
+                 vision=None, drop_inputs: Sequence[str] = (), planner_k: int = Planner.K, sharing=None,
+                 heading: Sequence[bool] | None = None):
         """layouts: (obs dim, action count) per layout; hidden: widths, the first being the adapters' output.
 
         `foresight_outputs` adds a head on the trunk that predicts what happens after this decision (mappo.trainer's
@@ -2770,6 +2948,9 @@ class LayoutActor(nn.Module):
 
         `sharing` (sharing_of: mappo.shared_blocks) shares the movement across the class layouts: see _attach_sharing.
         None: every layout's adapter and head are its own alone, exactly as before.
+
+        `heading` (heading_of: stage.json's continuous outputs) is per layout whether it steers by a continuous heading
+        (HeadingHead, one for all of them); None: no heading head.
         """
         super().__init__()
         if not hidden:
@@ -2824,6 +3005,13 @@ class LayoutActor(nn.Module):
         # Its free look (LookHead), where the vision block has look heads (revision 4): the actor's own, not shared.
         look_heads = vision_look_heads(vision)
         self.look_head = LookHead(head_width, look_heads, self.vision.has_vision) if look_heads else None
+        # The heading (HeadingHead, heading.CONTRACT.md), where stage.json's continuous outputs name it: one for every
+        # layout with a move block. Registered after every other head and before the shared movement, so that without
+        # it the parameters and the random draws are an actor's without, and the shared parameters stay last (an
+        # optimiser saved without them still lines up). It reads the policy features the action head does, past the
+        # GRU, so there is nothing of it to fold or densify in a rollout copy.
+        self.heading_head = (HeadingHead(head_width, torch.tensor([bool(h) for h in heading], dtype=torch.bool))
+                             if heading is not None and any(heading) else None)
         # The movement shared across the layouts (mappo.shared_blocks): registered last, so that without it the
         # parameters, their order and the random draws are exactly an actor's without, and with it the shared
         # parameters follow every other (an optimiser saved without them still lines up: MappoTrainer.load_state_dict).
@@ -3066,6 +3254,18 @@ class LayoutActor(nn.Module):
                    goal: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
         """The free look's (log probability [N], entropy [N]) of choices taken (LookHead.evaluate)."""
         return self.look_head.evaluate(self.policy_features(features, goal), layout, choice)
+
+    def heading(self, features: torch.Tensor, layout: torch.Tensor, goal: torch.Tensor | None = None,
+                deterministic: bool = False, greedy: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+        """The heading for flat rows (HeadingHead.sample): (theta [N] float32, log probability [N]). `greedy` [N] bool:
+        the rows that take the mode (a greedy env's whole decision is the argmax)."""
+        return self.heading_head.sample(self.policy_features(features, goal), layout, deterministic, greedy)
+
+    def heading_terms(self, features: torch.Tensor, layout: torch.Tensor, theta: torch.Tensor,
+                      goal: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """The heading's (log probability [N], entropy surrogate [N], mean concentration [N]) of headings taken
+        (HeadingHead.evaluate)."""
+        return self.heading_head.evaluate(self.policy_features(features, goal), layout, theta)
 
     def action_logits(self, features: torch.Tensor, layout: torch.Tensor, mask: torch.Tensor,
                       goal: torch.Tensor | None = None, groups=None, obs: torch.Tensor | None = None) -> torch.Tensor:

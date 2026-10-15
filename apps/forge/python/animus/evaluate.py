@@ -27,7 +27,8 @@ import torch
 from .config import REPORT_COLUMNS, TrainConfig
 from .env import ForgeEnv
 from .evaluation import action_mask_table, format_summary, run_evaluation
-from .mappo.networks import check_image_bytes, check_look_heads, vision_of
+from .mappo.networks import check_image_bytes, check_look_heads, heading_of, vision_of
+from .protocol import check_continuous
 from .mappo.trainer import MappoConfig, MappoTrainer
 from .runs import resume_mismatch
 from .stages import STAGE_FILE, layout_changes, load_stage
@@ -89,9 +90,10 @@ def main() -> None:
     try:
         check_image_bytes(vision, spec.image_bytes, spec.map_bytes)
         check_look_heads(vision, spec.look_heads)
+        check_continuous(stage, spec.continuous_count)
     except ValueError as error:
         raise SystemExit(f"vision: {error}") from None
-    trainer = MappoTrainer(layouts, spec.state_dim, mappo, vision=vision)
+    trainer = MappoTrainer(layouts, spec.state_dim, mappo, vision=vision, heading=heading_of(stage, names))
     trainer.load_state_dict(checkpoint["trainer"], load_optimizers=False)
 
     acting = trainer.acting_state(spec.num_envs, spec.agents_per_env)
@@ -114,8 +116,12 @@ def main() -> None:
         # The sim's mask less the actions this scoring may not take, per layout.
         mask = host(step.mask) if forbidden is None else np.logical_and(host(step.mask), ~forbidden[step.layout])
         chosen = trainer.act(step.obs, mask, step.layout, not args.stochastic, acting, getattr(step, "image", None))[0]
-        # The free look (protocol 22) goes with the actions, greedy with them unless --stochastic.
+        # The free look (protocol 22) and the heading (protocol 32) go with the actions, greedy with them unless
+        # --stochastic.
         look = trainer.wire_look(acting.look)
+        heading = trainer.wire_heading(acting.heading)
+        if heading is not None:
+            return chosen, None, look, heading
         return chosen if look is None else (chosen, None, look)
 
     try:

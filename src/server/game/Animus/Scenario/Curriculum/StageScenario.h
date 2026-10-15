@@ -144,6 +144,7 @@ namespace Animus::Curriculum
         /// when it is played -- of a stage with a vision block, straight into their cameras (SeatState::Look). Never
         /// through ApplySeatAction: looking is free, and nothing that prices or tallies an action sees it (R1).
         void ApplyLook(Env& env, int32 const* look) override;
+        void ApplyContinuous(Env& env, float const* continuous) override;
         [[nodiscard]] std::pair<uint32, uint32> CameraRenderSize(Env const& env, uint32 agent) const override;
         [[nodiscard]] int32 EntitiesFirst(uint16 layout) const override;
         void Observe(Env& env, float* obs, float* state, uint8* mask, uint8* image, uint8* map) override;
@@ -292,8 +293,8 @@ namespace Animus::Curriculum
         static void TrackController(SeatState& seat, uint32 diffMs);
         /// The movement-pacing tallies of one tick (M7, decision 0027): straight runs, pauses, turning in place, pins
         /// and their escapes, from the controller's body.
-        static void TrackPacing(SeatState& seat, Movement::BodyState const& body, Movement::ControlState const& held,
-            bool keys, bool stuck, uint32 diffMs);
+        static void TrackPacing(SeatState& seat, Movement::BodyState const& body, bool keys, bool stuck,
+            uint32 diffMs);
         /// Whether the body's course, its way from the last tick to (x, y) over `diffMs`, turned more than 20 degrees
         /// from the tick before while moving (half a yard a second or more); keeps the course on the seat.
         static bool CourseKink(SeatState& seat, float x, float y, uint32 diffMs);

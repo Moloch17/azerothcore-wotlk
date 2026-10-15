@@ -3,10 +3,13 @@
 The forge charges steering that does not commit and presses that do nothing (CurriculumTuning.h ActionTuning,
 MoveControls.h's Press): **Actions.Jitter** per quarter turn a press takes back of the choice before it, weighed by
 recency e^(-dt / **Options.JitterDecayMs**) -- a reversal of the feet (forward to back, left to right) or of a climb
-half a turn, of a turn or pitch rate the smaller rate over a quarter turn a second; **Actions.Effort** per press
-(a rate by its size, EffortOf over 180 deg/s turning, 90 deg/s pitching); **Actions.Repeat** per press of
+half a turn, of a pitch rate the smaller rate over a quarter turn a second; **Actions.Effort** per press (a pitch
+rate by its size, EffortOf over 90 deg/s); **Actions.Repeat** per press of
 one action past RepeatFree (3) within RepeatWindowMs (10 s); **Actions.Fidget** per second moving in a fight while
 already at the wanted range, once held **Actions.SettleGraceMs**.
+
+Turning is no press since move block revision 8 (the heading is the policy's continuous output, and what it costs is
+the nav stages' PointNav.Turning per radian turned, not a noise price here), so a human's turning is in none of these.
 
 Human presses come from the inverse mapper (movement, controller space) and the CastRequests (casts); the same
 quantities are tallied per unit (one player in one hour shard, at least MIN_MINUTES of clip time) and the prices
@@ -42,10 +45,7 @@ DECAY_GRID = tuple(range(250, 5001, 250))
 BUDGET = 0.005
 MIN_MINUTES = 0.5
 QUARTER_TURN = math.pi / 2
-
-
-TURN_FULL = math.pi              # Press's full turn press: TURN_RATE_MAX / 2, 180 deg/s
-PITCH_FULL = math.pi / 2        # ... and pitch press: PITCH_RATE_MAX, 90 deg/s
+PITCH_FULL = math.pi / 2        # Press's full pitch press: PITCH_RATE_MAX, 90 deg/s
 
 
 @dataclass
@@ -109,8 +109,8 @@ def tally_movement(tally: UnitTally, samples: np.ndarray, actions: list[int], sp
     space = space or fit.SPACES["controller"]
     dt_s = space.dt
     tally.minutes += (len(samples) - 1) * dt_s / 60.0
-    axes = {kind: _Axis() for kind in (fit.FORWARD, fit.STRAFE, fit.VERTICAL, fit.TURN, fit.PITCH)}
-    full = {fit.TURN: TURN_FULL, fit.PITCH: PITCH_FULL}
+    axes = {kind: _Axis() for kind in (fit.FORWARD, fit.STRAFE, fit.VERTICAL, fit.PITCH)}
+    full = {fit.PITCH: PITCH_FULL}
     for k, a in enumerate(actions):
         kind, value = space.actions[a]
         if kind == fit.NOOP:
@@ -118,7 +118,7 @@ def tally_movement(tally: UnitTally, samples: np.ndarray, actions: list[int], sp
         if kind in axes:
             _press(tally, axes[kind], value, k * dt_s, full.get(kind))
         else:
-            tally.effort += 1.0             # JUMP, WALK_TOGGLE: a full press
+            tally.effort += 1.0             # JUMP: a full press
     feats = motion.features(samples)
     moving = feats[:, motion.INDEX["moving"]] > 0.5
     # Fidget proxy: moving in combat, charged once a run has held the grace.

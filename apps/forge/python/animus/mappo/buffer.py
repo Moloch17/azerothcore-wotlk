@@ -169,8 +169,9 @@ class RolloutBuffer:
     def __init__(self, steps: int, envs: int, agents: int, obs_dim: int, state_dim: int, num_actions: int,
                  foresight: int = 0, recurrent: int = 0, goals: bool = False, slow_goal: int = 0,
                  goal_slots: int = 1, image_bytes: int = 0, look_heads: int = 0, label_bytes: int = 0,
-                 planner_widths: tuple[int, int] = (0, 0)):
+                 planner_widths: tuple[int, int] = (0, 0), heading: bool = False):
         self.steps = steps
+        self.heading = bool(heading)
         self.image_bytes = image_bytes
         self.label_bytes = label_bytes
         self.planner_widths = tuple(planner_widths)
@@ -231,6 +232,10 @@ class RolloutBuffer:
         self.look = np.zeros((*shape, look_heads), dtype=np.int8)
         # The look's part of `log_probs` (the policy's own, as log_probs is), for the movement-only KL.
         self.look_log_probs = np.zeros(shape, dtype=np.float32)
+        # The heading each decision took (protocol 32, HeadingHead), radians as sent, 0 for a row without a move block,
+        # and its part of `log_probs` (its log density), for the movement-only KL.
+        self.heading_theta = np.zeros(shape, dtype=np.float32)
+        self.heading_log_probs = np.zeros(shape, dtype=np.float32)
         self.log_probs = np.zeros(shape, dtype=np.float32)
         # Which seats acted with the argmax (mappo.greedy_env_fraction, exploration v3): their log probabilities are not
         # draws from the policy, so the update's policy gradient skips them.
@@ -258,11 +263,12 @@ class RolloutBuffer:
     def add_decision(self, obs, state, mask, layout, actions, log_probs, values, present=None,
                      foresight=None, memory=None, goals=None, critic_memory=None, image=None,
                      look=None, look_log_prob=None, greedy=None, labels=None, planner_readout=None,
-                     planner_pool=None) -> None:
+                     planner_pool=None, heading=None, heading_log_prob=None) -> None:
         """Record what the policy saw and did at step `cursor`; `present` [E, A] marks the agents with a character
         (default: all); `image` [E, A, I] uint8 the camera's bytes, with a camera; `look` [E, A, H] the free look's
         choices, with look heads; `labels` [E, A, L] uint8 the nav labels (protocol 31), where the stage sends them;
-        `planner_readout` [E, A, R] and `planner_pool` [E, A, B] the cached plan the decision used, with a planner."""
+        `planner_readout` [E, A, R] and `planner_pool` [E, A, B] the cached plan the decision used, with a planner;
+        `heading` [E, A] the headings taken and `heading_log_prob` [E, A] their log densities, with a heading head."""
         t = self.cursor
         if self.planner_widths[0] and planner_readout is not None:
             self.planner_readout[t] = planner_readout
@@ -281,6 +287,10 @@ class RolloutBuffer:
             self.look[t] = look
         if self.look_heads and look_log_prob is not None:
             self.look_log_probs[t] = look_log_prob
+        if self.heading and heading is not None:
+            self.heading_theta[t] = heading
+        if self.heading and heading_log_prob is not None:
+            self.heading_log_probs[t] = heading_log_prob
         self.log_probs[t] = log_probs
         if greedy is not None:
             self.greedy[t] = greedy
@@ -448,6 +458,7 @@ class RolloutBuffer:
             "valid": self.samples,
             "actions": self.actions,
             **({"look": self.look, "look_log_probs": self.look_log_probs} if self.look_heads else {}),
+            **({"heading": self.heading_theta, "heading_log_probs": self.heading_log_probs} if self.heading else {}),
             "log_probs": self.log_probs,
             "greedy": self.greedy,
             "values": self.values,

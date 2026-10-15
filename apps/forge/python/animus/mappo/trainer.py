@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import math
 import time
 from contextlib import nullcontext
 from dataclasses import dataclass
@@ -60,6 +61,11 @@ class MappoConfig:
     # The free look's entropy bonus (LookHead, camera-vision.FREELOOK.md D), on the look's summed entropy; None is
     # entropy_coef. Either way it follows entropy_coef's schedule and floor (it is entropy_coef times this over it).
     look_entropy_coef: float | None = None
+    # The heading's entropy bonus (HeadingHead, heading.CONTRACT.md sec 5; on wherever stage.json's "continuous" names
+    # the heading), on its entropy surrogate: a coefficient of its own, apart from entropy_coef's schedule and a
+    # restart's boost, falling linearly to heading_entropy_final_fraction of itself over total_env_steps.
+    heading_entropy_coef: float = 0.003
+    heading_entropy_final_fraction: float = 1.0
     # The camera's update a chunk of this many rows at a time (MappoTrainer._encode_vision), encoded twice -- once
     # without its graph, once more for its gradient -- so the decoded images and the patch activations live a chunk
     # at a time; 0 = the whole minibatch at once. "auto" (VISION_CHUNK_AUTO) lets the learner choose at start from the
@@ -298,6 +304,10 @@ class ActingState:
     # And the look's own log probability [E, A] (its part of the joint one), which the update takes out again for the
     # movement-only KL (approx_kl_move).
     look_log_prob: np.ndarray | None = None
+    # The heading's last choices [E, A] float32 radians (HeadingHead, protocol 32; 0 for a row without a move block)
+    # and their log probability [E, A] (its part of the joint one), as the look's: what the decision just taken sends.
+    heading: np.ndarray | None = None
+    heading_log_prob: np.ndarray | None = None
     # Which seats act with the argmax [E, A] bool (MappoConfig.greedy_env_fraction): set once by the training Run's
     # acting state, never by an evaluation's; clear() leaves it alone (it is a property of the env, not the episode).
     greedy: np.ndarray | None = None
@@ -398,11 +408,15 @@ class _Decided:
         self.goal_cells_at = self.plan_at = None
         self.actions_at = self.log_probs_at = None
         self.look_at = self.look_log_prob_at = None
+        self.heading_at = self.heading_log_prob_at = None
 
     def finish(self, fetched: list[np.ndarray]):
         if self.look_at is not None and self.state is not None:
             self.state.look = fetched[self.look_at]
             self.state.look_log_prob = fetched[self.look_log_prob_at]
+        if self.heading_at is not None and self.state is not None:
+            self.state.heading = fetched[self.heading_at]
+            self.state.heading_log_prob = fetched[self.heading_log_prob_at]
         goals = None
         if self.goal_at is not None:
             goal = fetched[self.goal_at]
@@ -631,6 +645,13 @@ class _RolloutGraph:
             log_probs = log_probs + look_log_prob.to(log_probs.dtype)
             out["look"] = look.reshape(envs, agents, -1).to(torch.int8)
             out["look_log_prob"] = look_log_prob.reshape(envs, agents).to(torch.float32)
+        if actor.heading_head is not None:
+            # The heading (HeadingHead), inside the captured decision too: its fixed-iteration sampler reads nothing
+            # back. The joint log probability takes its log density.
+            heading, heading_log_prob = actor.heading(features, layout_t, goal_t, self.deterministic, greedy_t)
+            log_probs = log_probs + heading_log_prob.to(log_probs.dtype)
+            out["heading"] = heading.reshape(envs, agents).to(torch.float32)
+            out["heading_log_prob"] = heading_log_prob.reshape(envs, agents).to(torch.float32)
         out["actions"] = actions.reshape(envs, agents)
         out["log_probs"] = log_probs.reshape(envs, agents)
         if trainer.foresight_outputs:
@@ -718,6 +739,9 @@ class _RolloutGraph:
         if "look" in fetched:
             state.look = fetched["look"]
             state.look_log_prob = fetched["look_log_prob"]
+        if "heading" in fetched:
+            state.heading = fetched["heading"]
+            state.heading_log_prob = fetched["heading_log_prob"]
         return fetched["actions"], fetched["log_probs"], fetched["values"], fetched.get("foresight"), goals
 
 
@@ -746,10 +770,12 @@ class MappoTrainer:
         vision=None,
         aux: "AuxConfig | None" = None,
         sharing=None,
+        heading=None,
     ):
         """layouts: (obs dim, action count) per agent layout, in the sim's layout order. `aux`: the nav stages'
         auxiliary losses (AuxConfig; the defaults without one). `sharing`: the actor's shared movement
-        (networks.sharing_of from the stage and mappo.shared_blocks), None for none."""
+        (networks.sharing_of from the stage and mappo.shared_blocks), None for none. `heading`: per layout whether it
+        steers by a continuous heading (networks.heading_of from the stage), None for no heading head."""
         skip_distribution_checks()
         self.aux = aux if aux is not None else AuxConfig()
         if config.vision_chunk_rows == VISION_CHUNK_AUTO:
@@ -779,6 +805,8 @@ class MappoTrainer:
         self.entropy_coef = config.entropy_coef
         # The goal head's factor on it (goal_entropy_scale, annealed by the learner loop every update).
         self.goal_entropy_factor = config.goal_entropy_scale
+        # The heading's schedule factor on mappo.heading_entropy_coef (annealed by the learner loop every update).
+        self.heading_entropy_factor = 1.0
 
         hidden = list(config.hidden)
         self.foresight_outputs = ((len(config.foresight_horizons_seconds) + 1
@@ -812,7 +840,9 @@ class MappoTrainer:
                                  self.goal_kinds, self.goal_targets, self.slow_goal_size, config.foresight_feedback,
                                  config.goal_lookahead, self.goal_slots,
                                  self.vision, tuple(config.drop_inputs), max(1, int(config.planner_k)),
-                                 sharing=sharing).to(self.train_device)
+                                 sharing=sharing, heading=heading).to(self.train_device)
+        # Whether the actor steers by a continuous heading (protocol 32's ACT section; HeadingHead).
+        self.heading = self.actor.heading_head is not None
         # (readout width, pool width) of the cached plan a row (VisionEncoder.planner_widths), (0, 0) without one.
         self.planner_widths = self.actor.vision.planner_widths if self.actor.vision is not None else (0, 0)
         if self.actor.goal_head is not None:
@@ -1281,6 +1311,13 @@ class MappoTrainer:
             log_probs = log_probs + look_log_prob.to(log_probs.dtype)
             decided.look_at = downloads.add(look.reshape(envs, agents, -1).to(torch.int8))
             decided.look_log_prob_at = downloads.add(look_log_prob.reshape(envs, agents).to(torch.float32))
+        if self._rollout_actor.heading_head is not None:
+            # The heading (HeadingHead): drawn beside the action, the mode with it; the log probability is joint.
+            heading, heading_log_prob = self._rollout_actor.heading(features, layout_t, decided.goal_t, deterministic,
+                                                                    greedy_t)
+            log_probs = log_probs + heading_log_prob.to(log_probs.dtype)
+            decided.heading_at = downloads.add(heading.reshape(envs, agents).to(torch.float32))
+            decided.heading_log_prob_at = downloads.add(heading_log_prob.reshape(envs, agents).to(torch.float32))
 
         if self.foresight_outputs:
             decided.foresight_at = downloads.add(
@@ -1383,6 +1420,8 @@ class MappoTrainer:
             serial=np.zeros((envs, agents), dtype=np.int64) if self.goal_slots > 1 and self.goal_count else None,
             look=np.zeros((envs, agents, len(self.look_heads)), dtype=np.int8) if self.look_heads else None,
             look_log_prob=np.zeros((envs, agents), dtype=np.float32) if self.look_heads else None,
+            heading=np.zeros((envs, agents), dtype=np.float32) if self.heading else None,
+            heading_log_prob=np.zeros((envs, agents), dtype=np.float32) if self.heading else None,
             planner_readout=(np.zeros((envs, agents, self.planner_widths[0]), dtype=np.float32)
                              if self.planner_widths[0] else None),
             planner_pool=(np.zeros((envs, agents, self.planner_widths[1]), dtype=np.float32)
@@ -1446,6 +1485,18 @@ class MappoTrainer:
         if not self.look_heads or look is None:
             return None
         return np.asarray(look, dtype=np.int32)
+
+    def wire_heading(self, heading: np.ndarray | None) -> np.ndarray | None:
+        """The continuous section ACT carries (protocol 32) for the headings `heading` [E, A] a decision took:
+        [E, A, 1] float32 radians, 0 for a row without a move block (HeadingHead gives it 0); None without a heading
+        head."""
+        if not self.heading or heading is None:
+            return None
+        return np.asarray(heading, dtype=np.float32)[..., None]
+
+    def heading_entropy_coef(self) -> float:
+        """The heading's entropy coefficient now: mappo.heading_entropy_coef times its own schedule factor."""
+        return float(self.config.heading_entropy_coef) * self.heading_entropy_factor
 
     def set_planner_off(self, off: bool) -> None:
         """The eval arm no_planner (evaluation.ABLATIONS): the planner's readouts and the cell pointer's bonus zeroed
@@ -1518,6 +1569,16 @@ class MappoTrainer:
             for choice, name in enumerate(LOOK_COMMANDS):
                 out[name] = ((command == choice) & seeing).sum().to(torch.float32) / count
         return _host_stats(out)
+
+    def _heading_stats(self, data: dict) -> dict[str, float]:
+        """How far the policy steers: `heading_abs_theta_mean`, the mean |theta| in degrees over the rollout's samples
+        whose layout has a move block (0 holds the heading; 180 turns about)."""
+        if self.actor.heading_head is None or "heading" not in data:
+            return {}
+        steering = self.actor.heading_head.has_heading[data["layout"].long()] & data["valid"].bool()
+        count = steering.sum().clamp(min=1).to(torch.float32)
+        degrees = data["heading"].abs().to(torch.float32) * (180.0 / math.pi)
+        return _host_stats({"heading_abs_theta_mean": (degrees * steering).sum() / count})
 
     def _goal_stats(self, data: dict) -> dict[str, float]:
         """How the goal head is being used, from the rollout itself: the share of decisions spent on each goal, and
@@ -2127,6 +2188,9 @@ class MappoTrainer:
             stats["goal_entropy"] = 0.0
         if self.actor.look_head is not None:
             stats["look_entropy"] = 0.0
+        if self.actor.heading_head is not None:
+            stats["heading_entropy"] = 0.0
+            stats["heading_kappa_mean"] = 0.0
         if self.vision_opt is not None:
             # The shared camera's gradient at its embedding, each loss's share: whether the value loss swamps the
             # policy's in what the encoder learns.
@@ -2266,6 +2330,15 @@ class MappoTrainer:
                         features, layout_all, data["look"][:, chunk].reshape(features.shape[0], -1), goal_all)
                     log_probs = log_probs + look_log_probs.reshape(*lead).to(log_probs.dtype)
                     look_entropies = look_entropies.reshape(*lead)
+                heading_entropies = heading_kappas = None
+                if self.actor.heading_head is not None:
+                    # The heading (HeadingHead): its log density joins the joint log probability, as the rollout's
+                    # stored one has it; 0 with no gradient on rows without a move block.
+                    heading_log_probs, heading_entropies, heading_kappas = self.actor.heading_terms(
+                        features, layout_all, data["heading"][:, chunk].reshape(-1), goal_all)
+                    log_probs = log_probs + heading_log_probs.reshape(*lead).to(log_probs.dtype)
+                    heading_entropies = heading_entropies.reshape(*lead)
+                    heading_kappas = heading_kappas.reshape(*lead)
 
                 # The teachers' own memories follow the same replayed decisions as the student's (animus.distill),
                 # so distillation is the one part that stays a loop over the sequence.
@@ -2304,6 +2377,9 @@ class MappoTrainer:
                 if look_entropies is not None:
                     look_entropy = (look_entropies * counted).sum() / weight
                     actor_loss = actor_loss - self.look_entropy_coef() * look_entropy
+                if heading_entropies is not None:
+                    heading_entropy = (heading_entropies * counted).sum() / weight
+                    actor_loss = actor_loss - self.heading_entropy_coef() * heading_entropy
                 if foresight:
                     targets = data["foresight_targets"][:, chunk]
                     known = data["foresight_valid"][:, chunk].to(torch.float32) * counted[..., None]
@@ -2452,14 +2528,23 @@ class MappoTrainer:
                         # Over the rows that look (a layout without the camera has none to speak of).
                         seeing = self.actor.look_head.has_vision[layout_all].reshape(lead).to(torch.float32) * counted
                         totals["look_entropy"] += (look_entropies * seeing).sum().detach() / seeing.sum().clamp(min=1.0)
+                    if heading_entropies is not None:
+                        # Over the rows that steer (a layout without a move block has no heading).
+                        steering = (self.actor.heading_head.has_heading[layout_all].reshape(lead).to(torch.float32)
+                                    * counted)
+                        steered = steering.sum().clamp(min=1.0)
+                        totals["heading_entropy"] += (heading_entropies * steering).sum().detach() / steered
+                        totals["heading_kappa_mean"] += (heading_kappas * steering).sum() / steered
                     totals["clip_frac"] += ((((ratio - 1).abs() > cfg.clip).to(torch.float32)
                                              * pg).sum() / pg_weight)
                     totals["approx_kl"] += kl
-                    # The movement action's KL alone: the stored joint log probability less the look's part (the
-                    # goal's is stored apart). The joint KL above stays the early stop's signal.
+                    # The movement action's KL alone: the stored joint log probability less the look's and the
+                    # heading's parts (the goal's is stored apart). The joint KL above stays the early stop's signal.
                     taken_move = data["log_probs"][:, chunk]
                     if "look_log_probs" in data:
                         taken_move = taken_move - data["look_log_probs"][:, chunk]
+                    if "heading_log_probs" in data:
+                        taken_move = taken_move - data["heading_log_probs"][:, chunk]
                     move_log_ratio = move_log_probs - taken_move
                     totals["approx_kl_move"] += ((((move_log_ratio.exp() - 1) - move_log_ratio) * pg).sum()
                                                  / pg_weight)
@@ -2485,6 +2570,7 @@ class MappoTrainer:
         stats["minibatches_done"] = float(updates)
         stats.update(self._goal_stats(data))
         stats.update(self._look_stats(data))
+        stats.update(self._heading_stats(data))
         auxiliary_stats = _host_stats(auxiliary_stats)
         # The forecasts' quality: sums over every minibatch with their counts (_foresight_quality).
         for name in [n for n in auxiliary_stats if n.startswith("forecast_") and not n.endswith("_n")]:
@@ -2579,6 +2665,7 @@ class MappoTrainer:
 
     def load_state_dict(self, state: dict, load_optimizers: bool = True) -> None:
         from .networks import BLIND_KEEP_PREFIXES, grow_goal_rows, without_blind_columns
+        heading_saved = any(key.startswith("heading_head.") for key in state["actor"])
         grown = load_actor_state(self.actor, state["actor"])
         critic_state, critic_grown = grow_goal_rows(without_blind_columns(state["critic"]), self.critic.state_dict())
         missing, unexpected = self.critic.load_state_dict(critic_state, strict=False)
@@ -2592,6 +2679,12 @@ class MappoTrainer:
             print(f"Resume: the checkpoint's goal space is smaller than this stage's ({len(grown)} actor and "
                   f"{len(critic_grown)} critic tensors grown, new rows as initialised); the optimisers start fresh",
                   flush=True)
+            load_optimizers = False
+        if load_optimizers and heading_saved != self.heading:
+            # The heading head (HeadingHead) is in one and not the other: the saved moments line up with other
+            # parameters than these.
+            print(f"Resume: the checkpoint {'has' if heading_saved else 'has no'} heading head, this actor "
+                  f"{'has' if self.heading else 'has none'}; the optimisers start fresh", flush=True)
             load_optimizers = False
         if self.value_norm is not None and state.get("value_norm") is not None:
             self.value_norm.load_state_dict(state["value_norm"])

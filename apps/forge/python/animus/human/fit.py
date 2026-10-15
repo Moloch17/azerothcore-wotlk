@@ -5,24 +5,28 @@ controller (src/server/game/Animus/Scenario/Curriculum/Blocks/MoveControls.h, An
 and a beam search per human clip for the action sequence that best reproduces it at the decision rate. Per context it
 reports how far the best reproduction drifts and how its motion's distributions differ from the human's.
 
-**The emulator** (one action a decision, as the policy has; MoveControls.h's 25 actions):
-- Held controls persist until changed: forward / back / stop, strafe left / right / stop, a turn rate (+-360, 180, 90,
-  30 deg/s or 0, left positive -- the mouse's, not slowed while moving), a pitch rate (+-90, 30 or 0 deg/s, water and
-  air only), ascend / descend / stop (water and air), walk (a toggle). Pressing the value already held does nothing.
+**The emulator** (one action a decision, as the policy has; MoveControls.h's 15 actions, move block revision 8):
+- Held controls persist until changed: forward / back / stop, strafe left / right / stop, a pitch rate (+-90, 30 or
+  0 deg/s, water and air only), ascend / descend / stop (water and air). Pressing the value already held does nothing.
+- The heading is no action: every decision the policy also names an angle theta from its facing, and the controller
+  eases the body to it (PlayerController.h HEADING_*: at most 360 deg/s, 10/s times what is left, at least 20 deg/s,
+  on it within a quarter degree), in sub-steps of MAX_SUBSTEP turned half before and half after each sub-step's move,
+  as the controller does. The fit does not search it: a decision's turn depends on theta alone, so the theta that
+  turns the body onto the human's next facing is read off (theta_toward; past the most one decision can turn, the
+  smallest theta that turns that most).
 - The speed in force (the sample's) is the run, swim or flight speed; back is that times the back ratio (run_back /
   run, ...); walking caps everything at the walk speed; forward or back held with a strafe is a diagonal, each
   component x 0.7071, at the back speed when back is held (the client's rules, fn 0x987570).
 - Swimming or flying, the forward direction is the look direction (pitch); a held ascend or descend moves at 45
   degrees (0.7071 of the speed each way, fn 0x987700).
 - JUMP (ground or water, not mid-jump) freezes the horizontal velocity for JUMP_SECONDS (2 x 7.9555 / 19.2911): no
-  air control, the turn rate still turns the body.
-- Within a decision the body moves along the heading half-way through the decision's turn: the chord of the arc a
-  steady turn rate walks.
+  air control, the heading still turns the body.
+- Walk is not an action (revision 7): the speed in force is the run's.
 
 **Limits.** Terrain and collision are ignored (human tracks are already feasible, so this measures the action space,
 not the world); on the ground only planar error counts (the ground owns z), swimming and flying are 3D. The human's
-mode, speed and mount are given per decision, not chosen. A human turns the mouse at any rate; the policy has nine,
-held a decision at least -- what the fit measures.
+mode, speed and mount are given per decision, not chosen. A human turns the mouse at any rate; the policy's body
+turns at most HEADING_MAX_TURN, easing out as it arrives -- what the heading error measures.
 
 **Search.** Per chunk of CHUNK_SECONDS, re-anchored at the human's position, facing and pitch with each of the nine
 start states of the feet (forward/back/none x strafe left/right/none) held, a beam of `beam` states expands every
@@ -59,7 +63,6 @@ WALK_RATIO = 2.5 / 7.0          # walk / run (Unit.cpp baseMoveSpeed)
 # Back speed over forward speed per mode (Unit.cpp baseMoveSpeed): run_back/run, swim_back/swim, flight_back/flight.
 BACK_RATIO = {motion.MODE_GROUND: 4.5 / 7.0, motion.MODE_SWIM: 2.5 / 4.722222, motion.MODE_FLY: 4.5 / 7.0,
               motion.MODE_AIRBORNE: 4.5 / 7.0}
-TURN_RATES_DEG = (-360.0, -180.0, -90.0, -30.0, 0.0, 30.0, 90.0, 180.0, 360.0)
 PITCH_RATES_DEG = (-90.0, -30.0, 0.0, 30.0, 90.0)
 
 CHUNK_SECONDS = 5.0
@@ -68,8 +71,15 @@ PRESS_COST = 1e-4
 EXPRESSIBLE_YARDS = 1.0
 EXPRESSIBLE_DEGREES = 10.0
 DIST_FEATURES = ("yaw_rate", "planar", "accel", "fwd", "lat")
+# PlayerController.h's heading (move block revision 8) and sub-step.
+HEADING_MAX_TURN = 2.0 * math.pi
+HEADING_EASE = 10.0
+HEADING_MIN_TURN = math.radians(20.0)
+HEADING_SNAP = math.radians(0.25)
+MAX_SUBSTEP = 0.05
 
-# Action kinds: the held control an action sets, and the value it sets it to.
+# Action kinds: the held control an action sets, and the value it sets it to. TURN (the turn rates) and WALK (the walk
+# toggle) are kinds no action has any more (move block revisions 8 and 7), kept so the kind numbers stay as they were.
 NOOP, FORWARD, STRAFE, TURN, PITCH, VERTICAL, JUMP, WALK = range(8)
 KIND_NAMES = ("noop", "forward", "strafe", "turn", "pitch", "vertical", "jump", "walk")
 #: The feet's start states a chunk is anchored with: (forward, strafe).
@@ -93,22 +103,16 @@ class Space:
             return {-1.0: "strafe_left", 1.0: "strafe_right", 0.0: "strafe_stop"}[value]
         if kind == VERTICAL:
             return {1.0: "ascend", -1.0: "descend", 0.0: "vertical_stop"}[value]
-        if kind == TURN:
-            degrees = round(math.degrees(value))
-            return "turn_stop" if degrees == 0 else f"turn_{'left' if degrees > 0 else 'right'}_{abs(degrees)}"
         if kind == PITCH:
             degrees = round(math.degrees(value))
             return "pitch_stop" if degrees == 0 else f"pitch_{'up' if degrees > 0 else 'down'}_{abs(degrees)}"
-        if kind == WALK:
-            return "walk_toggle"
         return KIND_NAMES[kind]
 
 
 def _controller() -> tuple:
-    """No press, then MoveControls.h's 24 actions in their order (revision 7: no walk toggle)."""
+    """No press, then MoveControls.h's 15 actions in their order (revision 8: no turn rates, no walk toggle)."""
     acts = [(NOOP, 0.0), (FORWARD, 1.0), (FORWARD, -1.0), (FORWARD, 0.0), (STRAFE, -1.0), (STRAFE, 1.0),
             (STRAFE, 0.0)]
-    acts += [(TURN, math.radians(r)) for r in TURN_RATES_DEG]
     acts += [(PITCH, math.radians(r)) for r in PITCH_RATES_DEG]
     acts += [(VERTICAL, 1.0), (VERTICAL, -1.0), (VERTICAL, 0.0), (JUMP, 0.0)]
     return tuple(acts)
@@ -131,7 +135,6 @@ class State:
     pitch: np.ndarray
     forward: np.ndarray
     strafe: np.ndarray
-    turn: np.ndarray            # rad/s
     pitch_rate: np.ndarray
     vertical: np.ndarray
     walk: np.ndarray
@@ -145,18 +148,73 @@ class State:
         f = lambda v: np.full(n, v, dtype=np.float64)  # noqa: E731
         held = np.broadcast_to(np.asarray(feet, dtype=np.int64).reshape(-1, 2), (n, 2))
         return State(f(x), f(y), f(z), f(facing), f(pitch), held[:, 0].astype(np.float64).copy(),
-                     held[:, 1].astype(np.float64).copy(), f(0.0), f(0.0), f(0.0), np.zeros(n, dtype=bool),
+                     held[:, 1].astype(np.float64).copy(), f(0.0), f(0.0), np.zeros(n, dtype=bool),
                      f(0.0), f(0.0), f(0.0))
 
     def take(self, index: np.ndarray) -> "State":
         return State(*(getattr(self, name)[index] for name in self.__dataclass_fields__))
 
 
-def step(state: State, kinds: np.ndarray, values: np.ndarray, mode: int, speed: float, space: Space
-         ) -> tuple[State, np.ndarray]:
-    """One decision for a batch: the action (kind, value) of each state, then the decision's motion. Returns the new
-    states and which actions were allowed (MoveControls::Allowed: pitch rates, ascend and descend only swimming or
-    flying, the stops everywhere; jump not mid-jump nor flying)."""
+def _turn_toward(yaw: np.ndarray, target: np.ndarray, dt: float) -> np.ndarray:
+    """PlayerController.cpp's TurnToward over `dt`: the yaw turned toward `target` (radians, unwrapped is fine)."""
+    remaining = motion.wrap(target - yaw)
+    left = np.abs(remaining)
+    step_ = np.minimum(np.minimum(left, HEADING_MAX_TURN * dt), HEADING_EASE * left * dt + HEADING_MIN_TURN * dt)
+    return np.where(left < HEADING_SNAP, yaw + remaining, yaw + np.sign(remaining) * step_)
+
+
+def _substeps(dt: float) -> tuple[int, float]:
+    """The controller's sub-steps of a decision: how many, and how long each (PlayerController.cpp Step)."""
+    n = max(1, int(math.ceil(dt / MAX_SUBSTEP - 1e-4)))
+    return n, dt / n
+
+
+def _headings(facing: np.ndarray, theta: np.ndarray, dt: float) -> tuple[np.ndarray, np.ndarray]:
+    """The decision's heading toward facing + theta: each sub-step's move heading ([n, batch], half the sub-step's
+    turn taken before it, as SubStep does) and the facing at the decision's end."""
+    n, sub = _substeps(dt)
+    target = facing + theta
+    yaw = facing.astype(np.float64).copy()
+    out = np.empty((n, len(yaw)))
+    for i in range(n):
+        yaw = _turn_toward(yaw, target, 0.5 * sub)
+        out[i] = yaw
+        yaw = _turn_toward(yaw, target, 0.5 * sub)
+    return out, yaw
+
+
+_TURN_TABLES: dict[float, tuple[np.ndarray, np.ndarray]] = {}
+
+
+def _turn_table(dt: float) -> tuple[np.ndarray, np.ndarray]:
+    """How far one decision of `dt` turns the body for each theta in [0, pi] (the turn is odd in theta and does not
+    depend on the facing), cut where it stops growing: (turned, theta), turned increasing, for np.interp."""
+    if dt not in _TURN_TABLES:
+        thetas = np.linspace(0.0, math.pi, 4097)
+        _, end = _headings(np.zeros_like(thetas), thetas, dt)
+        turned = np.maximum.accumulate(end)
+        last = int(np.argmax(turned >= turned[-1] - 1e-9))
+        keep = np.concatenate(([True], np.diff(turned[:last + 1]) > 0.0))
+        _TURN_TABLES[dt] = (turned[:last + 1][keep], thetas[:last + 1][keep])
+    return _TURN_TABLES[dt]
+
+
+def theta_toward(facing: np.ndarray | float, yaw_next: np.ndarray | float, dt: float) -> np.ndarray:
+    """The heading angle (theta, + left) that turns a body facing `facing` onto `yaw_next` in one decision of `dt`; a
+    turn larger than one decision can make gets the smallest theta that makes the most of it. How the fit and the
+    mapper express a human's turning: read off the track, never searched. A half turn exactly comes back as -pi
+    (motion.wrap is [-pi, pi)); the sim folds -pi to +pi, the same heading."""
+    want = motion.wrap(np.asarray(yaw_next, dtype=np.float64) - np.asarray(facing, dtype=np.float64))
+    turned, thetas = _turn_table(dt)
+    return np.sign(want) * np.interp(np.abs(want), turned, thetas)
+
+
+def step(state: State, kinds: np.ndarray, values: np.ndarray, mode: int, speed: float, space: Space,
+         theta: np.ndarray | float | None = None) -> tuple[State, np.ndarray]:
+    """One decision for a batch: the action (kind, value) of each state and its heading `theta` (an angle from the
+    facing; None or 0 holds it), then the decision's motion. Returns the new states and which actions were allowed
+    (MoveControls::Allowed: pitch rates, ascend and descend only swimming or flying, the stops everywhere; jump not
+    mid-jump nor flying)."""
     s = State(*(getattr(state, name).copy() for name in state.__dataclass_fields__))
     n = len(kinds)
     steered = mode in (motion.MODE_SWIM, motion.MODE_FLY)
@@ -166,23 +224,20 @@ def step(state: State, kinds: np.ndarray, values: np.ndarray, mode: int, speed: 
     allowed[(kinds == VERTICAL) & (values != 0.0) & (not steered)] = False
     allowed[(kinds == JUMP) & (jumping | (mode in (motion.MODE_FLY, motion.MODE_AIRBORNE)))] = False
 
-    for kind, field_name in ((FORWARD, "forward"), (STRAFE, "strafe"), (TURN, "turn"), (PITCH, "pitch_rate"),
-                             (VERTICAL, "vertical")):
+    for kind, field_name in ((FORWARD, "forward"), (STRAFE, "strafe"), (PITCH, "pitch_rate"), (VERTICAL, "vertical")):
         mask = kinds == kind
         getattr(s, field_name)[mask] = values[mask]
-    toggle = kinds == WALK
-    s.walk[toggle] = ~s.walk[toggle]
     if not steered:
         s.pitch[:] = 0.0
 
-    # The turn (and pitch) over the decision, and the heading half-way through it.
-    before = s.facing.copy()
-    s.facing = s.facing + s.turn * space.dt
+    # The heading over the decision (the controller's sub-steps), and the pitch.
+    theta = np.broadcast_to(np.asarray(0.0 if theta is None else theta, dtype=np.float64), (n,))
+    headings, s.facing = _headings(s.facing, theta, space.dt)
     if steered:
         s.pitch = np.clip(s.pitch + s.pitch_rate * space.dt, -PITCH_LIMIT, PITCH_LIMIT)
-    heading = before + s.turn * space.dt / 2.0
 
-    # The wish: forward/back and strafe in the body frame, the client's speed rules.
+    # The wish: forward/back and strafe in the body frame, the client's speed rules, along each sub-step's heading;
+    # the decision's mean velocity.
     back = s.forward < 0
     speed_now = np.where(back, speed * BACK_RATIO.get(mode, 1.0), speed)
     speed_now = np.where(s.walk, np.minimum(speed_now, speed * WALK_RATIO), speed_now)
@@ -190,8 +245,10 @@ def step(state: State, kinds: np.ndarray, values: np.ndarray, mode: int, speed: 
     diagonal = (s.forward != 0) & (s.strafe != 0)
     fwd = s.forward * np.where(diagonal, DIAGONAL, 1.0)
     side = -s.strafe * np.where(diagonal, DIAGONAL, 1.0)            # strafe right is clockwise: -left
-    vx = (fwd * np.cos(heading) - side * np.sin(heading)) * speed_now * moving
-    vy = (fwd * np.sin(heading) + side * np.cos(heading)) * speed_now * moving
+    cos_h = np.cos(headings).mean(axis=0)
+    sin_h = np.sin(headings).mean(axis=0)
+    vx = (fwd * cos_h - side * sin_h) * speed_now * moving
+    vy = (fwd * sin_h + side * cos_h) * speed_now * moving
     vz = np.zeros(n)
     if steered:
         vx = vx * np.cos(s.pitch)
@@ -218,16 +275,28 @@ def step(state: State, kinds: np.ndarray, values: np.ndarray, mode: int, speed: 
     return s, allowed
 
 
-def rollout(space: Space, actions: list[int], start: dict, modes: np.ndarray, speeds: np.ndarray) -> np.ndarray:
+def rollout(space: Space, actions: list[int], start: dict, modes: np.ndarray, speeds: np.ndarray,
+            thetas: np.ndarray | None = None, headings: np.ndarray | None = None,
+            taken: list[float] | None = None) -> np.ndarray:
     """Emulate one action sequence from `start` (x, y, z, facing, pitch, feet = (forward, strafe)): [len(actions) +
-    1, 5] rows of x, y, z, facing, pitch."""
+    1, 5] rows of x, y, z, facing, pitch. The heading per decision is `thetas` (angles from the facing), or the angle
+    that turns onto `headings` (the yaw to reach at each decision's end: a human's next facing), or held; `taken`,
+    when given, receives the theta of each decision."""
     s = State.start(1, start["x"], start["y"], start.get("z", 0.0), start["facing"], start.get("pitch", 0.0),
                     start.get("feet", (0, 0)))
     out = [[s.x[0], s.y[0], s.z[0], s.facing[0], s.pitch[0]]]
     for k, a in enumerate(actions):
         kind, value = space.actions[a]
         speed = float(speeds[k]) if speeds[k] > 0.1 else motion.DEFAULT_SPEED
-        s, _ = step(s, np.array([kind]), np.array([value]), int(modes[k]), speed, space)
+        if thetas is not None:
+            theta = np.array([float(thetas[k])])
+        elif headings is not None:
+            theta = theta_toward(s.facing, headings[k], space.dt)
+        else:
+            theta = np.zeros(1)
+        if taken is not None:
+            taken.append(float(theta[0]))
+        s, _ = step(s, np.array([kind]), np.array([value]), int(modes[k]), speed, space, theta)
         out.append([s.x[0], s.y[0], s.z[0], s.facing[0], s.pitch[0]])
     return np.asarray(out)
 
@@ -240,6 +309,7 @@ class FitResult:
     pos_err: np.ndarray             # [K + 1]
     yaw_err: np.ndarray             # [K + 1] radians, absolute
     cost: float
+    thetas: np.ndarray = field(default_factory=lambda: np.zeros(0))     # [K] the heading taken each decision
 
 
 def beam_fit(space: Space, human: np.ndarray, beam: int = 32, start_feet: tuple[tuple[int, int], ...] | None = None,
@@ -247,7 +317,8 @@ def beam_fit(space: Space, human: np.ndarray, beam: int = 32, start_feet: tuple[
     """The action sequence of `space` that best reproduces `human` ([K + 1, SAMPLE_DIM] on space.dt), started at
     the human's first sample with any of the feet's states held (FEET), or only `start_feet` when the start is known.
     `jumps` ([K] bool, from the MSG_MOVE_JUMP packets) pins the jumps: JUMP where the human jumped (when a jump can
-    be taken there) and nowhere else -- on the ground a jump's carry is otherwise a forward walk's."""
+    be taken there) and nowhere else -- on the ground a jump's carry is otherwise a forward walk's. The heading is not
+    searched: each state takes the angle that turns it onto the human's next facing (theta_toward)."""
     h = np.asarray(human, dtype=np.float64)
     k_steps = len(h) - 1
     kinds = np.array([a[0] for a in space.actions])
@@ -263,8 +334,10 @@ def beam_fit(space: Space, human: np.ndarray, beam: int = 32, start_feet: tuple[
         m = len(total)
         rep = np.repeat(np.arange(m), n_act)
         acts = np.tile(np.arange(n_act), m)
+        theta = theta_toward(state.facing, h[k + 1, motion.YAW], space.dt)
         cand, allowed = step(state.take(rep), kinds[acts], values[acts], int(h[k, motion.MODE]),
-                             float(h[k, motion.SPEED]) if h[k, motion.SPEED] > 0.1 else motion.DEFAULT_SPEED, space)
+                             float(h[k, motion.SPEED]) if h[k, motion.SPEED] > 0.1 else motion.DEFAULT_SPEED, space,
+                             theta[rep])
         target = h[k + 1]
         if int(target[motion.MODE]) in (motion.MODE_SWIM, motion.MODE_FLY):
             err2 = ((cand.x - target[motion.X]) ** 2 + (cand.y - target[motion.Y]) ** 2
@@ -295,14 +368,17 @@ def beam_fit(space: Space, human: np.ndarray, beam: int = 32, start_feet: tuple[
         idx = int(parents[idx])
     actions.reverse()
     start_feet = (int(starts[idx][0]), int(starts[idx][1]))
+    taken: list[float] = []
     path = rollout(space, actions, {"x": h[0, motion.X], "y": h[0, motion.Y], "z": h[0, motion.Z],
                                     "facing": h[0, motion.YAW], "pitch": h[0, motion.PITCH],
-                                    "feet": start_feet}, h[:, motion.MODE], h[:, motion.SPEED])
+                                    "feet": start_feet}, h[:, motion.MODE], h[:, motion.SPEED],
+                   headings=h[1:, motion.YAW], taken=taken)
     ground = ~np.isin(h[:, motion.MODE].astype(int), (motion.MODE_SWIM, motion.MODE_FLY))
     path[ground, 2] = h[ground, motion.Z]
     pos_err = np.linalg.norm(path[:, :3] - h[:, motion.X:motion.Z + 1], axis=1)
     yaw_err = np.abs(motion.wrap(path[:, 3] - h[:, motion.YAW]))
-    return FitResult(actions, start_feet, path, pos_err, yaw_err, float(total[best]) if len(total) else math.inf)
+    return FitResult(actions, start_feet, path, pos_err, yaw_err, float(total[best]) if len(total) else math.inf,
+                     np.asarray(taken))
 
 
 def emulated_samples(human: np.ndarray, fit: FitResult) -> np.ndarray:
@@ -358,8 +434,9 @@ class FitStudy:
                                "emd": "motion.histogram_distance, emulated vs human steps, per motion feature"},
                "limits": ["terrain and collision ignored: human tracks are already feasible",
                           "ground error is planar (the ground owns z); swim/fly error is 3D",
-                          "within a decision the body moves on the mid-turn heading (a steady turn's chord)",
-                          "the human's turns quantised to the policy's nine held rates, a decision at least"],
+                          "within a decision the body moves on the controller's sub-step headings",
+                          "the heading is read off the human's next facing (theta_toward), never searched; a turn "
+                          "past what one decision can make (HEADING_MAX_TURN, easing out) is the heading error"],
                "spaces": {}}
         for name, per_ctx in self.rows.items():
             space_out = {"dt": SPACES[name].dt, "actions": [SPACES[name].label(i)

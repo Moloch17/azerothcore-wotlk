@@ -94,6 +94,8 @@ Animus::EnvPool::EnvPool(Scenario& scenario, StageSettings const& settings)
     Look.clear();
     for (uint32 agent = 0; _spec.LookHeads && agent < agents; ++agent)
         Look.insert(Look.end(), Vision::FreeLook::NEUTRAL.begin(), Vision::FreeLook::NEUTRAL.end());
+    // The heading's rows (protocol 32): 0, the facing held, until an ACT sets them. Empty without a move block.
+    Continuous.assign(std::size_t(agents) * _spec.ContinuousCount, 0.0f);
     _reportInfoSum.assign(_spec.EpisodeInfoDim, 0.0);
 
     // NOT_FILED, not MapKey(0, 0): map 0 instance 0 is Eastern Kingdoms, a key an env can really have.
@@ -351,6 +353,11 @@ void Animus::EnvPool::ApplyActionsForMap(Map const& map)
         // them (looking is free).
         if (!Look.empty())
             _scenario.ApplyLook(env, &Look[std::size_t(index) * _spec.AgentsPerEnv * _spec.LookHeads]);
+        // The heading (protocol 32), after the camera's turn (a turn to camera moves the facing it is taken from) and
+        // before the presses; it is no press itself.
+        if (!Continuous.empty())
+            _scenario.ApplyContinuous(env,
+                &Continuous[std::size_t(index) * _spec.AgentsPerEnv * _spec.ContinuousCount]);
 
         _scenario.ApplyActions(env, &Actions[index * _spec.AgentsPerEnv]);
     }
@@ -504,6 +511,10 @@ bool Animus::EnvPool::ChooseLocalActions(std::string const& policy, uint32 begin
         if (!Look.empty())
             std::copy(Vision::FreeLook::NEUTRAL.begin(), Vision::FreeLook::NEUTRAL.end(),
                 Look.begin() + std::size_t(i) * _spec.LookHeads);
+        // ... nor steer its heading: it holds the facing it has.
+        if (!Continuous.empty())
+            std::fill_n(Continuous.begin() + std::ptrdiff_t(std::size_t(i) * _spec.ContinuousCount),
+                _spec.ContinuousCount, 0.0f);
 
         uint32 allowed = 0;
         for (uint32 a = 0; a < numActions; ++a)

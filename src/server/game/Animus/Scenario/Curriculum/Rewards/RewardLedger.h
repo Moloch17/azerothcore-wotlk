@@ -191,8 +191,9 @@ namespace Animus::Curriculum
         /// maximum (PointNav.FallHurt, Cost) and a death under water (PointNav.Drowned, Cost). Appended.
         FallHurt,
         Drowned,
-        /// The nav stages' price on a held turn (PointNav.Turning, Cost): per second, times the turn rate in full
-        /// turns a second -- a player does not spin (2026-10-14: nav1's seats held a turn 88-99% of the time).
+        /// The nav stages' price on the body's turning (PointNav.Turning, Cost): per radian it actually turned toward
+        /// the policy's heading (move block revision 8) -- a player does not spin (2026-10-14: nav1's seats held a
+        /// turn 88-99% of the time).
         Turning,
         Count
     };

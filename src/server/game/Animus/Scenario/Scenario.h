@@ -64,15 +64,19 @@ namespace Animus
         /// Per agent, the bytes of its training labels (PointNavEncounter::LABEL_BYTES) when the stage has a nav
         /// encounter, else 0: the STEP's labels section (vision movement curriculum, protocol 31).
         uint32 LabelBytes = 0;
+        /// Per agent, the continuous outputs ACT carries after the look section (protocol 32): 1, the heading (move
+        /// block revision 8, heading.CONTRACT.md), when the stage has a move block, else 0. stage.json's "continuous"
+        /// names them.
+        uint32 ContinuousCount = 0;
         std::vector<LayoutSpec> Layouts;    // empty = one layout named after the scenario, ObsDim x NumActions
     };
 
     /// A training scenario: how an env is built, reset, observed, acted on and scored.
     ///
     /// Buffers are pre-sized by EnvPool: per-agent arrays hold AgentsPerEnv rows in agent order. Reset, Reward,
-    /// IsTerminal, Observe, ApplyActions, ApplyGoals, ApplyLook and SubTick of an env run on the map thread that
-    /// updates its map (EnvPool::ResetMapEnvs, ApplyActionsForMap, ObserveMap); the rest run on the world thread,
-    /// outside MapMgr::Update.
+    /// IsTerminal, Observe, ApplyActions, ApplyGoals, ApplyLook, ApplyContinuous and SubTick of an env run on the map
+    /// thread that updates its map (EnvPool::ResetMapEnvs, ApplyActionsForMap, ObserveMap); the rest run on the world
+    /// thread, outside MapMgr::Update.
     class Scenario
     {
     public:
@@ -121,6 +125,12 @@ namespace Animus
         /// camera take theirs; every other row is a placeholder and is never applied. Looking is free: nothing
         /// here may reach what prices, tallies or judges an action.
         virtual void ApplyLook(Env& /*env*/, int32 const* /*look*/) { }
+
+        /// continuous: [AgentsPerEnv * Spec().ContinuousCount] each agent's continuous outputs as ACT sent them,
+        /// unchecked (any float: a scenario sanitises what it takes). Called after ApplyLook and before ApplyActions,
+        /// only when ContinuousCount > 0. Only agents whose layout has a move block take theirs (the heading, an angle
+        /// from the body's facing); every other row is a placeholder.
+        virtual void ApplyContinuous(Env& /*env*/, float const* /*continuous*/) { }
 
         /// The size agent `agent`'s camera casts its frames at this episode (the camera audit's "render"), or 0 x 0
         /// for an agent with no camera.

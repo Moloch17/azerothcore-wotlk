@@ -30,9 +30,11 @@ namespace Animus::Curriculum
 {
     /// **Where the seat puts its feet: a player's keys and mouse** (player-controller plan §4, C3).
     ///
-    /// The seat holds forward or back, a strafe, a turn rate and a pitch rate (the mouse), ascend or descend in water
-    /// and air, and walk; it presses jump. Each action changes one held control (MoveControls), and the controls stay
-    /// held across decisions until the seat changes them. The player controller (Animus/Movement) turns them into
+    /// The seat holds forward or back, a strafe and a pitch rate, ascend or descend in water and air; it presses jump.
+    /// Each action changes one held control (MoveControls), and the controls stay held across decisions until the seat
+    /// changes them. Where it faces is not an action (revision 8): every decision the policy names a heading, an angle
+    /// from its facing (the ACT's continuous section, StageScenario::ApplyContinuous), and the controller turns the
+    /// body to it as a mouse would (Movement::HEADING_*). The player controller (Animus/Movement) turns them into
     /// motion every world tick with the client's own physics, and the server is told of it as a client would tell it.
     /// Nothing is pathfound, no spline is laid for a seat, and nothing faces it at its target: walls, slopes, ledges,
     /// water and where to look are the policy's to learn.
@@ -61,12 +63,15 @@ namespace Animus::Curriculum
             OBS_PITCH_SIN,
             OBS_PITCH_COS,
             /// **The controls it holds** (MoveControls::SeatControls): forward/back and strafe (-1, 0, 1; strafe + is
-            /// right), ascend/descend, the turn rate over TURN_RATE_MAX (+ left) and the pitch rate over
-            /// PITCH_RATE_MAX (+ up), and walk. A policy has to know its own hands are on the keys.
+            /// right), ascend/descend, the heading still to turn (sin here, cos at OBS_TARGET_REMAINING_COS: what
+            /// is left of the policy's last heading, target - yaw, + left; 0 and 1 with none or on it) and the pitch
+            /// rate over PITCH_RATE_MAX (+ up), and walk. A policy has to know its own hands are on the keys. The
+            /// remaining turn's sin took held_turn's place (revision 8) and its cos is appended, so every other
+            /// column keeps its index.
             OBS_HELD_FORWARD,
             OBS_HELD_STRAFE,
             OBS_HELD_VERTICAL,
-            OBS_HELD_TURN,
+            OBS_TARGET_REMAINING_SIN,
             OBS_HELD_PITCH,
             OBS_HELD_WALK,
             /// **What the body is actually doing**: its velocity in its own frame (ahead, left, up) over twice the
@@ -141,6 +146,8 @@ namespace Animus::Curriculum
             OBS_BLOCKED_AHEAD,
             OBS_HOLD_AGE,
             OBS_PINNED_AGE,
+            /// The cos of the heading still to turn (revision 8; its sin is OBS_TARGET_REMAINING_SIN).
+            OBS_TARGET_REMAINING_COS,
             OBS_COUNT
         };
         static constexpr float HOLD_AGE_SCALE_S = 8.0f;
@@ -158,8 +165,9 @@ namespace Animus::Curriculum
         /// purpose: findDistanceToWall searches outward through the polygon graph and the shared query has a
         /// 1024-node pool, and room beyond a few yards is not a thing a seat needs to tell apart.
         static constexpr float CLEARANCE_RANGE = 8.0f;
-        /// Its layout revision: MoveControls::REVISION (6), past the bearing design's 0 and 1, the controls' 2, the
-        /// rays' removal (4), the compass's leaving (5) and the contact-side columns (6).
+        /// Its layout revision: MoveControls::REVISION (8), past the bearing design's 0 and 1, the controls' 2, the
+        /// rays' removal (4), the compass's leaving (5), the contact-side columns (6), walk_toggle's removal (7) and
+        /// the turn rates' giving way to the continuous heading (8).
         [[nodiscard]] uint32 Revision() const override { return MoveControls::REVISION; }
         /// Each column's name (stage.json obs_names), so a seed can follow a column that moved: revision 4's
         /// objective columns are the compass block's names, and bootstrap maps a revision 4 move block by them.

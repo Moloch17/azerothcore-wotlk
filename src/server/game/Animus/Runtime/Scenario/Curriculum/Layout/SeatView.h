@@ -553,10 +553,10 @@ namespace Animus::Curriculum
         uint32 PetAbilities = 0;                    // pet bar abilities the pet started
         uint32 PetOrders = 0;                       // pet stances, follow and stay, and sending the pet in
         PetOrder PetOrderGiven = PetOrder::None;    // which of them, when one was given
-        /// Steering that failed to commit (MoveBlock, Actions.Jitter, MoveControls::Press): a turn or pitch rate, or
-        /// a climb, against the last one within 1500 ms (MovePrice::COUNT_MS), the feet reversed within it (forward to
-        /// back, left to right: BearingFlip, in half turns), and any of them 1.5 to 4 s on (Weaves).
-        uint32 TurnReversals = 0;
+        /// Steering that failed to commit (MoveBlock, Actions.Jitter, MoveControls::Press): a pitch rate or a climb
+        /// against the last one within 1500 ms (MovePrice::COUNT_MS), the feet reversed within it (forward to back,
+        /// left to right: BearingFlip, in half turns), and any of them 1.5 to 4 s on (Weaves). The heading is no press
+        /// (move block revision 8), so there are no turn reversals.
         float BearingFlip = 0.0f;
         uint32 PitchReversals = 0;
         uint32 Weaves = 0;
