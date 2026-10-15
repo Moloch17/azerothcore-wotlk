@@ -52,7 +52,7 @@ namespace Animus::Curriculum
     /// LostYards, Revisit per second on bake cells stood on before (arenas with Revisit) -- Costs; Stuck and Wall at
     /// their fixed price (Controls.*, as M1). No shaping from the sim: the learner pays its potential on the route
     /// distance the STEP's labels carry. The episode ends on arrival; a death rises at the start point after
-    /// Respawn.DelayMs (EntranceRespawn) and arriving ends nothing.
+    /// Respawn.DelayMs (EntranceRespawn).
     ///
     /// **Labels** (sec 3.1; WriteLabels): per seat, the bake's classes and the route cost-to-go in the fine and
     /// coarse crop frames of the seat's last observation (SeatState::Crop), then C(body), C(start) and the goal in the
