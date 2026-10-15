@@ -4190,7 +4190,7 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
         seat.MapPending = false;
         double const now = double(GameTime::GetGameTimeMS().count()) / 1000.0;
         Vision::SharedMemories& memories = Vision::SharedMemories::Instance();
-        if (seat.Map.Anchored() && seat.MapMapId)
+        if (seat.Map.Anchored())
             memories.Get(seat.MapMapId, now)->Absorb(seat.Map, now);
         seat.Map.Configure(Vision::MapCurrent().Caps);
         Vision::SharedMemory* memory = memories.Get(bot->GetMapId(), now);
