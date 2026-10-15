@@ -768,9 +768,14 @@ class ConvergenceController:
         cannot be told apart in the score. A few classes still moving do not move the score much; waiting for every
         one of ten never ended (stage4, 2026-10-03)."""
         window = self.config.convergence.window
+        if not self.fade.require_plateau and self.fade.rung > 0:
+            # Only the intervals played since a gate-stepped ladder's own last step: where the classes' difficulty is
+            # that ladder (nav1, 2026-10-15), its step read as every class moving and held the next one back for a
+            # window -- SPL 0.712 met rung 1's gate 0.7 at 50M and the ladder stayed.
+            window = min(window, self.fade.evals_at_rung)
         moving = 0
         for state in self.played_layouts():
-            rungs = [value for value in state.rung[-window:] if value is not None]
+            rungs = [value for value in state.rung[-window:] if value is not None] if window > 0 else []
             if rungs and max(rungs) - min(rungs) > RUNG_SETTLED:
                 moving += 1
         return moving <= self.config.fade.moving_classes
