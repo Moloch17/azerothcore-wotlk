@@ -752,6 +752,18 @@ void Animus::Curriculum::PointNavEncounter::Reward(Env& env, uint32 seatIndex, P
     ledger.Add(RewardTerm::Arrive, tuning.Arrive * share);
 }
 
+bool Animus::Curriculum::PointNavEncounter::IsTerminal(Env const& env) const
+{
+    EnvNav const& nav = _envs[env.Index];
+    if (nav.LabelsOnly || !nav.Placed)
+        return false;
+    uint32 const seats = std::min<uint32>(_scenario.Data(env).ActiveSeats, uint32(nav.Seats.size()));
+    for (uint32 seat = 0; seat < seats; ++seat)
+        if (!nav.Seats[seat].Reached)
+            return false;
+    return seats > 0;
+}
+
 void Animus::Curriculum::PointNavEncounter::WriteState(Env const& env, float* state) const
 {
     // The critic sees the goal in the first enemy slot (the stage has no enemies): where it is, relative to the

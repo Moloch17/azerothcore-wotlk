@@ -51,7 +51,7 @@ namespace Animus::Curriculum
     /// Drowned on a death under water, Lost per second while the route distance to the goal exceeds the start's by
     /// LostYards, Revisit per second on bake cells stood on before (arenas with Revisit) -- Costs; Stuck and Wall at
     /// their fixed price (Controls.*, as M1). No shaping from the sim: the learner pays its potential on the route
-    /// distance the STEP's labels carry. The episode runs its clock: a death rises at the start point after
+    /// distance the STEP's labels carry. The episode ends on arrival; a death rises at the start point after
     /// Respawn.DelayMs (EntranceRespawn) and arriving ends nothing.
     ///
     /// **Labels** (sec 3.1; WriteLabels): per seat, the bake's classes and the route cost-to-go in the fine and
@@ -81,8 +81,10 @@ namespace Animus::Curriculum
         void View(Env const& env, uint32 seat, SeatView& view) const override;
         void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
         void WriteState(Env const& env, float* state) const override;
-        /// The episode runs its clock: arriving ends nothing, and a death rises at the start (Update).
-        [[nodiscard]] bool IsTerminal(Env const& /*env*/) const override { return false; }
+        /// A death rises at the start (Update); arriving ends the episode (IsTerminal).
+        /// The episode ends on arrival (2026-10-14: running the clock out after it, nothing paid or charged, was more
+        /// than half of nav1's decisions -- shuffling on the point). A labels-only arena (nav6) never ends it.
+        [[nodiscard]] bool IsTerminal(Env const& env) const override;
 
         /// Seat `seat`'s LABEL_BYTES of labels for the observation just taken (its SeatState::Crop pose), into `out`.
         /// Zeros, with every cost unreachable, for a seat with no bake or no body.
