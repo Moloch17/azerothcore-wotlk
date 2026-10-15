@@ -591,10 +591,26 @@ void Animus::Vision::SampleLabels(TravGrid const& grid, std::vector<float> const
                         ++counts[0];
                         continue;
                     }
-                    ++counts[std::min<uint32_t>(grid.Classes[at], TRAV_CLASSES - 1)];
+                    // No ground inside the bake's box is rock or a void: a wall to the body. Left Unknown it was
+                    // never trained on, and the walls the costmap learned were the few unreachable floors (nav1,
+                    // 2026-10-15: 32 wall cells of 15,656 in Stockades, 78% Unknown; wall IoU 0.02).
+                    uint32_t const kind = grid.Classes[at] == uint8_t(TravClass::Unknown)
+                        ? uint32_t(TravClass::Wall) : std::min<uint32_t>(grid.Classes[at], TRAV_CLASSES - 1);
+                    ++counts[kind];
                     if (haveCost)
                         best = std::min(best, cost[at]);
                 }
+            // A cell wider than the bake's (the coarse tier) is passable if any of it is: rock round a corridor
+            // narrower than the cell must not outvote the corridor.
+            if (samples > 1)
+            {
+                uint32_t passable = 0;
+                for (uint32_t candidate = 1; candidate < TRAV_CLASSES; ++candidate)
+                    if (candidate != uint32_t(TravClass::Wall))
+                        passable += counts[candidate];
+                if (passable)
+                    counts[uint32_t(TravClass::Wall)] = 0;
+            }
             // The majority of the known classes; Unknown only when nothing under the cell is known.
             uint32_t label = 0;
             for (uint32_t candidate = 1; candidate < TRAV_CLASSES; ++candidate)

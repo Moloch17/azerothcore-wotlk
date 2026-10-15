@@ -288,9 +288,10 @@ namespace Animus::Vision
 
     /// **A label grid** (CONTRACT.md sec 3.1): TRAV_LABEL_SIDE x TRAV_LABEL_SIDE cells of `cell` yards in the map
     /// crop's frame -- heading-up for `yaw`, row 0 the furthest ahead, column 0 the furthest left, the body at the
-    /// centre: MentalMap::Crop's geometry -- each the bake's class and cost-to-go at the cell. A cell wider than the
-    /// bake's (the coarse tier) covers several bake cells: the majority class of those that are not Unknown (Unknown
-    /// when none) and the least cost. `classes` gets TRAV_LABEL_CELLS bytes, `costs` as many halves. An empty
+    /// centre: MentalMap::Crop's geometry -- each the bake's class and cost-to-go at the cell, a bake cell with no
+    /// ground (rock or a void inside the box) labelled Wall. A cell wider than the bake's (the coarse tier) covers
+    /// several bake cells: the majority class of those that are not Unknown, Wall only when none of them is passable
+    /// (Unknown when the cell is outside the box), and the least cost. `classes` gets TRAV_LABEL_CELLS bytes, `costs` as many halves. An empty
     /// `cost` (no goal) writes TRAV_UNREACHABLE everywhere.
     void SampleLabels(TravGrid const& grid, std::vector<float> const& cost, float x, float y, float yaw, float cell,
         uint8_t* classes, uint16_t* costs);
