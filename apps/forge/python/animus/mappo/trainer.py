@@ -18,10 +18,10 @@ from ..protocol import GOAL_SLOTS_ON_WIRE
 from ..protocol import (LABEL_COARSE_CLASS, LABEL_COARSE_COST, LABEL_FINE_CLASS, LABEL_FINE_COST, LABEL_SIDE,
                         LABEL_UNREACHABLE, TRAV_CLASS_NAMES, TRAV_CLASSES)
 from .buffer import RolloutBuffer
-from .networks import (LayoutActor, LayoutCritic, SharedInputDense, _carry_sequence, _per_layout, load_actor_state,
-                       per_layout, per_layout_host, sample_logits, skip_distribution_checks, goal_pair,
-                       split_goal_pair, to_device, update_norms, vision_image_bytes, vision_look_heads, vision_term,
-                       look_hold_indices)
+from .networks import (MAP_CODE, LayoutActor, LayoutCritic, SharedInputDense, _carry_sequence, _per_layout,
+                       load_actor_state, per_layout, per_layout_host, sample_logits, skip_distribution_checks,
+                       goal_pair, split_goal_pair, to_device, update_norms, vision_image_bytes, vision_look_heads,
+                       vision_term, look_hold_indices)
 from .valuenorm import ValueNorm
 
 
@@ -249,7 +249,8 @@ class AuxConfig:
     """The nav stages' auxiliary losses (vision movement curriculum, CONTRACT.md sec 5; TrainConfig.aux), on the
     actor's minibatch wherever the stage sends labels (protocol 31) and the map has two tiers (the costmap head and
     the planner, MapEncoder): `costmap_coef` x the cross-entropy of the costmap head's logits against the bake's
-    classes on the cells whose label is not unknown, both tiers, class-balanced (`balance_clip`), and `planner_coef`
+    classes on the cells whose label is not unknown, both tiers, class-balanced (`balance_clip`) and each cell the
+    tier's crop has not seen weighted by `unseen_weight`, and `planner_coef`
     x the L1 of the planner's cost-to-go against the bake's on the cells whose route is reachable, both tiers, in
     yards / 100. Computed on `rows` rows of each minibatch drawn at random among its samples (0 = every row: the
     VIN's backward keeps SEGMENT iterations' activations a row, so a whole minibatch of thousands of rows is
@@ -257,7 +258,8 @@ class AuxConfig:
     costmap_loss (the balanced loss), planner_loss, costmap_iou (the mean IoU over the classes present in the batch),
     costmap_iou_known (the same over the fine tier's cells the crop knows), costmap_known_share (the labelled fine
     cells the crop knows: the rest can only be guessed at the prior), costmap_iou_<class> (MappoTrainer.AUX_CLASSES:
-    each class's IoU over the update, both tiers), planner_mae_yards (over the reachable cells) and planner_mae_known
+    each class's IoU over the update, both tiers), costmap_iou_known_<class> (the same over the fine tier's cells the
+    crop knows), planner_mae_yards (over the reachable cells) and planner_mae_known
     (over the reachable cells the fine crop knows). Nothing happens without labels."""
 
     costmap_coef: float = 0.5
@@ -271,6 +273,15 @@ class AuxConfig:
     # labelled cells (the bakes round a reachable body), so the unweighted loss settled on free everywhere: IoU 0.12,
     # the loss the label marginal's entropy, for 400 updates.
     balance_clip: float = 20.0
+    # The cross-entropy's weight on a cell its tier's crop has never seen (code byte 0), a seen cell weighing 1
+    # (2026-10-15; 1 = every labelled cell alike, 0 = seen cells only). 63 % of the labelled fine cells are unseen
+    # (costmap_known_share 0.37): graded on them alike the head learned to guess the prior, and once rock became Wall
+    # it over-called wall (free IoU 0.46 -> 0.29). The class balance counts the cells at the same weights.
+    unseen_weight: float = 1.0
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.unseen_weight <= 1.0:
+            raise ValueError(f"aux.unseen_weight: expected a weight in [0, 1], got {self.unseen_weight!r}")
 
 
 #: The foresight's observation targets (MappoConfig.foresight_obs_targets): the seat's health 8 and 20 decisions on
@@ -2065,6 +2076,32 @@ class MappoTrainer:
     #: unions over every pass, so a class absent from one minibatch does not drag its reading to 0.
     AUX_CLASSES = ("free", "wall", "water", "hazard", "drop_safe", "drop_hurt", "slope")
     AUX_CLASS_STATS = tuple(f"costmap_iou_{name}" for name in AUX_CLASSES)
+    #: ... and each over the fine tier's cells the crop knows (costmap_iou_known_<class>), accumulated the same way.
+    AUX_KNOWN_CLASS_STATS = tuple(f"costmap_iou_known_{name}" for name in AUX_CLASSES)
+
+    @staticmethod
+    def _aux_class_weights(classes: list[torch.Tensor], known: list[torch.Tensor], unseen_weight: float,
+                           balance_clip: float) -> tuple[torch.Tensor, list[torch.Tensor]]:
+        """The costmap cross-entropy's weights (AuxConfig.balance_clip, unseen_weight): each class's [TRAV_CLASSES]
+        and each tier's per-cell seen weight [N, H, W] (1 where the tier's crop knows the cell, unseen_weight where
+        not). The class balance counts every tier's cells at their seen weights, so it balances the cells the loss
+        actually grades: counting unseen cells whole would size each class's weight to cells that weigh a quarter
+        (or nothing), and a class labelled only where the crop never looked would keep a full weight at
+        unseen_weight 0. At unseen_weight 1 the counts, and so the weights, are exactly the unweighted ones. The mean
+        count of the present classes over each class's own, clipped; unknown (and an absent class) weighs nothing."""
+        seen = [torch.where(tier_known, 1.0, float(unseen_weight)) for tier_known in known]
+        counts = sum(torch.bincount(target.reshape(-1), weights=cell.reshape(-1).to(torch.float32),
+                                    minlength=TRAV_CLASSES)[:TRAV_CLASSES]
+                     for target, cell in zip(classes, seen)).to(torch.float32)
+        counts[0] = 0.0
+        present_classes = counts > 0
+        if balance_clip > 0.0 and bool(present_classes.any()):
+            mean = counts[present_classes].mean()
+            weights = torch.where(present_classes, (mean / counts.clamp(min=1.0)).clamp(max=balance_clip),
+                                  torch.zeros_like(counts))
+        else:
+            weights = present_classes.to(torch.float32)
+        return weights, seen
 
     def _aux_pass(self, obs: torch.Tensor, layout: torch.Tensor, image: torch.Tensor, labels: torch.Tensor,
                   counted: torch.Tensor, totals: dict) -> None:
@@ -2089,9 +2126,13 @@ class MappoTrainer:
                    for at in (LABEL_FINE_CLASS, LABEL_COARSE_CLASS)]
         costs = [picked[:, at:at + 2 * cells].contiguous().view(torch.float16).to(torch.float32).reshape(n, side, side)
                  for at in (LABEL_FINE_COST, LABEL_COARSE_COST)]
-        # The fine crop's known cells (its code byte): the cells the map itself can say something about.
-        crop = image[rows].reshape(n, -1)[:, encoder.image_bytes:encoder.image_bytes + encoder.map.crop_bytes]
-        crop_known = crop.reshape(n, side, side, -1)[..., 0] != 0
+        # Each tier's known cells (its crop's code byte): the cells the map itself can say something about. The crop
+        # section follows the image's bytes as [fine][coarse], crop_bytes each (decode_map_tiers, MapEncoder).
+        crops = image[rows].reshape(n, -1)[:, encoder.image_bytes:encoder.image_bytes + encoder.map_bytes]
+        per = encoder.map.crop_bytes
+        known = [crops[:, tier * per:(tier + 1) * per].reshape(n, side, side, -1)[..., MAP_CODE] != 0
+                 for tier in range(len(classes))]
+        crop_known = known[0]
         device = obs.device
         costmap_loss = torch.zeros((), device=device)
         planner_loss = torch.zeros((), device=device)
@@ -2102,24 +2143,15 @@ class MappoTrainer:
         known_sum = torch.zeros((), device=device)
         known_n = torch.zeros((), device=device)
         known_share = torch.zeros((), device=device)
-        # The class weights (AuxConfig.balance_clip), from this pass's labelled cells over both tiers: the mean count
-        # of the present classes over each class's own, clipped; unknown (and an absent class) weighs nothing.
+        # The class weights and each cell's seen weight (AuxConfig.balance_clip, unseen_weight), from this pass's
+        # labelled cells over both tiers (_aux_class_weights).
         with torch.no_grad():
-            counts = sum(torch.bincount(target.reshape(-1), minlength=TRAV_CLASSES)[:TRAV_CLASSES]
-                         for target in classes).to(torch.float32)
-            counts[0] = 0.0
-            present_classes = counts > 0
-            if aux.balance_clip > 0.0 and bool(present_classes.any()):
-                mean = counts[present_classes].mean()
-                weights = torch.where(present_classes, (mean / counts.clamp(min=1.0)).clamp(max=aux.balance_clip),
-                                      torch.zeros_like(counts))
-            else:
-                weights = present_classes.to(torch.float32)
+            weights, seen_weight = self._aux_class_weights(classes, known, aux.unseen_weight, aux.balance_clip)
         for tier in range(len(plan["costmap"])):
             logits, target = plan["costmap"][tier].to(torch.float32), classes[tier]
             labelled = target != 0
             entropy = nn.functional.cross_entropy(logits, target, reduction="none")
-            weight = weights[target]
+            weight = weights[target] * seen_weight[tier]
             costmap_loss = costmap_loss + (entropy * weight).sum() / weight.sum().clamp(min=1e-6)
             with torch.no_grad():
                 predicted = logits.argmax(dim=1)
@@ -2158,7 +2190,7 @@ class MappoTrainer:
                 return mean, inter, union
 
             iou, inter, union = mean_iou(confusion)
-            iou_known = mean_iou(confusion_known)[0]
+            iou_known, inter_known, union_known = mean_iou(confusion_known)
             values = {"costmap_loss": costmap_loss.detach() / tiers, "planner_loss": planner_loss.detach() / tiers,
                       "costmap_iou": iou, "costmap_iou_known": iou_known, "costmap_known_share": known_share,
                       "planner_mae_yards": mae_sum / mae_n.clamp(min=1.0),
@@ -2171,6 +2203,8 @@ class MappoTrainer:
                 index = TRAV_CLASS_NAMES.index(name)
                 totals[f"aux_inter_{name}"] = totals.get(f"aux_inter_{name}", 0.0) + inter[index]
                 totals[f"aux_union_{name}"] = totals.get(f"aux_union_{name}", 0.0) + union[index]
+                totals[f"aux_inter_known_{name}"] = totals.get(f"aux_inter_known_{name}", 0.0) + inter_known[index]
+                totals[f"aux_union_known_{name}"] = totals.get(f"aux_union_known_{name}", 0.0) + union_known[index]
 
     def _update_recurrent(self, buffer: RolloutBuffer, auxiliary=None, sync: bool = True) -> dict[str, float]:
         """One PPO update that replays the rollout in order, so the GRU learns what to remember.
@@ -2592,6 +2626,10 @@ class MappoTrainer:
                 union = auxiliary_stats.pop(f"aux_union_{name}", 0.0)
                 if union > 0.0:
                     stats[f"costmap_iou_{name}"] = inter / union
+                inter = auxiliary_stats.pop(f"aux_inter_known_{name}", 0.0)
+                union = auxiliary_stats.pop(f"aux_union_known_{name}", 0.0)
+                if union > 0.0:
+                    stats[f"costmap_iou_known_{name}"] = inter / union
         if buffer.label_bytes:
             # The potential term the rollout was paid (RolloutBuffer.finish), per valid decision.
             stats["reward_potential"] = buffer.mean_potential()

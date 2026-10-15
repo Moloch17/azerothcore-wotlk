@@ -174,7 +174,7 @@ party_frames 24, combat 25, goal 26 (`Layout/Block.h`; never renumbered). What e
 | `group1_roles` | 0.999 | 2 | 1.5e-4 | 0.004 | 128 | |
 | `dungeon2_ragefire` | 0.999 | 2 | 1.5e-4 | 0.004 | 128 | extends `group1_roles`; restates `goal_entropy_final_fraction: 0.5` |
 | `dungeon3_deadmines` | 0.999 (inherited) | 2 | 1.5e-4 | 0.004 | 128 | |
-| `nav1_sight` to `nav6_follow` | per `configs/nav*.yaml` (the learner agent's; contract sec 5) | | | | | `potential:` (enabled, yards_scale 0.01, clip 50) and `aux:` (costmap_coef 0.5, planner_coef 0.5) sections; `entropy_final_fraction 0.1`; `sampled_every 1` |
+| `nav1_sight` to `nav6_follow` | per `configs/nav*.yaml` (the learner agent's; contract sec 5) | | | | | `potential:` (enabled, yards_scale 0.01, clip 50) and `aux:` (costmap_coef 0.5, planner_coef 0.5, unseen_weight 0.25: cells the crop has not seen grade at a quarter) sections; `entropy_final_fraction 0.1`; `sampled_every 1` |
 
 M1's rate 1.5e-4 was halved at 93M steps (comment in the yaml); M2's is the same value for a different reason
 ([../decisions/0013-m2-learning-rate.md](../decisions/0013-m2-learning-rate.md)). The combat line does not inherit

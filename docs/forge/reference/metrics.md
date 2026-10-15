@@ -216,7 +216,9 @@ columns describe the leader's believed position as the point.
 
 Learner-side readings of the nav stages (metrics.csv per update, and the evaluation summary; `trainer.py`):
 `costmap_loss`, `planner_loss`, `costmap_iou` (mean over the classes present of the costmap head's IoU against the
-bake's labels, both tiers), `planner_mae_yards` (L1 of the planner's cost-to-go against the bake on reachable cells, yards),
+bake's labels, both tiers), `costmap_iou_known`, `costmap_known_share` (the labelled fine cells the crop has seen),
+`costmap_iou_<class>` (each class's IoU over the update, both tiers), `costmap_iou_known_<class>` (the same over the
+fine tier's cells the crop has seen: the head's quality where the map can say something), `planner_mae_yards` (L1 of the planner's cost-to-go against the bake on reachable cells, yards),
 `planner_mae_known` (the same on the cells the map crop knows: the honest diagnostic), `reward_potential` (the mean
 potential paid per update). Nothing is computed when `label_bytes == 0` (a stage without labels).
 
