@@ -326,6 +326,14 @@ namespace Animus::Curriculum
         /// Tiers of the mental map's crop in the map block (1: the 2-yd crop; 2: and the 8-yd coarse tier, map
         /// block revision 5, the nav stages).
         uint8 MapTiers = 1;
+        /// The share of episodes a seat starts from its map's shared memory (Vision::SharedMemory: a mental map
+        /// shared by every seat on the map, kept on disk across restarts), drawn at each seat's reset from the
+        /// episode's random numbers, training and evaluation alike (episode info `shared_memory`); the rest start
+        /// blank. Either way what the seat sees goes into the shared memory, and the seat's own map is never kept
+        /// across resets (Map.KeepShare is off in such a stage). 0 = no shared memory: the map lives as before
+        /// (Map.KeepShare), and no random number is drawn for it. The nav stages: 0.5 (the user, 2026-10-15: "half
+        /// of episodes use it, half do not").
+        float SharedMemoryShare = 0.0f;
 
         [[nodiscard]] bool Has(BlockId block) const;
         /// Seats per env: the largest arena's.

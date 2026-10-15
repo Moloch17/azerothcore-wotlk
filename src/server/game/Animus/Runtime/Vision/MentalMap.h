@@ -41,12 +41,24 @@
 /// MapSettings::MaxTiles, the least recently written tile going first; a realm's cap folds an evicted tile into
 /// coarse tiles (MapSettings::CoarseTiles, COARSE_CELL yards a cell) instead of forgetting it.
 ///
-/// **Writes** (WriteFrame, from the frame as cast, before it is scaled up): every ray's hit within WRITE_REACH marks
-/// its cell -- a floor (normal z at least FLOOR_NORMAL) at its height layer, else a wall within the body's band of a
-/// floor, a door, water or a hazard, or a unit's or game object's class -- and the cells the ray crossed on its way
+/// **Writes** (WriteFrame, from the frame as cast, before it is scaled up): every ray's hit marks its cell -- a floor
+/// (normal z at least FLOOR_NORMAL) at its height layer, else a wall within the body's band of a floor, a door, water
+/// or a hazard, or a unit's or game object's class -- within WRITE_REACH in the 1-yd cells, beyond it (at any
+/// distance; sky never) in the far tier's COARSE_CELL-yd cells (_far, the map-the-distance change, 2026-10-15), so
+/// the coarse crop fills with the hall a seat looks down. The cells the ray crossed on its way (within WRITE_REACH)
 /// are "seen free" by a 2D grid step over the map's own cells, but only where the ray's segment over the cell lies in
-/// the body's band above that cell's floor (with no floor known, within FREE_BAND yards of the feet). A pass-through
-/// never marks a floor. WriteBody marks the cells the body stood on visited (and their floor, from the feet).
+/// the body's band above that cell's floor (with no floor known, within FREE_BAND yards of the feet), or -- a ray
+/// that ends on a floor -- in the body's band above THAT floor within HIT_BAND_REACH yards of it (a deck or a terrace
+/// seen from above or below). A pass-through never marks a floor. Then the frame is **meshed** (depth-image meshing):
+/// each quad of neighbouring rays is two triangles, and a triangle whose three hits are one surface -- the same kind
+/// (floor, water/hazard), its plane facing the camera, as level as its hits' own normals say -- fills the cells under
+/// it at its interpolated height, a pair of neighbouring wall hits at a near depth the cells between them; never
+/// across a depth discontinuity (an edge, a doorway, a drop), and at most MESH_TRIANGLE_CELLS cells a triangle and
+/// MESH_FRAME_CELLS a frame. WriteBody marks the cells the body stood on visited (and their floor, from the feet).
+///
+/// **Shared memory** (SharedMemory.h): a map's tiles can be borrowed read-only from a shared memory (copy-on-write: a
+/// borrowed tile is cloned on its first write), and its clock anchored to the shared memory's, so a memory 20
+/// minutes old reads as 20 minutes old; the shared memory merges the tiles a map wrote back into itself.
 ///
 /// **Reads** (Crop): the MapBlock's one egocentric, heading-up crop (the Change, 2026-10-06): CROP x CROP cells of
 /// CROP_CELL yards round the body, each summarising its four 1-yd cells, seven bytes a cell (CropChannel); and, for
@@ -75,8 +87,26 @@ namespace Animus::Vision
     /// A wall counts within the body's band of a floor, and this much below it: a lintel over a doorway, high in a
     /// hall, is no wall where a body walks.
     constexpr float WALL_SLACK = 0.5f;
-    /// Rays write their hits, and walk their cells, this far from the camera at most (amendment 2).
+    /// Rays write their hits into the 1-yd cells, and walk their cells "seen free", this far from the camera at most
+    /// (amendment 2); a hit further off is written into the far tier's COARSE_CELL-yd cells.
     constexpr float WRITE_REACH = 64.0f;
+    /// A ray that ends on a floor marks the cells it crossed in the body's band above that floor "seen free" this far
+    /// (horizontally, yards) before the hit.
+    constexpr float HIT_BAND_REACH = 12.0f;
+    /// Meshing: a triangle fills at most this many cells (more: written in the far tier's cells, else skipped), and a
+    /// frame at most MESH_FRAME_CELLS cells in all.
+    constexpr uint32_t MESH_TRIANGLE_CELLS = 256;
+    constexpr uint32_t MESH_FRAME_CELLS = 24576;
+    /// A meshed triangle's longest side, horizontally, yards: within WRITE_REACH, and beyond it.
+    constexpr float MESH_SPAN_NEAR = 24.0f;
+    constexpr float MESH_SPAN_FAR = 96.0f;
+    /// A meshed floor's plane is as level as its hits' own normals, to this (a step's riser bridged over at a grazing
+    /// angle tilts the plane; a slope's hits tilt with it).
+    constexpr float MESH_NORMAL_SLACK = 0.1f;
+    /// Two neighbouring wall hits are one wall when their ranges differ by at most this share of the nearer, plus
+    /// MESH_WALL_SLACK yards.
+    constexpr float MESH_WALL_JUMP = 0.1f;
+    constexpr float MESH_WALL_SLACK = 0.5f;
 
     /// MapCell::Flags.
     enum MapFlag : uint8_t
@@ -115,11 +145,13 @@ namespace Animus::Vision
     [[nodiscard]] uint8_t EntityAgeBucket(float seconds);
 
     /// The map's caps (AnimusForge.Map.*): fine tiles, and coarse tiles an evicted fine tile folds into (0: none, a
-    /// fine tile evicted is forgotten -- training's).
+    /// fine tile evicted is forgotten -- training's); and the far tier's tiles (COARSE_CELL-yd cells written from hits
+    /// beyond WRITE_REACH, 256 yd a tile: 256 of them is four kilometres square).
     struct MapSettings
     {
         uint32_t MaxTiles = 4096;
         uint32_t CoarseTiles = 0;
+        uint32_t FarTiles = 256;
     };
 
     /// The process's map settings (AnimusForge.Map.*, set once at startup like the camera's): the caps, and how a
@@ -162,13 +194,35 @@ namespace Animus::Vision
     /// What a write did, for the tests and the cost row.
     struct MapWriteStats
     {
-        uint32_t Hits = 0;          // rays whose hit marked a cell
+        uint32_t Hits = 0;          // rays whose hit marked a cell (a 1-yd cell, or a far one: FarHits)
         uint32_t Floors = 0;
         uint32_t Walls = 0;
         uint32_t Entities = 0;
         uint32_t Steps = 0;         // cells the grid step visited
         uint32_t Free = 0;          // ... marked seen free
+        uint32_t FreeOnHit = 0;     // ... of them, free only by the band above the ray's own floor hit
+        uint32_t FarHits = 0;       // hits beyond WRITE_REACH, written into the far tier's cells
+        uint32_t Meshed = 0;        // 1-yd cells a meshed triangle or wall pair filled
+        uint32_t MeshedFar = 0;     // far cells a meshed triangle or wall pair filled
+        uint32_t MeshRejected = 0;  // triangles of one kind not filled: a discontinuity, too wide, or past the budget
     };
+
+    /// A tile of the map: MAP_TILE x MAP_TILE cells (1-yd in the fine tier, COARSE_CELL-yd in the coarse and far
+    /// tiers), with the coverage counters (general search): cells ever seen (a Seen 0 -> stamp transition), cells the
+    /// body stood on (MAP_VISITED first set), cells looked at this episode (Seen below the epoch -> at or above it)
+    /// with the epoch the count belongs to; a count of another epoch reads as 0 and restarts.
+    struct MapTile
+    {
+        std::array<MapCell, MAP_TILE_CELLS> Cells{};
+        uint16_t KnownCells = 0;
+        uint16_t VisitedCells = 0;
+        uint16_t SearchedCells = 0;
+        uint16_t SearchedEpoch = 0;
+    };
+    /// A tile as a shared memory holds it: immutable once made, read by any number of maps without a lock.
+    using SharedTile = std::shared_ptr<MapTile const>;
+
+    class SharedMemory;
 
     /// **The crop** (the Change): CROP x CROP cells of CROP_CELL yards, heading-up -- row 0 the furthest ahead, column
     /// 0 the furthest left -- the body at its centre; CROP_CHANNELS bytes a cell, [row][col][channel].
@@ -247,6 +301,8 @@ namespace Animus::Vision
 
         /// Forget everything; the clock starts again.
         void Clear();
+        /// Forget everything; the clock starts at `clock` (a shared memory's anchor: SharedMemory::Anchor).
+        void ClearAt(double clock);
         /// Move the map's clock on: every look ages by it.
         void Advance(float seconds);
         [[nodiscard]] double Clock() const { return _clock; }
@@ -290,35 +346,49 @@ namespace Animus::Vision
         /// `out` (CROP_BYTES). `cell` is a crop cell's side: CROP_CELL (each cell its four 1-yd cells by priority),
         /// or wider (COARSE_CELL: each cell the majority code of its 1-yd cells, the mean floor height, any visited,
         /// the newest look, any frontier, the cells looked at this episode over 16 scaled to SEARCHED_MAX, the most
-        /// recent entity's class; the same bytes and the same frame).
+        /// recent entity's class; the same bytes and the same frame -- the coarse and far tiers' 8-yd cells, each by
+        /// its centre, filling what the 1-yd cells leave unknown). The 2-yd crop never reads the far tier.
         void Crop(float x, float y, float z, float yaw, uint8_t* out, float cell = CROP_CELL) const;
 
         [[nodiscard]] std::size_t Tiles() const { return _tiles.size(); }
-
-    private:
-        struct Tile
-        {
-            std::array<MapCell, MAP_TILE_CELLS> Cells{};
-            uint64_t Touched = 0;
-            /// The coverage counters (general search): cells ever seen (a Seen 0 -> stamp transition), cells the body
-            /// stood on (MAP_VISITED first set), cells looked at this episode (Seen below the epoch -> at or above it)
-            /// with the epoch the count belongs to; a count of another epoch reads as 0 and restarts.
-            uint16_t KnownCells = 0;
-            uint16_t VisitedCells = 0;
-            uint16_t SearchedCells = 0;
-            uint16_t SearchedEpoch = 0;
-        };
+        /// The far tier's tiles (COARSE_CELL-yd cells written from hits beyond WRITE_REACH).
+        [[nodiscard]] std::size_t FarTiles() const { return _far.size(); }
+        /// The far tier's cell at world (x, y), or null when its tile is not kept.
+        [[nodiscard]] MapCell const* FindFar(float x, float y) const;
+        /// Whether the clock is a shared memory's (SharedMemory::Adopt / Anchor): only such a map is merged back.
+        [[nodiscard]] bool Anchored() const { return _anchored; }
 
         [[nodiscard]] static int64_t TileKey(int32_t tx, int32_t ty)
         {
             return (int64_t(tx) << 32) ^ int64_t(uint32_t(ty));
         }
 
-        /// The cell, its tile made when missing (and the cap kept).
+    private:
+        friend class SharedMemory;
+        using Tile = MapTile;
+
+        /// A kept tile: the map's own (Own), or borrowed from a shared memory (Shared, read-only: the first write
+        /// clones it into Own and lets the borrowed one go), and when it was last touched (the cap's order).
+        struct Slot
+        {
+            SharedTile Shared;
+            std::unique_ptr<Tile> Own;
+            uint64_t Touched = 0;
+
+            [[nodiscard]] Tile const* Read() const { return Own ? Own.get() : Shared.get(); }
+        };
+        using Slots = std::unordered_map<int64_t, Slot>;
+
+        /// The cell, its tile made when missing (and the cap kept), or cloned when borrowed.
         MapCell& Touch(int32_t cx, int32_t cy);
+        /// The far tier's cell (COARSE_CELL-yd cell coordinates), its tile made or cloned likewise.
+        MapCell& TouchFar(int32_t ccx, int32_t ccy);
+        [[nodiscard]] MapCell const* FindFarCell(int32_t ccx, int32_t ccy) const;
         void Evict();
         void Fold(int64_t key, Tile const& tile);
         [[nodiscard]] MapCell const* FindCoarse(int32_t cx, int32_t cy) const;
+        /// The cell (cx, cy) of `slots`' tiles, in their own cell coordinates, or null.
+        [[nodiscard]] static MapCell const* FindIn(Slots const& slots, int32_t cx, int32_t cy);
         /// Crop at a cell wider than CROP_CELL: the kept tiles' cells scattered into the crop's cells (a window copy
         /// of 547 x 547 cells for 8-yd cells would cost more than the crop itself).
         void CropWide(float x, float y, float z, float yaw, float cell, uint8_t* out) const;
@@ -328,19 +398,36 @@ namespace Animus::Vision
         void NoteGround(MapCell const& cell);
         void WriteFloor(int32_t cx, int32_t cy, float z, uint16_t stamp, MapWriteStats* stats);
         void WriteEntity(MapCell& cell, Class what, uint16_t stamp);
+        /// A wall hit at height `z` on 1-yd cell (cx, cy), when it is in the body's band of a floor (the cell's own,
+        /// else a neighbour's, else the feet's); true when it was written.
+        bool WriteWall(int32_t cx, int32_t cy, float z, float feetZ, float bodyHeight, uint16_t stamp);
+        /// A hit beyond WRITE_REACH into the far tier: floor at its layer, a wall in the band of the far cell's floor
+        /// (else the feet's), water or a hazard.
+        void WriteFar(Class what, float x, float y, float z, float normalZ, float feetZ, float bodyHeight,
+            uint16_t stamp, MapWriteStats* stats);
+        /// The frame's depth-image meshing (the map-the-distance change, part A).
+        void Mesh(FrameHits const& hits, float feetZ, float bodyHeight, uint16_t stamp, MapWriteStats* stats);
 
         MapSettings _settings;
-        std::unordered_map<int64_t, std::unique_ptr<Tile>> _tiles;
-        std::unordered_map<int64_t, std::unique_ptr<Tile>> _coarse;
+        Slots _tiles;
+        Slots _coarse;
+        Slots _far;
         double _clock = 0.0;
+        bool _anchored = false;         // the clock is a shared memory's (SharedMemory::Adopt / Anchor)
+        /// ... and the shared memory's second the clock's 0 is (the memory's stamp base when anchored): a stamp of
+        /// this map is the shared memory's stamp plus (its base now - _origin) (SharedMemory::Absorb).
+        double _origin = 0.0;
         uint16_t _epoch = 1;            // the first Stamp() of this episode
         uint32_t _groundTotal = 0;
         uint32_t _searchedTotal = 0;
         double _lastGroundClock = 0.0;
         uint64_t _touch = 0;
-        // The last tile Touch found: a frame writes runs of cells in one tile.
+        // The last tile Touch found: a frame writes runs of cells in one tile; and TouchFar's.
         int64_t _lastKey = 0;
+        Slot* _lastSlot = nullptr;
         Tile* _lastTile = nullptr;
+        int64_t _lastFarKey = 0;
+        Slot* _lastFarSlot = nullptr;
         bool _hasBody = false;
         float _bodyX = 0.0f;
         float _bodyY = 0.0f;
@@ -353,6 +440,9 @@ namespace Animus::Vision
     [[nodiscard]] bool NearestFloor(MapCell const& cell, float feetZ, float& z);
     /// Whether a cell was ever seen (any look at all: a hit, a pass in the band, the body).
     [[nodiscard]] inline bool Known(MapCell const& cell) { return cell.Seen != 0; }
+    /// `from` folded into `into` (a coarse cell, or a shared memory's): its floors as layers, its flags, the newer
+    /// look and entity. Both cells' stamps on one clock.
+    void MergeCell(MapCell& into, MapCell const& from);
 }
 
 #endif

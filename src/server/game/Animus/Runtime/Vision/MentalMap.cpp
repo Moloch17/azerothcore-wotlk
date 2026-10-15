@@ -133,6 +133,11 @@ namespace
     }
 }
 
+void Animus::Vision::MergeCell(MapCell& into, MapCell const& from)
+{
+    Merge(into, from);
+}
+
 namespace
 {
     MapRunSettings CurrentMapSettings;
@@ -217,14 +222,26 @@ void Animus::Vision::MentalMap::Clear()
 {
     _tiles.clear();
     _coarse.clear();
+    _far.clear();
     _clock = 0.0;
+    _anchored = false;
+    _origin = 0.0;
     _touch = 0;
+    _lastSlot = nullptr;
     _lastTile = nullptr;
+    _lastFarSlot = nullptr;
     _hasBody = false;
     _epoch = 1;
     _groundTotal = 0;
     _searchedTotal = 0;
     _lastGroundClock = 0.0;
+}
+
+void Animus::Vision::MentalMap::ClearAt(double clock)
+{
+    Clear();
+    _clock = std::clamp(clock, 0.0, CLOCK_LIMIT - 1.0);
+    _lastGroundClock = _clock;
 }
 
 void Animus::Vision::MentalMap::Advance(float seconds)
@@ -249,7 +266,7 @@ void Animus::Vision::MentalMap::TileCounts(int32_t tx, int32_t ty, uint16_t& kno
     auto const found = _tiles.find(TileKey(tx, ty));
     if (found == _tiles.end())
         return;
-    Tile const& tile = *found->second;
+    Tile const& tile = *found->second.Read();
     known = tile.KnownCells;
     visited = tile.VisitedCells;
     searched = tile.SearchedEpoch == _epoch ? tile.SearchedCells : 0;
@@ -265,36 +282,82 @@ Animus::Vision::MapCell& Animus::Vision::MentalMap::Touch(int32_t cx, int32_t cy
     int32_t const tx = FloorDiv(cx, MAP_TILE);
     int32_t const ty = FloorDiv(cy, MAP_TILE);
     int64_t const key = TileKey(tx, ty);
-    Tile* tile = _lastTile && _lastKey == key ? _lastTile : nullptr;
-    if (!tile)
+    Slot* slot = _lastSlot && _lastKey == key ? _lastSlot : nullptr;
+    if (!slot)
     {
         auto found = _tiles.find(key);
         if (found == _tiles.end())
         {
             if (_tiles.size() >= std::max<uint32_t>(1, _settings.MaxTiles))
                 Evict();
-            found = _tiles.emplace(key, std::make_unique<Tile>()).first;
+            found = _tiles.emplace(key, Slot()).first;
+            found->second.Own = std::make_unique<Tile>();
         }
-        tile = found->second.get();
+        slot = &found->second;
+        // A borrowed tile (a shared memory's) is cloned on its first write: the shared one is never written.
+        if (!slot->Own)
+        {
+            slot->Own = std::make_unique<Tile>(*slot->Shared);
+            slot->Shared.reset();
+        }
         _lastKey = key;
-        _lastTile = tile;
+        _lastSlot = slot;
+        _lastTile = slot->Own.get();
     }
-    tile->Touched = ++_touch;
-    return tile->Cells[std::size_t((cy - ty * MAP_TILE) * MAP_TILE + (cx - tx * MAP_TILE))];
+    slot->Touched = ++_touch;
+    return _lastTile->Cells[std::size_t((cy - ty * MAP_TILE) * MAP_TILE + (cx - tx * MAP_TILE))];
+}
+
+Animus::Vision::MapCell& Animus::Vision::MentalMap::TouchFar(int32_t ccx, int32_t ccy)
+{
+    int32_t const tx = FloorDiv(ccx, MAP_TILE);
+    int32_t const ty = FloorDiv(ccy, MAP_TILE);
+    int64_t const key = TileKey(tx, ty);
+    Slot* slot = _lastFarSlot && _lastFarKey == key ? _lastFarSlot : nullptr;
+    if (!slot)
+    {
+        auto found = _far.find(key);
+        if (found == _far.end())
+        {
+            if (_far.size() >= std::max<uint32_t>(1, _settings.FarTiles))
+            {
+                auto oldest = _far.begin();
+                for (auto it = _far.begin(); it != _far.end(); ++it)
+                    if (it->second.Touched < oldest->second.Touched)
+                        oldest = it;
+                _far.erase(oldest);
+            }
+            found = _far.emplace(key, Slot()).first;
+            found->second.Own = std::make_unique<Tile>();
+        }
+        slot = &found->second;
+        if (!slot->Own)
+        {
+            slot->Own = std::make_unique<Tile>(*slot->Shared);
+            slot->Shared.reset();
+        }
+        _lastFarKey = key;
+        _lastFarSlot = slot;
+    }
+    slot->Touched = ++_touch;
+    return slot->Own->Cells[std::size_t((ccy - ty * MAP_TILE) * MAP_TILE + (ccx - tx * MAP_TILE))];
 }
 
 void Animus::Vision::MentalMap::Evict()
 {
     auto oldest = _tiles.end();
     for (auto it = _tiles.begin(); it != _tiles.end(); ++it)
-        if (oldest == _tiles.end() || it->second->Touched < oldest->second->Touched)
+        if (oldest == _tiles.end() || it->second.Touched < oldest->second.Touched)
             oldest = it;
     if (oldest == _tiles.end())
         return;
     if (_settings.CoarseTiles)
-        Fold(oldest->first, *oldest->second);
-    if (_lastTile == oldest->second.get())
+        Fold(oldest->first, *oldest->second.Read());
+    if (_lastSlot == &oldest->second)
+    {
+        _lastSlot = nullptr;
         _lastTile = nullptr;
+    }
     _tiles.erase(oldest);
 }
 
@@ -320,25 +383,44 @@ void Animus::Vision::MentalMap::Fold(int64_t key, Tile const& tile)
                 {
                     auto oldest = _coarse.begin();
                     for (auto it = _coarse.begin(); it != _coarse.end(); ++it)
-                        if (it->second->Touched < oldest->second->Touched)
+                        if (it->second.Touched < oldest->second.Touched)
                             oldest = it;
                     _coarse.erase(oldest);
                 }
-                found = _coarse.emplace(coarseKey, std::make_unique<Tile>()).first;
+                found = _coarse.emplace(coarseKey, Slot()).first;
+                found->second.Own = std::make_unique<Tile>();
             }
-            found->second->Touched = ++_touch;
-            Merge(found->second->Cells[std::size_t((ccy - cty * MAP_TILE) * MAP_TILE + (ccx - ctx * MAP_TILE))], cell);
+            found->second.Touched = ++_touch;
+            Merge(found->second.Own->Cells[std::size_t((ccy - cty * MAP_TILE) * MAP_TILE + (ccx - ctx * MAP_TILE))],
+                cell);
         }
+}
+
+Animus::Vision::MapCell const* Animus::Vision::MentalMap::FindIn(Slots const& slots, int32_t cx, int32_t cy)
+{
+    if (slots.empty())
+        return nullptr;
+    int32_t const tx = FloorDiv(cx, MAP_TILE);
+    int32_t const ty = FloorDiv(cy, MAP_TILE);
+    auto const found = slots.find(TileKey(tx, ty));
+    if (found == slots.end())
+        return nullptr;
+    return &found->second.Read()->Cells[std::size_t((cy - ty * MAP_TILE) * MAP_TILE + (cx - tx * MAP_TILE))];
 }
 
 Animus::Vision::MapCell const* Animus::Vision::MentalMap::FindCell(int32_t cx, int32_t cy) const
 {
-    int32_t const tx = FloorDiv(cx, MAP_TILE);
-    int32_t const ty = FloorDiv(cy, MAP_TILE);
-    auto const found = _tiles.find(TileKey(tx, ty));
-    if (found == _tiles.end())
-        return nullptr;
-    return &found->second->Cells[std::size_t((cy - ty * MAP_TILE) * MAP_TILE + (cx - tx * MAP_TILE))];
+    return FindIn(_tiles, cx, cy);
+}
+
+Animus::Vision::MapCell const* Animus::Vision::MentalMap::FindFarCell(int32_t ccx, int32_t ccy) const
+{
+    return FindIn(_far, ccx, ccy);
+}
+
+Animus::Vision::MapCell const* Animus::Vision::MentalMap::FindFar(float x, float y) const
+{
+    return FindFarCell(FloorDiv(CellOf(x), COARSE_CELL), FloorDiv(CellOf(y), COARSE_CELL));
 }
 
 Animus::Vision::MapCell const* Animus::Vision::MentalMap::Find(float x, float y) const
@@ -350,14 +432,7 @@ Animus::Vision::MapCell const* Animus::Vision::MentalMap::FindCoarse(int32_t cx,
 {
     if (_coarse.empty())
         return nullptr;
-    int32_t const ccx = FloorDiv(cx, COARSE_CELL);
-    int32_t const ccy = FloorDiv(cy, COARSE_CELL);
-    int32_t const ctx = FloorDiv(ccx, MAP_TILE);
-    int32_t const cty = FloorDiv(ccy, MAP_TILE);
-    auto const found = _coarse.find(TileKey(ctx, cty));
-    if (found == _coarse.end())
-        return nullptr;
-    return &found->second->Cells[std::size_t((ccy - cty * MAP_TILE) * MAP_TILE + (ccx - ctx * MAP_TILE))];
+    return FindIn(_coarse, FloorDiv(cx, COARSE_CELL), FloorDiv(cy, COARSE_CELL));
 }
 
 void Animus::Vision::MentalMap::MarkSeen(MapCell& cell, uint16_t stamp)
@@ -419,6 +494,110 @@ void Animus::Vision::MentalMap::WriteFloor(int32_t cx, int32_t cy, float z, uint
         Touch(cx, cy).Flags |= MAP_EDGE;
 }
 
+bool Animus::Vision::MentalMap::WriteWall(int32_t cx, int32_t cy, float z, float feetZ, float bodyHeight,
+    uint16_t stamp)
+{
+    // A wall within the body's band above a floor: the cell's own, else a neighbour's, else the feet's.
+    float reference = 0.0f;
+    bool referenced = false;
+    uint8_t flag = MAP_WALL_LOW;
+    MapCell const* here = FindCell(cx, cy);
+    if (here)
+        for (uint32_t layer = 0; layer < 2; ++layer)
+            if (here->Floor[layer] != NO_FLOOR && FloorHeight(here->Floor[layer]) <= z + WALL_SLACK)
+            {
+                reference = FloorHeight(here->Floor[layer]);
+                referenced = true;
+                flag = layer == 0 ? MAP_WALL_LOW : MAP_WALL_HIGH;
+            }
+    if (!referenced)
+    {
+        static int32_t const NEIGHBOURS[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
+        for (auto const& offset : NEIGHBOURS)
+        {
+            MapCell const* next = FindCell(cx + offset[0], cy + offset[1]);
+            float nz = 0.0f;
+            if (next && NearestFloor(*next, z, nz) && nz <= z + WALL_SLACK && (!referenced || nz > reference))
+            {
+                reference = nz;
+                referenced = true;
+            }
+        }
+    }
+    bool const inBand = referenced ? z <= reference + bodyHeight + WALL_SLACK
+        : z >= feetZ - FREE_BAND && z <= feetZ + bodyHeight + WALL_SLACK;
+    if (!inBand)
+        return false;
+    MapCell& cell = Touch(cx, cy);
+    cell.Flags |= flag;
+    MarkSeen(cell, stamp);
+    return true;
+}
+
+void Animus::Vision::MentalMap::WriteFar(Class what, float x, float y, float z, float normalZ, float feetZ,
+    float bodyHeight, uint16_t stamp, MapWriteStats* stats)
+{
+    int32_t const ccx = FloorDiv(CellOf(x), COARSE_CELL);
+    int32_t const ccy = FloorDiv(CellOf(y), COARSE_CELL);
+    switch (what)
+    {
+        case Class::Terrain:
+        case Class::Model:
+        {
+            if (normalZ >= FLOOR_NORMAL)
+            {
+                MapCell& cell = TouchFar(ccx, ccy);
+                InsertFloor(cell, z);
+                cell.Seen = stamp;
+                if (stats)
+                    ++stats->Floors;
+                break;
+            }
+            if (normalZ <= CEILING_NORMAL)
+                return;
+            // A wall in the band of the far cell's own floor (its highest layer at or below the hit), else the
+            // feet's: an 8-yd cell holds the floor beside its wall more often than not.
+            float reference = 0.0f;
+            bool referenced = false;
+            uint8_t flag = MAP_WALL_LOW;
+            if (MapCell const* here = FindFarCell(ccx, ccy))
+                for (uint32_t layer = 0; layer < 2; ++layer)
+                    if (here->Floor[layer] != NO_FLOOR && FloorHeight(here->Floor[layer]) <= z + WALL_SLACK)
+                    {
+                        reference = FloorHeight(here->Floor[layer]);
+                        referenced = true;
+                        flag = layer == 0 ? MAP_WALL_LOW : MAP_WALL_HIGH;
+                    }
+            bool const inBand = referenced ? z <= reference + bodyHeight + WALL_SLACK
+                : z >= feetZ - FREE_BAND && z <= feetZ + bodyHeight + WALL_SLACK;
+            if (!inBand)
+                return;
+            MapCell& cell = TouchFar(ccx, ccy);
+            cell.Flags |= flag;
+            cell.Seen = stamp;
+            if (stats)
+                ++stats->Walls;
+            break;
+        }
+        case Class::Water:
+        case Class::Deadly:
+        {
+            MapCell& cell = TouchFar(ccx, ccy);
+            cell.Flags |= MAP_HAZARD;
+            cell.Seen = stamp;
+            break;
+        }
+        default:
+            // An entity's class is the sensor's to write (WriteEntities), at its own cell.
+            return;
+    }
+    if (stats)
+    {
+        ++stats->Hits;
+        ++stats->FarHits;
+    }
+}
+
 void Animus::Vision::MentalMap::WriteFrame(FrameHits const& hits, float feetZ, float bodyHeight, MapWriteStats* stats)
 {
     uint16_t const stamp = Stamp();
@@ -428,8 +607,12 @@ void Animus::Vision::MentalMap::WriteFrame(FrameHits const& hits, float feetZ, f
         bool const sky = ray.What == Class::Sky;
         bool const hitWithin = !sky && ray.Distance <= WRITE_REACH;
         float const reach = std::min(ray.Distance, WRITE_REACH);
-        int32_t const hitX = CellOf(camera.X + ray.Dir.X * ray.Distance);
-        int32_t const hitY = CellOf(camera.Y + ray.Dir.Y * ray.Distance);
+        float const hitXf = camera.X + ray.Dir.X * ray.Distance;
+        float const hitYf = camera.Y + ray.Dir.Y * ray.Distance;
+        int32_t const hitX = CellOf(hitXf);
+        int32_t const hitY = CellOf(hitYf);
+        // A ray ending on a floor: the band above that floor near the hit is seen free too (part C).
+        bool const floorHit = (ray.What == Class::Terrain || ray.What == Class::Model) && ray.NormalZ >= FLOOR_NORMAL;
 
         // **Seen free** (amendment 2): a 2D grid step over the map's cells from the camera to the hit (or the reach),
         // each cell taking the stretch of the ray above it; free only where that stretch is in the body's band.
@@ -447,6 +630,8 @@ void Animus::Vision::MentalMap::WriteFrame(FrameHits const& hits, float feetZ, f
             float const edgeY = (ray.Dir.Y > 0.0f ? float(cy + 1) : float(cy)) * MAP_CELL;
             float nextX = std::fabs(ray.Dir.X) > 1e-9f ? (edgeX - camera.X) / ray.Dir.X : inf;
             float nextY = std::fabs(ray.Dir.Y) > 1e-9f ? (edgeY - camera.Y) / ray.Dir.Y : inf;
+            // Where along the ray the band above the hit's floor starts to count (HIT_BAND_REACH across the ground).
+            float const bandFrom = floorHit ? ray.Distance - HIT_BAND_REACH / horizontal : inf;
             float enter = 0.0f;
             while (enter < reach)
             {
@@ -471,13 +656,20 @@ void Animus::Vision::MentalMap::WriteFrame(FrameHits const& hits, float feetZ, f
                 }
                 else
                     free = low >= feetZ - FREE_BAND && high <= feetZ + FREE_BAND;
+                bool onHit = false;
+                if (!free && leave >= bandFrom && low >= ray.Z - FLOOR_STEP && high <= ray.Z + bodyHeight)
+                    free = onHit = true;
                 if (free)
                 {
                     MapCell& cell = Touch(cx, cy);
                     cell.Flags |= MAP_FREE;
                     MarkSeen(cell, stamp);
                     if (stats)
+                    {
                         ++stats->Free;
+                        if (onHit)
+                            ++stats->FreeOnHit;
+                    }
                 }
                 if (leave >= reach)
                     break;
@@ -495,8 +687,14 @@ void Animus::Vision::MentalMap::WriteFrame(FrameHits const& hits, float feetZ, f
             }
         }
 
-        if (!hitWithin)
+        if (sky)
             continue;
+        // Past the near reach, at any distance: the far tier's cells (part B).
+        if (!hitWithin)
+        {
+            WriteFar(ray.What, hitXf, hitYf, ray.Z, ray.NormalZ, feetZ, bodyHeight, stamp, stats);
+            continue;
+        }
         if (stats)
             ++stats->Hits;
         switch (ray.What)
@@ -511,42 +709,7 @@ void Animus::Vision::MentalMap::WriteFrame(FrameHits const& hits, float feetZ, f
                 }
                 if (ray.NormalZ <= CEILING_NORMAL)
                     break;
-                // A wall within the body's band above a floor: the cell's own, else a neighbour's, else the feet's.
-                float reference = 0.0f;
-                bool referenced = false;
-                uint8_t flag = MAP_WALL_LOW;
-                MapCell const* here = FindCell(hitX, hitY);
-                if (here)
-                    for (uint32_t layer = 0; layer < 2; ++layer)
-                        if (here->Floor[layer] != NO_FLOOR && FloorHeight(here->Floor[layer]) <= ray.Z + WALL_SLACK)
-                        {
-                            reference = FloorHeight(here->Floor[layer]);
-                            referenced = true;
-                            flag = layer == 0 ? MAP_WALL_LOW : MAP_WALL_HIGH;
-                        }
-                if (!referenced)
-                {
-                    static int32_t const NEIGHBOURS[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
-                    for (auto const& offset : NEIGHBOURS)
-                    {
-                        MapCell const* next = FindCell(hitX + offset[0], hitY + offset[1]);
-                        float nz = 0.0f;
-                        if (next && NearestFloor(*next, ray.Z, nz) && nz <= ray.Z + WALL_SLACK
-                            && (!referenced || nz > reference))
-                        {
-                            reference = nz;
-                            referenced = true;
-                        }
-                    }
-                }
-                bool const inBand = referenced ? ray.Z <= reference + bodyHeight + WALL_SLACK
-                    : ray.Z >= feetZ - FREE_BAND && ray.Z <= feetZ + bodyHeight + WALL_SLACK;
-                if (!inBand)
-                    break;
-                MapCell& cell = Touch(hitX, hitY);
-                cell.Flags |= flag;
-                MarkSeen(cell, stamp);
-                if (stats)
+                if (WriteWall(hitX, hitY, ray.Z, feetZ, bodyHeight, stamp) && stats)
                     ++stats->Walls;
                 break;
             }
@@ -572,6 +735,219 @@ void Animus::Vision::MentalMap::WriteFrame(FrameHits const& hits, float feetZ, f
             }
         }
     }
+
+    Mesh(hits, feetZ, bodyHeight, stamp, stats);
+}
+
+void Animus::Vision::MentalMap::Mesh(FrameHits const& hits, float feetZ, float bodyHeight, uint16_t stamp,
+    MapWriteStats* stats)
+{
+    uint32_t const width = hits.Width;
+    uint32_t const height = hits.Height;
+    if (width < 2 || height < 2 || hits.Rays.size() != std::size_t(width) * height)
+        return;
+
+    // Each ray's hit as a point of the depth image: where it is, its range (3D) and its kind.
+    enum : uint8_t
+    {
+        KIND_NONE = 0,      // sky, a ceiling, an entity: never meshed
+        KIND_FLOOR,
+        KIND_WALL,
+        KIND_HAZARD,
+    };
+    struct Point
+    {
+        float X = 0.0f;
+        float Y = 0.0f;
+        float Z = 0.0f;
+        float Range = 0.0f;
+        float NormalZ = 0.0f;
+        uint8_t Kind = KIND_NONE;
+    };
+    Vec3 const camera = hits.Camera;
+    thread_local std::vector<Point> points;
+    points.resize(hits.Rays.size());
+    for (std::size_t index = 0; index < hits.Rays.size(); ++index)
+    {
+        RayHit const& ray = hits.Rays[index];
+        Point& point = points[index];
+        point.X = camera.X + ray.Dir.X * ray.Distance;
+        point.Y = camera.Y + ray.Dir.Y * ray.Distance;
+        point.Z = ray.Z;
+        point.Range = ray.Distance;
+        point.NormalZ = ray.NormalZ;
+        point.Kind = KIND_NONE;
+        if (ray.What == Class::Terrain || ray.What == Class::Model)
+            point.Kind = ray.NormalZ >= FLOOR_NORMAL ? KIND_FLOOR
+                : ray.NormalZ > CEILING_NORMAL ? KIND_WALL : KIND_NONE;
+        else if (ray.What == Class::Water || ray.What == Class::Deadly)
+            point.Kind = KIND_HAZARD;
+    }
+
+    uint32_t budget = MESH_FRAME_CELLS;
+    auto const reject = [stats]()
+    {
+        if (stats)
+            ++stats->MeshRejected;
+    };
+
+    // A triangle of one surface (floor or water/hazard): its cells, at the plane's height, when the three hits are
+    // one surface -- the plane faces the camera (a drop's far floor seen past an edge makes a plane that faces away),
+    // as level as a floor, and as level as its hits' own normals (a riser bridged at a grazing angle tilts it).
+    auto const triangle = [&](Point const& a, Point const& b, Point const& c)
+    {
+        uint8_t const kind = a.Kind;
+        float const span = std::max({ std::hypot(b.X - a.X, b.Y - a.Y), std::hypot(c.X - b.X, c.Y - b.Y),
+            std::hypot(a.X - c.X, a.Y - c.Y) });
+        bool far = std::min({ a.Range, b.Range, c.Range }) > WRITE_REACH;
+        if (span > (far ? MESH_SPAN_FAR : MESH_SPAN_NEAR))
+            return reject();
+        float cell = far ? float(COARSE_CELL) : MAP_CELL;
+        // All three in one cell: the hits wrote it, there is nothing between them.
+        if (int32_t(std::floor(a.X / cell)) == int32_t(std::floor(b.X / cell))
+            && int32_t(std::floor(a.X / cell)) == int32_t(std::floor(c.X / cell))
+            && int32_t(std::floor(a.Y / cell)) == int32_t(std::floor(b.Y / cell))
+            && int32_t(std::floor(a.Y / cell)) == int32_t(std::floor(c.Y / cell)))
+            return;
+        Vec3 const ab{ b.X - a.X, b.Y - a.Y, b.Z - a.Z };
+        Vec3 const ac{ c.X - a.X, c.Y - a.Y, c.Z - a.Z };
+        Vec3 normal{ ab.Y * ac.Z - ab.Z * ac.Y, ab.Z * ac.X - ab.X * ac.Z, ab.X * ac.Y - ab.Y * ac.X };
+        float const length = Length(normal);
+        if (length < 1e-6f)
+            return reject();
+        if (normal.Z < 0.0f)
+            normal = normal * -1.0f;
+        float const nz = normal.Z / length;
+        if (nz < FLOOR_NORMAL || nz < std::min({ a.NormalZ, b.NormalZ, c.NormalZ }) - MESH_NORMAL_SLACK)
+            return reject();
+        Vec3 const toCamera{ camera.X - a.X, camera.Y - a.Y, camera.Z - a.Z };
+        if (Dot(toCamera, normal) <= 0.0f)
+            return reject();
+
+        // The cells whose centres the triangle covers (barycentric in the ground plane); a near triangle too wide
+        // for its budget goes to the far tier's cells.
+        float const minX = std::min({ a.X, b.X, c.X });
+        float const maxX = std::max({ a.X, b.X, c.X });
+        float const minY = std::min({ a.Y, b.Y, c.Y });
+        float const maxY = std::max({ a.Y, b.Y, c.Y });
+        auto const cellsAt = [&](float size)
+        {
+            return uint32_t(int32_t(std::floor(maxX / size)) - int32_t(std::floor(minX / size)) + 1)
+                * uint32_t(int32_t(std::floor(maxY / size)) - int32_t(std::floor(minY / size)) + 1);
+        };
+        if (!far && cellsAt(cell) > MESH_TRIANGLE_CELLS)
+        {
+            far = true;
+            cell = float(COARSE_CELL);
+        }
+        uint32_t const cells = cellsAt(cell);
+        if (cells > MESH_TRIANGLE_CELLS || cells > budget)
+            return reject();
+        float const denominator = (b.Y - c.Y) * (a.X - c.X) + (c.X - b.X) * (a.Y - c.Y);
+        if (std::fabs(denominator) < 1e-6f)
+            return reject();
+        int32_t const x0 = int32_t(std::floor(minX / cell));
+        int32_t const x1 = int32_t(std::floor(maxX / cell));
+        int32_t const y0 = int32_t(std::floor(minY / cell));
+        int32_t const y1 = int32_t(std::floor(maxY / cell));
+        constexpr float INSIDE = -0.02f;
+        for (int32_t cy = y0; cy <= y1; ++cy)
+            for (int32_t cx = x0; cx <= x1; ++cx)
+            {
+                float const px = (float(cx) + 0.5f) * cell;
+                float const py = (float(cy) + 0.5f) * cell;
+                float const wa = ((b.Y - c.Y) * (px - c.X) + (c.X - b.X) * (py - c.Y)) / denominator;
+                float const wb = ((c.Y - a.Y) * (px - c.X) + (a.X - c.X) * (py - c.Y)) / denominator;
+                float const wc = 1.0f - wa - wb;
+                if (wa < INSIDE || wb < INSIDE || wc < INSIDE)
+                    continue;
+                float const z = wa * a.Z + wb * b.Z + wc * c.Z;
+                --budget;
+                MapCell& written = far ? TouchFar(cx, cy) : Touch(cx, cy);
+                if (kind == KIND_FLOOR)
+                    InsertFloor(written, z);
+                else
+                    written.Flags |= MAP_HAZARD;
+                if (far)
+                    written.Seen = stamp;
+                else
+                    MarkSeen(written, stamp);
+                if (stats)
+                    ++(far ? stats->MeshedFar : stats->Meshed);
+            }
+    };
+
+    // A pair of neighbouring wall hits at a near range (one wall, no doorway or corner between them): the cells on
+    // the line between them, each a wall at its interpolated height when it is in the band (WriteWall).
+    auto const wall = [&](Point const& a, Point const& b)
+    {
+        float const span = std::hypot(b.X - a.X, b.Y - a.Y);
+        bool const far = std::min(a.Range, b.Range) > WRITE_REACH;
+        if (std::fabs(a.Range - b.Range) > MESH_WALL_JUMP * std::min(a.Range, b.Range) + MESH_WALL_SLACK
+            || span > (far ? MESH_SPAN_FAR : MESH_SPAN_NEAR))
+            return reject();
+        float const cell = far ? float(COARSE_CELL) : MAP_CELL;
+        uint32_t const samples = uint32_t(std::ceil(span / (0.5f * cell)));
+        if (samples < 2)
+            return;
+        if (samples > MESH_TRIANGLE_CELLS || samples > budget)
+            return reject();
+        int32_t lastX = INT32_MIN;
+        int32_t lastY = INT32_MIN;
+        for (uint32_t step = 1; step < samples; ++step)
+        {
+            float const t = float(step) / float(samples);
+            float const x = a.X + (b.X - a.X) * t;
+            float const y = a.Y + (b.Y - a.Y) * t;
+            float const z = a.Z + (b.Z - a.Z) * t;
+            int32_t const cx = int32_t(std::floor(x / cell));
+            int32_t const cy = int32_t(std::floor(y / cell));
+            if (cx == lastX && cy == lastY)
+                continue;
+            lastX = cx;
+            lastY = cy;
+            --budget;
+            if (far)
+            {
+                WriteFar(Class::Model, x, y, z, 0.0f, feetZ, bodyHeight, stamp, nullptr);
+                if (stats)
+                    ++stats->MeshedFar;
+            }
+            else if (WriteWall(cx, cy, z, feetZ, bodyHeight, stamp) && stats)
+                ++stats->Meshed;
+        }
+    };
+
+    // Each quad of neighbouring rays (row r and r + 1, column c and c + 1) as two triangles; each ray's wall pair to
+    // its right and below.
+    for (uint32_t row = 0; row < height; ++row)
+        for (uint32_t col = 0; col < width; ++col)
+        {
+            if (!budget)
+                return;
+            std::size_t const at = std::size_t(row) * width + col;
+            Point const& p00 = points[at];
+            bool const right = col + 1 < width;
+            bool const below = row + 1 < height;
+            if (p00.Kind == KIND_WALL)
+            {
+                if (right && points[at + 1].Kind == KIND_WALL)
+                    wall(p00, points[at + 1]);
+                if (below && points[at + width].Kind == KIND_WALL)
+                    wall(p00, points[at + width]);
+            }
+            if (!right || !below)
+                continue;
+            Point const& p01 = points[at + 1];
+            Point const& p10 = points[at + width];
+            Point const& p11 = points[at + width + 1];
+            bool const surface00 = p00.Kind == KIND_FLOOR || p00.Kind == KIND_HAZARD;
+            bool const surface11 = p11.Kind == KIND_FLOOR || p11.Kind == KIND_HAZARD;
+            if (surface00 && p01.Kind == p00.Kind && p10.Kind == p00.Kind)
+                triangle(p00, p01, p10);
+            if (surface11 && p01.Kind == p11.Kind && p10.Kind == p11.Kind)
+                triangle(p11, p10, p01);
+        }
 }
 
 void Animus::Vision::MentalMap::WriteEntities(SeenList const& seen, MapWriteStats* stats)
@@ -659,7 +1035,7 @@ void Animus::Vision::MentalMap::Crop(float x, float y, float z, float yaw, uint8
         for (int32_t tx = tx0; tx <= tx1; ++tx)
         {
             auto const found = _tiles.find(TileKey(tx, ty));
-            Tile const* tile = found == _tiles.end() ? nullptr : found->second.get();
+            Tile const* tile = found == _tiles.end() ? nullptr : found->second.Read();
             if (!tile && _coarse.empty())
                 continue;
             int32_t const cx0 = std::max(x0, tx * MAP_TILE);
@@ -787,6 +1163,12 @@ void Animus::Vision::MentalMap::CropWide(float x, float y, float z, float yaw, f
         bool Frontier = false;
         uint32_t Searched = 0;
         uint32_t Known = 0;
+        // The coarse and far tiers' cells that fell here, each weighing the 1-yd cells it stands for: they fill
+        // what the 1-yd cells leave unknown (CoarseKnown at most), never outvote them.
+        float CoarseCodes[MAP_CODES] = {};
+        float CoarseKnown = 0.0f;
+        float CoarseHeight = 0.0f;
+        uint32_t CoarseFloors = 0;
     };
     thread_local std::vector<Sum> sums;
     sums.assign(std::size_t(CROP) * CROP, Sum());
@@ -853,26 +1235,86 @@ void Animus::Vision::MentalMap::CropWide(float x, float y, float z, float yaw, f
                     }
             }
     };
-    for (auto const& [key, tile] : _tiles)
+    for (auto const& [key, slot] : _tiles)
     {
         int32_t const tx = int32_t(key >> 32);
         int32_t const ty = int32_t(uint32_t(key & 0xFFFFFFFFu));
         if (tx * MAP_TILE > cx1 || tx * MAP_TILE + MAP_TILE - 1 < cx0 || ty * MAP_TILE > cy1
             || ty * MAP_TILE + MAP_TILE - 1 < cy0)
             continue;
-        scatter(tx, ty, *tile);
+        scatter(tx, ty, *slot.Read());
     }
-    for (auto const& [key, tile] : _coarse)
+
+    // The coarse tiers (a realm's folded tiles, Fold; the far tier, written from hits beyond WRITE_REACH): each cell
+    // stands for COARSE_CELL x COARSE_CELL yards and goes, by its centre, to the crop cell it falls in, weighing the
+    // 1-yd cells it covers (at most a crop cell's).
+    float const coarseWeight = float(std::min<uint32_t>(perCell, uint32_t(COARSE_CELL * COARSE_CELL)));
+    int32_t const coarseSpan = MAP_TILE * COARSE_CELL;     // a coarse tile's side, in 1-yd cells
+    auto const knownCoarse = [this](int32_t ccx, int32_t ccy)
     {
-        // A coarse tile's cells stand for COARSE_CELL-yd cells (Fold): read at their own coordinates, which is what
-        // FindCoarse does, so they are scattered by key too -- an approximation a training seat never meets.
+        MapCell const* far = FindIn(_far, ccx, ccy);
+        MapCell const* folded = FindIn(_coarse, ccx, ccy);
+        return (far && Known(*far)) || (folded && Known(*folded));
+    };
+    auto const scatterCoarse = [&](int64_t key, Tile const& tile)
+    {
         int32_t const tx = int32_t(key >> 32);
         int32_t const ty = int32_t(uint32_t(key & 0xFFFFFFFFu));
-        if (tx * MAP_TILE > cx1 || tx * MAP_TILE + MAP_TILE - 1 < cx0 || ty * MAP_TILE > cy1
-            || ty * MAP_TILE + MAP_TILE - 1 < cy0)
-            continue;
-        scatter(tx, ty, *tile);
-    }
+        if (tx * coarseSpan > cx1 || tx * coarseSpan + coarseSpan - 1 < cx0 || ty * coarseSpan > cy1
+            || ty * coarseSpan + coarseSpan - 1 < cy0)
+            return;
+        int32_t const fx0 = std::max(FloorDiv(cx0, COARSE_CELL), tx * MAP_TILE);
+        int32_t const fx1 = std::min(FloorDiv(cx1, COARSE_CELL), tx * MAP_TILE + MAP_TILE - 1);
+        int32_t const fy0 = std::max(FloorDiv(cy0, COARSE_CELL), ty * MAP_TILE);
+        int32_t const fy1 = std::min(FloorDiv(cy1, COARSE_CELL), ty * MAP_TILE + MAP_TILE - 1);
+        for (int32_t ccy = fy0; ccy <= fy1; ++ccy)
+            for (int32_t ccx = fx0; ccx <= fx1; ++ccx)
+            {
+                MapCell const& mapCell =
+                    tile.Cells[std::size_t((ccy - ty * MAP_TILE) * MAP_TILE + (ccx - tx * MAP_TILE))];
+                if (!Known(mapCell))
+                    continue;
+                float const dx = (float(ccx) + 0.5f) * float(COARSE_CELL) - x;
+                float const dy = (float(ccy) + 0.5f) * float(COARSE_CELL) - y;
+                float const forward = dx * forwardX + dy * forwardY;
+                float const right = dx * rightX + dy * rightY;
+                float const row = std::floor(centre - forward / cell);
+                float const col = std::floor(centre + right / cell);
+                if (row < 0.0f || col < 0.0f || row >= float(CROP) || col >= float(CROP))
+                    continue;
+                Sum& sum = sums[std::size_t(row) * CROP + std::size_t(col)];
+                MapCode const here = CodeOf(mapCell, z);
+                sum.CoarseCodes[uint8_t(here)] += coarseWeight;
+                sum.CoarseKnown += coarseWeight;
+                float floor = 0.0f;
+                if (NearestFloor(mapCell, z, floor))
+                {
+                    sum.CoarseHeight += floor;
+                    ++sum.CoarseFloors;
+                }
+                sum.Visited = sum.Visited || (mapCell.Flags & MAP_VISITED);
+                double const age = std::max(0.0, _clock - (double(mapCell.Seen) - 1.0));
+                if (sum.Newest < 0.0 || age < sum.Newest)
+                    sum.Newest = age;
+                double const entityAge = EntityAge(mapCell, _clock);
+                if (entityAge >= 0.0 && (sum.EntityAge < 0.0 || entityAge < sum.EntityAge))
+                {
+                    sum.EntityAge = entityAge;
+                    sum.Entity = uint8_t(mapCell.Entity & CLASS_MASK);
+                }
+                if (!sum.Frontier && here == MapCode::Floor)
+                    for (auto const& offset : NEIGHBOURS)
+                        if (!knownCoarse(ccx + offset[0], ccy + offset[1]))
+                        {
+                            sum.Frontier = true;
+                            break;
+                        }
+            }
+    };
+    for (auto const& [key, slot] : _coarse)
+        scatterCoarse(key, *slot.Read());
+    for (auto const& [key, slot] : _far)
+        scatterCoarse(key, *slot.Read());
 
     static uint8_t const PRIORITY[MAP_CODES] = { 0, 1, 4, 3, 2 };   // unknown, floor, wall, door, hazard
     for (uint32_t index = 0; index < CROP * CROP; ++index)
@@ -880,9 +1322,20 @@ void Animus::Vision::MentalMap::CropWide(float x, float y, float z, float yaw, f
         Sum const& sum = sums[index];
         // The majority over all the cell's 1-yd cells, the unseen ones counted as unknown; a tie goes to the code
         // the fine crop would rank higher.
-        uint32_t counts[MAP_CODES];
-        std::copy(std::begin(sum.Codes), std::end(sum.Codes), std::begin(counts));
-        counts[uint8_t(MapCode::Unknown)] += perCell > sum.Known ? perCell - sum.Known : 0;
+        // The coarse tiers' cells fill what the 1-yd cells leave unknown, scaled down to fit it.
+        float counts[MAP_CODES];
+        for (uint32_t kind = 0; kind < MAP_CODES; ++kind)
+            counts[kind] = float(sum.Codes[kind]);
+        float known = float(sum.Known);
+        float const open = float(perCell) - known;
+        if (sum.CoarseKnown > 0.0f && open > 0.0f)
+        {
+            float const scale = std::min(1.0f, open / sum.CoarseKnown);
+            for (uint32_t kind = 0; kind < MAP_CODES; ++kind)
+                counts[kind] += sum.CoarseCodes[kind] * scale;
+            known += sum.CoarseKnown * scale;
+        }
+        counts[uint8_t(MapCode::Unknown)] += std::max(0.0f, float(perCell) - known);
         MapCode code = MapCode::Unknown;
         for (uint32_t candidate = 1; candidate < MAP_CODES; ++candidate)
             if (counts[candidate] > counts[uint8_t(code)]
@@ -890,8 +1343,10 @@ void Animus::Vision::MentalMap::CropWide(float x, float y, float z, float yaw, f
                 code = MapCode(candidate);
         uint8_t* bytes = out + std::size_t(index) * CROP_CHANNELS;
         bytes[CROP_CODE] = uint8_t(code);
-        bytes[CROP_HEIGHT] = sum.Floors ? uint8_t(std::clamp(int32_t(CROP_HEIGHT_ZERO)
-            + int32_t(std::lround((sum.Height / float(sum.Floors) - z) / CROP_HEIGHT_STEP)), 1, 255)) : 0;
+        float const meanHeight = sum.Floors ? sum.Height / float(sum.Floors)
+            : sum.CoarseFloors ? sum.CoarseHeight / float(sum.CoarseFloors) : 0.0f;
+        bytes[CROP_HEIGHT] = sum.Floors || sum.CoarseFloors ? uint8_t(std::clamp(int32_t(CROP_HEIGHT_ZERO)
+            + int32_t(std::lround((meanHeight - z) / CROP_HEIGHT_STEP)), 1, 255)) : 0;
         bytes[CROP_VISITED] = sum.Visited ? 1 : 0;
         bytes[CROP_AGE] = sum.Newest < 0.0 ? CROP_AGE_NEVER : AgeByte(float(sum.Newest));
         bytes[CROP_CLASS] = sum.Entity;

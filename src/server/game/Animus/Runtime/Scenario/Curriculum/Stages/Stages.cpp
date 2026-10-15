@@ -922,6 +922,7 @@ namespace
             .EvenLevels = true,
             .EvenRenderSizes = true,
             .MapTiers = 2,
+            .SharedMemoryShare = 0.5f,
         });
 
         // N2 -- detour: the straight line is blocked in view (doors, pillars, room walls: the Stockades' rooms, the
@@ -945,6 +946,7 @@ namespace
             .EvenLevels = true,
             .EvenRenderSizes = true,
             .MapTiers = 2,
+            .SharedMemoryShare = 0.5f,
         });
 
         // N3 -- vertical: step up, jump or go round; safe against hurting and lethal drops; stairs, ramps and decks
@@ -969,6 +971,7 @@ namespace
             .EvenLevels = true,
             .EvenRenderSizes = true,
             .MapTiers = 2,
+            .SharedMemoryShare = 0.5f,
         });
 
         // N4 -- beyond sight: the route is not in view -- plan over the mental map's two tiers, commit to a direction,
@@ -997,6 +1000,7 @@ namespace
             .EvenLevels = true,
             .EvenRenderSizes = true,
             .MapTiers = 2,
+            .SharedMemoryShare = 0.5f,
         });
 
         // N5 -- water: swim or go round; banks taller than a step are walls; the bed as a goal (PointNav.BedShare of
@@ -1020,6 +1024,7 @@ namespace
             .EvenLevels = true,
             .EvenRenderSizes = true,
             .MapTiers = 2,
+            .SharedMemoryShare = 0.5f,
         });
 
         // N6 -- follow, the moving point: move4_follow's party (four learned followers and their group's leader, the
@@ -1057,6 +1062,7 @@ namespace
             .EvenLevels = true,
             .EvenRenderSizes = true,
             .MapTiers = 2,
+            .SharedMemoryShare = 0.5f,
         });
 
         // **The combat stages** (dungeon-curriculum C1-C3, approved 2026-10-06): fighting on a cleared Ragefire Chasm

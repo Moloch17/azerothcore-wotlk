@@ -41,6 +41,8 @@
 #include "MapMgr.h"
 #include "MapUpdater.h"
 #include "SceneRegistry.h"
+#include "SharedMemory.h"
+#include "GameTime.h"
 #include "StageDefinition.h"
 #include "StringFormat.h"
 #include "World.h"
@@ -190,6 +192,15 @@ void AnimusForge::Forge::OnStartup()
     Animus::Vision::Configure(_config.Vision);
     // The mental map's caps and persistence (perception-goals REDESIGN §3), for every seat a map block gives one.
     Animus::Vision::ConfigureMap(_config.Map);
+    // The shared memories (Vision::SharedMemory, a stage's SharedMemoryShare): one a game map, kept in
+    // <DataDir>/memory/<map>.amem, loaded when a map's is first asked for, with the mental map's caps.
+    {
+        Animus::Vision::SharedMemorySettings memory;
+        memory.Dir = (std::filesystem::path(_config.DataDir) / "memory").string();
+        memory.MaxTiles = _config.Map.Caps.MaxTiles;
+        memory.FarTiles = _config.Map.Caps.FarTiles;
+        Animus::Vision::SharedMemories::Instance().Configure(memory);
+    }
     // Entity memory's cap (dungeon-curriculum I2), for every seat a sight block gives one.
     Animus::Vision::ConfigureMemory(_config.Memory);
     // The render sizes, each with its share of the draw.
@@ -431,6 +442,8 @@ void AnimusForge::Forge::OnUpdate(uint32 diff)
 
     PollExport();
     PollCluster();
+    // The shared memories written every SaveSeconds, on a thread of their own (only those a stage changed).
+    Animus::Vision::SharedMemories::Instance().SaveDue(double(GameTime::GetGameTimeMS().count()) / 1000.0);
 
     // AnimusForge.Bench.AutoTune: a machine with no benchmark of its own CPU (a fresh copy of the project) tunes
     // itself before anything else, once per start.
@@ -593,6 +606,10 @@ void AnimusForge::Forge::OnShutdown()
     _evalVideos.Drain();
     if (_pool)
         _pool->Teardown();
+
+    // The shared memories as they stand, at a stage's end and at shutdown (the episodes in flight are not merged:
+    // an episode's map goes in at the next one's start).
+    Animus::Vision::SharedMemories::Instance().SaveAll(double(GameTime::GetGameTimeMS().count()) / 1000.0);
 
     _pool.reset();
     _scenario.reset();
@@ -889,6 +906,10 @@ void AnimusForge::Forge::TeardownScenario(bool stopLearner)
     _evalVideos.End();
     if (_pool)
         _pool->Teardown();
+
+    // The shared memories as they stand, at a stage's end and at shutdown (the episodes in flight are not merged:
+    // an episode's map goes in at the next one's start).
+    Animus::Vision::SharedMemories::Instance().SaveAll(double(GameTime::GetGameTimeMS().count()) / 1000.0);
 
     _pool.reset();
     _scenario.reset();

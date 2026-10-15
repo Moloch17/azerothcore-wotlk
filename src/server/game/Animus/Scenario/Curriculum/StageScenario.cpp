@@ -63,6 +63,8 @@
 #include "Random.h"
 #include "SeatCharacter.h"
 #include "SeatEncoder.h"
+#include "GameTime.h"
+#include "SharedMemory.h"
 #include "CombatReward.h"
 #include "SpawnArea.h"
 #include "Spell.h"
@@ -747,6 +749,13 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
         return float(env.EpisodeStats[index].SpecialDamage);
     });
     _info.Add("level", [seat](Env const& env, uint32 index) { return float(seat(env, index).Level); });
+    // Whether the episode started from its map's shared memory (StageDefinition::SharedMemoryShare): 0/1, a category
+    // (stage.json episode_categories "off"/"on") the evaluation splits by. Only in a stage that draws it.
+    if (_stage.SharedMemoryShare > 0.0f)
+        _info.Add("shared_memory", [seat](Env const& env, uint32 index)
+        {
+            return seat(env, index).MapShared ? 1.0f : 0.0f;
+        });
     _info.Add("race", [seat](Env const& env, uint32 index) { return float(seat(env, index).Race); });
     _info.Add("spec", [seat](Env const& env, uint32 index) { return float(seat(env, index).Spec); });
     // Which way this character's talents were spent (SeatCharacter::TalentPlan): 0 standard, 1 noisy, 2 random.
@@ -1549,6 +1558,10 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
     // Episode info columns that index a list of names (the seek stage's room and object): the learner's evaluation
     // tables split by them (animus.evaluation, EvalResult.categories).
     boost::json::object& categories = stageFile["episode_categories"].emplace_object();
+    // The shared memory's draw (StageDefinition::SharedMemoryShare): every evaluation table split into the episodes
+    // that started from the map's shared memory and those that started blank.
+    if (_info.Contains("shared_memory"))
+        categories["shared_memory"] = boost::json::array{ "off", "on" };
     // The seek arenas' rooms as one list: the union of their distinct room tables in arena order, each table once
     // (the Stockades arenas share one, so its history keeps its indexes); the seek_room column is the table's offset
     // plus the room (SeekEncounter::RoomOffsets). The objects are one pool.
@@ -2120,13 +2133,24 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     // (amendment 1); never in an evaluation, which starts every seat's map empty so its scores compare. Applied at the
     // episode's first observation, once the seat's instance is known (ObserveSeat). Its entity memory (a sight block,
     // dungeon-curriculum I2) lives by the same roll: a shipped bot keeps both together.
+    // In a stage with a shared memory (StageDefinition::SharedMemoryShare) the seat's own map is never kept: the
+    // reset draws, from the same random numbers -- an evaluation's from its seed, so its split by `shared_memory` is
+    // the same on every evaluation -- whether this episode starts from its map's shared memory or blank.
     if (_stage.Has(BlockId::Map) || _stage.Has(BlockId::Sight))
     {
         Vision::MapRunSettings const& maps = Vision::MapCurrent();
+        float const shared = _stage.SharedMemoryShare;
         for (SeatState& seat : data.Seats)
         {
             seat.MapPending = true;
             seat.MapKept = false;
+            if (shared > 0.0f)
+            {
+                seat.MapShared = frand(0.0f, 1.0f) < shared;
+                seat.MapKeep = false;
+                seat.MapAgeOffset = 0.0f;
+                continue;
+            }
             seat.MapKeep = !env.Evaluating && maps.KeepShare > 0.0f && frand(0.0f, 1.0f) < maps.KeepShare;
             seat.MapAgeOffset = seat.MapKeep ? frand(0.0f, std::max(0.0f, maps.AgeOffsetSeconds)) : 0.0f;
         }
@@ -4157,7 +4181,32 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
     seat.Memory.Observe(bot, target, env.EpisodeElapsedMs);
     // The mental map at the episode's first look (amendment 1): kept, older by the reset's offset, when the reset
     // rolled it and the seat is on the instance it is of; else started afresh.
-    if ((_stage.Has(BlockId::Map) || _stage.Has(BlockId::Sight)) && bot && seat.MapPending)
+    bool const mapped = _stage.Has(BlockId::Map) || _stage.Has(BlockId::Sight);
+    if (mapped && bot && seat.MapPending && _stage.SharedMemoryShare > 0.0f)
+    {
+        // A stage with a shared memory: the episode before's map goes into its map's memory (anchored maps only: the
+        // first episode's is blank), then this one starts from the memory of the map the seat is on, or blank on its
+        // clock, as the reset drew (MapShared). The clock is the process's game time, which runs with the sim.
+        seat.MapPending = false;
+        double const now = double(GameTime::GetGameTimeMS().count()) / 1000.0;
+        Vision::SharedMemories& memories = Vision::SharedMemories::Instance();
+        if (seat.Map.Anchored() && seat.MapMapId)
+            memories.Get(seat.MapMapId, now)->Absorb(seat.Map, now);
+        seat.Map.Configure(Vision::MapCurrent().Caps);
+        Vision::SharedMemory* memory = memories.Get(bot->GetMapId(), now);
+        if (seat.MapShared)
+            memory->Adopt(seat.Map, now);
+        else
+            memory->Anchor(seat.Map, now);
+        seat.MapKept = seat.MapShared && seat.Map.Tiles() > 0;
+        seat.Map.BeginEpisode();
+        seat.Recall.Configure(Vision::MemoryCurrent());
+        seat.RecallKept = false;
+        seat.Recall.Clear();
+        seat.MapMapId = bot->GetMapId();
+        seat.MapInstanceId = bot->GetInstanceId();
+    }
+    else if (mapped && bot && seat.MapPending)
     {
         seat.MapPending = false;
         bool const same = seat.MapMapId == bot->GetMapId() && seat.MapInstanceId == bot->GetInstanceId();
