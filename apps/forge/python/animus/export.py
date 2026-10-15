@@ -148,8 +148,31 @@ The .amdl format (little-endian); a reader must follow it exactly, and a change 
              columns readout_first..+2) added to the camera's embedding before its SiLU
         f32  pointer_weight                 the cell pointer's bonus: value averaged over each pool x pool block
                                             of the fine tier times this, added to every cell score
+        In version 13 (a policy with the camera splat; mappo.camera_splat, networks.CameraSplat), right after
+        compass_scale and before the costmap's arrays:
+        u32  splat_channels                 C (8); conv1 then reads planes + vision + C + 1 input channels, the
+                                            splat's C averaged features and its covered flag after the vision ones
+        u32  stride (2), scalar_yaw_sin (0), scalar_yaw_cos (1), scalar_pitch (2), scalar_boom (4),
+             scalar_render_width (10)      (the vision block's scalars read, by position)
+        f32  fov_h, fov_v (degrees), near (0.25), distance_reference (1000), zoom_scale (12)
+        f32  splat_weight[C * mix_out], splat_bias[C]     the projection of a camera patch's features (the camera's
+                                            mix output, after its SiLU)
+        The splat (networks.CameraSplat, the reference): the samples are the canonical pixels (r, c), r = stride/2,
+        stride/2 + stride, ... < height, c likewise < width, row by row; each takes its patch's projected features
+        (patch (r / patch) x (width / patch) + c / patch). Its ray: cast width w = round(scalar_render_width x width)
+        (the canonical width when the scalar is 0), clamped 1..width, h = round(w x height / width) clamped 1..height;
+        yaw_right = ((floor(c w / width) + 0.5) / w x fov_h - fov_h / 2), pitch_up = (fov_v / 2 - (floor(r h / height) +
+        0.5) / h x fov_v), radians; the depth byte b (the pixel's byte 0; 255 sky lands nowhere) gives d = near x
+        (distance_reference / near) ^ (b / 254). With the scalars' yaw sin s and cos k, pitch p = scalar x pi / 2 and
+        boom B = scalar x zoom_scale: cos a = k cos(yaw_right) + s sin(yaw_right), sin a = s cos(yaw_right) - k
+        sin(yaw_right), level = d cos(p + pitch_up), forward = level cos a - B cos(p) k, right = -(level sin a - B
+        cos(p) s). Per tier of cell yards (tier_cells; the map's height x width crop, side = height): row =
+        floor(side / 2 - forward / cell), col = floor(side / 2 + right / cell); a sample inside 0..side adds its
+        features to that cell; a cell's planes are the mean of what landed in it (0 when nothing did) and covered (1
+        when anything did). Float32 throughout, as the learner computes it.
     (version 12 on: a file of 12 is written only for a policy with the heading; every other policy is still 11, 10 or
-    9. The camera's flag and, without a camera, the planner's 0 flag come before it as in version 11)
+    9. The camera's flag and, without a camera, the planner's 0 flag come before it as in version 11. A file of 13 --
+    a policy with the camera splat -- has the section too)
     u8       heading                        the continuous heading (HeadingHead, heading.CONTRACT.md sec 5)
     if heading:
         u32  components (K, 3), feature_width
@@ -223,8 +246,13 @@ AMDL_MAGIC = b"AMDL"
 # 12: the continuous heading (HeadingHead, heading.CONTRACT.md sec 5): a section after the planner's. Written only for a
 # policy with the heading; every other policy is still 11, 10 or 9. A checkpoint with a heading head is never written
 # as 11 or below (write_amdl refuses).
-AMDL_VERSION = 12
-AMDL_VERSIONS = (7, 8, 9, 10, 11, 12)
+# 13: the camera splat (networks.CameraSplat, mappo.camera_splat): the planner section's splat header and projection,
+# and conv1 reading the splat's planes. Written only for a policy with the splat; every other policy is still 12, 11, 10
+# or 9. A checkpoint with the splat is never written as 12 or below (write_amdl refuses).
+AMDL_VERSION = 13
+AMDL_VERSIONS = (7, 8, 9, 10, 11, 12, 13)
+#: The version a policy with the heading and no camera splat is written as.
+AMDL_HEADING_VERSION = 12
 #: The version a policy with the planner and no heading is written as.
 AMDL_PLANNER_VERSION = 11
 #: The version a policy without the tail is written as, and the one with the camera tail and no planner.
@@ -304,8 +332,8 @@ def write_amdl(
     seat_sets: dict | None = None,
     tail: dict | None = None,
 ) -> None:
-    """Write one model. `tail` is the version 10 tail (tail_weights); without one the file is version 9. A tail with a
-    heading is version 12, one with a planner (and no heading) 11."""
+    """Write one model. `tail` is the version 10 tail (tail_weights); without one the file is version 9. A tail with
+    the camera splat is version 13, one with a heading (and no splat) 12, one with a planner (and neither) 11."""
     if layers[0][0].shape[1] != obs_dim + num_agents:
         raise ValueError(f"first layer takes {layers[0][0].shape[1]} inputs, expected {obs_dim} + {num_agents}")
     if memory is not None and layers[-1][0].shape[1] != memory["weight_hh"].shape[1]:
@@ -316,12 +344,15 @@ def write_amdl(
     encoded = name.encode("utf-8")
     planner = bool(tail and tail.get("planner"))
     heading = bool(tail and tail.get("heading"))
-    version = (AMDL_VERSION if heading else AMDL_PLANNER_VERSION if planner
+    splat = bool(planner and tail["planner"].get("splat"))
+    version = (AMDL_VERSION if splat else AMDL_HEADING_VERSION if heading else AMDL_PLANNER_VERSION if planner
                else (AMDL_CAMERA_VERSION if tail else AMDL_PLAIN_VERSION))
     if planner and version < AMDL_PLANNER_VERSION:
-        raise ValueError("a policy with a planner is written as version 11 or 12, never 10")
-    if heading and version < AMDL_VERSION:
-        raise ValueError("a policy with a heading head is written as version 12, never 11 or below")
+        raise ValueError("a policy with a planner is written as version 11 or above, never 10")
+    if heading and version < AMDL_HEADING_VERSION:
+        raise ValueError("a policy with a heading head is written as version 12 or above, never 11 or below")
+    if splat and version < AMDL_VERSION:
+        raise ValueError("a policy with the camera splat is written as version 13, never 12 or below")
     with open(path, "wb") as out:
         out.write(AMDL_MAGIC)
         out.write(struct.pack("<IH", version, len(encoded)))
@@ -413,12 +444,12 @@ def _floats(out, *arrays) -> None:
 
 
 def _write_tail(out, tail: dict, version: int = AMDL_CAMERA_VERSION) -> None:
-    """The version 10 tail (see the format above), the version 11 map tiers and planner section with one, and the
-    version 12 heading section with one."""
+    """The version 10 tail (see the format above), the version 11 map tiers and planner section with one (the
+    version 13 camera splat in it), and the version 12 heading section with one (version 12 on)."""
     _write_camera_tail(out, tail, version)
-    if version < AMDL_VERSION:
+    if version < AMDL_HEADING_VERSION:
         if tail.get("heading"):
-            raise ValueError("a policy with a heading head is written as version 12, never 11 or below")
+            raise ValueError("a policy with a heading head is written as version 12 or above, never 11 or below")
         return
     heading = tail.get("heading")
     out.write(struct.pack("<B", 1 if heading else 0))
@@ -494,6 +525,15 @@ def _write_camera_tail(out, tail: dict, version: int) -> None:
         return
     out.write(struct.pack("<13I", *(int(planner[key]) & 0xFFFFFFFF for key in PLANNER_HEADER)))
     _floats(out, np.asarray(planner["tier_cells"], dtype="<f4"), np.asarray([planner["compass_scale"]], dtype="<f4"))
+    splat = planner.get("splat")
+    if version >= AMDL_VERSION:
+        out.write(struct.pack("<I", int(splat["channels"]) if splat else 0))
+        if splat:
+            out.write(struct.pack("<6I", *(int(splat[key]) for key in SPLAT_HEADER)))
+            out.write(struct.pack("<5f", *(float(splat[key]) for key in SPLAT_FLOATS)))
+            _floats(out, splat["weight"], splat["bias"])
+    elif splat:
+        raise ValueError("a policy with the camera splat is written as version 13, never 12 or below")
     _floats(out, *(planner[key] for key in PLANNER_ARRAYS))
 
 
@@ -648,6 +688,10 @@ _PLANNER_KEYS = {"vision_weight": "costmap.vision.weight", "vision_bias": "costm
                  "fixed_weight": "planner.fixed.weight", "fixed_bias": "planner.fixed.bias",
                  "recur_weight": "planner.recur.weight", "join_weight": "planner_join.weight",
                  "join_bias": "planner_join.bias"}
+#: The camera splat's header in the planner section (version 13; networks.CameraSplat), after its channel count: the
+#: sample stride and the vision scalars read, then its floats.
+SPLAT_HEADER = ("stride", "scalar_yaw_sin", "scalar_yaw_cos", "scalar_pitch", "scalar_boom", "scalar_render_width")
+SPLAT_FLOATS = ("fov_h", "fov_v", "near", "distance_reference", "zoom_scale")
 #: The map encoder's arrays in the order the tail writes them, and their MapEncoder keys.
 MAP_ARRAYS = ("code_embed", "patch_weight", "patch_bias", "mix_weight", "mix_bias", "embed_weight", "embed_bias",
               "join_weight", "join_bias")
@@ -742,7 +786,9 @@ def tail_weights(actor_state: dict[str, torch.Tensor], stage: dict, names: list[
                                  f"{inputs}")
         crop = own.get("map")
         if crop is not None and "vision.map.patch.weight" in actor_state:
-            from .mappo.networks import CostmapHead, MapEncoder, Planner
+            from .mappo.networks import (IMAGE_NEAR, VISION_SCALAR_BOOM, VISION_SCALAR_PITCH,
+                                         VISION_SCALAR_RENDER_WIDTH, VISION_SCALAR_YAW_COS, VISION_SCALAR_YAW_SIN,
+                                         VISION_ZOOM_SCALE, CameraSplat, CostmapHead, MapEncoder, Planner)
             tiers = int(crop.get("tiers", 1))
             camera["map"] = {"first": crop["first"], "scalars": crop["scalars"], "height": crop["height"],
                              "width": crop["width"], "patch": MapEncoder.PATCH, "tiers": tiers,
@@ -757,11 +803,30 @@ def tail_weights(actor_state: dict[str, torch.Tensor], stage: dict, names: list[
                 compass = own.get("compass") or {}
                 # K from the checkpoint's buffer (mappo.planner_k); a checkpoint from before it ran the old 40.
                 k = int(actor_state["vision.map.planner.k"]) if "vision.map.planner.k" in actor_state else 40
+                # The camera splat (version 13): its planes are conv1's last input channels.
+                splat = None
+                if "vision.map.splat.project.weight" in actor_state:
+                    fov_h, fov_v = own.get("fov", (120.0, 60.0))
+                    splat = {"channels": CameraSplat.CHANNELS, "stride": CameraSplat.STRIDE,
+                             "scalar_yaw_sin": VISION_SCALAR_YAW_SIN, "scalar_yaw_cos": VISION_SCALAR_YAW_COS,
+                             "scalar_pitch": VISION_SCALAR_PITCH, "scalar_boom": VISION_SCALAR_BOOM,
+                             "scalar_render_width": VISION_SCALAR_RENDER_WIDTH, "fov_h": float(fov_h),
+                             "fov_v": float(fov_v), "near": IMAGE_NEAR,
+                             "distance_reference": float(own.get("distance_reference", 1000.0)),
+                             "zoom_scale": VISION_ZOOM_SCALE,
+                             "weight": array("vision.map.splat.project.weight"),
+                             "bias": array("vision.map.splat.project.bias")}
+                    if splat["weight"].shape[0] != CameraSplat.CHANNELS:
+                        raise ValueError(f"the camera splat projects to {splat['weight'].shape[0]} channels, the "
+                                         f"learner's {CameraSplat.CHANNELS}")
+                splat_planes = splat["channels"] + 1 if splat else 0
                 tail["planner"] = {
                     "tiers": tiers, "classes": int(actor_state["vision.map.costmap.out.weight"].shape[0]),
                     "vision": CostmapHead.VISION, "hidden": CostmapHead.HIDDEN, "k": k,
                     "channels": Planner.CHANNELS,
-                    "planes": int(actor_state["vision.map.costmap.conv1.weight"].shape[1]) - CostmapHead.VISION,
+                    "planes": (int(actor_state["vision.map.costmap.conv1.weight"].shape[1]) - CostmapHead.VISION
+                               - splat_planes),
+                    "splat": splat,
                     "readout": MapEncoder.READOUT, "readout_first": MapEncoder.READOUT_FIRST,
                     "compass_present": int(compass.get("present", -1)), "compass_sin": int(compass.get("sin", -1)),
                     "compass_cos": int(compass.get("cos", -1)), "compass_dist": int(compass.get("dist", -1)),
@@ -1112,8 +1177,22 @@ def read_amdl(path: str | Path) -> dict:
             planner["tier_cells"] = floats(tiers, tiers).tolist()
             planner["compass_scale"] = float(floats(1, 1)[0])
             embed = tail["camera"]["embed_weight"].shape[0]
+            planner["splat"] = None
+            splat_planes = 0
+            if version >= 13:
+                (channels_splat,) = u32s(1)
+                if channels_splat:
+                    splat = {"channels": channels_splat, **dict(zip(SPLAT_HEADER, u32s(len(SPLAT_HEADER))))}
+                    splat.update(zip(SPLAT_FLOATS, struct.unpack_from(f"<{len(SPLAT_FLOATS)}f", data, offset)))
+                    offset += 4 * len(SPLAT_FLOATS)
+                    mix_out = tail["camera"]["mix_weight"].shape[0]
+                    splat["weight"] = floats(channels_splat * mix_out, channels_splat, mix_out)
+                    splat["bias"] = floats(channels_splat, channels_splat)
+                    planner["splat"] = splat
+                    splat_planes = channels_splat + 1
             shapes = {"vision_weight": (vision_width, embed), "vision_bias": (vision_width,),
-                      "tier_bias": (tiers, vision_width), "conv1_weight": (hidden, planes + vision_width, 3, 3),
+                      "tier_bias": (tiers, vision_width),
+                      "conv1_weight": (hidden, planes + vision_width + splat_planes, 3, 3),
                       "conv1_bias": (hidden,), "conv2_weight": (hidden, hidden, 3, 3), "conv2_bias": (hidden,),
                       "out_weight": (classes, hidden, 1, 1), "out_bias": (classes,),
                       "fixed_weight": (channels, classes + planes + 1, 3, 3), "fixed_bias": (channels,),

@@ -1139,6 +1139,22 @@ CLASS_MASK = 0x1F
 CLASS_LIMIT = 32
 #: The encoder's patch size when the manifest names none (revision 3 and before: 4 x 4 at 64 x 32).
 DEFAULT_PATCH = 4
+#: The camera's geometry as the sim casts it (Camera.h, VisionCaster.cpp), read by the camera splat (CameraSplat):
+#: the distance byte b is ln(max(d, NEAR) / NEAR) / ln(REFERENCE / NEAR) x 254 (255 sky), so d = NEAR x (REFERENCE /
+#: NEAR) ^ (b / 254); the field of view when the manifest's "camera" names none (Settings::FovH, FovV, degrees); the
+#: vision block's scalars the pose is read from (Vision::Scalar: the yaw offset's sin and cos, the pitch / (pi / 2), the
+#: boom -- the camera's distance behind the pivot after the pull-in -- / ZOOM_SCALE, the cast width / the canonical
+#: width); and ZOOM_SCALE itself.
+IMAGE_NEAR = 0.25
+IMAGE_DISTANCE_REFERENCE = 1000.0
+IMAGE_FOV_H = 120.0
+IMAGE_FOV_V = 60.0
+VISION_SCALAR_YAW_SIN = 0
+VISION_SCALAR_YAW_COS = 1
+VISION_SCALAR_PITCH = 2
+VISION_SCALAR_BOOM = 4
+VISION_SCALAR_RENDER_WIDTH = 10
+VISION_ZOOM_SCALE = 12.0
 #: The entity list's block in stage.json (BlockId::Entities), which comes with a camera.
 ENTITIES_BLOCK = "entities"
 #: The sight block in stage.json (BlockId::Sight, dungeon-curriculum I1 and I2): the visible and remembered entities
@@ -1366,6 +1382,11 @@ def vision_of(stage: dict | None, layout_names: Sequence[str]) -> list[dict | No
             raise ValueError(f"{name}: the vision block's pixel classes {list(described['pixel_classes'])} are not "
                              f"distinct classes of the {described['class_limit']} the wire carries")
         described["render_sizes"] = tuple(tuple(int(v) for v in size) for size in image.get("render_sizes", ()))
+        # The camera it was cast with (the block's informational "camera"): the field of view and the distance
+        # channel's reference, which the camera splat projects the pixels with (CameraSplat).
+        rig = block.get("camera") or {}
+        described["fov"] = (float(rig.get("fov_h", IMAGE_FOV_H)), float(rig.get("fov_v", IMAGE_FOV_V)))
+        described["distance_reference"] = float(rig.get("distance_reference", IMAGE_DISTANCE_REFERENCE))
         look = block.get("look") or image.get("look") or {}
         heads = tuple(int(head) for head in look.get("heads", ()))
         look_names = tuple(str(n) for n in look.get("names", ()))
@@ -1539,30 +1560,150 @@ def goal_plane(forward: torch.Tensor, right: torch.Tensor, present: torch.Tensor
     return plane.reshape(-1, side, side)
 
 
+class CameraSplat(nn.Module):
+    """**The camera splat** (lift, splat; mappo.camera_splat): the camera's patch features laid on the crop's cells,
+    so the costmap head reads what each part of the image shows *where it is*, not only the whole image's embedding
+    broadcast over every cell.
+
+    **Lift.** Every pixel's ray is fixed by the camera's geometry, exactly as the sim casts it (Vision::PlaceCamera,
+    PixelAngles, PixelDirection): the pivot over the body, the camera BOOM yards behind it along the view (the boom the
+    vision scalars carry, after the pull-in against walls), the view at the body's facing plus the free look's yaw
+    offset and at the pitch the scalars carry, and the pixel's own angles -- equiangular, yaw right = ((c + 0.5) / w x
+    FovH - FovH / 2), pitch up = (FovV / 2 - (r + 0.5) / h x FovV) -- of the pixel it was cast as: a frame cast at w x h
+    is scaled up to the canonical W x H by nearest pixel (Vision::Upscale), so canonical column c is cast column
+    floor(c w / W), w the scalars' cast width (h = H w / W: every render size is the canonical's aspect). The distance
+    is the depth channel's byte decoded (d = NEAR (REFERENCE / NEAR) ^ (b / 254); sky, 255, lands nowhere). The hit's
+    place in the body's heading-up frame, yards forward f and right r, needs neither the body's height nor the pivot's:
+    f = -BOOM cos(pitch) cos(yaw) + d cos(e) cos(a), left = -BOOM cos(pitch) sin(yaw) + d cos(e) sin(a) (e and a the
+    ray's elevation and azimuth from the facing; WoW's yaw turns left), the crop's own frame (MentalMap::Crop, the same
+    pose: the body's position and facing of the same decision): cell row floor(side / 2 - f / cell), column floor(side
+    / 2 + r / cell).
+
+    **Splat.** Every STRIDE-th pixel of every STRIDE-th row (rows and columns STRIDE / 2, STRIDE / 2 + STRIDE, ...:
+    2,048 samples at 128 x 64, 16 a patch of 8) carries its patch's features, projected Linear(features -> CHANNELS),
+    to the cell it lands in; a cell's value is the mean over the samples that landed in it, and one more plane says
+    whether any did ("covered"): [N, CHANNELS + 1, side, side] a tier, zeros and covered 0 where nothing landed. Both
+    tiers from the same rays (2 and 8 yd cells). The geometry is computed without a gradient (indices); the features
+    keep theirs, so the costmap's loss teaches the camera's patches what the ground they show is like. Fixed shapes
+    and no read-back (scatter_add over a clamped index with a zero weight for a sample that lands nowhere): a rollout
+    graph captures it."""
+
+    CHANNELS = 8
+    STRIDE = 2
+
+    def __init__(self, image: dict, features: int):
+        super().__init__()
+        self.height, self.width, self.patch = int(image["height"]), int(image["width"]), int(image["patch"])
+        fov_h, fov_v = image.get("fov", (IMAGE_FOV_H, IMAGE_FOV_V))
+        self.fov_h, self.fov_v = math.radians(float(fov_h)), math.radians(float(fov_v))
+        self.log_range = math.log(float(image.get("distance_reference", IMAGE_DISTANCE_REFERENCE)) / IMAGE_NEAR)
+        self.project = nn.Linear(features, self.CHANNELS)
+        rows, cols = torch.meshgrid(torch.arange(self.STRIDE // 2, self.height, self.STRIDE),
+                                    torch.arange(self.STRIDE // 2, self.width, self.STRIDE), indexing="ij")
+        rows, cols = rows.reshape(-1), cols.reshape(-1)
+        # Derived from the image's shape, not learned: each sample's canonical row and column, its distance byte's
+        # offset in the image's bytes ([row][col][4]) and its patch (VisionEncoder.patches' order, row by row).
+        self.register_buffer("sample_row", rows.to(torch.float32), persistent=False)
+        self.register_buffer("sample_col", cols.to(torch.float32), persistent=False)
+        self.register_buffer("sample_byte", (rows * self.width + cols) * IMAGE_BYTES_PER_PIXEL, persistent=False)
+        self.register_buffer("sample_patch", (rows // self.patch) * (self.width // self.patch) + cols // self.patch,
+                             persistent=False)
+
+    @property
+    def samples(self) -> int:
+        return int(self.sample_byte.shape[0])
+
+    def ground(self, pixels: torch.Tensor, scalars: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Where each sample's ray ends in the body's heading-up frame: (forward yards, right yards, hit) [N, samples]
+        each, from the image's bytes [N, image bytes] and the vision block's scalars [N, S] (raw). Float32, no grad."""
+        with torch.no_grad():
+            scalars = scalars.to(torch.float32)
+            distance = pixels[:, self.sample_byte].to(torch.float32)
+            hit = distance < 255.0
+            d = IMAGE_NEAR * torch.exp(distance / 254.0 * self.log_range)
+            yaw_sin = scalars[:, VISION_SCALAR_YAW_SIN, None]
+            yaw_cos = scalars[:, VISION_SCALAR_YAW_COS, None]
+            pitch = scalars[:, VISION_SCALAR_PITCH, None] * (math.pi / 2.0)
+            boom = scalars[:, VISION_SCALAR_BOOM, None] * VISION_ZOOM_SCALE
+            # The size the frame was cast at (the canonical where the scalar says nothing).
+            share = scalars[:, VISION_SCALAR_RENDER_WIDTH, None]
+            cast_w = torch.where(share > 0.0, torch.round(share * self.width), torch.full_like(share, self.width))
+            cast_w = cast_w.clamp(1.0, float(self.width))
+            cast_h = torch.round(cast_w * self.height / self.width).clamp(1.0, float(self.height))
+            cast_col = torch.floor(self.sample_col * cast_w / self.width)
+            cast_row = torch.floor(self.sample_row * cast_h / self.height)
+            yaw_right = (cast_col + 0.5) / cast_w * self.fov_h - self.fov_h / 2.0
+            pitch_up = self.fov_v / 2.0 - (cast_row + 0.5) / cast_h * self.fov_v
+            # The ray's azimuth from the facing, a = yaw - yaw_right, by its sine and cosine.
+            cos_a = yaw_cos * torch.cos(yaw_right) + yaw_sin * torch.sin(yaw_right)
+            sin_a = yaw_sin * torch.cos(yaw_right) - yaw_cos * torch.sin(yaw_right)
+            level = d * torch.cos(pitch + pitch_up)
+            back = boom * torch.cos(pitch)
+            forward = level * cos_a - back * yaw_cos
+            right = -(level * sin_a - back * yaw_sin)
+        return forward, right, hit
+
+    def forward(self, features: torch.Tensor, pixels: torch.Tensor, scalars: torch.Tensor, side: int,
+                cells: Sequence[float]) -> list[torch.Tensor]:
+        """`features` [N, patches, F] (VisionEncoder.features), `pixels` [N, image bytes] uint8, `scalars` [N, S] ->
+        per tier of `cells` yards a cell, [N, CHANNELS + 1, side, side]: the mean of the samples' projected features
+        over the cell, then covered (1 where a sample landed)."""
+        n = features.shape[0]
+        projected = self.project(features.to(self.project.weight.dtype))                     # [N, patches, C]
+        values = projected.gather(1, self.sample_patch[None, :, None].expand(n, -1, self.CHANNELS))
+        forward, right, hit = self.ground(pixels, scalars)
+        out = []
+        for cell in cells:
+            with torch.no_grad():
+                row = torch.floor(side / 2.0 - forward / cell)
+                col = torch.floor(side / 2.0 + right / cell)
+                inside = hit & (row >= 0) & (row < side) & (col >= 0) & (col < side)
+                index = torch.where(inside, row * side + col, torch.zeros_like(row)).long()
+                weight = inside.to(values.dtype)
+            sums = values.new_zeros((n, side * side, self.CHANNELS)).scatter_add(
+                1, index[:, :, None].expand(-1, -1, self.CHANNELS), values * weight[:, :, None])
+            counts = weight.new_zeros((n, side * side)).scatter_add(1, index, weight)
+            mean = sums / counts.clamp(min=1.0)[:, :, None]
+            plane = torch.cat([mean, (counts > 0).to(mean.dtype)[:, :, None]], dim=-1)
+            out.append(plane.transpose(1, 2).reshape(n, self.CHANNELS + 1, side, side))
+        return out
+
+
 class CostmapHead(nn.Module):
     """**The costmap head** (vision movement curriculum, CONTRACT.md sec 5 (b)): from a tier's decoded map planes
     (MapEncoder.planes, [N, H, W, P]) and the camera's embedding broadcast over the crop (Linear EMBED -> VISION, plus a
     learned bias per tier, the same head on both tiers), two 3 x 3 convolutions of HIDDEN channels with SiLU and a 1 x 1
     to TRAV_CLASSES logits a cell: the egocentric traversability the policy plans on, trained by cross-entropy against
-    the sim's bake (trainer aux.costmap_coef) and never by the return."""
+    the sim's bake (trainer aux.costmap_coef) and never by the return.
+
+    With the camera splat (mappo.camera_splat, `splat` its planes a cell: CameraSplat.CHANNELS + 1) conv1 also reads
+    the tier's splat planes, after the broadcast ones: [planes, vision, splat features, covered]. A head without it is
+    exactly what it was."""
 
     VISION = 8
     HIDDEN = 32
 
-    def __init__(self, planes: int, vision_width: int, tiers: int):
+    def __init__(self, planes: int, vision_width: int, tiers: int, splat: int = 0):
         super().__init__()
+        self.splat = int(splat)
         self.vision = _linear(vision_width, self.VISION, 1.0)
         self.tier_bias = nn.Parameter(torch.zeros(tiers, self.VISION))
-        self.conv1 = nn.Conv2d(planes + self.VISION, self.HIDDEN, 3, padding=1)
+        self.conv1 = nn.Conv2d(planes + self.VISION + self.splat, self.HIDDEN, 3, padding=1)
         self.conv2 = nn.Conv2d(self.HIDDEN, self.HIDDEN, 3, padding=1)
         self.out = nn.Conv2d(self.HIDDEN, TRAV_CLASSES, 1)
 
-    def forward(self, planes: torch.Tensor, camera: torch.Tensor, tier: int) -> torch.Tensor:
-        """`planes` [N, P, H, W], `camera` [N, vision_width] -> logits [N, TRAV_CLASSES, H, W]."""
+    def forward(self, planes: torch.Tensor, camera: torch.Tensor, tier: int,
+                splat: torch.Tensor | None = None) -> torch.Tensor:
+        """`planes` [N, P, H, W], `camera` [N, vision_width], `splat` [N, splat, H, W] (CameraSplat; required exactly
+        when the head has splat planes) -> logits [N, TRAV_CLASSES, H, W]."""
         silu = nn.functional.silu
+        if (splat is None) != (self.splat == 0):
+            raise ValueError(f"the costmap head reads {self.splat} camera splat planes; "
+                             f"{'none were' if splat is None else 'some were'} given")
         seen = self.vision(camera.to(self.vision.weight.dtype)) + self.tier_bias[tier].to(self.vision.weight.dtype)
         seen = seen[:, :, None, None].expand(-1, -1, planes.shape[-2], planes.shape[-1])
-        x = silu(self.conv1(torch.cat([planes.to(seen.dtype), seen], dim=1)))
+        inputs = [planes.to(seen.dtype), seen] + ([splat.to(seen.dtype)] if splat is not None else [])
+        x = silu(self.conv1(torch.cat(inputs, dim=1)))
         return self.out(silu(self.conv2(x)))
 
 
@@ -1669,7 +1810,8 @@ class MapEncoder(nn.Module):
     READOUT_FIRST = 22
 
     def __init__(self, crop: dict, class_embedding: nn.Embedding, out_width: int, starts: Sequence[int],
-                 compass: Sequence[dict | None] = (), planner_k: int = Planner.K):
+                 compass: Sequence[dict | None] = (), planner_k: int = Planner.K, splat: dict | None = None,
+                 splat_features: int = 0):
         super().__init__()
         self.height, self.width = crop["height"], crop["width"]
         if self.height % self.PATCH or self.width % self.PATCH:
@@ -1702,7 +1844,8 @@ class MapEncoder(nn.Module):
         self.compass_scale = COMPASS_SCALE
         if self.tiers > 1:
             self.tier_embed = nn.Parameter(torch.zeros(self.tiers, self.WIDTHS[1]))
-            self.costmap = CostmapHead(self.planes_per_cell, out_width, self.tiers)
+            splat_planes = CameraSplat.CHANNELS + 1 if splat is not None else 0
+            self.costmap = CostmapHead(self.planes_per_cell, out_width, self.tiers, splat_planes)
             self.planner = Planner(TRAV_CLASSES + self.planes_per_cell + 1, planner_k)
             self.planner_join = _linear(self.tiers * self.READOUT, out_width, math.sqrt(2))
             # Per layout the compass block's columns (present, bearing sin, cos, distance; compass_of), -1 without:
@@ -1711,6 +1854,10 @@ class MapEncoder(nn.Module):
             self.register_buffer("compass", torch.tensor(columns or [[-1] * 4], dtype=torch.long), persistent=False)
             scales = [c["scale"] for c in compass if c]
             self.compass_scale = float(scales[0]) if scales else COMPASS_SCALE
+        # The camera splat (mappo.camera_splat; `splat` the camera's image descriptor, vision_of): the camera's patch
+        # features laid on both tiers' cells for the costmap head. Built last and only when asked, so a map without it
+        # has exactly the parameters and the random draws it had. Nothing reads it on a one-tier map (no costmap head).
+        self.splat = CameraSplat(splat, splat_features) if splat is not None and self.tiers > 1 else None
 
     @property
     def planner_on(self) -> bool:
@@ -1750,21 +1897,31 @@ class MapEncoder(nn.Module):
         return forward, right, present
 
     def plan(self, obs: torch.Tensor, layout: torch.Tensor, decoded: list[dict[str, torch.Tensor]],
-             planes: list[torch.Tensor], camera: torch.Tensor, plan_out: dict | None = None) -> torch.Tensor:
+             planes: list[torch.Tensor], camera: torch.Tensor, plan_out: dict | None = None,
+             splat: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None = None) -> torch.Tensor:
         """The costmap head and the planner over both tiers: the readouts [N, tiers x READOUT], detached (the caller
         joins them; forward). With `plan_out` (a dict) the parts are left in it: "costmap" (logits
         [N, C, H, W] a tier), "cost_to_go" (-value x 100, yards, [N, H, W] a tier), "value", "goal_plane", "readout"
         [N, tiers x READOUT] and "pool" [N, (H / CELL_POOL) x (W / CELL_POOL)], the fine tier's value averaged over
         the cell pointer's blocks (its bonus). Computed under the caller's grad mode: the trainer's aux pass keeps the
-        graph, every other call runs it without one (the readouts are detached either way)."""
+        graph, every other call runs it without one (the readouts are detached either way). `splat` (the camera's
+        patch features [N, patches, F], its image bytes [N, image bytes] and its scalars [N, S]; VisionEncoder.forward)
+        feeds the camera splat where the map has one (CameraSplat), its planes in plan_out's "splat" a tier."""
         forward, right, present = self.goal(obs, layout)
         side = self.height
         c = self.READOUT_FIRST
         out = {"costmap": [], "cost_to_go": [], "value": [], "goal_plane": []}
+        splats: list[torch.Tensor | None] = [None] * len(planes)
+        if self.splat is not None:
+            if splat is None:
+                raise ValueError("the map's costmap head reads the camera splat: the camera's patch features, image "
+                                 "and scalars have to come with the crop (VisionEncoder.forward)")
+            splats = self.splat(*splat, side, self.tier_cells)
+            out["splat"] = splats
         readouts = []
         for tier, (planes_tier, cell) in enumerate(zip(planes, self.tier_cells)):
             nchw = planes_tier.permute(0, 3, 1, 2)
-            logits = self.costmap(nchw, camera, tier)
+            logits = self.costmap(nchw, camera, tier, splats[tier])
             plane = goal_plane(forward, right, present, side, cell)
             inputs = torch.cat([torch.softmax(logits.to(torch.float32), dim=1), nchw.to(torch.float32),
                                 plane[:, None]], dim=1)
@@ -1796,12 +1953,14 @@ class MapEncoder(nn.Module):
 
     def forward(self, obs: torch.Tensor, layout: torch.Tensor, crops: torch.Tensor,
                 camera: torch.Tensor | None = None, plan_out: dict | None = None, grad: bool = False,
-                planner: dict | None = None) -> torch.Tensor:
+                planner: dict | None = None,
+                splat: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None = None) -> torch.Tensor:
         """What the map adds to the camera's embedding (before its SiLU), [N, out_width]. `camera` [N, out_width] is
         the camera's own embedding (the costmap head reads it; None skips the planner), `plan_out` and `grad` as
         plan()'s: the planner runs without a graph unless `grad`. `planner` ({"readout" [N, readout_width], "pool"
         [N, pool_width]}: the rows' cached plan, MappoTrainer's acting state) is read instead of running it -- the
-        planner runs every mappo.planner_every decisions and its readouts are reused in between."""
+        planner runs every mappo.planner_every decisions and its readouts are reused in between. `splat`: the camera
+        splat's inputs (plan())."""
         silu = nn.functional.silu
         layout = layout.reshape(-1).long()
         columns = (self.start[layout].clamp(min=0)[:, None] + self.offsets[None, :]).clamp(max=obs.shape[-1] - 1)
@@ -1828,7 +1987,7 @@ class MapEncoder(nn.Module):
             # The planner without a graph unless asked (the aux pass): its readouts are detached either way, and the
             # join learns from the return outside the no_grad.
             with torch.set_grad_enabled(grad and torch.is_grad_enabled()):
-                readout = self.plan(obs, layout, decoded, planes, camera, plan_out)
+                readout = self.plan(obs, layout, decoded, planes, camera, plan_out, splat)
             out = out + self.planner_join(readout.to(self.planner_join.weight.dtype)).to(out.dtype)
         return out
 
@@ -2176,14 +2335,15 @@ class VisionEncoder(nn.Module):
     CLASS_EMBED = 6
 
     @classmethod
-    def update_bytes_per_row(cls, image: dict) -> int:
+    def update_bytes_per_row(cls, image: dict, splat: bool = False) -> int:
         """Roughly the device memory one row's camera (and map) keeps for the update's backward pass, in bytes, from the
         stage's vision descriptor: float32 tensors the encoder saves per pixel (the decoded channels, the planes
         without the class, the concatenated planes with the class one-hot and the patch copy of them) and per map
         cell (the code and class embeddings, the values, the planes and their patch copy, and the int64 decode).
         The pixel class is a one-hot (no embedding output kept), so a row of the 128 x 64 camera is 1.0 MB against the
         embedded design's 1.15 MB (0.98 MB measured then, 5.6 GiB over 6,144 rows, move1_controls.yaml); not
-        re-measured. The map adds 0.45 MB."""
+        re-measured. The map adds 0.45 MB; the camera splat (`splat`, mappo.camera_splat) its samples' features, its
+        geometry and its planes a tier, about 0.3 MB more."""
         channels = int(image["channels"])
         planes = channels - 1 + len(image["pixel_classes"])
         pixels = int(image["height"]) * int(image["width"])
@@ -2199,6 +2359,12 @@ class VisionEncoder(nn.Module):
                 # and logits, their softmax, the VIN's input planes and the fixed step costs, float32 a cell.
                 planes = CostmapHead.HIDDEN * 2 + 2 * TRAV_CLASSES + (TRAV_CLASSES + per_cell + 1) + Planner.CHANNELS
                 total += int(crop["height"]) * int(crop["width"]) * 4 * planes * tiers
+                if splat:
+                    # The camera splat (CameraSplat): each sample's projected features (and their gradient's copy),
+                    # its float32 geometry (about eight arrays) and int64 index a tier, and its planes a tier.
+                    samples = pixels // (CameraSplat.STRIDE * CameraSplat.STRIDE)
+                    total += samples * 4 * (2 * CameraSplat.CHANNELS + 8 + 4 * tiers)
+                    total += int(crop["height"]) * int(crop["width"]) * 4 * 2 * (CameraSplat.CHANNELS + 2) * tiers
         return total
 
     @property
@@ -2217,7 +2383,8 @@ class VisionEncoder(nn.Module):
     #: The dropped columns stay blind to the adapters, so a network with and without reads the same checkpoint.
     DROPPABLE = ("map", "coverage")
 
-    def __init__(self, descriptors: Sequence[dict | None], drop: Sequence[str] = (), planner_k: int = Planner.K):
+    def __init__(self, descriptors: Sequence[dict | None], drop: Sequence[str] = (), planner_k: int = Planner.K,
+                 splat: bool = False):
         super().__init__()
         unknown = sorted(set(drop) - set(self.DROPPABLE))
         if unknown:
@@ -2276,7 +2443,7 @@ class VisionEncoder(nn.Module):
                 self.map = MapEncoder(crop, self.class_embed, self.EMBED,
                                       [c["first"] if c is not None else -1 for c in crops],
                                       [entry.get("compass") if entry is not None else None for entry in descriptors],
-                                      planner_k)
+                                      planner_k, image if splat else None, self.WIDTHS[1])
         # The coarse coverage grid (general search sec 5), where the layouts have the block: its columns are read raw
         # by its own small encoder, whose join adds to the embedding as the map's does.
         grids = [entry.get("coverage") if entry is not None else None for entry in descriptors]
@@ -2371,7 +2538,10 @@ class VisionEncoder(nn.Module):
         out = self.embed(torch.cat([self.keypoints(features), scalars], dim=-1))
         if self.map is not None:
             crops = image.reshape(-1, self.image_bytes + self.map_bytes)[:, self.image_bytes:]
-            out = out + self.map(obs, layout, crops, out, plan_out, grad, planner).to(out.dtype)
+            # The camera splat's inputs (mappo.camera_splat): the patch features, the image's bytes (its depth) and
+            # the scalars (the camera's pose), raw.
+            splat = (features, self.pixels(image), scalars) if self.map.splat is not None else None
+            out = out + self.map(obs, layout, crops, out, plan_out, grad, planner, splat).to(out.dtype)
         if self.coverage is not None:
             out = out + self.coverage(obs, layout).to(out.dtype)
         if self.entities is not None:
@@ -2627,20 +2797,21 @@ class HeadingHead(nn.Module):
 
 
 def _attach_vision(network: nn.Module, vision, encoder: "VisionEncoder | None" = None,
-                   drop: Sequence[str] = (), planner_k: int = Planner.K) -> None:
+                   drop: Sequence[str] = (), planner_k: int = Planner.K, splat: bool = False) -> None:
     """Give an actor or critic the camera: the encoder (VisionEncoder) and its own join (VisionJoin), and keep the
     camera's columns -- image and scalars -- out of every layout's adapter (attach_blind_columns, tag "vision") and
     normaliser (RunningNorm.hide). `vision` is vision_of()'s per-layout image, or None (no camera: nothing changes).
     With `encoder` (another network's: the trainer's critic gets the actor's), the network reads that one through a
     reference that is not one of its modules -- not in its parameters, its state dict or its .to() -- else it builds
     and owns its own. `drop` names the camera-side inputs an owned encoder leaves unread (VisionEncoder.DROPPABLE,
-    mappo.drop_inputs)."""
+    mappo.drop_inputs); `splat` whether its map's costmap head reads the camera splat (CameraSplat,
+    mappo.camera_splat)."""
     network.vision = None
     network.vision_join = None
     if vision is None:
         return
     if encoder is None:
-        network.vision = VisionEncoder(vision, drop, planner_k)
+        network.vision = VisionEncoder(vision, drop, planner_k, splat)
     else:
         share_vision(network, encoder)
     network.vision_join = VisionJoin(network.vision.has_vision, network.adapters[0].out_features)
@@ -2871,6 +3042,30 @@ def materialised_state(state: dict, drop: bool = False) -> dict:
     return out
 
 
+#: The camera splat's parameters (CameraSplat, mappo.camera_splat) and the costmap head's first convolution, whose
+#: input channels grow by the splat's planes when it is on.
+SPLAT_PREFIX = "vision.map.splat."
+COSTMAP_CONV1 = "vision.map.costmap.conv1.weight"
+
+
+def grow_costmap_inputs(state: dict, current: dict) -> tuple[dict, list[str]]:
+    """A saved actor's state for an actor whose costmap head reads more input channels than the checkpoint's (the
+    camera splat switched on over a checkpoint without it, mappo.camera_splat): conv1's weight with the checkpoint's
+    channels first, as they were, and the new ones -- the splat's planes, after the map's and the broadcast camera's --
+    at zero, so the costmap head starts exactly as it was and the splat comes in as conv1 learns to read it. Returns the
+    state and the keys grown (none for a checkpoint of the same shape, or of a shape this does not fit: the load then
+    reports it as before)."""
+    old, new = state.get(COSTMAP_CONV1), current.get(COSTMAP_CONV1)
+    if old is None or new is None or old.shape == new.shape:
+        return state, []
+    if old.dim() != 4 or new.dim() != 4 or old.shape[0] != new.shape[0] or old.shape[2:] != new.shape[2:] \
+            or old.shape[1] > new.shape[1]:
+        return state, []
+    grown = torch.zeros(new.shape, dtype=old.dtype, device=old.device)
+    grown[:, :old.shape[1]] = old
+    return {**state, COSTMAP_CONV1: grown}, [COSTMAP_CONV1]
+
+
 def load_actor_state(actor: nn.Module, state: dict) -> list[str]:
     """actor.load_state_dict(state), except that an actor saved before the goal scale existed loads with it at zero,
     one saved before the goal head's pointer existed loads with the pointer as initialised (a no-op), and one saved with
@@ -2880,12 +3075,25 @@ def load_actor_state(actor: nn.Module, state: dict) -> list[str]:
     The shared movement (mappo.shared_blocks): an actor without sharing reads a sharing checkpoint materialised
     (materialised_state: the same map, in every layout's own weights); a sharing actor reads one saved without sharing
     with its shared weights averaged from the layouts' own (LayoutActor.share_from_layouts), and a sharing checkpoint
-    as it is. The index buffers are always the actor's own."""
+    as it is. The index buffers are always the actor's own.
+
+    The camera splat (mappo.camera_splat): an actor with it reads a checkpoint without it with the splat's projection as
+    initialised and the costmap head's conv1 grown (grow_costmap_inputs: the new channels at zero), and says so; conv1
+    is returned with the grown goal tensors (its optimiser moments have the old shape)."""
     sharing = getattr(actor, "shared_columns", None) is not None
     # Materialised either way, so the layouts' own weights are whole whatever the checkpoint shared.
     state = materialised_state(state, drop=not sharing)
     state = {key: value for key, value in state.items() if key not in SHARED_INDEX_KEYS}
-    state, grown = grow_goal_rows(without_blind_columns(state), actor.state_dict())
+    current = actor.state_dict()
+    state, grown = grow_goal_rows(without_blind_columns(state), current)
+    saved_inputs = int(state[COSTMAP_CONV1].shape[1]) if COSTMAP_CONV1 in state else 0
+    state, widened = grow_costmap_inputs(state, current)
+    if widened:
+        print(f"Load: the checkpoint's costmap head reads {saved_inputs} input channels, this actor's "
+              f"{current[COSTMAP_CONV1].shape[1]} (the camera splat, mappo.camera_splat): conv1's "
+              f"{current[COSTMAP_CONV1].shape[1] - saved_inputs} new channels start at zero, the splat's projection "
+              f"as initialised", flush=True)
+        grown = [*grown, *widened]
     if getattr(actor, "heading_head", None) is None:
         dropped = [key for key in state if key.startswith(HEADING_PREFIX)]
         if dropped:
@@ -2899,7 +3107,7 @@ def load_actor_state(actor: nn.Module, state: dict) -> list[str]:
              if key not in _GOAL_SCALE_KEYS and not key.startswith(_GOAL_POINTER_PREFIXES)
              and not key.split(".")[-1].startswith(BLIND_KEEP_PREFIXES)
              and key not in SHARED_PARAMETER_KEYS and key not in SHARED_INDEX_KEYS
-             and not key.startswith(HEADING_PREFIX)]
+             and not key.startswith(HEADING_PREFIX) and not (widened and key.startswith(SPLAT_PREFIX))]
     if wrong or unexpected:
         raise RuntimeError(f"Error(s) in loading state_dict for {type(actor).__name__}: missing {wrong}, "
                            f"unexpected {list(unexpected)}")
@@ -2934,7 +3142,7 @@ class LayoutActor(nn.Module):
                  recurrent_size: int = 0, goal_count: int = 0, goal_targets: int = 1, slow_size: int = 0,
                  foresight_feedback: bool = False, lookahead: bool = False, goal_slots: int = 1,
                  vision=None, drop_inputs: Sequence[str] = (), planner_k: int = Planner.K, sharing=None,
-                 heading: Sequence[bool] | None = None):
+                 heading: Sequence[bool] | None = None, camera_splat: bool = False):
         """layouts: (obs dim, action count) per layout; hidden: widths, the first being the adapters' output.
 
         `foresight_outputs` adds a head on the trunk that predicts what happens after this decision (mappo.trainer's
@@ -2951,6 +3159,9 @@ class LayoutActor(nn.Module):
 
         `heading` (heading_of: stage.json's continuous outputs) is per layout whether it steers by a continuous heading
         (HeadingHead, one for all of them); None: no heading head.
+
+        `camera_splat` (mappo.camera_splat) lays the camera's patch features on the costmap head's cells (CameraSplat);
+        off, the network is exactly what it was.
         """
         super().__init__()
         if not hidden:
@@ -2998,7 +3209,7 @@ class LayoutActor(nn.Module):
         self.foresight_proj = _linear(foresight_outputs, head_width, 0.01) if self.foresight_feedback else None
         # The camera (VisionEncoder; vision_of(stage.json), None = no layout has one), less the inputs dropped
         # (mappo.drop_inputs).
-        _attach_vision(self, vision, drop=drop_inputs, planner_k=planner_k)
+        _attach_vision(self, vision, drop=drop_inputs, planner_k=planner_k, splat=camera_splat)
         # The sight list's pointer heads (SightPointers), where the layouts have a sight block: the actor's own.
         sight = self.vision.sight if self.vision is not None else None
         self.sight_pointers = SightPointers(sight.presses, head_width) if sight is not None else None

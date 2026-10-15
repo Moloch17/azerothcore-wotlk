@@ -612,7 +612,7 @@ def choose_vision_chunk_rows(config: TrainConfig, spec, vision, device,
     rollout_rows = config.rollout_length * spec.num_envs * spec.agents_per_env
     batch_rows = max(1, rollout_rows // max(1, min(cfg.minibatches, spec.num_envs)))
     held = rollout_rows * (4 * (spec.obs_dim + spec.state_dim) + spec.image_bytes + spec.map_bytes)
-    per_row = VisionEncoder.update_bytes_per_row(image) * VISION_CHUNK_PEAK
+    per_row = VisionEncoder.update_bytes_per_row(image, bool(cfg.camera_splat)) * VISION_CHUNK_PEAK
     room = VISION_CHUNK_BUDGET * (free_bytes - held - VISION_CHUNK_RESERVE)
     fits = int(room // per_row) if room > 0 else 0
     if fits >= batch_rows:

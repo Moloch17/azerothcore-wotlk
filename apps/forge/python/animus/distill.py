@@ -111,7 +111,8 @@ def frozen_actor(checkpoint: dict, device) -> LayoutActor:
     actor = LayoutActor(t_layouts, hidden, foresight_outputs, recurrent_size, goal_count, goal_targets, slow_size,
                         bool(mappo.get("foresight_feedback", False)), bool(mappo.get("goal_lookahead", False)),
                         goal_slots=int(mappo.get("goal_slots", 1) or 1), vision=vision,
-                        heading=heading_of(t_stage, t_names))
+                        heading=heading_of(t_stage, t_names),
+                        camera_splat=bool(mappo.get("camera_splat", False)))
     load_actor_state(actor, checkpoint["trainer"]["actor"])
     actor.to(device).eval()
     for param in actor.parameters():

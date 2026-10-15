@@ -242,6 +242,10 @@ class MappoConfig:
     # (134.7 ms on dev, 2026-10-13); at K=20 every 8th it is amortised to a fraction of the camera's.
     planner_k: int = 20
     planner_every: int = 0
+    # The camera splat (networks.CameraSplat; only with the planner): the camera's patch features laid on the costmap
+    # head's cells by each pixel's depth and the camera's pose (lift, splat), beside the broadcast embedding. Off: the
+    # network is exactly what it was. Seeding from a checkpoint without it grows conv1 with zeroed channels.
+    camera_splat: bool = False
 
 
 @dataclass
@@ -851,7 +855,8 @@ class MappoTrainer:
                                  self.goal_kinds, self.goal_targets, self.slow_goal_size, config.foresight_feedback,
                                  config.goal_lookahead, self.goal_slots,
                                  self.vision, tuple(config.drop_inputs), max(1, int(config.planner_k)),
-                                 sharing=sharing, heading=heading).to(self.train_device)
+                                 sharing=sharing, heading=heading,
+                                 camera_splat=bool(config.camera_splat)).to(self.train_device)
         # Whether the actor steers by a continuous heading (protocol 32's ACT section; HeadingHead).
         self.heading = self.actor.heading_head is not None
         # (readout width, pool width) of the cached plan a row (VisionEncoder.planner_widths), (0, 0) without one.

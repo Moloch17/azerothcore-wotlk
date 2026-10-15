@@ -9,6 +9,13 @@ run_name: nav2_detour
 # A ceiling, not a target: convergence ends the stage.
 total_env_steps: 150000000
 
+mappo:
+  # The camera splat (networks.CameraSplat): each camera patch's features laid on the costmap head's cells where its
+  # pixels' rays land (depth and the camera's pose; lift, splat), so a door or pillar in view is a cell, not only a
+  # direction of the broadcast embedding. On from here for the rest of the chain (nav1 runs without it). Seeded from
+  # nav1: conv1 grows with the splat's channels at zero and the splat's projection starts fresh.
+  camera_splat: true
+
 status:
   targets:
     # SPL 0.85 at the 1.6-2.5 detour bin is the PLAN's reading; here the display target is the stage-wide SPL.

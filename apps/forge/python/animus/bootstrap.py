@@ -34,7 +34,7 @@ import io
 
 import torch
 
-from .mappo.networks import grow_goal_rows, materialised_state
+from .mappo.networks import COSTMAP_CONV1, SPLAT_PREFIX, grow_costmap_inputs, grow_goal_rows, materialised_state
 from .stages import Span, block_revisions, block_spans
 
 
@@ -675,18 +675,32 @@ def _seed_vision(new: dict, old: dict, new_stage: dict | None, old_stage: dict |
 def _seed_map(new: dict, old: dict) -> str | None:
     """Carry the mental map's encoder from a checkpoint that has one, key by key where the shapes agree; else it
     starts fresh. Whatever starts fresh with an output into the camera's embedding -- the map's join -- is zeroed, so
-    the seeded policy starts as it was. None when this network has no map."""
+    the seeded policy starts as it was. None when this network has no map.
+
+    The camera splat (mappo.camera_splat) over a checkpoint without it: the costmap head's conv1 is carried grown
+    (grow_costmap_inputs: the checkpoint's channels as they were, the splat's at zero) and the splat's projection starts
+    fresh; neither zeroes the joins, since the costmap head computes exactly what it did until conv1 learns to read the
+    splat."""
     keys = [key for key in new if key.startswith(MAP)]
     if not keys:
         return None
+    saved_inputs = int(old[COSTMAP_CONV1].shape[1]) if COSTMAP_CONV1 in old else 0
+    old, widened = grow_costmap_inputs(old, new)
     carried = [key for key in keys if key in old and old[key].shape == new[key].shape]
     for key in carried:
         new[key].copy_(old[key])
     fresh = [key for key in keys if key not in carried]
     # A join that was carried over an encoder that was not reads that encoder's fresh output through weights trained on
     # another one (exploration v3: a map of six channels has a patch and an embed of other shapes), so it is zeroed
-    # too: the map comes in as the join learns, and the seeded policy acts as it did.
-    stale_join = any(not key.startswith(MAP_ZEROED) for key in fresh)
+    # too: the map comes in as the join learns, and the seeded policy acts as it did. The splat's own projection is
+    # not such a part: conv1 reads it through zeros.
+    stale_join = any(not key.startswith(MAP_ZEROED) and not (widened and key.startswith(SPLAT_PREFIX))
+                     for key in fresh)
+    if widened:
+        print(f"  map encoder: the checkpoint's costmap head reads {saved_inputs} input channels, this one "
+              f"{new[COSTMAP_CONV1].shape[1]} (the camera splat, mappo.camera_splat): conv1 carried with its "
+              f"{new[COSTMAP_CONV1].shape[1] - saved_inputs} new channels at zero, the splat's projection "
+              f"({sum(1 for key in fresh if key.startswith(SPLAT_PREFIX))} tensors) fresh", flush=True)
     for key in keys:
         if key.startswith(MAP_ZEROED) and (key in fresh or stale_join):
             new[key].zero_()
