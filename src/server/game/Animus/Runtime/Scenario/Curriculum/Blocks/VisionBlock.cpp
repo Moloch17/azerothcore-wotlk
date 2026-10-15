@@ -20,9 +20,11 @@
 #include "Camera.h"
 #include "EntitySensor.h"
 #include "FreeLook.h"
+#include "Layout.h"
 #include "MapVisionWorld.h"
 #include "Player.h"
 #include "SeatView.h"
+#include "StageDefinition.h"
 #include "UnitBody.h"
 #include "VisionCaster.h"
 #include "VisionCost.h"
@@ -39,7 +41,7 @@ Animus::Curriculum::BlockSize Animus::Curriculum::VisionBlock::Size(Layout const
     return BlockSize{ Vi::ObsCount(Vi::Current()), 0 };
 }
 
-void Animus::Curriculum::VisionBlock::DescribeManifest(Layout const& /*layout*/, boost::json::object& block) const
+void Animus::Curriculum::VisionBlock::DescribeManifest(Layout const& layout, boost::json::object& block) const
 {
     Vi::Settings const& settings = Vi::Current();
     boost::json::object image;
@@ -77,10 +79,11 @@ void Animus::Curriculum::VisionBlock::DescribeManifest(Layout const& /*layout*/,
     for (Vi::Resolution const& size : settings.RenderSizes)
         sizes.push_back(boost::json::array{ size.Width, size.Height });
     image["render_sizes"] = std::move(sizes);
-    // ... and each one's weight in the draw at reset, in the same order.
+    // ... and each one's weight in the draw at reset, in the same order (all 1 in a stage with EvenRenderSizes).
+    bool const even = layout.Stage && layout.Stage->EvenRenderSizes;
     boost::json::array weights;
     for (std::size_t i = 0; i < settings.RenderSizes.size(); ++i)
-        weights.push_back(double(i < settings.RenderWeights.size() ? settings.RenderWeights[i] : 1.0f));
+        weights.push_back(double(Vi::RenderWeight(settings, i, even)));
     image["render_weights"] = std::move(weights);
     block["image"] = std::move(image);
 

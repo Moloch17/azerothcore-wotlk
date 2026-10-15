@@ -318,6 +318,11 @@ namespace Animus::Curriculum
         /// evaluation alike: the draw's usual lean to the high and low bands (Characters.HighLevelChance and
         /// LowLevelChance) is off. The movement stages (the user, 2026-10-13: "evenly train all classes and levels").
         bool EvenLevels = false;
+        /// Every one of the camera's render sizes (AnimusForge.Vision.RenderSizes) drawn equally often at a seat's
+        /// reset, training and evaluation alike: the sizes' conf weights (the default's lean away from 128 x 64) are
+        /// off for this stage. Every size stays in the draw -- the low CPU tiers a shipped model renders at too. The
+        /// movement stages (the user, 2026-10-15: "draw every render size evenly").
+        bool EvenRenderSizes = false;
         /// Tiers of the mental map's crop in the map block (1: the 2-yd crop; 2: and the 8-yd coarse tier, map
         /// block revision 5, the nav stages).
         uint8 MapTiers = 1;

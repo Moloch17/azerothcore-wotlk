@@ -882,7 +882,8 @@ namespace
         // 2026-10-13): PointNav -- a point goal whose position is always known (the compass: the minimap marker) and
         // whose route is not, in cleared dungeons, one seat, every race and class at every level, evenly (EvenLevels:
         // 1-80, a death knight 55-80; the user, 2026-10-13), and every class equally often (no per-class reweighting
-        // in the learner). A second root of the curriculum: nav1 seeds from nothing
+        // in the learner); the camera draws every render size equally often (EvenRenderSizes; the user, 2026-10-15).
+        // A second root of the curriculum: nav1 seeds from nothing
         // before it (plan decision 7), the chain nav1 -> nav6 seeds by name. **Dungeons only in this build** (the
         // camera's scene baker bakes whole maps; a continent box is Phase B): every arena is an emptied instance with
         // its own replica per env, its traversability bake (Vision/TravBake: a 2-yd grid of what a player's controller
@@ -919,6 +920,7 @@ namespace
             .MapId = MAP_STORMWIND_STOCKADE,
             .SpawnPoints = { DungeonEntrance(MAP_STORMWIND_STOCKADE) },
             .EvenLevels = true,
+            .EvenRenderSizes = true,
             .MapTiers = 2,
         });
 
@@ -941,6 +943,7 @@ namespace
             .MapId = MAP_STORMWIND_STOCKADE,
             .SpawnPoints = { DungeonEntrance(MAP_STORMWIND_STOCKADE) },
             .EvenLevels = true,
+            .EvenRenderSizes = true,
             .MapTiers = 2,
         });
 
@@ -964,6 +967,7 @@ namespace
             .MapId = MAP_DEADMINES,
             .SpawnPoints = { DungeonEntrance(MAP_DEADMINES) },
             .EvenLevels = true,
+            .EvenRenderSizes = true,
             .MapTiers = 2,
         });
 
@@ -991,6 +995,7 @@ namespace
             .MapId = MAP_GNOMEREGAN,
             .SpawnPoints = { DungeonEntrance(MAP_GNOMEREGAN) },
             .EvenLevels = true,
+            .EvenRenderSizes = true,
             .MapTiers = 2,
         });
 
@@ -1013,6 +1018,7 @@ namespace
             .MapId = MAP_BLACKFATHOM_DEEPS,
             .SpawnPoints = { DungeonEntrance(MAP_BLACKFATHOM_DEEPS) },
             .EvenLevels = true,
+            .EvenRenderSizes = true,
             .MapTiers = 2,
         });
 
@@ -1049,6 +1055,7 @@ namespace
             .MapId = MAP_RAGEFIRE_CHASM,
             .SpawnPoints = { DungeonEntrance(MAP_RAGEFIRE_CHASM) },
             .EvenLevels = true,
+            .EvenRenderSizes = true,
             .MapTiers = 2,
         });
 

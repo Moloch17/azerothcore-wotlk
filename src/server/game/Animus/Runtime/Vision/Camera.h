@@ -87,32 +87,37 @@ namespace Animus::Vision
     [[nodiscard]] std::vector<Resolution> ParseRenderSizes(std::string const& text, Settings const& canonical,
         std::vector<float>& weights, std::vector<std::string>& errors);
 
-    /// The size a seat casts its frames at this episode: one of RenderSizes, drawn by RenderWeights (a missing or
-    /// non-positive weight counts as 1), `roll(total)` giving a number in [0, total) from the pool's random numbers.
+    /// RenderSizes[i]'s weight in the draw: RenderWeights[i] (a missing or non-positive weight counts as 1), or 1
+    /// for every size when `even` (a stage's StageDefinition::EvenRenderSizes: every size equally often).
+    [[nodiscard]] inline float RenderWeight(Settings const& settings, std::size_t i, bool even = false)
+    {
+        if (even)
+            return 1.0f;
+        return i < settings.RenderWeights.size() && settings.RenderWeights[i] > 0.0f ? settings.RenderWeights[i] : 1.0f;
+    }
+
+    /// The size a seat casts its frames at this episode: one of RenderSizes, drawn by RenderWeight (RenderWeights, or
+    /// every size alike when `even`), `roll(total)` giving a number in [0, total) from the pool's random numbers.
     /// Rolled only when there is a choice -- so one entry draws nothing and every seat renders at it. None
     /// configured: the canonical size.
     template <typename Roll>
-    [[nodiscard]] Resolution DrawRenderSize(Settings const& settings, Roll&& roll)
+    [[nodiscard]] Resolution DrawRenderSize(Settings const& settings, bool even, Roll&& roll)
     {
         std::vector<Resolution> const& sizes = settings.RenderSizes;
         if (sizes.empty())
             return { settings.Width, settings.Height };
         if (sizes.size() == 1)
             return sizes.front();
-        auto const weight = [&settings](std::size_t i)
-        {
-            return i < settings.RenderWeights.size() && settings.RenderWeights[i] > 0.0f ? settings.RenderWeights[i]
-                : 1.0f;
-        };
         float total = 0.0f;
         for (std::size_t i = 0; i < sizes.size(); ++i)
-            total += weight(i);
+            total += RenderWeight(settings, i, even);
         float pick = float(roll(total));
         for (std::size_t i = 0; i < sizes.size(); ++i)
         {
-            if (pick < weight(i))
+            float const weight = RenderWeight(settings, i, even);
+            if (pick < weight)
                 return sizes[i];
-            pick -= weight(i);
+            pick -= weight;
         }
         return sizes.back();        // a roll at the very top of the range (rounding)
     }
