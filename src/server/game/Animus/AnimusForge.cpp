@@ -976,6 +976,10 @@ void AnimusForge::Forge::EndPlan(char const* reason)
         _cluster.Broadcast("STOP");
         _clusterSims.clear();
         _clusterStart.clear();
+        _clusterLearnerStart.clear();
+        _clusterLearnerDist.clear();
+        _clusterRanks.clear();
+        _clusterWorld = 0;
     }
 
     if (_benching)
@@ -1109,19 +1113,53 @@ void AnimusForge::Forge::PollCluster()
     _cluster.Poll();
 
     // Host: a worker of the running scenario that dropped out and is back goes straight back to it, and the
-    // learner takes its envs in again between rollouts. One the learner does not know joins the next scenario.
+    // learner takes its envs in again between rollouts. A worker with a learner of its own joins the running scenario
+    // as an asynchronous rank whenever it registers, back or new: the leader takes a follower at any time. Before,
+    // a worker that registered a moment after `forge start`/`resume` dealt the ranks (the slowest machine of a
+    // `forgectl build --cluster`, its worldserver still starting) sat idle until the watcher's auto-resume, ten
+    // minutes later (spencer, 2026-10-15 23:05, 2026-10-16 00:45 and 11:58). Any other joins the next scenario.
     if (_config.Cluster == ForgeConfig::ClusterRole::Host)
     {
         for (std::string const& sim : _cluster.TakeRegistrations())
         {
-            bool const running = _state == State::Training && !_clusterStart.empty();
-            if (running && std::find(_clusterSims.begin(), _clusterSims.end(), sim) != _clusterSims.end())
+            // From the deal (as the scenario is set up, before it trains) until the plan ends.
+            if (_clusterStart.empty())
+                continue;
+            if (std::find(_clusterSims.begin(), _clusterSims.end(), sim) != _clusterSims.end())
             {
                 LOG_INFO("module.animus", "Cluster: {} is back; ordering it onto {} again", sim, _current);
                 _cluster.SendTo(sim, _clusterStart);
+                continue;
             }
-            else if (running)
-                LOG_INFO("module.animus", "Cluster: {} joins the next scenario this host starts", sim);
+
+            std::vector<ClusterLink::WorkerInfo> const workers = _cluster.RegisteredWorkers();
+            auto const worker = std::find_if(workers.begin(), workers.end(),
+                [&sim](ClusterLink::WorkerInfo const& info) { return info.Sim == sim; });
+            bool const learner = worker != workers.end() && worker->Learner && !worker->HostAddress.empty();
+            if (learner && _clusterAsync && !_clusterLearnerDist.empty())
+            {
+                auto const known = std::find_if(_clusterRanks.begin(), _clusterRanks.end(),
+                    [&sim](std::pair<std::string, uint32> const& dealt) { return dealt.first == sim; });
+                bool const back = known != _clusterRanks.end();
+                uint32 rank = back ? known->second : 0;
+                if (!back)
+                {
+                    rank = _clusterWorld++;
+                    _clusterRanks.emplace_back(sim, rank);
+                    ++_clusterLearners;
+                }
+                LOG_INFO("module.animus", "Cluster: {} {}; ordering it onto {} with its learner as rank {} of {}", sim,
+                    back ? "is back" : "joined after the run started", _current, rank, _clusterWorld);
+                _cluster.SendTo(sim, Acore::StringFormat("{} rank={} world={}{}", _clusterLearnerStart, rank,
+                    _clusterWorld, _clusterLearnerDist));
+                continue;
+            }
+
+            LOG_INFO("module.animus", "Cluster: {} joins the next scenario this host starts ({})", sim,
+                !learner ? "the running learner was not given its sim"
+                : _clusterLearnerDist.empty() ? "this run started without worker learners, so no leader serves its "
+                    "networks to join"
+                : "AnimusForge.Cluster.Sync is not async: the running learners are one fixed group");
         }
 
         // The cluster's dungeon ladder is this host's: every worker's runs feed it, and the workers are told the rung
@@ -1338,6 +1376,11 @@ void AnimusForge::Forge::DealClusterLearners(ForgeConfig& learnerConfig, std::st
     }
     _clusterSims = learnerConfig.ClusterSims;
     _clusterLearners = uint32(learners.size());
+    _clusterLearnerStart = start;
+    _clusterLearnerDist.clear();
+    _clusterRanks.clear();
+    _clusterWorld = 0;
+    _clusterAsync = _config.ClusterSync == "async";
 
     if (!learners.empty())
     {
@@ -1349,13 +1392,18 @@ void AnimusForge::Forge::DealClusterLearners(ForgeConfig& learnerConfig, std::st
         learnerConfig.DistAddress = Acore::StringFormat("{}:{}", address, _config.ClusterDistPort);
         learnerConfig.DistIface = ClusterLink::InterfaceOf(address);
         learnerConfig.DistSync = _config.ClusterSync;
+        _clusterLearnerDist = Acore::StringFormat(" dist={} sync={}", learnerConfig.DistAddress,
+            learnerConfig.DistSync);
+        _clusterWorld = learnerConfig.DistWorld;
         for (std::size_t index = 0; index < learners.size(); ++index)
         {
             // A worker ignores a START of the scenario it runs; STOP first makes it start again with its new rank.
             if (restart)
                 _cluster.SendTo(learners[index].Sim, "STOP");
-            _cluster.SendTo(learners[index].Sim, Acore::StringFormat("{} rank={} world={} dist={} sync={}", start,
-                local + index, learnerConfig.DistWorld, learnerConfig.DistAddress, learnerConfig.DistSync));
+            uint32 const rank = local + uint32(index);
+            _clusterRanks.emplace_back(learners[index].Sim, rank);
+            _cluster.SendTo(learners[index].Sim, Acore::StringFormat("{} rank={} world={}{}", start, rank,
+                learnerConfig.DistWorld, _clusterLearnerDist));
         }
         LOG_INFO("module.animus", "Cluster: {} worker learner{} join{} this run ({} learners in all, meeting at {}{}; "
             "{})", learners.size(), learners.size() == 1 ? "" : "s", learners.size() == 1 ? "s" : "",

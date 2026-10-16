@@ -414,6 +414,15 @@ namespace AnimusForge
         /// one that drops out and registers again to be sent straight back to it.
         std::vector<std::string> _clusterSims;
         uint32 _clusterLearners = 0;    // host: workers running a learner rank of the current scenario
+        /// Host: how a worker learner joins the running scenario after it started (async learners only: their
+        /// leader takes a follower at any time). The START its ranks were dealt; " dist=... sync=...", empty when
+        /// the run has no worker learners (then no leader serves its networks, and none can join); the rank each
+        /// worker's sim was dealt, and the learners in all so far.
+        std::string _clusterLearnerStart;
+        std::string _clusterLearnerDist;
+        std::vector<std::pair<std::string, uint32>> _clusterRanks;
+        uint32 _clusterWorld = 0;
+        bool _clusterAsync = false;
         uint32 _autoResumes = 0;        // host: learner restarts of the current scenario after a rank failed
         /// Worker: when its next PROGRESS goes to the host.
         std::chrono::steady_clock::time_point _nextClusterReport{};

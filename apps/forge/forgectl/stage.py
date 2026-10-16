@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass
 
 from . import audit, collect, console, remote, watch_loop
@@ -19,6 +20,10 @@ EFFECT = {
     "cancel": "stop the plan on the host and every worker; the learner saves latest.pt first",
 }
 LEARNER_KEYS = ("value_loss", "entropy", "episode_score_outcome")
+# A registered worker's row in the host's `forge status` ("  tcp://192.168.0.66:7701: state=..."); one that is
+# connected but not registered yet shows its bare address.
+REGISTERED_SIM = re.compile(r"tcp://([^:\s]+):\d+")
+WORKER_WAIT_S = 240       # the slowest worker's worldserver rejoined the host ~10 s after `build --cluster` returned
 
 
 def check_names(names: list[str]) -> None:
@@ -141,6 +146,41 @@ def machine_plan_state(config: Config, machine: Machine) -> tuple[str, str]:
     return ("idle" if "idle" in first.lower() else "running"), first
 
 
+def wait_for_workers(config: Config, timeout: float = WORKER_WAIT_S) -> None:
+    """Hold a start or resume until every in-cluster worker is registered with the host, so the host deals each its
+    rank with the others. `forgectl build --cluster` returns once the containers are recreated, while the slowest
+    worker's worldserver is still loading: the host's `forge resume` went out a second before spencer rejoined, and
+    spencer sat idle until the watcher's auto-resume (2026-10-15 23:05, 2026-10-16 00:45 and 11:58). On a timeout the
+    order goes out anyway: the host orders a worker learner that registers later into the running stage."""
+    expected = {machine.address: machine.name for machine in config.workers}
+    if not expected:
+        return
+    started = time.monotonic()
+    waited = False
+    while True:
+        try:
+            result = console.send(config, config.host, "forge status", timeout=25)
+            answered = result.ok
+            joined = set(REGISTERED_SIM.findall(result.text)) if answered else set()
+        except Failure:         # another forgectl holds the host's console: ask again
+            answered, joined = False, set()
+        missing = [name for address, name in expected.items() if address not in joined]
+        if not missing:
+            if waited:
+                note(f"every worker is registered with the host after {time.monotonic() - started:.0f} s")
+            return
+        if time.monotonic() - started >= timeout:
+            say(f"WARNING: {', '.join(missing)} not registered with the host after {timeout:.0f} s"
+                + ("" if answered else " (the host's console did not answer)") + "; sending the order anyway. "
+                "A worker learner that registers later is ordered into the running stage (host Server.log: "
+                "\"Cluster: ... joined after the run started\"); check `forgectl cluster`.")
+            return
+        if not waited:
+            note(f"waiting up to {timeout:.0f} s for {', '.join(missing)} to register with the host ...")
+            waited = True
+        time.sleep(5)
+
+
 def show(machine: Machine, result: console.ConsoleResult) -> None:
     say(f"--- {machine.name} ---")
     say(result.text if result.lines else "(no reply text: the command was accepted silently)")
@@ -172,6 +212,8 @@ def run(config: Config, action: str, stages: list[str], yes: bool, archive_ok: b
         say(f"Nothing was sent ({declined}).")
         return 1
     audit.touch(targets)
+    if action in ("start", "resume"):
+        wait_for_workers(config)
     failed = []
     for machine in targets:
         try:
