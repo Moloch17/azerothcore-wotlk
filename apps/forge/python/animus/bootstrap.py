@@ -34,7 +34,8 @@ import io
 
 import torch
 
-from .mappo.networks import COSTMAP_CONV1, SPLAT_PREFIX, grow_costmap_inputs, grow_goal_rows, materialised_state
+from .mappo.networks import (COSTMAP_CONV1, PLANNER_SCHEDULE_KEYS, SPLAT_PREFIX, grow_costmap_inputs, grow_goal_rows,
+                             materialised_state)
 from .stages import Span, block_revisions, block_spans
 
 
@@ -681,8 +682,12 @@ def _seed_map(new: dict, old: dict) -> str | None:
     The camera splat (mappo.camera_splat) over a checkpoint without it: the costmap head's conv1 is carried grown
     (grow_costmap_inputs: the checkpoint's channels as they were, the splat's at zero) and the splat's projection starts
     fresh; neither zeroes the joins, since the costmap head computes exactly what it did until conv1 learns to read the
-    splat."""
-    keys = [key for key in new if key.startswith(MAP)]
+    splat.
+
+    The planner's iteration counts and hierarchy (vision.map.planner.k, PLANNER_SCHEDULE_KEYS) are this network's own,
+    from its config: never carried, never counted fresh (a seeded stage runs the K it is configured with)."""
+    keys = [key for key in new if key.startswith(MAP) and key not in PLANNER_SCHEDULE_KEYS
+            and key != "vision.map.planner.k"]
     if not keys:
         return None
     saved_inputs = int(old[COSTMAP_CONV1].shape[1]) if COSTMAP_CONV1 in old else 0

@@ -20,6 +20,13 @@ mappo:
   # policy beside the readouts (2026-10-15: the global planner -> local controller split; the policy walks to a point
   # well). On from here (nav1 stays without). Its join starts at zero: nav2's checkpoint resumes computing what it did.
   planner_waypoint: true
+  # The coarse -> fine hierarchy (MapEncoder.plan, 2026-10-16): trips average ~85 yd, mostly past the fine crop's 48 yd
+  # reach, where the fine goal plane was clamped to its border and 20 iterations carried value 40 yd. The coarse tier
+  # plans first; its value, resampled, is the fine planner's start and held border, so the fine value is the route to
+  # the real goal (its label). The fine tier then runs 32 iterations (the border is 24 cells from the body, more round
+  # a detour), the coarse planner_k's 20. On from here (nav1 stays without); no parameter, so nav2's checkpoint resumes.
+  planner_hierarchical: true
+  planner_k_fine: 32
 
 status:
   targets:

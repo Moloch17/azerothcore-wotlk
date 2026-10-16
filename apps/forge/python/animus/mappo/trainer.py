@@ -243,6 +243,18 @@ class MappoConfig:
     # (134.7 ms on dev, 2026-10-13); at K=20 every 8th it is amortised to a fraction of the camera's.
     planner_k: int = 20
     planner_every: int = 0
+    # The fine tier's own iterations (Planner.k_fine; 0 = planner_k's, and the network is exactly what it was): with
+    # the hierarchy the fine tier only has to carry the coarse plan from its border to the body, 24 cells straight and
+    # more round a detour. planner_k is then the coarse tier's. Buffers, not parameters: the configured counts stand
+    # over a checkpoint's. Without the hierarchy the value is unbounded: a trained VIN can diverge past the K it was
+    # trained at (nav2's at 48: 1e6 yd of error), so raise it there only with planner_hierarchical (its bound).
+    planner_k_fine: int = 0
+    # The coarse -> fine hierarchy (MapEncoder.plan, coarse_frame): the coarse tier plans first and its value, detached
+    # and resampled, is the fine planner's start and its held border, so the fine value is the route to the real goal
+    # past the fine crop (the fine label) instead of to a border cell the goal was clamped to; the fine goal plane is
+    # the goal's cell only when it is in the crop; both tiers' values are bounded at 0 yd of cost-to-go (Planner's
+    # bound). No parameter: a checkpoint without it resumes (its plan differs).
+    planner_hierarchical: bool = False
     # The camera splat (networks.CameraSplat; only with the planner): the camera's patch features laid on the costmap
     # head's cells by each pixel's depth and the camera's pose (lift, splat), beside the broadcast embedding. Off: the
     # network is exactly what it was. Seeding from a checkpoint without it grows conv1 with zeroed channels.
@@ -887,7 +899,9 @@ class MappoTrainer:
                                  self.vision, tuple(config.drop_inputs), max(1, int(config.planner_k)),
                                  sharing=sharing, heading=heading,
                                  camera_splat=bool(config.camera_splat),
-                                 planner_waypoint=bool(config.planner_waypoint)).to(self.train_device)
+                                 planner_waypoint=bool(config.planner_waypoint),
+                                 planner_k_fine=int(config.planner_k_fine) or None,
+                                 planner_hierarchical=bool(config.planner_hierarchical)).to(self.train_device)
         # Whether the actor steers by a continuous heading (protocol 32's ACT section; HeadingHead).
         self.heading = self.actor.heading_head is not None
         # (readout width, pool width) of the cached plan a row (VisionEncoder.planner_widths), (0, 0) without one.

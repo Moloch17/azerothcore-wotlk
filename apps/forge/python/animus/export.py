@@ -187,6 +187,23 @@ The .amdl format (little-endian); a reader must follow it exactly, and a change 
         cell is not the start and the compass's objective is present (presence column > 0.5), else 0. The tier's four
         numbers: -right / d x valid, forward / d x valid, d / (steps[tier] x cell) x valid, valid; the tiers' fours in
         tier order are the F inputs. They are computed with the readouts (each replan) and kept between.
+        In version 15 (a policy with the coarse -> fine hierarchy or a fine tier of its own K;
+        mappo.planner_hierarchical, planner_k_fine, networks.MapEncoder.plan), after the waypoint's section:
+        u32  hierarchical (0 or 1), k_tiers[tiers]   each tier's iterations, fine first (the header's k is the coarse
+                                            tier's, k_tiers[1])
+        The hierarchy (networks.MapEncoder.plan, coarse_frame and Planner.forward, the reference), with hierarchical
+        1 and two tiers, every value of both tiers is clamped to at most 0 after each iteration (min(value, 0)). The
+        coarse tier (1) is planned first as without it (value_0 = 0, recur's border padded with 0, the goal plane
+        clamped to the border), k_tiers[1] iterations. The fine tier (0) then: its goal plane is the goal's one-hot
+        only when the goal's unclamped cell, round(c - forward / cell) and round(c + right / cell), lies inside rows
+        and columns 0..side - 1, else all zero; the frame B[i][j], i and j in -1..side
+        (side + 2 a side), is the coarse value sampled bilinearly at coarse row c + (i - c) x tier_cells[0] /
+        tier_cells[1] and column c + (j - c) x tier_cells[0] / tier_cells[1] (c = (side - 1) / 2; between the four
+        coarse cells around it, the coordinate clamped to 0..side - 1, as grid_sample's align_corners and border
+        padding), clamped to at most 0; value_0[i][j] = B[i][j] for i, j in 0..side - 1, and each of the k_tiers[0]
+        iterations computes conv3x3(value; recur) with B's ring (i or j = -1 or side) in place of the zero padding,
+        the rest as without it. Without the hierarchy (0) both tiers run as in version 14 (no clamp), the fine tier
+        k_tiers[0] times.
     (version 12 on: a file of 12 is written only for a policy with the heading; every other policy is still 11, 10 or
     9. The camera's flag and, without a camera, the planner's 0 flag come before it as in version 11. A file of 13 --
     a policy with the camera splat -- or of 14 -- one with the planned waypoint -- has the section too)
@@ -269,8 +286,13 @@ AMDL_MAGIC = b"AMDL"
 # 14: the planned waypoint (mappo.planner_waypoint, networks.MapEncoder.waypoints): the planner section's waypoint
 # count, walk and join after the pointer's weight. Written only for a policy with the waypoint; every other policy is
 # still 13 or below. A checkpoint with the waypoint is never written as 13 or below (write_amdl refuses).
-AMDL_VERSION = 14
-AMDL_VERSIONS = (7, 8, 9, 10, 11, 12, 13, 14)
+# 15: the planner's schedule (mappo.planner_hierarchical, planner_k_fine; networks.MapEncoder.plan): the hierarchy's
+# flag and each tier's K after the waypoint's section. Written only for a policy with the hierarchy or a fine K of its
+# own; every other policy is still 14 or below. Such a checkpoint is never written as 14 or below (write_amdl refuses).
+AMDL_VERSION = 15
+AMDL_VERSIONS = (7, 8, 9, 10, 11, 12, 13, 14, 15)
+#: The version a policy with the planned waypoint and the planner's one K is written as.
+AMDL_WAYPOINT_VERSION = 14
 #: The version a policy with the camera splat and no planned waypoint is written as.
 AMDL_SPLAT_VERSION = 13
 #: The version a policy with the heading and no camera splat is written as.
@@ -355,8 +377,9 @@ def write_amdl(
     tail: dict | None = None,
 ) -> None:
     """Write one model. `tail` is the version 10 tail (tail_weights); without one the file is version 9. A tail with
-    the planned waypoint is version 14, one with the camera splat (and no waypoint) 13, one with a heading (and
-    neither) 12, one with a planner (and none of them) 11."""
+    the planner's schedule (the hierarchy or a fine K of its own) is version 15, one with the planned waypoint (and
+    no schedule) 14, one with the camera splat (and neither) 13, one with a heading (and none of them) 12, one with a
+    planner (and nothing else) 11."""
     if layers[0][0].shape[1] != obs_dim + num_agents:
         raise ValueError(f"first layer takes {layers[0][0].shape[1]} inputs, expected {obs_dim} + {num_agents}")
     if memory is not None and layers[-1][0].shape[1] != memory["weight_hh"].shape[1]:
@@ -369,16 +392,21 @@ def write_amdl(
     heading = bool(tail and tail.get("heading"))
     splat = bool(planner and tail["planner"].get("splat"))
     waypoint = bool(planner and tail["planner"].get("waypoint"))
-    version = (AMDL_VERSION if waypoint else AMDL_SPLAT_VERSION if splat else AMDL_HEADING_VERSION if heading
-               else AMDL_PLANNER_VERSION if planner else (AMDL_CAMERA_VERSION if tail else AMDL_PLAIN_VERSION))
+    schedule = bool(planner and tail["planner"].get("schedule"))
+    version = (AMDL_VERSION if schedule else AMDL_WAYPOINT_VERSION if waypoint else AMDL_SPLAT_VERSION if splat
+               else AMDL_HEADING_VERSION if heading else AMDL_PLANNER_VERSION if planner
+               else (AMDL_CAMERA_VERSION if tail else AMDL_PLAIN_VERSION))
     if planner and version < AMDL_PLANNER_VERSION:
         raise ValueError("a policy with a planner is written as version 11 or above, never 10")
     if heading and version < AMDL_HEADING_VERSION:
         raise ValueError("a policy with a heading head is written as version 12 or above, never 11 or below")
     if splat and version < AMDL_SPLAT_VERSION:
         raise ValueError("a policy with the camera splat is written as version 13, never 12 or below")
-    if waypoint and version < AMDL_VERSION:
+    if waypoint and version < AMDL_WAYPOINT_VERSION:
         raise ValueError("a policy with the planned waypoint is written as version 14, never 13 or below")
+    if schedule and version < AMDL_VERSION:
+        raise ValueError("a policy with the planner's hierarchy or per-tier K is written as version 15, never 14 or "
+                         "below")
     with open(path, "wb") as out:
         out.write(AMDL_MAGIC)
         out.write(struct.pack("<IH", version, len(encoded)))
@@ -562,7 +590,7 @@ def _write_camera_tail(out, tail: dict, version: int) -> None:
         raise ValueError("a policy with the camera splat is written as version 13, never 12 or below")
     _floats(out, *(planner[key] for key in PLANNER_ARRAYS))
     waypoint = planner.get("waypoint")
-    if version >= AMDL_VERSION:
+    if version >= AMDL_WAYPOINT_VERSION:
         out.write(struct.pack("<I", int(waypoint["features"]) if waypoint else 0))
         if waypoint:
             out.write(struct.pack(f"<{1 + len(waypoint['steps'])}I", int(waypoint["anchor"]),
@@ -570,6 +598,16 @@ def _write_camera_tail(out, tail: dict, version: int) -> None:
             _floats(out, waypoint["weight"], waypoint["bias"])
     elif waypoint:
         raise ValueError("a policy with the planned waypoint is written as version 14, never 13 or below")
+    schedule = planner.get("schedule")
+    if version >= AMDL_VERSION:
+        k_tiers = schedule["k_tiers"] if schedule else [int(planner["k"])] * int(planner["tiers"])
+        if len(k_tiers) != int(planner["tiers"]):
+            raise ValueError(f"the planner's schedule has {len(k_tiers)} tiers' K, the planner {planner['tiers']}")
+        out.write(struct.pack(f"<{1 + len(k_tiers)}I", int(bool(schedule and schedule["hierarchical"])),
+                              *(int(k) for k in k_tiers)))
+    elif schedule:
+        raise ValueError("a policy with the planner's hierarchy or per-tier K is written as version 15, never 14 or "
+                         "below")
 
 
 def memory_weights(actor_state: dict[str, torch.Tensor]) -> dict[str, np.ndarray] | None:
@@ -871,6 +909,14 @@ def tail_weights(actor_state: dict[str, torch.Tensor], stage: dict, names: list[
                     "pointer_weight": (array("goal_head.cell.planner_weight")
                                        if "goal_head.cell.planner_weight" in actor_state
                                        else np.zeros((1,), "<f4"))}
+                # The planner's schedule (version 15): the hierarchy and the fine tier's own K, where either is on.
+                hierarchical = int(actor_state.get("vision.map.hierarchy", 0)) != 0
+                k_fine = int(actor_state["vision.map.planner.k_fine"]) if "vision.map.planner.k_fine" in actor_state \
+                    else k
+                if hierarchical or k_fine != k:
+                    if tiers != 2:
+                        raise ValueError(f"the planner's hierarchy / per-tier K is for two tiers, this map has {tiers}")
+                    tail["planner"]["schedule"] = {"hierarchical": hierarchical, "k_tiers": [k_fine, k]}
                 # The planned waypoint (version 14): its walk and its join.
                 if "vision.map.waypoint_join.weight" in actor_state:
                     weight = array("vision.map.waypoint_join.weight")
@@ -1254,6 +1300,10 @@ def read_amdl(path: str | Path) -> dict:
                     planner["waypoint"] = {"features": features, "anchor": anchor, "steps": list(steps),
                                            "weight": floats(embed * features, embed, features),
                                            "bias": floats(embed, embed)}
+            planner["schedule"] = None
+            if version >= 15:
+                hierarchical, *k_tiers = u32s(1 + tiers)
+                planner["schedule"] = {"hierarchical": bool(hierarchical), "k_tiers": list(k_tiers)}
             tail["planner"] = planner
         if version >= 12 and flag():
             components, heading_width = u32s(2)

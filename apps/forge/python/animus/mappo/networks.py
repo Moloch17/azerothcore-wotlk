@@ -1543,11 +1543,13 @@ def decode_map_tiers(crops: torch.Tensor, height: int, width: int, tiers: int) -
 
 
 def goal_plane(forward: torch.Tensor, right: torch.Tensor, present: torch.Tensor, side: int,
-               cell: float) -> torch.Tensor:
+               cell: float, clamp: bool = True) -> torch.Tensor:
     """The planner's goal plane [N, side, side]: a one-hot of the goal's cell in a heading-up crop of `side` cells of
     `cell` yards (row 0 furthest ahead, column 0 furthest left, the body at the centre), from the goal's forward and
     right yards in the body frame; the border cell where the line from the body to the goal leaves the crop when it
-    lies outside; all zero where no goal is present."""
+    lies outside; all zero where no goal is present. Without `clamp` (the hierarchy's fine tier,
+    mappo.planner_hierarchical: the coarse plan stands in for a goal past the crop) a goal outside the crop -- its
+    unclamped cell past rows or columns 0..side - 1 -- is all zero too; a goal inside is the same one-hot either way."""
     centre = (side - 1) / 2.0
     f = forward.to(torch.float32) / cell
     r = right.to(torch.float32) / cell
@@ -1555,8 +1557,13 @@ def goal_plane(forward: torch.Tensor, right: torch.Tensor, present: torch.Tensor
     t = (centre / reach).clamp(max=1.0)
     row = torch.round(centre - t * f).clamp(0, side - 1).long()
     col = torch.round(centre + t * r).clamp(0, side - 1).long()
+    weight = present.to(torch.float32)
+    if not clamp:
+        free_row, free_col = torch.round(centre - f), torch.round(centre + r)
+        inside = (free_row >= 0) & (free_row <= side - 1) & (free_col >= 0) & (free_col <= side - 1)
+        weight = weight * inside.to(torch.float32)
     plane = forward.new_zeros((forward.shape[0], side * side), dtype=torch.float32)
-    plane.scatter_(1, (row * side + col)[:, None], present.to(torch.float32)[:, None])
+    plane.scatter_(1, (row * side + col)[:, None], weight[:, None])
     return plane.reshape(-1, side, side)
 
 
@@ -1761,19 +1768,36 @@ class Planner(nn.Module):
     tiers. Initialised as Bellman's own rule: channel c of `recur` copies neighbour c of the 3 x 3 (the eight
     neighbours), `fixed` is small, so the value starts at 0 everywhere and propagates as the step costs are learned.
     Under a gradient the iterations are checkpointed SEGMENT at a time (torch.utils.checkpoint), so the update keeps
-    SEGMENT iterations' activations a row rather than K; the rollout runs it without one."""
+    SEGMENT iterations' activations a row rather than K; the rollout runs it without one.
+
+    **K per tier** (mappo.planner_k, planner_k_fine): `k` the iterations of every tier, or of the coarse alone where
+    `k_fine` is given (the fine tier's, a buffer of its own built only then, so a planner without it has exactly the
+    state it had). Both are buffers -- the checkpoint and the export carry them -- but the configured counts stand: a
+    checkpoint that ran other counts loads with this network's own, and says so (a resume that changes K changes it).
+
+    **The boundary** (the hierarchy, mappo.planner_hierarchical; MapEncoder.plan): forward's `init` is the value the
+    iterations start from instead of 0 and `ring` [N, H + 2, W + 2] the value held just past the crop's border every
+    iteration instead of recur's zero padding (its interior is ignored), and `bound` holds the value at or below 0 (a
+    cost-to-go is never below 0 yards: the goal saturates at 0 rather than feeding back on itself -- nav2's trained
+    `recur` has a channel of gain 1.97, so a positive value doubled every iteration, harmless at K 20 and 1e6 yd of
+    error at 48). Without them the iteration is exactly what it was."""
 
     K = 20
     CHANNELS = 8
     SEGMENT = 8
 
-    def __init__(self, planes: int, k: int = K):
+    def __init__(self, planes: int, k: int = K, k_fine: int | None = None):
         super().__init__()
         self.planes = planes
         # The iterations (mappo.planner_k): a buffer, so a checkpoint and the export carry it; the host copy is what
         # forward reads (a captured graph cannot read the device).
         self.iterations = max(1, int(k))
         self.register_buffer("k", torch.tensor(self.iterations, dtype=torch.long))
+        # The fine tier's own (mappo.planner_k_fine): built only when configured.
+        self.fine_iterations = self.iterations
+        if k_fine is not None:
+            self.fine_iterations = max(1, int(k_fine))
+            self.register_buffer("k_fine", torch.tensor(self.fine_iterations, dtype=torch.long))
         self.fixed = nn.Conv2d(planes, self.CHANNELS, 3, padding=1)
         self.recur = nn.Conv2d(1, self.CHANNELS, 3, padding=1, bias=False)
         with torch.no_grad():
@@ -1785,29 +1809,64 @@ class Planner(nn.Module):
                 r, c = neighbours[channel % len(neighbours)]
                 self.recur.weight[channel, 0, r, c] = 1.0
 
-    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
-        super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
-        # A checkpoint from before the buffer keeps this network's own K (load_actor_state tolerates the missing key).
-        self.iterations = max(1, int(self.k))
+    def tier_iterations(self, tier: int) -> int:
+        """The iterations tier `tier` runs (0 the fine tier)."""
+        return self.fine_iterations if tier == 0 else self.iterations
 
-    def _iterate(self, value: torch.Tensor, fixed: torch.Tensor, count: int) -> torch.Tensor:
+    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
+        configured = {"k": self.iterations}
+        if hasattr(self, "k_fine"):
+            configured["k_fine"] = self.fine_iterations
+        super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
+        # The configured counts stand (a checkpoint from before a buffer leaves it as built): the buffers are put back,
+        # so the state this network saves, its rollout copy and the export all say what it runs.
+        for name, count in configured.items():
+            buffer = getattr(self, name)
+            if int(buffer) != count:
+                print(f"Load: the checkpoint's planner ran {name} = {int(buffer)} iterations; this network's "
+                      f"configured {count} stand (mappo.planner_k{'_fine' if name == 'k_fine' else ''})", flush=True)
+                buffer.fill_(count)
+
+    def _iterate(self, value: torch.Tensor, fixed: torch.Tensor, count: int,
+                 ring: torch.Tensor | None = None, bound: bool = False) -> torch.Tensor:
         for _ in range(count):
-            value = (self.recur(value) + fixed).amax(dim=1, keepdim=True)
+            if ring is None:
+                value = (self.recur(value) + fixed).amax(dim=1, keepdim=True)
+            else:
+                # The held border: the value padded with the ring (zero inside it) in place of recur's zeros.
+                padded = nn.functional.pad(value, (1, 1, 1, 1)) + ring
+                value = (nn.functional.conv2d(padded, self.recur.weight) + fixed).amax(dim=1, keepdim=True)
+            if bound:
+                value = value.clamp(max=0.0)
         return value
 
-    def forward(self, planes: torch.Tensor) -> torch.Tensor:
-        """`planes` [N, P, H, W] -> the value [N, H, W] after K iterations (unitless; -value x 100 is yards of
-        cost-to-go once trained, MapEncoder.plan)."""
+    def forward(self, planes: torch.Tensor, iterations: int | None = None, init: torch.Tensor | None = None,
+                ring: torch.Tensor | None = None, bound: bool = False) -> torch.Tensor:
+        """`planes` [N, P, H, W] -> the value [N, H, W] after `iterations` (K when None) iterations (unitless; -value x
+        100 is yards of cost-to-go once trained, MapEncoder.plan), started from `init` [N, H, W] (0 when None) with
+        the border held at `ring` [N, H + 2, W + 2] (recur's zero padding when None; the class docstring). `bound`
+        holds the value at or below 0 after every iteration (and the start): a cost-to-go is never below 0 yards."""
         fixed = self.fixed(planes.to(self.fixed.weight.dtype))
-        value = fixed.new_zeros((planes.shape[0], 1, planes.shape[-2], planes.shape[-1]))
+        if init is None:
+            value = fixed.new_zeros((planes.shape[0], 1, planes.shape[-2], planes.shape[-1]))
+        else:
+            value = init[:, None].to(fixed.dtype)
+            if bound:
+                value = value.clamp(max=0.0)
+        if ring is not None:
+            inside = torch.ones_like(ring[:1, 1:-1, 1:-1])
+            ring = (ring * (1.0 - nn.functional.pad(inside, (1, 1, 1, 1))))[:, None].to(fixed.dtype)
+            if bound:
+                ring = ring.clamp(max=0.0)
+        total = self.iterations if iterations is None else max(1, int(iterations))
         done = 0
-        while done < self.iterations:
-            count = min(self.SEGMENT, self.iterations - done)
+        while done < total:
+            count = min(self.SEGMENT, total - done)
             if torch.is_grad_enabled() and fixed.requires_grad:
                 from torch.utils.checkpoint import checkpoint
-                value = checkpoint(self._iterate, value, fixed, count, use_reentrant=False)
+                value = checkpoint(self._iterate, value, fixed, count, ring, bound, use_reentrant=False)
             else:
-                value = self._iterate(value, fixed, count)
+                value = self._iterate(value, fixed, count, ring, bound)
             done += count
         return value[:, 0]
 
@@ -1856,6 +1915,22 @@ class MapEncoder(nn.Module):
     `waypoint_join`, which starts at zero: a policy loaded from a checkpoint without it computes exactly what it did.
     The critic reads the actor's encoder, so it sees the waypoint as it sees the readouts.
 
+    **The hierarchy** (mappo.planner_hierarchical, `hierarchical`; 2026-10-16): the goal of a nav trip is mostly past
+    the fine crop (96 yd across), where the fine goal plane was clamped to a border cell -- the wrong point -- and K
+    iterations carried value only K cells. With the hierarchy the coarse tier plans first, as before; the fine tier's
+    goal plane is the goal's one-hot only when the goal lies inside the fine crop (goal_plane without clamp) and the
+    coarse value, detached, resampled bilinearly at the fine cells' centres and at the ring just past the fine border
+    (coarse_frame), is the fine planner's boundary: its iterations start from it over the whole crop and hold the ring
+    at it every iteration (Planner.forward's `init` and `ring`) in place of 0 and the zero padding. The fine value is
+    then a K-step refinement of the coarse estimate at 2 yd -- the cost through the crop to the border plus the coarse
+    plan beyond, where the goal is out of the crop; the goal cell itself where it is in -- the same quantity as its
+    label (the route to the real goal), by construction rather than learned through another input plane. A boundary
+    only at the ring would not do: an interior started at 0 out-ranks any boundary below -K x the step cost. Both
+    tiers' values are bounded at 0 (Planner.forward's `bound`), so the coarse plan never hands the fine one a negative
+    cost-to-go and neither tier runs away with more iterations. The coarse plan is detached: it has its own labels at
+    every cell, and the shared planner's weights learn from the fine loss through the fine pass anyway. No parameter: a
+    checkpoint without it loads as it is.
+
     **The join** (`join`, orthogonal): EMBED -> the camera's embedding width, after a SiLU, added to the camera's
     embedding before its own SiLU, so both networks read the map through their own camera join. Seeding from a
     checkpoint without a map zeroes it (bootstrap._seed_map): the seeded policy starts as it was, and the map comes in
@@ -1876,7 +1951,8 @@ class MapEncoder(nn.Module):
 
     def __init__(self, crop: dict, class_embedding: nn.Embedding, out_width: int, starts: Sequence[int],
                  compass: Sequence[dict | None] = (), planner_k: int = Planner.K, splat: dict | None = None,
-                 splat_features: int = 0, waypoint: bool = False):
+                 splat_features: int = 0, waypoint: bool = False, planner_k_fine: int | None = None,
+                 hierarchical: bool = False):
         super().__init__()
         self.height, self.width = crop["height"], crop["width"]
         if self.height % self.PATCH or self.width % self.PATCH:
@@ -1911,7 +1987,7 @@ class MapEncoder(nn.Module):
             self.tier_embed = nn.Parameter(torch.zeros(self.tiers, self.WIDTHS[1]))
             splat_planes = CameraSplat.CHANNELS + 1 if splat is not None else 0
             self.costmap = CostmapHead(self.planes_per_cell, out_width, self.tiers, splat_planes)
-            self.planner = Planner(TRAV_CLASSES + self.planes_per_cell + 1, planner_k)
+            self.planner = Planner(TRAV_CLASSES + self.planes_per_cell + 1, planner_k, planner_k_fine)
             self.planner_join = _linear(self.tiers * self.READOUT, out_width, math.sqrt(2))
             # Per layout the compass block's columns (present, bearing sin, cos, distance; compass_of), -1 without:
             # the goal plane reads them. Derived from stage.json, not learned.
@@ -1931,6 +2007,22 @@ class MapEncoder(nn.Module):
             self.waypoint_join = nn.Linear(self.tiers * self.WAYPOINT_FEATURES, out_width)
             nn.init.zeros_(self.waypoint_join.weight)
             nn.init.zeros_(self.waypoint_join.bias)
+        # The hierarchy (mappo.planner_hierarchical; plan): no parameter, a flag buffer (the export reads it) built only
+        # when asked, and where each fine cell of the crop and of the ring just past it lies on the coarse tier
+        # (grid_sample's normalised x = column, y = row, align_corners: -1 and 1 the coarse crop's first and last
+        # cells' centres). Both tiers are heading-up and centred on the body: fine cell i's centre is (c - i) x fine
+        # yards ahead, c = (side - 1) / 2, which is coarse cell c - (c - i) x fine / coarse.
+        self.hierarchical = bool(hierarchical) and self.tiers == 2
+        if self.hierarchical:
+            self.register_buffer("hierarchy", torch.tensor(1, dtype=torch.long))
+            ratio = self.tier_cells[0] / self.tier_cells[1]
+            rows = (self.height - 1) / 2.0 + (torch.arange(-1, self.height + 1, dtype=torch.float32)
+                                              - (self.height - 1) / 2.0) * ratio
+            cols = (self.width - 1) / 2.0 + (torch.arange(-1, self.width + 1, dtype=torch.float32)
+                                             - (self.width - 1) / 2.0) * ratio
+            y, x = torch.meshgrid(rows / (self.height - 1) * 2.0 - 1.0, cols / (self.width - 1) * 2.0 - 1.0,
+                                  indexing="ij")
+            self.register_buffer("coarse_grid", torch.stack([x, y], dim=-1)[None], persistent=False)
 
     @property
     def planner_on(self) -> bool:
@@ -1953,6 +2045,15 @@ class MapEncoder(nn.Module):
                 features.append(torch.stack([-right / distance * valid, forward / distance * valid,
                                              distance / (steps * cell) * valid, valid], dim=-1))
             return torch.cat(features, dim=-1)
+
+    def coarse_frame(self, coarse: torch.Tensor) -> torch.Tensor:
+        """The hierarchy's boundary (mappo.planner_hierarchical): the coarse tier's value [N, H, W], detached,
+        resampled bilinearly at the centres of the fine tier's cells and of the ring of cells just past its border
+        (coarse_grid), [N, H + 2, W + 2] float32: the fine planner starts from its interior and holds its ring."""
+        n = coarse.shape[0]
+        grid = self.coarse_grid.expand(n, -1, -1, -1)
+        return nn.functional.grid_sample(coarse.detach().to(torch.float32)[:, None], grid, mode="bilinear",
+                                         padding_mode="border", align_corners=True)[:, 0]
 
     def join_plan(self, readout: torch.Tensor) -> torch.Tensor:
         """The cached plan [N, readout_width] into the embedding: the readouts through planner_join and, with the
@@ -2021,14 +2122,26 @@ class MapEncoder(nn.Module):
                                  "and scalars have to come with the crop (VisionEncoder.forward)")
             splats = self.splat(*splat, side, self.tier_cells)
             out["splat"] = splats
-        readouts = []
-        for tier, (planes_tier, cell) in enumerate(zip(planes, self.tier_cells)):
+        tiers = list(zip(planes, self.tier_cells))
+        parts: list[tuple | None] = [None] * len(tiers)
+        # The hierarchy (mappo.planner_hierarchical): the coarse tier first, its plan the fine tier's boundary.
+        for tier in (reversed(range(len(tiers))) if self.hierarchical else range(len(tiers))):
+            planes_tier, cell = tiers[tier]
             nchw = planes_tier.permute(0, 3, 1, 2)
             logits = self.costmap(nchw, camera, tier, splats[tier])
-            plane = goal_plane(forward, right, present, side, cell)
+            fine = self.hierarchical and tier == 0
+            plane = goal_plane(forward, right, present, side, cell, clamp=not fine)
             inputs = torch.cat([torch.softmax(logits.to(torch.float32), dim=1), nchw.to(torch.float32),
                                 plane[:, None]], dim=1)
-            value = self.planner(inputs).to(torch.float32)
+            init = ring = None
+            if fine:
+                ring = self.coarse_frame(parts[1][1])
+                init = ring[:, 1:-1, 1:-1]
+            value = self.planner(inputs, self.planner.tier_iterations(tier), init, ring,
+                                 bound=self.hierarchical).to(torch.float32)
+            parts[tier] = (logits, value, plane)
+        readouts = []
+        for logits, value, plane in parts:
             readouts.append(value[:, c:c + 3, c:c + 3].reshape(value.shape[0], -1))
             out["costmap"].append(logits)
             out["cost_to_go"].append(-value * 100.0)
@@ -2494,7 +2607,8 @@ class VisionEncoder(nn.Module):
     DROPPABLE = ("map", "coverage")
 
     def __init__(self, descriptors: Sequence[dict | None], drop: Sequence[str] = (), planner_k: int = Planner.K,
-                 splat: bool = False, waypoint: bool = False):
+                 splat: bool = False, waypoint: bool = False, planner_k_fine: int | None = None,
+                 hierarchical: bool = False):
         super().__init__()
         unknown = sorted(set(drop) - set(self.DROPPABLE))
         if unknown:
@@ -2553,7 +2667,8 @@ class VisionEncoder(nn.Module):
                 self.map = MapEncoder(crop, self.class_embed, self.EMBED,
                                       [c["first"] if c is not None else -1 for c in crops],
                                       [entry.get("compass") if entry is not None else None for entry in descriptors],
-                                      planner_k, image if splat else None, self.WIDTHS[1], waypoint)
+                                      planner_k, image if splat else None, self.WIDTHS[1], waypoint,
+                                      planner_k_fine, hierarchical)
         # The coarse coverage grid (general search sec 5), where the layouts have the block: its columns are read raw
         # by its own small encoder, whose join adds to the embedding as the map's does.
         grids = [entry.get("coverage") if entry is not None else None for entry in descriptors]
@@ -2908,7 +3023,7 @@ class HeadingHead(nn.Module):
 
 def _attach_vision(network: nn.Module, vision, encoder: "VisionEncoder | None" = None,
                    drop: Sequence[str] = (), planner_k: int = Planner.K, splat: bool = False,
-                   waypoint: bool = False) -> None:
+                   waypoint: bool = False, planner_k_fine: int | None = None, hierarchical: bool = False) -> None:
     """Give an actor or critic the camera: the encoder (VisionEncoder) and its own join (VisionJoin), and keep the
     camera's columns -- image and scalars -- out of every layout's adapter (attach_blind_columns, tag "vision") and
     normaliser (RunningNorm.hide). `vision` is vision_of()'s per-layout image, or None (no camera: nothing changes).
@@ -2916,13 +3031,15 @@ def _attach_vision(network: nn.Module, vision, encoder: "VisionEncoder | None" =
     reference that is not one of its modules -- not in its parameters, its state dict or its .to() -- else it builds
     and owns its own. `drop` names the camera-side inputs an owned encoder leaves unread (VisionEncoder.DROPPABLE,
     mappo.drop_inputs); `splat` whether its map's costmap head reads the camera splat (CameraSplat,
-    mappo.camera_splat); `waypoint` whether its map feeds the planned waypoint (MapEncoder, mappo.planner_waypoint)."""
+    mappo.camera_splat); `waypoint` whether its map feeds the planned waypoint (MapEncoder, mappo.planner_waypoint);
+    `planner_k_fine` the fine tier's own iterations (None: planner_k's; Planner) and `hierarchical` the coarse ->
+    fine hierarchy (MapEncoder, mappo.planner_hierarchical)."""
     network.vision = None
     network.vision_join = None
     if vision is None:
         return
     if encoder is None:
-        network.vision = VisionEncoder(vision, drop, planner_k, splat, waypoint)
+        network.vision = VisionEncoder(vision, drop, planner_k, splat, waypoint, planner_k_fine, hierarchical)
     else:
         share_vision(network, encoder)
     network.vision_join = VisionJoin(network.vision.has_vision, network.adapters[0].out_features)
@@ -3160,6 +3277,10 @@ COSTMAP_CONV1 = "vision.map.costmap.conv1.weight"
 #: The planned waypoint's join (MapEncoder.waypoint_join, mappo.planner_waypoint): zero at the start, so a checkpoint
 #: without it loads with it as initialised and the policy computes what it did.
 WAYPOINT_PREFIX = "vision.map.waypoint_join."
+#: The planner's schedule beyond its one K (mappo.planner_k_fine, planner_hierarchical): buffers built from the config
+#: alone (Planner, MapEncoder), so a checkpoint without them loads with this network's, and one with them into a
+#: network without drops them; neither is a parameter.
+PLANNER_SCHEDULE_KEYS = ("vision.map.planner.k_fine", "vision.map.hierarchy")
 
 
 def grow_costmap_inputs(state: dict, current: dict) -> tuple[dict, list[str]]:
@@ -3197,7 +3318,11 @@ def load_actor_state(actor: nn.Module, state: dict) -> list[str]:
 
     The planned waypoint (mappo.planner_waypoint): an actor with it reads a checkpoint without it with its join as
     initialised (zero: the policy computes exactly what it did), and says so. Nothing is grown: the camera's optimiser
-    moments are carried by name past the new tensors (MappoTrainer._load_vision_optimizer)."""
+    moments are carried by name past the new tensors (MappoTrainer._load_vision_optimizer).
+
+    The planner's schedule (PLANNER_SCHEDULE_KEYS: mappo.planner_k_fine, planner_hierarchical): the configured one
+    stands either way -- missing from the checkpoint, the actor's own; in the checkpoint and not the actor's, dropped
+    -- and says so. Nothing to grow: they are buffers."""
     sharing = getattr(actor, "shared_columns", None) is not None
     # Materialised either way, so the layouts' own weights are whole whatever the checkpoint shared.
     state = materialised_state(state, drop=not sharing)
@@ -3218,6 +3343,11 @@ def load_actor_state(actor: nn.Module, state: dict) -> list[str]:
             print(f"Load: the checkpoint's heading head ({len(dropped)} tensors) is not this actor's (no layout of the "
                   f"stage steers by a heading); dropped", flush=True)
             state = {key: value for key, value in state.items() if not key.startswith(HEADING_PREFIX)}
+    schedule_dropped = [key for key in PLANNER_SCHEDULE_KEYS if key in state and key not in current]
+    if schedule_dropped:
+        print(f"Load: the checkpoint's planner schedule ({', '.join(schedule_dropped)}) is not this actor's "
+              f"(mappo.planner_k_fine, planner_hierarchical off); dropped", flush=True)
+        state = {key: value for key, value in state.items() if key not in schedule_dropped}
     missing, unexpected = actor.load_state_dict(state, strict=False)
     # The blind-column masks are never taken from a checkpoint: an actor built with seat sets has its own already (the
     # stage's), which a resume keeps.
@@ -3226,12 +3356,20 @@ def load_actor_state(actor: nn.Module, state: dict) -> list[str]:
              and not key.split(".")[-1].startswith(BLIND_KEEP_PREFIXES)
              and key not in SHARED_PARAMETER_KEYS and key not in SHARED_INDEX_KEYS
              and not key.startswith(HEADING_PREFIX) and not (widened and key.startswith(SPLAT_PREFIX))
-             and not key.startswith(WAYPOINT_PREFIX)]
+             and not key.startswith(WAYPOINT_PREFIX) and key not in PLANNER_SCHEDULE_KEYS]
     if wrong or unexpected:
         raise RuntimeError(f"Error(s) in loading state_dict for {type(actor).__name__}: missing {wrong}, "
                            f"unexpected {list(unexpected)}")
     if any(key.startswith(HEADING_PREFIX) for key in missing):
         print("Load: the checkpoint has no heading head; the actor's starts as initialised", flush=True)
+    schedule_new = [key for key in PLANNER_SCHEDULE_KEYS if key in missing]
+    if schedule_new:
+        planner = actor.vision.map.planner if getattr(actor, "vision", None) is not None else None
+        hierarchical = bool(getattr(actor.vision.map, "hierarchical", False)) if planner is not None else False
+        print(f"Load: the checkpoint has no planner schedule ({', '.join(schedule_new)}); this actor's stands: fine K "
+              f"{planner.fine_iterations if planner is not None else '-'}, coarse K "
+              f"{planner.iterations if planner is not None else '-'}, hierarchical {hierarchical} "
+              f"(mappo.planner_k_fine, planner_hierarchical)", flush=True)
     if any(key.startswith(WAYPOINT_PREFIX) for key in missing):
         print("Load: the checkpoint has no planned waypoint (mappo.planner_waypoint); its join starts at zero, so the "
               "policy computes what it did", flush=True)
@@ -3264,7 +3402,8 @@ class LayoutActor(nn.Module):
                  recurrent_size: int = 0, goal_count: int = 0, goal_targets: int = 1, slow_size: int = 0,
                  foresight_feedback: bool = False, lookahead: bool = False, goal_slots: int = 1,
                  vision=None, drop_inputs: Sequence[str] = (), planner_k: int = Planner.K, sharing=None,
-                 heading: Sequence[bool] | None = None, camera_splat: bool = False, planner_waypoint: bool = False):
+                 heading: Sequence[bool] | None = None, camera_splat: bool = False, planner_waypoint: bool = False,
+                 planner_k_fine: int | None = None, planner_hierarchical: bool = False):
         """layouts: (obs dim, action count) per layout; hidden: widths, the first being the adapters' output.
 
         `foresight_outputs` adds a head on the trunk that predicts what happens after this decision (mappo.trainer's
@@ -3284,7 +3423,9 @@ class LayoutActor(nn.Module):
 
         `camera_splat` (mappo.camera_splat) lays the camera's patch features on the costmap head's cells (CameraSplat);
         off, the network is exactly what it was. `planner_waypoint` (mappo.planner_waypoint) feeds the planner's
-        planned waypoint into the embedding (MapEncoder); off, likewise.
+        planned waypoint into the embedding (MapEncoder); off, likewise. `planner_k_fine` (mappo.planner_k_fine; None:
+        planner_k's) the fine tier's iterations and `planner_hierarchical` (mappo.planner_hierarchical) the coarse ->
+        fine hierarchy (MapEncoder); neither adds a parameter.
         """
         super().__init__()
         if not hidden:
@@ -3333,7 +3474,7 @@ class LayoutActor(nn.Module):
         # The camera (VisionEncoder; vision_of(stage.json), None = no layout has one), less the inputs dropped
         # (mappo.drop_inputs).
         _attach_vision(self, vision, drop=drop_inputs, planner_k=planner_k, splat=camera_splat,
-                       waypoint=planner_waypoint)
+                       waypoint=planner_waypoint, planner_k_fine=planner_k_fine, hierarchical=planner_hierarchical)
         # The sight list's pointer heads (SightPointers), where the layouts have a sight block: the actor's own.
         sight = self.vision.sight if self.vision is not None else None
         self.sight_pointers = SightPointers(sight.presses, head_width) if sight is not None else None
