@@ -359,7 +359,21 @@ bool Animus::Curriculum::PointNavEncounter::DrawPair(Env& env, Map* map, Player*
         // the goal drawn again a few times when none does, then the nearest fit. SightOnly: the start's eye sees the
         // goal (SightDraw::InSight, the camera's own ray).
         Vision::MapVisionWorld const world(map, bot->GetPhaseMask());
-        float const eyeRise = Vision::PIVOT_SHARE * Movement::ShapeOf(bot).Height;
+        Movement::Body const shape = Movement::ShapeOf(bot);
+        float const eyeRise = Vision::PIVOT_SHARE * shape.Height;
+        // The cells this body is drawn on: the bake's Free and StepUp cells (Reachable) less those whose liquid it
+        // would swim -- the controller swims from SWIM_ENTER of the body's height over the bed (PlayerController),
+        // the bake calls liquid under TRAV_WATER_DEPTH wadeable for everyone (one bake a map), so a gnome swims
+        // where a tauren wades: a start it could only swim from, or a goal it could only tread water at, is not
+        // drawn for it. Liquid[] of a dry cell is TRAV_NO_HEIGHT, far under any floor.
+        float const swimDepth = Movement::SWIM_ENTER * shape.Height;
+        std::vector<uint32> drawable;
+        drawable.reserve(grid.Reachable.size());
+        for (uint32 cell : grid.Reachable)
+            if (grid.Liquid[cell] - grid.Ground[cell] < swimDepth)
+                drawable.push_back(cell);
+        if (drawable.size() < 2)
+            return false;
         std::vector<uint32> fits;
         uint32 bestCell = Vision::TRAV_NO_CELL;
         float bestMiss = std::numeric_limits<float>::infinity();
@@ -367,11 +381,11 @@ bool Animus::Curriculum::PointNavEncounter::DrawPair(Env& env, Map* map, Player*
         float const lengthMid = 0.5f * (lengthLow + lengthHigh);
         for (uint32 attempt = 0; attempt < GOAL_TRIES && nav.StartCell == Vision::TRAV_NO_CELL; ++attempt)
         {
-            uint32 const goal = grid.Reachable[pick(grid.Reachable.size())];
+            uint32 const goal = drawable[pick(drawable.size())];
             Vision::CostToGo(grid, goal, tuning.DropHurtYards, nav.Cost);
             Position const goalPoint = CellPoint(grid, goal, false);
             fits.clear();
-            for (uint32 cell : grid.Reachable)
+            for (uint32 cell : drawable)
             {
                 float const route = nav.Cost[cell];
                 if (cell == goal || route >= Vision::TRAV_UNREACHABLE || route <= 0.0f)

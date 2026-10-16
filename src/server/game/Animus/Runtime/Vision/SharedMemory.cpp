@@ -152,8 +152,11 @@ void Animus::Vision::SharedMemory::MergeTile(Store& store, int64_t key, MapTile 
         MapCell cell = from.Cells[index];
         if (!cell.Seen && !cell.Flags && cell.Floor[0] == NO_FLOOR && cell.Floor[1] == NO_FLOOR)
             continue;
-        // A body's own ground stays its own (the map block's ground counters and visited channel).
+        // A body's own ground stays its own (the map block's ground counters and visited channel), and so is what
+        // it saw standing there: a unit's class is a sighting of the moment, not a feature of the ground (kept, the
+        // memory painted a whole dungeon with the creatures a thousand episodes had met; the door flag stays).
         cell.Flags &= uint8_t(~MAP_VISITED);
+        cell.Entity = 0;
         cell.Seen = Shifted(cell.Seen, shift);
         MergeCell(merged->Cells[index], cell, clears);
     }

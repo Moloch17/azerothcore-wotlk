@@ -609,7 +609,7 @@ through to `StandIn.Share`, so its default 0 is never consulted today (the "defe
 | StandIn | `StandIn.LeadChance` | 50 | int32 | Load: 0..100 | `Encounters/StandIn.h:142` | group1, dungeon2-3 |
 | StandIn | `StandIn.TankChance` | 34 | int32 | Load: 0..100; pair scaled to sum <= 100 | `Encounters/StandIn.h:145`, `Encounters/StandIn.h:146` | group1, dungeon2-3 |
 | StandIn | `StandIn.HealerChance` | 33 | int32 | Load: 0..100; pair scaled to sum <= 100 | `Encounters/StandIn.h:146` | group1, dungeon2-3 |
-| PointNav | `PointNav.ArriveYards` | 1.0f | float | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (arrival: within this of the goal, 2D) |
+| PointNav | `PointNav.ArriveYards` | 1.5f | float | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (arrival: within this of the goal, 2D) |
 | PointNav | `PointNav.ArriveRise` | 2.0f | float | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (arrival: within this of the goal's height) |
 | PointNav | `PointNav.StopMoved` | 0.05f | float | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (a stop: under this many yards moved over the decision) |
 | PointNav | `PointNav.Arrive` | 3.0f | float | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (Outcome, once) |

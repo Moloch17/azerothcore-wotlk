@@ -354,8 +354,8 @@ namespace Animus::Curriculum
             /// Potential shaping on the cosine of the marker's bearing from the seat's facing: Facing for turning
             /// from dead away to dead ahead (Shaping).
             float Facing = 0.25f;
-            /// Stopped: no forward, back, strafe or vertical key held, no jump pending, on the ground, and the feet
-            /// moved less than this many yards since the last decision.
+            /// Stopped: no forward, back, strafe or vertical key held, no jump pending, on the ground or treading
+            /// water, and the feet moved less than this many yards since the last decision.
             float StopMoved = 0.05f;
             /// How near a stop has to be to count in stop_distance (a stop far from the marker is a pause, not a try).
             float StopNear = 10.0f;
@@ -479,7 +479,7 @@ namespace Animus::Curriculum
         /// the fall's share of health times it, in yards of walking.
         struct PointNavTuning
         {
-            float ArriveYards = 1.0f;
+            float ArriveYards = 1.5f;
             float ArriveRise = 2.0f;
             float StopMoved = 0.05f;
             float Arrive = 3.0f;

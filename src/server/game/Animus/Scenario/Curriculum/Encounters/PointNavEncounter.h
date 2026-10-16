@@ -44,7 +44,8 @@ namespace Animus::Curriculum
     /// percent of training episodes start where a seat of this arena failed -- pinned PinSeconds, fell for damage,
     /// drowned or timed out -- with that goal (a ring of FailurePool); an evaluation's pairs come from its seed. A
     /// SightOnly arena (nav1) keeps only starts whose eye sees the goal; a goal on a water cell is at the surface, at
-    /// the bed BedShare percent of the time.
+    /// the bed BedShare percent of the time. Neither end is drawn on a cell the seat's own body would swim (liquid
+    /// deeper than SWIM_ENTER of its height over the bed): the bake's wadeable is the tallest race's.
     ///
     /// Paid (PointNav.*): Arrive once (Outcome) on stopping (Standing::Stopped) within ArriveYards of the goal and
     /// ArriveRise of its height; StepCost per decision, Death, FallHurt per share of maximum health a fall took,

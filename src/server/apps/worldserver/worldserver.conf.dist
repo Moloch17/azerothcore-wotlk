@@ -6575,7 +6575,7 @@ AnimusForge.Curriculum.PartyFollow.DriftMovingYards = 10.0
 #        cell's bed (goal z = the bed; the surface otherwise). DropHurtYards prices a damaging drop's edge in the bake:
 #        the fall's share of health times it, in yards of walking (a half-health fall costs 50 yd).
 #   arriving: stopped within ArriveYards (2D) and ArriveRise (height) of the point, under StopMoved yards of motion
-AnimusForge.Curriculum.PointNav.ArriveYards = 1.0
+AnimusForge.Curriculum.PointNav.ArriveYards = 1.5
 AnimusForge.Curriculum.PointNav.ArriveRise = 2.0
 AnimusForge.Curriculum.PointNav.StopMoved = 0.05
 #   the outcome and the costs

@@ -164,6 +164,13 @@ namespace Animus::Vision
     }
     [[nodiscard]] inline float FloorHeight(int16_t q) { return float(q) * FLOOR_STEP; }
 
+    /// The oldest sighting the crop's class channel (CROP_CLASS) still shows, seconds: a unit seen here this long ago
+    /// is not here for the policy's purposes (a patrol's loop is under a minute; the next bucket, 4 min, is "it was
+    /// here once"). Older marks stay in the cell but paint no class -- a map kept across resets
+    /// (MapRunSettings::KeepShare, its clock moved on by minutes) or borrowed from the shared memory would otherwise
+    /// show every creature a seat had ever met as present (seed 216, 2026-10-16).
+    constexpr float ENTITY_RECENT_SECONDS = 60.0f;
+
     /// An entity's age past its cell's last look, in eight buckets: under 1 s, 4 s, 15 s, 1 min, 4 min, 15 min, 1 h,
     /// and older; and the bucket's start.
     constexpr float ENTITY_AGE_BUCKETS[8] = { 0.0f, 1.0f, 4.0f, 15.0f, 60.0f, 240.0f, 900.0f, 3600.0f };
@@ -266,7 +273,7 @@ namespace Animus::Vision
         CROP_HEIGHT,            // the floor layer nearest the feet: 0 none, else 128 + (z - feet) / CROP_HEIGHT_STEP
         CROP_VISITED,           // 1 any of the four was stood on
         CROP_AGE,               // the newest look: CROP_AGE_NEVER never, else round(CROP_AGE_SCALE x log2(1 + s))
-        CROP_CLASS,             // the most recent entity's class (Class), 0 none
+        CROP_CLASS,             // the most recent entity's class (Class) seen under ENTITY_RECENT_SECONDS ago, 0 none
         CROP_FRONTIER,          // 1 any of the four is known floor beside a cell never seen
         CROP_SEARCHED,          // 0..SEARCHED_MAX how many of the four were looked at THIS episode (Seen >= epoch)
     };

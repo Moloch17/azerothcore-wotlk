@@ -1100,7 +1100,7 @@ cell changes.
 
 ### Rewards (no Shaping)
 
-Arrive (`PointNav.Arrive` 3.0, Outcome) once, `Standing::Stopped` within `ArriveYards` (1.0, 2D) and `ArriveRise`
+Arrive (`PointNav.Arrive` 3.0, Outcome) once, `Standing::Stopped` within `ArriveYards` (1.5, 2D) and `ArriveRise`
 (2.0) of the goal; StepCost 0.002 per decision; Stuck and Wall at `Seek.*`'s fixed prices; FallHurt (`RewardTerm::
 FallHurt`, Cost) = the share of max health a fall took x `PointNav.FallHurt` 2.0; Death 3.0; Drowned (`RewardTerm::
 Drowned`, 3.0) on underwater self damage at a death; Lost 0.02/s while `C(body) > C(start) + LostYards` (40);

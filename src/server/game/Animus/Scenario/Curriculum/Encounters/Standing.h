@@ -46,12 +46,15 @@ namespace Animus::Curriculum::Standing
     /// Whether a seat is stopped, as arriving means it, read from the server's applied state (player-controller
     /// §5A.1: what is judged is what the server holds; the client sends MOVE_STOP at once, so at a stop the two
     /// agree): `movementFlags` is the unit's MovementInfo flags -- no forward, back, strafe, pitch, ascend or
-    /// descend, not falling (a jump is), not swimming or flying -- and the unit's position moved under
-    /// `stopMoved` yards since the last decision. A turn (MOVEMENTFLAG_LEFT/RIGHT, or the mouse's facing alone)
-    /// does not count against it: turning on the spot is standing still (ratified 2026-10-05).
+    /// descend, not falling (a jump is), not flying -- and the unit's position moved under `stopMoved` yards
+    /// since the last decision. A turn (MOVEMENTFLAG_LEFT/RIGHT, or the mouse's facing alone) does not count
+    /// against it: turning on the spot is standing still (ratified 2026-10-05). Nor does swimming (2026-10-16): a
+    /// swimmer treading water with no key held is stopped -- the flag is set the whole time a body is in deep
+    /// water, and in the mask it let no seat ever arrive at a goal in water (nav5's bed goals, a short race's
+    /// swim through what the bake calls wadeable); the callers' own floor tests (ArriveRise) say where it stopped.
     [[nodiscard]] inline bool Stopped(uint32 movementFlags, float movedYards, float stopMoved)
     {
-        constexpr uint32 MOVING = MOVEMENTFLAG_MASK_MOVING | MOVEMENTFLAG_SWIMMING | MOVEMENTFLAG_FLYING;
+        constexpr uint32 MOVING = MOVEMENTFLAG_MASK_MOVING | MOVEMENTFLAG_FLYING;
         return (movementFlags & MOVING) == 0 && movedYards < stopMoved;
     }
 

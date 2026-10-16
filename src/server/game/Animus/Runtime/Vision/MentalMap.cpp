@@ -1332,8 +1332,9 @@ void Animus::Vision::MentalMap::Crop(float x, float y, float z, float yaw, uint8
                     if (newest < 0.0 || age < newest)
                         newest = age;
                 }
+                // The class of the newest sighting, and only a recent one (ENTITY_RECENT_SECONDS).
                 double const age = EntityAge(cell, _clock);
-                if (age >= 0.0 && (entityAge < 0.0 || age < entityAge))
+                if (age >= 0.0 && age < ENTITY_RECENT_SECONDS && (entityAge < 0.0 || age < entityAge))
                 {
                     entityAge = age;
                     entity = uint8_t(cell.Entity & CLASS_MASK);
@@ -1439,7 +1440,8 @@ void Animus::Vision::MentalMap::CropWide(float x, float y, float z, float yaw, f
                 if (sum.Newest < 0.0 || age < sum.Newest)
                     sum.Newest = age;
                 double const entityAge = EntityAge(mapCell, _clock);
-                if (entityAge >= 0.0 && (sum.EntityAge < 0.0 || entityAge < sum.EntityAge))
+                if (entityAge >= 0.0 && entityAge < ENTITY_RECENT_SECONDS
+                    && (sum.EntityAge < 0.0 || entityAge < sum.EntityAge))
                 {
                     sum.EntityAge = entityAge;
                     sum.Entity = uint8_t(mapCell.Entity & CLASS_MASK);
@@ -1520,7 +1522,8 @@ void Animus::Vision::MentalMap::CropWide(float x, float y, float z, float yaw, f
                 if (sum.Newest < 0.0 || age < sum.Newest)
                     sum.Newest = age;
                 double const entityAge = EntityAge(mapCell, _clock);
-                if (entityAge >= 0.0 && (sum.EntityAge < 0.0 || entityAge < sum.EntityAge))
+                if (entityAge >= 0.0 && entityAge < ENTITY_RECENT_SECONDS
+                    && (sum.EntityAge < 0.0 || entityAge < sum.EntityAge))
                 {
                     sum.EntityAge = entityAge;
                     sum.Entity = uint8_t(mapCell.Entity & CLASS_MASK);

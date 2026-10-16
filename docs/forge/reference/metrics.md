@@ -184,7 +184,7 @@ exact set is `stage.json` `episode_info` once built):
 
 | Column | Meaning | Unit |
 |---|---|---|
-| arrived | Stopped within `PointNav.ArriveYards` (1.0, 2D) and `ArriveRise` (2.0) of the goal: the outcome. | 0/1 |
+| arrived | Stopped within `PointNav.ArriveYards` (1.5, 2D) and `ArriveRise` (2.0) of the goal: the outcome. | 0/1 |
 | spl | Success weighted by path length: `arrived x optimal / max(optimal, travelled)` (Habitat's SPL). **The nav stages' measure**: the fade's gate (0.6, 0.7, 0.8), `convergence.measure`, the headline. | 0..1 |
 | time_ratio | Seconds taken over the optimum's run time, `seconds / (optimal / 7)` (7 yd/s run speed). | ratio |
 | optimal_yards | The bake's route cost from the start to the goal, `C(start)`. | yd |

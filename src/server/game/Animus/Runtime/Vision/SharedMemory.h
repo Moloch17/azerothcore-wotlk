@@ -50,7 +50,11 @@
 /// stamp with it; a look older than the move is clamped to the oldest stamp, which reads no differently (the crop's
 /// age byte saturates near two hours). A map remembers the base it was anchored on, so a merge after a rebase
 /// shifts its stamps by the difference. The memory never keeps MAP_VISITED (a body's own ground: the map block's
-/// ground counters and visited channel stay the seat's) nor the per-episode searched counters.
+/// ground counters and visited channel stay the seat's), the per-episode searched counters, nor a cell's entity
+/// (MapCell::Entity, a unit's class and age: a sighting of the moment, which merged from every seat painted the
+/// whole known map with creatures; the crop's class channel shows only sightings under ENTITY_RECENT_SECONDS old,
+/// and a memory may be hours old). A version 3 file written before 2026-10-16 may still carry entities: the crop's
+/// age gate hides them, so the format is unchanged.
 ///
 /// **Walls by recency** (MergeCell): a wall moves with its floor layer, and on a layer both hold the newer look
 /// decides -- a map that read the memory (Adopt) sets or clears it, one that started blank (Anchor) can only set it,
