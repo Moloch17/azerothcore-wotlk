@@ -18,10 +18,11 @@ from ..protocol import GOAL_SLOTS_ON_WIRE
 from ..protocol import (LABEL_COARSE_CLASS, LABEL_COARSE_COST, LABEL_FINE_CLASS, LABEL_FINE_COST, LABEL_SIDE,
                         LABEL_UNREACHABLE, TRAV_CLASS_NAMES, TRAV_CLASSES)
 from .buffer import RolloutBuffer
-from .networks import (MAP_CODE, LayoutActor, LayoutCritic, SharedInputDense, _carry_sequence, _per_layout,
-                       load_actor_state, per_layout, per_layout_host, sample_logits, skip_distribution_checks,
-                       goal_pair, split_goal_pair, to_device, update_norms, vision_image_bytes, vision_look_heads,
-                       vision_term, look_hold_indices)
+from .networks import (MAP_CODE, LayoutActor, LayoutCritic, MapEncoder, SharedInputDense, _carry_sequence,
+                       _per_layout, load_actor_state, neighbour_stack, neighbours_within_45, per_layout,
+                       per_layout_host, sample_logits, skip_distribution_checks, goal_pair, split_goal_pair,
+                       to_device, update_norms, vision_image_bytes, vision_look_heads, vision_term,
+                       look_hold_indices)
 from .valuenorm import ValueNorm
 
 
@@ -246,6 +247,12 @@ class MappoConfig:
     # head's cells by each pixel's depth and the camera's pose (lift, splat), beside the broadcast embedding. Off: the
     # network is exactly what it was. Seeding from a checkpoint without it grows conv1 with zeroed channels.
     camera_splat: bool = False
+    # The planned waypoint (MapEncoder.waypoints; only with the planner): per tier, a steepest-descent walk over the
+    # planner's cost-to-go from the body (5 cells of 2 yd, 2 of 8 yd) and the cell reached -- bearing, distance, valid
+    # -- fed to the policy beside the readouts, cached with them between replans and zeroed by no_planner: the global
+    # planner -> local controller split, the policy being good at walking to a point. Its join starts at zero, so a
+    # checkpoint without it resumes computing what it did. Off: the network is exactly what it was.
+    planner_waypoint: bool = False
 
 
 @dataclass
@@ -264,7 +271,23 @@ class AuxConfig:
     cells the crop knows: the rest can only be guessed at the prior), costmap_iou_<class> (MappoTrainer.AUX_CLASSES:
     each class's IoU over the update, both tiers), costmap_iou_known_<class> (the same over the fine tier's cells the
     crop knows), planner_mae_yards (over the reachable cells) and planner_mae_known
-    (over the reachable cells the fine crop knows). Nothing happens without labels."""
+    (over the reachable cells the fine crop knows). Nothing happens without labels.
+
+    **The planner's direction** (2026-10-15): the L1 leaves 26-50 yd of error on seen cells while neighbouring fine
+    cells differ by about 2 yd of route, so which way is downhill -- what the readouts and the planned waypoint read --
+    is mostly wrong. `planner_dir_coef` x a cross-entropy over each cell's eight neighbours (networks.NEIGHBOURS): the
+    logits -cost_to_go / (planner_dir_temp x the tier's cell yards) of all eight (the predicted cost of a wall or an
+    unknown cell is part of what is learned, so none is masked; past the crop's border none), the target the label's
+    downhill neighbour -- the reachable neighbour(s) of the lowest label cost, ties sharing the target -- on every cell
+    whose label is reachable and has a strictly lower reachable neighbour, both tiers, each cell at its seen weight
+    (unseen_weight, as the costmap's). Dense rather than at the body alone: the waypoint walks the direction of every
+    cell on its way, and the graph is the L1's own (eight shifted views of the cost-to-go, no second VIN pass). 0 is
+    the old loss exactly. Statistics (whatever the coefficient): planner_dir_loss; planner_dir_acc_fine and _coarse,
+    the share of rows whose predicted downhill neighbour of the body's cell (the readouts' centre,
+    MapEncoder.WAYPOINT_ANCHOR: argmin of the predicted cost-to-go over its eight neighbours) is one of the label's,
+    over the rows whose body cell is reachable with a strictly lower reachable neighbour; planner_dir_acc45_fine and
+    _coarse, within 45 degrees of one; planner_dir_acc_seen, the same as _fine over every graded fine cell the crop
+    knows."""
 
     costmap_coef: float = 0.5
     planner_coef: float = 0.5
@@ -282,10 +305,17 @@ class AuxConfig:
     # (costmap_known_share 0.37): graded on them alike the head learned to guess the prior, and once rock became Wall
     # it over-called wall (free IoU 0.46 -> 0.29). The class balance counts the cells at the same weights.
     unseen_weight: float = 1.0
+    # The direction cross-entropy's weight (0 = off: the loss is exactly the costmap's and the L1's) and its
+    # temperature in the tier's cells: a neighbour one cell of route nearer is 1 / planner_dir_temp nats likelier.
+    planner_dir_coef: float = 0.0
+    planner_dir_temp: float = 1.0
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.unseen_weight <= 1.0:
             raise ValueError(f"aux.unseen_weight: expected a weight in [0, 1], got {self.unseen_weight!r}")
+        if self.planner_dir_coef < 0.0 or self.planner_dir_temp <= 0.0:
+            raise ValueError(f"aux.planner_dir_coef must be >= 0 and aux.planner_dir_temp > 0, got "
+                             f"{self.planner_dir_coef!r} and {self.planner_dir_temp!r}")
 
 
 #: The foresight's observation targets (MappoConfig.foresight_obs_targets): the seat's health 8 and 20 decisions on
@@ -856,7 +886,8 @@ class MappoTrainer:
                                  config.goal_lookahead, self.goal_slots,
                                  self.vision, tuple(config.drop_inputs), max(1, int(config.planner_k)),
                                  sharing=sharing, heading=heading,
-                                 camera_splat=bool(config.camera_splat)).to(self.train_device)
+                                 camera_splat=bool(config.camera_splat),
+                                 planner_waypoint=bool(config.planner_waypoint)).to(self.train_device)
         # Whether the actor steers by a continuous heading (protocol 32's ACT section; HeadingHead).
         self.heading = self.actor.heading_head is not None
         # (readout width, pool width) of the cached plan a row (VisionEncoder.planner_widths), (0, 0) without one.
@@ -2076,7 +2107,12 @@ class MappoTrainer:
 
     #: The aux pass's statistics (AuxConfig), as metrics.csv names them.
     AUX_STATS = ("costmap_loss", "planner_loss", "costmap_iou", "costmap_iou_known", "costmap_known_share",
-                 "planner_mae_yards", "planner_mae_known")
+                 "planner_mae_yards", "planner_mae_known", "planner_dir_loss")
+    #: The planner's direction accuracies (AuxConfig: the body cell's downhill neighbour, each tier, exactly and within
+    #: 45 degrees, and every graded fine cell the crop knows), as metrics.csv names them: hits over the rows graded,
+    #: summed over the update's passes, so a pass with few graded rows weighs what it holds.
+    AUX_DIR_STATS = ("planner_dir_acc_fine", "planner_dir_acc_coarse", "planner_dir_acc45_fine",
+                     "planner_dir_acc45_coarse", "planner_dir_acc_seen")
     #: The classes whose IoU over the update metrics.csv names (costmap_iou_<class>): accumulated as intersections and
     #: unions over every pass, so a class absent from one minibatch does not drag its reading to 0.
     AUX_CLASSES = ("free", "wall", "water", "hazard", "drop_safe", "drop_hurt", "slope")
@@ -2116,7 +2152,7 @@ class MappoTrainer:
         critic's share -- and the statistics added to `totals` (sums over the minibatches, with aux_n)."""
         aux, encoder = self.aux, self.actor.vision
         if encoder is None or not encoder.planner_on or labels is None \
-                or (aux.costmap_coef <= 0.0 and aux.planner_coef <= 0.0):
+                or (aux.costmap_coef <= 0.0 and aux.planner_coef <= 0.0 and aux.planner_dir_coef <= 0.0):
             return
         rows = torch.nonzero(counted > 0).reshape(-1)
         if aux.rows > 0 and rows.numel() > aux.rows:
@@ -2148,6 +2184,11 @@ class MappoTrainer:
         known_sum = torch.zeros((), device=device)
         known_n = torch.zeros((), device=device)
         known_share = torch.zeros((), device=device)
+        direction_loss = torch.zeros((), device=device)
+        # The direction (AuxConfig.planner_dir_coef): the body's cell and the neighbours within 45 degrees of each.
+        anchor = MapEncoder.WAYPOINT_ANCHOR
+        within_45 = neighbours_within_45().to(device=device, dtype=torch.float32)
+        direction_hits: dict[str, torch.Tensor] = {}
         # The class weights and each cell's seen weight (AuxConfig.balance_clip, unseen_weight), from this pass's
         # labelled cells over both tiers (_aux_class_weights).
         with torch.no_grad():
@@ -2180,8 +2221,43 @@ class MappoTrainer:
                     known = reachable & crop_known
                     known_sum += (error * known).sum() * 100.0
                     known_n += known.sum()
+            # The direction: a cross-entropy over each cell's eight neighbours, the label's downhill one(s) the target
+            # (AuxConfig). Graded where the label is reachable and a reachable neighbour is strictly lower. A cell not
+            # graded takes all eight as its target (a loss of 0, finite, so no NaN reaches the backward through the
+            # weight's zero); a neighbour past the crop's border is a very low logit rather than -inf, likewise.
+            with torch.set_grad_enabled(aux.planner_dir_coef > 0.0 and torch.is_grad_enabled()):
+                label_next = neighbour_stack(cost, LABEL_UNREACHABLE)
+                reach_next = label_next < LABEL_UNREACHABLE
+                lowest = torch.where(reach_next, label_next, torch.full_like(label_next, math.inf)).amin(dim=1)
+                graded = reachable & (lowest < cost)
+                target = (reach_next & (label_next == lowest[:, None])) | ~graded[:, None]
+                inside = neighbour_stack(torch.ones_like(cost[:1]), 0.0) > 0.0
+                temperature = aux.planner_dir_temp * float(encoder.map.tier_cells[tier])
+                logits = -neighbour_stack(plan["cost_to_go"][tier].to(torch.float32), 0.0) / temperature
+                logits = torch.where(inside, logits, torch.full_like(logits, -1e9))
+                crossing = torch.logsumexp(logits, dim=1) - torch.logsumexp(
+                    torch.where(target, logits, torch.full_like(logits, -1e9)), dim=1)
+                graded_weight = seen_weight[tier] * graded
+                direction_loss = direction_loss + (crossing * graded_weight).sum() / graded_weight.sum().clamp(min=1e-6)
+            with torch.no_grad():
+                name = "fine" if tier == 0 else "coarse"
+                body = graded[:, anchor, anchor]
+                body_target = target[:, :, anchor, anchor].to(torch.float32)
+                chosen = logits[:, :, anchor, anchor].argmax(dim=1, keepdim=True)
+                hit = body_target.gather(1, chosen)[:, 0] > 0.0
+                near = (body_target @ within_45).gather(1, chosen)[:, 0] > 0.0
+                direction_hits[f"aux_dir_hit_{name}"] = (hit & body).sum()
+                direction_hits[f"aux_dir_hit45_{name}"] = (near & body).sum()
+                direction_hits[f"aux_dir_n_{name}"] = body.sum()
+                if tier == 0:
+                    seen_cells = graded & crop_known
+                    hits = target.gather(1, logits.argmax(dim=1, keepdim=True))[:, 0]
+                    direction_hits["aux_dir_hit_seen"] = (hits & seen_cells).sum()
+                    direction_hits["aux_dir_n_seen"] = seen_cells.sum()
         tiers = max(1, len(plan["costmap"]))
         loss = aux.costmap_coef * costmap_loss / tiers + aux.planner_coef * planner_loss / tiers
+        if aux.planner_dir_coef > 0.0:
+            loss = loss + aux.planner_dir_coef * direction_loss / tiers
         loss.backward()
         with torch.no_grad():
             def mean_iou(matrix: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -2199,10 +2275,13 @@ class MappoTrainer:
             values = {"costmap_loss": costmap_loss.detach() / tiers, "planner_loss": planner_loss.detach() / tiers,
                       "costmap_iou": iou, "costmap_iou_known": iou_known, "costmap_known_share": known_share,
                       "planner_mae_yards": mae_sum / mae_n.clamp(min=1.0),
-                      "planner_mae_known": known_sum / known_n.clamp(min=1.0)}
+                      "planner_mae_known": known_sum / known_n.clamp(min=1.0),
+                      "planner_dir_loss": direction_loss.detach() / tiers}
             for name, value in values.items():
                 totals[f"aux_{name}"] = totals.get(f"aux_{name}", 0.0) + value
             totals["aux_n"] = totals.get("aux_n", 0.0) + 1.0
+            for name, value in direction_hits.items():
+                totals[name] = totals.get(name, 0.0) + value.to(torch.float32)
             # Each named class's intersection and union, summed over the update's passes (AUX_CLASSES).
             for name in self.AUX_CLASSES:
                 index = TRAV_CLASS_NAMES.index(name)
@@ -2625,6 +2704,18 @@ class MappoTrainer:
             count = auxiliary_stats.pop("aux_n")
             for name in self.AUX_STATS:
                 stats[name] = auxiliary_stats.pop(f"aux_{name}", 0.0) / max(count, 1.0)
+            # The direction's accuracies: hits over the rows (cells) graded, over the whole update.
+            for stat, hit, graded in (("planner_dir_acc_fine", "hit_fine", "n_fine"),
+                                      ("planner_dir_acc_coarse", "hit_coarse", "n_coarse"),
+                                      ("planner_dir_acc45_fine", "hit45_fine", "n_fine"),
+                                      ("planner_dir_acc45_coarse", "hit45_coarse", "n_coarse"),
+                                      ("planner_dir_acc_seen", "hit_seen", "n_seen")):
+                hits = float(auxiliary_stats.pop(f"aux_dir_{hit}", 0.0))
+                rows = float(auxiliary_stats.get(f"aux_dir_{graded}", 0.0))
+                if rows > 0.0:
+                    stats[stat] = hits / rows
+            for graded in ("n_fine", "n_coarse", "n_seen"):
+                auxiliary_stats.pop(f"aux_dir_{graded}", None)
             # A class's IoU over the whole update; absent (no column value) where it was never labelled nor predicted.
             for name in self.AUX_CLASSES:
                 inter = auxiliary_stats.pop(f"aux_inter_{name}", 0.0)
@@ -2706,6 +2797,34 @@ class MappoTrainer:
                   f"moments are dropped", flush=True)
         self.actor_opt.load_state_dict(saved)
 
+    def _load_vision_optimizer(self, saved: dict, actor_state: dict) -> None:
+        """The camera's optimizer from a checkpoint. Parameters the checkpoint's actor has no tensor for (the planned
+        waypoint's join, mappo.planner_waypoint, switched on over a checkpoint without it) start with fresh moments and
+        every other parameter keeps its own, matched by name: the saved ids are positions in the parameter order, which
+        is this encoder's with the new parameters left out. Moments that would not fit their parameter (another
+        change) leave the whole optimizer fresh, and say so."""
+        names = [f"vision.{name}" for name, _ in self.actor.vision.named_parameters()]
+        added = [name for name in names if name not in actor_state]
+        if not added:
+            self.vision_opt.load_state_dict(saved)
+            return
+        groups = saved.get("param_groups") or []
+        parameters = self.vision_parameters()
+        if len(groups) == 1 and len(groups[0]["params"]) + len(added) == len(names) == len(parameters):
+            kept = iter(groups[0]["params"])
+            fresh = iter(range(max(groups[0]["params"], default=-1) + 1, 1 << 30))
+            ids = [next(fresh) if name in added else next(kept) for name in names]
+            fits = all(not torch.is_tensor(moment) or moment.dim() == 0 or moment.shape == parameter.shape
+                       for index, parameter in zip(ids, parameters)
+                       for moment in saved["state"].get(index, {}).values())
+            if fits:
+                self.vision_opt.load_state_dict({**saved, "param_groups": [{**groups[0], "params": ids}]})
+                print(f"Resume: the camera's optimizer moments loaded by name; its new parameters "
+                      f"({', '.join(added)}) start with fresh moments", flush=True)
+                return
+        print(f"Resume: the camera's saved optimizer does not line up with this encoder past its new parameters "
+              f"({', '.join(added)}); it starts fresh", flush=True)
+
     def load_state_dict(self, state: dict, load_optimizers: bool = True) -> None:
         from .networks import BLIND_KEEP_PREFIXES, grow_goal_rows, without_blind_columns
         heading_saved = any(key.startswith("heading_head.") for key in state["actor"])
@@ -2735,7 +2854,7 @@ class MappoTrainer:
             self._load_actor_optimizer(state["actor_opt"], state["actor"])
             self.critic_opt.load_state_dict(state["critic_opt"])
             if self.vision_opt is not None and "vision_opt" in state:
-                self.vision_opt.load_state_dict(state["vision_opt"])
+                self._load_vision_optimizer(state["vision_opt"], state["actor"])
             if self.slow_opt is not None and state.get("slow_opt") is not None:
                 try:
                     self.slow_opt.load_state_dict(state["slow_opt"])

@@ -15,6 +15,11 @@ mappo:
   # direction of the broadcast embedding. On from here for the rest of the chain (nav1 runs without it). Seeded from
   # nav1: conv1 grows with the splat's channels at zero and the splat's projection starts fresh.
   camera_splat: true
+  # The planned waypoint (MapEncoder.waypoints): steepest descent over the planner's cost-to-go from the body, 5 cells
+  # of 2 yd on the fine tier and 2 of 8 yd on the coarse, and the cell reached -- bearing, distance, valid -- fed to the
+  # policy beside the readouts (2026-10-15: the global planner -> local controller split; the policy walks to a point
+  # well). On from here (nav1 stays without). Its join starts at zero: nav2's checkpoint resumes computing what it did.
+  planner_waypoint: true
 
 status:
   targets:

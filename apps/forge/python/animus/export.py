@@ -170,9 +170,26 @@ The .amdl format (little-endian); a reader must follow it exactly, and a change 
         floor(side / 2 - forward / cell), col = floor(side / 2 + right / cell); a sample inside 0..side adds its
         features to that cell; a cell's planes are the mean of what landed in it (0 when nothing did) and covered (1
         when anything did). Float32 throughout, as the learner computes it.
+        In version 14 (a policy with the planned waypoint; mappo.planner_waypoint, networks.MapEncoder.waypoints),
+        after pointer_weight:
+        u32  waypoint_features              F = tiers x 4 (0: none, and nothing follows)
+        if F:
+            u32  anchor (23), steps[tiers] (5, 2)
+            f32  waypoint_weight[embed * F], waypoint_bias[embed]    added to the camera's embedding before its SiLU
+                                            with the readouts' join
+        The waypoint (networks.descend and MapEncoder.waypoints, the reference), per tier of cell yards, from the
+        tier's value map after the k iterations, cost = -value x 100: start at cell (anchor, anchor) (row 0 furthest
+        ahead, column 0 furthest left; the readouts' centre); up to steps[tier] times, take the eight neighbours in the
+        order (-1,-1), (-1,0), (-1,1), (0,-1), (0,1), (1,-1), (1,0), (1,1) as (row, column) offsets, those past the
+        crop never chosen, and move to the one of the lowest cost (the first of equals) only when its cost is strictly
+        lower than the current cell's, else stop. With c = (height - 1) / 2, the reached cell (r, k) is forward =
+        (c - r) x cell, right = (k - c) x cell yards from the body, d = sqrt(forward^2 + right^2); valid = 1 when the
+        cell is not the start and the compass's objective is present (presence column > 0.5), else 0. The tier's four
+        numbers: -right / d x valid, forward / d x valid, d / (steps[tier] x cell) x valid, valid; the tiers' fours in
+        tier order are the F inputs. They are computed with the readouts (each replan) and kept between.
     (version 12 on: a file of 12 is written only for a policy with the heading; every other policy is still 11, 10 or
     9. The camera's flag and, without a camera, the planner's 0 flag come before it as in version 11. A file of 13 --
-    a policy with the camera splat -- has the section too)
+    a policy with the camera splat -- or of 14 -- one with the planned waypoint -- has the section too)
     u8       heading                        the continuous heading (HeadingHead, heading.CONTRACT.md sec 5)
     if heading:
         u32  components (K, 3), feature_width
@@ -249,8 +266,13 @@ AMDL_MAGIC = b"AMDL"
 # 13: the camera splat (networks.CameraSplat, mappo.camera_splat): the planner section's splat header and projection,
 # and conv1 reading the splat's planes. Written only for a policy with the splat; every other policy is still 12, 11, 10
 # or 9. A checkpoint with the splat is never written as 12 or below (write_amdl refuses).
-AMDL_VERSION = 13
-AMDL_VERSIONS = (7, 8, 9, 10, 11, 12, 13)
+# 14: the planned waypoint (mappo.planner_waypoint, networks.MapEncoder.waypoints): the planner section's waypoint
+# count, walk and join after the pointer's weight. Written only for a policy with the waypoint; every other policy is
+# still 13 or below. A checkpoint with the waypoint is never written as 13 or below (write_amdl refuses).
+AMDL_VERSION = 14
+AMDL_VERSIONS = (7, 8, 9, 10, 11, 12, 13, 14)
+#: The version a policy with the camera splat and no planned waypoint is written as.
+AMDL_SPLAT_VERSION = 13
 #: The version a policy with the heading and no camera splat is written as.
 AMDL_HEADING_VERSION = 12
 #: The version a policy with the planner and no heading is written as.
@@ -333,7 +355,8 @@ def write_amdl(
     tail: dict | None = None,
 ) -> None:
     """Write one model. `tail` is the version 10 tail (tail_weights); without one the file is version 9. A tail with
-    the camera splat is version 13, one with a heading (and no splat) 12, one with a planner (and neither) 11."""
+    the planned waypoint is version 14, one with the camera splat (and no waypoint) 13, one with a heading (and
+    neither) 12, one with a planner (and none of them) 11."""
     if layers[0][0].shape[1] != obs_dim + num_agents:
         raise ValueError(f"first layer takes {layers[0][0].shape[1]} inputs, expected {obs_dim} + {num_agents}")
     if memory is not None and layers[-1][0].shape[1] != memory["weight_hh"].shape[1]:
@@ -345,14 +368,17 @@ def write_amdl(
     planner = bool(tail and tail.get("planner"))
     heading = bool(tail and tail.get("heading"))
     splat = bool(planner and tail["planner"].get("splat"))
-    version = (AMDL_VERSION if splat else AMDL_HEADING_VERSION if heading else AMDL_PLANNER_VERSION if planner
-               else (AMDL_CAMERA_VERSION if tail else AMDL_PLAIN_VERSION))
+    waypoint = bool(planner and tail["planner"].get("waypoint"))
+    version = (AMDL_VERSION if waypoint else AMDL_SPLAT_VERSION if splat else AMDL_HEADING_VERSION if heading
+               else AMDL_PLANNER_VERSION if planner else (AMDL_CAMERA_VERSION if tail else AMDL_PLAIN_VERSION))
     if planner and version < AMDL_PLANNER_VERSION:
         raise ValueError("a policy with a planner is written as version 11 or above, never 10")
     if heading and version < AMDL_HEADING_VERSION:
         raise ValueError("a policy with a heading head is written as version 12 or above, never 11 or below")
-    if splat and version < AMDL_VERSION:
+    if splat and version < AMDL_SPLAT_VERSION:
         raise ValueError("a policy with the camera splat is written as version 13, never 12 or below")
+    if waypoint and version < AMDL_VERSION:
+        raise ValueError("a policy with the planned waypoint is written as version 14, never 13 or below")
     with open(path, "wb") as out:
         out.write(AMDL_MAGIC)
         out.write(struct.pack("<IH", version, len(encoded)))
@@ -526,7 +552,7 @@ def _write_camera_tail(out, tail: dict, version: int) -> None:
     out.write(struct.pack("<13I", *(int(planner[key]) & 0xFFFFFFFF for key in PLANNER_HEADER)))
     _floats(out, np.asarray(planner["tier_cells"], dtype="<f4"), np.asarray([planner["compass_scale"]], dtype="<f4"))
     splat = planner.get("splat")
-    if version >= AMDL_VERSION:
+    if version >= AMDL_SPLAT_VERSION:
         out.write(struct.pack("<I", int(splat["channels"]) if splat else 0))
         if splat:
             out.write(struct.pack("<6I", *(int(splat[key]) for key in SPLAT_HEADER)))
@@ -535,6 +561,15 @@ def _write_camera_tail(out, tail: dict, version: int) -> None:
     elif splat:
         raise ValueError("a policy with the camera splat is written as version 13, never 12 or below")
     _floats(out, *(planner[key] for key in PLANNER_ARRAYS))
+    waypoint = planner.get("waypoint")
+    if version >= AMDL_VERSION:
+        out.write(struct.pack("<I", int(waypoint["features"]) if waypoint else 0))
+        if waypoint:
+            out.write(struct.pack(f"<{1 + len(waypoint['steps'])}I", int(waypoint["anchor"]),
+                                  *(int(step) for step in waypoint["steps"])))
+            _floats(out, waypoint["weight"], waypoint["bias"])
+    elif waypoint:
+        raise ValueError("a policy with the planned waypoint is written as version 14, never 13 or below")
 
 
 def memory_weights(actor_state: dict[str, torch.Tensor]) -> dict[str, np.ndarray] | None:
@@ -836,6 +871,17 @@ def tail_weights(actor_state: dict[str, torch.Tensor], stage: dict, names: list[
                     "pointer_weight": (array("goal_head.cell.planner_weight")
                                        if "goal_head.cell.planner_weight" in actor_state
                                        else np.zeros((1,), "<f4"))}
+                # The planned waypoint (version 14): its walk and its join.
+                if "vision.map.waypoint_join.weight" in actor_state:
+                    weight = array("vision.map.waypoint_join.weight")
+                    if weight.shape[1] != tiers * MapEncoder.WAYPOINT_FEATURES:
+                        raise ValueError(f"the waypoint join reads {weight.shape[1]} inputs, the learner's "
+                                         f"{tiers} x {MapEncoder.WAYPOINT_FEATURES}")
+                    tail["planner"]["waypoint"] = {
+                        "features": tiers * MapEncoder.WAYPOINT_FEATURES, "anchor": MapEncoder.WAYPOINT_ANCHOR,
+                        "steps": [MapEncoder.WAYPOINT_STEPS[min(t, len(MapEncoder.WAYPOINT_STEPS) - 1)]
+                                  for t in range(tiers)],
+                        "weight": weight, "bias": array("vision.map.waypoint_join.bias")}
         if "look_head.linear.weight" in actor_state:
             camera["look_heads"] = [int(h) for h in own["look"]]
             camera["look_weight"] = array("look_head.linear.weight")
@@ -1200,6 +1246,14 @@ def read_amdl(path: str | Path) -> dict:
                       "join_bias": (embed,), "pointer_weight": (1,)}
             for key in PLANNER_ARRAYS:
                 planner[key] = floats(int(np.prod(shapes[key])), *shapes[key])
+            planner["waypoint"] = None
+            if version >= 14:
+                (features,) = u32s(1)
+                if features:
+                    anchor, *steps = u32s(1 + tiers)
+                    planner["waypoint"] = {"features": features, "anchor": anchor, "steps": list(steps),
+                                           "weight": floats(embed * features, embed, features),
+                                           "bias": floats(embed, embed)}
             tail["planner"] = planner
         if version >= 12 and flag():
             components, heading_width = u32s(2)

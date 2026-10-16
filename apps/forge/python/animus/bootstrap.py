@@ -614,8 +614,9 @@ VISION_JOIN = "vision_join."
 #: camera carries from a checkpoint without a map, and the map starts fresh with its join zeroed.
 MAP = "vision.map."
 #: ... and its joins onto the camera's embedding: the map's own and, with the planner (vision movement curriculum), the
-#: planner's readout join, zeroed together whenever anything of the encoder starts fresh.
-MAP_ZEROED = ("vision.map.join.", "vision.map.planner_join.")
+#: planner's readout join and the planned waypoint's (mappo.planner_waypoint), zeroed together whenever anything of the
+#: encoder starts fresh. A fresh waypoint join alone zeroes nothing else: it starts at zero, a no-op.
+MAP_ZEROED = ("vision.map.join.", "vision.map.planner_join.", "vision.map.waypoint_join.")
 #: The coarse coverage grid's encoder inside the camera's (CoverageEncoder, general search sec 5): seeded on its own,
 #: so a camera carries from a checkpoint without the block (M1's), and the grid starts fresh with its join zeroed --
 #: the seeded policy acts as it did, and the grid comes in as the join learns.
