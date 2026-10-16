@@ -184,6 +184,7 @@ semantics: every Shaping term (fade) or noise price (costs) is paid times the cu
 | `require_plateau` | true | (fade only) | false: a gate-stepped ladder steps as soon as the gate is met (`stage.py:571, 641`) |
 | `stall_evals` | 4 | (fade only) | at least 1 (`config.py:223`); stall warning (`stage.py:174, 316`) |
 | `stall_env_steps` | 20,000,000 | (fade only) | 0 or more |
+| `rung_metric` | `""` | (fade only) | the summary column with the rung the evaluation was played at (nav: `nav_rung`); an evaluation off the ladder's rung is not read (`stage.py` `ShapingFade.off_rung`) |
 
 ### `style:` (`StyleConfig`, `config.py:272`), read by `style.py` and `train.py:908-934, 1338, 1779`
 

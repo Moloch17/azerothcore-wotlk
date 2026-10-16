@@ -100,7 +100,8 @@ Meaning: [py-learner-stage.md](py-learner-stage.md). Every live yaml sets `patie
 ## `FadeConfig` (`:176`), section `fade`
 
 `enabled` False; `rungs` `(1.0, 0.5, 0.25, 0.0)`; `window` 3; `regress_z` 2.0; `give_up` 2; `moving_classes` 2;
-`gate_metric` ""; `gate_value` 0.0; `require_plateau` True; `stall_evals` 4; `stall_env_steps` 20,000,000.
+`gate_metric` ""; `gate_value` 0.0; `require_plateau` True; `stall_evals` 4; `stall_env_steps` 20,000,000;
+`rung_metric` "".
 Validation (`:210`): rungs non-empty, within [0,1], strictly falling, last exactly 0.0; `window >= 1`; `regress_z > 0`;
 `give_up >= 1`; `moving_classes >= 0`; `stall_evals >= 1`; `stall_env_steps >= 0`. Live yamls: all use
 `[1.0, 0.5, 0.25, 0.0]` with `require_plateau: false` and a gate (for example M1 `arrived_at_rung >= 0.85`, `found >= 0.8`, `won >= 0.7`, `full_clear >= 0.5`).

@@ -222,6 +222,9 @@ fade:
   require_plateau: false
   # A difficulty ladder: it steps on its gate whatever the cost ladder is doing (nothing to fade).
   wait_for_costs: false
+  # An evaluation is read only when its episodes were played at the ladder's rung (the sim's nav_rung, its
+  # SightDraw::Rung of the shaping scale): nav2's resumed run once stepped to the top on rung 0's trips.
+  rung_metric: nav_rung
 
 # No cost ladder: StepCost, Stuck, Wall, Death and the noise prices are at full price from the first step (the dungeon
 # plan's rule; M1's stall on a ladder that waited).

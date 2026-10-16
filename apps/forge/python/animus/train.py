@@ -883,7 +883,10 @@ class TrainingRun:
             if leader:
                 self.hub = Hub(config.dist_address, networks, shared_listing(Path(config.runs_dir), self.shared_files))
                 self.hub.center_steps = self.env_steps
-                self.hub.set(env_steps=self.env_steps, update=self.update)
+                # The resumed ladders' scales from the start: a follower that joins before the leader's first rollout
+                # would otherwise push its own controller's (x1, the cost ladder's first rung) to its sim.
+                self.hub.set(env_steps=self.env_steps, update=self.update, shaping_scale=self.controller.fade.scale,
+                             cost_scale=self.controller.costs.scale)
             else:
                 # A follower evaluates nothing and decides nothing: the leader's run is the run.
                 self.link = Link(config.dist_address, config.rank, networks, config.mappo.weight_sync_every,
@@ -1028,6 +1031,10 @@ class TrainingRun:
         self.lr_scale_now = 1.0
         self.shaping_scale_now = self.controller.fade.scale
         self.cost_scale_now = self.controller.costs.scale
+        if self.link is not None:
+            # A follower resumed nothing: its scales are the leader's, as the hello's control carried them.
+            self.shaping_scale_now = self.link.control.get("shaping_scale", self.shaping_scale_now)
+            self.cost_scale_now = self.link.control.get("cost_scale", self.cost_scale_now)
         self.frozen = np.zeros(0, dtype=np.int64)
         self.layout_allowed: dict[int, float] = {}
         self.last_layout_stats: dict[str, dict[str, float]] = {}
@@ -1457,7 +1464,7 @@ class TrainingRun:
             # evaluation of a new rung it has no best yet (None): print a dash, do not format it.
             best = "-" if tracker.best is None else format(tracker.best, ".4g")
             judged = (f" judged on {self.judged_kind} {tracker.history[-1][1]:.3g} +/- {tracker.history[-1][2]:.2g}"
-                      if self.judged_kind and tracker.history else "")
+                      if self.judged_kind and tracker.history and controller.unread_message is None else "")
             print(f"Eval at {self.env_steps} env steps: score {result.score:.4g} +/- {result.stderr:.2g}{judged} "
                   f"(best {best}, {tracker.evals_since_best} evals since, margin {tracker.last_margin:.2g})"
                   f"{against}; return {played if played is None else format(played, '.4g')} at shaping "
@@ -1467,6 +1474,9 @@ class TrainingRun:
             if excluded := config.status.excluded_line():
                 print(excluded, flush=True)
 
+            if controller.unread_message:
+                print(f"{config.run_name}: WARNING {controller.unread_message}", flush=True)
+                self.log_event(f"evaluation at {self.env_steps} not read: {controller.unread_message}")
             if controller.costs_message:
                 print(f"{config.run_name}: {controller.costs_message}", flush=True)
             if controller.fade_message:
@@ -2035,10 +2045,7 @@ class TrainingRun:
         self.maybe_partner_snapshot()
         # How far through its budget the stage is, for the arenas whose weights change over it (WeightFinal), and
         # the shaping and cost ladders' scales. Sent while the sim waits for this rollout's last ACT, as WEIGHTS is.
-        if hasattr(self.env, "set_stage_progress"):
-            total = self.config.total_env_steps
-            self.env.set_stage_progress(self.env_steps / total if total > 0 else 0.0, self.shaping_scale_now,
-                                        self.cost_scale_now)
+        self.push_progress()
 
         if self.updater is None:
             stats = trainer.update(buffer, self.distiller)
@@ -2059,6 +2066,15 @@ class TrainingRun:
         # it waited too, and so on: every update was joined where it was submitted and overlap_updates never
         # overlapped anything.
         return stats if stats is not None else {}, started, rollout_seconds
+
+    def push_progress(self) -> None:
+        """Send the sim(s) the stage's progress and the ladders' scales in force (protocol PROGRESS). The sim builds
+        each episode at the scales it last had -- a nav stage's trips at SightDraw::Rung of the shaping scale -- and a
+        restarted worldserver has x1 and x1 until it is told."""
+        if hasattr(self.env, "set_stage_progress"):
+            total = self.config.total_env_steps
+            self.env.set_stage_progress(self.env_steps / total if total > 0 else 0.0, self.shaping_scale_now,
+                                        self.cost_scale_now)
 
     def style_scale(self) -> float:
         """What the style reward is paid times: the cost ladder's scale in force (style.ladder), else 1."""
@@ -2546,6 +2562,15 @@ class TrainingRun:
                 # The evaluation resets every env: the training episodes in progress are cut short, and the next
                 # rollout starts from fresh ones (this rollout's advantages were already computed above).
                 self.evaluate()
+                # A ladder that moved at that evaluation: its scales to the sim now, so the episodes built from here
+                # on are the new rung's, rather than after the next rollout (the ones the evaluation's training MODE
+                # rebuilt keep the old rung until they end).
+                scales = self.ranks.broadcast((controller.fade.scale, controller.costs.scale))
+                if scales != (self.shaping_scale_now, self.cost_scale_now):
+                    self.shaping_scale_now, self.cost_scale_now = scales
+                    if self.hub is not None:
+                        self.hub.set(shaping_scale=scales[0], cost_scale=scales[1])
+                    self.push_progress()
                 decision = self.ranks.broadcast(controller.after_eval(self.env_steps) if self.ranks.leader else None)
                 # Converged: that evaluation was the stage's last, so it gets its held-out reading if it had none.
                 if decision is not None and decision.action == ADVANCE and self.heldout \
@@ -2565,17 +2590,31 @@ class TrainingRun:
     def run(self) -> int:
         """The whole run; returns the process exit code."""
         self.step = self.env.reset()
-        # The sim fields no stand-in until the learner says it can play one: said once here, then with every training
-        # MODE after an evaluation (a pool that gained its first member since).
-        if self.ranks.broadcast(self.field_stand_in()):
-            self.step = self.env.set_mode(False, stand_in=True)
+        # The ladders' scales before anything is played: a worldserver restarted under a resumed run starts at shaping
+        # and cost x1, and builds its episodes (a nav stage's trips: its rung) at those until PROGRESS says otherwise,
+        # which rollout() sends only after the first rollout. nav2, 2026-10-16: the resumed run's first evaluation
+        # played rung 0's trips while the ladder stood at rung 2, and its SPL stepped the ladder to the top. The
+        # leader's scales, on every rank (a follower's came with the hello).
+        self.shaping_scale_now, self.cost_scale_now = self.ranks.broadcast((self.shaping_scale_now,
+                                                                            self.cost_scale_now))
+        self.push_progress()
+        # Then a training MODE, always: every env is rebuilt at those scales (the ones the sim built when this learner
+        # connected were built at the old ones). The sim fields no stand-in until the learner says it can play one:
+        # said here, then with every training MODE after an evaluation (a pool that gained its first member since).
+        self.step = self.env.set_mode(False, stand_in=self.ranks.broadcast(self.field_stand_in()))
         if self.cast is not None or self.partners is not None:
             self._reset_far_side()
         self.progress.write("training", self.update, self.env_steps)
-        if self.ranks.broadcast(self.evaluating and self.config.eval.at_start and not self.tracker.history):
+        # The starting networks only: a resumed run was evaluated where it stopped. Its tracker's history is no sign of
+        # that -- a gate-stepped ladder's step empties it (ConvergenceController.rebaseline), and nav2's resume read the
+        # empty history as a run never evaluated, twice.
+        if self.ranks.broadcast(self.evaluating and self.config.eval.at_start and not self.resume_path
+                                and not self.tracker.history):
             self.evaluate()
-        self.last_eval_env_steps = self.ranks.broadcast(self.tracker.history[-1][0] if self.tracker.history
-                                                        else self.env_steps)
+        last_eval = self.controller.last_eval_env_steps
+        if last_eval is None:
+            last_eval = self.tracker.history[-1][0] if self.tracker.history else self.env_steps
+        self.last_eval_env_steps = self.ranks.broadcast(min(int(last_eval), self.env_steps))
 
         outcome: Outcome | None = None
         try:

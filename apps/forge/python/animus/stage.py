@@ -150,6 +150,7 @@ class ShapingFade:
         self.gate_value = float(getattr(fade, "gate_value", 0.0))
         self.gate_values = tuple(float(value) for value in (getattr(fade, "gate_values", ()) or ()))
         self.require_plateau = bool(getattr(fade, "require_plateau", True)) or not self.gate_metric
+        self.rung_metric = str(getattr(fade, "rung_metric", "") or "")
         self.gate_seen: float | None = None
         self.rungs = tuple(float(scale) for scale in fade.rungs)
         self.window = max(1, int(fade.window))
@@ -266,6 +267,22 @@ class ShapingFade:
             return (f"the {self.NAME} {self.FORWARD}, x{before:g} -> x{self.scale:g}: outcome score {score:.4g} +/- "
                     f"{stderr:.2g} {self._why()}{against} after {waited} evaluations")
         return None
+
+    OFF_RUNG = 0.1  # rungs the evaluation's mean played rung may differ from the ladder's (every episode is one rung)
+
+    def off_rung(self, summary: dict) -> str | None:
+        """Why the evaluation cannot be read at this rung -- its episodes were played at another (the ladder config's
+        rung_metric, the mean rung the sim built them at) -- or None when it can, or when nothing says (no
+        rung_metric, or no such column in the summary: the evaluation is read as before)."""
+        if not self.enabled or not self.rung_metric:
+            return None
+        played = summary.get(self.rung_metric)
+        if not isinstance(played, (int, float)) or not math.isfinite(played):
+            return None
+        if abs(float(played) - self.rung) <= self.OFF_RUNG:
+            return None
+        return (f"the {self.NAME} is at rung {self.rung} (x{self.scale:g}) but the evaluation's episodes were played "
+                f"at {self.rung_metric} {float(played):.3g}: not read -- no gate, no plateau and no best from it")
 
     def see_gate(self, summary: dict) -> None:
         """The latest evaluation's gate metric (the ladder config's gate_metric), read before observe()."""
@@ -563,6 +580,11 @@ class ConvergenceController:
         # archives the best checkpoint of each rung left (animus.runs.archive_rung_best) before anything overwrites it.
         self.rung_exits: list[tuple[str, int]] = []
         self.stale_ladder = False
+        # Why the latest evaluation was not read (ShapingFade.off_rung), for the run to print; None when it was.
+        self.unread_message: str | None = None
+        # The env steps of the last evaluation observed, saved with the state: the overall tracker's history is emptied
+        # at each gate-stepped rung (rebaseline), and a resumed run times its next evaluation from this.
+        self.last_eval_env_steps: int | None = None
 
     def _tracker(self, patience: int) -> ConvergenceTracker:
         c = self.config.convergence
@@ -632,7 +654,18 @@ class ConvergenceController:
     # ------------------------------------------------------------------ evaluations
 
     def observe(self, summary: dict, env_steps: int) -> bool:
-        """Record a learner evaluation; True if its networks are the new best (save them to best.pt)."""
+        """Record a learner evaluation; True if its networks are the new best (save them to best.pt).
+
+        An evaluation whose episodes were played at another rung than the shaping ladder's (ShapingFade.off_rung) is
+        not recorded at all -- no tracker, ladder or class sees it, and it is never the best -- and `unread_message`
+        says why. Its interval's KL, entropy and rung sums carry on into the next evaluation's."""
+        self.rung_exits = []
+        self.fade_message = self.costs_message = None
+        self.last_eval_env_steps = env_steps
+        self.unread_message = self.fade.off_rung(summary)
+        if self.unread_message is not None:
+            self.fade.alarm = self.fade.stall_alarm = None   # the last evaluation's, already said
+            return False
         self.evals += 1
         before_rungs = self._gate_rungs()
         stderr = summary.get("stderr", 0.0)
@@ -861,6 +894,7 @@ class ConvergenceController:
             "plateau_env_steps": self.plateau_env_steps,
             "baselined": dict(self.baselined),
             "evals": self.evals,
+            "last_eval_env_steps": self.last_eval_env_steps,
             "fade": self.fade.state_dict(),
             "costs": self.costs.state_dict(),
             "layouts": {name: {
@@ -879,6 +913,8 @@ class ConvergenceController:
         self.baseline_summary = state.get("baseline_summary")
         self.plateau_env_steps = state.get("plateau_env_steps")
         self.evals = int(state.get("evals", 0))
+        last = state.get("last_eval_env_steps")
+        self.last_eval_env_steps = int(last) if last is not None else None
         self.fade.load_state_dict(state.get("fade"))
         self.costs.load_state_dict(state.get("costs"))
         for name, saved in (state.get("layouts") or {}).items():

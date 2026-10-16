@@ -262,6 +262,12 @@ class FadeConfig:
     # doorway sat at ~35% for 30M steps, which is a stall and not a collapse). 0 steps = the evaluations alone.
     stall_evals: int = 4
     stall_env_steps: int = 20_000_000
+    # The evaluation summary's column that says which rung its episodes were played at (the nav stages: `nav_rung`,
+    # the sim's SightDraw::Rung of the shaping scale it was sent, so `rungs` must be its FADE_SCALES). An evaluation
+    # that played another rung than the ladder's is not read: no gate, no score for any tracker (nav2, 2026-10-16: a
+    # resumed learner evaluated before the restarted sim had its scale, played rung 0's trips, and their SPL stepped
+    # the ladder from rung 2 to the top). "" = not checked (a stage whose `difficulty` is something else, as M2's).
+    rung_metric: str = ""
 
     def __post_init__(self) -> None:
         rungs = tuple(float(scale) for scale in self.rungs)

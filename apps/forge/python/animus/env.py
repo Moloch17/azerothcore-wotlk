@@ -303,6 +303,9 @@ class ClusterEnv:
         self.sat_out = np.zeros(offset, dtype=bool)
         self._weights = None
         self._replay = None
+        # The last PROGRESS and the training MODE's stand-in flag, for a worker that comes back (rejoin).
+        self._progress: tuple[float, float, float] | None = None
+        self._stand_in = False
 
     # ------------------------------------------------------------------ workers dropping out and coming back
 
@@ -383,6 +386,11 @@ class ClusterEnv:
                 if self._replay is not None:
                     sim.set_replay(*self._replay)
                 fresh = self._seen(index, sim.reset())
+                if self._progress is not None:
+                    # A worldserver restarted under the run is at shaping and cost x1, and built the envs it just
+                    # sent at those: the ladders' scales, then every env rebuilt at them (a nav stage's rung).
+                    sim.set_stage_progress(*self._progress)
+                    fresh = self._seen(index, sim.set_mode(False, stand_in=self._stand_in))
             except OSError as error:
                 self._drop(index, error)
                 continue
@@ -455,6 +463,8 @@ class ClusterEnv:
         # is played once and reported by its own index whichever sim plays it.
         weights = [spec.num_envs if sim is not None else 0 for sim, spec in zip(self.sims, self.specs)]
         shares = _shares(episodes, weights) if evaluate else [0] * len(self.sims)
+        if not evaluate:
+            self._stand_in = stand_in
         parts, start = [], first_seed
         for index, share in enumerate(shares):
             first = start
@@ -474,6 +484,7 @@ class ClusterEnv:
                     self._drop(index, error)
 
     def set_stage_progress(self, progress: float, shaping_scale: float = 1.0, cost_scale: float = 1.0) -> None:
+        self._progress = (progress, shaping_scale, cost_scale)
         for index, sim in enumerate(self.sims):
             if sim is not None:
                 try:
