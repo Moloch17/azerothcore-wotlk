@@ -51,14 +51,24 @@
 /// that ends on a floor -- in the body's band above THAT floor within HIT_BAND_REACH yards of it (a deck or a terrace
 /// seen from above or below). A pass-through never marks a floor. Then the frame is **meshed** (depth-image meshing):
 /// each quad of neighbouring rays is two triangles, and a triangle whose three hits are one surface -- the same kind
-/// (floor, water/hazard), its plane facing the camera, as level as its hits' own normals say -- fills the cells under
-/// it at its interpolated height, a pair of neighbouring wall hits at a near depth the cells between them; never
-/// across a depth discontinuity (an edge, a doorway, a drop), and at most MESH_TRIANGLE_CELLS cells a triangle and
+/// (floor, water/hazard), its plane facing the camera, as level as its hits' own normals say, with no range jump
+/// between its hits and no more rise across it than those normals allow plus a step -- fills the cells under it at
+/// its interpolated height, a pair of neighbouring wall hits at a near depth the cells between them; never across a
+/// depth discontinuity (an edge, a doorway, a drop), and at most MESH_TRIANGLE_CELLS cells a triangle and
 /// MESH_FRAME_CELLS a frame. WriteBody marks the cells the body stood on visited (and their floor, from the feet).
+///
+/// **Walls are bound to a floor layer** (MAP_WALL_LOW to Floor[0]'s band, MAP_WALL_HIGH to Floor[1]'s) and move with
+/// it: a layer's wall goes when the layer is replaced by another storey, and an observation of the layer clears it --
+/// a 1-yd floor hit on it, the body standing on it, or a ray seen free through its cell low in its band (within
+/// FREE_CLEAR_RISE of the floor, crossing FREE_CLEAR_SPAN of the cell) -- unless a wall was written on the cell or a
+/// neighbour in the same frame (MAP_WALL_FRAME; a frame's clears wait for its end: a cell at a wall's foot holds floor
+/// and wall both, and a wall seen at a grazing angle is hit in some of its cells and passed in front of in the
+/// others). A meshed floor clears nothing (it is interpolated), nor does a far cell. A wall whose band has no layer in
+/// a cell that has floors (a ground wall under a deck the cell holds) is not written.
 ///
 /// **Shared memory** (SharedMemory.h): a map's tiles can be borrowed read-only from a shared memory (copy-on-write: a
 /// borrowed tile is cloned on its first write), and its clock anchored to the shared memory's, so a memory 20
-/// minutes old reads as 20 minutes old; the shared memory merges the tiles a map wrote back into itself.
+/// minutes old reads as 20 minutes old; the shared memory merges the tiles a map wrote back into itself (MergeCell).
 ///
 /// **Reads** (Crop): the MapBlock's one egocentric, heading-up crop (the Change, 2026-10-06): CROP x CROP cells of
 /// CROP_CELL yards round the body, each summarising its four 1-yd cells, seven bytes a cell (CropChannel); and, for
@@ -107,6 +117,20 @@ namespace Animus::Vision
     /// MESH_WALL_SLACK yards.
     constexpr float MESH_WALL_JUMP = 0.1f;
     constexpr float MESH_WALL_SLACK = 0.5f;
+    /// A floor or water triangle's hits are one surface when the furthest's range exceeds the nearest's by at most
+    /// this share of the nearest, plus MESH_FLOOR_SLACK yards (looser than a wall's: neighbouring rows on a floor at a
+    /// grazing angle differ by up to twice the range at the coarsest render size), and when its hits rise across it
+    /// at most what their own normals allow over its span plus MESH_STEP_RISE yards (a ground hit joined to a raised
+    /// one -- a ledge's top, a beam -- is no tilted floor).
+    constexpr float MESH_FLOOR_JUMP = 1.0f;
+    constexpr float MESH_FLOOR_SLACK = 1.0f;
+    constexpr float MESH_STEP_RISE = 1.0f;
+    /// A ray seen free through a cell clears the wall of the floor layer it passed in only when its segment over the
+    /// cell came within this many yards of that floor (a ray at head height says nothing of a crate at the knees)...
+    constexpr float FREE_CLEAR_RISE = 1.0f;
+    /// ... and crossed at least this much of the cell, horizontally (a ray clipping a corner in front of a wall's
+    /// face is no look at the cell).
+    constexpr float FREE_CLEAR_SPAN = 0.5f;
 
     /// MapCell::Flags.
     enum MapFlag : uint8_t
@@ -118,6 +142,7 @@ namespace Animus::Vision
         MAP_EDGE = 0x10,            // a step or drop to a neighbouring floor
         MAP_VISITED = 0x20,         // the body stood here
         MAP_FREE = 0x40,            // a ray passed here within the body's band, hitting nothing
+        MAP_WALL_FRAME = 0x80,      // a wall was written here this frame (inside WriteFrame only; never kept)
     };
 
     /// One yard of the map, eight bytes.
@@ -205,6 +230,7 @@ namespace Animus::Vision
         uint32_t Meshed = 0;        // 1-yd cells a meshed triangle or wall pair filled
         uint32_t MeshedFar = 0;     // far cells a meshed triangle or wall pair filled
         uint32_t MeshRejected = 0;  // triangles of one kind not filled: a discontinuity, too wide, or past the budget
+        uint32_t WallsCleared = 0;  // layers' walls an observation cleared (a floor hit, a pass low in the band)
     };
 
     /// A tile of the map: MAP_TILE x MAP_TILE cells (1-yd in the fine tier, COARSE_CELL-yd in the coarse and far
@@ -357,6 +383,9 @@ namespace Animus::Vision
         [[nodiscard]] MapCell const* FindFar(float x, float y) const;
         /// Whether the clock is a shared memory's (SharedMemory::Adopt / Anchor): only such a map is merged back.
         [[nodiscard]] bool Anchored() const { return _anchored; }
+        /// Whether the map started from a shared memory's tiles (SharedMemory::Adopt): a wall it lacks on a newer look
+        /// is one it cleared, so its merge may clear the memory's (MergeCell).
+        [[nodiscard]] bool Adopted() const { return _adopted; }
 
         [[nodiscard]] static int64_t TileKey(int32_t tx, int32_t ty)
         {
@@ -401,6 +430,14 @@ namespace Animus::Vision
         /// A wall hit at height `z` on 1-yd cell (cx, cy), when it is in the body's band of a floor (the cell's own,
         /// else a neighbour's, else the feet's); true when it was written.
         bool WriteWall(int32_t cx, int32_t cy, float z, float feetZ, float bodyHeight, uint16_t stamp);
+        /// The 1-yd cell (cx, cy) when its tile is the map's own (not borrowed), else null.
+        [[nodiscard]] MapCell* OwnCell(int32_t cx, int32_t cy);
+        /// An observation of `cell`'s floor layer `layer` (-1: the cell has no floor known) with nothing in the way:
+        /// its wall, if it has one, is cleared at the frame's end (SettleFrame).
+        void NoteClear(int32_t cx, int32_t cy, MapCell const& cell, int32_t layer);
+        /// The frame's end: the noted clears applied, except on or beside a cell with a wall written this frame; the
+        /// MAP_WALL_FRAME marks removed.
+        void SettleFrame(MapWriteStats* stats);
         /// A hit beyond WRITE_REACH into the far tier: floor at its layer, a wall in the band of the far cell's floor
         /// (else the feet's), water or a hazard.
         void WriteFar(Class what, float x, float y, float z, float normalZ, float feetZ, float bodyHeight,
@@ -414,6 +451,7 @@ namespace Animus::Vision
         Slots _far;
         double _clock = 0.0;
         bool _anchored = false;         // the clock is a shared memory's (SharedMemory::Adopt / Anchor)
+        bool _adopted = false;          // ... and the tiles were its (SharedMemory::Adopt)
         /// ... and the shared memory's second the clock's 0 is (the memory's stamp base when anchored): a stamp of
         /// this map is the shared memory's stamp plus (its base now - _origin) (SharedMemory::Absorb).
         double _origin = 0.0;
@@ -431,6 +469,16 @@ namespace Animus::Vision
         bool _hasBody = false;
         float _bodyX = 0.0f;
         float _bodyY = 0.0f;
+        /// The 1-yd cells marked MAP_WALL_FRAME this frame (TileKey-packed cell coordinates), and the clears noted
+        /// (the cell, and its layer's height: NaN for a cell with no floor known).
+        std::vector<int64_t> _frameWalls;
+        struct PendingClear
+        {
+            int32_t X;
+            int32_t Y;
+            float Z;
+        };
+        std::vector<PendingClear> _frameClears;
     };
 
     /// A cell's code for a body whose feet are at `feetZ` (MapCode): the wall of the floor layer nearest the feet,
@@ -440,9 +488,14 @@ namespace Animus::Vision
     [[nodiscard]] bool NearestFloor(MapCell const& cell, float feetZ, float& z);
     /// Whether a cell was ever seen (any look at all: a hit, a pass in the band, the body).
     [[nodiscard]] inline bool Known(MapCell const& cell) { return cell.Seen != 0; }
-    /// `from` folded into `into` (a coarse cell, or a shared memory's): its floors as layers, its flags, the newer
-    /// look and entity. Both cells' stamps on one clock.
-    void MergeCell(MapCell& into, MapCell const& from);
+    /// `from` folded into a shared memory's cell `into`: its floors as layers, its flags, the newer look and entity.
+    /// Both cells' stamps on one clock. A wall moves with its floor layer (the source's layer 0 is not the target's
+    /// layer 0 once the layers are merged); a wall with no floor known goes to a target with at most one layer, else
+    /// is dropped (its height is unknown). Walls by recency: on a layer both hold, a newer `from` sets its wall --
+    /// and, when `clears` (its map read the memory: MentalMap::Adopted, so a wall it lacks is one it cleared), clears
+    /// one it lacks; an equal look adds, an older one leaves the target's be (and moves or evicts none of its layers);
+    /// a layer new to the target takes `from`'s wall.
+    void MergeCell(MapCell& into, MapCell const& from, bool clears);
 }
 
 #endif

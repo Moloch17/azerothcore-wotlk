@@ -52,6 +52,11 @@
 /// shifts its stamps by the difference. The memory never keeps MAP_VISITED (a body's own ground: the map block's
 /// ground counters and visited channel stay the seat's) nor the per-episode searched counters.
 ///
+/// **Walls by recency** (MergeCell): a wall moves with its floor layer, and on a layer both hold the newer look
+/// decides -- a map that read the memory (Adopt) sets or clears it, one that started blank (Anchor) can only set it,
+/// knowing nothing of the memory's walls; the far tier's cells, which no observation clears, only set. So a misread
+/// is cleared by the next seat that looks there, rather than kept for every bot for good.
+///
 /// **Persistence**: `<Dir>/<mapId>.amem`, written periodically (SaveSeconds of real time, on a thread of its own, off
 /// the world and map threads) and at shutdown, loaded the first time a map's memory is asked for. A versioned binary
 /// file (MemoryFileHeader: the magic, MEMORY_VERSION, the map id, the cell's and tile's sizes, the baked scene's
@@ -69,14 +74,16 @@ namespace Animus::Vision
         double SaveSeconds = 600.0;     // real seconds between the periodic saves
     };
 
-    constexpr uint32_t MEMORY_VERSION = 1;
+    /// 2 (2026-10-15): walls bound to their layers on merge and cleared by observation; a version 1 file holds walls
+    /// on the wrong layers and misreads never cleared, and is not read.
+    constexpr uint32_t MEMORY_VERSION = 2;
     /// When the memory's clock (seconds past its base) passes this, the base moves on to leave REBASE_KEEP seconds
     /// of history: a seat's map runs to MentalMap's 65000-second limit from wherever it was anchored.
     constexpr double REBASE_AT = 40000.0;
     constexpr double REBASE_KEEP = 20000.0;
 
 #pragma pack(push, 1)
-    /// The .amem file's header; MEMORY_VERSION 1. Little-endian, as the forge's and the realm's machines are. The
+    /// The .amem file's header; MEMORY_VERSION 2. Little-endian, as the forge's and the realm's machines are. The
     /// tiles follow it, FineTiles then FarTiles records of (int64 tile key, MAP_TILE_CELLS MapCell: int16 Floor[2],
     /// uint8 Flags, uint8 Entity, uint16 Seen).
     struct MemoryFileHeader
@@ -142,8 +149,9 @@ namespace Animus::Vision
         [[nodiscard]] double Relative(double now) const { return now + _offset - _base; }
         /// Moves the base on when the clock nears the stamp's range. Under _lock.
         void RebaseIfDue(double now);
-        /// Merges one tile a map owns into `store`, its stamps shifted by `shift`. Under _lock.
-        void MergeTile(Store& store, int64_t key, MapTile const& from, int32_t shift);
+        /// Merges one tile a map owns into `store`, its stamps shifted by `shift`; `clears`: the map's missing walls
+        /// on newer looks clear the memory's (MergeCell). Under _lock.
+        void MergeTile(Store& store, int64_t key, MapTile const& from, int32_t shift, bool clears);
         static void Trim(Store& store, uint32_t cap);
 
         uint32_t _mapId;

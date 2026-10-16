@@ -42,42 +42,87 @@ namespace
         return cell.Floor[0] != NO_FLOOR || cell.Floor[1] != NO_FLOOR;
     }
 
-    /// Keeps the floor layers in order, the lower first; a wall's flag moves with its layer.
-    void SortLayers(MapCell& cell)
+    constexpr uint8_t MAP_WALLS = MAP_WALL_LOW | MAP_WALL_HIGH;
+
+    /// The wall flag of floor layer `layer` (0 the lower).
+    [[nodiscard]] uint8_t WallFlag(int32_t layer)
+    {
+        return layer == 0 ? MAP_WALL_LOW : MAP_WALL_HIGH;
+    }
+
+    [[nodiscard]] int32_t FloorLayers(MapCell const& cell)
+    {
+        return int32_t(cell.Floor[0] != NO_FLOOR) + int32_t(cell.Floor[1] != NO_FLOOR);
+    }
+
+    /// The cell's floor layer within LAYER_MERGE of `z` (the nearer of two), or -1.
+    [[nodiscard]] int32_t LayerNear(MapCell const& cell, float z)
+    {
+        int32_t found = -1;
+        float best = LAYER_MERGE;
+        for (int32_t layer = 0; layer < 2; ++layer)
+        {
+            if (cell.Floor[layer] == NO_FLOOR)
+                continue;
+            float const distance = std::fabs(FloorHeight(cell.Floor[layer]) - z);
+            if (distance <= best)
+            {
+                best = distance;
+                found = layer;
+            }
+        }
+        return found;
+    }
+
+    /// Keeps the floor layers in order, the lower first; a wall's flag moves with its layer. True when they swapped.
+    bool SortLayers(MapCell& cell)
     {
         bool const swap = (cell.Floor[0] == NO_FLOOR && cell.Floor[1] != NO_FLOOR)
             || (cell.Floor[0] != NO_FLOOR && cell.Floor[1] != NO_FLOOR && cell.Floor[0] > cell.Floor[1]);
         if (!swap)
-            return;
+            return false;
         std::swap(cell.Floor[0], cell.Floor[1]);
         uint8_t const low = cell.Flags & MAP_WALL_LOW;
         uint8_t const high = cell.Flags & MAP_WALL_HIGH;
-        cell.Flags = uint8_t((cell.Flags & ~(MAP_WALL_LOW | MAP_WALL_HIGH)) | (low ? MAP_WALL_HIGH : 0)
-            | (high ? MAP_WALL_LOW : 0));
+        cell.Flags = uint8_t((cell.Flags & ~MAP_WALLS) | (low ? MAP_WALL_HIGH : 0) | (high ? MAP_WALL_LOW : 0));
+        return true;
     }
 
     /// A floor at `z` into the cell's layers: the layer within LAYER_MERGE takes it (the latest look), else a free
-    /// layer, else the nearer layer is replaced.
-    void InsertFloor(MapCell& cell, float z)
+    /// layer, else the nearer layer is replaced -- another storey, so the replaced layer's wall goes with it. Returns
+    /// the layer the floor is now (after the layers are sorted).
+    int32_t InsertFloor(MapCell& cell, float z)
     {
         int16_t const q = QuantiseFloor(z);
-        for (int16_t& layer : cell.Floor)
-            if (layer != NO_FLOOR && std::fabs(FloorHeight(layer) - z) <= LAYER_MERGE)
-            {
-                layer = q;
-                SortLayers(cell);
-                return;
-            }
-        if (cell.Floor[0] == NO_FLOOR)
-            cell.Floor[0] = q;
-        else if (cell.Floor[1] == NO_FLOOR)
-            cell.Floor[1] = q;
-        else
+        int32_t at = -1;
+        for (int32_t layer = 0; layer < 2 && at < 0; ++layer)
+            if (cell.Floor[layer] != NO_FLOOR && std::fabs(FloorHeight(cell.Floor[layer]) - z) <= LAYER_MERGE)
+                at = layer;
+        if (at < 0)
         {
-            bool const lower = std::fabs(FloorHeight(cell.Floor[0]) - z) <= std::fabs(FloorHeight(cell.Floor[1]) - z);
-            cell.Floor[lower ? 0 : 1] = q;
+            if (cell.Floor[0] == NO_FLOOR)
+                at = 0;
+            else if (cell.Floor[1] == NO_FLOOR)
+                at = 1;
+            else
+            {
+                at = std::fabs(FloorHeight(cell.Floor[0]) - z) <= std::fabs(FloorHeight(cell.Floor[1]) - z) ? 0 : 1;
+                cell.Flags &= uint8_t(~WallFlag(at));
+            }
         }
-        SortLayers(cell);
+        cell.Floor[at] = q;
+        return SortLayers(cell) ? 1 - at : at;
+    }
+
+    /// An observation of floor layer `layer` with nothing in its way: its wall goes.
+    void ClearWall(MapCell& cell, int32_t layer, MapWriteStats* stats)
+    {
+        uint8_t const flag = WallFlag(layer);
+        if (!(cell.Flags & flag))
+            return;
+        cell.Flags &= uint8_t(~flag);
+        if (stats)
+            ++stats->WallsCleared;
     }
 
     /// When the entity filed in a cell was seen, in map seconds (approximate: its bucket's start before the cell's
@@ -95,13 +140,76 @@ namespace
         return std::max(0.0, clock - EntityTime(cell));
     }
 
-    /// `from` folded into `into` (a coarse cell): its floors as layers, its flags, the newer look and entity.
-    void Merge(MapCell& into, MapCell const& from)
+    /// How Merge settles the walls of a layer both cells hold: any wall in either (Union: a coarse cell, which stands
+    /// for 64 1-yd cells), or by recency (Newest: a newer `from` sets or clears; NewestAdds: a newer `from` only
+    /// sets; either way an equal look adds and an older one leaves the target's be).
+    enum class WallMerge : uint8_t
     {
-        for (int16_t layer : from.Floor)
-            if (layer != NO_FLOOR)
-                InsertFloor(into, FloorHeight(layer));
-        into.Flags |= from.Flags;
+        Union,
+        Newest,
+        NewestAdds,
+    };
+
+    /// `from` folded into `into` (a coarse cell, or a shared memory's: MergeCell): its floors as layers, its flags,
+    /// the newer look and entity.
+    void Merge(MapCell& into, MapCell const& from, WallMerge mode)
+    {
+        bool const union_ = mode == WallMerge::Union;
+        bool const newer = from.Seen > into.Seen;
+        bool const older = from.Seen < into.Seen;
+        // The source's layers, and whether the target held each already (else the merge makes it).
+        int16_t const heights[2] = { from.Floor[0], from.Floor[1] };
+        bool held[2] = { false, false };
+        for (int32_t layer = 0; layer < 2; ++layer)
+            held[layer] = heights[layer] != NO_FLOOR && LayerNear(into, FloorHeight(heights[layer])) >= 0;
+        for (int32_t layer = 0; layer < 2; ++layer)
+        {
+            if (heights[layer] == NO_FLOOR)
+                continue;
+            // An older look neither moves a layer the target holds nor evicts one.
+            if (!union_ && older && (held[layer] || FloorLayers(into) == 2))
+                continue;
+            InsertFloor(into, FloorHeight(heights[layer]));
+        }
+
+        // A wall moves with its layer: the source's layer i is wherever its height landed among the target's layers
+        // (the insertions may have reordered them, or a second insertion evicted the first: its wall is then lost).
+        auto const settle = [&](int32_t target, bool wall, bool existed)
+        {
+            uint8_t const flag = WallFlag(target);
+            if (!existed || union_ || !(newer || older))
+            {
+                if (wall)
+                    into.Flags |= flag;
+            }
+            else if (newer)
+            {
+                if (wall)
+                    into.Flags |= flag;
+                else if (mode == WallMerge::Newest)
+                    into.Flags &= uint8_t(~flag);
+            }
+        };
+        if (!HasFloor(from))
+        {
+            // A wall with no floor known (in the band of the feet that saw it): with no floor in the target either
+            // the same; with one layer, the only band it can be in; with two, its height is unknown and it is
+            // dropped. A floorless look without a wall clears only a floorless wall.
+            int32_t const layers = FloorLayers(into);
+            bool const wall = from.Flags & MAP_WALLS;
+            if (layers == 0 || (layers == 1 && wall))
+                settle(0, wall, true);
+        }
+        else
+            for (int32_t layer = 0; layer < 2; ++layer)
+            {
+                if (heights[layer] == NO_FLOOR)
+                    continue;
+                int32_t const target = LayerNear(into, FloorHeight(heights[layer]));
+                if (target >= 0)
+                    settle(target, from.Flags & WallFlag(layer), held[layer]);
+            }
+        into.Flags |= uint8_t(from.Flags & ~(MAP_WALLS | MAP_WALL_FRAME));
         if (from.Entity & CLASS_MASK)
         {
             if (!(into.Entity & CLASS_MASK) || EntityTime(from) >= EntityTime(into))
@@ -133,9 +241,9 @@ namespace
     }
 }
 
-void Animus::Vision::MergeCell(MapCell& into, MapCell const& from)
+void Animus::Vision::MergeCell(MapCell& into, MapCell const& from, bool clears)
 {
-    Merge(into, from);
+    Merge(into, from, clears ? WallMerge::Newest : WallMerge::NewestAdds);
 }
 
 namespace
@@ -225,6 +333,7 @@ void Animus::Vision::MentalMap::Clear()
     _far.clear();
     _clock = 0.0;
     _anchored = false;
+    _adopted = false;
     _origin = 0.0;
     _touch = 0;
     _lastSlot = nullptr;
@@ -392,7 +501,7 @@ void Animus::Vision::MentalMap::Fold(int64_t key, Tile const& tile)
             }
             found->second.Touched = ++_touch;
             Merge(found->second.Own->Cells[std::size_t((ccy - cty * MAP_TILE) * MAP_TILE + (ccx - ctx * MAP_TILE))],
-                cell);
+                cell, WallMerge::Union);
         }
 }
 
@@ -473,7 +582,8 @@ void Animus::Vision::MentalMap::WriteEntity(MapCell& cell, Class what, uint16_t 
 void Animus::Vision::MentalMap::WriteFloor(int32_t cx, int32_t cy, float z, uint16_t stamp, MapWriteStats* stats)
 {
     MapCell& cell = Touch(cx, cy);
-    InsertFloor(cell, z);
+    // A floor hit is a look at its layer with nothing in the way: its wall goes at the frame's end (SettleFrame).
+    NoteClear(cx, cy, cell, InsertFloor(cell, z));
     MarkSeen(cell, stamp);
     if (stats)
         ++stats->Floors;
@@ -503,13 +613,14 @@ bool Animus::Vision::MentalMap::WriteWall(int32_t cx, int32_t cy, float z, float
     uint8_t flag = MAP_WALL_LOW;
     MapCell const* here = FindCell(cx, cy);
     if (here)
-        for (uint32_t layer = 0; layer < 2; ++layer)
+        for (int32_t layer = 0; layer < 2; ++layer)
             if (here->Floor[layer] != NO_FLOOR && FloorHeight(here->Floor[layer]) <= z + WALL_SLACK)
             {
                 reference = FloorHeight(here->Floor[layer]);
                 referenced = true;
-                flag = layer == 0 ? MAP_WALL_LOW : MAP_WALL_HIGH;
+                flag = WallFlag(layer);
             }
+    bool const own = referenced;
     if (!referenced)
     {
         static int32_t const NEIGHBOURS[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
@@ -528,10 +639,79 @@ bool Animus::Vision::MentalMap::WriteWall(int32_t cx, int32_t cy, float z, float
         : z >= feetZ - FREE_BAND && z <= feetZ + bodyHeight + WALL_SLACK;
     if (!inBand)
         return false;
+    // The cell has floors, all above the hit: the band's floor (a neighbour's, or the feet's) is the cell's layer
+    // within LAYER_MERGE of it, or none -- a ground wall under a deck the cell holds is no wall of the deck.
+    if (!own && here && HasFloor(*here))
+    {
+        int32_t const layer = LayerNear(*here, referenced ? reference : feetZ);
+        if (layer < 0)
+            return false;
+        flag = WallFlag(layer);
+    }
     MapCell& cell = Touch(cx, cy);
     cell.Flags |= flag;
+    if (!(cell.Flags & MAP_WALL_FRAME))
+    {
+        cell.Flags |= MAP_WALL_FRAME;
+        _frameWalls.push_back(TileKey(cx, cy));
+    }
     MarkSeen(cell, stamp);
     return true;
+}
+
+Animus::Vision::MapCell* Animus::Vision::MentalMap::OwnCell(int32_t cx, int32_t cy)
+{
+    int32_t const tx = FloorDiv(cx, MAP_TILE);
+    int32_t const ty = FloorDiv(cy, MAP_TILE);
+    auto const found = _tiles.find(TileKey(tx, ty));
+    if (found == _tiles.end() || !found->second.Own)
+        return nullptr;
+    return &found->second.Own->Cells[std::size_t((cy - ty * MAP_TILE) * MAP_TILE + (cx - tx * MAP_TILE))];
+}
+
+void Animus::Vision::MentalMap::NoteClear(int32_t cx, int32_t cy, MapCell const& cell, int32_t layer)
+{
+    // Only a layer with a wall has anything to clear; -1 is the wall of a cell with no floor known.
+    if (!(cell.Flags & WallFlag(std::max(0, layer))))
+        return;
+    float const z = layer >= 0 && cell.Floor[layer] != NO_FLOOR ? FloorHeight(cell.Floor[layer])
+        : std::numeric_limits<float>::quiet_NaN();
+    _frameClears.push_back({ cx, cy, z });
+}
+
+void Animus::Vision::MentalMap::SettleFrame(MapWriteStats* stats)
+{
+    // The frame's clears, by the layer's height (a floor written since may have reordered the layers): none on a cell
+    // with a wall written this frame, nor beside one -- a wall seen at a grazing angle is hit in some of its cells
+    // and passed in front of in the others, and its line is kept whole.
+    static int32_t const NEIGHBOURS[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
+    for (PendingClear const& clear : _frameClears)
+    {
+        MapCell* cell = OwnCell(clear.X, clear.Y);
+        if (!cell || (cell->Flags & MAP_WALL_FRAME))
+            continue;
+        bool walled = false;
+        for (auto const& offset : NEIGHBOURS)
+        {
+            MapCell const* next = FindCell(clear.X + offset[0], clear.Y + offset[1]);
+            if (next && (next->Flags & MAP_WALL_FRAME))
+            {
+                walled = true;
+                break;
+            }
+        }
+        if (walled)
+            continue;
+        int32_t const layer = std::isnan(clear.Z) ? (HasFloor(*cell) ? -1 : 0) : LayerNear(*cell, clear.Z);
+        if (layer >= 0)
+            ClearWall(*cell, layer, stats);
+    }
+    _frameClears.clear();
+    // The marks go: a tile evicted since went with its own.
+    for (int64_t const packed : _frameWalls)
+        if (MapCell* cell = OwnCell(int32_t(packed >> 32), int32_t(uint32_t(packed & 0xFFFFFFFF))))
+            cell->Flags &= uint8_t(~MAP_WALL_FRAME);
+    _frameWalls.clear();
 }
 
 void Animus::Vision::MentalMap::WriteFar(Class what, float x, float y, float z, float normalZ, float feetZ,
@@ -560,18 +740,27 @@ void Animus::Vision::MentalMap::WriteFar(Class what, float x, float y, float z, 
             float reference = 0.0f;
             bool referenced = false;
             uint8_t flag = MAP_WALL_LOW;
-            if (MapCell const* here = FindFarCell(ccx, ccy))
-                for (uint32_t layer = 0; layer < 2; ++layer)
+            MapCell const* here = FindFarCell(ccx, ccy);
+            if (here)
+                for (int32_t layer = 0; layer < 2; ++layer)
                     if (here->Floor[layer] != NO_FLOOR && FloorHeight(here->Floor[layer]) <= z + WALL_SLACK)
                     {
                         reference = FloorHeight(here->Floor[layer]);
                         referenced = true;
-                        flag = layer == 0 ? MAP_WALL_LOW : MAP_WALL_HIGH;
+                        flag = WallFlag(layer);
                     }
             bool const inBand = referenced ? z <= reference + bodyHeight + WALL_SLACK
                 : z >= feetZ - FREE_BAND && z <= feetZ + bodyHeight + WALL_SLACK;
             if (!inBand)
                 return;
+            // The feet's band in a cell whose floors are all above the hit: the layer near the feet, or none.
+            if (!referenced && here && HasFloor(*here))
+            {
+                int32_t const layer = LayerNear(*here, feetZ);
+                if (layer < 0)
+                    return;
+                flag = WallFlag(layer);
+            }
             MapCell& cell = TouchFar(ccx, ccy);
             cell.Flags |= flag;
             cell.Seen = stamp;
@@ -647,22 +836,39 @@ void Animus::Vision::MentalMap::WriteFrame(FrameHits const& hits, float feetZ, f
                 float const high = std::max(zA, zB);
                 MapCell const* known = FindCell(cx, cy);
                 bool free = false;
+                // The layer the pass was in (its floor's height), when the pass is a look at that layer's wall: low
+                // in the band (FREE_CLEAR_RISE) and across the cell (FREE_CLEAR_SPAN). -1: no floor known.
+                int32_t passLayer = -1;
+                float passFloor = feetZ;
                 if (known && HasFloor(*known))
                 {
-                    for (int16_t layer : known->Floor)
-                        if (layer != NO_FLOOR && low >= FloorHeight(layer) - FLOOR_STEP
-                            && high <= FloorHeight(layer) + bodyHeight)
+                    for (int32_t layer = 0; layer < 2; ++layer)
+                        if (known->Floor[layer] != NO_FLOOR && low >= FloorHeight(known->Floor[layer]) - FLOOR_STEP
+                            && high <= FloorHeight(known->Floor[layer]) + bodyHeight)
+                        {
                             free = true;
+                            passLayer = layer;
+                            passFloor = FloorHeight(known->Floor[layer]);
+                        }
                 }
                 else
                     free = low >= feetZ - FREE_BAND && high <= feetZ + FREE_BAND;
                 bool onHit = false;
                 if (!free && leave >= bandFrom && low >= ray.Z - FLOOR_STEP && high <= ray.Z + bodyHeight)
+                {
                     free = onHit = true;
+                    passLayer = known ? LayerNear(*known, ray.Z) : -1;
+                    passFloor = ray.Z;
+                    // In the band of the hit's floor, which this cell does not hold: no layer's wall to clear.
+                    if (passLayer < 0)
+                        passFloor = -std::numeric_limits<float>::infinity();
+                }
                 if (free)
                 {
                     MapCell& cell = Touch(cx, cy);
                     cell.Flags |= MAP_FREE;
+                    if (low <= passFloor + FREE_CLEAR_RISE && (leave - enter) * horizontal >= FREE_CLEAR_SPAN)
+                        NoteClear(cx, cy, cell, passLayer);
                     MarkSeen(cell, stamp);
                     if (stats)
                     {
@@ -737,6 +943,7 @@ void Animus::Vision::MentalMap::WriteFrame(FrameHits const& hits, float feetZ, f
     }
 
     Mesh(hits, feetZ, bodyHeight, stamp, stats);
+    SettleFrame(stats);
 }
 
 void Animus::Vision::MentalMap::Mesh(FrameHits const& hits, float feetZ, float bodyHeight, uint16_t stamp,
@@ -792,15 +999,26 @@ void Animus::Vision::MentalMap::Mesh(FrameHits const& hits, float feetZ, float b
     };
 
     // A triangle of one surface (floor or water/hazard): its cells, at the plane's height, when the three hits are
-    // one surface -- the plane faces the camera (a drop's far floor seen past an edge makes a plane that faces away),
-    // as level as a floor, and as level as its hits' own normals (a riser bridged at a grazing angle tilts it).
+    // one surface -- no range jump between them (MESH_FLOOR_JUMP: a far floor seen past an edge or across a gap at
+    // the same height), no more rise across it than its hits' own normals allow over its span plus a step
+    // (MESH_STEP_RISE: a ground hit joined to a raised one 20 yd off makes a plane level enough to pass for a
+    // floor, a phantom storey), the plane facing the camera (a drop's far floor seen past an edge makes a plane that
+    // faces away), as level as a floor, and as level as its hits' own normals (a riser bridged at a grazing angle
+    // tilts it).
     auto const triangle = [&](Point const& a, Point const& b, Point const& c)
     {
         uint8_t const kind = a.Kind;
         float const span = std::max({ std::hypot(b.X - a.X, b.Y - a.Y), std::hypot(c.X - b.X, c.Y - b.Y),
             std::hypot(a.X - c.X, a.Y - c.Y) });
-        bool far = std::min({ a.Range, b.Range, c.Range }) > WRITE_REACH;
+        float const nearest = std::min({ a.Range, b.Range, c.Range });
+        bool far = nearest > WRITE_REACH;
         if (span > (far ? MESH_SPAN_FAR : MESH_SPAN_NEAR))
+            return reject();
+        if (std::max({ a.Range, b.Range, c.Range }) - nearest > MESH_FLOOR_JUMP * nearest + MESH_FLOOR_SLACK)
+            return reject();
+        float const level = std::clamp(std::min({ a.NormalZ, b.NormalZ, c.NormalZ }), FLOOR_NORMAL, 1.0f);
+        float const allowed = span * std::sqrt(std::max(0.0f, 1.0f - level * level)) / level + MESH_STEP_RISE;
+        if (std::max({ a.Z, b.Z, c.Z }) - std::min({ a.Z, b.Z, c.Z }) > allowed)
             return reject();
         float cell = far ? float(COARSE_CELL) : MAP_CELL;
         // All three in one cell: the hits wrote it, there is nothing between them.
@@ -1003,8 +1221,9 @@ void Animus::Vision::MentalMap::WriteBody(float x, float y, float z, bool ground
     MapCell& cell = Touch(CellOf(x), CellOf(y));
     NoteGround(cell);
     cell.Flags |= MAP_VISITED;
+    // Standing on a floor is the surest look at its layer: its wall goes (ClearWall).
     if (grounded)
-        InsertFloor(cell, z);
+        ClearWall(cell, InsertFloor(cell, z), nullptr);
     MarkSeen(cell, stamp);
     _hasBody = true;
     _bodyX = x;

@@ -236,9 +236,13 @@ namespace Animus::Curriculum
         bool MapKept = false;
         /// In a stage with a shared memory (StageDefinition::SharedMemoryShare): whether this episode's map starts
         /// from its map's shared memory (Vision::SharedMemory::Adopt) or blank on its clock (Anchor), drawn at the
-        /// reset; either way the map goes into the shared memory at the next episode's first observation (Absorb).
+        /// reset; either way a training episode's map goes into the shared memory at the next episode's first
+        /// observation (Absorb).
         /// MapKept is then whether the memory it started from held anything.
         bool MapShared = false;
+        /// ... and whether that merge happens: set when the map is anchored, false for an evaluation's episode (an
+        /// evaluation reads the memory, never writes it).
+        bool MapAbsorb = false;
         /// **Its entity memory** (dungeon-curriculum I2), in a stage with a sight block: written by the entities block
         /// from each frame's list, read by the sight block. Kept across resets with the map, by the same roll and
         /// offset (MapKeep, MapAgeOffset), on the same instance; RecallKept says this episode's was. Mutable like the

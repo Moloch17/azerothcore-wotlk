@@ -129,6 +129,7 @@ void Animus::Vision::SharedMemory::Adopt(MentalMap& map, double now)
     map._clock = clock;
     map._lastGroundClock = clock;
     map._anchored = true;
+    map._adopted = true;
     map._origin = _base;
 }
 
@@ -141,7 +142,8 @@ void Animus::Vision::SharedMemory::Anchor(MentalMap& map, double now)
     map._origin = _base;
 }
 
-void Animus::Vision::SharedMemory::MergeTile(Store& store, int64_t key, MapTile const& from, int32_t shift)
+void Animus::Vision::SharedMemory::MergeTile(Store& store, int64_t key, MapTile const& from, int32_t shift,
+    bool clears)
 {
     Entry& entry = store[key];
     auto merged = entry.Tile ? std::make_shared<MapTile>(*entry.Tile) : std::make_shared<MapTile>();
@@ -153,7 +155,7 @@ void Animus::Vision::SharedMemory::MergeTile(Store& store, int64_t key, MapTile 
         // A body's own ground stays its own (the map block's ground counters and visited channel).
         cell.Flags &= uint8_t(~MAP_VISITED);
         cell.Seen = Shifted(cell.Seen, shift);
-        MergeCell(merged->Cells[index], cell);
+        MergeCell(merged->Cells[index], cell, clears);
     }
     Recount(*merged, _newest);
     entry.Tile = std::move(merged);
@@ -184,13 +186,13 @@ void Animus::Vision::SharedMemory::Absorb(MentalMap const& map, double now)
     for (auto const& [key, slot] : map._tiles)
         if (slot.Own)
         {
-            MergeTile(_fine, key, *slot.Own, shift);
+            MergeTile(_fine, key, *slot.Own, shift, map._adopted);
             merged = true;
         }
     for (auto const& [key, slot] : map._far)
         if (slot.Own)
         {
-            MergeTile(_far, key, *slot.Own, shift);
+            MergeTile(_far, key, *slot.Own, shift, false);
             merged = true;
         }
     if (!merged)

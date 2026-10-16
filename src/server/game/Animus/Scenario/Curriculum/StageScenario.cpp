@@ -4185,13 +4185,17 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
     if (mapped && bot && seat.MapPending && _stage.SharedMemoryShare > 0.0f)
     {
         // A stage with a shared memory: the episode before's map goes into its map's memory (anchored maps only: the
-        // first episode's is blank), then this one starts from the memory of the map the seat is on, or blank on its
-        // clock, as the reset drew (MapShared). The clock is the process's game time, which runs with the sim.
+        // first episode's is blank; and a training episode's only: MapAbsorb), then this one starts from the memory of
+        // the map the seat is on, or blank on its clock, as the reset drew (MapShared). The clock is the process's
+        // game time, which runs with the sim.
         seat.MapPending = false;
         double const now = double(GameTime::GetGameTimeMS().count()) / 1000.0;
         Vision::SharedMemories& memories = Vision::SharedMemories::Instance();
-        if (seat.Map.Anchored())
+        if (seat.Map.Anchored() && seat.MapAbsorb)
             memories.Get(seat.MapMapId, now)->Absorb(seat.Map, now);
+        // An evaluation reads the memory by its seeded draw but never writes it: its scores would drift as it filled,
+        // and a held-out map only evaluations visit would get a memory built from them.
+        seat.MapAbsorb = !env.Evaluating;
         seat.Map.Configure(Vision::MapCurrent().Caps);
         Vision::SharedMemory* memory = memories.Get(bot->GetMapId(), now);
         if (seat.MapShared)
