@@ -16,6 +16,7 @@ from typing import Union, get_args, get_origin, get_type_hints
 import yaml
 
 from .human.motion import WINDOW as MOTION_WINDOW
+from .mappo.networks import WAYPOINT_SOURCES
 from .mappo.trainer import AuxConfig, MappoConfig
 from .stages import merges, seed_chain
 
@@ -768,6 +769,13 @@ class TrainConfig:
         if lookback > 0 and coef <= 0.0:
             raise ValueError(f"mappo.goal_cell_hindsight_lookback {lookback} needs mappo.goal_cell_hindsight_coef > 0 "
                              f"(it is {coef!r}: the lookback would train nothing)")
+        # The waypoint's source (mappo.planner_waypoint_source): one of the two, and only with the waypoint it feeds.
+        source = self.mappo.planner_waypoint_source
+        if source not in WAYPOINT_SOURCES:
+            raise ValueError(f"mappo.planner_waypoint_source: expected one of {list(WAYPOINT_SOURCES)}, got {source!r}")
+        if source != "learned" and not self.mappo.planner_waypoint:
+            raise ValueError(f"mappo.planner_waypoint_source {source!r} needs mappo.planner_waypoint (there is no "
+                             f"waypoint for it to plan)")
 
     @property
     def shared_runs(self) -> str:

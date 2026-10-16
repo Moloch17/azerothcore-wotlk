@@ -266,6 +266,12 @@ class MappoConfig:
     # planner -> local controller split, the policy being good at walking to a point. Its join starts at zero, so a
     # checkpoint without it resumes computing what it did. Off: the network is exactly what it was.
     planner_waypoint: bool = False
+    # What the waypoint walks over (MapEncoder.classical_plan; with planner_waypoint): "learned", the VIN's value, or
+    # "classical", a fixed-weight value iteration over the costmap head's classes (networks.CLASSICAL_COSTS; the
+    # hierarchy as the VIN has it; CLASSICAL_WAYPOINT_ITERATIONS fixed iterations) -- measured live it points the right
+    # way 66 % of the time on the coarse tier against the VIN's 37 %, 46 % against 32 % on the fine. The same walk and
+    # numbers, so waypoint_join reads what it read; the readouts stay the VIN's. No parameter: a checkpoint resumes.
+    planner_waypoint_source: str = "learned"
 
 
 @dataclass
@@ -908,7 +914,8 @@ class MappoTrainer:
                                  camera_splat=bool(config.camera_splat),
                                  planner_waypoint=bool(config.planner_waypoint),
                                  planner_k_fine=int(config.planner_k_fine) or None,
-                                 planner_hierarchical=bool(config.planner_hierarchical)).to(self.train_device)
+                                 planner_hierarchical=bool(config.planner_hierarchical),
+                                 planner_waypoint_source=str(config.planner_waypoint_source)).to(self.train_device)
         # Whether the actor steers by a continuous heading (protocol 32's ACT section; HeadingHead).
         self.heading = self.actor.heading_head is not None
         # (readout width, pool width) of the cached plan a row (VisionEncoder.planner_widths), (0, 0) without one.

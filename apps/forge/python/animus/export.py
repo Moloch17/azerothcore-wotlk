@@ -204,6 +204,30 @@ The .amdl format (little-endian); a reader must follow it exactly, and a change 
         iterations computes conv3x3(value; recur) with B's ring (i or j = -1 or side) in place of the zero padding,
         the rest as without it. Without the hierarchy (0) both tiers run as in version 14 (no clamp), the fine tier
         k_tiers[0] times.
+        In version 16 (a policy whose waypoint walks over the classical planner; mappo.planner_waypoint_source
+        "classical", networks.MapEncoder.classical_plan and classical_cost_to_go), after the schedule's section:
+        u32  waypoint_source                0: the learned value (version 14's walk as it is; nothing follows),
+                                            1: the classical planner
+        if waypoint_source == 1:
+            u32  classes C (11), iterations[tiers]   the fixed iterations of each tier, fine first (64, 64)
+            f32  costs[C]                   each class's step cost multiple (CLASSICAL_COSTS, TRAV_CLASS_NAMES order)
+            f32  sentinel (1e6)             the cost-to-go of a cell nothing has reached
+        The classical waypoint (the reference: MapEncoder.classical_plan, classical_cost_to_go, coarse_frame, descend
+        and waypoints): the readouts, their join and the pointer's bonus are the learned planner's, as without it;
+        only the walk's map changes. Per tier, after the costmap head's logits (as above): p = softmax over the C
+        classes a cell; factor(s) = sum_c p_c(s) x costs[c] (float32). The goal plane is the planner's own (clamped to
+        the border on the coarse tier and without the hierarchy; the unclamped one-hot or all zero on the hierarchy's
+        fine tier). V_0(s) = 0 at a goal cell (plane > 0), sentinel elsewhere; each of iterations[tier] steps (exactly
+        that many; no early stop) computes, for every cell s at once from the previous V, V'(s) = min(sentinel, V(s),
+        min over the eight neighbours n = s + (dr, dc) of V(n) + edge(s, n)), edge(s, n) = 0.5 x cell x sqrt(dr^2 +
+        dc^2) x (factor(s) + factor(n)), the tier's cell yards; a goal cell stays 0. A neighbour past the crop: without
+        a ring (the coarse tier, or no hierarchy) it is never taken; with the hierarchy the fine tier's ring R[i][j], i
+        or j = -1 or side, is the coarse tier's classical cost-to-go (its iterations[1] done first) sampled bilinearly
+        exactly as version 15's frame B (coarse row c + (i - c) x tier_cells[0] / tier_cells[1], likewise the column,
+        clamped to 0..side - 1; no clamp at 0 here) and clamped to at most sentinel, and the step onto it costs edge
+        with factor(n) = factor(s) (the border cell's own). The fine tier's interior starts at sentinel / 0 as above
+        (the frame seeds only the ring). Then version 14's walk over cost = V itself (lower is nearer: no negation),
+        the same anchor, steps, features and scaling.
     (version 12 on: a file of 12 is written only for a policy with the heading; every other policy is still 11, 10 or
     9. The camera's flag and, without a camera, the planner's 0 flag come before it as in version 11. A file of 13 --
     a policy with the camera splat -- or of 14 -- one with the planned waypoint -- has the section too)
@@ -289,8 +313,15 @@ AMDL_MAGIC = b"AMDL"
 # 15: the planner's schedule (mappo.planner_hierarchical, planner_k_fine; networks.MapEncoder.plan): the hierarchy's
 # flag and each tier's K after the waypoint's section. Written only for a policy with the hierarchy or a fine K of its
 # own; every other policy is still 14 or below. Such a checkpoint is never written as 14 or below (write_amdl refuses).
-AMDL_VERSION = 15
-AMDL_VERSIONS = (7, 8, 9, 10, 11, 12, 13, 14, 15)
+# 16: the classical waypoint (mappo.planner_waypoint_source "classical", networks.MapEncoder.classical_plan): the
+# waypoint's source, the classical planner's step costs, iterations and sentinel after the schedule's section. Written
+# only for a policy whose waypoint walks over the classical planner; every other policy is still 15 or below. Such a
+# checkpoint is never written as 15 or below (write_amdl refuses).
+AMDL_VERSION = 16
+AMDL_VERSIONS = (7, 8, 9, 10, 11, 12, 13, 14, 15, 16)
+#: The version a policy with the planner's schedule (the hierarchy or a fine K of its own) and the learned waypoint
+#: (or none) is written as.
+AMDL_SCHEDULE_VERSION = 15
 #: The version a policy with the planned waypoint and the planner's one K is written as.
 AMDL_WAYPOINT_VERSION = 14
 #: The version a policy with the camera splat and no planned waypoint is written as.
@@ -377,7 +408,8 @@ def write_amdl(
     tail: dict | None = None,
 ) -> None:
     """Write one model. `tail` is the version 10 tail (tail_weights); without one the file is version 9. A tail with
-    the planner's schedule (the hierarchy or a fine K of its own) is version 15, one with the planned waypoint (and
+    the classical waypoint is version 16, one with the planner's schedule (the hierarchy or a fine K of its own; and
+    the learned waypoint or none) 15, one with the planned waypoint (and
     no schedule) 14, one with the camera splat (and neither) 13, one with a heading (and none of them) 12, one with a
     planner (and nothing else) 11."""
     if layers[0][0].shape[1] != obs_dim + num_agents:
@@ -393,7 +425,11 @@ def write_amdl(
     splat = bool(planner and tail["planner"].get("splat"))
     waypoint = bool(planner and tail["planner"].get("waypoint"))
     schedule = bool(planner and tail["planner"].get("schedule"))
-    version = (AMDL_VERSION if schedule else AMDL_WAYPOINT_VERSION if waypoint else AMDL_SPLAT_VERSION if splat
+    classical = bool(planner and tail["planner"].get("classical"))
+    if classical and not waypoint:
+        raise ValueError("the classical waypoint needs the planned waypoint (mappo.planner_waypoint)")
+    version = (AMDL_VERSION if classical else AMDL_SCHEDULE_VERSION if schedule
+               else AMDL_WAYPOINT_VERSION if waypoint else AMDL_SPLAT_VERSION if splat
                else AMDL_HEADING_VERSION if heading else AMDL_PLANNER_VERSION if planner
                else (AMDL_CAMERA_VERSION if tail else AMDL_PLAIN_VERSION))
     if planner and version < AMDL_PLANNER_VERSION:
@@ -404,9 +440,11 @@ def write_amdl(
         raise ValueError("a policy with the camera splat is written as version 13, never 12 or below")
     if waypoint and version < AMDL_WAYPOINT_VERSION:
         raise ValueError("a policy with the planned waypoint is written as version 14, never 13 or below")
-    if schedule and version < AMDL_VERSION:
+    if schedule and version < AMDL_SCHEDULE_VERSION:
         raise ValueError("a policy with the planner's hierarchy or per-tier K is written as version 15, never 14 or "
                          "below")
+    if classical and version < AMDL_VERSION:
+        raise ValueError("a policy with the classical waypoint is written as version 16, never 15 or below")
     with open(path, "wb") as out:
         out.write(AMDL_MAGIC)
         out.write(struct.pack("<IH", version, len(encoded)))
@@ -599,7 +637,7 @@ def _write_camera_tail(out, tail: dict, version: int) -> None:
     elif waypoint:
         raise ValueError("a policy with the planned waypoint is written as version 14, never 13 or below")
     schedule = planner.get("schedule")
-    if version >= AMDL_VERSION:
+    if version >= AMDL_SCHEDULE_VERSION:
         k_tiers = schedule["k_tiers"] if schedule else [int(planner["k"])] * int(planner["tiers"])
         if len(k_tiers) != int(planner["tiers"]):
             raise ValueError(f"the planner's schedule has {len(k_tiers)} tiers' K, the planner {planner['tiers']}")
@@ -608,6 +646,18 @@ def _write_camera_tail(out, tail: dict, version: int) -> None:
     elif schedule:
         raise ValueError("a policy with the planner's hierarchy or per-tier K is written as version 15, never 14 or "
                          "below")
+    classical = planner.get("classical")
+    if version >= AMDL_VERSION:
+        out.write(struct.pack("<I", 1 if classical else 0))
+        if classical:
+            iterations, costs = list(classical["iterations"]), np.asarray(classical["costs"], dtype="<f4")
+            if len(iterations) != int(planner["tiers"]) or costs.shape != (int(planner["classes"]),):
+                raise ValueError(f"the classical waypoint has {len(iterations)} tiers' iterations and {costs.shape} "
+                                 f"costs, the planner {planner['tiers']} tiers of {planner['classes']} classes")
+            out.write(struct.pack(f"<{1 + len(iterations)}I", int(costs.shape[0]), *(int(k) for k in iterations)))
+            _floats(out, costs, np.asarray([classical["sentinel"]], dtype="<f4"))
+    elif classical:
+        raise ValueError("a policy with the classical waypoint is written as version 16, never 15 or below")
 
 
 def memory_weights(actor_state: dict[str, torch.Tensor]) -> dict[str, np.ndarray] | None:
@@ -859,7 +909,8 @@ def tail_weights(actor_state: dict[str, torch.Tensor], stage: dict, names: list[
                                  f"{inputs}")
         crop = own.get("map")
         if crop is not None and "vision.map.patch.weight" in actor_state:
-            from .mappo.networks import (IMAGE_NEAR, VISION_SCALAR_BOOM, VISION_SCALAR_PITCH,
+            from .mappo.networks import (CLASSICAL_COSTS, CLASSICAL_SENTINEL, CLASSICAL_WAYPOINT_ITERATIONS,
+                                         IMAGE_NEAR, VISION_SCALAR_BOOM, VISION_SCALAR_PITCH,
                                          VISION_SCALAR_RENDER_WIDTH, VISION_SCALAR_YAW_COS, VISION_SCALAR_YAW_SIN,
                                          VISION_ZOOM_SCALE, CameraSplat, CostmapHead, MapEncoder, Planner)
             tiers = int(crop.get("tiers", 1))
@@ -928,6 +979,20 @@ def tail_weights(actor_state: dict[str, torch.Tensor], stage: dict, names: list[
                         "steps": [MapEncoder.WAYPOINT_STEPS[min(t, len(MapEncoder.WAYPOINT_STEPS) - 1)]
                                   for t in range(tiers)],
                         "weight": weight, "bias": array("vision.map.waypoint_join.bias")}
+                # The classical waypoint (version 16; mappo.planner_waypoint_source): its planner's constants.
+                source = int(actor_state.get("vision.map.waypoint_source", 0))
+                if source not in (0, 1):
+                    raise ValueError(f"the waypoint's source buffer is {source}; this exporter knows 0 (learned) and 1 "
+                                     f"(classical)")
+                if source == 1:
+                    if "waypoint" not in tail["planner"]:
+                        raise ValueError("the actor's waypoint walks over the classical planner but has no waypoint "
+                                         "join: not exporting")
+                    tail["planner"]["classical"] = {
+                        "costs": np.asarray(CLASSICAL_COSTS, dtype="<f4"),
+                        "iterations": [CLASSICAL_WAYPOINT_ITERATIONS[min(t, len(CLASSICAL_WAYPOINT_ITERATIONS) - 1)]
+                                       for t in range(tiers)],
+                        "sentinel": float(CLASSICAL_SENTINEL)}
         if "look_head.linear.weight" in actor_state:
             camera["look_heads"] = [int(h) for h in own["look"]]
             camera["look_weight"] = array("look_head.linear.weight")
@@ -1304,6 +1369,15 @@ def read_amdl(path: str | Path) -> dict:
             if version >= 15:
                 hierarchical, *k_tiers = u32s(1 + tiers)
                 planner["schedule"] = {"hierarchical": bool(hierarchical), "k_tiers": list(k_tiers)}
+            planner["classical"] = None
+            if version >= 16:
+                (source,) = u32s(1)
+                if source:
+                    count, *iterations = u32s(1 + tiers)
+                    costs = floats(count, count)
+                    (sentinel,) = floats(1, 1)
+                    planner["classical"] = {"costs": costs, "iterations": list(iterations),
+                                            "sentinel": float(sentinel)}
             tail["planner"] = planner
         if version >= 12 and flag():
             components, heading_width = u32s(2)

@@ -27,6 +27,11 @@ mappo:
   # a detour), the coarse planner_k's 20. On from here (nav1 stays without); no parameter, so nav2's checkpoint resumes.
   planner_hierarchical: true
   planner_k_fine: 32
+  # The waypoint walks over the classical planner (MapEncoder.classical_plan, 2026-10-16): a fixed-weight value
+  # iteration over the costmap head's classes, measured live pointing the right way 66 % of the time on the coarse tier
+  # against the learned value's 37 % (fine 46 % against 32 %). The readouts stay the learned planner's; the same walk
+  # and numbers, so the waypoint's join reads what it read and nav2's checkpoint resumes (no new parameter).
+  planner_waypoint_source: classical
 
 status:
   targets:
