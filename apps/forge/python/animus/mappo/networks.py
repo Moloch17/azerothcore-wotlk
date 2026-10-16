@@ -1633,30 +1633,65 @@ def classical_cost_to_go(factor: torch.Tensor, goal: torch.Tensor, cell: float, 
     `iterations` at most; without `check` exactly `iterations`, with no host sync (the classical waypoint's fixed
     count, CLASSICAL_WAYPOINT_ITERATIONS: the same iterations, so the same numbers as far as they go). Returns the
     cost-to-go [N, H, W] (yards; the sentinel where nothing reached) and the iterations run. Without a gradient; reads
-    no random state."""
+    no random state.
+
+    The iteration (2026-10-16): two padded buffers, each the ring around the value, read and written in turn. On a
+    GPU a step is two kernels -- the nine candidates (the eight neighbours' sums and the cell's own value) in one add
+    of a strided window over the buffer and the edges stacked once, then their minimum -- where it was nineteen: the
+    classical waypoint's 80 iterations over 192 rows took a median 43 ms beside training on dev's card (12 at best:
+    the small kernels queue behind the update's), now 10 (9). On the host, where launches are cheap and the nine
+    candidates measured slower at 192 rows, the eight sums and minimums run in place in preallocated buffers instead
+    (classical_plan at 192 rows 39 -> 29 ms). Either gives the same bits as the plain form (pad, add the ring, the
+    eight minimums, clamp at the sentinel): the minimum is exact in any order, a value plus the ring's zero is the
+    value, and the clamp never bit (each step's minimum includes the cell's own value, never above the sentinel)."""
     n, height, width = factor.shape
     factor = factor.to(torch.float32)
     sentinel = CLASSICAL_SENTINEL
     padded_factor = nn.functional.pad(factor[:, None], (1, 1, 1, 1), mode="replicate")[:, 0]
-    edges = [(padded_factor[:, 1 + dr:1 + dr + height, 1 + dc:1 + dc + width] + factor)
-             * (0.5 * cell * math.hypot(dr, dc)) for dr, dc in NEIGHBOURS]
-    border = torch.full((n, height + 2, width + 2), sentinel, device=factor.device) if ring is None \
+    scales = [0.5 * cell * math.hypot(dr, dc) for dr, dc in NEIGHBOURS]
+    # The two buffers: the ring held (the sentinel without one), the value inside; a step reads one, writes the other.
+    padded = torch.full((n, height + 2, width + 2), sentinel, device=factor.device) if ring is None \
         else ring.to(torch.float32).clamp(max=sentinel).clone()
-    border[:, 1:-1, 1:-1] = 0.0
-    value = torch.where(goal > 0, torch.zeros_like(factor), torch.full_like(factor, sentinel))
+    buffers = (padded, padded.clone())
+    inner = tuple(buffer[:, 1:-1, 1:-1] for buffer in buffers)
+    inner[0].copy_(torch.where(goal > 0, torch.zeros_like(factor), torch.full_like(factor, sentinel)))
+    if factor.device.type != "cpu":
+        # [N, 3, 3, H, W]: the step onto the neighbour at (dr, dc) at [:, 1 + dr, 1 + dc], 0 for the cell itself, and
+        # a window of each buffer laid out alike (no copy).
+        edges = factor.new_zeros((n, 3, 3, height, width))
+        for (dr, dc), scale in zip(NEIGHBOURS, scales):
+            neighbour = padded_factor[:, 1 + dr:1 + dr + height, 1 + dc:1 + dc + width]
+            edges[:, 1 + dr, 1 + dc] = (neighbour + factor) * scale
+        stride = buffers[0].stride(0)
+        windows = tuple(buffer.as_strided((n, 3, 3, height, width), (stride, width + 2, 1, width + 2, 1))
+                        for buffer in buffers)
+        candidates = torch.empty_like(edges)
+
+        def step(source: int) -> None:
+            torch.add(windows[source], edges, out=candidates)
+            torch.amin(candidates.view(n, 9, height, width), dim=1, out=inner[1 - source])
+    else:
+        edges = [(padded_factor[:, 1 + dr:1 + dr + height, 1 + dc:1 + dc + width] + factor) * scale
+                 for (dr, dc), scale in zip(NEIGHBOURS, scales)]
+        candidate = torch.empty_like(factor)
+
+        def step(source: int) -> None:
+            target = inner[1 - source]
+            target.copy_(inner[source])
+            for (dr, dc), edge in zip(NEIGHBOURS, edges):
+                torch.add(buffers[source][:, 1 + dr:1 + dr + height, 1 + dc:1 + dc + width], edge, out=candidate)
+                torch.minimum(target, candidate, out=target)
+    source = 0
     done = 0
     while done < int(iterations):
-        previous = value
+        previous = inner[source].clone() if check else None
         for _ in range(min(CLASSICAL_CHECK_EVERY, int(iterations) - done)):
-            padded = nn.functional.pad(value, (1, 1, 1, 1)) + border
-            best = value
-            for (dr, dc), edge in zip(NEIGHBOURS, edges):
-                best = torch.minimum(best, padded[:, 1 + dr:1 + dr + height, 1 + dc:1 + dc + width] + edge)
-            value = best.clamp(max=sentinel)
+            step(source)
+            source = 1 - source
             done += 1
-        if check and float((previous - value).abs().max()) <= CLASSICAL_TOLERANCE:
+        if check and float((previous - inner[source]).abs().max()) <= CLASSICAL_TOLERANCE:
             break
-    return value, done
+    return inner[source].contiguous(), done
 
 
 @torch.no_grad()
