@@ -286,6 +286,7 @@ namespace
             // The hit triangle's own slope: a floor reads its tilt, a wall 0, a ceiling seen from under it below 0
             // (the encoding clamps it to 0, a wall's).
             best.NormalZ = hit.NormalZ;
+            best.BackFace = hit.BackFace;
         }
 
         // 2. A WMO's liquid, entered from above (a rising ray only meets one from below, which it sees through).
@@ -300,6 +301,7 @@ namespace
                 best.What = liquid.Deadly ? Class::Deadly : Class::Water;
                 best.Z = origin.Z + dir.Z * liquid.Distance;
                 best.NormalZ = 1.0f;
+                best.BackFace = false;
             }
         }
         Charge(breakdown, &Breakdown::LiquidNs, mark);
@@ -693,10 +695,30 @@ Animus::Vision::Rig Animus::Vision::PlaceCamera(Pose const& pose, CameraState co
     if (zoom > 0.0f)
     {
         // One cast from the pivot back along the view, against the trees and the terrain: the camera pulls in to
-        // BOOM_BACKOFF short of what it meets, never nearer than BOOM_MIN (or the zoom, when that is nearer still).
+        // BOOM_BACKOFF short of what it meets; with no room for that, to BOOM_MIN or half way to the surface,
+        // whichever is nearer -- never onto or past it.
         Hit const back = Nearest(rig.Pivot, forward * -1.0f, zoom, world, false, breakdown);
         if (back.What != Class::Sky)
-            rig.Boom = std::min(zoom, std::max(std::min(BOOM_MIN, zoom), back.Distance - BOOM_BACKOFF));
+            rig.Boom = std::min(zoom, back.Distance - BOOM_BACKOFF >= BOOM_MIN ? back.Distance - BOOM_BACKOFF
+                : std::min(BOOM_MIN, 0.5f * back.Distance));
+        // A boom clear of everything can still end above a ceiling panel's plane (a stepped or coffered ceiling: the
+        // boom slips up past a panel's edge into the pocket over it), and from there the frame sees the panel's top
+        // -- its back face, which the hit turns to read as a floor -- and the level's shell from outside. Straight
+        // down from the camera to the pivot's height, the first surface is then a model's triangle met from behind:
+        // the camera pulls in, halving the boom (to the pivot at last), until that cast meets no back face. A camera
+        // at or below the pivot has nothing over the head to be above.
+        for (uint32_t pull = 0; pull <= BOOM_PULLS && rig.Boom > 0.0f; ++pull)
+        {
+            Vec3 const at = rig.Pivot - forward * rig.Boom;
+            if (at.Z <= rig.Pivot.Z)
+                break;
+            if (breakdown)
+                ++breakdown->Rays;
+            SurfaceHit const below = world.StaticHit(at, { at.X, at.Y, rig.Pivot.Z });
+            if (below.Distance < 0.0f || !below.BackFace)
+                break;
+            rig.Boom = pull < BOOM_PULLS ? 0.5f * rig.Boom : 0.0f;
+        }
     }
     rig.Camera = rig.Pivot - forward * rig.Boom;
     return rig;
@@ -829,10 +851,25 @@ uint32_t Animus::Vision::Render(Settings const& settings, Rig const& rig, Pose c
         {
             Vec3 const dir = PixelDirection(rig, cast, row, col);
             Hit hit = CastStatic(rig.Camera, dir, world, breakdown);
+            // A floor met from behind with nothing over it, or under a ceiling's face closer than ENCLOSURE_HEADROOM
+            // (the gap between two panels of a stepped ceiling), is the top of the level's shell -- a one-sided
+            // ceiling panel seen from over it -- not a floor: the map takes nothing of it. A back face under another
+            // back face stays a floor: props are not all wound to face the room (Deadmines' planks and crates, stood
+            // on, read as back faces under more of them). The pixel is left as cast.
+            bool backside = false;
+            if (hits && hit.BackFace && hit.What == Class::Model && hit.NormalZ >= FLOOR_NORMAL)
+            {
+                Vec3 const at = rig.Camera + dir * hit.Distance;
+                Vec3 const from{ at.X, at.Y, at.Z + ENCLOSURE_LIFT };
+                if (breakdown)
+                    ++breakdown->Rays;
+                SurfaceHit const over = world.StaticHit(from, { from.X, from.Y, from.Z + ENCLOSURE_REACH });
+                backside = over.Distance < 0.0f || (!over.BackFace && over.Distance < ENCLOSURE_HEADROOM);
+            }
             PaintHazards(hit, rig.Camera, dir, sight, breakdown);
             // The map reads what the pixel does, a hazard painted on the floor included: its class marks the area.
             if (hits)
-                hits->Rays.push_back({ dir, hit.Distance, hit.Z, hit.NormalZ, hit.What });
+                hits->Rays.push_back({ dir, hit.Distance, hit.Z, hit.NormalZ, hit.What, backside });
             // From the camera to the hit, or to where the ray left the loaded grids on sky (R12).
             bool const flag = ObjectiveFlag(rig.Camera, dir, hit.Distance, objective, objectiveRadius) > 0.5f;
             EncodePixel(hit, pose.Z, flag, target + (std::size_t(row) * cast.Width + col) * BYTES_PER_PIXEL);

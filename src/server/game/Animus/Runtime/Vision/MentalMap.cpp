@@ -801,7 +801,9 @@ void Animus::Vision::MentalMap::WriteFrame(FrameHits const& hits, float feetZ, f
         int32_t const hitX = CellOf(hitXf);
         int32_t const hitY = CellOf(hitYf);
         // A ray ending on a floor: the band above that floor near the hit is seen free too (part C).
-        bool const floorHit = (ray.What == Class::Terrain || ray.What == Class::Model) && ray.NormalZ >= FLOOR_NORMAL;
+        // A backside (RayHit::Backside) is no floor: the band over it is not seen free, and its cell takes nothing.
+        bool const floorHit = (ray.What == Class::Terrain || ray.What == Class::Model) && ray.NormalZ >= FLOOR_NORMAL
+            && !ray.Backside;
 
         // **Seen free** (amendment 2): a 2D grid step over the map's cells from the camera to the hit (or the reach),
         // each cell taking the stretch of the ray above it; free only where that stretch is in the body's band.
@@ -893,7 +895,7 @@ void Animus::Vision::MentalMap::WriteFrame(FrameHits const& hits, float feetZ, f
             }
         }
 
-        if (sky)
+        if (sky || ray.Backside)
             continue;
         // Past the near reach, at any distance: the far tier's cells (part B).
         if (!hitWithin)
@@ -984,7 +986,9 @@ void Animus::Vision::MentalMap::Mesh(FrameHits const& hits, float feetZ, float b
         point.Range = ray.Distance;
         point.NormalZ = ray.NormalZ;
         point.Kind = KIND_NONE;
-        if (ray.What == Class::Terrain || ray.What == Class::Model)
+        if (ray.Backside)
+            point.Kind = KIND_NONE;
+        else if (ray.What == Class::Terrain || ray.What == Class::Model)
             point.Kind = ray.NormalZ >= FLOOR_NORMAL ? KIND_FLOOR
                 : ray.NormalZ > CEILING_NORMAL ? KIND_WALL : KIND_NONE;
         else if (ray.What == Class::Water || ray.What == Class::Deadly)

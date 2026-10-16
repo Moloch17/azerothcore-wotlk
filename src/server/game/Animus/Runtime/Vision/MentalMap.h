@@ -42,17 +42,17 @@
 /// coarse tiles (MapSettings::CoarseTiles, COARSE_CELL yards a cell) instead of forgetting it.
 ///
 /// **Writes** (WriteFrame, from the frame as cast, before it is scaled up): every ray's hit marks its cell -- a floor
-/// (normal z at least FLOOR_NORMAL) at its height layer, else a wall within the body's band of a floor, a door, water
-/// or a hazard, or a unit's or game object's class -- within WRITE_REACH in the 1-yd cells, beyond it (at any
-/// distance; sky never) in the far tier's COARSE_CELL-yd cells (_far, the map-the-distance change, 2026-10-15), so
-/// the coarse crop fills with the hall a seat looks down. The cells the ray crossed on its way (within WRITE_REACH)
-/// are "seen free" by a 2D grid step over the map's own cells, but only where the ray's segment over the cell lies in
-/// the body's band above that cell's floor (with no floor known, within FREE_BAND yards of the feet), or -- a ray
-/// that ends on a floor -- in the body's band above THAT floor within HIT_BAND_REACH yards of it (a deck or a terrace
-/// seen from above or below). A pass-through never marks a floor. Then the frame is **meshed** (depth-image meshing):
-/// each quad of neighbouring rays is two triangles, and a triangle whose three hits are one surface -- the same kind
-/// (floor, water/hazard), its plane facing the camera, as level as its hits' own normals say, with no range jump
-/// between its hits and no more rise across it than those normals allow plus a step -- fills the cells under it at
+/// (normal z at least FLOOR_NORMAL, never a RayHit::Backside) at its height layer, else a wall within the body's band
+/// of a floor, a door, water or a hazard, or a unit's or game object's class -- within WRITE_REACH in the 1-yd cells,
+/// beyond it (at any distance; sky never) in the far tier's COARSE_CELL-yd cells (_far, the map-the-distance change,
+/// 2026-10-15), so the coarse crop fills with the hall a seat looks down. The cells the ray crossed on its way (within
+/// WRITE_REACH) are "seen free" by a 2D grid step over the map's own cells, but only where the ray's segment over the
+/// cell lies in the body's band above that cell's floor (with no floor known, within FREE_BAND yards of the feet), or
+/// -- a ray that ends on a floor -- in the body's band above THAT floor within HIT_BAND_REACH yards of it (a deck or a
+/// terrace seen from above or below). A pass-through never marks a floor. Then the frame is **meshed** (depth-image
+/// meshing): each quad of neighbouring rays is two triangles, and a triangle whose three hits are one surface -- the
+/// same kind (floor, water/hazard), its plane facing the camera, as level as its hits' own normals say, with no range
+/// jump between its hits and no more rise across it than those normals allow plus a step -- fills the cells under it at
 /// its interpolated height, a pair of neighbouring wall hits at a near depth the cells between them; never across a
 /// depth discontinuity (an edge, a doorway, a drop), and at most MESH_TRIANGLE_CELLS cells a triangle and
 /// MESH_FRAME_CELLS a frame. WriteBody marks the cells the body stood on visited (and their floor, from the feet).
@@ -197,7 +197,9 @@ namespace Animus::Vision
 
     /// One ray of a frame as cast (before the frame is scaled up): from the camera along Dir (a unit vector) to its
     /// hit at Distance -- for sky, where the ray left the loaded grids -- the hit's height and normal z, and what it
-    /// hit.
+    /// hit. Backside: the hit reads as a floor but is the top of the level's shell -- a model's triangle met from
+    /// behind (SurfaceHit::BackFace) with no room over it (Render; Camera.h's ENCLOSURE_HEADROOM), a one-sided ceiling
+    /// panel seen from over it; never a floor for the map.
     struct RayHit
     {
         Vec3 Dir;
@@ -205,6 +207,7 @@ namespace Animus::Vision
         float Z = 0.0f;
         float NormalZ = 0.0f;
         Class What = Class::Sky;
+        bool Backside = false;
     };
 
     /// A frame's rays (Render's `hits`): the camera they start from and one per cast pixel, row by row.

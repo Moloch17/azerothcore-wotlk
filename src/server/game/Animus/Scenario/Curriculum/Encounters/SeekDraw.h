@@ -137,8 +137,8 @@ namespace Animus::Curriculum::SeekDraw
     inline bool Inside(std::vector<std::pair<float, float>> const& floor, float x, float y);
 
     /// **Looked into a room** (REDESIGN §2): per room, the frame's cast rays whose hit is a floor (the terrain or a
-    /// model, normal z at least Vision::FLOOR_NORMAL, within Vision::WRITE_REACH of the camera) inside its floor
-    /// polygon, within `rise` of its floor's height. The frame alone: nothing the mental map remembers.
+    /// model, normal z at least Vision::FLOOR_NORMAL, within Vision::WRITE_REACH of the camera, no backside) inside
+    /// its floor polygon, within `rise` of its floor's height. The frame alone: nothing the mental map remembers.
     /// `visit(room, x, y, z)` is called for each such ray with the room it fell in and the floor point it hit (a ray
     /// falls in the first room that takes it).
     template <typename Visit>
@@ -156,7 +156,7 @@ namespace Animus::Curriculum::SeekDraw
         for (Vision::RayHit const& ray : hits.Rays)
         {
             if ((ray.What != Vision::Class::Terrain && ray.What != Vision::Class::Model)
-                || ray.NormalZ < Vision::FLOOR_NORMAL || ray.Distance > Vision::WRITE_REACH)
+                || ray.NormalZ < Vision::FLOOR_NORMAL || ray.Distance > Vision::WRITE_REACH || ray.Backside)
                 continue;
             float const x = hits.Camera.X + ray.Dir.X * ray.Distance;
             float const y = hits.Camera.Y + ray.Dir.Y * ray.Distance;
@@ -173,7 +173,7 @@ namespace Animus::Curriculum::SeekDraw
     }
 
     /// **The floor a frame landed on** (Explore): every cast ray whose hit is a floor (the terrain or a model, normal z
-    /// at least Vision::FLOOR_NORMAL, within Vision::WRITE_REACH of the camera), room or not.
+    /// at least Vision::FLOOR_NORMAL, within Vision::WRITE_REACH of the camera, no backside), room or not.
     /// `visit(x, y, z)` is called with the point it hit.
     template <typename Visit>
     inline void FloorRays(Vision::FrameHits const& hits, Visit&& visit)
@@ -181,7 +181,7 @@ namespace Animus::Curriculum::SeekDraw
         for (Vision::RayHit const& ray : hits.Rays)
         {
             if ((ray.What != Vision::Class::Terrain && ray.What != Vision::Class::Model)
-                || ray.NormalZ < Vision::FLOOR_NORMAL || ray.Distance > Vision::WRITE_REACH)
+                || ray.NormalZ < Vision::FLOOR_NORMAL || ray.Distance > Vision::WRITE_REACH || ray.Backside)
                 continue;
             visit(hits.Camera.X + ray.Dir.X * ray.Distance, hits.Camera.Y + ray.Dir.Y * ray.Distance, ray.Z);
         }

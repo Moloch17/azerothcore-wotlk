@@ -158,12 +158,15 @@ namespace Animus::Vision
     /// A collision tree's first solid along a segment: how far along it (< 0 for none) and the hit triangle's normal
     /// z, turned to face the segment's start -- 1 a floor seen from above, 0 a wall, below 0 a ceiling from under it.
     /// Object, for the dynamic tree, is the game object model hit (its GameObjectModel, opaque here): the entity
-    /// sensor ignores the one it is looking at.
+    /// sensor ignores the one it is looking at. BackFace: the ray met the triangle from behind (along its own winding's
+    /// normal) -- the static world's models are wound to face where a body can be, so a back face is a surface seen
+    /// from inside or behind the geometry (the top of a one-sided ceiling panel); the baked scene's hits only.
     struct SurfaceHit
     {
         float Distance = -1.0f;
         float NormalZ = 0.0f;
         void const* Object = nullptr;
+        bool BackFace = false;
     };
 
     struct LiquidHit
@@ -269,6 +272,7 @@ namespace Animus::Vision
         Class What = Class::Sky;
         float Z = 0.0f;             // the hit's height
         float NormalZ = 0.0f;
+        bool BackFace = false;      // a model's triangle met from behind (SurfaceHit::BackFace)
     };
 
     /// Where a frame's time and work went: filled only when asked for (the snapshot and the timing test), since
@@ -301,7 +305,8 @@ namespace Animus::Vision
         Breakdown* breakdown = nullptr);
 
     /// The pivot, the boom's pull-in (one cast from the pivot back along the view, against the trees and the
-    /// terrain) and the camera.
+    /// terrain, never leaving the camera on or past what it meets; then pulled further in while the camera is over a
+    /// ceiling panel's back) and the camera.
     [[nodiscard]] Rig PlaceCamera(Pose const& pose, CameraState const& camera, VisionWorld const& world,
         Breakdown* breakdown = nullptr);
 

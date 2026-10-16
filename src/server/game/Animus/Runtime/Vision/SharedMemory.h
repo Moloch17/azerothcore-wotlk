@@ -76,14 +76,16 @@ namespace Animus::Vision
 
     /// 2 (2026-10-15): walls bound to their layers on merge and cleared by observation; a version 1 file holds walls
     /// on the wrong layers and misreads never cleared, and is not read.
-    constexpr uint32_t MEMORY_VERSION = 2;
+    /// 3 (2026-10-16): the tops of ceiling panels seen from over them (RayHit::Backside) are no floors; a version 2
+    /// file holds them as phantom storeys over the real floors, and is not read.
+    constexpr uint32_t MEMORY_VERSION = 3;
     /// When the memory's clock (seconds past its base) passes this, the base moves on to leave REBASE_KEEP seconds
     /// of history: a seat's map runs to MentalMap's 65000-second limit from wherever it was anchored.
     constexpr double REBASE_AT = 40000.0;
     constexpr double REBASE_KEEP = 20000.0;
 
 #pragma pack(push, 1)
-    /// The .amem file's header; MEMORY_VERSION 2. Little-endian, as the forge's and the realm's machines are. The
+    /// The .amem file's header; MEMORY_VERSION 3. Little-endian, as the forge's and the realm's machines are. The
     /// tiles follow it, FineTiles then FarTiles records of (int64 tile key, MAP_TILE_CELLS MapCell: int16 Floor[2],
     /// uint8 Flags, uint8 Entity, uint16 Seen).
     struct MemoryFileHeader

@@ -285,9 +285,19 @@ namespace Animus::Vision
 
     /// The pivot the camera orbits: the head, this share of the collision height above the feet.
     constexpr float PIVOT_SHARE = 0.9f;
-    /// The boom pulls in to this short of what it meets, and never nearer the pivot than BOOM_MIN.
+    /// The boom pulls in to this short of what it meets; with no room for that, to BOOM_MIN or half way to the
+    /// surface, whichever is nearer (PlaceCamera): never onto or past it.
     constexpr float BOOM_BACKOFF = 0.2f;
     constexpr float BOOM_MIN = 0.3f;
+    /// A camera over the back of a model's triangle above the head (the top of a ceiling panel) halves its boom up
+    /// to this many times, then sits at the pivot (PlaceCamera).
+    constexpr uint32_t BOOM_PULLS = 3;
+    /// A floor hit on a model's triangle met from behind is a floor only with something over it: the cast straight
+    /// up from ENCLOSURE_LIFT above it meets, within ENCLOSURE_REACH, another back face, or a face on (a ceiling)
+    /// no nearer than ENCLOSURE_HEADROOM -- less is no room a body stands in (Render, RayHit::Backside).
+    constexpr float ENCLOSURE_LIFT = 0.05f;
+    constexpr float ENCLOSURE_REACH = 64.0f;
+    constexpr float ENCLOSURE_HEADROOM = 1.5f;
     /// The distance channel: ln(max(d, NEAR) / NEAR) / ln(DISTANCE_REFERENCE / NEAR), clamped to 1 (and 1 for sky).
     constexpr float NEAR = 0.25f;
     constexpr float DISTANCE_REFERENCE = 1000.0f;
