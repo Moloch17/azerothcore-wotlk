@@ -653,6 +653,23 @@ namespace
             .SightOnly = flag == NavFlag::SightOnly };
     }
 
+    /// Shadowfang Keep's nav arena: the bake boxed to the keep's own WMO (its triangles' cluster round the entrance in
+    /// the baked scene, 16-yd bins, 8 yd of margin: x -320..-64, y 2048..2336). Without a box the bake takes the
+    /// scene's solid bounds, which for this instance are the loaded Silverpine tiles round the keep -- 2048 x 884 yd,
+    /// 209,186 reachable cells of open terrain against the Stockades' 3,338 -- and nearly every pair was drawn
+    /// outdoors, hundreds of yards from the dungeon, on ground the bake (the map's collision) calls free but the
+    /// camera's scene fills with doodads (seed 98, 2026-10-16: pinned 98 s at 534,1811 among M2 trees and rocks).
+    ArenaDefinition ShadowfangNav(uint32 episodeSeconds, NavFlag flag = NavFlag::None)
+    {
+        ArenaDefinition arena = NavArena("shadowfang", MAP_SHADOWFANG_KEEP, episodeSeconds, flag);
+        arena.HasBox = true;
+        arena.BoxMinX = -328.0f;
+        arena.BoxMinY = 2040.0f;
+        arena.BoxMaxX = -56.0f;
+        arena.BoxMaxY = 2344.0f;
+        return arena;
+    }
+
     /// **The nav stages' blocks**: Core and the goal block the frame, Move the lesson, the compass the goal (the
     /// minimap marker: bearing and distance to the point, exact, never withheld in a nav stage), the camera (with its
     /// entity list, inserted after it) and the mental map -- two tiers of it here (StageDefinition::MapTiers 2: the
@@ -938,7 +955,7 @@ namespace
             .Arenas = {
                 NavArena("stockades", MAP_STORMWIND_STOCKADE, 120),
                 NavArena("deadmines", MAP_DEADMINES, 120),
-                NavArena("shadowfang", MAP_SHADOWFANG_KEEP, 120),
+                ShadowfangNav(120),
                 NavHeldOut(120),
             },
             .MapId = MAP_STORMWIND_STOCKADE,
@@ -961,7 +978,7 @@ namespace
             .Blocks = NavBlocks(),
             .Arenas = {
                 NavArena("deadmines", MAP_DEADMINES, 150),
-                NavArena("shadowfang", MAP_SHADOWFANG_KEEP, 150),
+                ShadowfangNav(150),
                 NavArena("gnomeregan", MAP_GNOMEREGAN, 150),
                 NavArena("razorfen", MAP_RAZORFEN_KRAUL, 150),
                 NavHeldOut(150),
