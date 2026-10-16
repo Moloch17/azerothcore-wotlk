@@ -18,9 +18,10 @@ from ..protocol import GOAL_SLOTS_ON_WIRE
 from ..protocol import (LABEL_COARSE_CLASS, LABEL_COARSE_COST, LABEL_FINE_CLASS, LABEL_FINE_COST, LABEL_SIDE,
                         LABEL_UNREACHABLE, TRAV_CLASS_NAMES, TRAV_CLASSES)
 from .buffer import RolloutBuffer
-from .networks import (MAP_CODE, LayoutActor, LayoutCritic, MapEncoder, SharedInputDense, _carry_sequence,
-                       _per_layout, load_actor_state, neighbour_stack, neighbours_within_45, per_layout,
-                       per_layout_host, sample_logits, skip_distribution_checks, goal_pair, split_goal_pair,
+from .networks import (CLASSICAL_COSTS, CLASSICAL_ITERATIONS, CLASSICAL_ORACLE_UNKNOWN, CLASSICAL_SENTINEL,
+                       MAP_CODE, LayoutActor, LayoutCritic, MapEncoder, SharedInputDense, _carry_sequence,
+                       _per_layout, classical_cost_to_go, load_actor_state, neighbour_stack, neighbours_within_45,
+                       per_layout, per_layout_host, sample_logits, skip_distribution_checks, goal_pair, split_goal_pair,
                        to_device, update_norms, vision_image_bytes, vision_look_heads, vision_term,
                        look_hold_indices)
 from .valuenorm import ValueNorm
@@ -299,7 +300,13 @@ class AuxConfig:
     MapEncoder.WAYPOINT_ANCHOR: argmin of the predicted cost-to-go over its eight neighbours) is one of the label's,
     over the rows whose body cell is reachable with a strictly lower reachable neighbour; planner_dir_acc45_fine and
     _coarse, within 45 degrees of one; planner_dir_acc_seen, the same as _fine over every graded fine cell the crop
-    knows."""
+    knows.
+
+    **The classical planner beside it** (2026-10-16; a measurement, MappoTrainer._classical_directions): the same
+    accuracies of a fixed-weight value iteration over the costmap head's classes (classical_dir_acc_fine, _coarse,
+    _acc45_fine, _acc45_coarse, _acc_seen, and classical_mae_known, yards over the reachable cells the fine crop
+    knows) and over the label's own (oracle_dir_acc_fine, _coarse, _seen): how much of the learned planner's error is
+    the costmap's and how much the planning rule's. No loss reads them."""
 
     costmap_coef: float = 0.5
     planner_coef: float = 0.5
@@ -2121,12 +2128,21 @@ class MappoTrainer:
 
     #: The aux pass's statistics (AuxConfig), as metrics.csv names them.
     AUX_STATS = ("costmap_loss", "planner_loss", "costmap_iou", "costmap_iou_known", "costmap_known_share",
-                 "planner_mae_yards", "planner_mae_known", "planner_dir_loss")
+                 "planner_mae_yards", "planner_mae_known", "planner_dir_loss", "classical_mae_known")
     #: The planner's direction accuracies (AuxConfig: the body cell's downhill neighbour, each tier, exactly and within
     #: 45 degrees, and every graded fine cell the crop knows), as metrics.csv names them: hits over the rows graded,
     #: summed over the update's passes, so a pass with few graded rows weighs what it holds.
     AUX_DIR_STATS = ("planner_dir_acc_fine", "planner_dir_acc_coarse", "planner_dir_acc45_fine",
-                     "planner_dir_acc45_coarse", "planner_dir_acc_seen")
+                     "planner_dir_acc45_coarse", "planner_dir_acc_seen",
+                     "classical_dir_acc_fine", "classical_dir_acc_coarse", "classical_dir_acc45_fine",
+                     "classical_dir_acc45_coarse", "classical_dir_acc_seen",
+                     "oracle_dir_acc_fine", "oracle_dir_acc_coarse", "oracle_dir_acc_seen")
+    #: The aux pass's direction families (_aux_pass's count_directions): the metrics.csv prefix of each and its
+    #: totals' key -- the learned planner, the classical one over the costmap head's classes, and the classical one
+    #: over the label's (_classical_directions).
+    AUX_DIR_FAMILIES = (("planner", "dir"), ("classical", "cls"), ("oracle", "orc"))
+    #: The rows of each aux pass the classical planner runs on (its first, already drawn at random; 0 all of them).
+    CLASSICAL_ROWS = 0
     #: The classes whose IoU over the update metrics.csv names (costmap_iou_<class>): accumulated as intersections and
     #: unions over every pass, so a class absent from one minibatch does not drag its reading to 0.
     AUX_CLASSES = ("free", "wall", "water", "hazard", "drop_safe", "drop_hurt", "slope")
@@ -2157,6 +2173,48 @@ class MappoTrainer:
         else:
             weights = present_classes.to(torch.float32)
         return weights, seen
+
+    @torch.no_grad()
+    def _classical_directions(self, plan: dict, classes: list[torch.Tensor], costs: list[torch.Tensor],
+                              crop_known: torch.Tensor, targets: list[torch.Tensor], graded: list[torch.Tensor],
+                              count) -> torch.Tensor:
+        """**The classical planner's measurement** (_aux_pass; nothing trains on it and no plan, readout, waypoint or
+        action reads it): fixed-weight value iteration (networks.classical_cost_to_go, CLASSICAL_COSTS) over each
+        tier's step costs -- the expected cost under the costmap head's softmax (the "cls" family: a cell 10% wall
+        costs as much as 11 free ones, so the head's own doubt prices a cell) and the label's classes one-hot (the
+        "orc" family, the same rule: the gap between the two is what the costmap's errors cost, the gap from 1 what
+        the rule does) -- from the plan's goal planes, the hierarchy as MapEncoder.plan has it (mappo.
+        planner_hierarchical: the coarse tier first, its classical cost-to-go resampled onto the fine tier's border
+        ring, MapEncoder.coarse_frame). Its directions are counted by `count` (count_directions) against the label's
+        `targets` over the cells `graded`, the learned planner's own definition. Returns the cost-to-go MAE (yards) over
+        the fine tier's reachable cells the crop knows and the classical plan reaches (0 where none).
+        CLASSICAL_ROWS > 0 runs it on that many of the pass's rows."""
+        mapper = self.actor.vision.map
+        n = classes[0].shape[0]
+        k = n if self.CLASSICAL_ROWS <= 0 else min(n, int(self.CLASSICAL_ROWS))
+        device = classes[0].device
+        table = torch.tensor(CLASSICAL_COSTS, dtype=torch.float32, device=device)
+        oracle_table = table.clone()
+        oracle_table[0] = CLASSICAL_ORACLE_UNKNOWN
+        tier_count = len(plan["costmap"])
+        hierarchical = bool(getattr(mapper, "hierarchical", False))
+        planned: list[torch.Tensor | None] = [None] * tier_count
+        for tier in (reversed(range(tier_count)) if hierarchical else range(tier_count)):
+            probabilities = torch.softmax(plan["costmap"][tier][:k].detach().to(torch.float32), dim=1)
+            factor = torch.cat([torch.einsum("nchw,c->nhw", probabilities, table), oracle_table[classes[tier][:k]]])
+            goal = plan["goal_plane"][tier][:k].detach().repeat(2, 1, 1)
+            ring = mapper.coarse_frame(planned[1]) if hierarchical and tier == 0 else None
+            planned[tier], _ = classical_cost_to_go(factor, goal, float(mapper.tier_cells[tier]),
+                                                    CLASSICAL_ITERATIONS[min(tier, 1)], ring)
+        for tier, value in enumerate(planned):
+            inside = neighbour_stack(torch.ones_like(value[:1]), 0.0) > 0.0
+            scores = torch.where(inside, -neighbour_stack(value, 0.0), torch.full_like(inside, -1e9,
+                                                                                       dtype=torch.float32))
+            count("cls", tier, scores[:k], targets[tier][:k], graded[tier][:k])
+            count("orc", tier, scores[k:], targets[tier][:k], graded[tier][:k])
+        fine = planned[0][:k]
+        measured = (costs[0][:k] < LABEL_UNREACHABLE) & crop_known[:k] & (fine < 0.5 * CLASSICAL_SENTINEL)
+        return ((fine - costs[0][:k]).abs() * measured).sum() / measured.sum().clamp(min=1)
 
     def _aux_pass(self, obs: torch.Tensor, layout: torch.Tensor, image: torch.Tensor, labels: torch.Tensor,
                   counted: torch.Tensor, totals: dict) -> None:
@@ -2203,6 +2261,31 @@ class MappoTrainer:
         anchor = MapEncoder.WAYPOINT_ANCHOR
         within_45 = neighbours_within_45().to(device=device, dtype=torch.float32)
         direction_hits: dict[str, torch.Tensor] = {}
+        # Each tier's label direction (its downhill neighbours [N, 8, H, W] and the cells graded [N, H, W]), kept for
+        # the classical planner's measurement after the backward (_classical_directions).
+        label_targets: list[torch.Tensor] = []
+        label_graded: list[torch.Tensor] = []
+
+        def count_directions(family: str, tier: int, scores: torch.Tensor, target: torch.Tensor,
+                             graded: torch.Tensor) -> None:
+            """The direction's hits into direction_hits as aux_<family>_hit[45]_<tier> and aux_<family>_n_<tier>
+            (and _seen on the fine tier): `scores` [N, 8, H, W] each cell's neighbours, the highest the one a plan
+            descends to (the first of equals in NEIGHBOURS order), against the label's `target` over the cells
+            `graded`."""
+            name = "fine" if tier == 0 else "coarse"
+            body = graded[:, anchor, anchor]
+            body_target = target[:, :, anchor, anchor].to(torch.float32)
+            chosen = scores[:, :, anchor, anchor].argmax(dim=1, keepdim=True)
+            hit = body_target.gather(1, chosen)[:, 0] > 0.0
+            near = (body_target @ within_45).gather(1, chosen)[:, 0] > 0.0
+            direction_hits[f"aux_{family}_hit_{name}"] = (hit & body).sum()
+            direction_hits[f"aux_{family}_hit45_{name}"] = (near & body).sum()
+            direction_hits[f"aux_{family}_n_{name}"] = body.sum()
+            if tier == 0:
+                seen_cells = graded & crop_known[:graded.shape[0]]
+                hits = target.gather(1, scores.argmax(dim=1, keepdim=True))[:, 0]
+                direction_hits[f"aux_{family}_hit_seen"] = (hits & seen_cells).sum()
+                direction_hits[f"aux_{family}_n_seen"] = seen_cells.sum()
         # The class weights and each cell's seen weight (AuxConfig.balance_clip, unseen_weight), from this pass's
         # labelled cells over both tiers (_aux_class_weights).
         with torch.no_grad():
@@ -2254,25 +2337,17 @@ class MappoTrainer:
                 graded_weight = seen_weight[tier] * graded
                 direction_loss = direction_loss + (crossing * graded_weight).sum() / graded_weight.sum().clamp(min=1e-6)
             with torch.no_grad():
-                name = "fine" if tier == 0 else "coarse"
-                body = graded[:, anchor, anchor]
-                body_target = target[:, :, anchor, anchor].to(torch.float32)
-                chosen = logits[:, :, anchor, anchor].argmax(dim=1, keepdim=True)
-                hit = body_target.gather(1, chosen)[:, 0] > 0.0
-                near = (body_target @ within_45).gather(1, chosen)[:, 0] > 0.0
-                direction_hits[f"aux_dir_hit_{name}"] = (hit & body).sum()
-                direction_hits[f"aux_dir_hit45_{name}"] = (near & body).sum()
-                direction_hits[f"aux_dir_n_{name}"] = body.sum()
-                if tier == 0:
-                    seen_cells = graded & crop_known
-                    hits = target.gather(1, logits.argmax(dim=1, keepdim=True))[:, 0]
-                    direction_hits["aux_dir_hit_seen"] = (hits & seen_cells).sum()
-                    direction_hits["aux_dir_n_seen"] = seen_cells.sum()
+                count_directions("dir", tier, logits, target, graded)
+                label_targets.append(target.detach())
+                label_graded.append(graded.detach())
         tiers = max(1, len(plan["costmap"]))
         loss = aux.costmap_coef * costmap_loss / tiers + aux.planner_coef * planner_loss / tiers
         if aux.planner_dir_coef > 0.0:
             loss = loss + aux.planner_dir_coef * direction_loss / tiers
         loss.backward()
+        # The classical planner beside the learned one (a measurement: no loss, gradient or plan reads it).
+        classical_mae = self._classical_directions(plan, classes, costs, crop_known, label_targets, label_graded,
+                                                   count_directions)
         with torch.no_grad():
             def mean_iou(matrix: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
                 """The mean IoU over the classes present in `matrix` (a confusion, target x predicted), and every
@@ -2290,7 +2365,7 @@ class MappoTrainer:
                       "costmap_iou": iou, "costmap_iou_known": iou_known, "costmap_known_share": known_share,
                       "planner_mae_yards": mae_sum / mae_n.clamp(min=1.0),
                       "planner_mae_known": known_sum / known_n.clamp(min=1.0),
-                      "planner_dir_loss": direction_loss.detach() / tiers}
+                      "planner_dir_loss": direction_loss.detach() / tiers, "classical_mae_known": classical_mae}
             for name, value in values.items():
                 totals[f"aux_{name}"] = totals.get(f"aux_{name}", 0.0) + value
             totals["aux_n"] = totals.get("aux_n", 0.0) + 1.0
@@ -2718,18 +2793,20 @@ class MappoTrainer:
             count = auxiliary_stats.pop("aux_n")
             for name in self.AUX_STATS:
                 stats[name] = auxiliary_stats.pop(f"aux_{name}", 0.0) / max(count, 1.0)
-            # The direction's accuracies: hits over the rows (cells) graded, over the whole update.
-            for stat, hit, graded in (("planner_dir_acc_fine", "hit_fine", "n_fine"),
-                                      ("planner_dir_acc_coarse", "hit_coarse", "n_coarse"),
-                                      ("planner_dir_acc45_fine", "hit45_fine", "n_fine"),
-                                      ("planner_dir_acc45_coarse", "hit45_coarse", "n_coarse"),
-                                      ("planner_dir_acc_seen", "hit_seen", "n_seen")):
-                hits = float(auxiliary_stats.pop(f"aux_dir_{hit}", 0.0))
-                graded_rows = float(auxiliary_stats.get(f"aux_dir_{graded}", 0.0))
-                if graded_rows > 0.0:
-                    stats[stat] = hits / graded_rows
-            for graded in ("n_fine", "n_coarse", "n_seen"):
-                auxiliary_stats.pop(f"aux_dir_{graded}", None)
+            # The direction's accuracies: hits over the rows (cells) graded, over the whole update -- the learned
+            # planner's, the classical one's and the oracle's (AUX_DIR_FAMILIES), each over its own counts.
+            for family, key in self.AUX_DIR_FAMILIES:
+                for suffix, hit, graded in (("acc_fine", "hit_fine", "n_fine"),
+                                            ("acc_coarse", "hit_coarse", "n_coarse"),
+                                            ("acc45_fine", "hit45_fine", "n_fine"),
+                                            ("acc45_coarse", "hit45_coarse", "n_coarse"),
+                                            ("acc_seen", "hit_seen", "n_seen")):
+                    hits = float(auxiliary_stats.pop(f"aux_{key}_{hit}", 0.0))
+                    graded_rows = float(auxiliary_stats.get(f"aux_{key}_{graded}", 0.0))
+                    if graded_rows > 0.0 and f"{family}_dir_{suffix}" in self.AUX_DIR_STATS:
+                        stats[f"{family}_dir_{suffix}"] = hits / graded_rows
+                for graded in ("n_fine", "n_coarse", "n_seen"):
+                    auxiliary_stats.pop(f"aux_{key}_{graded}", None)
             # A class's IoU over the whole update; absent (no column value) where it was never labelled nor predicted.
             for name in self.AUX_CLASSES:
                 inter = auxiliary_stats.pop(f"aux_inter_{name}", 0.0)

@@ -1588,6 +1588,65 @@ def neighbours_within_45() -> torch.Tensor:
     return gap <= math.pi / 4.0 + 1e-6
 
 
+#: **The classical planner's step costs** (MappoTrainer._aux_pass's classical_* and oracle_* statistics; a measurement
+#: only): what a yard of step on a cell of each class (TRAV_CLASS_NAMES order) costs, as a multiple of walking it.
+#: A step pays the mean of its two cells' multiples (classical_cost_to_go). The bake's own factors where it has one
+#: (TravBake.h: walk, step and a safe drop 1, swim and jump TRAV_SWIM_FACTOR / TRAV_JUMP_FACTOR 1.5), a hurting drop
+#: a flat 3 (the bake adds its damage at dropHurtYards a health bar), magma or slime 5, and wall, a lethal drop and a
+#: slope too steep to walk 100: blocked in effect, but finite, so every cell still has a cost-to-go. Unknown -- the
+#: head's guess that it cannot tell -- a modest optimism of 1.5. The oracle reads the label's classes, whose unknown
+#: is outside the bake (no route): blocked there instead.
+CLASSICAL_COSTS = (1.5, 1.0, 100.0, 1.5, 5.0, 1.0, 1.5, 1.0, 3.0, 100.0, 100.0)
+CLASSICAL_ORACLE_UNKNOWN = 100.0
+#: The classical planner's iterations at most, the fine tier's and the coarse's (enough to round a detour across
+#: the 48-cell crop), the convergence check's cadence and tolerance (yards), and the cost-to-go of a cell no goal
+#: reaches (finite, so the hierarchy's bilinear resample of the coarse value never meets inf x 0).
+CLASSICAL_ITERATIONS = (160, 100)
+CLASSICAL_CHECK_EVERY = 8
+CLASSICAL_TOLERANCE = 1e-3
+CLASSICAL_SENTINEL = 1e6
+
+
+@torch.no_grad()
+def classical_cost_to_go(factor: torch.Tensor, goal: torch.Tensor, cell: float, iterations: int,
+                         ring: torch.Tensor | None = None) -> tuple[torch.Tensor, int]:
+    """**The classical planner** (a measurement beside the learned one; CLASSICAL_COSTS): fixed-weight value iteration
+    -- min-plus Bellman, V(s) = min over the eight neighbours n (NEIGHBOURS) of V(n) + step yards (`cell`, x sqrt 2
+    diagonally) x (factor(s) + factor(n)) / 2 -- over `factor` [N, H, W] (each cell's step cost multiple) from the
+    goal cells (`goal` [N, H, W] > 0, held at 0), every other cell starting at CLASSICAL_SENTINEL. The mean of the
+    two cells rather than the one entered: a wall's own cell then holds a high cost-to-go too, so the hierarchy's
+    bilinear resample of the coarse value (below) does not leak a wall's far side onto its near one (measured on the
+    synthetic wall map: 3.9 against 8.2 yd of error). `ring` [N, H + 2, W + 2] (the hierarchy's boundary: the coarse
+    tier's classical cost-to-go resampled, MapEncoder.coarse_frame; its interior is ignored) holds the value just
+    past the border, a step onto it priced at the border cell's own factor; without one nothing lies past the
+    border. Runs until no cell moved more than CLASSICAL_TOLERANCE yards over CLASSICAL_CHECK_EVERY iterations,
+    `iterations` at most. Returns the cost-to-go [N, H, W] (yards; the sentinel
+    where nothing reached) and the iterations run. Without a gradient; reads no random state."""
+    n, height, width = factor.shape
+    factor = factor.to(torch.float32)
+    sentinel = CLASSICAL_SENTINEL
+    padded_factor = nn.functional.pad(factor[:, None], (1, 1, 1, 1), mode="replicate")[:, 0]
+    edges = [(padded_factor[:, 1 + dr:1 + dr + height, 1 + dc:1 + dc + width] + factor)
+             * (0.5 * cell * math.hypot(dr, dc)) for dr, dc in NEIGHBOURS]
+    border = torch.full((n, height + 2, width + 2), sentinel, device=factor.device) if ring is None \
+        else ring.to(torch.float32).clamp(max=sentinel).clone()
+    border[:, 1:-1, 1:-1] = 0.0
+    value = torch.where(goal > 0, torch.zeros_like(factor), torch.full_like(factor, sentinel))
+    done = 0
+    while done < int(iterations):
+        previous = value
+        for _ in range(min(CLASSICAL_CHECK_EVERY, int(iterations) - done)):
+            padded = nn.functional.pad(value, (1, 1, 1, 1)) + border
+            best = value
+            for (dr, dc), edge in zip(NEIGHBOURS, edges):
+                best = torch.minimum(best, padded[:, 1 + dr:1 + dr + height, 1 + dc:1 + dc + width] + edge)
+            value = best.clamp(max=sentinel)
+            done += 1
+        if float((previous - value).abs().max()) <= CLASSICAL_TOLERANCE:
+            break
+    return value, done
+
+
 @torch.no_grad()
 def descend(cost: torch.Tensor, start: int, steps: int) -> tuple[torch.Tensor, torch.Tensor]:
     """**The planned waypoint's walk** (mappo.planner_waypoint): steepest descent over `cost` [N, H, W] (the planner's
