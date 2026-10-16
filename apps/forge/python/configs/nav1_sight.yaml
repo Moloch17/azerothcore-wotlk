@@ -175,12 +175,15 @@ eval:
 # forge status for this stage: did it arrive, how efficiently (spl: arrived x optimal / max(optimal, travelled)), how
 # fast against the bake's optimum, how precisely it stopped, how cleanly it got there, the rung; the perception and
 # planning modules' own quality (costmap_iou, planner_mae_yards on the labelled cells, planner_mae_known on the cells
-# the map knows -- from the last update) and the potential paid; the held-out dungeon's and the arms' spl. Targets are
-# a readout, never a gate (no pass gates: convergence alone ends the stage).
+# the map knows -- from the last update; the classical waypoint's direction accuracy over the head's classes and over
+# the map's own codes, classical_dir_acc_* and classical_map_dir_acc_*, mappo.planner_waypoint_costs) and the
+# potential paid; the held-out dungeon's and the arms' spl. Targets are a readout, never a gate (no pass gates:
+# convergence alone ends the stage).
 status:
   headline: [arrived, spl, time_ratio, stop_error_yards, falls, fall_damage_share, died, drowned, timed_out,
              lost_seconds, wall_seconds, stuck_seconds, waypoint_regret_yards, waypoints_chosen, nav_rung, at_top_rung,
              costmap_iou, planner_mae_yards, planner_mae_known, planner_dir_acc_fine, planner_dir_acc_coarse,
+             classical_dir_acc_fine, classical_dir_acc_coarse, classical_map_dir_acc_fine, classical_map_dir_acc_coarse,
              reward_potential, reward_potential_train,
              spl_heldout_wailing, arrived_heldout_wailing, spl_no_camera, spl_no_map, spl_no_planner, spl_no_memory]
   targets:

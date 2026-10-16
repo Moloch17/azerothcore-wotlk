@@ -1615,6 +1615,65 @@ CLASSICAL_SENTINEL = 1e6
 CLASSICAL_WAYPOINT_ITERATIONS = (40, 40)
 #: Where the classical waypoint can come from (mappo.planner_waypoint_source; MapEncoder.waypoints).
 WAYPOINT_SOURCES = ("learned", "classical")
+#: **The classical planner over the map's own codes** (mappo.planner_waypoint_costs; MapEncoder.classical_plan,
+#: classical_factor; 2026-10-16): what the step cost of a cell is priced on. "head": the costmap head's softmax under
+#: CLASSICAL_COSTS everywhere (the rule as it was). "map": the crop's own code where the crop knows the cell, the
+#: head's guess only where it does not -- measured in the aux pass, the classical plan over the label's true classes
+#: points the right way 0.68 / 0.84 of the time (fine / coarse) against 0.53 / 0.79 over the head's, whose known-cell
+#: IoU is 0.58 on walls and 0.65 on free ground: the crop's codes are what the body's rays hit, the head's classes a
+#: guess at them. Per cell of MapCode k (MentalMap.h: unknown, floor, wall, door, hazard; MAP_CODE_RULES,
+#: MAP_CODE_COSTS): unknown -> the head's expected cost under CLASSICAL_COSTS; wall -> 100 and hazard (magma, slime)
+#: -> 5, fixed; floor and door -> the head's expected cost under CLASSICAL_FLOOR_COSTS, CLASSICAL_COSTS with every
+#: blocking class (wall, a lethal drop, a slope too steep: CLASSICAL_BLOCKED) and unknown re-priced as floor. The
+#: crop decides passability (a floor hit is a surface the body can stand on; the head's wall mass on such a cell is
+#: exactly the error the rule removes, so max(crop, head) would keep it), the head the grade of passable ground --
+#: water (1.5), a hurting drop (3), a jump -- which the crop's five codes cannot name. The coarse tier's code is the
+#: majority of the cell's 1-yd cells (MentalMap.cpp Fold), so a corridor's thin wall never makes a coarse cell a wall.
+WAYPOINT_COST_RULES = ("head", "map")
+CLASSICAL_BLOCKED = 100.0
+CLASSICAL_FLOOR_COSTS = tuple(1.0 if index == 0 or cost >= CLASSICAL_BLOCKED else cost
+                              for index, cost in enumerate(CLASSICAL_COSTS))
+#: Per MapCode (MAP_CODES of them), how classical_factor prices a cell under the "map" rule: 0 the head's expected
+#: cost under CLASSICAL_COSTS, 1 the head's under CLASSICAL_FLOOR_COSTS, 2 the fixed cost in MAP_CODE_COSTS.
+MAP_CODE_RULES = (0, 1, 2, 1, 2)
+MAP_CODE_COSTS = (0.0, 0.0, CLASSICAL_BLOCKED, 0.0, 5.0)
+#: The cost-to-go (yards of cost) no route over free ground can reach from inside the two crops (MappoTrainer.
+#: _classical_directions): a cell above it was priced through blockers -- three or more wall cells at 100, or a long
+#: way through hazard -- and its error against the label is the wall's cost, not the plan's accuracy. Walking the
+#: fine crop's diagonal and the coarse one's at 1 a yard is 68 + 272 = 340 yd; swum at 1.5, 510; the ceiling leaves
+#: room above that. A cell behind one or two predicted wall cells (180-360 yd of cost on top of a route that may
+#: itself be 300 yd) cannot be told from an open one by any ceiling and still counts in the MAE with that error.
+CLASSICAL_OPEN_CEILING = 600.0
+
+
+def classical_tables(device=None) -> dict[str, torch.Tensor]:
+    """The classical planner's constant tables as tensors on `device`: "costs" [TRAV_CLASSES] (CLASSICAL_COSTS),
+    "floor_costs" [TRAV_CLASSES] (CLASSICAL_FLOOR_COSTS), "code_rules" [MAP_CODES] long and "code_costs" [MAP_CODES]
+    (MAP_CODE_RULES, MAP_CODE_COSTS)."""
+    return {"costs": torch.tensor(CLASSICAL_COSTS, dtype=torch.float32, device=device),
+            "floor_costs": torch.tensor(CLASSICAL_FLOOR_COSTS, dtype=torch.float32, device=device),
+            "code_rules": torch.tensor(MAP_CODE_RULES, dtype=torch.long, device=device),
+            "code_costs": torch.tensor(MAP_CODE_COSTS, dtype=torch.float32, device=device)}
+
+
+@torch.no_grad()
+def classical_factor(probabilities: torch.Tensor, tables: dict[str, torch.Tensor],
+                     codes: torch.Tensor | None = None) -> torch.Tensor:
+    """Each cell's step cost multiple [N, H, W] for the classical planner (classical_cost_to_go) from the costmap
+    head's class probabilities `probabilities` [N, C, H, W] (a softmax; a one-hot for the oracle) and, under the "map"
+    rule (mappo.planner_waypoint_costs; WAYPOINT_COST_RULES), the crop's codes `codes` [N, H, W] (decode_map's
+    "code"): None is the "head" rule, the expected cost under `tables["costs"]` everywhere. With codes, per cell by
+    MAP_CODE_RULES: the head's expected cost under "costs" (unknown), under "floor_costs" (floor, door) or the fixed
+    "code_costs" (wall, hazard). Float32, without a gradient."""
+    probabilities = probabilities.to(torch.float32)
+    head = torch.einsum("nchw,c->nhw", probabilities, tables["costs"])
+    if codes is None:
+        return head
+    codes = codes.long().clamp(0, MAP_CODES - 1)
+    floor = torch.einsum("nchw,c->nhw", probabilities, tables["floor_costs"])
+    rule = tables["code_rules"][codes]
+    fixed = tables["code_costs"][codes]
+    return torch.where(rule == 0, head, torch.where(rule == 1, floor, fixed))
 
 
 @torch.no_grad()
@@ -2031,6 +2090,12 @@ class MapEncoder(nn.Module):
     readouts and the pointer's bonus are exactly as they were. Without a gradient; zeroed by planner_off as before. A
     flag buffer (`waypoint_source`, the export reads it) built only then; no parameter, so a checkpoint resumes.
 
+    **The classical waypoint over the map's codes** (mappo.planner_waypoint_costs "map", `waypoint_costs`;
+    2026-10-16): the cells' step costs priced on the crop's own codes where the crop knows a cell and on the head's
+    guess only where it does not (WAYPOINT_COST_RULES, classical_factor: the rule and why). The same walk, iterations
+    and scaling; another flag buffer (`waypoint_costs`, the export reads it: .amdl version 17) built only then; no
+    parameter, so a checkpoint resumes and nav1's seeds it by name as before.
+
     **The hierarchy** (mappo.planner_hierarchical, `hierarchical`; 2026-10-16): the goal of a nav trip is mostly past
     the fine crop (96 yd across), where the fine goal plane was clamped to a border cell -- the wrong point -- and K
     iterations carried value only K cells. With the hierarchy the coarse tier plans first, as before; the fine tier's
@@ -2068,11 +2133,14 @@ class MapEncoder(nn.Module):
     def __init__(self, crop: dict, class_embedding: nn.Embedding, out_width: int, starts: Sequence[int],
                  compass: Sequence[dict | None] = (), planner_k: int = Planner.K, splat: dict | None = None,
                  splat_features: int = 0, waypoint: bool = False, planner_k_fine: int | None = None,
-                 hierarchical: bool = False, waypoint_source: str = "learned"):
+                 hierarchical: bool = False, waypoint_source: str = "learned", waypoint_costs: str = "head"):
         super().__init__()
         if waypoint_source not in WAYPOINT_SOURCES:
             raise ValueError(f"mappo.planner_waypoint_source: expected one of {list(WAYPOINT_SOURCES)}, got "
                              f"{waypoint_source!r}")
+        if waypoint_costs not in WAYPOINT_COST_RULES:
+            raise ValueError(f"mappo.planner_waypoint_costs: expected one of {list(WAYPOINT_COST_RULES)}, got "
+                             f"{waypoint_costs!r}")
         self.height, self.width = crop["height"], crop["width"]
         if self.height % self.PATCH or self.width % self.PATCH:
             raise ValueError(f"the map's crop is {self.width} x {self.height}; its encoder cuts it into {self.PATCH} x "
@@ -2145,10 +2213,21 @@ class MapEncoder(nn.Module):
         # The classical waypoint (mappo.planner_waypoint_source; classical_plan): a flag buffer (the export reads it)
         # and the step costs' table, built only when asked, so a map without it is exactly what it was.
         self.classical_waypoint = self.waypoint and waypoint_source == "classical"
+        # ... and over the map's codes (mappo.planner_waypoint_costs "map"; classical_factor): its flag buffer and
+        # the rule's tables, likewise built only when asked.
+        self.map_costs = self.classical_waypoint and waypoint_costs == "map"
         if self.classical_waypoint:
             self.register_buffer("waypoint_source", torch.tensor(WAYPOINT_SOURCES.index("classical"), dtype=torch.long))
-            self.register_buffer("classical_costs", torch.tensor(CLASSICAL_COSTS, dtype=torch.float32),
-                                 persistent=False)
+            for name, table in classical_tables().items():
+                self.register_buffer(f"classical_{name}", table, persistent=False)
+        if self.map_costs:
+            self.register_buffer("waypoint_costs", torch.tensor(WAYPOINT_COST_RULES.index("map"), dtype=torch.long))
+
+    @property
+    def classical_rule_tables(self) -> dict[str, torch.Tensor]:
+        """The classical planner's tables (classical_tables()) as this encoder's buffers, on its device."""
+        return {name: getattr(self, f"classical_{name}") for name in ("costs", "floor_costs", "code_rules",
+                                                                       "code_costs")}
 
     @property
     def planner_on(self) -> bool:
@@ -2172,19 +2251,26 @@ class MapEncoder(nn.Module):
                                              distance / (steps * cell) * valid, valid], dim=-1))
             return torch.cat(features, dim=-1)
 
-    def classical_plan(self, logits: list[torch.Tensor], goals: list[torch.Tensor]) -> list[torch.Tensor]:
+    def classical_plan(self, logits: list[torch.Tensor], goals: list[torch.Tensor],
+                       codes: list[torch.Tensor] | None = None) -> list[torch.Tensor]:
         """The classical waypoint's cost-to-go of every tier (mappo.planner_waypoint_source "classical"), [N, H, W]
         yards a tier (CLASSICAL_SENTINEL where nothing reached): classical_cost_to_go over each tier's expected step
         cost under the costmap head's softmax (`logits` [N, C, H, W] a tier, priced by CLASSICAL_COSTS) from the plan's
         goal planes (`goals` [N, H, W] a tier), CLASSICAL_WAYPOINT_ITERATIONS fixed iterations (no host sync); with the
-        hierarchy the coarse tier first and its cost-to-go resampled (coarse_frame) as the fine tier's ring. Without a
-        gradient; reads no random state."""
+        hierarchy the coarse tier first and its cost-to-go resampled (coarse_frame) as the fine tier's ring. With
+        mappo.planner_waypoint_costs "map" (`map_costs`) the step costs are priced on the crop's own codes (`codes`
+        [N, H, W] a tier, decode_map's; classical_factor) where the crop knows a cell. Without a gradient; reads no
+        random state."""
         with torch.no_grad():
             tier_count = len(logits)
             planned: list[torch.Tensor | None] = [None] * tier_count
+            tables = self.classical_rule_tables
+            if self.map_costs and codes is None:
+                raise ValueError("the classical waypoint prices the map's codes (mappo.planner_waypoint_costs map): "
+                                 "classical_plan needs each tier's codes")
             for tier in (reversed(range(tier_count)) if self.hierarchical else range(tier_count)):
                 probabilities = torch.softmax(logits[tier].detach().to(torch.float32), dim=1)
-                factor = torch.einsum("nchw,c->nhw", probabilities, self.classical_costs)
+                factor = classical_factor(probabilities, tables, codes[tier] if self.map_costs else None)
                 boundary = self.coarse_frame(planned[1]) if self.hierarchical and tier == 0 else None
                 planned[tier], _ = classical_cost_to_go(
                     factor, goals[tier].detach(), self.tier_cells[tier],
@@ -2305,7 +2391,8 @@ class MapEncoder(nn.Module):
             if not self.classical_waypoint:
                 out["waypoint"] = self.waypoints(out["cost_to_go"], present)
             elif classical:
-                out["classical_cost_to_go"] = self.classical_plan(out["costmap"], out["goal_plane"])
+                out["classical_cost_to_go"] = self.classical_plan(out["costmap"], out["goal_plane"],
+                                                                  [tier["code"] for tier in decoded])
                 out["waypoint"] = self.waypoints(out["classical_cost_to_go"], present)
             else:
                 out["waypoint"] = present.new_zeros((present.shape[0], self.tiers * self.WAYPOINT_FEATURES),
@@ -2769,7 +2856,7 @@ class VisionEncoder(nn.Module):
 
     def __init__(self, descriptors: Sequence[dict | None], drop: Sequence[str] = (), planner_k: int = Planner.K,
                  splat: bool = False, waypoint: bool = False, planner_k_fine: int | None = None,
-                 hierarchical: bool = False, waypoint_source: str = "learned"):
+                 hierarchical: bool = False, waypoint_source: str = "learned", waypoint_costs: str = "head"):
         super().__init__()
         unknown = sorted(set(drop) - set(self.DROPPABLE))
         if unknown:
@@ -2829,7 +2916,7 @@ class VisionEncoder(nn.Module):
                                       [c["first"] if c is not None else -1 for c in crops],
                                       [entry.get("compass") if entry is not None else None for entry in descriptors],
                                       planner_k, image if splat else None, self.WIDTHS[1], waypoint,
-                                      planner_k_fine, hierarchical, waypoint_source)
+                                      planner_k_fine, hierarchical, waypoint_source, waypoint_costs)
         # The coarse coverage grid (general search sec 5), where the layouts have the block: its columns are read raw
         # by its own small encoder, whose join adds to the embedding as the map's does.
         grids = [entry.get("coverage") if entry is not None else None for entry in descriptors]
@@ -3185,7 +3272,7 @@ class HeadingHead(nn.Module):
 def _attach_vision(network: nn.Module, vision, encoder: "VisionEncoder | None" = None,
                    drop: Sequence[str] = (), planner_k: int = Planner.K, splat: bool = False,
                    waypoint: bool = False, planner_k_fine: int | None = None, hierarchical: bool = False,
-                   waypoint_source: str = "learned") -> None:
+                   waypoint_source: str = "learned", waypoint_costs: str = "head") -> None:
     """Give an actor or critic the camera: the encoder (VisionEncoder) and its own join (VisionJoin), and keep the
     camera's columns -- image and scalars -- out of every layout's adapter (attach_blind_columns, tag "vision") and
     normaliser (RunningNorm.hide). `vision` is vision_of()'s per-layout image, or None (no camera: nothing changes).
@@ -3195,15 +3282,16 @@ def _attach_vision(network: nn.Module, vision, encoder: "VisionEncoder | None" =
     mappo.drop_inputs); `splat` whether its map's costmap head reads the camera splat (CameraSplat,
     mappo.camera_splat); `waypoint` whether its map feeds the planned waypoint (MapEncoder, mappo.planner_waypoint);
     `planner_k_fine` the fine tier's own iterations (None: planner_k's; Planner), `hierarchical` the coarse -> fine
-    hierarchy (MapEncoder, mappo.planner_hierarchical) and `waypoint_source` what the waypoint walks over (MapEncoder,
-    mappo.planner_waypoint_source)."""
+    hierarchy (MapEncoder, mappo.planner_hierarchical), `waypoint_source` what the waypoint walks over (MapEncoder,
+    mappo.planner_waypoint_source) and `waypoint_costs` what the classical one prices its cells on (MapEncoder,
+    mappo.planner_waypoint_costs)."""
     network.vision = None
     network.vision_join = None
     if vision is None:
         return
     if encoder is None:
         network.vision = VisionEncoder(vision, drop, planner_k, splat, waypoint, planner_k_fine, hierarchical,
-                                       waypoint_source)
+                                       waypoint_source, waypoint_costs)
     else:
         share_vision(network, encoder)
     network.vision_join = VisionJoin(network.vision.has_vision, network.adapters[0].out_features)
@@ -3441,10 +3529,12 @@ COSTMAP_CONV1 = "vision.map.costmap.conv1.weight"
 #: The planned waypoint's join (MapEncoder.waypoint_join, mappo.planner_waypoint): zero at the start, so a checkpoint
 #: without it loads with it as initialised and the policy computes what it did.
 WAYPOINT_PREFIX = "vision.map.waypoint_join."
-#: The planner's schedule beyond its one K (mappo.planner_k_fine, planner_hierarchical) and the waypoint's source
-#: (mappo.planner_waypoint_source): buffers built from the config alone (Planner, MapEncoder), so a checkpoint without
-#: them loads with this network's, and one with them into a network without drops them; none is a parameter.
-PLANNER_SCHEDULE_KEYS = ("vision.map.planner.k_fine", "vision.map.hierarchy", "vision.map.waypoint_source")
+#: The planner's schedule beyond its one K (mappo.planner_k_fine, planner_hierarchical), the waypoint's source
+#: (mappo.planner_waypoint_source) and what it prices (mappo.planner_waypoint_costs): buffers built from the config
+#: alone (Planner, MapEncoder), so a checkpoint without them loads with this network's, and one with them into a
+#: network without drops them; none is a parameter.
+PLANNER_SCHEDULE_KEYS = ("vision.map.planner.k_fine", "vision.map.hierarchy", "vision.map.waypoint_source",
+                         "vision.map.waypoint_costs")
 
 
 def grow_costmap_inputs(state: dict, current: dict) -> tuple[dict, list[str]]:
@@ -3510,7 +3600,8 @@ def load_actor_state(actor: nn.Module, state: dict) -> list[str]:
     schedule_dropped = [key for key in PLANNER_SCHEDULE_KEYS if key in state and key not in current]
     if schedule_dropped:
         print(f"Load: the checkpoint's planner schedule ({', '.join(schedule_dropped)}) is not this actor's "
-              f"(mappo.planner_k_fine, planner_hierarchical off, planner_waypoint_source learned); dropped", flush=True)
+              f"(mappo.planner_k_fine, planner_hierarchical off, planner_waypoint_source learned, "
+              f"planner_waypoint_costs head); dropped", flush=True)
         state = {key: value for key, value in state.items() if key not in schedule_dropped}
     missing, unexpected = actor.load_state_dict(state, strict=False)
     # The blind-column masks are never taken from a checkpoint: an actor built with seat sets has its own already (the
@@ -3532,10 +3623,12 @@ def load_actor_state(actor: nn.Module, state: dict) -> list[str]:
         hierarchical = bool(getattr(actor.vision.map, "hierarchical", False)) if planner is not None else False
         source = ("classical" if planner is not None and getattr(actor.vision.map, "classical_waypoint", False)
                   else "learned")
+        costs = "map" if planner is not None and getattr(actor.vision.map, "map_costs", False) else "head"
         print(f"Load: the checkpoint has no planner schedule ({', '.join(schedule_new)}); this actor's stands: fine K "
               f"{planner.fine_iterations if planner is not None else '-'}, coarse K "
               f"{planner.iterations if planner is not None else '-'}, hierarchical {hierarchical}, waypoint source "
-              f"{source} (mappo.planner_k_fine, planner_hierarchical, planner_waypoint_source)", flush=True)
+              f"{source}, waypoint costs {costs} (mappo.planner_k_fine, planner_hierarchical, "
+              f"planner_waypoint_source, planner_waypoint_costs)", flush=True)
     if any(key.startswith(WAYPOINT_PREFIX) for key in missing):
         print("Load: the checkpoint has no planned waypoint (mappo.planner_waypoint); its join starts at zero, so the "
               "policy computes what it did", flush=True)
@@ -3570,7 +3663,7 @@ class LayoutActor(nn.Module):
                  vision=None, drop_inputs: Sequence[str] = (), planner_k: int = Planner.K, sharing=None,
                  heading: Sequence[bool] | None = None, camera_splat: bool = False, planner_waypoint: bool = False,
                  planner_k_fine: int | None = None, planner_hierarchical: bool = False,
-                 planner_waypoint_source: str = "learned"):
+                 planner_waypoint_source: str = "learned", planner_waypoint_costs: str = "head"):
         """layouts: (obs dim, action count) per layout; hidden: widths, the first being the adapters' output.
 
         `foresight_outputs` adds a head on the trunk that predicts what happens after this decision (mappo.trainer's
@@ -3593,8 +3686,9 @@ class LayoutActor(nn.Module):
         planned waypoint into the embedding (MapEncoder); off, likewise. `planner_k_fine` (mappo.planner_k_fine; None:
         planner_k's) the fine tier's iterations and `planner_hierarchical` (mappo.planner_hierarchical) the coarse ->
         fine hierarchy (MapEncoder); `planner_waypoint_source` (mappo.planner_waypoint_source) what the waypoint walks
-        over, the learned value or the classical planner's cost-to-go (MapEncoder.classical_plan); none adds a
-        parameter.
+        over, the learned value or the classical planner's cost-to-go (MapEncoder.classical_plan), and
+        `planner_waypoint_costs` (mappo.planner_waypoint_costs) what the classical one prices its cells on, the head's
+        classes or the map's own codes; none adds a parameter.
         """
         super().__init__()
         if not hidden:
@@ -3644,7 +3738,7 @@ class LayoutActor(nn.Module):
         # (mappo.drop_inputs).
         _attach_vision(self, vision, drop=drop_inputs, planner_k=planner_k, splat=camera_splat,
                        waypoint=planner_waypoint, planner_k_fine=planner_k_fine, hierarchical=planner_hierarchical,
-                       waypoint_source=planner_waypoint_source)
+                       waypoint_source=planner_waypoint_source, waypoint_costs=planner_waypoint_costs)
         # The sight list's pointer heads (SightPointers), where the layouts have a sight block: the actor's own.
         sight = self.vision.sight if self.vision is not None else None
         self.sight_pointers = SightPointers(sight.presses, head_width) if sight is not None else None

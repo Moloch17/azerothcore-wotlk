@@ -113,6 +113,7 @@ def frozen_actor(checkpoint: dict, device) -> LayoutActor:
     saved_k = checkpoint["trainer"]["actor"].get("vision.map.planner.k")
     saved_k_fine = checkpoint["trainer"]["actor"].get("vision.map.planner.k_fine")
     saved_source = "classical" if "vision.map.waypoint_source" in checkpoint["trainer"]["actor"] else "learned"
+    saved_costs = "map" if "vision.map.waypoint_costs" in checkpoint["trainer"]["actor"] else "head"
     actor = LayoutActor(t_layouts, hidden, foresight_outputs, recurrent_size, goal_count, goal_targets, slow_size,
                         bool(mappo.get("foresight_feedback", False)), bool(mappo.get("goal_lookahead", False)),
                         goal_slots=int(mappo.get("goal_slots", 1) or 1), vision=vision,
@@ -122,7 +123,7 @@ def frozen_actor(checkpoint: dict, device) -> LayoutActor:
                         planner_k=int(saved_k) if saved_k is not None else max(1, int(mappo.get("planner_k", 20))),
                         planner_k_fine=int(saved_k_fine) if saved_k_fine is not None else None,
                         planner_hierarchical="vision.map.hierarchy" in checkpoint["trainer"]["actor"],
-                        planner_waypoint_source=saved_source)
+                        planner_waypoint_source=saved_source, planner_waypoint_costs=saved_costs)
     load_actor_state(actor, checkpoint["trainer"]["actor"])
     actor.to(device).eval()
     for param in actor.parameters():

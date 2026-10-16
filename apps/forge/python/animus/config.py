@@ -16,7 +16,7 @@ from typing import Union, get_args, get_origin, get_type_hints
 import yaml
 
 from .human.motion import WINDOW as MOTION_WINDOW
-from .mappo.networks import WAYPOINT_SOURCES
+from .mappo.networks import WAYPOINT_COST_RULES, WAYPOINT_SOURCES
 from .mappo.trainer import AuxConfig, MappoConfig
 from .stages import merges, seed_chain
 
@@ -776,6 +776,14 @@ class TrainConfig:
         if source != "learned" and not self.mappo.planner_waypoint:
             raise ValueError(f"mappo.planner_waypoint_source {source!r} needs mappo.planner_waypoint (there is no "
                              f"waypoint for it to plan)")
+        # What the classical waypoint prices (mappo.planner_waypoint_costs): one of the two, and "map" only with the
+        # classical waypoint it prices.
+        rule = self.mappo.planner_waypoint_costs
+        if rule not in WAYPOINT_COST_RULES:
+            raise ValueError(f"mappo.planner_waypoint_costs: expected one of {list(WAYPOINT_COST_RULES)}, got {rule!r}")
+        if rule != "head" and source != "classical":
+            raise ValueError(f"mappo.planner_waypoint_costs {rule!r} needs mappo.planner_waypoint_source \"classical\" "
+                             f"(the learned waypoint prices nothing)")
 
     @property
     def shared_runs(self) -> str:

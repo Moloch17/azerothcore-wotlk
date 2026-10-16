@@ -32,6 +32,24 @@ mappo:
   # against the learned value's 37 % (fine 46 % against 32 %). The readouts stay the learned planner's; the same walk
   # and numbers, so the waypoint's join reads what it read and nav2's checkpoint resumes (no new parameter).
   planner_waypoint_source: classical
+  # The classical waypoint prices the map's own codes (networks.classical_factor, 2026-10-16): wall 100 and hazard 5
+  # where the crop has seen one, floor and door the head's grade of passable ground (water, a hurting drop), the
+  # head's guess only where the crop is unknown. Measured in nav2's aux pass, the classical plan over the true classes
+  # points the right way 0.68 / 0.84 of the time (fine / coarse) against 0.53 / 0.79 over the head's, whose known-cell
+  # IoU is 0.58 on walls: the rays' hits are the better map. Read live as classical_map_dir_acc_* beside
+  # classical_dir_acc_*. The same walk and numbers; no parameter, so nav1's checkpoint seeds it by name as before.
+  # Exported as .amdl version 17. On from here (nav3+ inherit).
+  planner_waypoint_costs: map
+  # Greedy training envs (exploration v3; 0.12 of this learner's envs act with the argmax of the movement heads, their
+  # movement policy-gradient rows masked, their states and rewards training the critic): the argmax policy the
+  # evaluation and the export play froze on 3.5 % of nav2's trips (2026-10-16: 27 of 118 failures over three
+  # evaluations stood turning in place, a no-op the mode on 440-460 of 461 decisions) while the sampled policy walked
+  # the same seeds. The traces say why: standing, the sampled policy presses a move 6-10 % of decisions and a stop
+  # 83-89 % -- enough under sampling, since a press holds until released, and nothing under the argmax, since the
+  # delay costs only the discount and StepCost (~0.02 a decision) and the mode never presses. With a share of the envs
+  # frozen as the argmax freezes, the critic sees what standing costs over the whole trip and the gap V(moving) -
+  # V(standing) that drives the press is learned, not inferred from the sampled policy's quick escapes.
+  greedy_env_fraction: 0.12
 
 status:
   targets:

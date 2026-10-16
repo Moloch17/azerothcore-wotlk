@@ -18,9 +18,10 @@ from ..protocol import GOAL_SLOTS_ON_WIRE
 from ..protocol import (LABEL_COARSE_CLASS, LABEL_COARSE_COST, LABEL_FINE_CLASS, LABEL_FINE_COST, LABEL_SIDE,
                         LABEL_UNREACHABLE, TRAV_CLASS_NAMES, TRAV_CLASSES)
 from .buffer import RolloutBuffer
-from .networks import (CLASSICAL_COSTS, CLASSICAL_ITERATIONS, CLASSICAL_ORACLE_UNKNOWN, CLASSICAL_SENTINEL,
-                       MAP_CODE, LayoutActor, LayoutCritic, MapEncoder, SharedInputDense, _carry_sequence,
-                       _per_layout, classical_cost_to_go, load_actor_state, neighbour_stack, neighbours_within_45,
+from .networks import (CLASSICAL_COSTS, CLASSICAL_ITERATIONS, CLASSICAL_OPEN_CEILING, CLASSICAL_ORACLE_UNKNOWN,
+                       CLASSICAL_SENTINEL, MAP_CODE, LayoutActor, LayoutCritic, MapEncoder, SharedInputDense,
+                       _carry_sequence, _per_layout, classical_cost_to_go, classical_factor, classical_tables,
+                       load_actor_state, neighbour_stack, neighbours_within_45,
                        per_layout, per_layout_host, sample_logits, skip_distribution_checks, goal_pair, split_goal_pair,
                        to_device, update_norms, vision_image_bytes, vision_look_heads, vision_term,
                        look_hold_indices)
@@ -272,6 +273,14 @@ class MappoConfig:
     # way 66 % of the time on the coarse tier against the VIN's 37 %, 46 % against 32 % on the fine. The same walk and
     # numbers, so waypoint_join reads what it read; the readouts stay the VIN's. No parameter: a checkpoint resumes.
     planner_waypoint_source: str = "learned"
+    # What the classical waypoint prices a cell on (MapEncoder.classical_plan, networks.classical_factor; with
+    # planner_waypoint_source "classical"): "head", the costmap head's softmax under CLASSICAL_COSTS everywhere, or
+    # "map", the crop's own code where the crop knows the cell (wall 100, hazard 5, floor and door the head's grade of
+    # passable ground, CLASSICAL_FLOOR_COSTS) and the head's guess only where it does not (networks.WAYPOINT_COST_RULES:
+    # the rule and the measurement behind it, 0.68 / 0.84 over the true classes against 0.53 / 0.79 over the head's).
+    # The same walk and numbers; no parameter, so a checkpoint resumes. Read live as classical_map_dir_acc_* beside
+    # classical_dir_acc_* (the aux pass measures both rules whatever the waypoint walks).
+    planner_waypoint_costs: str = "head"
 
 
 @dataclass
@@ -310,9 +319,12 @@ class AuxConfig:
 
     **The classical planner beside it** (2026-10-16; a measurement, MappoTrainer._classical_directions): the same
     accuracies of a fixed-weight value iteration over the costmap head's classes (classical_dir_acc_fine, _coarse,
-    _acc45_fine, _acc45_coarse, _acc_seen, and classical_mae_known, yards over the reachable cells the fine crop
-    knows) and over the label's own (oracle_dir_acc_fine, _coarse, _seen): how much of the learned planner's error is
-    the costmap's and how much the planning rule's. No loss reads them."""
+    _acc45_fine, _acc45_coarse, _acc_seen), over the crop's own codes where it knows a cell (classical_map_dir_acc_*;
+    mappo.planner_waypoint_costs "map") and over the label's own (oracle_dir_acc_fine, _coarse, _seen): how much of
+    the learned planner's error is the costmap's and how much the planning rule's. With each of the first two,
+    classical[_map]_mae_known, yards over the reachable cells the fine crop knows whose plan runs over open ground
+    (cost-to-go under networks.CLASSICAL_OPEN_CEILING), and classical[_map]_blocked_share, the share of those cells
+    the plan priced through a blocker. No loss reads them."""
 
     costmap_coef: float = 0.5
     planner_coef: float = 0.5
@@ -915,7 +927,8 @@ class MappoTrainer:
                                  planner_waypoint=bool(config.planner_waypoint),
                                  planner_k_fine=int(config.planner_k_fine) or None,
                                  planner_hierarchical=bool(config.planner_hierarchical),
-                                 planner_waypoint_source=str(config.planner_waypoint_source)).to(self.train_device)
+                                 planner_waypoint_source=str(config.planner_waypoint_source),
+                                 planner_waypoint_costs=str(config.planner_waypoint_costs)).to(self.train_device)
         # Whether the actor steers by a continuous heading (protocol 32's ACT section; HeadingHead).
         self.heading = self.actor.heading_head is not None
         # (readout width, pool width) of the cached plan a row (VisionEncoder.planner_widths), (0, 0) without one.
@@ -2135,7 +2148,8 @@ class MappoTrainer:
 
     #: The aux pass's statistics (AuxConfig), as metrics.csv names them.
     AUX_STATS = ("costmap_loss", "planner_loss", "costmap_iou", "costmap_iou_known", "costmap_known_share",
-                 "planner_mae_yards", "planner_mae_known", "planner_dir_loss", "classical_mae_known")
+                 "planner_mae_yards", "planner_mae_known", "planner_dir_loss", "classical_mae_known",
+                 "classical_blocked_share", "classical_map_mae_known", "classical_map_blocked_share")
     #: The planner's direction accuracies (AuxConfig: the body cell's downhill neighbour, each tier, exactly and within
     #: 45 degrees, and every graded fine cell the crop knows), as metrics.csv names them: hits over the rows graded,
     #: summed over the update's passes, so a pass with few graded rows weighs what it holds.
@@ -2143,11 +2157,14 @@ class MappoTrainer:
                      "planner_dir_acc45_coarse", "planner_dir_acc_seen",
                      "classical_dir_acc_fine", "classical_dir_acc_coarse", "classical_dir_acc45_fine",
                      "classical_dir_acc45_coarse", "classical_dir_acc_seen",
+                     "classical_map_dir_acc_fine", "classical_map_dir_acc_coarse", "classical_map_dir_acc45_fine",
+                     "classical_map_dir_acc45_coarse", "classical_map_dir_acc_seen",
                      "oracle_dir_acc_fine", "oracle_dir_acc_coarse", "oracle_dir_acc_seen")
     #: The aux pass's direction families (_aux_pass's count_directions): the metrics.csv prefix of each and its
-    #: totals' key -- the learned planner, the classical one over the costmap head's classes, and the classical one
-    #: over the label's (_classical_directions).
-    AUX_DIR_FAMILIES = (("planner", "dir"), ("classical", "cls"), ("oracle", "orc"))
+    #: totals' key -- the learned planner, the classical one over the costmap head's classes, the classical one over
+    #: the map's own codes (mappo.planner_waypoint_costs "map"; networks.classical_factor) and the classical one over
+    #: the label's (_classical_directions).
+    AUX_DIR_FAMILIES = (("planner", "dir"), ("classical", "cls"), ("classical_map", "map"), ("oracle", "orc"))
     #: The rows of each aux pass the classical planner runs on (its first, already drawn at random; 0 all of them).
     CLASSICAL_ROWS = 0
     #: The classes whose IoU over the update metrics.csv names (costmap_iou_<class>): accumulated as intersections and
@@ -2184,28 +2201,37 @@ class MappoTrainer:
     @torch.no_grad()
     def _classical_directions(self, plan: dict, classes: list[torch.Tensor], costs: list[torch.Tensor],
                               crop_known: torch.Tensor, targets: list[torch.Tensor], graded: list[torch.Tensor],
-                              count) -> torch.Tensor:
+                              count, codes: list[torch.Tensor]) -> dict[str, torch.Tensor]:
         """**The classical planner's measurement** (_aux_pass; nothing trains on it and no plan, readout, waypoint or
         action reads it): fixed-weight value iteration (networks.classical_cost_to_go, CLASSICAL_COSTS) over each
         tier's step costs -- the expected cost under the costmap head's softmax (the "cls" family: a cell 10% wall
-        costs as much as 11 free ones, so the head's own doubt prices a cell) and the label's classes one-hot (the
-        "orc" family, the same rule: the gap between the two is what the costmap's errors cost, the gap from 1 what
-        the rule does) -- from the plan's goal planes, the hierarchy as MapEncoder.plan has it (mappo.
-        planner_hierarchical: the coarse tier first, its classical cost-to-go resampled onto the fine tier's border
-        ring, MapEncoder.coarse_frame). Its directions are counted by `count` (count_directions) against the label's
-        `targets` over the cells `graded`, the learned planner's own definition. Returns the cost-to-go MAE (yards) over
-        the fine tier's reachable cells the crop knows and the classical plan reaches (0 where none).
-        CLASSICAL_ROWS > 0 runs it on that many of the pass's rows."""
+        costs as much as 11 free ones, so the head's own doubt prices a cell), the same priced on the crop's own
+        codes where the crop knows a cell (the "map" family: mappo.planner_waypoint_costs "map", networks.
+        classical_factor over each tier's `codes` [N, H, W]), and the label's classes one-hot (the "orc" family, the
+        head's rule: the gap between it and "cls" is what the costmap's errors cost, the gap from 1 what the rule
+        does) -- from the plan's goal planes, the hierarchy as MapEncoder.plan has it (mappo.planner_hierarchical: the
+        coarse tier first, its classical cost-to-go resampled onto the fine tier's border ring, MapEncoder.
+        coarse_frame). Each family's directions are counted by `count` (count_directions) against the label's
+        `targets` over the cells `graded`, the learned planner's own definition. Returns, for the head's rule
+        (classical_*) and the map's (classical_map_*), over the fine tier's reachable cells the crop knows: "mae_known",
+        the cost-to-go MAE (yards) over the cells the plan reaches on open ground (its cost-to-go under
+        CLASSICAL_OPEN_CEILING: a cell above it was priced through a blocker, and its error is the wall's cost, 2 yd x
+        100 a cell crossed -- what inflated the one reading to hundreds of yards), and "blocked_share", the share of
+        those cells above the ceiling (0 where none). CLASSICAL_ROWS > 0 runs it on that many of the pass's rows."""
         mapper = self.actor.vision.map
         n = classes[0].shape[0]
         k = n if self.CLASSICAL_ROWS <= 0 else min(n, int(self.CLASSICAL_ROWS))
         device = classes[0].device
-        table = torch.tensor(CLASSICAL_COSTS, dtype=torch.float32, device=device)
+        tables = classical_tables(device)
+        table = tables["costs"]
         oracle_table = table.clone()
         oracle_table[0] = CLASSICAL_ORACLE_UNKNOWN
         tier_count = len(plan["costmap"])
         hierarchical = bool(getattr(mapper, "hierarchical", False))
+        # The head's and the oracle's plans in one batch, as before; the map rule's in its own (the convergence check
+        # is over the whole batch, so a third set of rows would move the first two's iterations).
         planned: list[torch.Tensor | None] = [None] * tier_count
+        planned_map: list[torch.Tensor | None] = [None] * tier_count
         for tier in (reversed(range(tier_count)) if hierarchical else range(tier_count)):
             probabilities = torch.softmax(plan["costmap"][tier][:k].detach().to(torch.float32), dim=1)
             factor = torch.cat([torch.einsum("nchw,c->nhw", probabilities, table), oracle_table[classes[tier][:k]]])
@@ -2213,15 +2239,27 @@ class MappoTrainer:
             ring = mapper.coarse_frame(planned[1]) if hierarchical and tier == 0 else None
             planned[tier], _ = classical_cost_to_go(factor, goal, float(mapper.tier_cells[tier]),
                                                     CLASSICAL_ITERATIONS[min(tier, 1)], ring)
-        for tier, value in enumerate(planned):
+            map_factor = classical_factor(probabilities, tables, codes[tier][:k])
+            map_ring = mapper.coarse_frame(planned_map[1]) if hierarchical and tier == 0 else None
+            planned_map[tier], _ = classical_cost_to_go(map_factor, goal[:k], float(mapper.tier_cells[tier]),
+                                                        CLASSICAL_ITERATIONS[min(tier, 1)], map_ring)
+        for tier, (value, value_map) in enumerate(zip(planned, planned_map)):
             inside = neighbour_stack(torch.ones_like(value[:1]), 0.0) > 0.0
             scores = torch.where(inside, -neighbour_stack(value, 0.0), torch.full_like(inside, -1e9,
                                                                                        dtype=torch.float32))
             count("cls", tier, scores[:k], targets[tier][:k], graded[tier][:k])
             count("orc", tier, scores[k:], targets[tier][:k], graded[tier][:k])
-        fine = planned[0][:k]
-        measured = (costs[0][:k] < LABEL_UNREACHABLE) & crop_known[:k] & (fine < 0.5 * CLASSICAL_SENTINEL)
-        return ((fine - costs[0][:k]).abs() * measured).sum() / measured.sum().clamp(min=1)
+            scores_map = torch.where(inside, -neighbour_stack(value_map, 0.0),
+                                     torch.full_like(inside, -1e9, dtype=torch.float32))
+            count("map", tier, scores_map, targets[tier][:k], graded[tier][:k])
+        out: dict[str, torch.Tensor] = {}
+        label = costs[0][:k]
+        known = (label < LABEL_UNREACHABLE) & crop_known[:k]
+        for prefix, fine in (("classical", planned[0][:k]), ("classical_map", planned_map[0][:k])):
+            open_ground = known & (fine < CLASSICAL_OPEN_CEILING)
+            out[f"{prefix}_mae_known"] = ((fine - label).abs() * open_ground).sum() / open_ground.sum().clamp(min=1)
+            out[f"{prefix}_blocked_share"] = (known & ~open_ground).sum() / known.sum().clamp(min=1)
+        return out
 
     def _aux_pass(self, obs: torch.Tensor, layout: torch.Tensor, image: torch.Tensor, labels: torch.Tensor,
                   counted: torch.Tensor, totals: dict) -> None:
@@ -2250,8 +2288,9 @@ class MappoTrainer:
         # section follows the image's bytes as [fine][coarse], crop_bytes each (decode_map_tiers, MapEncoder).
         crops = image[rows].reshape(n, -1)[:, encoder.image_bytes:encoder.image_bytes + encoder.map_bytes]
         per = encoder.map.crop_bytes
-        known = [crops[:, tier * per:(tier + 1) * per].reshape(n, side, side, -1)[..., MAP_CODE] != 0
-                 for tier in range(len(classes))]
+        crop_codes = [crops[:, tier * per:(tier + 1) * per].reshape(n, side, side, -1)[..., MAP_CODE].long()
+                      for tier in range(len(classes))]
+        known = [code != 0 for code in crop_codes]
         crop_known = known[0]
         device = obs.device
         costmap_loss = torch.zeros((), device=device)
@@ -2353,8 +2392,8 @@ class MappoTrainer:
             loss = loss + aux.planner_dir_coef * direction_loss / tiers
         loss.backward()
         # The classical planner beside the learned one (a measurement: no loss, gradient or plan reads it).
-        classical_mae = self._classical_directions(plan, classes, costs, crop_known, label_targets, label_graded,
-                                                   count_directions)
+        classical = self._classical_directions(plan, classes, costs, crop_known, label_targets, label_graded,
+                                               count_directions, crop_codes)
         with torch.no_grad():
             def mean_iou(matrix: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
                 """The mean IoU over the classes present in `matrix` (a confusion, target x predicted), and every
@@ -2372,7 +2411,7 @@ class MappoTrainer:
                       "costmap_iou": iou, "costmap_iou_known": iou_known, "costmap_known_share": known_share,
                       "planner_mae_yards": mae_sum / mae_n.clamp(min=1.0),
                       "planner_mae_known": known_sum / known_n.clamp(min=1.0),
-                      "planner_dir_loss": direction_loss.detach() / tiers, "classical_mae_known": classical_mae}
+                      "planner_dir_loss": direction_loss.detach() / tiers, **classical}
             for name, value in values.items():
                 totals[f"aux_{name}"] = totals.get(f"aux_{name}", 0.0) + value
             totals["aux_n"] = totals.get("aux_n", 0.0) + 1.0

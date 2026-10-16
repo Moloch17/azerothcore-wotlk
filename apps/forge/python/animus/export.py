@@ -228,6 +228,22 @@ The .amdl format (little-endian); a reader must follow it exactly, and a change 
         with factor(n) = factor(s) (the border cell's own). The fine tier's interior starts at sentinel / 0 as above
         (the frame seeds only the ring). Then version 14's walk over cost = V itself (lower is nearer: no negation),
         the same anchor, steps, features and scaling.
+        In version 17 (a policy whose classical waypoint prices the map's own codes; mappo.planner_waypoint_costs
+        "map", networks.classical_factor), after version 16's classical section (waypoint_source is 1):
+        u32  costs_rule                     0: version 16's factor as it is (nothing follows), 1: the map's codes
+        if costs_rule == 1:
+            f32  floor_costs[C]             each class's step cost multiple on a cell the crop calls floor or door
+                                            (CLASSICAL_FLOOR_COSTS: costs[] with unknown and every blocking class --
+                                            wall, drop_lethal, slope, cost 100 -- at 1)
+            u32  code_rule[5]               per map code (the crop cell's byte 0: unknown, floor, wall, door, hazard;
+                                            MAP_CODE_RULES): 0 the head's expected cost under costs[], 1 the head's
+                                            under floor_costs[], 2 the fixed code_cost
+            f32  code_cost[5]               the fixed cost of a code of rule 2 (MAP_CODE_COSTS: wall 100, hazard 5)
+        The rule (the reference: networks.classical_factor), per tier and cell s, with p the softmax over the C classes
+        as in version 16 and k = min(the cell's crop code byte, 4): factor(s) = sum_c p_c costs[c] when code_rule[k]
+        is 0, sum_c p_c floor_costs[c] when 1, code_cost[k] when 2. Everything else -- the goal planes, the
+        iterations, the sentinel, the ring, the walk -- is version 16's. The crop's codes are the same bytes the map
+        encoder decodes (the fine tier's crop first, then the coarse, each height x width x 7).
     (version 12 on: a file of 12 is written only for a policy with the heading; every other policy is still 11, 10 or
     9. The camera's flag and, without a camera, the planner's 0 flag come before it as in version 11. A file of 13 --
     a policy with the camera splat -- or of 14 -- one with the planned waypoint -- has the section too)
@@ -317,8 +333,15 @@ AMDL_MAGIC = b"AMDL"
 # waypoint's source, the classical planner's step costs, iterations and sentinel after the schedule's section. Written
 # only for a policy whose waypoint walks over the classical planner; every other policy is still 15 or below. Such a
 # checkpoint is never written as 15 or below (write_amdl refuses).
-AMDL_VERSION = 16
-AMDL_VERSIONS = (7, 8, 9, 10, 11, 12, 13, 14, 15, 16)
+# 17: the classical waypoint over the map's own codes (mappo.planner_waypoint_costs "map", networks.classical_factor):
+# the costs rule and its tables after version 16's classical section. Written only for a policy whose classical
+# waypoint prices the map's codes; one pricing the head's classes is still 16, every other policy 15 or below. Such a
+# checkpoint is never written as 16 or below (write_amdl refuses).
+AMDL_VERSION = 17
+AMDL_VERSIONS = (7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)
+#: The version a policy whose classical waypoint prices the costmap head's classes (mappo.planner_waypoint_costs
+#: "head") is written as.
+AMDL_CLASSICAL_VERSION = 16
 #: The version a policy with the planner's schedule (the hierarchy or a fine K of its own) and the learned waypoint
 #: (or none) is written as.
 AMDL_SCHEDULE_VERSION = 15
@@ -408,10 +431,10 @@ def write_amdl(
     tail: dict | None = None,
 ) -> None:
     """Write one model. `tail` is the version 10 tail (tail_weights); without one the file is version 9. A tail with
-    the classical waypoint is version 16, one with the planner's schedule (the hierarchy or a fine K of its own; and
-    the learned waypoint or none) 15, one with the planned waypoint (and
-    no schedule) 14, one with the camera splat (and neither) 13, one with a heading (and none of them) 12, one with a
-    planner (and nothing else) 11."""
+    the classical waypoint over the map's codes is version 17, one with the classical waypoint over the head's classes
+    16, one with the planner's schedule (the hierarchy or a fine K of its own; and the learned waypoint or none) 15,
+    one with the planned waypoint (and no schedule) 14, one with the camera splat (and neither) 13, one with a heading
+    (and none of them) 12, one with a planner (and nothing else) 11."""
     if layers[0][0].shape[1] != obs_dim + num_agents:
         raise ValueError(f"first layer takes {layers[0][0].shape[1]} inputs, expected {obs_dim} + {num_agents}")
     if memory is not None and layers[-1][0].shape[1] != memory["weight_hh"].shape[1]:
@@ -426,9 +449,11 @@ def write_amdl(
     waypoint = bool(planner and tail["planner"].get("waypoint"))
     schedule = bool(planner and tail["planner"].get("schedule"))
     classical = bool(planner and tail["planner"].get("classical"))
+    map_costs = bool(classical and tail["planner"]["classical"].get("map_costs"))
     if classical and not waypoint:
         raise ValueError("the classical waypoint needs the planned waypoint (mappo.planner_waypoint)")
-    version = (AMDL_VERSION if classical else AMDL_SCHEDULE_VERSION if schedule
+    version = (AMDL_VERSION if map_costs else AMDL_CLASSICAL_VERSION if classical
+               else AMDL_SCHEDULE_VERSION if schedule
                else AMDL_WAYPOINT_VERSION if waypoint else AMDL_SPLAT_VERSION if splat
                else AMDL_HEADING_VERSION if heading else AMDL_PLANNER_VERSION if planner
                else (AMDL_CAMERA_VERSION if tail else AMDL_PLAIN_VERSION))
@@ -443,8 +468,11 @@ def write_amdl(
     if schedule and version < AMDL_SCHEDULE_VERSION:
         raise ValueError("a policy with the planner's hierarchy or per-tier K is written as version 15, never 14 or "
                          "below")
-    if classical and version < AMDL_VERSION:
-        raise ValueError("a policy with the classical waypoint is written as version 16, never 15 or below")
+    if classical and version < AMDL_CLASSICAL_VERSION:
+        raise ValueError("a policy with the classical waypoint is written as version 16 or above, never 15 or below")
+    if map_costs and version < AMDL_VERSION:
+        raise ValueError("a policy whose classical waypoint prices the map's codes is written as version 17, never 16 "
+                         "or below")
     with open(path, "wb") as out:
         out.write(AMDL_MAGIC)
         out.write(struct.pack("<IH", version, len(encoded)))
@@ -647,7 +675,8 @@ def _write_camera_tail(out, tail: dict, version: int) -> None:
         raise ValueError("a policy with the planner's hierarchy or per-tier K is written as version 15, never 14 or "
                          "below")
     classical = planner.get("classical")
-    if version >= AMDL_VERSION:
+    map_costs = classical.get("map_costs") if classical else None
+    if version >= AMDL_CLASSICAL_VERSION:
         out.write(struct.pack("<I", 1 if classical else 0))
         if classical:
             iterations, costs = list(classical["iterations"]), np.asarray(classical["costs"], dtype="<f4")
@@ -656,8 +685,24 @@ def _write_camera_tail(out, tail: dict, version: int) -> None:
                                  f"costs, the planner {planner['tiers']} tiers of {planner['classes']} classes")
             out.write(struct.pack(f"<{1 + len(iterations)}I", int(costs.shape[0]), *(int(k) for k in iterations)))
             _floats(out, costs, np.asarray([classical["sentinel"]], dtype="<f4"))
+            # The costs rule (version 17): the map's codes and their tables.
+            if version >= AMDL_VERSION:
+                out.write(struct.pack("<I", 1 if map_costs else 0))
+                if map_costs:
+                    floor_costs = np.asarray(map_costs["floor_costs"], dtype="<f4")
+                    code_rules = [int(rule) for rule in map_costs["code_rules"]]
+                    code_costs = np.asarray(map_costs["code_costs"], dtype="<f4")
+                    if floor_costs.shape != costs.shape or len(code_rules) != code_costs.shape[0]:
+                        raise ValueError(f"the map costs rule has {floor_costs.shape} floor costs for {costs.shape} "
+                                         f"classes and {len(code_rules)} code rules for {code_costs.shape} codes")
+                    _floats(out, floor_costs)
+                    out.write(struct.pack(f"<{len(code_rules)}I", *code_rules))
+                    _floats(out, code_costs)
     elif classical:
-        raise ValueError("a policy with the classical waypoint is written as version 16, never 15 or below")
+        raise ValueError("a policy with the classical waypoint is written as version 16 or above, never 15 or below")
+    if map_costs and version < AMDL_VERSION:
+        raise ValueError("a policy whose classical waypoint prices the map's codes is written as version 17, never 16 "
+                         "or below")
 
 
 def memory_weights(actor_state: dict[str, torch.Tensor]) -> dict[str, np.ndarray] | None:
@@ -909,10 +954,11 @@ def tail_weights(actor_state: dict[str, torch.Tensor], stage: dict, names: list[
                                  f"{inputs}")
         crop = own.get("map")
         if crop is not None and "vision.map.patch.weight" in actor_state:
-            from .mappo.networks import (CLASSICAL_COSTS, CLASSICAL_SENTINEL, CLASSICAL_WAYPOINT_ITERATIONS,
-                                         IMAGE_NEAR, VISION_SCALAR_BOOM, VISION_SCALAR_PITCH,
-                                         VISION_SCALAR_RENDER_WIDTH, VISION_SCALAR_YAW_COS, VISION_SCALAR_YAW_SIN,
-                                         VISION_ZOOM_SCALE, CameraSplat, CostmapHead, MapEncoder, Planner)
+            from .mappo.networks import (CLASSICAL_COSTS, CLASSICAL_FLOOR_COSTS, CLASSICAL_SENTINEL,
+                                         CLASSICAL_WAYPOINT_ITERATIONS, IMAGE_NEAR, MAP_CODE_COSTS, MAP_CODE_RULES,
+                                         VISION_SCALAR_BOOM, VISION_SCALAR_PITCH, VISION_SCALAR_RENDER_WIDTH,
+                                         VISION_SCALAR_YAW_COS, VISION_SCALAR_YAW_SIN, VISION_ZOOM_SCALE, CameraSplat,
+                                         CostmapHead, MapEncoder, Planner)
             tiers = int(crop.get("tiers", 1))
             camera["map"] = {"first": crop["first"], "scalars": crop["scalars"], "height": crop["height"],
                              "width": crop["width"], "patch": MapEncoder.PATCH, "tiers": tiers,
@@ -992,7 +1038,20 @@ def tail_weights(actor_state: dict[str, torch.Tensor], stage: dict, names: list[
                         "costs": np.asarray(CLASSICAL_COSTS, dtype="<f4"),
                         "iterations": [CLASSICAL_WAYPOINT_ITERATIONS[min(t, len(CLASSICAL_WAYPOINT_ITERATIONS) - 1)]
                                        for t in range(tiers)],
-                        "sentinel": float(CLASSICAL_SENTINEL)}
+                        "sentinel": float(CLASSICAL_SENTINEL), "map_costs": None}
+                    # ... and its costs rule (version 17; mappo.planner_waypoint_costs "map"): the rule's tables.
+                    rule = int(actor_state.get("vision.map.waypoint_costs", 0))
+                    if rule not in (0, 1):
+                        raise ValueError(f"the waypoint's costs buffer is {rule}; this exporter knows 0 (head) and 1 "
+                                         f"(map)")
+                    if rule == 1:
+                        tail["planner"]["classical"]["map_costs"] = {
+                            "floor_costs": np.asarray(CLASSICAL_FLOOR_COSTS, dtype="<f4"),
+                            "code_rules": list(MAP_CODE_RULES),
+                            "code_costs": np.asarray(MAP_CODE_COSTS, dtype="<f4")}
+                elif "vision.map.waypoint_costs" in actor_state:
+                    raise ValueError("the actor prices the map's codes (vision.map.waypoint_costs) but its waypoint "
+                                     "is not the classical one: not exporting")
         if "look_head.linear.weight" in actor_state:
             camera["look_heads"] = [int(h) for h in own["look"]]
             camera["look_weight"] = array("look_head.linear.weight")
@@ -1377,7 +1436,18 @@ def read_amdl(path: str | Path) -> dict:
                     costs = floats(count, count)
                     (sentinel,) = floats(1, 1)
                     planner["classical"] = {"costs": costs, "iterations": list(iterations),
-                                            "sentinel": float(sentinel)}
+                                            "sentinel": float(sentinel), "map_costs": None}
+                    # The costs rule (version 17): the map's codes and their tables.
+                    if version >= 17:
+                        from .mappo.networks import MAP_CODES
+                        (rule,) = u32s(1)
+                        if rule:
+                            floor_costs = floats(count, count)
+                            code_rules = u32s(MAP_CODES)
+                            code_costs = floats(MAP_CODES, MAP_CODES)
+                            planner["classical"]["map_costs"] = {"floor_costs": floor_costs,
+                                                                 "code_rules": list(code_rules),
+                                                                 "code_costs": code_costs}
             tail["planner"] = planner
         if version >= 12 and flag():
             components, heading_width = u32s(2)
