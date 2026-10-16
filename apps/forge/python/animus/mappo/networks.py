@@ -1662,8 +1662,9 @@ def classical_cost_to_go(factor: torch.Tensor, goal: torch.Tensor, cell: float, 
         for (dr, dc), scale in zip(NEIGHBOURS, scales):
             neighbour = padded_factor[:, 1 + dr:1 + dr + height, 1 + dc:1 + dc + width]
             edges[:, 1 + dr, 1 + dc] = (neighbour + factor) * scale
-        stride = buffers[0].stride(0)
-        windows = tuple(buffer.as_strided((n, 3, 3, height, width), (stride, width + 2, 1, width + 2, 1))
+        windows = tuple(buffer.as_strided((n, 3, 3, height, width), (buffer.stride(0), buffer.stride(1),
+                                                                      buffer.stride(2), buffer.stride(1),
+                                                                      buffer.stride(2)))
                         for buffer in buffers)
         candidates = torch.empty_like(edges)
 
