@@ -2711,9 +2711,9 @@ class MappoTrainer:
                                       ("planner_dir_acc45_coarse", "hit45_coarse", "n_coarse"),
                                       ("planner_dir_acc_seen", "hit_seen", "n_seen")):
                 hits = float(auxiliary_stats.pop(f"aux_dir_{hit}", 0.0))
-                rows = float(auxiliary_stats.get(f"aux_dir_{graded}", 0.0))
-                if rows > 0.0:
-                    stats[stat] = hits / rows
+                graded_rows = float(auxiliary_stats.get(f"aux_dir_{graded}", 0.0))
+                if graded_rows > 0.0:
+                    stats[stat] = hits / graded_rows
             for graded in ("n_fine", "n_coarse", "n_seen"):
                 auxiliary_stats.pop(f"aux_dir_{graded}", None)
             # A class's IoU over the whole update; absent (no column value) where it was never labelled nor predicted.
