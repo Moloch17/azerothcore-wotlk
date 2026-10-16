@@ -1609,8 +1609,10 @@ CLASSICAL_SENTINEL = 1e6
 #: MapEncoder.classical_plan): a fixed count, run without the convergence check's host syncs. The walk reads only the
 #: cells round the body, which settle well before the whole crop (live the crop converges in 56-80 fine, 40-56 coarse):
 #: on 192 synthetic room maps (2026-10-16) the fine waypoint was final by 24 iterations at p90 and 48 at most, the
-#: coarse by 24 at p90, 49 at p99 and 72 at most -- 64 each leaves one map in 192 short on the coarse tier.
-CLASSICAL_WAYPOINT_ITERATIONS = (64, 64)
+#: coarse by 24 at p90, 49 at p99 and 72 at most -- 64 each leaves one map in 192 short on the coarse tier. 64 a tier
+#: cost the cluster a third of its steps live (2.7k -> 1.8k steps/s, 2026-10-16: the rollout's replan); 40 keeps every
+#: fine waypoint at p90 x 1.7 and the coarse past its p90, for about 40% less.
+CLASSICAL_WAYPOINT_ITERATIONS = (40, 40)
 #: Where the classical waypoint can come from (mappo.planner_waypoint_source; MapEncoder.waypoints).
 WAYPOINT_SOURCES = ("learned", "classical")
 
