@@ -201,6 +201,12 @@ namespace Animus::Vision
 
     /// A coarse cell's side, yards (amendment 3: far tiles kept at 8 yd).
     constexpr int32_t COARSE_CELL = 8;
+    /// The coarse crop reads a far or folded cell's floor only within this many yards of the feet (2026-10-17): an
+    /// 8-yd cell holds floors at any height a seat ever looked at from anywhere -- the sea under the Deadmines'
+    /// cliffs, the hills over them, another bot's storey -- and painted as floor outside the dungeon's shell they
+    /// were 47-74 % of a memory-on coarse crop, a straight line through the walls to the planner. A cell with no
+    /// floor (a wall or a hazard alone) has no height to judge and is read as it is.
+    constexpr float COARSE_READ_BAND = 6.0f;
 
     /// One ray of a frame as cast (before the frame is scaled up): from the camera along Dir (a unit vector) to its
     /// hit at Distance -- for sky, where the ray left the loaded grids -- the hit's height and normal z, and what it
@@ -383,7 +389,8 @@ namespace Animus::Vision
         /// or wider (COARSE_CELL: each cell the majority code of its 1-yd cells, the mean floor height, any visited,
         /// the newest look, any frontier, the cells looked at this episode over 16 scaled to SEARCHED_MAX, the most
         /// recent entity's class; the same bytes and the same frame -- the coarse and far tiers' 8-yd cells, each by
-        /// its centre, filling what the 1-yd cells leave unknown). The 2-yd crop never reads the far tier.
+        /// its centre, filling what the 1-yd cells leave unknown, a cell with a floor only when that floor is within
+        /// COARSE_READ_BAND of the feet). The 2-yd crop never reads the far tier.
         void Crop(float x, float y, float z, float yaw, uint8_t* out, float cell = CROP_CELL) const;
 
         [[nodiscard]] std::size_t Tiles() const { return _tiles.size(); }

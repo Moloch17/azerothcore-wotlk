@@ -209,6 +209,7 @@ exact set is `stage.json` `episode_info` once built):
 | start_x/y/z, goal_x/y/z | The pair, world coordinates. | yd |
 | waypoint_regret_yards | Mean over the cell pointer's choices of `C(chosen block) - min C over the choosable blocks`; 0 without a choice. | yd |
 | waypoints_chosen | Cell-goal choices made. | count |
+| map_route_start_yards, map_route_end_yards | The route cost-to-go on the seat's own map (the labels' `MapPlanner` value at the body) at the episode's first decision and at its last; 0 where the map had no route. | yd |
 | reward_potential | The potential term's column on the sim's side: **always 0** (the learner pays it; see section 5). | |
 
 N6 writes M4's columns (`follow_kept_share` and the `leader_*` family) beside these; its `arrived`, `spl` and the pair

@@ -90,6 +90,15 @@ crop's cost besides `WriteFrame` (up to 64 grid steps per ray, about 2056 rays) 
 
 `MapColour` / `MapPanel` (FrameImage.cpp) draw the crop for the audit; see cpp-vision-video.md.
 
+**The coarse crop** (`CropWide`, map block revision 5: the same bytes at `COARSE_CELL` 8 yd, 384 yd across) scatters the
+fine tiles' cells by their centres and fills what they leave unknown from the folded (`_coarse`) and far (`_far`, hits beyond
+`WRITE_REACH`) tiers' 8-yd cells. Since 2026-10-17 a far or folded cell with a floor is read only when that floor is within
+`COARSE_READ_BAND` 6 yd of the feet (`NearestFloor`); a cell with no floor (a wall or hazard alone) is read as it is. Before
+that, far-tier floors at any height -- the sea under the Deadmines' cliffs, the hills over them, other bots' storeys from the
+shared memory -- were 47-74 % of a memory-on coarse crop, painted as floor outside the dungeon's shell. The shared memory
+still adopts far tiles (`SharedMemory::Adopt`): the band at read time covers the seat's own far sightings and adopted ones
+alike. The nav labels' own-map route (`MapPlanner.h`, protocol 33) plans over the two crops as written.
+
 ### Invariants
 
 - Written only from camera rays and the body; never from the navmesh or the map data (an unseen cell is unknown whatever is there). Never written in an evaluation across resets (evaluations start empty).

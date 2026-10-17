@@ -489,9 +489,10 @@ void Animus::EnvPool::DescribeAgents(Env const& env)
     _scenario.AgentLayouts(env, &Layout[first]);
     _scenario.AgentPresence(env, &Present[first]);
     _scenario.AgentKinematics(env, &KinematicSamples[std::size_t(first) * Kinematics::SAMPLE_DIM]);
-    // The training labels of the observation just taken (protocol 31), in a stage that has them.
+    // The training labels of the observation just taken (protocol 31), in a stage that has them, planned over the
+    // map crops that observation wrote (protocol 33).
     if (_spec.LabelBytes)
-        _scenario.AgentLabels(env, &Labels[std::size_t(first) * _spec.LabelBytes]);
+        _scenario.AgentLabels(env, MapRows(MapCrop, env.Index), &Labels[std::size_t(first) * _spec.LabelBytes]);
 }
 
 bool Animus::EnvPool::ChooseLocalActions(std::string const& policy, uint32 begin, uint32 count)

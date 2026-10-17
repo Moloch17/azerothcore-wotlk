@@ -174,10 +174,11 @@ namespace Animus
         }
 
         /// labels: [AgentsPerEnv * Spec().LabelBytes] each agent's training labels for the observation just taken
-        /// (the nav stages' traversability classes and route cost-to-go, CONTRACT.md sec 3.1; protocol 31). Called
-        /// with AgentLayouts, after a live Observe only (an ended episode's final observation has none). Never
-        /// called when LabelBytes is 0.
-        virtual void AgentLabels(Env const& /*env*/, uint8* labels) const
+        /// (the nav stages' traversability classes and route cost-to-go, CONTRACT.md sec 3.1; protocol 31). `maps`:
+        /// that observation's map crops, [AgentsPerEnv * Spec().MapBytes] as Observe wrote them (null when MapBytes
+        /// is 0), the bytes the own-map route labels are planned over (protocol 33). Called with AgentLayouts, after
+        /// a live Observe only (an ended episode's final observation has none). Never called when LabelBytes is 0.
+        virtual void AgentLabels(Env const& /*env*/, uint8 const* /*maps*/, uint8* labels) const
         {
             std::fill(labels, labels + std::size_t(Spec().AgentsPerEnv) * Spec().LabelBytes, uint8(0));
         }
@@ -222,6 +223,9 @@ namespace Animus
         /// stand-in" arm), training in its share of them; without it every party is all the learner's. Scenarios
         /// without a stand-in ignore it.
         virtual void SetStandIn(bool /*standIn*/) { }
+        /// Whether an evaluation's seats start blank instead of adopting their map's shared memory
+        /// (MODE_FLAG_NO_SHARED_MEMORY, the learner's "no_shared_memory" arm). Scenarios without one ignore it.
+        virtual void SetNoSharedMemory(bool /*off*/) { }
         /// A cluster's shared curriculum state (StageScenario's dungeon ladder): a worker's runs since its last
         /// report, as a PROGRESS field (empty for none); the host folds every worker's into its own and sends the
         /// workers what it decided ("RUNG <n>"), which they follow instead of deciding for themselves.

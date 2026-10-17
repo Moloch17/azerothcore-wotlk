@@ -2135,18 +2135,22 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     // dungeon-curriculum I2) lives by the same roll: a shipped bot keeps both together.
     // In a stage with a shared memory (StageDefinition::SharedMemoryShare) the seat's own map is never kept: the
     // reset draws, from the same random numbers -- an evaluation's from its seed, so its split by `shared_memory` is
-    // the same on every evaluation -- whether this episode starts from its map's shared memory or blank.
+    // the same on every evaluation -- whether this episode starts from its map's shared memory or blank. The
+    // learner's "no_shared_memory" arm (MODE_FLAG_NO_SHARED_MEMORY) overrides the draw to blank without skipping it,
+    // so the seed's later draws are the plain evaluation's and the arm plays the same trips.
     if (_stage.Has(BlockId::Map) || _stage.Has(BlockId::Sight))
     {
         Vision::MapRunSettings const& maps = Vision::MapCurrent();
         float const shared = _stage.SharedMemoryShare;
+        bool const adopt = !(env.Evaluating && _noSharedMemory.load(std::memory_order_relaxed));
         for (SeatState& seat : data.Seats)
         {
             seat.MapPending = true;
             seat.MapKept = false;
             if (shared > 0.0f)
             {
-                seat.MapShared = frand(0.0f, 1.0f) < shared;
+                bool const drawn = frand(0.0f, 1.0f) < shared;
+                seat.MapShared = drawn && adopt;
                 seat.MapKeep = false;
                 seat.MapAgeOffset = 0.0f;
                 continue;
@@ -4126,7 +4130,7 @@ void Animus::Curriculum::StageScenario::AgentKinematics(Env const& env, float* k
     }
 }
 
-void Animus::Curriculum::StageScenario::AgentLabels(Env const& env, uint8* labels) const
+void Animus::Curriculum::StageScenario::AgentLabels(Env const& env, uint8 const* maps, uint8* labels) const
 {
     uint32 const agents = _spec.AgentsPerEnv;
     uint32 const bytes = _spec.LabelBytes;
@@ -4135,10 +4139,12 @@ void Animus::Curriculum::StageScenario::AgentLabels(Env const& env, uint8* label
         std::fill(labels, labels + std::size_t(agents) * bytes, uint8(0));
         return;
     }
-    // Every agent row: a seat's labels at the pose its map crop was taken from; the owner's row (never a seat in a
-    // nav stage) and an empty seat's are zeros with every cost unreachable (WriteLabels does that for no body).
+    // Every agent row: a seat's labels at the pose its map crop was taken from, planned over that crop's own bytes;
+    // the owner's row (never a seat in a nav stage) and an empty seat's are zeros with every cost unreachable
+    // (WriteLabels does that for no body).
     for (uint32 agent = 0; agent < agents; ++agent)
-        _pointNav->WriteLabels(env, agent, labels + std::size_t(agent) * bytes);
+        _pointNav->WriteLabels(env, agent, maps ? maps + std::size_t(agent) * _spec.MapBytes : nullptr,
+            _spec.MapBytes, labels + std::size_t(agent) * bytes);
 }
 
 void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, float* obs, uint8* mask,
@@ -5326,6 +5332,15 @@ void Animus::Curriculum::StageScenario::SettleIntent(Env& env, SeatState& seat, 
     seat.StepAimless = 0;
     seat.StepEffort = 0.0f;
     seat.StepFidgetMs = 0;
+}
+
+void Animus::Curriculum::StageScenario::SetNoSharedMemory(bool off)
+{
+    bool const before = _noSharedMemory.exchange(off, std::memory_order_relaxed);
+    if (before != off && _stage.SharedMemoryShare > 0.0f)
+        LOG_INFO("module.animus", "Animus forge: stage {}: {}", _stage.Name, off
+            ? "the evaluation's seats start blank (no shared memory: the learner's no_shared_memory arm)"
+            : "the evaluation's seats adopt the shared memory as the seed draws");
 }
 
 bool Animus::Curriculum::StageScenario::PinEvaluationArena(uint32 pin)

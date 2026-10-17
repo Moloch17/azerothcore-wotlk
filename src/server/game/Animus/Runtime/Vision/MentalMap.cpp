@@ -1084,6 +1084,15 @@ void Animus::Vision::MentalMap::Mesh(FrameHits const& hits, float feetZ, float b
                 if (wa < INSIDE || wb < INSIDE || wc < INSIDE)
                     continue;
                 float const z = wa * a.Z + wb * b.Z + wc * c.Z;
+                // A hazard's surface is a plane: a cell whose floor stands above it (the shore's dry edge between
+                // three hits on the water) is not under it.
+                if (kind == KIND_HAZARD)
+                {
+                    MapCell const* known = far ? FindFarCell(cx, cy) : FindCell(cx, cy);
+                    float floor = 0.0f;
+                    if (known && NearestFloor(*known, z, floor) && floor > z + FLOOR_STEP)
+                        continue;
+                }
                 --budget;
                 MapCell& written = far ? TouchFar(cx, cy) : Touch(cx, cy);
                 if (kind == KIND_FLOOR)
@@ -1499,6 +1508,12 @@ void Animus::Vision::MentalMap::CropWide(float x, float y, float z, float yaw, f
                     tile.Cells[std::size_t((ccy - ty * MAP_TILE) * MAP_TILE + (ccx - tx * MAP_TILE))];
                 if (!Known(mapCell))
                     continue;
+                // A floor further than COARSE_READ_BAND from the feet is another height's ground: the cell is unknown
+                // to this read. One with no floor (a wall, a hazard) is read as it is.
+                float floor = 0.0f;
+                bool const hasFloor = NearestFloor(mapCell, z, floor);
+                if (hasFloor && std::fabs(floor - z) > COARSE_READ_BAND)
+                    continue;
                 float const dx = (float(ccx) + 0.5f) * float(COARSE_CELL) - x;
                 float const dy = (float(ccy) + 0.5f) * float(COARSE_CELL) - y;
                 float const forward = dx * forwardX + dy * forwardY;
@@ -1511,8 +1526,7 @@ void Animus::Vision::MentalMap::CropWide(float x, float y, float z, float yaw, f
                 MapCode const here = CodeOf(mapCell, z);
                 sum.CoarseCodes[uint8_t(here)] += coarseWeight;
                 sum.CoarseKnown += coarseWeight;
-                float floor = 0.0f;
-                if (NearestFloor(mapCell, z, floor))
+                if (hasFloor)
                 {
                     sum.CoarseHeight += floor;
                     ++sum.CoarseFloors;

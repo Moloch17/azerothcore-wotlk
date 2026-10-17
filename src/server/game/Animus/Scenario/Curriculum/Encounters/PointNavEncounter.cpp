@@ -27,6 +27,7 @@
 #include "GoalBlock.h"
 #include "Log.h"
 #include "Map.h"
+#include "MapPlanner.h"
 #include "MapVisionWorld.h"
 #include "ObjectMgr.h"
 #include "ObjectPool.h"
@@ -196,6 +197,18 @@ void Animus::Curriculum::PointNavEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
         return s.Waypoints ? s.RegretSum / float(s.Waypoints) : 0.0f;
     });
     add("waypoints_chosen", [seatOf](Env const& env, uint32 seat) { return float(seatOf(env, seat).Waypoints); });
+    // The route on the seat's own map (the labels' MapPlanner value at the body) at the episode's first decision and
+    // at its last; 0 where the map had no route.
+    add("map_route_start_yards", [seatOf](Env const& env, uint32 seat)
+    {
+        float const yards = seatOf(env, seat).MapRouteStart;
+        return yards >= Vision::TRAV_UNREACHABLE ? 0.0f : yards;
+    });
+    add("map_route_end_yards", [seatOf](Env const& env, uint32 seat)
+    {
+        float const yards = seatOf(env, seat).MapRouteLast;
+        return yards >= Vision::TRAV_UNREACHABLE ? 0.0f : yards;
+    });
 }
 
 void Animus::Curriculum::PointNavEncounter::ResetEpisode(Env& env)
@@ -800,7 +813,8 @@ void Animus::Curriculum::PointNavEncounter::WriteState(Env const& env, float* st
         : std::min(1.0f, nav.CStart / STATE_YARDS_SCALE);
 }
 
-void Animus::Curriculum::PointNavEncounter::WriteLabels(Env const& env, uint32 seatIndex, uint8* out) const
+void Animus::Curriculum::PointNavEncounter::WriteLabels(Env const& env, uint32 seatIndex, uint8 const* maps,
+    uint32 mapBytes, uint8* out)
 {
     namespace Vi = Animus::Vision;
     std::memset(out, 0, LABEL_BYTES);
@@ -810,10 +824,13 @@ void Animus::Curriculum::PointNavEncounter::WriteLabels(Env const& env, uint32 s
     uint16_t const unreachable = Vi::FloatToHalf(Vi::TRAV_UNREACHABLE);
     std::fill(fineCost, fineCost + Vi::TRAV_LABEL_CELLS, unreachable);
     std::fill(coarseCost, coarseCost + Vi::TRAV_LABEL_CELLS, unreachable);
-    scalars[0] = Vi::TRAV_UNREACHABLE;
-    scalars[1] = Vi::TRAV_UNREACHABLE;
+    // The four route costs unreachable, the goal's yards 0 (the memset), until a goal and a body say otherwise.
+    scalars[Vi::TRAV_LABEL_C_BODY] = Vi::TRAV_UNREACHABLE;
+    scalars[Vi::TRAV_LABEL_C_START] = Vi::TRAV_UNREACHABLE;
+    scalars[Vi::TRAV_LABEL_MAP_C_BODY] = Vi::TRAV_UNREACHABLE;
+    scalars[Vi::TRAV_LABEL_MAP_C_LAST] = Vi::TRAV_UNREACHABLE;
 
-    EnvNav const& nav = _envs[env.Index];
+    EnvNav& nav = _envs[env.Index];
     if (!nav.Grid || seatIndex >= MAX_SEATS)
         return;
     Player const* bot = _scenario.SeatBotInWorld(env, seatIndex);
@@ -833,11 +850,55 @@ void Animus::Curriculum::PointNavEncounter::WriteLabels(Env const& env, uint32 s
         coarseCost);
     if (!haveGoal)
         return;
-    scalars[0] = CostAt(nav, x, y);
-    scalars[1] = nav.CStart;
+    scalars[Vi::TRAV_LABEL_C_BODY] = CostAt(nav, x, y);
+    scalars[Vi::TRAV_LABEL_C_START] = nav.CStart;
     // The goal in the body frame: forward along the facing, right along (sin yaw, -cos yaw) -- what the compass says.
+    float const cosYaw = std::cos(yaw);
+    float const sinYaw = std::sin(yaw);
     float const dx = nav.Goal.GetPositionX() - x;
     float const dy = nav.Goal.GetPositionY() - y;
-    scalars[2] = dx * std::cos(yaw) + dy * std::sin(yaw);
-    scalars[3] = dx * std::sin(yaw) - dy * std::cos(yaw);
+    float const goalForward = dx * cosYaw + dy * sinYaw;
+    float const goalRight = dx * sinYaw - dy * cosYaw;
+    scalars[Vi::TRAV_LABEL_GOAL_FORWARD] = goalForward;
+    scalars[Vi::TRAV_LABEL_GOAL_RIGHT] = goalRight;
+
+    // The route on the seat's own map (protocol 33): the learner's classical planner over the crops this observation
+    // handed the policy, at the body and at the body's last decision's position in this crop's frame -- both on the
+    // map as it is now, so their difference is movement alone. The first decision's last is the body's own; a last
+    // position more than LABEL_STEP_MAX off (a rise after a death, a teleport) or past the fine crop reads
+    // unreachable, which the learner pays nothing for.
+    if (seatIndex >= GROUP_SEATS)
+        return;
+    SeatNav& seat = nav.Seats[seatIndex];
+    if (maps && pose.Valid && mapBytes >= Vi::CROP_BYTES)
+    {
+        uint8 const* fine = maps;
+        uint8 const* coarse = mapBytes >= 2 * Vi::CROP_BYTES ? maps + Vi::CROP_BYTES : nullptr;
+        Vi::PlanPoint near[2];
+        uint32 points = 1;
+        bool lastNear = false;
+        if (seat.HasLabelPos)
+        {
+            float const lx = seat.LabelX - x;
+            float const ly = seat.LabelY - y;
+            if (lx * lx + ly * ly <= LABEL_STEP_MAX * LABEL_STEP_MAX)
+            {
+                near[1] = { lx * cosYaw + ly * sinYaw, lx * sinYaw - ly * cosYaw };
+                lastNear = true;
+                points = 2;
+            }
+        }
+        thread_local Vi::MapPlan plan;
+        Vi::PlanOnCrops(fine, coarse, goalForward, goalRight, plan, near, points);
+        float const atBody = Vi::PlanValueAt(plan, 0.0f, 0.0f);
+        scalars[Vi::TRAV_LABEL_MAP_C_BODY] = atBody;
+        scalars[Vi::TRAV_LABEL_MAP_C_LAST] = !seat.HasLabelPos ? atBody
+            : lastNear ? Vi::PlanValueAt(plan, near[1].Forward, near[1].Right) : Vi::TRAV_UNREACHABLE;
+        if (!seat.HasLabelPos)
+            seat.MapRouteStart = atBody;
+        seat.MapRouteLast = atBody;
+    }
+    seat.HasLabelPos = true;
+    seat.LabelX = x;
+    seat.LabelY = y;
 }

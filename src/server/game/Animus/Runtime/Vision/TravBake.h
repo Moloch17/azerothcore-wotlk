@@ -83,15 +83,25 @@ namespace Animus::Vision
     constexpr uint32_t TRAV_LABEL_SIDE = 48;
     constexpr float TRAV_LABEL_COARSE_CELL = 8.0f;
     /// Bytes per agent of the STEP's labels (CONTRACT.md sec 3.1): two 48 x 48 class grids, two 48 x 48 f16
-    /// cost-to-go grids, four f32 scalars, at these offsets.
+    /// cost-to-go grids, TRAV_LABEL_SCALAR_COUNT f32 scalars, at these offsets. The scalars (protocol 33): the bake's
+    /// route cost-to-go at the body and at the start, the route cost-to-go on the seat's OWN map (MapPlanner over the
+    /// crops the policy saw) at the body and at the body's last position -- both on the map as it is now
+    /// (PointNavEncounter::WriteLabels) -- then the goal's forward and right yards in the body frame.
     constexpr uint32_t TRAV_LABEL_CELLS = TRAV_LABEL_SIDE * TRAV_LABEL_SIDE;
     constexpr uint32_t TRAV_LABEL_FINE_CLASSES = 0;
     constexpr uint32_t TRAV_LABEL_COARSE_CLASSES = TRAV_LABEL_CELLS;
     constexpr uint32_t TRAV_LABEL_FINE_COST = 2 * TRAV_LABEL_CELLS;
     constexpr uint32_t TRAV_LABEL_COARSE_COST = 4 * TRAV_LABEL_CELLS;
     constexpr uint32_t TRAV_LABEL_SCALARS = 6 * TRAV_LABEL_CELLS;
-    constexpr uint32_t TRAV_LABEL_BYTES = TRAV_LABEL_SCALARS + 4 * 4;
-    static_assert(TRAV_LABEL_BYTES == 13840, "the labels' layout is the contract's");
+    constexpr uint32_t TRAV_LABEL_SCALAR_COUNT = 6;
+    constexpr uint32_t TRAV_LABEL_C_BODY = 0;
+    constexpr uint32_t TRAV_LABEL_C_START = 1;
+    constexpr uint32_t TRAV_LABEL_MAP_C_BODY = 2;
+    constexpr uint32_t TRAV_LABEL_MAP_C_LAST = 3;
+    constexpr uint32_t TRAV_LABEL_GOAL_FORWARD = 4;
+    constexpr uint32_t TRAV_LABEL_GOAL_RIGHT = 5;
+    constexpr uint32_t TRAV_LABEL_BYTES = TRAV_LABEL_SCALARS + TRAV_LABEL_SCALAR_COUNT * 4;
+    static_assert(TRAV_LABEL_BYTES == 13848, "the labels' layout is the contract's");
 
     /// A float as IEEE half (round to nearest even; the costs are 0..65504, so no overflow is met, but the
     /// conversion is whole for the scalars' sake). No helper existed in the tree.

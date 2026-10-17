@@ -230,7 +230,11 @@ namespace AnimusForge
     // 32: the continuous heading (heading.CONTRACT.md, move block revision 8: the nine turn-rate actions are gone):
     // SPEC ends with ContinuousCount, and a stage with a move block ends each ACT with every agent's heading, a float
     // an agent after the look section. A stage without one has protocol 31's ACT; every SPEC is four bytes longer.
-    constexpr uint32 PROTOCOL_VERSION = 32;
+    // 33: the nav stages' labels carry two more f32 scalars (TravBake.h TRAV_LABEL_*): the route cost-to-go on the
+    // seat's own map (MapPlanner over the crops the policy saw) at the body and at the body's last position, both on
+    // the map as it is now, between the bake's C(body), C(start) and the goal's forward and right yards -- so
+    // LabelBytes is 13,848 (was 13,840). The messages' layout is protocol 32's; a stage without labels is unchanged.
+    constexpr uint32 PROTOCOL_VERSION = 33;
     constexpr uint32 SCENARIO_NAME_SIZE = 32;
     constexpr uint32 POLICY_NAME_SIZE = 32;
     constexpr uint32 LAYOUT_NAME_SIZE = 48;
@@ -336,6 +340,13 @@ namespace AnimusForge
     /// draws it in its share of the parties (StandIn.Share and the arenas' own). Without it no party has one: a
     /// learner with no partner to field sends training MODE without it. The stand-in's row reads present 2.
     constexpr uint32 MODE_FLAG_STAND_IN = 2;
+    /// NO_SHARED_MEMORY (bit 2): an evaluation whose seats do not adopt their map's shared memory at reset
+    /// (StageDefinition::SharedMemoryShare): the reset's seeded draw still runs, so the episode's other draws are the
+    /// seed's, and every seat starts blank -- the learner's "no_shared_memory" arm, the plain evaluation's memory-on
+    /// episodes against the same trips without the memory. Ignored by training MODE and by a stage without a shared
+    /// memory. Not a wire change: an older sim ignores the bit (above) and the learner reads the episodes'
+    /// shared_memory column to tell.
+    constexpr uint32 MODE_FLAG_NO_SHARED_MEMORY = 4;
 
     struct ModeMsg
     {

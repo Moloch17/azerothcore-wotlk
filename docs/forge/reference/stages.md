@@ -643,9 +643,11 @@ its cell pointer; what the policy acts on is its own prediction, never the bake 
   Timeout 0. **The potential** `gamma * phi(next) - phi(cur)`, `phi = -min(C, 5000) * 0.01`, is paid by the learner
   with its own discount (0 on a done row, 0 when either C is unreachable), never faded; the sim's `reward_potential`
   column stays 0.
-* **Labels in STEP** (protocol 31, contract sec 3.1): per agent 13,840 bytes after the map section -- fine and coarse
-  costmap classes (48x48 u8 each, the crop's frame), fine and coarse cost-to-go (48x48 f16), then `C_body`, `C_start`
-  and the goal in the body frame. Never in the observation.
+* **Labels in STEP** (protocol 33, contract sec 3.1): per agent 13,848 bytes after the map section -- fine and coarse
+  costmap classes (48x48 u8 each, the crop's frame), fine and coarse cost-to-go (48x48 f16), then `C_body`, `C_start`,
+  the route on the seat's own map at the body and at the previous decision's position (both on the map as it is now:
+  `Vision::MapPlanner` over the crops the policy saw; protocol 33) and the goal in the body frame. Never in the
+  observation.
 * **Death**: the seat rises at its start point after `Respawn.DelayMs` and the episode goes on (`RespawnAtEntrance`).
 * **The ladder**: difficulty alone -- the fade's rungs open the bins (`fade.rungs [1.0, 0.5, 0.25, 0.0]`), stepped on
   argmax `spl`, `gate_values [0.6, 0.7, 0.8]` (nav6: `follow_kept_share`); `convergence.measure spl`.

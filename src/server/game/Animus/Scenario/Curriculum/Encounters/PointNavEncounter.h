@@ -56,9 +56,14 @@ namespace Animus::Curriculum
     /// Respawn.DelayMs (EntranceRespawn).
     ///
     /// **Labels** (sec 3.1; WriteLabels): per seat, the bake's classes and the route cost-to-go in the fine and
-    /// coarse crop frames of the seat's last observation (SeatState::Crop), then C(body), C(start) and the goal in the
-    /// body frame. **LabelsOnly** (nav6, beside PartyFollowEncounter): nothing placed or paid; the goal is the
-    /// leader's position as the server last had it, and the cost map is recomputed when its cell changes.
+    /// coarse crop frames of the seat's last observation (SeatState::Crop), then C(body), C(start), the route
+    /// cost-to-go on the seat's own map at the body and at the body's last decision's position (protocol 33: the
+    /// learner's classical planner run over the crops the policy was handed, Vision::MapPlanner; both on the map as
+    /// it is now, so their difference is movement alone, never the map changing; the first decision's "last" is the
+    /// body's own; a last position more than LABEL_STEP_MAX yards off -- a rise after a death, a teleport -- reads
+    /// unreachable, which the learner pays nothing for) and the goal in the body frame. **LabelsOnly** (nav6, beside
+    /// PartyFollowEncounter): nothing placed or paid; the goal is the leader's position as the server last had it,
+    /// and the cost map is recomputed when its cell changes.
     class PointNavEncounter final : public Encounter
     {
     public:
@@ -66,6 +71,9 @@ namespace Animus::Curriculum
 
         /// Bytes per agent of the STEP's labels (ScenarioSpec::LabelBytes).
         static constexpr uint32 LABEL_BYTES = Vision::TRAV_LABEL_BYTES;
+        /// The furthest a body moves between two decisions' labels on its own feet: further is a teleport, and the
+        /// own-map route at the last position is not read (a decision at run speed moves under 4 yd).
+        static constexpr float LABEL_STEP_MAX = 12.0f;
         /// The failure pool's and the draw's bins are the tuning's lists; the ladder is the fade's four rungs.
         static constexpr uint32 RUNGS = 4;
 
@@ -87,9 +95,11 @@ namespace Animus::Curriculum
         /// than half of nav1's decisions -- shuffling on the point). A labels-only arena (nav6) never ends it.
         [[nodiscard]] bool IsTerminal(Env const& env) const override;
 
-        /// Seat `seat`'s LABEL_BYTES of labels for the observation just taken (its SeatState::Crop pose), into `out`.
-        /// Zeros, with every cost unreachable, for a seat with no bake or no body.
-        void WriteLabels(Env const& env, uint32 seat, uint8* out) const;
+        /// Seat `seat`'s LABEL_BYTES of labels for the observation just taken (its SeatState::Crop pose), into `out`;
+        /// `maps` that observation's map crops (`mapBytes` of them: the fine crop, then the coarse when the stage has
+        /// two tiers; null for none), the own-map route's input. Zeros, with every cost unreachable, for a seat with
+        /// no bake or no body. Once a decision a seat: it keeps the body's position for the next decision's label.
+        void WriteLabels(Env const& env, uint32 seat, uint8 const* maps, uint32 mapBytes, uint8* out);
 
         /// A comma list of numbers ("1.0,1.2,1.6") parsed; empty on garbage.
         [[nodiscard]] static std::vector<float> ParseList(std::string const& list);
@@ -125,6 +135,13 @@ namespace Animus::Curriculum
             uint32 LastTicket = 0;
             std::vector<uint8> Stood;       // bake cells stood on (Revisit arenas), per cell
             uint32 LastCell = Vision::TRAV_NO_CELL;   // the bake cell the body was in at the last reward
+            // The own-map route labels (WriteLabels): where the body was at the last label, and the route on its
+            // own map at the episode's first label and at the newest (the map_route_* columns).
+            bool HasLabelPos = false;
+            float LabelX = 0.0f;
+            float LabelY = 0.0f;
+            float MapRouteStart = Vision::TRAV_UNREACHABLE;
+            float MapRouteLast = Vision::TRAV_UNREACHABLE;
         };
 
         struct EnvNav

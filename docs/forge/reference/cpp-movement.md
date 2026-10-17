@@ -148,7 +148,10 @@ into terrain refused; deep liquid below float depth switches to Swimming; descen
 
 `Resync` (:713): body takes the server's x,y,z,yaw, zero velocity; mode by priority: swimming (liquid present, not deadly, `z <= level`,
 deep enough), ground if a floor within STEP_UP (searched from `z+STEP_UP` downward, `2*STEP_UP`), else falling. Last rung: if falling,
-the point is inside terrain and there is no floor within 1000 yd below, the body stands on the terrain surface (`Unburied=true`).
+the point is inside terrain, there is no floor within 1000 yd below and nothing solid lies between the point and the terrain's surface
+(`Ceiling(x, y, z, terrain - z)` reaches it), the body stands on the terrain surface (`Unburied=true`). A body under a roof -- a dungeon
+under a filler terrain plane, where this rung once stood bodies that fell through a collision hole on the hills 240 yd over the
+Deadmines (2026-10-17) -- keeps falling to the server's void and rises at the start.
 `MovementFlags` (:768): FORWARD/BACKWARD, STRAFE_*, LEFT/RIGHT only when `KeyboardTurn` (mouse turns send no LEFT/RIGHT), PITCH_*
 only when steered and `KeyboardTurn`, ASCENDING/DESCENDING only when steered, WALKING, FALLING/SWIMMING/FLYING by mode, CAN_FLY,
 WATERWALKING, FALLING_SLOW (from `SlowFall`).

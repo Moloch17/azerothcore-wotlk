@@ -785,11 +785,17 @@ void Animus::Movement::Resync(BodyState& body, float x, float y, float z, float 
 
     // The last rung: put deeper than a step inside the ground with nothing at all under it -- a spawn point or the
     // server's position buried in the terrain -- the body would fall to the map's floor and die there. It stands on
-    // the terrain instead. A cave (under the terrain's surface, with its own floor below) is left to fall onto that.
+    // the terrain instead. A cave (under the terrain's surface, with its own floor below) is left to fall onto that;
+    // and so is a body with a model's surface between it and the terrain (2026-10-17): a dungeon lies under a
+    // filler terrain plane (the Deadmines under Westfall's hills at z 302), and a body that fell through a hole in
+    // its collision, or was put at one, was stood on the hills over the dungeon, 240 yd up, and painted them into
+    // the shared memory as a storey (37 in 12 h). Only open air up to the terrain's surface is a burial in it; a body
+    // under a roof keeps falling to the server's void, dies, and rises at the start as any other hole's does.
     body.Unburied = false;
     if (body.Kind == Mode::Falling && world.InTerrain(x, y, z)
         && !HasFloor(world.FloorBelow(x, y, z, BURIED_SEARCH)))
-        if (float const terrain = world.TerrainHeight(x, y); HasFloor(terrain) && terrain > z)
+        if (float const terrain = world.TerrainHeight(x, y); HasFloor(terrain) && terrain > z
+            && world.Ceiling(x, y, z, terrain - z) >= terrain - z)
         {
             body.Z = terrain;
             body.FallApexZ = terrain;

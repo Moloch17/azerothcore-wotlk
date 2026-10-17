@@ -1090,13 +1090,20 @@ starts in line of sight of the goal; `BedShare` (30) percent of nav5's draws put
 spawn is the start cell's centre at ground z, facing random (`EpisodeSpawn`, as PartyFollow); the goal is a point,
 no object: the **compass block** shows it (bearing, distance), never withheld.
 
-### Labels in STEP (protocol 31; `SpecMsg::LabelBytes` 13840)
+### Labels in STEP (protocol 33; `SpecMsg::LabelBytes` 13848)
 
 For the observation rows only, after the map section: fine costmap classes (48x48 u8 in the fine crop's frame),
 coarse costmap classes (48x48 u8, the majority of 16 bake cells), fine and coarse cost-to-go (48x48 f16 yards), then
-f32 `C_body`, `C_start`, `goal_forward_yards`, `goal_right_yards`. `LabelBytes = 0` in stages without PointNav. In
-nav6 (labels-only) the point is the leader's believed position and the C-map is recomputed only when the leader's
-cell changes.
+six f32 at byte 13824 (`TravBake.h` `TRAV_LABEL_*`): `[0] C_body`, `[1] C_start` (the bake's route), `[2] C_map_body`
+and `[3] C_map_last` (protocol 33, 2026-10-17: the route cost-to-go on the seat's OWN map at the body and at the
+previous decision's body position, both planned on the crops this observation handed the policy -- `Vision::MapPlanner`,
+the learner's classical planner mirrored: 8-neighbour min-plus, unknown 1.5 / floor and door 1 / wall 100 / hazard 5,
+a floor more than 3 yd off the feet priced as unknown, the coarse tier's value as the fine ring, settled exactly by
+Dijkstra; the first decision's `[3]` is `[2]`; a last position more than `LABEL_STEP_MAX` 12 yd off or past the fine
+crop reads 65504, unreachable), then `[4] goal_forward_yards`, `[5] goal_right_yards`. `AgentLabels` gets the map
+rows `Observe` wrote (`EnvPool::DescribeAgents`) for that. `LabelBytes = 0` in stages without PointNav. In nav6
+(labels-only) the point is the leader's believed position and the C-map is recomputed only when the leader's cell
+changes.
 
 ### Rewards (no Shaping)
 
@@ -1114,7 +1121,7 @@ and nothing is paid: `PartyFollowEncounter` pays.
 arrived, spl, time_ratio, optimal_yards, straight_yards, detour_factor, travelled_yards, stop_error_yards, falls,
 fall_damage_share, drowned, died, timed_out, stuck_seconds, wall_seconds, lost_seconds, revisit_seconds, jumps,
 swim_seconds, nav_rung, detour_bin, length_bin, replayed, map, start_x/y/z, goal_x/y/z, waypoint_regret_yards,
-waypoints_chosen (meanings in [metrics.md](metrics.md), N1-N6).
+waypoints_chosen, map_route_start_yards, map_route_end_yards (meanings in [metrics.md](metrics.md), N1-N6).
 
 ### Stage definition it runs under
 

@@ -151,8 +151,9 @@ namespace Animus::Curriculum
         void AgentLayouts(Env const& env, uint16* layout) const override;
         void AgentPresence(Env const& env, uint8* present) const override;
         void AgentKinematics(Env const& env, float* kinematics) const override;
-        /// The nav stages' labels (PointNavEncounter::WriteLabels) for every agent, after the observation.
-        void AgentLabels(Env const& env, uint8* labels) const override;
+        /// The nav stages' labels (PointNavEncounter::WriteLabels) for every agent, after the observation, over the
+        /// map crops it wrote (`maps`).
+        void AgentLabels(Env const& env, uint8 const* maps, uint8* labels) const override;
         void Reward(Env& env, float* reward) override;
         void EpisodeInfo(Env const& env, float* info) const override;
         [[nodiscard]] std::vector<std::string> EpisodeInfoNames() const override { return _info.Names(); }
@@ -373,6 +374,7 @@ namespace Animus::Curriculum
         void SetCostScale(float scale) override;
         bool PinEvaluationArena(uint32 pin) override;
         void SetStandIn(bool standIn) override;
+        void SetNoSharedMemory(bool off) override;
         /// The encounters arena `arena` uses, in build order and in reward order.
         [[nodiscard]] std::vector<Encounter*> const& ActiveRewardOrder(Env const& env) const;
         /// Create and place seat `seat`'s next character (its layout is set). `map` is null for the env's first bot.
@@ -510,6 +512,9 @@ namespace Animus::Curriculum
         /// Whether the learner plays a stand-in's row (MODE_FLAG_STAND_IN): an evaluation then has one in every party,
         /// training in its share of them; without it no party has one.
         std::atomic<bool> _standIn{ false };
+        /// Whether an evaluation's seats start blank instead of adopting the map's shared memory
+        /// (MODE_FLAG_NO_SHARED_MEMORY): the reset's draw (MapShared) is overridden, never skipped.
+        std::atomic<bool> _noSharedMemory{ false };
         /// The running cleared share of training runs of a whole dungeon (NoteWingRun); runs on several map threads may
         /// lose a step to each other, which a running average does not mind.
         WingLadder _wingLadder;

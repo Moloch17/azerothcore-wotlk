@@ -44,7 +44,9 @@ section). With `LookHeads > 0` the look section is required and every value must
 filled with -1 (`AnimusForge.cpp:2580-2583`). Anything else, a wrong length or an unexpected type, logs an error and drops
 every client (`:2715-2722`).
 
-`ModeMsg.Flags`: `MODE_FLAG_STAND_IN = 2` (bit 1). Flag value 1 (bit 0) is unused and reserved (it was
+`ModeMsg.Flags`: `MODE_FLAG_STAND_IN = 2` (bit 1); `MODE_FLAG_NO_SHARED_MEMORY = 4` (bit 2, 2026-10-17): an evaluation
+whose seats start blank instead of adopting the map's shared memory (`StageScenario::SetNoSharedMemory`; the reset's
+seeded draw still runs, so the arm plays the plain evaluation's trips). Flag value 1 (bit 0) is unused and reserved (it was
 `SCRIPTED_OPPONENTS`); the comment now says so (known-issues B2). The sim does not check that unknown flag bits are zero (`ApplyModes` only compares the flags of the
 ranks with each other).
 
