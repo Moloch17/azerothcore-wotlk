@@ -151,7 +151,19 @@ namespace Animus::Movement
         /// episode's, or the first tick's) takes it from wherever the episode put the seat. A build that failed after
         /// the seats were placed never reached its Start, and a client still started stepped and reported the last
         /// episode's body there: another map's coordinates (the M1 dry check read Nagrand's held-out point on map 1).
-        void Stop() { _started = false; }
+        /// The body itself starts over too, since Start takes only the position and facing from the server: its
+        /// pitch -- turned only while swimming or flying, never levelled on land -- and what its last step met would
+        /// otherwise outlive the episode. A seat whose last episode ended in the water set out pitched 38-90 degrees
+        /// on dry ground, and the policy, which meets a pitched body on dry ground only in the moments after leaving
+        /// the water, stood turning in place (pitched up) or ran lost until the clock (pitched down) from its first
+        /// decision: the 0M arm collapse of 2026-10-17 (seats on the same seed differed in pitch_sin / pitch_cos and
+        /// nothing else), sticky per env slot since a frozen seat never swims to change it.
+        void Stop()
+        {
+            _started = false;
+            Body = BodyState();
+            _rooted = false;    // the server's root is read again every tick; a stale one must not hold the next episode
+        }
         [[nodiscard]] bool Started() const { return _started; }
         [[nodiscard]] bool Rooted() const { return _rooted; }
         [[nodiscard]] uint32_t Granted() const { return _granted; }
