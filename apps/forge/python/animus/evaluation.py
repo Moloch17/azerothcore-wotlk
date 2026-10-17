@@ -979,7 +979,8 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
     every rank's envs on the same decision and switches mode only once all of them ask, so a rank done with its
     seeds keeps stepping until the last one is, and they switch back together.
 
-    `potential` (gamma a decision, yards_scale, clip[, source, blend]; vision movement curriculum; Run.eval_potential)
+    `potential` (gamma a decision, yards_scale, clip[, source, blend, map_fallback]; vision movement curriculum;
+    Run.eval_potential)
     sums the learner's potential term (mappo.buffer.compute_potential's rule off each STEP's labels, or under
     potential.source "map" / "blend" compute_potential_map's on the map costs the same labels carry) over every
     episode and writes it as the episode's `reward_potential` column -- over the sim's own (which is 0: the term is
@@ -1034,6 +1035,8 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
     else:
         map_weight = 1.0 if potential_source == "map" else 0.0
     true_weight = 1.0 - map_weight
+    # potential.map_fallback (the buffer's rule): the true route's term where the map's cannot be paid.
+    map_fallback = bool(potential[5]) if paying and len(potential) > 5 else False
     if map_weight > 0.0:
         check_map_costs(*p.c_map_of(step.labels))      # the first observation's: a wrong label layout refused here
     potential_column = info_names.index("reward_potential") if "reward_potential" in info_names else None
@@ -1098,15 +1101,18 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
         if paying:
             c_after = p.c_body_of(step.labels)
             alive = ~np.asarray(step.done, dtype=bool)[:, None]
+            true_paid = (c_before < p.LABEL_UNREACHABLE) & (c_after < p.LABEL_UNREACHABLE) & alive
+            true_term = np.where(true_paid, potential[0] * phi(c_after) - phi(c_before), 0.0)
             if true_weight > 0.0:
-                paid = (c_before < p.LABEL_UNREACHABLE) & (c_after < p.LABEL_UNREACHABLE) & alive
-                potential_sum += true_weight * np.where(paid, potential[0] * phi(c_after) - phi(c_before), 0.0)
+                potential_sum += true_weight * true_term
             if map_weight > 0.0:
                 map_body, map_prev = p.c_map_of(step.labels)
                 paid = (map_body < p.LABEL_UNREACHABLE) & (map_prev < p.LABEL_UNREACHABLE) & alive
                 cap = potential[2] * 100.0
-                potential_sum += map_weight * np.where(
-                    paid, (np.minimum(map_prev, cap) - np.minimum(map_body, cap)) * potential[1], 0.0)
+                map_term = np.where(paid, (np.minimum(map_prev, cap) - np.minimum(map_body, cap)) * potential[1], 0.0)
+                if map_fallback:
+                    map_term = np.where(~paid & true_paid, true_term, map_term)
+                potential_sum += map_weight * map_term
             c_before = c_after
         if collect_motion:
             for e in np.flatnonzero(~np.asarray(step.done, dtype=bool)):

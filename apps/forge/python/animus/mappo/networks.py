@@ -1171,12 +1171,28 @@ COVERAGE_LAYOUT = "row_col_channel"
 #: The crop's byte channels (Vision::CropChannel), and the codes (Vision::MapCode: unknown, floor, wall, door, hazard).
 #: Exploration v3 added the seventh, MAP_SEARCHED: how many of the crop cell's four 1-yd cells were looked at THIS
 #: episode (0..MAP_SEARCHED_MAX), where the other channels outlive an episode on a kept map. Map block revision 2.
-MAP_CHANNELS = 7
+#: Map block revision 6 (2026-10-17, the memory's sealed corridors) added the eighth, MAP_WALLS: how many of the crop
+#: cell's four 1-yd cells are wall (0..MAP_WALLS_MAX on the fine tier; the coarse tier's count scaled to the same
+#: range), since the code byte now calls a cell WALL only by majority (3 or 4 of its 1-yd cells) -- the old any-wall
+#: rule read a corridor's edge cells as wall and sealed it, so the map's route ran 2-3 x the true one.
+MAP_CHANNELS = 8
 MAP_CODES = 5
-MAP_CODE, MAP_HEIGHT, MAP_VISITED, MAP_AGE, MAP_CLASS, MAP_FRONTIER, MAP_SEARCHED = range(MAP_CHANNELS)
+MAP_CODE, MAP_HEIGHT, MAP_VISITED, MAP_AGE, MAP_CLASS, MAP_FRONTIER, MAP_SEARCHED, MAP_WALLS = range(MAP_CHANNELS)
 MAP_SEARCHED_MAX = 4
-#: The planes decode_map adds to the code and class embeddings: height, known, visited, age, frontier, searched.
-MAP_VALUE_PLANES = 6
+MAP_WALLS_MAX = 4
+#: The first map block revision whose crop has the walls channel (and the route scalars, ROUTE_COLUMNS): an older
+#: manifest is refused, as a re-laid block is.
+MAP_BLOCK_REVISION = 6
+#: The planes decode_map adds to the code and class embeddings: height, known, visited, age, frontier, searched, walls.
+MAP_VALUE_PLANES = 7
+#: **The sim's route waypoint** (mappo.planner_waypoint_source "sim"; map block revision 6): the sim plans the route on
+#: the bot's own map at 1 yd every decision and appends each tier's waypoint to the map block's scalars, in this
+#: order -- the four numbers a tier networks.descend's walk gives (bearing sin = -right / d, cos = forward / d, the
+#: distance over the tier's reach, a valid flag; all 0 where there is no waypoint), the fine tier (10 yd reach) then
+#: the coarse (16 yd). Located by name (route_of): the map block's obs_names, else its manifest's scalar_names at the
+#: block's columns; they have to be the block's last eight, which the map's embedding does not read (MapEncoder).
+ROUTE_COLUMNS = ("route_fine_sin", "route_fine_cos", "route_fine_dist", "route_fine_valid",
+                 "route_coarse_sin", "route_coarse_cos", "route_coarse_dist", "route_coarse_valid")
 MAP_HEIGHT_ZERO = 128
 #: The height byte's step (Vision::CROP_HEIGHT_STEP): the floor nearest the feet is at (byte - MAP_HEIGHT_ZERO) x
 #: MAP_HEIGHT_STEP yards over them, byte 0 no floor known; so the byte reaches +/- 31.75 yd and clamps there.
@@ -1186,8 +1202,11 @@ MAP_FLOOR, MAP_WALL, MAP_DOOR, MAP_HAZARD = 1, 2, 3, 4      # the crop codes (Vi
 
 def _map_of(entry: dict, name: str) -> dict | None:
     """A layout's mental map as its map block describes it -- {"first" (its scalar columns), "scalars", "height",
-    "width", "cell", "channels", "map_bytes", "codes", "classes"} -- or None without one. Refused: a crop this learner
-    does not decode (its channels or codes differ, or its bytes are not height x width x channels)."""
+    "width", "cell", "channels", "map_bytes", "codes", "classes", "route" (route_of: the sim's waypoint columns, or
+    None), "embed_scalars" (the scalars the map's embedding reads: all of them but the route's)} -- or None without
+    one. Refused: a crop this learner does not decode (its channels or codes differ, or its bytes are not height x
+    width x channels), or a map block before MAP_BLOCK_REVISION (the walls channel re-laid the crop's cells: the
+    manifest and the learner are from different trees, as a re-laid block is refused)."""
     block = next((b for b in entry.get("blocks", ()) if b.get("name") == MAP_BLOCK), None)
     if block is None:
         return None
@@ -1198,6 +1217,11 @@ def _map_of(entry: dict, name: str) -> dict | None:
                                                  "scalars")}
     out["cell"] = float(described.get("cell", 2.0))
     out["first"] = int(block["obs"][0])
+    revision = int(block.get("revision", 0))
+    if revision < MAP_BLOCK_REVISION:
+        raise ValueError(f"{name}: the map block is revision {revision}, this learner reads revision "
+                         f"{MAP_BLOCK_REVISION} on (the crop's walls channel and the route scalars; the manifest and "
+                         f"the learner are from different trees: rebuild the sim at this learner's tree)")
     # The crop's tiers (map block revision 5, vision movement curriculum CONTRACT.md sec 3.2): the manifest's
     # `tiers: [{cell: 2}, {cell: 8}]` says the crop section is [fine][coarse], each height x width x channels bytes
     # (`crop_bytes`); without the key there is one tier. `map_bytes` is the whole section (what the SPEC announces
@@ -1219,9 +1243,42 @@ def _map_of(entry: dict, name: str) -> dict | None:
     if "searched_channel" in described and int(described["searched_channel"]) != MAP_SEARCHED:
         raise ValueError(f"{name}: the map's searched channel is {described['searched_channel']}, this learner reads "
                          f"channel {MAP_SEARCHED} (the manifest and the learner are from different trees)")
+    # Map block revision 6: the walls channel, likewise cross-checked when named.
+    if "walls_channel" in described and int(described["walls_channel"]) != MAP_WALLS:
+        raise ValueError(f"{name}: the map's walls channel is {described['walls_channel']}, this learner reads "
+                         f"channel {MAP_WALLS} (the manifest and the learner are from different trees)")
+    if int(described.get("walls_max", MAP_WALLS_MAX)) != MAP_WALLS_MAX:
+        raise ValueError(f"{name}: the map's walls count runs to {described['walls_max']}, this learner scales by "
+                         f"{MAP_WALLS_MAX}")
     if int(block["obs"][1]) != out["scalars"]:
         raise ValueError(f"{name}: the map block is {block['obs'][1]} columns, its scalars {out['scalars']}")
+    # The sim's route waypoint (ROUTE_COLUMNS): the block's last eight columns, which the map's embedding leaves out
+    # (they feed the policy through the waypoint's join alone, under mappo.planner_waypoint_source "sim").
+    out["route"] = route_of(block, name)
+    out["embed_scalars"] = out["scalars"] - (len(ROUTE_COLUMNS) if out["route"] is not None else 0)
     return out
+
+
+def route_of(block: dict, name: str) -> dict | None:
+    """The sim's route waypoint columns of a map block (ROUTE_COLUMNS; map block revision 6) -- {"columns": their
+    absolute observation columns in ROUTE_COLUMNS order, "first": the first of them} -- or None when the block names
+    none of them (an older manifest, refused by _map_of on its revision anyway). Named by the block's obs_names, else
+    by its manifest's scalar_names at the block's columns. Refused: some of the names but not all, or the eight not
+    being the block's last eight in order (the embedding reads the block's prefix; the exported model's runtime reads
+    the eight from the first one on)."""
+    names = list(block.get("obs_names") or (block.get("map") or {}).get("scalar_names") or ())
+    found = [column for column in ROUTE_COLUMNS if column in names]
+    if not found:
+        return None
+    if len(found) != len(ROUTE_COLUMNS):
+        raise ValueError(f"{name}: the map block names {found} of the route columns {list(ROUTE_COLUMNS)}")
+    first = int(block["obs"][0])
+    columns = [first + names.index(column) for column in ROUTE_COLUMNS]
+    width = int(block["obs"][1])
+    if columns != list(range(first + width - len(ROUTE_COLUMNS), first + width)):
+        raise ValueError(f"{name}: the route columns are at {columns}, not the map block's last {len(ROUTE_COLUMNS)} "
+                         f"({first} + {width - len(ROUTE_COLUMNS)} on) in ROUTE_COLUMNS order")
+    return {"columns": columns, "first": columns[0]}
 
 
 #: The compass block in stage.json (BlockId::Compass): the objective's bearing and distance off the body, the nav
@@ -1515,11 +1572,13 @@ def decode_image(image: torch.Tensor, height: int, width: int) -> torch.Tensor:
 
 
 def decode_map(crops: torch.Tensor, height: int, width: int) -> dict[str, torch.Tensor]:
-    """The mental map's crop bytes [N, H x W x 7] uint8 as the encoder reads them (Vision::DecodeCropCell): "code" and
-    "class" [N, H, W] long (indexes it embeds), "height" [N, H, W] the height byte as sent, and "values" [N, H, W, 6]
+    """The mental map's crop bytes [N, H x W x 8] uint8 as the encoder reads them (Vision::DecodeCropCell): "code" and
+    "class" [N, H, W] long (indexes it embeds), "height" [N, H, W] the height byte as sent, and "values" [N, H, W, 7]
     float -- the floor's height over the feet
     ((b - 128) / 127, 0 with none), whether a floor is known, visited, the newest look's age (b / 255, 1 never seen),
-    the frontier and (exploration v3) the searched share of the cell's four 1-yd cells this episode (b / 4)."""
+    the frontier, (exploration v3) the searched share of the cell's four 1-yd cells this episode (b / 4) and (map
+    block revision 6) the wall share of them (b / 4: the code byte calls the cell wall by majority alone, so the
+    count is where a corridor's edge shows)."""
     cells = crops.reshape(-1, height, width, MAP_CHANNELS)
     as_float = lambda value: value.to(torch.float32)
     rise = cells[..., MAP_HEIGHT]
@@ -1536,12 +1595,13 @@ def decode_map(crops: torch.Tensor, height: int, width: int) -> dict[str, torch.
             as_float(cells[..., MAP_AGE]) / 255.0,
             as_float(cells[..., MAP_FRONTIER] != 0),
             as_float(cells[..., MAP_SEARCHED]) / float(MAP_SEARCHED_MAX),
+            as_float(cells[..., MAP_WALLS]) / float(MAP_WALLS_MAX),
         ], dim=-1),
     }
 
 
 def decode_map_tiers(crops: torch.Tensor, height: int, width: int, tiers: int) -> list[dict[str, torch.Tensor]]:
-    """decode_map of each tier of a crop section [N, tiers x H x W x 7] (map block revision 5: [fine][coarse]), in
+    """decode_map of each tier of a crop section [N, tiers x H x W x 8] (map block revision 5: [fine][coarse]), in
     order; one entry for a one-tier map."""
     per = height * width * MAP_CHANNELS
     rows = crops.reshape(crops.shape[0], -1)
@@ -1619,8 +1679,10 @@ CLASSICAL_SENTINEL = 1e6
 #: cost the cluster a third of its steps live (2.7k -> 1.8k steps/s, 2026-10-16: the rollout's replan); 40 keeps every
 #: fine waypoint at p90 x 1.7 and the coarse past its p90, for about 40% less.
 CLASSICAL_WAYPOINT_ITERATIONS = (40, 40)
-#: Where the classical waypoint can come from (mappo.planner_waypoint_source; MapEncoder.waypoints).
-WAYPOINT_SOURCES = ("learned", "classical")
+#: Where the planned waypoint can come from (mappo.planner_waypoint_source; MapEncoder.waypoints): the learned
+#: planner's cost-to-go, the learner's classical planner's, or the sim's own route on the bot's map (ROUTE_COLUMNS:
+#: planned at 1 yd every decision and read off the observation; the index is the `waypoint_source` buffer's value).
+WAYPOINT_SOURCES = ("learned", "classical", "sim")
 #: **The classical planner over the map's own codes** (mappo.planner_waypoint_costs; MapEncoder.classical_plan,
 #: classical_factor; 2026-10-16): what the step cost of a cell is priced on. "head": the costmap head's softmax under
 #: CLASSICAL_COSTS everywhere (the rule as it was). "map": the crop's own code where the crop knows the cell, the
@@ -2072,8 +2134,9 @@ def _spatial_softmax(features: torch.Tensor, grid_x: torch.Tensor, grid_y: torch
 class MapEncoder(nn.Module):
     """**The mental map's encoder** (perception-goals REDESIGN §3, the Change): the one heading-up crop (48 x 48 cells
     of 2 yd, protocol 24's bytes after the camera's image), shared by every layout as the camera is. Per cell, the code
-    embedded (CODE_EMBED wide), the entity's class through the camera's own class embedding, and six values
-    (decode_map): CODE_EMBED + the class embedding + 6 planes (16). **Patches**, as the camera's: PATCH x PATCH cells
+    embedded (CODE_EMBED wide), the entity's class through the camera's own class embedding, and seven values
+    (decode_map): CODE_EMBED + the class embedding + 7 planes (17; 16 before the walls plane, map block revision 6).
+    **Patches**, as the camera's: PATCH x PATCH cells
     (8 yd square at 2 yd; a 12 x 12 grid at 48 x 48) through Linear -> 64 + SiLU and Linear 64 -> 64 + SiLU, each
     channel's spatial-softmax keypoint over the grid, the channels' mean, the block's scalars (its own columns, read
     raw), and Linear -> EMBED. A convolution stack at the crop's own resolution was measured first: 3.6 times the
@@ -2118,6 +2181,20 @@ class MapEncoder(nn.Module):
     guess only where it does not (WAYPOINT_COST_RULES, classical_factor: the rule and why). The same walk, iterations
     and scaling; another flag buffer (`waypoint_costs`, the export reads it: .amdl version 17) built only then; no
     parameter, so a checkpoint resumes and nav1's seeds it by name as before.
+
+    **The sim's waypoint** (mappo.planner_waypoint_source "sim", `sim_waypoint`; 2026-10-17, map block revision 6):
+    the sim plans the route on the bot's own map at 1 yd (never the 2-yd crop, whose cells sealed corridors) every
+    decision and writes each tier's waypoint into the map block's last eight scalars (ROUTE_COLUMNS: the same four
+    numbers a tier as the walk's, the fine tier at 10 yd of reach, the coarse at 16). The waypoint's columns of the
+    readout are those scalars read off the observation (sim_waypoints: by each layout's `route` columns, times the
+    tier's valid flag), refreshed EVERY decision -- plan() reads them when it runs, and forward() overwrites the cached
+    plan's waypoint slice with the decision's own observation, in the rollout, the eval and the update's replay alike,
+    so the cache never stales them between replans. No value iteration is run for the waypoint (the aux pass still
+    measures the classical planner). The same width and join (waypoint_join), so a classical checkpoint's join reads
+    what it read. Zeroed by planner_off. The `waypoint_source` buffer reads 2 (the export writes it; the runtime
+    computes the waypoint itself). The eight scalars are not among the ones the map's embedding reads
+    (`embed_scalars`: the block's prefix), whatever the source: under "classical" or "learned" the policy never sees
+    the sim's route, so the sources compare cleanly.
 
     **The hierarchy** (mappo.planner_hierarchical, `hierarchical`; 2026-10-16): the goal of a nav trip is mostly past
     the fine crop (96 yd across), where the fine goal plane was clamped to a border cell -- the wrong point -- and K
@@ -2171,7 +2248,10 @@ class MapEncoder(nn.Module):
         self.tiers = int(crop.get("tiers", 1))
         self.tier_cells = tuple(float(cell) for cell in crop.get("tier_cells", (crop.get("cell", 2.0),)))
         self.crop_bytes = self.height * self.width * MAP_CHANNELS
-        self.map_bytes, self.scalars = crop["map_bytes"], crop["scalars"]
+        # The block's scalars the embedding reads: all of them but the sim's route waypoint (ROUTE_COLUMNS, the block's
+        # last eight; `embed_scalars`), which feeds the policy through the waypoint's join alone.
+        self.map_bytes = crop["map_bytes"]
+        self.scalars = int(crop.get("embed_scalars", crop["scalars"]))
         if self.map_bytes != self.crop_bytes * self.tiers or len(self.tier_cells) != self.tiers:
             raise ValueError(f"a map of {self.map_bytes} bytes is not {self.tiers} tier(s) of {self.crop_bytes}")
         self.code_embed = nn.Embedding(MAP_CODES, self.CODE_EMBED)
@@ -2245,6 +2325,20 @@ class MapEncoder(nn.Module):
                 self.register_buffer(f"classical_{name}", table, persistent=False)
         if self.map_costs:
             self.register_buffer("waypoint_costs", torch.tensor(WAYPOINT_COST_RULES.index("map"), dtype=torch.long))
+        # The sim's waypoint (mappo.planner_waypoint_source "sim"; sim_waypoints): its flag buffer and, per layout, the
+        # route columns (ROUTE_COLUMNS order; -1 for a layout without them), derived from stage.json, not learned.
+        self.sim_waypoint = self.waypoint and waypoint_source == "sim"
+        if self.sim_waypoint:
+            if self.tiers * self.WAYPOINT_FEATURES != len(ROUTE_COLUMNS):
+                raise ValueError(f"mappo.planner_waypoint_source sim: the sim's route carries {len(ROUTE_COLUMNS)} "
+                                 f"numbers, this map's {self.tiers} tier(s) read {self.tiers * self.WAYPOINT_FEATURES}")
+            routes = list(crop.get("routes") or ())
+            if not any(route is not None for route in routes):
+                raise ValueError("mappo.planner_waypoint_source sim: no layout's map block names the route columns "
+                                 f"{list(ROUTE_COLUMNS)} (map block revision {MAP_BLOCK_REVISION}: the sim is older)")
+            columns = [route["columns"] if route is not None else [-1] * len(ROUTE_COLUMNS) for route in routes]
+            self.register_buffer("route", torch.tensor(columns, dtype=torch.long), persistent=False)
+            self.register_buffer("waypoint_source", torch.tensor(WAYPOINT_SOURCES.index("sim"), dtype=torch.long))
 
     @property
     def classical_rule_tables(self) -> dict[str, torch.Tensor]:
@@ -2273,6 +2367,21 @@ class MapEncoder(nn.Module):
                 features.append(torch.stack([-right / distance * valid, forward / distance * valid,
                                              distance / (steps * cell) * valid, valid], dim=-1))
             return torch.cat(features, dim=-1)
+
+    def sim_waypoints(self, obs: torch.Tensor, layout: torch.Tensor) -> torch.Tensor:
+        """The sim's route waypoint of every tier (mappo.planner_waypoint_source "sim"; the class docstring),
+        [N, tiers x WAYPOINT_FEATURES] float32, read off each row's observation at its layout's route columns
+        (ROUTE_COLUMNS order, the walk's numbers tier by tier), each tier's numbers times its valid flag (the sim sends
+        0 where there is no waypoint; the product keeps a stray value out of the join); 0 for a layout without the
+        columns. Without a gradient."""
+        with torch.no_grad():
+            layout = layout.reshape(-1).long()
+            columns = self.route[layout.clamp(max=self.route.shape[0] - 1)]
+            has = (columns[:, :1] >= 0).to(torch.float32)
+            picked = obs.gather(1, columns.clamp(min=0).clamp(max=obs.shape[-1] - 1)).to(torch.float32)
+            per_tier = picked.reshape(picked.shape[0], self.tiers, self.WAYPOINT_FEATURES)
+            valid = (per_tier[..., self.WAYPOINT_FEATURES - 1:] > 0.5).to(torch.float32)
+            return (per_tier * valid).reshape(picked.shape[0], -1) * has
 
     def classical_plan(self, logits: list[torch.Tensor], goals: list[torch.Tensor],
                        codes: list[torch.Tensor] | None = None,
@@ -2324,7 +2433,7 @@ class MapEncoder(nn.Module):
         return out
 
     def planes(self, crops: torch.Tensor) -> torch.Tensor:
-        """[N, M] bytes of one tier -> [N, H, W, P] planes: the code's embedding, the class's, the six values."""
+        """[N, M] bytes of one tier -> [N, H, W, P] planes: the code's embedding, the class's, the seven values."""
         return self.planes_of(decode_map(crops, self.height, self.width))
 
     def planes_of(self, decoded: dict[str, torch.Tensor]) -> torch.Tensor:
@@ -2365,7 +2474,8 @@ class MapEncoder(nn.Module):
         [N, C, H, W] a tier), "cost_to_go" (-value x 100, yards, [N, H, W] a tier), "value", "goal_plane", "readout"
         [N, readout_width], with mappo.planner_waypoint "waypoint" [N, tiers x WAYPOINT_FEATURES] (the readout's last
         columns, before planner_off; with mappo.planner_waypoint_source "classical" walked over "classical_cost_to_go",
-        classical_plan's, a tier), and "pool" [N, (H / CELL_POOL) x (W / CELL_POOL)], the fine tier's value
+        classical_plan's, a tier; with "sim" the observation's route columns, sim_waypoints), and "pool"
+        [N, (H / CELL_POOL) x (W / CELL_POOL)], the fine tier's value
         averaged over the cell pointer's blocks (its bonus). Computed under the caller's grad mode: the trainer's aux
         pass keeps the graph, every other call runs it without one (the readouts are detached either way). `splat` (the
         camera's
@@ -2414,7 +2524,9 @@ class MapEncoder(nn.Module):
             # The planned waypoint (mappo.planner_waypoint): after the readouts, cached and zeroed with them; walked
             # over the classical planner's cost-to-go with mappo.planner_waypoint_source "classical" (lower is nearer,
             # as the learned -value x 100 is: descend reads either as it is).
-            if not self.classical_waypoint:
+            if self.sim_waypoint:
+                out["waypoint"] = self.sim_waypoints(obs, layout)
+            elif not self.classical_waypoint:
                 out["waypoint"] = self.waypoints(out["cost_to_go"], present)
             elif classical:
                 out["classical_cost_to_go"] = self.classical_plan(out["costmap"], out["goal_plane"],
@@ -2475,6 +2587,10 @@ class MapEncoder(nn.Module):
         out = self.join(silu(self.embed(torch.cat([*pooled, scalars], dim=-1))))
         if self.planner_on and planner is not None:
             readout = planner["readout"].to(torch.float32)
+            if self.sim_waypoint:
+                # The sim's waypoint is this decision's observation's, never the cache's (replanned every
+                # planner_every decisions): the cached slice is overwritten here, in the rollout and the replay alike.
+                readout = torch.cat([readout[:, :self.tiers * self.READOUT], self.sim_waypoints(obs, layout)], dim=-1)
             if self.planner_off:
                 readout = torch.zeros_like(readout)
             if plan_out is not None:
@@ -2938,6 +3054,8 @@ class VisionEncoder(nn.Module):
             crop = next(crop for crop in crops if crop is not None)
             # The crop's bytes follow the image in every row whether or not they are read (pixels() skips them).
             self.map_bytes = crop["map_bytes"]
+            # Per layout the sim's route waypoint columns (route_of; mappo.planner_waypoint_source "sim").
+            crop = {**crop, "routes": [c["route"] if c is not None else None for c in crops]}
             if "map" not in self.dropped:
                 self.map = MapEncoder(crop, self.class_embed, self.EMBED,
                                       [c["first"] if c is not None else -1 for c in crops],
@@ -3582,6 +3700,50 @@ def grow_costmap_inputs(state: dict, current: dict) -> tuple[dict, list[str]]:
     return {**state, COSTMAP_CONV1: grown}, [COSTMAP_CONV1]
 
 
+#: The map encoder's tensors whose input grows with the planes a crop cell decodes to (MapEncoder.planes_per_cell;
+#: map block revision 6 added the walls plane): the patch's Linear (P fastest within each of its PATCH x PATCH cells),
+#: the costmap head's conv1 (the planes before the broadcast camera and the splat) and the planner's fixed conv (the
+#: planes after the costmap's classes, before the goal plane).
+MAP_PATCH = "vision.map.patch.weight"
+PLANNER_FIXED = "vision.map.planner.fixed.weight"
+
+
+def grow_map_planes(state: dict, current: dict) -> tuple[dict, list[str]]:
+    """A saved actor's state for an actor whose map decodes more planes a cell than the checkpoint's (the walls plane,
+    map block revision 6, over a seven-channel checkpoint: nav1's into nav2): the patch's weight, the costmap head's
+    conv1 and the planner's fixed conv with the checkpoint's columns where they were and the new planes' at zero --
+    inserted where the new planes sit (the end of each patch cell's group, after the old planes in conv1, after the
+    costmap's classes and the old planes in fixed), so every network computes exactly what it did and the new plane
+    comes in as the weights learn to read it. Run BEFORE grow_costmap_inputs, whose tail padding is the splat's.
+    Returns the state and the keys grown (none for a checkpoint of the same width, or of one this does not fit: the
+    load then reports it as before)."""
+    old, new = state.get(MAP_PATCH), current.get(MAP_PATCH)
+    if old is None or new is None or old.shape == new.shape or old.dim() != 2 or new.dim() != 2 \
+            or old.shape[0] != new.shape[0]:
+        return state, []
+    cells = MapEncoder.PATCH * MapEncoder.PATCH
+    if old.shape[1] % cells or new.shape[1] % cells or old.shape[1] > new.shape[1]:
+        return state, []
+    planes_old, planes_new = old.shape[1] // cells, new.shape[1] // cells
+    added = planes_new - planes_old
+    grown = dict(state)
+    patch = torch.zeros((old.shape[0], cells, planes_new), dtype=old.dtype, device=old.device)
+    patch[:, :, :planes_old] = old.reshape(old.shape[0], cells, planes_old)
+    grown[MAP_PATCH] = patch.reshape(old.shape[0], -1)
+    names = [MAP_PATCH]
+    # conv1 [hidden, planes + VISION + splat, 3, 3] and fixed [channels, classes + planes + 1, 3, 3]: the new planes'
+    # channels inserted after the old planes' (at planes_old, and at classes + planes_old).
+    for key, at in ((COSTMAP_CONV1, planes_old), (PLANNER_FIXED, TRAV_CLASSES + planes_old)):
+        saved, now = state.get(key), current.get(key)
+        if saved is None or now is None or saved.dim() != 4 or now.dim() != 4 or saved.shape[0] != now.shape[0] \
+                or saved.shape[2:] != now.shape[2:] or saved.shape[1] + added > now.shape[1] or at > saved.shape[1]:
+            continue
+        pad = torch.zeros((saved.shape[0], added, *saved.shape[2:]), dtype=saved.dtype, device=saved.device)
+        grown[key] = torch.cat([saved[:, :at], pad, saved[:, at:]], dim=1)
+        names.append(key)
+    return grown, names
+
+
 def load_actor_state(actor: nn.Module, state: dict) -> list[str]:
     """actor.load_state_dict(state), except that an actor saved before the goal scale existed loads with it at zero,
     one saved before the goal head's pointer existed loads with the pointer as initialised (a no-op), and one saved with
@@ -3610,6 +3772,13 @@ def load_actor_state(actor: nn.Module, state: dict) -> list[str]:
     state = {key: value for key, value in state.items() if key not in SHARED_INDEX_KEYS}
     current = actor.state_dict()
     state, grown = grow_goal_rows(without_blind_columns(state), current)
+    saved_planes = int(state[MAP_PATCH].shape[1]) // (MapEncoder.PATCH ** 2) if MAP_PATCH in state else 0
+    state, deepened = grow_map_planes(state, current)
+    if deepened:
+        print(f"Load: the checkpoint's map decodes {saved_planes} planes a cell, this actor's "
+              f"{current[MAP_PATCH].shape[1] // (MapEncoder.PATCH ** 2)} (the walls plane, map block revision "
+              f"{MAP_BLOCK_REVISION}): {', '.join(deepened)} carried with the new planes' inputs at zero", flush=True)
+        grown = [*grown, *deepened]
     saved_inputs = int(state[COSTMAP_CONV1].shape[1]) if COSTMAP_CONV1 in state else 0
     state, widened = grow_costmap_inputs(state, current)
     if widened:
@@ -3649,6 +3818,7 @@ def load_actor_state(actor: nn.Module, state: dict) -> list[str]:
         planner = actor.vision.map.planner if getattr(actor, "vision", None) is not None else None
         hierarchical = bool(getattr(actor.vision.map, "hierarchical", False)) if planner is not None else False
         source = ("classical" if planner is not None and getattr(actor.vision.map, "classical_waypoint", False)
+                  else "sim" if planner is not None and getattr(actor.vision.map, "sim_waypoint", False)
                   else "learned")
         costs = "map" if planner is not None and getattr(actor.vision.map, "map_costs", False) else "head"
         print(f"Load: the checkpoint has no planner schedule ({', '.join(schedule_new)}); this actor's stands: fine K "

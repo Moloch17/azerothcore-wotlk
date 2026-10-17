@@ -126,7 +126,7 @@ and `blocks` [ {name, obs [first,count], actions [first,count], revision? , acti
 obs_names? (named columns, e.g. move: 57 names), plus per block manifests: vision: `image` {height 64, width 128, channels 5, bytes_per_pixel 4,
 class_byte 3, classes 24 with `class_names`, `class_kinds`, `pixel_classes` [0,1,2,3,4,5,23] (revision 6; `slot_byte` and `entity_slots` are gone), `patch` 8, `render_sizes` [[32,16],[48,24],[64,32],[128,64]],
 `render_weights`}, `camera` {mode "free, never adjust", yaw_rates, pitch_rates, ...}, `look`; entities: `entities`; map: `map` {height 48, width 48, cell 2.0,
-heading_up, channels 7 (revision 2; 6 in revision 1), channel_names (+ searched), map_bytes 16128, code_names [unknown, floor, wall, door, hazard], searched_channel 6, searched_max 4, scalars 7, scalar_names [known, frontier, visited, kept, searched, new_age, total], new_age_scale_s 120, total_scale 3000, epoch "episode", ...}; sight: `sight` } ].
+heading_up, channels 8 (revision 6; 7 in revision 2, 6 in revision 1), channel_names (+ searched, + walls), map_bytes 36864 (two tiers of 18432; 16128 a tier before revision 6), code_names [unknown, floor, wall, door, hazard], searched_channel 6, searched_max 4, walls_channel 7, walls_max 4, scalars 23 (revision 6: the revision 3 fifteen + the eight route scalars `route_fine_sin ... route_coarse_valid`), scalar_names, new_age_scale_s 120, total_scale 3000, epoch "episode", ...}; sight: `sight` } ].
 Block revision numbers in the backup: core 1, move 5, vision 5, entities 1, map 1 (map is 2 since exploration v3, decision 0026).
 
 Compatibility rule: `layout_changes` (stages.py:84) compares per-layout signatures (sha1 of block names, spans, revisions); a resume
@@ -346,7 +346,7 @@ evaluation overwrites it); `best_rung<k>.pt` (fade ladder; `best_<ladder>_rung<k
 
 ## The `.amdl` model format
 
-Writer `export.write_amdl` (export.py:~185), `AMDL_VERSION = 9`, readable versions (7, 8, 9); the format is documented field by field in the export.py module docstring (lines 6-83) and I verified the writer matches it in order.
+Writer `export.write_amdl` (export.py:~185), `AMDL_VERSION = 9`, readable versions (7, 8, 9); the format is documented field by field in the export.py module docstring (lines 6-83) and I verified the writer matches it in order. (Since then: versions 10-17 for the camera, the two-tier map and planner, the heading, the splat, the waypoint, its schedule, the classical waypoint and its map-costs rule, and 18 (2026-10-17) for the eight-channel map -- the map section's `u32 value_planes` (7) after `tiers` -- and the sim's waypoint (`waypoint_source` 2 followed by `u32 route_first`, the observation column of `route_fine_sin`; the runtime plans the waypoint on the bot's own map itself; no classical section). A policy with either is written as 18, every other as 17 or below. The module docstring of export.py is the field-by-field reference.)
 Little-endian: `"AMDL"`, `u32 version`, `u16 name length` + UTF-8 name, `u32 obs_dim, num_agents, num_actions, layer_count`, per layer `u32 in, u32 out, f32 W[out*in], f32 b[out]`, then optional sections each
 prefixed by a size/flag: GRU (`u32 recurrent_size` + 4 arrays), foresight feedback, slow GRU, goal head (kinds/targets/every, weights, `accepts`, `goal_block_at`, embeddings, lookahead flag, `goal_slots`
 (v6), kind/target scales (v7)), a never-written director byte (0), seat sets (v8) with the attention layer (v9), pointers. Observation normalisation is folded into the first layer; `num_agents` is 1 with a zero column.

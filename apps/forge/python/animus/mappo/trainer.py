@@ -272,6 +272,10 @@ class MappoConfig:
     # hierarchy as the VIN has it; CLASSICAL_WAYPOINT_ITERATIONS fixed iterations) -- measured live it points the right
     # way 66 % of the time on the coarse tier against the VIN's 37 %, 46 % against 32 % on the fine. The same walk and
     # numbers, so waypoint_join reads what it read; the readouts stay the VIN's. No parameter: a checkpoint resumes.
+    # "sim" (2026-10-17; MapEncoder.sim_waypoints, networks.ROUTE_COLUMNS): the sim plans the route on the bot's own
+    # map at 1 yd every decision and the waypoint's eight numbers are read off the map block's last eight scalars --
+    # the same numbers and join, refreshed every decision (the cached plan's slice is overwritten at act time); no
+    # value iteration runs for it (the aux pass still measures the classical planner). Needs map block revision 6.
     planner_waypoint_source: str = "learned"
     # What the classical waypoint prices a cell on (MapEncoder.classical_plan, networks.classical_factor; with
     # planner_waypoint_source "classical"): "head", the costmap head's softmax under CLASSICAL_COSTS everywhere, or
@@ -2873,6 +2877,8 @@ class MappoTrainer:
             # part of it (potential.source "map" / "blend"; 0 under "true").
             stats["reward_potential"] = buffer.mean_potential()
             stats["reward_potential_map"] = buffer.mean_potential_map()
+            # ... and the share of decisions the true route's term stood in for the map's (potential.map_fallback).
+            stats["reward_potential_fallback_share"] = buffer.mean_potential_fallback_share()
         # Hindsight: the relabelled loss per minibatch that had one, and the rows relabelled over the update.
         if "hindsight_loss" in auxiliary_stats:
             relabelled = auxiliary_stats.pop("hindsight_rows")

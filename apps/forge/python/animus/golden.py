@@ -75,9 +75,10 @@ def _image(rng: np.random.Generator, height: int, width: int, patch: int, classe
 
 
 def _crop(rng: np.random.Generator, side: int, pool: int, empty: bool = False) -> np.ndarray:
-    """A mental map crop [side, side, 7]: per pool x pool block mostly floor near the feet's height, some walls, doors,
-    hazards and unknown; visited, age, class, frontier and searched as the sim writes them. `empty`: all unknown."""
-    cells = np.zeros((side, side, 7), dtype=np.uint8)
+    """A mental map crop [side, side, 8]: per pool x pool block mostly floor near the feet's height, some walls, doors,
+    hazards and unknown; visited, age, class, frontier, searched and walls (map block revision 6: the wall count of
+    the cell's four 1-yd cells, 3 or 4 on a wall cell) as the sim writes them. `empty`: all unknown."""
+    cells = np.zeros((side, side, 8), dtype=np.uint8)
     if empty:
         cells[..., 3] = 255
         return cells.reshape(-1)
@@ -95,6 +96,11 @@ def _crop(rng: np.random.Generator, side: int, pool: int, empty: bool = False) -
             block[..., 4] = np.where(rng.random(block.shape[:2]) < 0.04, rng.integers(1, 32, size=block.shape[:2]), 0)
             block[..., 5] = (rng.random(block.shape[:2]) < 0.15) & (codes != 0)
             block[..., 6] = rng.integers(0, 5, size=block.shape[:2]) * (codes != 0)
+            # The wall count (a wall cell holds 3 or 4 of its four 1-yd cells, the majority rule; a corridor's edge
+            # cell a stray 1 or 2 beside a floor code).
+            edge = rng.random(block.shape[:2]) < 0.1
+            block[..., 7] = np.where(codes == 2, rng.integers(3, 5, size=block.shape[:2]),
+                                     np.where(edge, rng.integers(1, 3, size=block.shape[:2]), 0)) * (codes != 0)
     return cells.reshape(-1)
 
 

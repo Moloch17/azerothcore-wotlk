@@ -34,8 +34,8 @@ import io
 
 import torch
 
-from .mappo.networks import (COSTMAP_CONV1, PLANNER_SCHEDULE_KEYS, SPLAT_PREFIX, grow_costmap_inputs, grow_goal_rows,
-                             materialised_state)
+from .mappo.networks import (COSTMAP_CONV1, MAP_BLOCK_REVISION, MAP_PATCH, PLANNER_SCHEDULE_KEYS, SPLAT_PREFIX,
+                             MapEncoder, grow_costmap_inputs, grow_goal_rows, grow_map_planes, materialised_state)
 from .stages import Span, block_revisions, block_spans
 
 
@@ -682,7 +682,9 @@ def _seed_map(new: dict, old: dict) -> str | None:
     The camera splat (mappo.camera_splat) over a checkpoint without it: the costmap head's conv1 is carried grown
     (grow_costmap_inputs: the checkpoint's channels as they were, the splat's at zero) and the splat's projection starts
     fresh; neither zeroes the joins, since the costmap head computes exactly what it did until conv1 learns to read the
-    splat.
+    splat. The walls plane (map block revision 6) over a seven-channel checkpoint (nav1's): the patch's weight, conv1
+    and the planner's fixed conv are carried grown the same way (grow_map_planes: the new plane's inputs at zero,
+    inserted where the plane sits), so the encoder computes exactly what it did.
 
     The planner's iteration counts and hierarchy (vision.map.planner.k, PLANNER_SCHEDULE_KEYS) are this network's own,
     from its config: never carried, never counted fresh (a seeded stage runs the K it is configured with)."""
@@ -690,6 +692,8 @@ def _seed_map(new: dict, old: dict) -> str | None:
             and key != "vision.map.planner.k"]
     if not keys:
         return None
+    saved_planes = int(old[MAP_PATCH].shape[1]) // (MapEncoder.PATCH ** 2) if MAP_PATCH in old else 0
+    old, deepened = grow_map_planes(old, new)      # before the splat's tail padding (grow_costmap_inputs)
     saved_inputs = int(old[COSTMAP_CONV1].shape[1]) if COSTMAP_CONV1 in old else 0
     old, widened = grow_costmap_inputs(old, new)
     carried = [key for key in keys if key in old and old[key].shape == new[key].shape]
@@ -702,6 +706,10 @@ def _seed_map(new: dict, old: dict) -> str | None:
     # not such a part: conv1 reads it through zeros.
     stale_join = any(not key.startswith(MAP_ZEROED) and not (widened and key.startswith(SPLAT_PREFIX))
                      for key in fresh)
+    if deepened:
+        print(f"  map encoder: the checkpoint's map decodes {saved_planes} planes a cell, this one "
+              f"{new[MAP_PATCH].shape[1] // (MapEncoder.PATCH ** 2)} (the walls plane, map block revision "
+              f"{MAP_BLOCK_REVISION}): {', '.join(deepened)} carried with the new planes' inputs at zero", flush=True)
     if widened:
         print(f"  map encoder: the checkpoint's costmap head reads {saved_inputs} input channels, this one "
               f"{new[COSTMAP_CONV1].shape[1]} (the camera splat, mappo.camera_splat): conv1 carried with its "

@@ -132,7 +132,8 @@ DEVICE_FIELDS = ("obs", "state", "mask", "image")
 # (no character, a director, no map) is every pixel NO_FRAME_PIXEL (Vision::FillNoFrame): sky, height 0, class sky
 # with no objective.
 IMAGE_FIELDS = ("image", "final_image")
-# The mental map's crop as bytes (protocol 24, Vision::MentalMap::Crop): 48 x 48 cells of 7 bytes (6 before protocol 30), [row][col][channel].
+# The mental map's crop as bytes (protocol 24, Vision::MentalMap::Crop): 48 x 48 cells of 8 bytes (map block revision
+# 6: the wall count; 7 before, 6 before protocol 30), [row][col][channel]; the SPEC's map_bytes says how many.
 # A row without a map (no character, a director) is all zeros: every cell unknown, never seen.
 MAP_FIELDS = ("map", "final_map")
 # The nav stages' labels (protocol 31, CONTRACT.md sec 3.1): LABEL_BYTES an agent, laid out as the offsets below say --

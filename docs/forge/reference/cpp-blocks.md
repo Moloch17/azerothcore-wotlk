@@ -522,7 +522,16 @@ window's 1-yd cells looked at this episode), new_age (`min(1, SecondsSinceGround
 stood on a cell it had never stood on) and total (`min(1, GroundTotal / 3000)`: the window-independent record of how
 much ground it has covered); the last two come from `MentalMap` in `Observe`, after `Crop`. Manifest "map": channels 7,
 channel_names +"searched", map_bytes 16128, scalars 7, scalar_names, and searched_channel 6, searched_max 4,
-new_age_scale_s 120, total_scale 3000, epoch "episode". Revision 1 had 4 scalars and 6 channels. `Observe` advances the
+new_age_scale_s 120, total_scale 3000, epoch "episode". Revision 1 had 4 scalars and 6 channels. Revision 6 (2026-10-17, the
+learner's contract; `networks.MAP_BLOCK_REVISION`): the crop is 48x48x8 (18432 bytes a tier, 36864 for two) -- channel 7 `walls`, the
+count of the cell's four 1-yd cells that are wall (0..4; the coarse tier scaled to 0..4), and the code byte calls a cell `wall` by
+majority (3 or 4 of 4) alone, then door > hazard > floor > unknown over the rest -- and eight scalars are appended after the
+revision 3 ones, in this order: `route_fine_sin, route_fine_cos, route_fine_dist, route_fine_valid, route_coarse_sin,
+route_coarse_cos, route_coarse_dist, route_coarse_valid` (the sim's route on the bot's own map, planned at 1 yd every decision; a
+tier's four are `networks.descend`'s numbers -- sin = -right / d, cos = forward / d, d over the tier's reach of 10 / 16 yd, valid --
+all 0 without a waypoint). The manifest names them in `scalar_names` (or the block's `obs_names`), with `walls_channel` 7 and
+`walls_max` 4; `goals.cells.channels` must say 8 too. The learner reads them by name (`networks.route_of`) and requires them to be
+the block's last eight. `Observe` advances the
 map clock, writes the frame's rays (`view.Hits`), the listed entities (`view.Seen`) and the body, crops heading-up. Entity sensing: also writes the listed entities' cells (`MentalMap::WriteEntities(*view.Seen)`), since the image no longer carries units or objects. Declared from move2 on.
 Reviewer notes: uses `bot->GetPosition*` for the crop centre before the body override only when no
 body exists; no actions.

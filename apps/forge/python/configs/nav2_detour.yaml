@@ -27,18 +27,25 @@ mappo:
   # a detour), the coarse planner_k's 20. On from here (nav1 stays without); no parameter, so nav2's checkpoint resumes.
   planner_hierarchical: true
   planner_k_fine: 32
-  # The waypoint walks over the classical planner (MapEncoder.classical_plan, 2026-10-16): a fixed-weight value
-  # iteration over the costmap head's classes, measured live pointing the right way 66 % of the time on the coarse tier
-  # against the learned value's 37 % (fine 46 % against 32 %). The readouts stay the learned planner's; the same walk
-  # and numbers, so the waypoint's join reads what it read and nav2's checkpoint resumes (no new parameter).
-  planner_waypoint_source: classical
+  # The waypoint is the sim's own route (MapEncoder.sim_waypoints, 2026-10-17; networks.ROUTE_COLUMNS): the sim plans
+  # the route on the bot's own mental map at 1 yd every decision and writes each tier's waypoint -- bearing sin, cos,
+  # distance over the reach (10 yd fine, 16 coarse), valid -- into the map block's last eight scalars (map block
+  # revision 6), which the policy reads through the waypoint's join, refreshed every decision. It replaces the
+  # learner's classical planner over the 2-yd crop ("classical", 2026-10-16: 66 % / 46 % right on the coarse / fine
+  # tier), whose any-wall-sub-cell cells sealed corridors and read the map's route at 2-3 x the true one (the memory
+  # investigation of 2026-10-17); the crop's code byte now calls a cell wall by majority and carries the wall count as
+  # its eighth channel. No value iteration runs for the waypoint; the aux pass still measures the classical planner
+  # (classical_*, classical_map_*). The same eight numbers and join, so a classical checkpoint's join reads what it
+  # read. Exported as .amdl version 18 (the runtime plans the waypoint itself). On from here (nav3+ inherit).
+  planner_waypoint_source: sim
   # The classical waypoint prices the map's own codes (networks.classical_factor, 2026-10-16): wall 100 and hazard 5
   # where the crop has seen one, floor and door the head's grade of passable ground (water, a hurting drop), the
   # head's guess only where the crop is unknown. Measured in nav2's aux pass, the classical plan over the true classes
   # points the right way 0.68 / 0.84 of the time (fine / coarse) against 0.53 / 0.79 over the head's, whose known-cell
   # IoU is 0.58 on walls: the rays' hits are the better map. Read live as classical_map_dir_acc_* beside
   # classical_dir_acc_*. The same walk and numbers; no parameter, so nav1's checkpoint seeds it by name as before.
-  # Exported as .amdl version 17. On from here (nav3+ inherit).
+  # Exported as .amdl version 17 under "classical". On from here (nav3+ inherit). Under planner_waypoint_source "sim"
+  # the rule prices only the aux pass's measurement (the sim plans the waypoint); it stays set for a switch back.
   planner_waypoint_costs: map
   # Greedy training envs (exploration v3; 0.12 of this learner's envs act with the argmax of the movement heads, their
   # movement policy-gradient rows masked, their states and rewards training the critic): the argmax policy the
@@ -58,9 +65,12 @@ mappo:
 # becomes the quantity the bot can perceive and that its classical waypoint displays, so following its own map's
 # route pays at the step: in a blank map the unknown-priced route is near the straight line (explore toward the goal),
 # in a known map it is the detour. nav1 stays on the bake's true route (as it trained); nav3+ inherit. The Outcome
-# terms (Arrive x SPL, the clock) are as they were: the true route still judges the trip.
+# terms (Arrive x SPL, the clock) are as they were: the true route still judges the trip. Where the map cannot price
+# the move (either map cost unreachable: no route on the map yet, or a sealed one) the true route's term is paid
+# instead of 0 (potential.map_fallback, the default; reward_potential_fallback_share says how often).
 potential:
   source: map
+  map_fallback: true
 
 status:
   targets:

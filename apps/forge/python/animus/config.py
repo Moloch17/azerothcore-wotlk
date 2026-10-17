@@ -444,15 +444,21 @@ class PotentialConfig:
     `source` says which C (mappo.buffer.POTENTIAL_SOURCES): "true", the bake's route cost-to-go, which the bot cannot
     see; "map", the route cost-to-go on the bot's OWN mental map -- the sim labels each observation with the body's
     and the previous decision's position's on that same current map (protocol 33), and the step is paid yards_scale x
-    their difference, the yards the move closed on the map the bot perceives and its classical waypoint displays (0
-    where either is unreachable; mappo.buffer.compute_potential_map); "blend", `blend` of the map term and the rest
-    of the true one."""
+    their difference, the yards the move closed on the map the bot perceives and its waypoint displays (the true
+    route's term where either is unreachable with `map_fallback`, else 0; mappo.buffer.compute_potential_map);
+    "blend", `blend` of the map term and the rest of the true one."""
 
     enabled: bool = True
     yards_scale: float = 0.01   # reward per yard of route cost-to-go
     clip: float = 50.0          # phi is capped at this many hundred yards (5,000 yd: beyond it, a trip is a trip)
     source: str | bool = "true"     # "true" | "map" | "blend" (POTENTIAL_SOURCES); YAML's bare true reads as "true"
     blend: float = 0.5              # under "blend": the map term's weight, the true term's 1 - blend
+    # Under "map" / "blend" (2026-10-17): a decision whose map term cannot be paid -- C_map(prev) or C_map(body) is
+    # unreachable on the bot's map (LABEL_UNREACHABLE: the map has no route yet, or a sealed one) -- is paid the TRUE
+    # route's term instead (compute_potential's rule, with `discount`), rather than 0: the step is never free of the
+    # route while the map cannot price it. The share of decisions that fell back is reward_potential_fallback_share.
+    # False: 0 on those decisions, as before.
+    map_fallback: bool = True
     # The gamma inside the difference: discount x phi(next) - phi(cur). 1 (the default): the plain difference, which
     # telescopes to the route yards closed and pays nothing for standing still. The learner's gamma (Ng's invariance)
     # needs phi = 0 where an episode ends; nav episodes end on the clock with the term zeroed, so with phi negative
@@ -800,7 +806,9 @@ class TrainConfig:
         rule = self.mappo.planner_waypoint_costs
         if rule not in WAYPOINT_COST_RULES:
             raise ValueError(f"mappo.planner_waypoint_costs: expected one of {list(WAYPOINT_COST_RULES)}, got {rule!r}")
-        if rule != "head" and source != "classical":
+        # ... "map" prices the classical waypoint; under "sim" the sim plans the waypoint and the rule prices only the
+        # aux pass's classical measurement (which runs both rules whatever the waypoint walks), so it may stay set.
+        if rule != "head" and source not in ("classical", "sim"):
             raise ValueError(f"mappo.planner_waypoint_costs {rule!r} needs mappo.planner_waypoint_source \"classical\" "
                              f"(the learned waypoint prices nothing)")
 

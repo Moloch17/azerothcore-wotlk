@@ -57,7 +57,7 @@ def check_map_costs(*costs: np.ndarray) -> None:
 
 def compute_potential_map(c_map_body: np.ndarray, c_map_prev: np.ndarray, dones: np.ndarray,
                           last_c_map_body: np.ndarray, last_c_map_prev: np.ndarray, yards_scale: float,
-                          clip: float) -> np.ndarray:
+                          clip: float, paid_out: np.ndarray | None = None) -> np.ndarray:
     """The progress term on the bot's OWN mental map of every step, [T, E, A] (potential.source "map"): yards_scale x
     (min(C_prev, clip x 100) - min(C_body, clip x 100)) read off the labels of the observation the step led to --
     c_map_body [T, E, A] and c_map_prev [T, E, A] are each observation's route cost-to-go on the bot's map from the
@@ -67,7 +67,8 @@ def compute_potential_map(c_map_body: np.ndarray, c_map_prev: np.ndarray, dones:
     classical planner does, so its route is near the straight line and the term pays walking toward the goal; a
     known map's route is the detour, and the term pays following it. 0 on a done row (the row after a reset describes
     a position before it) and wherever either cost is unreachable (LABEL_UNREACHABLE). Not a potential difference
-    (the map changes), so no discount inside it."""
+    (the map changes), so no discount inside it. `paid_out` [T, E, A] bool, when given, receives where the term was
+    paid (the live rows with both costs reachable: potential.map_fallback pays the true term on the rest)."""
     steps = c_map_body.shape[0]
     cap = clip * 100.0
     out = np.zeros_like(c_map_body, dtype=np.float32)
@@ -77,6 +78,8 @@ def compute_potential_map(c_map_body: np.ndarray, c_map_prev: np.ndarray, dones:
         paid = (body < LABEL_UNREACHABLE) & (prev < LABEL_UNREACHABLE) & ~dones[t][:, None]
         term = (np.minimum(prev, cap) - np.minimum(body, cap)).astype(np.float32) * np.float32(yards_scale)
         out[t] = np.where(paid, term, 0.0).astype(np.float32)
+        if paid_out is not None:
+            paid_out[t] = paid
     return out
 
 
@@ -267,6 +270,9 @@ class RolloutBuffer:
         self.c_map_prev = np.full(shape, LABEL_UNREACHABLE, dtype=np.float32)
         self.potential = np.zeros(shape, dtype=np.float32)
         self.potential_map = np.zeros(shape, dtype=np.float32)
+        # ... and where the map term could not be paid and the true route's term stood in (potential.map_fallback;
+        # reward_potential_fallback_share).
+        self.potential_fallback = np.zeros(shape, dtype=bool)
         # The plan each decision acted on (MappoTrainer._replan's cache: the planner's readouts and the pointer's
         # bonus), so the update replays the decision on the same plan rather than planning again.
         self.planner_readout = np.zeros((*shape, self.planner_widths[0]), dtype=np.float32)
@@ -406,15 +412,20 @@ class RolloutBuffer:
                slow_goal: tuple[float, float] | None = None, obs_targets=None,
                potential: tuple[float, float] | None = None, last_c_body: np.ndarray | None = None,
                potential_source: str = "true", potential_blend: float = 0.0,
-               last_c_map: tuple[np.ndarray, np.ndarray] | None = None) -> None:
+               last_c_map: tuple[np.ndarray, np.ndarray] | None = None,
+               potential_map_fallback: bool = False) -> None:
         """`potential` (yards_scale, clip[, discount]) with `last_c_body` [E, A] (the cost-to-go of the observation
         after the last step; c_body_of(step.labels)) pays the potential term into the rewards before the advantages
         are taken, where the stage sends labels. `potential_source` (POTENTIAL_SOURCES) says what it is paid on:
         "true" the bake's route (compute_potential, as before), "map" the bot's own map's (compute_potential_map, off
         `last_c_map` = c_map_of(step.labels) for the last step), "blend" `potential_blend` of the map term and the
-        rest of the true one."""
+        rest of the true one. `potential_map_fallback` (potential.map_fallback): under "map" / "blend", a decision
+        whose map term cannot be paid (either map cost unreachable) is paid the true term in its place where the true
+        term can be (both true costs reachable; its discount), rather than 0; `potential_fallback` marks those
+        decisions (mean_potential_fallback_share)."""
         self.potential[:] = 0.0
         self.potential_map[:] = 0.0
+        self.potential_fallback[:] = False
         if potential is None or not self.label_bytes:
             pass
         elif potential_source == "true":
@@ -429,18 +440,30 @@ class RolloutBuffer:
             last_body = np.asarray(last_c_map[0], dtype=np.float32)
             last_prev = np.asarray(last_c_map[1], dtype=np.float32)
             check_map_costs(self.c_map_body, self.c_map_prev, last_body, last_prev)
+            map_paid = np.zeros_like(self.potential_fallback)
             map_term = compute_potential_map(self.c_map_body, self.c_map_prev, self.dones, last_body, last_prev,
-                                             potential[0], potential[1])
-            if potential_source == "map":
-                self.potential_map = map_term
-                self.potential = map_term.copy()
-            else:
+                                             potential[0], potential[1], map_paid)
+            true_term = None
+            if potential_source == "blend" or potential_map_fallback:
                 if last_c_body is None:
-                    raise ValueError("potential.source blend: finish needs last_c_body too")
+                    raise ValueError(f"potential.source {potential_source}"
+                                     f"{' with map_fallback' if potential_map_fallback else ''}: finish needs "
+                                     f"last_c_body too")
                 last = np.asarray(last_c_body, dtype=np.float32)
                 true_term = compute_potential(self.c_body, self.c_valid, self.dones, last, last < LABEL_UNREACHABLE,
                                               potential[2] if len(potential) > 2 else gamma, potential[0],
                                               potential[1])
+            if potential_map_fallback:
+                # The true route's term where the map's could not be paid and the true one can (compute_potential's
+                # own rule: both costs reachable, a live row); the row's done check is in both rules' masks.
+                true_paid = self.c_valid & np.concatenate([self.c_valid[1:], (last < LABEL_UNREACHABLE)[None]]) \
+                    & ~self.dones[..., None]
+                self.potential_fallback = ~map_paid & true_paid
+                map_term = np.where(self.potential_fallback, true_term, map_term).astype(np.float32)
+            if potential_source == "map":
+                self.potential_map = map_term
+                self.potential = map_term.copy()
+            else:
                 weight = np.float32(potential_blend)
                 self.potential_map = map_term * weight
                 self.potential = (self.potential_map + true_term * (np.float32(1.0) - weight)).astype(np.float32)
@@ -568,3 +591,9 @@ class RolloutBuffer:
         """Mean of the map term's part of the potential per decision over the valid samples (reward_potential_map; 0
         without labels or under potential.source "true")."""
         return float(self.potential_map[self.valid].mean()) if self.label_bytes and self.valid.any() else 0.0
+
+    def mean_potential_fallback_share(self) -> float:
+        """The share of the valid decisions whose map term could not be paid and were paid the true route's term
+        instead (potential.map_fallback; reward_potential_fallback_share; 0 without labels, under "true" or with the
+        fallback off)."""
+        return float(self.potential_fallback[self.valid].mean()) if self.label_bytes and self.valid.any() else 0.0

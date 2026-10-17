@@ -988,7 +988,8 @@ class TrainingRun:
         if spec.label_bytes:
             # The nav stages (vision movement curriculum): the potential term paid per decision and the costmap and
             # planner aux pass's losses and quality (MappoTrainer.AUX_STATS).
-            columns += ["reward_potential", "reward_potential_map", *MappoTrainer.AUX_STATS,
+            columns += ["reward_potential", "reward_potential_map", "reward_potential_fallback_share",
+                        *MappoTrainer.AUX_STATS,
                         *MappoTrainer.AUX_DIR_STATS, *MappoTrainer.AUX_CLASS_STATS,
                         *MappoTrainer.AUX_KNOWN_CLASS_STATS]
         self.logger = RunLogger(self.run_dir, columns, append=self.resume_path is not None) if leader else Silent()
@@ -2117,29 +2118,31 @@ class TrainingRun:
             return {"potential": None}
         out: dict = {"potential": (float(potential.yards_scale), float(potential.clip), float(potential.discount)),
                      "potential_source": potential.source, "potential_blend": float(potential.blend),
-                     "last_c_body": None, "last_c_map": None}
+                     "potential_map_fallback": bool(potential.map_fallback), "last_c_body": None, "last_c_map": None}
         if labels is not None:
             out["last_c_body"] = protocol.c_body_of(labels)
             if potential.source != "true":
                 out["last_c_map"] = protocol.c_map_of(labels)
         return out
 
-    def eval_potential(self) -> tuple[float, float, float, str, float] | None:
-        """run_evaluation's `potential`: (the difference's discount, yards_scale, clip, source, blend), so an
-        evaluation's episodes carry the learner's reward_potential column (evaluation.run_evaluation); None without
-        labels or with the term off."""
+    def eval_potential(self) -> tuple[float, float, float, str, float, bool] | None:
+        """run_evaluation's `potential`: (the difference's discount, yards_scale, clip, source, blend, map_fallback),
+        so an evaluation's episodes carry the learner's reward_potential column (evaluation.run_evaluation); None
+        without labels or with the term off."""
         terms = self.potential_terms()
         if terms is None:
             return None
-        return terms[2], terms[0], terms[1], self.config.potential.source, float(self.config.potential.blend)
+        return (terms[2], terms[0], terms[1], self.config.potential.source, float(self.config.potential.blend),
+                bool(self.config.potential.map_fallback))
 
     def aux_summary(self) -> dict[str, float]:
         """The last update's aux pass statistics (MappoTrainer.AUX_STATS) and potential mean, for the evaluation
         summary (forge status reads them off the headline): {} before the first update or without labels."""
         last = getattr(self, "last_update_stats", None) or {}
         return {name: float(last[name])
-                for name in ("reward_potential_train", *MappoTrainer.AUX_STATS, *MappoTrainer.AUX_DIR_STATS,
-                             *MappoTrainer.AUX_CLASS_STATS, *MappoTrainer.AUX_KNOWN_CLASS_STATS)
+                for name in ("reward_potential_train", "reward_potential_fallback_share", *MappoTrainer.AUX_STATS,
+                             *MappoTrainer.AUX_DIR_STATS, *MappoTrainer.AUX_CLASS_STATS,
+                             *MappoTrainer.AUX_KNOWN_CLASS_STATS)
                 if name in last}
 
     def add_style(self, buffer: RolloutBuffer) -> None:
