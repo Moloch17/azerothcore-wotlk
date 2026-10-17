@@ -1423,8 +1423,9 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
 
     // The STEP's labels (protocol 31; vision movement curriculum, CONTRACT.md sec 3.1): bytes per agent, 0 without a
     // nav encounter, and the layout of a row: the traversability classes of the fine (2 yd) and coarse (8 yd) crop
-    // frames, their route cost-to-go as f16 yards (unreachable = 65504), and four f32 scalars (C_body, C_start, the
-    // goal's forward and right yards in the body frame). The frames are the map crop's of the same observation.
+    // frames, their route cost-to-go as f16 yards (unreachable = 65504), and six f32 scalars (C_body, C_start, the
+    // route on the seat's own map at the body and at the last decision's position -- protocol 33 -- and the goal's
+    // forward and right yards in the body frame). The frames are the map crop's of the same observation.
     boost::json::object& labels = stageFile["labels"].emplace_object();
     labels["bytes"] = _spec.LabelBytes;
     labels["side"] = Vision::TRAV_LABEL_SIDE;
@@ -1442,7 +1443,8 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
     for (char const* name : Vision::TRAV_CLASS_NAMES)
         classNames.push_back(boost::json::string(name));
     boost::json::array& scalarNames = labels["scalar_names"].emplace_array();
-    for (char const* name : { "c_body", "c_start", "goal_forward_yards", "goal_right_yards" })
+    for (char const* name : { "c_body", "c_start", "map_c_body", "map_c_last", "goal_forward_yards",
+        "goal_right_yards" })
         scalarNames.push_back(boost::json::string(name));
 
     // The critic state's width, and where it holds the episode's arena, so the learner knows each decision's arena.

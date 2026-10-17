@@ -149,9 +149,15 @@ void Animus::Vision::PlanOnCrops(uint8_t const* fine, uint8_t const* coarse, flo
         int32_t const high = std::min(SIDE - 1, int32_t(std::ceil(CENTRE + (CENTRE + 1.0f) * ratio)));
         std::fill(wanted.begin(), wanted.end(), uint8_t(0));
         int32_t count = 0;
+        // A blocked cell's own value sits a hundred yards over its neighbours' and would hold the search until
+        // nearly everything had settled; the ring reads it as it is.
         for (int32_t r = low; r <= high; ++r)
-            for (int32_t c = low; c <= high; ++c, ++count)
-                wanted[std::size_t(r * SIDE + c)] = 1;
+            for (int32_t c = low; c <= high; ++c)
+                if (factor[r * SIDE + c] < PLAN_BLOCKED)
+                {
+                    wanted[std::size_t(r * SIDE + c)] = 1;
+                    ++count;
+                }
         Settle(factor.data(), cell, out.Coarse.data(), wanted.data(), count);
     }
 
@@ -192,25 +198,29 @@ void Animus::Vision::PlanOnCrops(uint8_t const* fine, uint8_t const* coarse, flo
                 }
             }
     }
-    // The cells round each named point (the ones PlanValueAt reads), else the whole crop.
-    int32_t count = 0;
-    if (near && nearCount)
+    // The cells round each named point (the ones PlanValueAt reads; blocked ones it never reads), else the whole
+    // crop.
+    if (!near || !nearCount)
     {
-        std::fill(wanted.begin(), wanted.end(), uint8_t(0));
-        for (uint32_t index = 0; index < nearCount; ++index)
-        {
-            int32_t const r0 = int32_t(std::floor(CENTRE - near[index].Forward / cell));
-            int32_t const c0 = int32_t(std::floor(CENTRE + near[index].Right / cell));
-            for (int32_t r = r0; r <= r0 + 1; ++r)
-                for (int32_t c = c0; c <= c0 + 1; ++c)
-                    if (r >= 0 && c >= 0 && r < SIDE && c < SIDE && !wanted[std::size_t(r * SIDE + c)])
-                    {
-                        wanted[std::size_t(r * SIDE + c)] = 1;
-                        ++count;
-                    }
-        }
+        Settle(factor.data(), cell, out.Fine.data(), nullptr, 0);
+        return;
     }
-    Settle(factor.data(), cell, out.Fine.data(), count ? wanted.data() : nullptr, count);
+    int32_t count = 0;
+    std::fill(wanted.begin(), wanted.end(), uint8_t(0));
+    for (uint32_t index = 0; index < nearCount; ++index)
+    {
+        int32_t const r0 = int32_t(std::floor(CENTRE - near[index].Forward / cell));
+        int32_t const c0 = int32_t(std::floor(CENTRE + near[index].Right / cell));
+        for (int32_t r = r0; r <= r0 + 1; ++r)
+            for (int32_t c = c0; c <= c0 + 1; ++c)
+                if (r >= 0 && c >= 0 && r < SIDE && c < SIDE && !wanted[std::size_t(r * SIDE + c)]
+                    && factor[r * SIDE + c] < PLAN_BLOCKED)
+                {
+                    wanted[std::size_t(r * SIDE + c)] = 1;
+                    ++count;
+                }
+    }
+    Settle(factor.data(), cell, out.Fine.data(), wanted.data(), count);
 }
 
 float Animus::Vision::PlanValueAt(MapPlan const& plan, float forward, float right)

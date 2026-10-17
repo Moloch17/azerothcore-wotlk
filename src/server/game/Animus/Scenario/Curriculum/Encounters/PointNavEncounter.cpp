@@ -359,7 +359,11 @@ bool Animus::Curriculum::PointNavEncounter::DrawPair(Env& env, Map* map, Player*
                     nav.GoalCell = failure.GoalCell;
                     nav.GoalAtBed = failure.GoalAtBed;
                     nav.StartCell = start;
-                    nav.Start = failure.Where;
+                    // The failure's bake cell at its standing height, not the point itself (2026-10-17): a seat that
+                    // timed out mid-fall through a hole in the collision filed the hole, and every replay of it fell
+                    // through again, died in the void and rose there to fall once more. The cell's centre is ground
+                    // the bake vouches for.
+                    nav.Start = CellPoint(grid, start, false);
                     nav.Replayed = true;
                 }
             }
