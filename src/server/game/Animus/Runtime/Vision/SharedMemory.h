@@ -56,10 +56,13 @@
 /// and a memory may be hours old). A version 3 file written before 2026-10-16 may still carry entities: the crop's
 /// age gate hides them, so the format is unchanged.
 ///
-/// **Walls by recency** (MergeCell): a wall moves with its floor layer, and on a layer both hold the newer look
-/// decides -- a map that read the memory (Adopt) sets or clears it, one that started blank (Anchor) can only set it,
-/// knowing nothing of the memory's walls; the far tier's cells, which no observation clears, only set. So a misread
-/// is cleared by the next seat that looks there, rather than kept for every bot for good.
+/// **Walls by recency** (MergeCell, WallClears): a wall moves with its floor layer, and on a layer both hold the
+/// newer look decides -- a map that read the memory (Adopt) sets or clears it; one that started blank (Anchor) sets
+/// it, and clears it only where its rays passed the cell free in the body's band (MAP_FREE; since version 5 -- it
+/// knew nothing of the memory's walls, but a pass is a look, and a corridor every blank seat walks through stayed
+/// sealed in the memory while only adopted seats could clear it); the far tier's cells, which no observation clears,
+/// only set. An older look changes nothing. So a misread is cleared by the next seat that looks there, rather than
+/// kept for every bot for good.
 ///
 /// **Persistence**: `<Dir>/<mapId>.amem`, written periodically (SaveSeconds of real time, on a thread of its own, off
 /// the world and map threads) and at shutdown, loaded the first time a map's memory is asked for. A versioned binary
@@ -85,14 +88,18 @@ namespace Animus::Vision
     /// 4 (2026-10-17): bodies that fell through a hole in a dungeon's collision were stood on the terrain over it
     /// (PlayerController's Resync) and painted it -- the Deadmines' 23,000 cells of floor at z 302 -- and the shore's
     /// dry edge was meshed as a hazard; a version 3 file holds both, and is not read. The bytes are version 3's.
-    constexpr uint32_t MEMORY_VERSION = 4;
+    /// 5 (2026-10-17, memv4): a ray's own hit on a liquid plane under the shore's dry floor painted the floor a hazard
+    /// (6-8 % of the Deadmines' and Shadowfang's dry ground; MentalMap::NoteHazard), and a wall a blank seat saw past
+    /// stayed (WallClears::SeenFree); a version 4 file holds those hazards and walls, and is not read. The bytes are
+    /// version 3's.
+    constexpr uint32_t MEMORY_VERSION = 5;
     /// When the memory's clock (seconds past its base) passes this, the base moves on to leave REBASE_KEEP seconds
     /// of history: a seat's map runs to MentalMap's 65000-second limit from wherever it was anchored.
     constexpr double REBASE_AT = 40000.0;
     constexpr double REBASE_KEEP = 20000.0;
 
 #pragma pack(push, 1)
-    /// The .amem file's header; MEMORY_VERSION 4. Little-endian, as the forge's and the realm's machines are. The
+    /// The .amem file's header; MEMORY_VERSION 5. Little-endian, as the forge's and the realm's machines are. The
     /// tiles follow it, FineTiles then FarTiles records of (int64 tile key, MAP_TILE_CELLS MapCell: int16 Floor[2],
     /// uint8 Flags, uint8 Entity, uint16 Seen).
     struct MemoryFileHeader
@@ -160,7 +167,7 @@ namespace Animus::Vision
         void RebaseIfDue(double now);
         /// Merges one tile a map owns into `store`, its stamps shifted by `shift`; `clears`: the map's missing walls
         /// on newer looks clear the memory's (MergeCell). Under _lock.
-        void MergeTile(Store& store, int64_t key, MapTile const& from, int32_t shift, bool clears);
+        void MergeTile(Store& store, int64_t key, MapTile const& from, int32_t shift, WallClears clears);
         static void Trim(Store& store, uint32_t cap);
 
         uint32_t _mapId;

@@ -4434,12 +4434,9 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
     SeatEncoder::AddObserve(SeatEncoder::OBSERVE_VIEW, uint64(std::chrono::duration_cast<
         std::chrono::nanoseconds>(std::chrono::steady_clock::now() - viewMark).count()));
     view.Image = image;
+    // The map block writes every tier of the map row (the coarse tier behind the fine crop, map block revision 5)
+    // and plans the own-map route over them (revision 6).
     SeatEncoder::Observe(view, obs, mask);
-    // The map's coarse tier (map block revision 5), behind the fine crop the map block wrote: the same pose, 8-yd
-    // cells (MentalMap::CropWide), in a stage that asks for two tiers.
-    if (map && _stage.MapTiers >= 2 && seat.Crop.Valid)
-        seat.Map.Crop(seat.Crop.X, seat.Crop.Y, seat.Crop.Z, seat.Crop.Yaw, map + Vision::CROP_BYTES,
-            float(Vision::COARSE_CELL));
     // What the frame showed of the objective: its flagged pixels, and the first frame with any (seek's measures).
     if (image && view.HasObjective)
     {

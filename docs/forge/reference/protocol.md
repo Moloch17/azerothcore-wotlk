@@ -165,7 +165,7 @@ among those E (the code is `Spec.step_layout`, protocol.py:157, and the chunk li
 | 13 | kinematics | f32 | [E,A,10] | `[t, x, y, z, yaw, pitch, mode, mounted, speed, in_combat]` after the transition; the new episode's first sample where done; zeros for an agent without a body. Kinematics.h. |
 | 14 | image | u8 | [E,A,I] | Only if I > 0 and not in device buffers. `[row][col][byte]`, row 0 top, 4 bytes a pixel (distance, height, normal, class + objective; the static world only). Rows without a frame are `Vision::FillNoFrame` = pixel `(255,128,0,0)` (`NO_FRAME_PIXEL`, protocol.py). |
 | 15 | final_image | u8 | [D,A,I] | Whenever the stage has a vision block (sent even with device buffers). |
-| 16 | map | u8 | [E,A,M] | Only if M > 0; always on the socket. 48 x 48 cells of 2 yd, heading-up, `[row][col][channel]`, 7 channels (code, height, visited, age, class, frontier, searched); zeros for no map. |
+| 16 | map | u8 | [E,A,M] | Only if M > 0; always on the socket. 48 x 48 cells of 2 yd, heading-up, `[row][col][channel]`, 8 channels (code, height, visited, age, class, frontier, searched, walls; 7 until map block revision 6, 2026-10-17), then the coarse tier's 48 x 48 at 8 yd in a two-tier stage; zeros for no map. |
 | 17 | final_map | u8 | [D,A,M] | Likewise for ended envs. |
 
 How each side builds it: the sim keeps flat vectors in `EnvPool` (`Obs, State, Mask, Rewards, Done, Terminated, FinalObs,

@@ -141,12 +141,14 @@ namespace
     }
 
     /// How Merge settles the walls of a layer both cells hold: any wall in either (Union: a coarse cell, which stands
-    /// for 64 1-yd cells), or by recency (Newest: a newer `from` sets or clears; NewestAdds: a newer `from` only
-    /// sets; either way an equal look adds and an older one leaves the target's be).
+    /// for 64 1-yd cells), or by recency (Newest: a newer `from` sets or clears; NewestFree: a newer `from` sets, and
+    /// clears when it saw the cell free, MAP_FREE; NewestAdds: a newer `from` only sets; either way an equal look
+    /// adds and an older one leaves the target's be).
     enum class WallMerge : uint8_t
     {
         Union,
         Newest,
+        NewestFree,
         NewestAdds,
     };
 
@@ -186,7 +188,7 @@ namespace
             {
                 if (wall)
                     into.Flags |= flag;
-                else if (mode == WallMerge::Newest)
+                else if (mode == WallMerge::Newest || (mode == WallMerge::NewestFree && (from.Flags & MAP_FREE)))
                     into.Flags &= uint8_t(~flag);
             }
         };
@@ -241,9 +243,10 @@ namespace
     }
 }
 
-void Animus::Vision::MergeCell(MapCell& into, MapCell const& from, bool clears)
+void Animus::Vision::MergeCell(MapCell& into, MapCell const& from, WallClears clears)
 {
-    Merge(into, from, clears ? WallMerge::Newest : WallMerge::NewestAdds);
+    Merge(into, from, clears == WallClears::Lacking ? WallMerge::Newest
+        : clears == WallClears::SeenFree ? WallMerge::NewestFree : WallMerge::NewestAdds);
 }
 
 namespace
@@ -289,6 +292,7 @@ Animus::Vision::CropCell Animus::Vision::DecodeCropCell(uint8_t const* bytes)
     cell.Entity = uint8_t(bytes[CROP_CLASS] & CLASS_MASK);
     cell.Frontier = bytes[CROP_FRONTIER] != 0;
     cell.Searched = uint8_t(std::min<uint32_t>(bytes[CROP_SEARCHED], SEARCHED_MAX));
+    cell.Walls = uint8_t(std::min<uint32_t>(bytes[CROP_WALLS], CROP_WALLS_MAX));
     return cell;
 }
 
@@ -344,6 +348,9 @@ void Animus::Vision::MentalMap::Clear()
     _groundTotal = 0;
     _searchedTotal = 0;
     _lastGroundClock = 0.0;
+    _frameWalls.clear();
+    _frameClears.clear();
+    _frameHazards.clear();
 }
 
 void Animus::Vision::MentalMap::ClearAt(double clock)
@@ -712,6 +719,34 @@ void Animus::Vision::MentalMap::SettleFrame(MapWriteStats* stats)
         if (MapCell* cell = OwnCell(int32_t(packed >> 32), int32_t(uint32_t(packed & 0xFFFFFFFF))))
             cell->Flags &= uint8_t(~MAP_WALL_FRAME);
     _frameWalls.clear();
+    // The frame's hazard hits, now that its floors are in: a liquid plane under a floor the cell holds is not where
+    // the body walks (the mesh's own guard for a triangle is the same, in Mesh).
+    uint16_t const stamp = Stamp();
+    for (PendingHazard const& hazard : _frameHazards)
+    {
+        MapCell const* known = hazard.Far ? FindFarCell(hazard.X, hazard.Y) : FindCell(hazard.X, hazard.Y);
+        float floor = 0.0f;
+        if (known && NearestFloor(*known, hazard.Z, floor) && floor > hazard.Z + FLOOR_STEP)
+            continue;
+        if (hazard.Far)
+        {
+            MapCell& cell = TouchFar(hazard.X, hazard.Y);
+            cell.Flags |= MAP_HAZARD;
+            cell.Seen = stamp;
+        }
+        else
+        {
+            MapCell& cell = Touch(hazard.X, hazard.Y);
+            cell.Flags |= MAP_HAZARD;
+            MarkSeen(cell, stamp);
+        }
+    }
+    _frameHazards.clear();
+}
+
+void Animus::Vision::MentalMap::NoteHazard(int32_t cx, int32_t cy, float z, bool far)
+{
+    _frameHazards.push_back({ cx, cy, z, far });
 }
 
 void Animus::Vision::MentalMap::WriteFar(Class what, float x, float y, float z, float normalZ, float feetZ,
@@ -770,12 +805,8 @@ void Animus::Vision::MentalMap::WriteFar(Class what, float x, float y, float z, 
         }
         case Class::Water:
         case Class::Deadly:
-        {
-            MapCell& cell = TouchFar(ccx, ccy);
-            cell.Flags |= MAP_HAZARD;
-            cell.Seen = stamp;
+            NoteHazard(ccx, ccy, z, true);
             break;
-        }
         default:
             // An entity's class is the sensor's to write (WriteEntities), at its own cell.
             return;
@@ -923,12 +954,8 @@ void Animus::Vision::MentalMap::WriteFrame(FrameHits const& hits, float feetZ, f
             }
             case Class::Water:
             case Class::Deadly:
-            {
-                MapCell& cell = Touch(hitX, hitY);
-                cell.Flags |= MAP_HAZARD;
-                MarkSeen(cell, stamp);
+                NoteHazard(hitX, hitY, ray.Z, false);
                 break;
-            }
             default:
             {
                 if (!IsEntityClass(ray.What))
@@ -1251,39 +1278,15 @@ void Animus::Vision::MentalMap::Crop(float x, float y, float z, float yaw, uint8
         return;
     }
     // A window of the map's cells round the body, wide enough for the turned crop and a cell of neighbours for the
-    // frontier: one copy of the tiles' rows rather than a tile lookup per sample.
+    // frontier.
     float const halfDiagonal = float(CROP) * CROP_CELL * 0.5f * 1.41422f;
     int32_t const radius = int32_t(std::ceil(halfDiagonal / MAP_CELL)) + 2;
     int32_t const side = 2 * radius + 1;
     int32_t const x0 = CellOf(x) - radius;
     int32_t const y0 = CellOf(y) - radius;
     thread_local std::vector<MapCell> window;
-    window.assign(std::size_t(side) * std::size_t(side), MapCell());
-    int32_t const tx0 = FloorDiv(x0, MAP_TILE);
-    int32_t const tx1 = FloorDiv(x0 + side - 1, MAP_TILE);
-    int32_t const ty0 = FloorDiv(y0, MAP_TILE);
-    int32_t const ty1 = FloorDiv(y0 + side - 1, MAP_TILE);
-    for (int32_t ty = ty0; ty <= ty1; ++ty)
-        for (int32_t tx = tx0; tx <= tx1; ++tx)
-        {
-            auto const found = _tiles.find(TileKey(tx, ty));
-            Tile const* tile = found == _tiles.end() ? nullptr : found->second.Read();
-            if (!tile && _coarse.empty())
-                continue;
-            int32_t const cx0 = std::max(x0, tx * MAP_TILE);
-            int32_t const cx1 = std::min(x0 + side - 1, tx * MAP_TILE + MAP_TILE - 1);
-            int32_t const cy0 = std::max(y0, ty * MAP_TILE);
-            int32_t const cy1 = std::min(y0 + side - 1, ty * MAP_TILE + MAP_TILE - 1);
-            for (int32_t cy = cy0; cy <= cy1; ++cy)
-                for (int32_t cx = cx0; cx <= cx1; ++cx)
-                {
-                    MapCell const* cell = tile
-                        ? &tile->Cells[std::size_t((cy - ty * MAP_TILE) * MAP_TILE + (cx - tx * MAP_TILE))]
-                        : FindCoarse(cx, cy);
-                    if (cell)
-                        window[std::size_t(cy - y0) * std::size_t(side) + std::size_t(cx - x0)] = *cell;
-                }
-        }
+    window.resize(std::size_t(side) * std::size_t(side));
+    Window(x0, y0, side, window.data());
     auto const at = [&](int32_t cx, int32_t cy) -> MapCell const&
     {
         static MapCell const none;
@@ -1308,6 +1311,7 @@ void Animus::Vision::MentalMap::Crop(float x, float y, float z, float yaw, uint8
             float const forward = (centre - 0.5f - float(row)) * CROP_CELL;
             float const right = (float(col) + 0.5f - centre) * CROP_CELL;
             MapCode code = MapCode::Unknown;
+            uint32_t walls = 0;
             bool hasHeight = false;
             float height = 0.0f;
             bool visited = false;
@@ -1324,7 +1328,11 @@ void Animus::Vision::MentalMap::Crop(float x, float y, float z, float yaw, uint8
                 int32_t const cy = CellOf(y + f * forwardY + r * rightY);
                 MapCell const& cell = at(cx, cy);
                 MapCode const here = CodeOf(cell, z);
-                if (PRIORITY[uint8_t(here)] > PRIORITY[uint8_t(code)])
+                // The walls are counted; the code is the other samples' by priority unless the walls are most of
+                // the four (CROP_WALL_MIN): a wall-footed cell beside a corridor's floor is the corridor's.
+                if (here == MapCode::Wall)
+                    ++walls;
+                else if (PRIORITY[uint8_t(here)] > PRIORITY[uint8_t(code)])
                     code = here;
                 float floor = 0.0f;
                 if (NearestFloor(cell, z, floor) && (!hasHeight || std::fabs(floor - z) < std::fabs(height - z)))
@@ -1356,8 +1364,11 @@ void Animus::Vision::MentalMap::Crop(float x, float y, float z, float yaw, uint8
                             break;
                         }
             }
+            if (walls >= CROP_WALL_MIN)
+                code = MapCode::Wall;
             uint8_t* cell = out + (std::size_t(row) * CROP + col) * CROP_CHANNELS;
             cell[CROP_CODE] = uint8_t(code);
+            cell[CROP_WALLS] = uint8_t(std::min<uint32_t>(walls, CROP_WALLS_MAX));
             cell[CROP_HEIGHT] = hasHeight ? uint8_t(std::clamp(int32_t(CROP_HEIGHT_ZERO)
                 + int32_t(std::lround((height - z) / CROP_HEIGHT_STEP)), 1, 255)) : 0;
             cell[CROP_VISITED] = visited ? 1 : 0;
@@ -1365,6 +1376,36 @@ void Animus::Vision::MentalMap::Crop(float x, float y, float z, float yaw, uint8
             cell[CROP_CLASS] = entity;
             cell[CROP_FRONTIER] = frontier ? 1 : 0;
             cell[CROP_SEARCHED] = searched;
+        }
+}
+
+void Animus::Vision::MentalMap::Window(int32_t x0, int32_t y0, int32_t side, MapCell* out) const
+{
+    std::fill(out, out + std::size_t(side) * std::size_t(side), MapCell());
+    int32_t const tx0 = FloorDiv(x0, MAP_TILE);
+    int32_t const tx1 = FloorDiv(x0 + side - 1, MAP_TILE);
+    int32_t const ty0 = FloorDiv(y0, MAP_TILE);
+    int32_t const ty1 = FloorDiv(y0 + side - 1, MAP_TILE);
+    for (int32_t ty = ty0; ty <= ty1; ++ty)
+        for (int32_t tx = tx0; tx <= tx1; ++tx)
+        {
+            auto const found = _tiles.find(TileKey(tx, ty));
+            Tile const* tile = found == _tiles.end() ? nullptr : found->second.Read();
+            if (!tile && _coarse.empty())
+                continue;
+            int32_t const cx0 = std::max(x0, tx * MAP_TILE);
+            int32_t const cx1 = std::min(x0 + side - 1, tx * MAP_TILE + MAP_TILE - 1);
+            int32_t const cy0 = std::max(y0, ty * MAP_TILE);
+            int32_t const cy1 = std::min(y0 + side - 1, ty * MAP_TILE + MAP_TILE - 1);
+            for (int32_t cy = cy0; cy <= cy1; ++cy)
+                for (int32_t cx = cx0; cx <= cx1; ++cx)
+                {
+                    MapCell const* cell = tile
+                        ? &tile->Cells[std::size_t((cy - ty * MAP_TILE) * MAP_TILE + (cx - tx * MAP_TILE))]
+                        : FindCoarse(cx, cy);
+                    if (cell)
+                        out[std::size_t(cy - y0) * std::size_t(side) + std::size_t(cx - x0)] = *cell;
+                }
         }
 }
 
@@ -1576,13 +1617,21 @@ void Animus::Vision::MentalMap::CropWide(float x, float y, float z, float yaw, f
             known += sum.CoarseKnown * scale;
         }
         counts[uint8_t(MapCode::Unknown)] += std::max(0.0f, float(perCell) - known);
+        // A wall only when the walls are more than half of the cell's 1-yd cells (map block revision 6; a thin wall
+        // across an 8-yd cell is a sixteenth of it); else the plurality of the other codes.
+        float const walls = counts[uint8_t(MapCode::Wall)];
         MapCode code = MapCode::Unknown;
-        for (uint32_t candidate = 1; candidate < MAP_CODES; ++candidate)
-            if (counts[candidate] > counts[uint8_t(code)]
-                || (counts[candidate] == counts[uint8_t(code)] && PRIORITY[candidate] > PRIORITY[uint8_t(code)]))
-                code = MapCode(candidate);
+        if (walls * 2.0f > float(perCell))
+            code = MapCode::Wall;
+        else
+            for (uint32_t candidate = 1; candidate < MAP_CODES; ++candidate)
+                if (candidate != uint32_t(MapCode::Wall) && (counts[candidate] > counts[uint8_t(code)]
+                    || (counts[candidate] == counts[uint8_t(code)] && PRIORITY[candidate] > PRIORITY[uint8_t(code)])))
+                    code = MapCode(candidate);
         uint8_t* bytes = out + std::size_t(index) * CROP_CHANNELS;
         bytes[CROP_CODE] = uint8_t(code);
+        bytes[CROP_WALLS] = uint8_t(std::clamp<int32_t>(int32_t(std::lround(walls * float(CROP_WALLS_MAX)
+            / float(perCell))), 0, int32_t(CROP_WALLS_MAX)));
         float const meanHeight = sum.Floors ? sum.Height / float(sum.Floors)
             : sum.CoarseFloors ? sum.CoarseHeight / float(sum.CoarseFloors) : 0.0f;
         bytes[CROP_HEIGHT] = sum.Floors || sum.CoarseFloors ? uint8_t(std::clamp(int32_t(CROP_HEIGHT_ZERO)

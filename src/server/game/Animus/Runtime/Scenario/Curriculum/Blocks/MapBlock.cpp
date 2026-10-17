@@ -40,7 +40,9 @@ namespace
 {
     constexpr char const* SCALAR_NAMES[Animus::Curriculum::MapBlock::OBS_COUNT] = { "known", "frontier", "visited",
         "kept", "searched", "new_age", "total", "frontier_sin", "frontier_cos", "frontier_dist", "region_sin",
-        "region_cos", "region_dist", "clusters", "searched_cells" };
+        "region_cos", "region_dist", "clusters", "searched_cells", "route_fine_sin", "route_fine_cos",
+        "route_fine_dist", "route_fine_valid", "route_coarse_sin", "route_coarse_cos", "route_coarse_dist",
+        "route_coarse_valid" };
 
     /// The analysis's sizes (MapBlock::ConfigureCoverage): the seek tuning's defaults until the scenario sets them.
     std::atomic<uint32> ClusterMinCells{ 2 };
@@ -112,6 +114,12 @@ void Animus::Curriculum::MapBlock::DescribeManifest(Layout const& layout, boost:
     map["frontier_channel"] = uint32(Vi::CROP_FRONTIER);
     map["searched_channel"] = uint32(Vi::CROP_SEARCHED);
     map["searched_max"] = Vi::SEARCHED_MAX;
+    // Revision 6: the walls channel, the crop's wall rule, and the route scalars' reaches.
+    map["walls_channel"] = uint32(Vi::CROP_WALLS);
+    map["walls_max"] = Vi::CROP_WALLS_MAX;
+    map["wall_min"] = Vi::CROP_WALL_MIN;
+    map["route_fine_reach_yards"] = double(float(Vi::PLAN_FINE_STEPS) * Vi::MAP_CELL);
+    map["route_coarse_reach_yards"] = double(float(Vi::PLAN_COARSE_STEPS) * float(Vi::COARSE_CELL));
     map["new_age_scale_s"] = double(Vi::GROUND_AGE_SCALE_S);
     // Revision 4: total and searched_cells are log1p(cells) / log1p(the max), clamped to 1 (MapBlock::LogShare).
     map["total_log_max"] = double(TOTAL_LOG_MAX);
@@ -181,9 +189,13 @@ void Animus::Curriculum::MapBlock::CoverageScalars(Coverage::Summary const& summ
 void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uint8* /*mask*/) const
 {
     std::fill(obs, obs + OBS_COUNT, 0.0f);
+    // The tiers the stage asks for (revision 5), fine first; the pose the crop before was taken at, before this
+    // decision's replaces it (the own-map route at it is the labels' C_map(last)).
+    uint32 const tiers = std::max<uint32>(1, view.L && view.L->Stage ? view.L->Stage->MapTiers : 1);
+    CropPose const last = view.Crop ? *view.Crop : CropPose();
     // No map until this decision's says otherwise: every cell unknown (the zero row).
     if (view.MapRow)
-        std::memset(view.MapRow, 0, Vi::CROP_BYTES);
+        std::memset(view.MapRow, 0, std::size_t(Vi::CROP_BYTES) * tiers);
     if (view.Crop)
         *view.Crop = CropPose();
     if (view.CoverageOut)
@@ -217,9 +229,17 @@ void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uin
         map->WriteEntities(*view.Seen);
     map->WriteBody(x, y, z, grounded);
 
-    thread_local std::vector<uint8> scratch(Vi::CROP_BYTES);
+    thread_local std::vector<uint8> scratch(2 * Vi::CROP_BYTES);
     uint8* crop = view.MapRow ? view.MapRow : scratch.data();
     map->Crop(x, y, z, view.Facing, crop);
+    // The coarse tier behind the fine crop: the same pose, 8-yd cells (MentalMap::CropWide).
+    uint8 const* coarse = nullptr;
+    if (tiers >= 2)
+    {
+        uint8* row = crop + Vi::CROP_BYTES;
+        map->Crop(x, y, z, view.Facing, row, float(Vi::COARSE_CELL));
+        coarse = row;
+    }
     Scalars(crop, view.MapKept, obs);
     obs[OBS_NEW_AGE] = std::min(1.0f, float(map->SecondsSinceGround()) / Vi::GROUND_AGE_SCALE_S);
     obs[OBS_TOTAL] = LogShare(float(map->GroundTotal()), TOTAL_LOG_MAX);
@@ -233,8 +253,52 @@ void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uin
     obs[OBS_SEARCHED_CELLS] = LogShare(float(map->SearchedCells()), SEARCHED_LOG_MAX);
     // Where this crop was taken from and how many of its blocks a cell goal can name (free choice goals): the ACT that
     // answers this observation is decoded against exactly this pose (StageScenario::ApplyGoals).
+    CropPose pose{ true, x, y, z, view.Facing, CellGrid::Count(crop) };
+    // The route on the seat's own map to the objective the compass shows (revision 6): planned once here, its
+    // waypoints the policy's and its values the labels' (CropPose::Route*). A withheld compass is no objective.
+    if (view.HasObjective && !view.CompassWithheld)
+    {
+        // The objective and the crop before's pose in the body frame: forward along the facing, right along
+        // (sin yaw, -cos yaw) -- what the compass says.
+        float const cosYaw = std::cos(view.Facing);
+        float const sinYaw = std::sin(view.Facing);
+        float const dx = view.Objective.GetPositionX() - x;
+        float const dy = view.Objective.GetPositionY() - y;
+        float const goalForward = dx * cosYaw + dy * sinYaw;
+        float const goalRight = dx * sinYaw - dy * cosYaw;
+        Vi::PlanPoint near[1];
+        uint32 points = 0;
+        if (last.Valid)
+        {
+            float const lx = last.X - x;
+            float const ly = last.Y - y;
+            near[0] = Vi::PlanPoint{ lx * cosYaw + ly * sinYaw, lx * sinYaw - ly * cosYaw };
+            points = 1;
+        }
+        thread_local Vi::MapPlan plan;
+        Vi::PlanOnMap(*map, x, y, z, view.Facing, goalForward, goalRight, coarse, plan, near, points);
+        pose.RouteValid = true;
+        pose.RouteBody = Vi::PlanValueAt(plan, 0.0f, 0.0f);
+        if (last.Valid)
+        {
+            pose.RouteLastValid = true;
+            pose.LastX = last.X;
+            pose.LastY = last.Y;
+            pose.RouteLast = Vi::PlanValueAt(plan, near[0].Forward, near[0].Right);
+        }
+        Vi::PlanWaypoint const fine = Vi::FineWaypoint(plan);
+        Vi::PlanWaypoint const far = Vi::CoarseWaypoint(plan);
+        obs[OBS_ROUTE_FINE_SIN] = fine.Sin;
+        obs[OBS_ROUTE_FINE_COS] = fine.Cos;
+        obs[OBS_ROUTE_FINE_DIST] = fine.Dist;
+        obs[OBS_ROUTE_FINE_VALID] = fine.Valid;
+        obs[OBS_ROUTE_COARSE_SIN] = far.Sin;
+        obs[OBS_ROUTE_COARSE_COS] = far.Cos;
+        obs[OBS_ROUTE_COARSE_DIST] = far.Dist;
+        obs[OBS_ROUTE_COARSE_VALID] = far.Valid;
+    }
     if (view.Crop)
-        *view.Crop = CropPose{ true, x, y, z, view.Facing, CellGrid::Count(crop) };
+        *view.Crop = pose;
     Vi::Cost::AddMap(uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()
         - start).count()), map->Tiles());
 }

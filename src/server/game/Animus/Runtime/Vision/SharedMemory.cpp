@@ -143,7 +143,7 @@ void Animus::Vision::SharedMemory::Anchor(MentalMap& map, double now)
 }
 
 void Animus::Vision::SharedMemory::MergeTile(Store& store, int64_t key, MapTile const& from, int32_t shift,
-    bool clears)
+    WallClears clears)
 {
     Entry& entry = store[key];
     auto merged = entry.Tile ? std::make_shared<MapTile>(*entry.Tile) : std::make_shared<MapTile>();
@@ -189,13 +189,14 @@ void Animus::Vision::SharedMemory::Absorb(MentalMap const& map, double now)
     for (auto const& [key, slot] : map._tiles)
         if (slot.Own)
         {
-            MergeTile(_fine, key, *slot.Own, shift, map._adopted);
+            // An adopted map's missing wall is one it cleared; a blank map's, one it saw past (MAP_FREE) or never saw.
+            MergeTile(_fine, key, *slot.Own, shift, map._adopted ? WallClears::Lacking : WallClears::SeenFree);
             merged = true;
         }
     for (auto const& [key, slot] : map._far)
         if (slot.Own)
         {
-            MergeTile(_far, key, *slot.Own, shift, false);
+            MergeTile(_far, key, *slot.Own, shift, WallClears::Never);
             merged = true;
         }
     if (!merged)

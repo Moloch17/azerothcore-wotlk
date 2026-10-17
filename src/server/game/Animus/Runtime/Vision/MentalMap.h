@@ -71,9 +71,13 @@
 /// minutes old reads as 20 minutes old; the shared memory merges the tiles a map wrote back into itself (MergeCell).
 ///
 /// **Reads** (Crop): the MapBlock's one egocentric, heading-up crop (the Change, 2026-10-06): CROP x CROP cells of
-/// CROP_CELL yards round the body, each summarising its four 1-yd cells, seven bytes a cell (CropChannel); and, for
+/// CROP_CELL yards round the body, each summarising its four 1-yd cells, eight bytes a cell (CropChannel); and, for
 /// the nav stages (map block revision 5, CONTRACT.md sec 3.2), the same crop at COARSE_CELL yards a cell -- 384 yd
-/// across, each cell summarising its 64 1-yd cells -- the planner's far tier.
+/// across, each cell summarising its 64 1-yd cells -- the planner's far tier. A crop cell reads WALL only when most of
+/// its 1-yd cells are walls (CROP_WALL_MIN of the four; more than half of the 64): with any wall sub-cell a wall (map
+/// block revisions 1-5) a 4-yd corridor's two wall-footed cells sealed it at 2 yd, and the route planned over the
+/// shared memory's crop read 2-3 x the true route (memv4, 2026-10-17). The wall count itself is the CROP_WALLS channel
+/// (revision 6). The route itself is planned on the 1-yd cells (MapPlanner.h).
 namespace Animus::Vision
 {
     /// Cells a tile side, and a cell's size in yards.
@@ -163,6 +167,8 @@ namespace Animus::Vision
         return int16_t(std::clamp(q, float(INT16_MIN + 1), float(INT16_MAX)));
     }
     [[nodiscard]] inline float FloorHeight(int16_t q) { return float(q) * FLOOR_STEP; }
+    /// The 1-yd cell coordinate holding world coordinate `v`.
+    [[nodiscard]] inline int32_t MapCellOf(float v) { return int32_t(std::floor(v / MAP_CELL)); }
 
     /// The oldest sighting the crop's class channel (CROP_CLASS) still shows, seconds: a unit seen here this long ago
     /// is not here for the policy's purposes (a patrol's loop is under a minute; the next bucket, 4 min, is "it was
@@ -270,19 +276,26 @@ namespace Animus::Vision
     /// 0 the furthest left -- the body at its centre; CROP_CHANNELS bytes a cell, [row][col][channel].
     constexpr uint32_t CROP = 48;
     constexpr float CROP_CELL = 2.0f;
-    constexpr uint32_t CROP_CHANNELS = 7;
+    constexpr uint32_t CROP_CHANNELS = 8;
     constexpr uint32_t CROP_BYTES = CROP * CROP * CROP_CHANNELS;
 
     enum CropChannel : uint32_t
     {
-        CROP_CODE = 0,          // MapCode, the four cells' by priority (wall > door > hazard > floor > unknown)
+        CROP_CODE = 0,          // MapCode: wall when CROP_WALL_MIN of the four cells are, else the rest by priority
+                                // (door > hazard > floor > unknown)
         CROP_HEIGHT,            // the floor layer nearest the feet: 0 none, else 128 + (z - feet) / CROP_HEIGHT_STEP
         CROP_VISITED,           // 1 any of the four was stood on
         CROP_AGE,               // the newest look: CROP_AGE_NEVER never, else round(CROP_AGE_SCALE x log2(1 + s))
         CROP_CLASS,             // the most recent entity's class (Class) seen under ENTITY_RECENT_SECONDS ago, 0 none
         CROP_FRONTIER,          // 1 any of the four is known floor beside a cell never seen
         CROP_SEARCHED,          // 0..SEARCHED_MAX how many of the four were looked at THIS episode (Seen >= epoch)
+        CROP_WALLS,             // 0..CROP_WALLS_MAX how many of the four are walls (the coarse crop's 64 scaled)
     };
+
+    /// A fine crop cell is a wall when at least this many of its four 1-yd cells are (map block revision 6).
+    constexpr uint32_t CROP_WALL_MIN = 3;
+    /// The most CROP_WALLS reads: the four 1-yd cells of a fine crop cell; a coarse cell's 64 are scaled to it.
+    constexpr uint32_t CROP_WALLS_MAX = 4;
 
     /// The most CROP_SEARCHED reads (a crop cell is four 1-yd cells).
     constexpr uint32_t SEARCHED_MAX = 4;
@@ -308,7 +321,7 @@ namespace Animus::Vision
     constexpr uint8_t CROP_AGE_NEVER = 255;
     constexpr float CROP_AGE_SCALE = 20.0f;
     constexpr char const* CROP_CHANNEL_NAMES[CROP_CHANNELS] = { "code", "height", "visited", "age", "class",
-        "frontier", "searched" };
+        "frontier", "searched", "walls" };
 
     [[nodiscard]] uint8_t AgeByte(float seconds);
 
@@ -326,6 +339,7 @@ namespace Animus::Vision
         uint8_t Entity = 0;
         bool Frontier = false;
         uint8_t Searched = 0;   // of the four 1-yd cells, how many were looked at this episode
+        uint8_t Walls = 0;      // ... how many are walls (CROP_WALLS)
     };
     [[nodiscard]] CropCell DecodeCropCell(uint8_t const* bytes);
 
@@ -383,10 +397,15 @@ namespace Animus::Vision
         /// The cell at world (x, y), or null when its tile is not kept (a coarse cell is not one).
         [[nodiscard]] MapCell const* Find(float x, float y) const;
         [[nodiscard]] MapCell const* FindCell(int32_t cx, int32_t cy) const;
+        /// A window of `side` x `side` 1-yd cells from cell (x0, y0), row by row (y first), into `out`: each the kept
+        /// tile's cell, else the folded coarse cell standing in for it (a realm's; the far tier never), else a blank
+        /// cell. One copy of the tiles' rows rather than a tile lookup a sample (the crop's and the planner's read).
+        void Window(int32_t x0, int32_t y0, int32_t side, MapCell* out) const;
 
         /// The crop round (x, y) at the feet's height z, heading-up for yaw (WoW's, counter-clockwise from +x), into
-        /// `out` (CROP_BYTES). `cell` is a crop cell's side: CROP_CELL (each cell its four 1-yd cells by priority),
-        /// or wider (COARSE_CELL: each cell the majority code of its 1-yd cells, the mean floor height, any visited,
+        /// `out` (CROP_BYTES). `cell` is a crop cell's side: CROP_CELL (each cell a wall when CROP_WALL_MIN of its
+        /// four 1-yd cells are, else the others by priority), or wider (COARSE_CELL: each cell a wall when more than
+        /// half of its 1-yd cells are, else the plurality of the rest, the mean floor height, any visited,
         /// the newest look, any frontier, the cells looked at this episode over 16 scaled to SEARCHED_MAX, the most
         /// recent entity's class; the same bytes and the same frame -- the coarse and far tiers' 8-yd cells, each by
         /// its centre, filling what the 1-yd cells leave unknown, a cell with a floor only when that floor is within
@@ -453,8 +472,14 @@ namespace Animus::Vision
         /// its wall, if it has one, is cleared at the frame's end (SettleFrame).
         void NoteClear(int32_t cx, int32_t cy, MapCell const& cell, int32_t layer);
         /// The frame's end: the noted clears applied, except on or beside a cell with a wall written this frame; the
-        /// MAP_WALL_FRAME marks removed.
+        /// MAP_WALL_FRAME marks removed; the frame's hazard hits written where no floor stands above them.
         void SettleFrame(MapWriteStats* stats);
+        /// A water, magma or slime hit at height `z` on a 1-yd cell (far: a far cell): written at the frame's end
+        /// (SettleFrame) unless the cell's floor nearest the hit stands above it -- the shore's dry edge, which a WMO's
+        /// liquid plane runs on under (the caster takes the plane wherever a solid is not nearer: the Deadmines' and
+        /// Shadowfang's dry ground read 6-8 % hazard, memv4 2026-10-17). The frame's own floor hits count, whatever
+        /// their order among its rays.
+        void NoteHazard(int32_t cx, int32_t cy, float z, bool far);
         /// A hit beyond WRITE_REACH into the far tier: floor at its layer, a wall in the band of the far cell's floor
         /// (else the feet's), water or a hazard.
         void WriteFar(Class what, float x, float y, float z, float normalZ, float feetZ, float bodyHeight,
@@ -496,6 +521,15 @@ namespace Animus::Vision
             float Z;
         };
         std::vector<PendingClear> _frameClears;
+        /// The frame's hazard hits (NoteHazard): the cell, the hit's height, and whether the cell is a far one.
+        struct PendingHazard
+        {
+            int32_t X;
+            int32_t Y;
+            float Z;
+            bool Far;
+        };
+        std::vector<PendingHazard> _frameHazards;
     };
 
     /// A cell's code for a body whose feet are at `feetZ` (MapCode): the wall of the floor layer nearest the feet,
@@ -505,14 +539,22 @@ namespace Animus::Vision
     [[nodiscard]] bool NearestFloor(MapCell const& cell, float feetZ, float& z);
     /// Whether a cell was ever seen (any look at all: a hit, a pass in the band, the body).
     [[nodiscard]] inline bool Known(MapCell const& cell) { return cell.Seen != 0; }
+    /// How a merge treats a wall the newer source lacks on a layer both hold (MergeCell).
+    enum class WallClears : uint8_t
+    {
+        Never,      // the target's wall stays: the far tier's cells, which no observation clears
+        SeenFree,   // ... unless the source saw the cell free (MAP_FREE: a ray passed in the body's band): a map that
+                    // started blank (SharedMemory::Anchor) knew nothing of the memory's walls, but a pass is a look
+        Lacking,    // the wall goes: the source read the memory (MentalMap::Adopted), so a wall it lacks it cleared
+    };
+
     /// `from` folded into a shared memory's cell `into`: its floors as layers, its flags, the newer look and entity.
     /// Both cells' stamps on one clock. A wall moves with its floor layer (the source's layer 0 is not the target's
     /// layer 0 once the layers are merged); a wall with no floor known goes to a target with at most one layer, else
     /// is dropped (its height is unknown). Walls by recency: on a layer both hold, a newer `from` sets its wall --
-    /// and, when `clears` (its map read the memory: MentalMap::Adopted, so a wall it lacks is one it cleared), clears
-    /// one it lacks; an equal look adds, an older one leaves the target's be (and moves or evicts none of its layers);
-    /// a layer new to the target takes `from`'s wall.
-    void MergeCell(MapCell& into, MapCell const& from, bool clears);
+    /// and clears one it lacks as `clears` says (WallClears); an equal look adds, an older one leaves the target's be
+    /// (and moves or evicts none of its layers); a layer new to the target takes `from`'s wall.
+    void MergeCell(MapCell& into, MapCell const& from, WallClears clears);
 }
 
 #endif

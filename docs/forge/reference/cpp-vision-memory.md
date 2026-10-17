@@ -71,17 +71,18 @@ searched)` (zeros for a missing tile, `searched` 0 for another epoch's count) fo
 ### The crop (read) - byte-exact
 
 `Crop(x, y, z, yaw, out)` (:565) writes `CROP x CROP = 48 x 48` cells of 2 yd, heading-up: row 0 is the furthest ahead, column 0 the furthest left, the body at the centre. Cell `(row, col)` centre: `forward = (23.5 - row) * 2` yd, `right = (col + 0.5 - 24) * 2` yd (so row 0 is 47 yd ahead,
-col 0 is 47 yd left; the crop spans 96 yd). Each crop cell summarises four 1-yd map cells sampled at `+-0.5` yd round its centre, turned by yaw (forward = (cos, sin), right = (sin, -cos)). `CROP_BYTES = 48 * 48 * 7 = 16128` (was 6 channels, 13824, until decision 0026). Layout `[row][col][channel]`, 7 bytes a cell:
+col 0 is 47 yd left; the crop spans 96 yd). Each crop cell summarises four 1-yd map cells sampled at `+-0.5` yd round its centre, turned by yaw (forward = (cos, sin), right = (sin, -cos)). `CROP_BYTES = 48 * 48 * 8 = 18432` (7 channels, 16128, until map block revision 6; 6 channels, 13824, until decision 0026). Layout `[row][col][channel]`, 8 bytes a cell:
 
 | channel | byte | value |
 |---|---|---|
-| 0 CODE | `MapCode`: 0 unknown, 1 floor, 2 wall, 3 door, 4 hazard | the four cells' codes by priority wall > door > hazard > floor > unknown (`PRIORITY {0,1,4,3,2}`); a cell's code (`CodeOf`) is wall if the wall flag of the floor layer nearest the feet is set (either flag when no floor), else door, else hazard, else floor if any layer, else unknown |
+| 0 CODE | `MapCode`: 0 unknown, 1 floor, 2 wall, 3 door, 4 hazard | wall when at least `CROP_WALL_MIN` 3 of the four cells are walls; else the other cells' codes by priority door > hazard > floor > unknown (`PRIORITY {0,1,4,3,2}` over the non-wall samples). Until revision 6 any wall sub-cell made the cell a wall, which sealed a 4-yd corridor whose wall-footed cells straddle the crop's cells (memv4, 2026-10-17). A cell's code (`CodeOf`) is wall if the wall flag of the floor layer nearest the feet is set (either flag when no floor), else door, else hazard, else floor if any layer, else unknown |
 | 1 HEIGHT | 0 no floor, else `clamp(128 + round((floorZ - feetZ)/0.25), 1, 255)` | the floor layer nearest the feet among the four cells (nearest to `z`) |
 | 2 VISITED | 0/1 | any of the four VISITED |
 | 3 AGE | 255 never; else `min(254, round(20 * log2(1 + s)))` | the newest look among the four, s = `clock - (Seen - 1)` seconds |
 | 4 CLASS | 0 none, else class 1..23 | the most recent entity among the four (by `EntityAge`) |
 | 5 FRONTIER | 0/1 | any of the four cells is a floor with a 4-neighbour never seen (`Seen == 0`) |
 | 6 SEARCHED | 0..4 (`SEARCHED_MAX`) | how many of the four cells have `Seen >= _epoch`: looked at THIS episode (any `MarkSeen` / `WriteEntity`: a ray hit or crossed it, or the body stood on it) |
+| 7 WALLS | 0..4 (`CROP_WALLS_MAX`) | how many of the four cells are walls (`CodeOf` wall); revision 6. The coarse crop scales its 64 to the same range: `round(walls x 4 / 64)` |
 
 **Episode epoch and ground counters** (exploration v3, decision 0026). `MentalMap` holds `_epoch` (the first `Stamp()` of the episode; 1 after `Clear()`), `_groundTotal` and `_lastGroundClock`. `BeginEpisode()` (after `Advance` / `Clear`, `StageScenario::ObserveSeat`'s map reset) sets `_epoch = Stamp()` and zeroes the ground counters. The kept-map path advances by `max(MapAgeOffset, 1.0f)` first, because `Stamp()` is `floor(clock) + 1` (1 s resolution): an offset under a second would leave the last stamp of the episode before equal to the new epoch. Every look of an earlier episode then has `Seen < _epoch` strictly. The writers are unchanged; `Crop` compares the stored stamps with the epoch (one compare and add per sub-cell visited). The only counters are in `WriteBody`, via `NoteGround`: a cell the body first stands on (`MAP_VISITED` not yet set, in the interpolated cells of a fast step and the body's own cell) adds one to `GroundTotal()` and resets `SecondsSinceGround()`; exact in an evaluation, an under-count in the 50% kept-map training episodes (`MAP_VISITED` outlives the episode, as the `visited` channel does). Looks are not counted for the scalars on purpose: they accrue at 1,600+ cells an episode and never go quiet; first stands go quiet when the seat re-walks its own ground (the hub shuttle). Constants `GROUND_AGE_SCALE_S` 120 and `GROUND_TOTAL_SCALE` 3000 normalise the two map-block scalars.
 
@@ -97,13 +98,48 @@ fine tiles' cells by their centres and fills what they leave unknown from the fo
 that, far-tier floors at any height -- the sea under the Deadmines' cliffs, the hills over them, other bots' storeys from the
 shared memory -- were 47-74 % of a memory-on coarse crop, painted as floor outside the dungeon's shell. The shared memory
 still adopts far tiles (`SharedMemory::Adopt`): the band at read time covers the seat's own far sightings and adopted ones
-alike. The nav labels' own-map route (`MapPlanner.h`, protocol 33) plans over the two crops as written.
+alike. A coarse cell's code is a wall only when more than half of its 1-yd cells are (revision 6; a thin wall across an
+8-yd cell is a sixteenth of it), else the plurality of the other codes (unseen cells counted as unknown; a tie to the
+code the fine crop ranks higher).
+
+**The route on the map** (`MapPlanner.h`, map block revision 6, memv4 2026-10-17; `MapBlock::Observe`): when the compass
+shows an objective (not withheld), the map block plans the route to it on the map itself -- `PlanOnMap`: a 96 x 96
+window of 1-yd cells, axis-aligned and centred on the body (`MentalMap::Window`, the fine crop's extent), each cell
+priced by `CodeOf` for the feet (`PLAN_COSTS` unknown 1.5, floor and door 1, wall 100, hazard 5; a floor or door whose
+layer nearest the feet is more than `PLAN_HEIGHT_BAND` 3 yd off them priced as unknown), an 8-neighbour min-plus (a
+step's yards x the mean of the two cells' factors) settled exactly by Dijkstra; the goal's own cell at 0 when it lies in
+the window, and the coarse crop's plan (the learner's rule over the 8-yd bytes, as before) sampled bilinearly at the
+centres of the cells just past the window's border, each turned into the crop's frame, as the ring. The search stops
+once the cells round the body and the crop before's pose are settled (a steepest-descent walk from a settled cell only
+reaches settled cells). Planned over the 2-yd crop, the shared memory's route read 2-3 x the bake's and 12-18 %
+unreachable; on the 1-yd cells the same memory's ratio is 1.01 (memv4). Outputs: the map block's eight route scalars
+(`FineWaypoint`: the learner's `descend` from the body's cell, 10 steps of a yard; `CoarseWaypoint`: from the
+learner's anchor cell (23, 23) on the coarse plan, 2 steps of 8 yd; each sin = -right / d, cos = forward / d, dist = d /
+reach, valid), and the plan's value at the body and at the crop before's pose, carried on `CropPose::Route*` to the
+nav labels' `[2]` / `[3]` (cpp-encounters.md). Cost on a synthetic room map (tmp/mapfix/check, 2026-10-17): 320-340 us
+a plan with the goal ahead, 760 us with it 150 yd behind (most of the window settles before the body), 40-50 us with
+no coarse crop; the block's `map` cost row includes it. Planned once a decision a seat.
+
+**Hazards at the frame's end** (`NoteHazard`, `SettleFrame`; memory version 5): a ray's own hit on water, magma or
+slime (within `WRITE_REACH` a 1-yd cell, beyond it a far cell) is written after the frame's floors, and not at all
+when the cell's floor nearest the hit stands above it by more than `FLOOR_STEP` -- the mesh's guard for a hazard
+triangle applied to the direct hits too. The caster takes a WMO's liquid plane wherever a solid is not nearer
+(`VisionCaster.cpp` step 2 has no ground-below-the-plane test, unlike the terrain's at :557), so a ray through a gap in
+the collision, or along the shore's dry edge, hit the plane under dry floor: 6-8 % of the Deadmines' and Shadowfang's
+reachable floor read hazard in the version 4 memory (memv4). A hazard hit on a cell whose floor is not yet known is
+still written (the cell has no liquid level to judge by later).
 
 ### Invariants
 
 - Written only from camera rays and the body; never from the navmesh or the map data (an unseen cell is unknown whatever is there). Never written in an evaluation across resets (evaluations start empty).
 - `Seen` is a 16-bit second stamp; entity age is re-expressed against the newest look (`MarkSeen`, `Merge`), so it is approximate (bucket start).
 - Not thread safe; owned by one seat, used on its map thread.
+- Shared memory (`SharedMemory.h`, `MEMORY_VERSION` 5 since 2026-10-17; a version 4 file is not read): a blank
+  (anchored, not adopted) seat's merge clears a wall the memory holds on a layer both hold when the seat's look is
+  newer and its cell carries `MAP_FREE` (a ray passed it in the body's band: `WallClears::SeenFree`); an adopted seat
+  clears any wall it lacks on a newer look (`Lacking`); the far tier never clears (`Never`). An older look changes
+  nothing. `MAP_FREE` is any in-band pass, head height included -- looser than the map's own clear (`FREE_CLEAR_RISE`,
+  `FREE_CLEAR_SPAN`), and `MergeTile` strips `MAP_VISITED` before merging, so standing there is not evidence here.
 
 ### Tests
 

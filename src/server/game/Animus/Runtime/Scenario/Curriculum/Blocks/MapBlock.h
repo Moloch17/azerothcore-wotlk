@@ -21,6 +21,7 @@
 
 #include "Block.h"
 #include "Coverage.h"
+#include "MapPlanner.h"
 #include "MentalMap.h"
 #include <algorithm>
 #include <cmath>
@@ -32,15 +33,23 @@ namespace Animus::Curriculum
     /// vision block leaves its rays on the seat, Vision::FrameHits), from the entities the sensor listed (the
     /// entities block's list, Vision::SeenList: where each stood, as its class) and from the seat's own body, then
     /// read as one
-    /// egocentric, heading-up crop of Vision::CROP x CROP cells of Vision::CROP_CELL yards, seven bytes a cell
+    /// egocentric, heading-up crop of Vision::CROP x CROP cells of Vision::CROP_CELL yards, eight bytes a cell
     /// (Vision::CropChannel: the code, the floor's height over the feet, visited, the newest look's age, the most
-    /// recent entity's class, the frontier, how many of its four 1-yd cells were looked at this episode). After the
-    /// vision block (its frame is this decision's). No actions.
+    /// recent entity's class, the frontier, how many of its four 1-yd cells were looked at this episode, how many are
+    /// walls), and -- a stage with two map tiers (StageDefinition::MapTiers) -- the same crop at Vision::COARSE_CELL
+    /// yards behind it. After the vision block (its frame is this decision's). No actions.
     ///
     /// The crop travels as bytes beside the observation -- the seat's map row (SeatView::MapRow), the STEP's map
-    /// section (protocol 24), like the camera's image -- and the block's float columns are its seven scalars. Nothing
+    /// section (protocol 24), like the camera's image -- and the block's float columns are its scalars. Nothing
     /// in it comes from the navmesh or the map's data: an unseen cell is unknown, whatever is there. The frontier is
     /// worked out from the seat's own map, as a player reads a minimap's edge.
+    ///
+    /// **The route scalars** (revision 6, memv4 2026-10-17; Vision::MapPlanner): when the compass shows an objective
+    /// (SeatView::HasObjective, not withheld), the block plans the route to it on the seat's own map -- the 1-yd
+    /// cells round the body, the coarse crop as the ring beyond them -- and hands the policy the next waypoint of
+    /// each tier's plan (the learner's descend walk: Vision::FineWaypoint, CoarseWaypoint) as four scalars each. The
+    /// plan's value at the body and at the crop before's pose go with the crop's pose (CropPose::Route*) for the nav
+    /// labels (PointNavEncounter::WriteLabels), so the route is planned once a decision.
     ///
     /// The block also records where each crop was taken from (SeatView::Crop: the pose, and how many of its pooled
     /// blocks a cell goal can name, CellGrid::Count), which the scenario decodes the learner's cell choice against.
@@ -69,6 +78,19 @@ namespace Animus::Curriculum
             OBS_REGION_DIST,
             OBS_CLUSTERS,
             OBS_SEARCHED_CELLS,
+            /// **The route scalars** (revision 6): the fine plan's waypoint (a walk of Vision::PLAN_FINE_STEPS yards)
+            /// and the coarse plan's (Vision::PLAN_COARSE_STEPS coarse cells), each as sin and cos of its bearing off
+            /// the facing (the compass block's convention: sin positive to the left), its distance over the walk's
+            /// reach (past 1 on a diagonal), and valid 1 when the walk moved and an objective is shown; all four 0
+            /// otherwise.
+            OBS_ROUTE_FINE_SIN,
+            OBS_ROUTE_FINE_COS,
+            OBS_ROUTE_FINE_DIST,
+            OBS_ROUTE_FINE_VALID,
+            OBS_ROUTE_COARSE_SIN,
+            OBS_ROUTE_COARSE_COS,
+            OBS_ROUTE_COARSE_DIST,
+            OBS_ROUTE_COARSE_VALID,
             OBS_COUNT
         };
         static constexpr float CLUSTER_SCALE = 8.0f;
@@ -92,14 +114,19 @@ namespace Animus::Curriculum
         /// (vision movement curriculum, CONTRACT.md sec 3.2): the manifest's `tiers` lists each tier's cell, fine
         /// first (2 yd) then coarse (8 yd, Vision::COARSE_CELL, MentalMap::CropWide), `map_bytes` is the tiers'
         /// total, and the STEP's map section carries the tiers in that order. A stage with StageDefinition::MapTiers
-        /// 1 is byte-identical to revision 4.
-        [[nodiscard]] uint32 Revision() const override { return 5; }
+        /// 1 is byte-identical to revision 4. 6: the crop's eighth channel, walls (Vision::CROP_WALLS: CROP_BYTES
+        /// 18,432 a tier), a crop cell a wall only when most of its 1-yd cells are (Vision::CROP_WALL_MIN), and the
+        /// eight route scalars appended (route_fine_sin .. route_coarse_valid; memv4, 2026-10-17): a learner built
+        /// on revision 5's bytes refuses it.
+        [[nodiscard]] uint32 Revision() const override { return 6; }
         /// "map": { transport "bytes", height, width (Vision::CROP), cell (yards), tiers [{cell, bytes}...],
-        /// tier_bytes (one tier's), channels (7), channel_names, map_bytes (every tier's), codes, code_names,
-        /// code_channel, height_channel, height_step, height_zero, visited_channel, age_channel, age_scale, age_never, class_channel, classes (Vision::CLASS_LIMIT), frontier_channel,
-        /// searched_channel, searched_max, new_age_scale_s, total_log_max, epoch ("episode"), scalars, scalar_names,
-        /// coverage_cell_yards, coverage_reach_yards, cluster_scale, searched_cells_log_max, cluster_min_cells,
-        /// pocket_min_cells }
+        /// tier_bytes (one tier's), channels (8), channel_names, map_bytes (every tier's), codes, code_names,
+        /// code_channel, height_channel, height_step, height_zero, visited_channel, age_channel, age_scale, age_never,
+        /// class_channel, classes (Vision::CLASS_LIMIT), frontier_channel, searched_channel, searched_max,
+        /// walls_channel, walls_max, wall_min (Vision::CROP_WALL_MIN), new_age_scale_s, total_log_max, epoch
+        /// ("episode"), scalars, scalar_names, coverage_cell_yards, coverage_reach_yards, cluster_scale,
+        /// searched_cells_log_max, cluster_min_cells, pocket_min_cells, route_fine_reach_yards,
+        /// route_coarse_reach_yards }
         /// -- the block's columns are the scalars; the crop is the STEP's map section.
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;

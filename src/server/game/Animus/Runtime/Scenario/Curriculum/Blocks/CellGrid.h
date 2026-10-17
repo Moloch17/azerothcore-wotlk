@@ -39,6 +39,16 @@ namespace Animus::Curriculum
         float Z = 0.0f;
         float Yaw = 0.0f;
         uint32 Choosable = 0;
+        /// The route on the seat's own map at this pose (MapBlock::Observe, Vision::MapPlanner: the nav labels' C_map
+        /// scalars, PointNavEncounter::WriteLabels): planned when the compass showed an objective (RouteValid), its
+        /// value at the body (RouteBody), and at the pose of the crop before (LastX, LastY; RouteLastValid) on the
+        /// same plan (RouteLast) -- both on the map as it is now, so their difference is movement alone.
+        bool RouteValid = false;
+        float RouteBody = 0.0f;
+        bool RouteLastValid = false;
+        float LastX = 0.0f;
+        float LastY = 0.0f;
+        float RouteLast = 0.0f;
     };
 
     /// A place the sim holds for a cell goal: the world point latched when the cell was chosen.

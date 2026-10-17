@@ -817,8 +817,8 @@ void Animus::Curriculum::PointNavEncounter::WriteState(Env const& env, float* st
         : std::min(1.0f, nav.CStart / STATE_YARDS_SCALE);
 }
 
-void Animus::Curriculum::PointNavEncounter::WriteLabels(Env const& env, uint32 seatIndex, uint8 const* maps,
-    uint32 mapBytes, uint8* out)
+void Animus::Curriculum::PointNavEncounter::WriteLabels(Env const& env, uint32 seatIndex, uint8 const* /*maps*/,
+    uint32 /*mapBytes*/, uint8* out)
 {
     namespace Vi = Animus::Vision;
     std::memset(out, 0, LABEL_BYTES);
@@ -866,38 +866,28 @@ void Animus::Curriculum::PointNavEncounter::WriteLabels(Env const& env, uint32 s
     scalars[Vi::TRAV_LABEL_GOAL_FORWARD] = goalForward;
     scalars[Vi::TRAV_LABEL_GOAL_RIGHT] = goalRight;
 
-    // The route on the seat's own map (protocol 33): the learner's classical planner over the crops this observation
-    // handed the policy, at the body and at the body's last decision's position in this crop's frame -- both on the
-    // map as it is now, so their difference is movement alone. The first decision's last is the body's own; a last
-    // position more than LABEL_STEP_MAX off (a rise after a death, a teleport) or past the fine crop reads
+    // The route on the seat's own map (protocol 33): the plan the map block made this observation on the map's own
+    // 1-yd cells (MapBlock::Observe, Vision::PlanOnMap: the policy's route waypoints come from the same plan), at
+    // the body and at the body's last decision's position -- both on the map as it is now, so their difference is
+    // movement alone. The first decision's last is the body's own; a last position more than LABEL_STEP_MAX off (a
+    // rise after a death, a teleport), past the plan's window, or not the pose the block planned at reads
     // unreachable, which the learner pays nothing for.
     if (seatIndex >= GROUP_SEATS)
         return;
     SeatNav& seat = nav.Seats[seatIndex];
-    if (maps && pose.Valid && mapBytes >= Vi::CROP_BYTES)
+    if (pose.Valid && pose.RouteValid)
     {
-        uint8 const* fine = maps;
-        uint8 const* coarse = mapBytes >= 2 * Vi::CROP_BYTES ? maps + Vi::CROP_BYTES : nullptr;
-        Vi::PlanPoint near[2];
-        uint32 points = 1;
         bool lastNear = false;
-        if (seat.HasLabelPos)
+        if (seat.HasLabelPos && pose.RouteLastValid && pose.LastX == seat.LabelX && pose.LastY == seat.LabelY)
         {
             float const lx = seat.LabelX - x;
             float const ly = seat.LabelY - y;
-            if (lx * lx + ly * ly <= LABEL_STEP_MAX * LABEL_STEP_MAX)
-            {
-                near[1] = { lx * cosYaw + ly * sinYaw, lx * sinYaw - ly * cosYaw };
-                lastNear = true;
-                points = 2;
-            }
+            lastNear = lx * lx + ly * ly <= LABEL_STEP_MAX * LABEL_STEP_MAX;
         }
-        thread_local Vi::MapPlan plan;
-        Vi::PlanOnCrops(fine, coarse, goalForward, goalRight, plan, near, points);
-        float const atBody = Vi::PlanValueAt(plan, 0.0f, 0.0f);
+        float const atBody = pose.RouteBody;
         scalars[Vi::TRAV_LABEL_MAP_C_BODY] = atBody;
         scalars[Vi::TRAV_LABEL_MAP_C_LAST] = !seat.HasLabelPos ? atBody
-            : lastNear ? Vi::PlanValueAt(plan, near[1].Forward, near[1].Right) : Vi::TRAV_UNREACHABLE;
+            : lastNear ? pose.RouteLast : Vi::TRAV_UNREACHABLE;
         if (!seat.HasLabelPos)
             seat.MapRouteStart = atBody;
         seat.MapRouteLast = atBody;

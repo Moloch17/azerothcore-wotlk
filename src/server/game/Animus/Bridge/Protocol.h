@@ -234,6 +234,11 @@ namespace AnimusForge
     // seat's own map (MapPlanner over the crops the policy saw) at the body and at the body's last position, both on
     // the map as it is now, between the bake's C(body), C(start) and the goal's forward and right yards -- so
     // LabelBytes is 13,848 (was 13,840). The messages' layout is protocol 32's; a stage without labels is unchanged.
+    //     Under the same protocol, map block revision 6 (memv4, 2026-10-17): the crop has an eighth channel, walls
+    //     (CROP_BYTES 18,432 a tier, was 16,128; HELLO's map_bytes says so and the manifest's revision refuses a stale
+    //     learner), the map block has eight more scalars (route_fine_*, route_coarse_*: the own-map route's waypoints),
+    //     and the labels' [2] and [3] come from the route planned on the map's own 1-yd cells (MapPlanner::PlanOnMap),
+    //     no longer over the crops' bytes. No wire layout changes.
     constexpr uint32 PROTOCOL_VERSION = 33;
     constexpr uint32 SCENARIO_NAME_SIZE = 32;
     constexpr uint32 POLICY_NAME_SIZE = 32;

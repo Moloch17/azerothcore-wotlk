@@ -58,8 +58,9 @@ namespace Animus::Curriculum
     /// **Labels** (sec 3.1; WriteLabels): per seat, the bake's classes and the route cost-to-go in the fine and
     /// coarse crop frames of the seat's last observation (SeatState::Crop), then C(body), C(start), the route
     /// cost-to-go on the seat's own map at the body and at the body's last decision's position (protocol 33: the
-    /// learner's classical planner run over the crops the policy was handed, Vision::MapPlanner; both on the map as
-    /// it is now, so their difference is movement alone, never the map changing; the first decision's "last" is the
+    /// route the map block planned on the map's own 1-yd cells, Vision::MapPlanner, read off the crop's pose,
+    /// CropPose::Route*; both on the map as it is now, so their difference is movement alone, never the map changing;
+    /// the first decision's "last" is the
     /// body's own; a last position more than LABEL_STEP_MAX yards off -- a rise after a death, a teleport -- reads
     /// unreachable, which the learner pays nothing for) and the goal in the body frame. **LabelsOnly** (nav6, beside
     /// PartyFollowEncounter): nothing placed or paid; the goal is the leader's position as the server last had it,
@@ -95,10 +96,11 @@ namespace Animus::Curriculum
         /// than half of nav1's decisions -- shuffling on the point). A labels-only arena (nav6) never ends it.
         [[nodiscard]] bool IsTerminal(Env const& env) const override;
 
-        /// Seat `seat`'s LABEL_BYTES of labels for the observation just taken (its SeatState::Crop pose), into `out`;
-        /// `maps` that observation's map crops (`mapBytes` of them: the fine crop, then the coarse when the stage has
-        /// two tiers; null for none), the own-map route's input. Zeros, with every cost unreachable, for a seat with
-        /// no bake or no body. Once a decision a seat: it keeps the body's position for the next decision's label.
+        /// Seat `seat`'s LABEL_BYTES of labels for the observation just taken (its SeatState::Crop pose, which
+        /// carries the own-map route the map block planned), into `out`; `maps` that observation's map crops
+        /// (`mapBytes` of them), unread since map block revision 6. Zeros, with every cost unreachable, for a seat
+        /// with no bake or no body. Once a decision a seat: it keeps the body's position for the next decision's
+        /// label.
         void WriteLabels(Env const& env, uint32 seat, uint8 const* maps, uint32 mapBytes, uint8* out);
 
         /// A comma list of numbers ("1.0,1.2,1.6") parsed; empty on garbage.

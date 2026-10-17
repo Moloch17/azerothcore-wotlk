@@ -1096,12 +1096,15 @@ For the observation rows only, after the map section: fine costmap classes (48x4
 coarse costmap classes (48x48 u8, the majority of 16 bake cells), fine and coarse cost-to-go (48x48 f16 yards), then
 six f32 at byte 13824 (`TravBake.h` `TRAV_LABEL_*`): `[0] C_body`, `[1] C_start` (the bake's route), `[2] C_map_body`
 and `[3] C_map_last` (protocol 33, 2026-10-17: the route cost-to-go on the seat's OWN map at the body and at the
-previous decision's body position, both planned on the crops this observation handed the policy -- `Vision::MapPlanner`,
-the learner's classical planner mirrored: 8-neighbour min-plus, unknown 1.5 / floor and door 1 / wall 100 / hazard 5,
-a floor more than 3 yd off the feet priced as unknown, the coarse tier's value as the fine ring, settled exactly by
-Dijkstra; the first decision's `[3]` is `[2]`; a last position more than `LABEL_STEP_MAX` 12 yd off or past the fine
-crop reads 65504, unreachable), then `[4] goal_forward_yards`, `[5] goal_right_yards`. `AgentLabels` gets the map
-rows `Observe` wrote (`EnvPool::DescribeAgents`) for that. `LabelBytes = 0` in stages without PointNav. In nav6
+previous decision's body position, both on the map as it is now -- since map block revision 6 the plan the map block
+made this observation on the map's own 1-yd cells, `Vision::PlanOnMap` (cpp-vision-memory.md: unknown 1.5 / floor and
+door 1 / wall 100 / hazard 5, a floor more than 3 yd off the feet priced as unknown, the coarse crop's value as the
+window's ring, settled exactly by Dijkstra), read off `SeatState::Crop` (`CropPose::RouteBody`, `RouteLast` at
+`LastX/Y`, the pose of the crop before), so the policy's route scalars and the labels come from one plan; before
+revision 6 WriteLabels planned over the two crops' bytes itself. The first decision's `[3]` is `[2]`; a last position
+more than `LABEL_STEP_MAX` 12 yd off, past the window, or not the pose the block planned at reads 65504, unreachable),
+then `[4] goal_forward_yards`, `[5] goal_right_yards`. `AgentLabels` still hands WriteLabels the map rows
+(`EnvPool::DescribeAgents`), unread since revision 6. `LabelBytes = 0` in stages without PointNav. In nav6
 (labels-only) the point is the leader's believed position and the C-map is recomputed only when the leader's cell
 changes.
 
