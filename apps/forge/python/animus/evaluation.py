@@ -27,6 +27,7 @@ import numpy as np
 from . import protocol as p
 from .device import host
 from .episode_means import event_weights, per_event_count
+from .mappo.buffer import check_map_costs
 
 LEVEL_BANDS = ((1, 20), (21, 40), (41, 60), (61, 80))
 
@@ -965,6 +966,8 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
     else:
         map_weight = 1.0 if potential_source == "map" else 0.0
     true_weight = 1.0 - map_weight
+    if map_weight > 0.0:
+        check_map_costs(*p.c_map_of(step.labels))      # the first observation's: a wrong label layout refused here
     potential_column = info_names.index("reward_potential") if "reward_potential" in info_names else None
     info_dim = spec.episode_info_dim + (1 if paying and potential_column is None else 0)
     if paying and potential_column is None:

@@ -43,6 +43,18 @@ def compute_potential(c_body: np.ndarray, c_valid: np.ndarray, dones: np.ndarray
 POTENTIAL_SOURCES = ("true", "map", "blend")
 
 
+def check_map_costs(*costs: np.ndarray) -> None:
+    """Refuse map costs (c_map_of) that cannot be route costs: a route cost-to-go is never negative, while the goal's
+    forward and right yards in the body frame -- the label scalars beside them -- are negative about half the time, so
+    a learner whose LABEL_SCALAR_MAP_* offsets do not match the sim's layout would otherwise pay the goal's yards as
+    progress on a connect the protocol version let through. Raises ValueError; the first rollout trips it."""
+    for cost in costs:
+        if cost is not None and np.asarray(cost).size and (np.asarray(cost) < 0.0).any():
+            raise ValueError("potential.source map: a label's map route cost is negative, which no route cost is; "
+                             "protocol.LABEL_SCALAR_MAP_BODY / LABEL_SCALAR_MAP_PREV do not match the sim's label "
+                             "layout (TravBake.h TRAV_LABEL_SCALARS): the goal yards are being read as costs")
+
+
 def compute_potential_map(c_map_body: np.ndarray, c_map_prev: np.ndarray, dones: np.ndarray,
                           last_c_map_body: np.ndarray, last_c_map_prev: np.ndarray, yards_scale: float,
                           clip: float) -> np.ndarray:
@@ -416,6 +428,7 @@ class RolloutBuffer:
             # (Without the observation after the rollout nothing is paid, as the true term's rule above.)
             last_body = np.asarray(last_c_map[0], dtype=np.float32)
             last_prev = np.asarray(last_c_map[1], dtype=np.float32)
+            check_map_costs(self.c_map_body, self.c_map_prev, last_body, last_prev)
             map_term = compute_potential_map(self.c_map_body, self.c_map_prev, self.dones, last_body, last_prev,
                                              potential[0], potential[1])
             if potential_source == "map":
