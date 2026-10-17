@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import math
 import time
+import zlib
 from dataclasses import dataclass, field, replace
 from typing import Callable
 
@@ -709,8 +710,20 @@ TRACE_FIELDS = (
     ("searched", np.float32),
     # The heading the decision chose (protocol 32, HeadingHead): radians relative to the body's facing, NaN for a
     # policy or a layout without one.
-    ("heading", np.float32))
+    ("heading", np.float32),
+    # What the seat was told about its trip and its body, raw from the observation (the 0M arm collapse of
+    # 2026-10-17: seats that stood turning from their first decision with the pose, the frame and the map the same as
+    # a seat that walked -- these are the columns that tell the two apart): the compass (objective present, its
+    # bearing and its distance over OBJECTIVE_SCALE), the goal block's offer (the travel_to kind and the assignment
+    # target, 0/1) and the move block's airborne, in_water and can_jump bits. NaN / -1 where the layout lacks them.
+    ("objective", np.float32), ("objective_sin", np.float32), ("objective_cos", np.float32),
+    ("objective_dist", np.float32), ("travel_to_offered", np.int8), ("assignment_offered", np.int8),
+    ("airborne", np.int8), ("in_water", np.int8), ("can_jump", np.int8))
 TRACE_FIELD_NAMES = tuple(name for name, _ in TRACE_FIELDS)
+#: The trace fields read straight off an observation column (TRACE_COLUMNS), as they are.
+TRACE_RAW_FIELDS = ("against_wall", "moving", "speed", "held_forward", "held_strafe", "searched",
+                    "objective", "objective_sin", "objective_cos", "objective_dist", "travel_to_offered",
+                    "assignment_offered", "airborne", "in_water", "can_jump")
 #: Where each trace field that reads an observation column finds it: (block, column name or scalar index).
 TRACE_COLUMNS = {
     "cam_sin": ("vision", 0), "cam_cos": ("vision", 1), "cam_pitch": ("vision", 2),
@@ -718,7 +731,11 @@ TRACE_COLUMNS = {
     "held_forward": ("move", "held_forward"), "held_strafe": ("move", "held_strafe"),
     "goal_present": ("goal", "goal_held_present"), "goal_sin": ("goal", "goal_held_sin"),
     "goal_cos": ("goal", "goal_held_cos"), "goal_dist": ("goal", "goal_held_dist"),
-    "searched": ("map", "searched_cells")}
+    "searched": ("map", "searched_cells"),
+    "objective": ("compass", "objective"), "objective_sin": ("compass", "objective_bearing_sin"),
+    "objective_cos": ("compass", "objective_bearing_cos"), "objective_dist": ("compass", "objective_distance"),
+    "travel_to_offered": ("goal", "goal_kind_travel_to"), "assignment_offered": ("goal", "goal_target_assignment"),
+    "airborne": ("move", "airborne"), "in_water": ("move", "in_water"), "can_jump": ("move", "can_jump")}
 #: The held goal's distance is carried as yards / this (GoalBlock goal_held_dist).
 GOAL_HELD_DIST_SCALE = 500.0
 #: The sample columns of the protocol-20 kinematics (human.motion: t x y z yaw pitch ...).
@@ -751,7 +768,12 @@ class TraceCollector:
     """The per-decision trace of an evaluation's scored seats (eval.trace_all): record() every decision before the
     actions go, reward() right after the step, and finish() for each env whose episode just ended. A seat's rows are
     kept as one [T, len(TRACE_FIELDS)] float32 block per seed and agent (EvalResult.trace_blocks), counted only for the
-    seeds the evaluation scores. One vectorised pass over the pool per decision (a few numpy gathers)."""
+    seeds the evaluation scores. One vectorised pass over the pool per decision (a few numpy gathers).
+
+    Beside the rows, each scored seat's first decision whole: its observation row, its action mask and a checksum of
+    its camera row (the image and the map crop), as the STEP carried them (a block's fifth element, write_trace's
+    first_obs / first_mask / first_image_crc). Two seats on the same seed, one that walked and one that stood, differ
+    somewhere in there; the per-decision fields alone could not say where (the 0M arm collapse of 2026-10-17)."""
 
     #: Decisions kept before the oldest that no env still needs are dropped.
     TRIM = 256
@@ -763,7 +785,27 @@ class TraceCollector:
         self.pending: list[np.ndarray] = []      # per decision, [E, A, F]
         self.base = 0                            # the decision index pending[0] is
         self.start = np.zeros(self.envs, dtype=np.int64)   # per env, the decision its current episode began at
-        self.blocks: list[tuple[int, int, int, np.ndarray]] = []
+        self.blocks: list[tuple[int, int, int, np.ndarray, dict | None]] = []
+        # Per env, its current episode's first decision as the STEP carried it: obs [A, O] float32, mask [A, N] bool
+        # and the camera row's CRC-32 [A] (0 without a camera). Taken by the first record() of the episode.
+        self.first: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+
+    def _keep_first(self, step, obs: np.ndarray) -> None:
+        """The first decision of every env whose episode begins at this one: its rows, whole."""
+        now = self.base + len(self.pending)
+        starting = np.flatnonzero(self.start == now)
+        if starting.size == 0:
+            return
+        mask = np.asarray(host(step.mask)).astype(bool)
+        image = getattr(step, "image", None)
+        pixels = np.asarray(host(image)) if image is not None and self.image_bytes else None
+        for env in starting:
+            crc = np.zeros(self.agents, dtype=np.uint32)
+            if pixels is not None:
+                for agent in range(self.agents):
+                    crc[agent] = zlib.crc32(np.ascontiguousarray(pixels[env, agent]).tobytes()) & 0xFFFFFFFF
+            self.first[int(env)] = (np.array(obs[env], dtype=np.float32, copy=True),
+                                    np.array(mask[env], dtype=bool, copy=True), crc)
 
     def _read(self, obs: np.ndarray, layout: np.ndarray, name: str) -> np.ndarray:
         """Observation column `name` of every row [E, A] (NaN where the row's layout lacks it)."""
@@ -776,6 +818,7 @@ class TraceCollector:
         ACT's continuous section, where the policy steers by one)."""
         layout = np.asarray(host(step.layout)).astype(np.int64)
         obs = np.asarray(host(step.obs))
+        self._keep_first(step, obs)
         block = np.full((self.envs, self.agents, len(TRACE_FIELDS)), np.nan, dtype=np.float32)
         at = {name: index for index, name in enumerate(TRACE_FIELD_NAMES)}
         block[..., at["layout"]] = layout
@@ -793,7 +836,7 @@ class TraceCollector:
         sin, cos = self._read(obs, layout, "cam_sin"), self._read(obs, layout, "cam_cos")
         block[..., at["cam_yaw"]] = np.arctan2(sin, cos)
         block[..., at["cam_pitch"]] = self._read(obs, layout, "cam_pitch") * (np.pi / 2.0)
-        for name in ("against_wall", "moving", "speed", "held_forward", "held_strafe", "searched"):
+        for name in TRACE_RAW_FIELDS:
             block[..., at[name]] = self._read(obs, layout, name)
         image = getattr(step, "image", None)
         if image is not None and self.image_bytes:
@@ -822,11 +865,15 @@ class TraceCollector:
         and start its next episode at the next decision."""
         if counted:
             rows = np.stack(self.pending[self.start[env] - self.base:], axis=0)[:, env]     # [T, A, F]
+            kept = self.first.get(int(env))
             for agent in range(self.agents):
                 if present[agent] and len(rows):
                     first = rows[0, agent, 0]
+                    whole = (None if kept is None else
+                             {"obs": kept[0][agent], "mask": kept[1][agent], "image_crc": int(kept[2][agent])})
                     self.blocks.append((int(seed), agent, int(first) if np.isfinite(first) else -1,
-                                        rows[:, agent].copy()))
+                                        rows[:, agent].copy(), whole))
+        self.first.pop(int(env), None)
         self.start[env] = self.base + len(self.pending)
         low = int(self.start.min())
         if low - self.base >= self.TRIM:
@@ -838,10 +885,14 @@ def write_trace(path, blocks: list, names: dict[str, list[str]], layouts: list[s
     """eval_trace_<env_steps>_<policy>.npz: one row per decision of a seat, flat over the seats in `blocks` order.
     Arrays: the TRACE_FIELDS (layout i2, action i2 -- the index into the layout's action names, `meta.action_names`
     --, goal i2, reward f4, x y z yaw f4, cam_yaw cam_pitch f4, flag_pixels i2, against_wall moving i1, speed f4,
-    held_forward held_strafe i1, goal_x goal_y f4, searched f4, heading f4 -- radians, NaN without one), then `seed`
-    i4, `agent` i1 and `decision` i4 (the index in the episode) per row, `starts` i8 [S + 1] (seat i is rows
-    starts[i]:starts[i + 1]) and `meta` (JSON text: the policy, steps, the layouts' names and each layout's action
-    names). Written beside and renamed over."""
+    held_forward held_strafe i1, goal_x goal_y f4, searched f4, heading f4 -- radians, NaN without one, objective
+    objective_sin objective_cos objective_dist f4, travel_to_offered assignment_offered airborne in_water can_jump
+    i1 -- -1 where the layout lacks the column), then `seed` i4, `agent` i1 and `decision` i4 (the index in the
+    episode) per row, `starts` i8 [S + 1] (seat i is rows starts[i]:starts[i + 1]) and `meta` (JSON text: the
+    policy, steps, the layouts' names and each layout's action names). Per seat, its first decision whole (a block
+    with one): `first_obs` f4 [S, O] (the observation row, NaN-padded to the widest), `first_mask` bool [S, N] and
+    `first_image_crc` u4 [S] (CRC-32 of the camera row, image and map crop; 0 without one); `meta.first` says how many
+    seats carry one. Written beside and renamed over."""
     from pathlib import Path
     path = Path(path)
     partial = path.with_name(path.name + ".partial.npz")
@@ -858,9 +909,26 @@ def write_trace(path, blocks: list, names: dict[str, list[str]], layouts: list[s
     arrays["agent"] = np.repeat([block[1] for block in blocks], lengths).astype(np.int8)
     arrays["decision"] = (np.concatenate([np.arange(n) for n in lengths]) if len(lengths) else np.zeros(0)).astype(
         np.int32)
+    # The first decisions, whole: a block without one (an older collector's, or an episode whose start was not
+    # seen) is a NaN row, an all-false mask and a 0 checksum.
+    wholes = [block[4] if len(block) > 4 else None for block in blocks]
+    obs_width = max((len(whole["obs"]) for whole in wholes if whole is not None), default=0)
+    mask_width = max((len(whole["mask"]) for whole in wholes if whole is not None), default=0)
+    first_obs = np.full((len(blocks), obs_width), np.nan, dtype=np.float32)
+    first_mask = np.zeros((len(blocks), mask_width), dtype=bool)
+    first_crc = np.zeros(len(blocks), dtype=np.uint32)
+    for index, whole in enumerate(wholes):
+        if whole is None:
+            continue
+        first_obs[index, :len(whole["obs"])] = whole["obs"]
+        first_mask[index, :len(whole["mask"])] = whole["mask"]
+        first_crc[index] = whole["image_crc"]
+    arrays.update(first_obs=first_obs, first_mask=first_mask, first_image_crc=first_crc)
     np.savez_compressed(partial, starts=np.concatenate([[0], np.cumsum(lengths)]).astype(np.int64),
                         meta=np.asarray(json.dumps({**meta, "layouts": layouts, "action_names": names,
-                                                    "fields": list(arrays), "seats": len(blocks)})), **arrays)
+                                                    "fields": list(arrays), "seats": len(blocks),
+                                                    "first": int(sum(whole is not None for whole in wholes))})),
+                        **arrays)
     partial.replace(path)
 
 
