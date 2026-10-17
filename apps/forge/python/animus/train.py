@@ -41,8 +41,9 @@ from .partners import PARTNERS_DIR, Partners, partner_snapshot, with_partners_ch
 from .config import TrainConfig
 from .distill import Distiller, auto_teachers, build_teacher
 from .env import ClusterEnv, ForgeEnv
-from .evaluation import (ABLATIONS, ConvergenceTracker, EvalResult, ablation_chooser, action_mask_table,
-                         casting_weights, format_summary, run_evaluation, trace_columns, write_trace)
+from .evaluation import (ABLATIONS, SHARED_MEMORY_ARM, SHARED_MEMORY_COLUMN, ConvergenceTracker, EvalResult,
+                         ablation_chooser, action_mask_table, casting_weights, format_summary, run_evaluation,
+                         trace_columns, write_trace)
 from .mappo.buffer import RolloutBuffer
 from .mappo.trainer import (LOOK_COMMANDS, VISION_CHUNK_AUTO, VISION_CHUNK_FALLBACK, MappoTrainer, horizon_seconds,
                             per_decision, schedule)
@@ -794,7 +795,8 @@ class TrainingRun:
             if spec.label_bytes:
                 print(f"Labels: {spec.label_bytes} bytes an agent a decision (protocol 31: the traversability classes "
                       f"and route cost-to-go of both tiers); the potential term is "
-                      f"{'on' if config.potential.enabled else 'off'}, the aux losses at costmap "
+                      f"{'on, on the ' + config.potential.source + ' route' if config.potential.enabled else 'off'}, "
+                      f"the aux losses at costmap "
                       f"{config.aux.costmap_coef:g} / planner {config.aux.planner_coef:g} on {config.aux.rows} rows "
                       f"a minibatch", flush=True)
         if inputs.heading is not None:
@@ -986,8 +988,9 @@ class TrainingRun:
         if spec.label_bytes:
             # The nav stages (vision movement curriculum): the potential term paid per decision and the costmap and
             # planner aux pass's losses and quality (MappoTrainer.AUX_STATS).
-            columns += ["reward_potential", *MappoTrainer.AUX_STATS, *MappoTrainer.AUX_DIR_STATS,
-                        *MappoTrainer.AUX_CLASS_STATS, *MappoTrainer.AUX_KNOWN_CLASS_STATS]
+            columns += ["reward_potential", "reward_potential_map", *MappoTrainer.AUX_STATS,
+                        *MappoTrainer.AUX_DIR_STATS, *MappoTrainer.AUX_CLASS_STATS,
+                        *MappoTrainer.AUX_KNOWN_CLASS_STATS]
         self.logger = RunLogger(self.run_dir, columns, append=self.resume_path is not None) if leader else Silent()
         # eval.report's columns, then the stage's headline measures (status.headline) that it does not list, so forge
         # status always has what the stage is read by.
@@ -1673,7 +1676,7 @@ class TrainingRun:
         "no_memory" (its recurrent state reset every decision), "random_goal" (its goals drawn uniformly over
         those on offer), "random_cell" (its cells drawn uniformly over the choosable blocks), "no_plan" (nothing held
         beside its primary goal or queued), "no_searched" and "no_coverage" (the searched-state and the coverage inputs
-        zeroed), all evaluation.ablation_chooser -- and
+        zeroed), all evaluation.ablation_chooser, "no_shared_memory" (the sim's seats started blank: a MODE flag) -- and
         reported apart as policy <arm> in eval.csv and eval.jsonl, with the gap to the plain one. A reading only:
         neither the tracker, the controller nor the partners' pool sees it."""
         config = self.config
@@ -1698,6 +1701,14 @@ class TrainingRun:
                 # The learner's own input edited (flag, image, compass, map, goal block) or its memory reset: the same
                 # seeds, the sim untouched, so the plain evaluation's episode columns read the arm's own result.
                 choose = ablation_chooser(choose, arm, self.spec, self.stage)
+            elif arm == SHARED_MEMORY_ARM:
+                # The sim told to start every seat blank (MODE_FLAG_NO_SHARED_MEMORY): the same seeds and draws, no
+                # adoption, so the plain evaluation's memory-on episodes compare with the same trips played blank.
+                if SHARED_MEMORY_COLUMN not in self.episode_categories:
+                    print(f"Arm {arm}: the stage has no shared memory (no {SHARED_MEMORY_COLUMN} column); skipped",
+                          flush=True)
+                    continue
+                options["no_shared_memory"] = True
             # random_goal, random_cell, no_plan: the goal head's draws are edited for the length of the arm
             # (MappoTrainer.uniform_goals, uniform_cells, single_goal).
             if arm in ("random_cell", "no_plan") and not (
@@ -1725,6 +1736,13 @@ class TrainingRun:
             if self.cast is not None or self.partners is not None:
                 self._reset_far_side()
             if not self.ranks.leader:
+                continue
+            adopted = result.column(SHARED_MEMORY_COLUMN) if arm == SHARED_MEMORY_ARM else None
+            if adopted is not None and len(adopted) and float(adopted.max()) > 0.0:
+                # A sim without the flag adopts as the seed says (unknown MODE bits are ignored): the arm's rows are
+                # the plain evaluation's again, not a reading, and are dropped.
+                print(f"Arm {arm}: the sim still started {float(adopted.mean()):.0%} of the episodes from the shared "
+                      f"memory (it ignores MODE_FLAG_NO_SHARED_MEMORY); the arm's rows are not recorded", flush=True)
                 continue
             result.policy = arm
             self.save_routes(result, f"eval_motion_{self.env_steps}_{arm}.npz")
@@ -1998,10 +2016,9 @@ class TrainingRun:
                       if trainer.slow_goal_size else None,
                       obs_targets=trainer.foresight_obs_columns(),
                       # The potential term (config.potential), where the stage sends labels: phi of the observation
-                      # after the rollout's last step is the next STEP's C(body).
-                      potential=self.potential_terms(),
-                      last_c_body=protocol.c_body_of(self.step.labels)
-                      if self.spec.label_bytes and getattr(self.step, "labels", None) is not None else None)
+                      # after the rollout's last step is the next STEP's C(body) (and its map costs, under
+                      # potential.source "map" / "blend").
+                      **self.potential_finish_kwargs(self.config, self.spec, getattr(self.step, "labels", None)))
         # Read before the buffers swap below: log_update runs on the rollout that has just been collected.
         self.rollout_reward = buffer.mean_reward()
         self.rollout_allowed_actions, self.layout_allowed = self.allowed_actions(buffer)
@@ -2088,12 +2105,33 @@ class TrainingRun:
             return None
         return float(potential.yards_scale), float(potential.clip), float(potential.discount)
 
-    def eval_potential(self) -> tuple[float, float, float] | None:
-        """run_evaluation's `potential`: (the difference's discount, yards_scale, clip), so an evaluation's episodes
-        carry the learner's reward_potential column (evaluation.run_evaluation); None without labels or with the term
-        off."""
+    @staticmethod
+    def potential_finish_kwargs(config: TrainConfig, spec, labels) -> dict:
+        """RolloutBuffer.finish's potential keywords (`potential`, `last_c_body`, `potential_source`, `potential_blend`,
+        `last_c_map`) for a rollout whose observation after the last step carries `labels` [E, A, L] (None without):
+        potential_terms' (yards_scale, clip, discount) and, under config.potential's source, the last C(body) and
+        the last map costs (protocol.c_body_of, c_map_of); `potential` None where the stage sends no labels or the
+        term is off (finish pays nothing)."""
+        potential = config.potential
+        if not potential.enabled or not spec.label_bytes:
+            return {"potential": None}
+        out: dict = {"potential": (float(potential.yards_scale), float(potential.clip), float(potential.discount)),
+                     "potential_source": potential.source, "potential_blend": float(potential.blend),
+                     "last_c_body": None, "last_c_map": None}
+        if labels is not None:
+            out["last_c_body"] = protocol.c_body_of(labels)
+            if potential.source != "true":
+                out["last_c_map"] = protocol.c_map_of(labels)
+        return out
+
+    def eval_potential(self) -> tuple[float, float, float, str, float] | None:
+        """run_evaluation's `potential`: (the difference's discount, yards_scale, clip, source, blend), so an
+        evaluation's episodes carry the learner's reward_potential column (evaluation.run_evaluation); None without
+        labels or with the term off."""
         terms = self.potential_terms()
-        return None if terms is None else (terms[2], terms[0], terms[1])
+        if terms is None:
+            return None
+        return terms[2], terms[0], terms[1], self.config.potential.source, float(self.config.potential.blend)
 
     def aux_summary(self) -> dict[str, float]:
         """The last update's aux pass statistics (MappoTrainer.AUX_STATS) and potential mean, for the evaluation

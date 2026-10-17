@@ -488,12 +488,21 @@ def standard_error(values: np.ndarray, groups: np.ndarray | None = None) -> floa
 #:               what remembering and predicting where each member is is worth beside the dots and the camera.
 #:   no_planner  (vision movement curriculum) the planner's value readouts into the trunk and the cell pointer's
 #:               planner bonus zeroed (MappoTrainer.set_planner_off): what the planner is worth beside the map.
+#: Beside them, not an ablation of the input: no_shared_memory (SHARED_MEMORY_ARM) is a MODE flag to the sim
+#: (MODE_FLAG_NO_SHARED_MEMORY, Run.evaluate_arms): the same seeds, every seat starting blank instead of the seeded
+#: half adopting the map's shared memory, so arrivals with and without the memory compare on the same trips (the
+#: plain evaluation's shared_memory split is two different draws of trips). `no_memory` is the GRU reset, not this.
 ABLATIONS = ("no_flag", "no_camera", "no_compass", "no_map", "no_memory", "no_goal", "random_goal", "random_cell",
              "no_plan", "no_searched", "no_coverage", "no_party", "no_recall", "no_planner")
 #: The ablations that are a flag on the trainer's goal draw (Run.evaluate_arms sets them), not an edit of the input.
 GOAL_DRAW_ARMS = ("random_goal", "random_cell", "no_plan")
 #: ... and the ones that are a flag on the networks (Run.evaluate_arms likewise): the chooser edits nothing.
 NETWORK_FLAG_ARMS = ("no_planner",)
+#: ... and the one that is a flag on the sim's MODE (MODE_FLAG_NO_SHARED_MEMORY): nothing of the learner's changes.
+SHARED_MEMORY_ARM = "no_shared_memory"
+#: The sim's episode column that says whether the episode started from the map's shared memory (0/1; a stage with a
+#: SharedMemoryShare writes it): the arm above reads it to tell whether the sim honoured the flag.
+SHARED_MEMORY_COLUMN = "shared_memory"
 #: What an ablation arm reports and shows in forge status (<column>_<arm>).
 ABLATION_COLUMNS = ("arrived", "arrived_no_compass", "arrived_with_compass", "objective_visible")
 #: Bit 5 of the class byte (byte 3) of every pixel: the objective flag (Vision EncodePixel, cpp-vision.md).
@@ -864,9 +873,10 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
                    any_playing: Callable[[bool], bool] | None = None,
                    score_column: str = SCORE_COLUMN, arena: int = 0,
                    collect_motion: bool = False, stand_in: bool = False, training_stand_in: bool = False,
+                   no_shared_memory: bool = False,
                    excluded: Callable[[int], np.ndarray] | None = None,
                    trace_all: dict[str, np.ndarray] | None = None,
-                   potential: tuple[float, float, float] | None = None) -> tuple[EvalResult, p.Step]:
+                   potential: tuple | None = None) -> tuple[EvalResult, p.Step]:
     """Run seeded episodes first_seed..first_seed+episodes-1 (a data-parallel learner's share of an evaluation; 0..
     episodes-1 alone) and return their results and the fresh training STEP after them.
 
@@ -889,7 +899,9 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
 
     `stand_in` puts the "human" stand-in in one seat of every party (the eval arm "with_human": its row is present 2,
     which the chooser plays with a frozen partner, and its episode info's present column is 0, so it is never scored);
-    `training_stand_in` is the training MODE's after the evaluation (the learner can field one). `excluded(env)` -> [A]
+    `training_stand_in` is the training MODE's after the evaluation (the learner can field one). `no_shared_memory`
+    (MODE_FLAG_NO_SHARED_MEMORY, the arm of that name) starts every seat blank instead of adopting the map's shared
+    memory, the seeds and their other draws as they are. `excluded(env)` -> [A]
     bool names rows of env's episode that just ended that are not the learner's to be scored (the eval arms
     "with_partners" and "with_human": the partners' seats); it is asked before the chooser sees the next episode's first
     STEP.
@@ -898,11 +910,12 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
     every rank's envs on the same decision and switches mode only once all of them ask, so a rank done with its
     seeds keeps stepping until the last one is, and they switch back together.
 
-    `potential` (gamma a decision, yards_scale, clip; vision movement curriculum) sums the learner's potential term
-    (mappo.buffer.compute_potential's rule, off each STEP's labels) over every episode and writes it as the episode's
-    `reward_potential` column -- over the sim's own (which is 0: the term is the learner's), or appended as a column
-    of that name -- so the summary reads it beside the sim's reward columns. None, or a stage without labels: the
-    sim's columns as they are.
+    `potential` (gamma a decision, yards_scale, clip[, source, blend]; vision movement curriculum; Run.eval_potential)
+    sums the learner's potential term (mappo.buffer.compute_potential's rule off each STEP's labels, or under
+    potential.source "map" / "blend" compute_potential_map's on the map costs the same labels carry) over every
+    episode and writes it as the episode's `reward_potential` column -- over the sim's own (which is 0: the term is
+    the learner's), or appended as a column of that name -- so the summary reads it beside the sim's reward columns.
+    None, or a stage without labels: the sim's columns as they are.
     """
     started = time.perf_counter()
     envs, agents = spec.num_envs, spec.agents_per_env
@@ -918,6 +931,8 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
         share["arena"] = arena
     if stand_in:
         share["stand_in"] = True
+    if no_shared_memory:
+        share["no_shared_memory"] = True
     step = env.set_mode(True, seed, episodes, baseline, **share)
     # Decisions of the envs that might be tracing, kept until their episode ends and its seed is known.
     tracing: dict[int, list[dict]] = {env: [] for env in range(envs)} if trace_episodes else {}
@@ -942,6 +957,14 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
     paying = potential is not None and getattr(step, "labels", None) is not None
     potential_sum = np.zeros((envs, agents), dtype=np.float64)
     c_before = p.c_body_of(step.labels) if paying else None
+    # What the term is paid on (potential.source): the true route's phi difference, the map's own yards closed, or
+    # a blend of the two (the weights true_weight / map_weight; mappo.buffer.finish's rule).
+    potential_source = potential[3] if paying and len(potential) > 3 else "true"
+    if potential_source == "blend":
+        map_weight = float(potential[4]) if len(potential) > 4 else 0.5
+    else:
+        map_weight = 1.0 if potential_source == "map" else 0.0
+    true_weight = 1.0 - map_weight
     potential_column = info_names.index("reward_potential") if "reward_potential" in info_names else None
     info_dim = spec.episode_info_dim + (1 if paying and potential_column is None else 0)
     if paying and potential_column is None:
@@ -1003,9 +1026,16 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
         running += step.reward
         if paying:
             c_after = p.c_body_of(step.labels)
-            paid = (c_before < p.LABEL_UNREACHABLE) & (c_after < p.LABEL_UNREACHABLE) \
-                & ~np.asarray(step.done, dtype=bool)[:, None]
-            potential_sum += np.where(paid, potential[0] * phi(c_after) - phi(c_before), 0.0)
+            alive = ~np.asarray(step.done, dtype=bool)[:, None]
+            if true_weight > 0.0:
+                paid = (c_before < p.LABEL_UNREACHABLE) & (c_after < p.LABEL_UNREACHABLE) & alive
+                potential_sum += true_weight * np.where(paid, potential[0] * phi(c_after) - phi(c_before), 0.0)
+            if map_weight > 0.0:
+                map_body, map_prev = p.c_map_of(step.labels)
+                paid = (map_body < p.LABEL_UNREACHABLE) & (map_prev < p.LABEL_UNREACHABLE) & alive
+                cap = potential[2] * 100.0
+                potential_sum += map_weight * np.where(
+                    paid, (np.minimum(map_prev, cap) - np.minimum(map_body, cap)) * potential[1], 0.0)
             c_before = c_after
         if collect_motion:
             for e in np.flatnonzero(~np.asarray(step.done, dtype=bool)):

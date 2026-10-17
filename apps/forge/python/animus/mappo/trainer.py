@@ -19,9 +19,9 @@ from ..protocol import (LABEL_COARSE_CLASS, LABEL_COARSE_COST, LABEL_FINE_CLASS,
                         LABEL_UNREACHABLE, TRAV_CLASS_NAMES, TRAV_CLASSES)
 from .buffer import RolloutBuffer
 from .networks import (CLASSICAL_COSTS, CLASSICAL_ITERATIONS, CLASSICAL_OPEN_CEILING, CLASSICAL_ORACLE_UNKNOWN,
-                       CLASSICAL_SENTINEL, MAP_CODE, LayoutActor, LayoutCritic, MapEncoder, SharedInputDense,
-                       _carry_sequence, _per_layout, classical_cost_to_go, classical_factor, classical_tables,
-                       load_actor_state, neighbour_stack, neighbours_within_45,
+                       CLASSICAL_SENTINEL, MAP_CODE, MAP_HEIGHT, LayoutActor, LayoutCritic, MapEncoder,
+                       SharedInputDense, _carry_sequence, _per_layout, classical_cost_to_go, classical_factor,
+                       classical_tables, load_actor_state, neighbour_stack, neighbours_within_45,
                        per_layout, per_layout_host, sample_logits, skip_distribution_checks, goal_pair, split_goal_pair,
                        to_device, update_norms, vision_image_bytes, vision_look_heads, vision_term,
                        look_hold_indices)
@@ -2201,13 +2201,15 @@ class MappoTrainer:
     @torch.no_grad()
     def _classical_directions(self, plan: dict, classes: list[torch.Tensor], costs: list[torch.Tensor],
                               crop_known: torch.Tensor, targets: list[torch.Tensor], graded: list[torch.Tensor],
-                              count, codes: list[torch.Tensor]) -> dict[str, torch.Tensor]:
+                              count, codes: list[torch.Tensor],
+                              heights: list[torch.Tensor] | None = None) -> dict[str, torch.Tensor]:
         """**The classical planner's measurement** (_aux_pass; nothing trains on it and no plan, readout, waypoint or
         action reads it): fixed-weight value iteration (networks.classical_cost_to_go, CLASSICAL_COSTS) over each
         tier's step costs -- the expected cost under the costmap head's softmax (the "cls" family: a cell 10% wall
         costs as much as 11 free ones, so the head's own doubt prices a cell), the same priced on the crop's own
         codes where the crop knows a cell (the "map" family: mappo.planner_waypoint_costs "map", networks.
-        classical_factor over each tier's `codes` [N, H, W]), and the label's classes one-hot (the "orc" family, the
+        classical_factor over each tier's `codes` [N, H, W] and height bytes `heights`, the height band), and the
+        label's classes one-hot (the "orc" family, the
         head's rule: the gap between it and "cls" is what the costmap's errors cost, the gap from 1 what the rule
         does) -- from the plan's goal planes, the hierarchy as MapEncoder.plan has it (mappo.planner_hierarchical: the
         coarse tier first, its classical cost-to-go resampled onto the fine tier's border ring, MapEncoder.
@@ -2239,7 +2241,8 @@ class MappoTrainer:
             ring = mapper.coarse_frame(planned[1]) if hierarchical and tier == 0 else None
             planned[tier], _ = classical_cost_to_go(factor, goal, float(mapper.tier_cells[tier]),
                                                     CLASSICAL_ITERATIONS[min(tier, 1)], ring)
-            map_factor = classical_factor(probabilities, tables, codes[tier][:k])
+            map_factor = classical_factor(probabilities, tables, codes[tier][:k],
+                                          None if heights is None else heights[tier][:k])
             map_ring = mapper.coarse_frame(planned_map[1]) if hierarchical and tier == 0 else None
             planned_map[tier], _ = classical_cost_to_go(map_factor, goal[:k], float(mapper.tier_cells[tier]),
                                                         CLASSICAL_ITERATIONS[min(tier, 1)], map_ring)
@@ -2288,8 +2291,10 @@ class MappoTrainer:
         # section follows the image's bytes as [fine][coarse], crop_bytes each (decode_map_tiers, MapEncoder).
         crops = image[rows].reshape(n, -1)[:, encoder.image_bytes:encoder.image_bytes + encoder.map_bytes]
         per = encoder.map.crop_bytes
-        crop_codes = [crops[:, tier * per:(tier + 1) * per].reshape(n, side, side, -1)[..., MAP_CODE].long()
-                      for tier in range(len(classes))]
+        crop_cells = [crops[:, tier * per:(tier + 1) * per].reshape(n, side, side, -1) for tier in range(len(classes))]
+        crop_codes = [cells[..., MAP_CODE].long() for cells in crop_cells]
+        # ... and its height bytes, for the map rule's height band (networks.classical_factor).
+        crop_heights = [cells[..., MAP_HEIGHT] for cells in crop_cells]
         known = [code != 0 for code in crop_codes]
         crop_known = known[0]
         device = obs.device
@@ -2393,7 +2398,7 @@ class MappoTrainer:
         loss.backward()
         # The classical planner beside the learned one (a measurement: no loss, gradient or plan reads it).
         classical = self._classical_directions(plan, classes, costs, crop_known, label_targets, label_graded,
-                                               count_directions, crop_codes)
+                                               count_directions, crop_codes, crop_heights)
         with torch.no_grad():
             def mean_iou(matrix: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
                 """The mean IoU over the classes present in `matrix` (a confusion, target x predicted), and every
@@ -2864,8 +2869,10 @@ class MappoTrainer:
                 if union > 0.0:
                     stats[f"costmap_iou_known_{name}"] = inter / union
         if buffer.label_bytes:
-            # The potential term the rollout was paid (RolloutBuffer.finish), per valid decision.
+            # The potential term the rollout was paid (RolloutBuffer.finish), per valid decision, and the map term's
+            # part of it (potential.source "map" / "blend"; 0 under "true").
             stats["reward_potential"] = buffer.mean_potential()
+            stats["reward_potential_map"] = buffer.mean_potential_map()
         # Hindsight: the relabelled loss per minibatch that had one, and the rows relabelled over the update.
         if "hindsight_loss" in auxiliary_stats:
             relabelled = auxiliary_stats.pop("hindsight_rows")

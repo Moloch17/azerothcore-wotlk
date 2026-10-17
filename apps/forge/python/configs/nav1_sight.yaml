@@ -162,6 +162,9 @@ eval:
     no_map: 64
     no_planner: 64
     no_memory: 64
+    # The same seeds with every seat started blank (a MODE flag to the sim; evaluation.SHARED_MEMORY_ARM): the plain
+    # evaluation's memory-on episodes against the same trips without the memory. Dropped when the sim ignores the flag.
+    no_shared_memory: 64
   # The sim's episode columns (CONTRACT.md sec 3), and the learner's potential term summed over the episode.
   report: [arrived, spl, time_ratio, optimal_yards, straight_yards, detour_factor, travelled_yards, stop_error_yards,
            falls, fall_damage_share, drowned, died, timed_out, stuck_seconds, wall_seconds, lost_seconds,

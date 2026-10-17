@@ -1178,6 +1178,9 @@ MAP_SEARCHED_MAX = 4
 #: The planes decode_map adds to the code and class embeddings: height, known, visited, age, frontier, searched.
 MAP_VALUE_PLANES = 6
 MAP_HEIGHT_ZERO = 128
+#: The height byte's step (Vision::CROP_HEIGHT_STEP): the floor nearest the feet is at (byte - MAP_HEIGHT_ZERO) x
+#: MAP_HEIGHT_STEP yards over them, byte 0 no floor known; so the byte reaches +/- 31.75 yd and clamps there.
+MAP_HEIGHT_STEP = 0.25
 MAP_FLOOR, MAP_WALL, MAP_DOOR, MAP_HAZARD = 1, 2, 3, 4      # the crop codes (Vision::MapCode; 0 unknown)
 
 
@@ -1513,7 +1516,8 @@ def decode_image(image: torch.Tensor, height: int, width: int) -> torch.Tensor:
 
 def decode_map(crops: torch.Tensor, height: int, width: int) -> dict[str, torch.Tensor]:
     """The mental map's crop bytes [N, H x W x 7] uint8 as the encoder reads them (Vision::DecodeCropCell): "code" and
-    "class" [N, H, W] long (indexes it embeds), and "values" [N, H, W, 6] float -- the floor's height over the feet
+    "class" [N, H, W] long (indexes it embeds), "height" [N, H, W] the height byte as sent, and "values" [N, H, W, 6]
+    float -- the floor's height over the feet
     ((b - 128) / 127, 0 with none), whether a floor is known, visited, the newest look's age (b / 255, 1 never seen),
     the frontier and (exploration v3) the searched share of the cell's four 1-yd cells this episode (b / 4)."""
     cells = crops.reshape(-1, height, width, MAP_CHANNELS)
@@ -1523,6 +1527,8 @@ def decode_map(crops: torch.Tensor, height: int, width: int) -> dict[str, torch.
     return {
         "code": cells[..., MAP_CODE].long().clamp(0, MAP_CODES - 1),
         "class": (cells[..., MAP_CLASS] & CLASS_MASK).long(),
+        # The height byte as sent (0 no floor; the classical planner's height band reads it, classical_factor).
+        "height": rise,
         "values": torch.stack([
             torch.where(known, (as_float(rise) - MAP_HEIGHT_ZERO) / 127.0, torch.zeros_like(as_float(rise))),
             as_float(known),
@@ -1631,6 +1637,17 @@ WAYPOINT_SOURCES = ("learned", "classical")
 #: majority of the cell's 1-yd cells (MentalMap.cpp Fold), so a corridor's thin wall never makes a coarse cell a wall.
 WAYPOINT_COST_RULES = ("head", "map")
 CLASSICAL_BLOCKED = 100.0
+#: **The height band** (classical_factor, the "map" rule; 2026-10-17): a known floor or door cell whose floor (the
+#: crop's height byte: the layer nearest the feet) lies more than this many yards above or below the feet is priced
+#: as unknown -- the head's expected cost under CLASSICAL_COSTS -- not as floor at 1. The map stores every floor it
+#: has seen, at every height: a deck 6 yd up, a ceiling meshed as a second floor, the Deadmines' phantom storey
+#: 300 yd up (the byte clamps at 31.75), the sea's surface in the far tier -- none of them where the body walks, all
+#: of them Floor to the code channel, so the height-blind rule planned the straight line across them (the shared
+#: memory's flooded coarse crop). A band rather than a wall: a ramp climbs ~3 yd across the 20 yd the crop shows of
+#: it, and its upper part priced as unknown (1.5 against the deck's 1) is still the route when nothing else is, where
+#: blocked (100) would cut every storey change off the plan; nav3 teaches the ramps. A cell with no height byte keeps
+#: its code's rule (the coarse tier's far cells carry a code but a mean height, which the band reads as any other).
+CLASSICAL_HEIGHT_BAND = 3.0
 CLASSICAL_FLOOR_COSTS = tuple(1.0 if index == 0 or cost >= CLASSICAL_BLOCKED else cost
                               for index, cost in enumerate(CLASSICAL_COSTS))
 #: Per MapCode (MAP_CODES of them), how classical_factor prices a cell under the "map" rule: 0 the head's expected
@@ -1658,13 +1675,15 @@ def classical_tables(device=None) -> dict[str, torch.Tensor]:
 
 @torch.no_grad()
 def classical_factor(probabilities: torch.Tensor, tables: dict[str, torch.Tensor],
-                     codes: torch.Tensor | None = None) -> torch.Tensor:
+                     codes: torch.Tensor | None = None, heights: torch.Tensor | None = None) -> torch.Tensor:
     """Each cell's step cost multiple [N, H, W] for the classical planner (classical_cost_to_go) from the costmap
     head's class probabilities `probabilities` [N, C, H, W] (a softmax; a one-hot for the oracle) and, under the "map"
     rule (mappo.planner_waypoint_costs; WAYPOINT_COST_RULES), the crop's codes `codes` [N, H, W] (decode_map's
     "code"): None is the "head" rule, the expected cost under `tables["costs"]` everywhere. With codes, per cell by
     MAP_CODE_RULES: the head's expected cost under "costs" (unknown), under "floor_costs" (floor, door) or the fixed
-    "code_costs" (wall, hazard). Float32, without a gradient."""
+    "code_costs" (wall, hazard); with `heights` too (the crop's height bytes [N, H, W], decode_map's "height"), a
+    floor or door cell whose floor is more than CLASSICAL_HEIGHT_BAND yards off the feet is priced as unknown (the
+    height band above). Float32, without a gradient."""
     probabilities = probabilities.to(torch.float32)
     head = torch.einsum("nchw,c->nhw", probabilities, tables["costs"])
     if codes is None:
@@ -1673,6 +1692,10 @@ def classical_factor(probabilities: torch.Tensor, tables: dict[str, torch.Tensor
     floor = torch.einsum("nchw,c->nhw", probabilities, tables["floor_costs"])
     rule = tables["code_rules"][codes]
     fixed = tables["code_costs"][codes]
+    if heights is not None:
+        byte = heights.to(torch.float32)
+        off_band = (byte != 0) & ((byte - MAP_HEIGHT_ZERO).abs() * MAP_HEIGHT_STEP > CLASSICAL_HEIGHT_BAND)
+        rule = torch.where((rule == 1) & off_band, torch.zeros_like(rule), rule)
     return torch.where(rule == 0, head, torch.where(rule == 1, floor, fixed))
 
 
@@ -2252,15 +2275,17 @@ class MapEncoder(nn.Module):
             return torch.cat(features, dim=-1)
 
     def classical_plan(self, logits: list[torch.Tensor], goals: list[torch.Tensor],
-                       codes: list[torch.Tensor] | None = None) -> list[torch.Tensor]:
+                       codes: list[torch.Tensor] | None = None,
+                       heights: list[torch.Tensor] | None = None) -> list[torch.Tensor]:
         """The classical waypoint's cost-to-go of every tier (mappo.planner_waypoint_source "classical"), [N, H, W]
         yards a tier (CLASSICAL_SENTINEL where nothing reached): classical_cost_to_go over each tier's expected step
         cost under the costmap head's softmax (`logits` [N, C, H, W] a tier, priced by CLASSICAL_COSTS) from the plan's
         goal planes (`goals` [N, H, W] a tier), CLASSICAL_WAYPOINT_ITERATIONS fixed iterations (no host sync); with the
         hierarchy the coarse tier first and its cost-to-go resampled (coarse_frame) as the fine tier's ring. With
         mappo.planner_waypoint_costs "map" (`map_costs`) the step costs are priced on the crop's own codes (`codes`
-        [N, H, W] a tier, decode_map's; classical_factor) where the crop knows a cell. Without a gradient; reads no
-        random state."""
+        [N, H, W] a tier, decode_map's; classical_factor) where the crop knows a cell, a known floor off the height
+        band (`heights` [N, H, W] a tier, the crop's height bytes; CLASSICAL_HEIGHT_BAND) as unknown. Without a
+        gradient; reads no random state."""
         with torch.no_grad():
             tier_count = len(logits)
             planned: list[torch.Tensor | None] = [None] * tier_count
@@ -2270,7 +2295,8 @@ class MapEncoder(nn.Module):
                                  "classical_plan needs each tier's codes")
             for tier in (reversed(range(tier_count)) if self.hierarchical else range(tier_count)):
                 probabilities = torch.softmax(logits[tier].detach().to(torch.float32), dim=1)
-                factor = classical_factor(probabilities, tables, codes[tier] if self.map_costs else None)
+                factor = classical_factor(probabilities, tables, codes[tier] if self.map_costs else None,
+                                          heights[tier] if self.map_costs and heights is not None else None)
                 boundary = self.coarse_frame(planned[1]) if self.hierarchical and tier == 0 else None
                 planned[tier], _ = classical_cost_to_go(
                     factor, goals[tier].detach(), self.tier_cells[tier],
@@ -2392,7 +2418,8 @@ class MapEncoder(nn.Module):
                 out["waypoint"] = self.waypoints(out["cost_to_go"], present)
             elif classical:
                 out["classical_cost_to_go"] = self.classical_plan(out["costmap"], out["goal_plane"],
-                                                                  [tier["code"] for tier in decoded])
+                                                                  [tier["code"] for tier in decoded],
+                                                                  [tier["height"] for tier in decoded])
                 out["waypoint"] = self.waypoints(out["classical_cost_to_go"], present)
             else:
                 out["waypoint"] = present.new_zeros((present.shape[0], self.tiers * self.WAYPOINT_FEATURES),

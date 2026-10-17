@@ -137,7 +137,7 @@ Read by `evaluation.py` (`run_evaluation`, line 451), `train.py` (1150-1310, 222
 | `heldout_on_best` | bool | true | also play on a new `best.pt` |
 | `heldout_cadence` | dict | `{}` | exploration v3: arena name to N, played every N-th evaluation (and always on the last); keys must be held-out arenas; an empty map restated in a child file replaces the inherited one (M3, M4) |
 | `score` | str | `outcome` | `outcome` or `return` (checked in `score_column`, `config.py:131-134`, not at load) |
-| `arms` | dict | `{}` | arm name to episodes; arms must be in `EVAL_ARMS = (with_human, with_partners, no_flag, no_camera, no_compass, no_map, no_memory, no_goal, random_goal, random_cell, no_plan, no_searched, no_coverage)`, counts non-negative ints (`config.py:119-124`) |
+| `arms` | dict | `{}` | arm name to episodes; arms must be in `EVAL_ARMS = (with_human, with_partners, no_flag, no_camera, no_compass, no_map, no_memory, no_goal, random_goal, random_cell, no_plan, no_searched, no_coverage, no_party, no_recall, no_planner, no_shared_memory)`, counts non-negative ints (`config.py` `EvalConfig.__post_init__`). `no_shared_memory` (2026-10-17) is not an input ablation but a MODE flag to the sim (`MODE_FLAG_NO_SHARED_MEMORY`): the same seeds with every seat started blank instead of the seeded half adopting the map's shared memory; skipped on a stage without a `shared_memory` episode column, and its rows dropped (with a printed line) when the sim ignores the flag (an older sim adopts as the seed says). The nav yamls run it at 64 episodes |
 | `arms_every` | int | 1 | at least 1 |
 | `keep_motion_files` | int | 12 | 0 or more: how many evaluations' route files (`eval_motion_<env_steps>[_<policy>].npz`) and trace files (`eval_trace_<env_steps>_<policy>.npz`) are kept; 0 writes none and the held-out arenas collect no motion |
 | `trace_all` | bool | false | exploration v3: every seed of every evaluation set, per policy, as compact arrays in `eval_trace_<env_steps>_<policy>.npz`; with it the sampled and arm sets keep routes too. `move2_seek.yaml` true |
@@ -270,6 +270,21 @@ validation.
 | `goal_entropy_scale`, `goal_entropy_final_fraction`, `goal_slot_entropy_weight` | 1.0, 1.0, 0.1 | `train.py:1736-1737`; `trainer.py:665` |
 | `slow_goal_size`, `slow_goal_gamma`, `slow_goal_lambda`, `slow_goal_lr` | 0, 0.993, 0.95, 3e-4 | `trainer.py:654-659, 746`; `train.py:1712` |
 | `goal_lookahead`, `lookahead_coef` | false, 0.5 | `trainer.py:662, 196` |
+
+### `potential:` (`PotentialConfig`, `config.py` `PotentialConfig`), read by `train.py` `TrainingRun.potential_finish_kwargs` / `eval_potential` and paid in `mappo/buffer.py` `RolloutBuffer.finish`
+
+The nav stages' potential-based progress term (CONTRACT.md sec 5); nothing happens in a stage without labels.
+
+| Field | Default | Meaning |
+|---|---|---|
+| `enabled` | true | pay the term |
+| `yards_scale` | 0.01 (the nav yamls 0.05) | reward per yard of route cost-to-go |
+| `clip` | 50.0 | phi is capped at this many hundred yards |
+| `discount` | 1.0 | the gamma inside the difference (1 = the plain difference, which pays nothing for standing still) |
+| `source` | `"true"` | what the term is paid on (`mappo/buffer.py` `POTENTIAL_SOURCES`): `"true"`, the bake's true route cost-to-go, `gamma x phi(next) - phi(cur)` as before (`compute_potential`); `"map"` (2026-10-17), the route cost-to-go on the bot's OWN mental map -- the sim labels each observation with the body's and the previous decision's position's on that same current map (protocol 33, `LABEL_SCALAR_MAP_BODY` / `LABEL_SCALAR_MAP_PREV`), and the step is paid `yards_scale x (min(C_prev, cap) - min(C_body, cap))` of the labels of the observation it led to, the yards the move closed on the map the bot perceives (0 where either is unreachable, 0 on a done row; no discount inside it: the map changes, so it is not a potential difference; `compute_potential_map`); `"blend"`, `blend` of the map term plus `1 - blend` of the true one. YAML's bare `true` reads as `"true"`. `nav2_detour.yaml` sets `map` (nav3+ inherit); nav1 stays on `true` |
+| `blend` | 0.5 | under `"blend"`, the map term's weight (0 to 1) |
+
+`reward_potential` (metrics.csv, the evaluation's episode column) is the term as paid; `reward_potential_map` beside it is the map term's part (0 under `"true"`).
 
 ## The 10 live yamls, field by field
 

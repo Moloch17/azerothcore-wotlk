@@ -11,7 +11,12 @@ from enum import IntEnum
 
 import numpy as np
 
-PROTOCOL_VERSION = 32
+PROTOCOL_VERSION = 33
+# 33: the labels carry the route cost-to-go on the bot's OWN mental map (LABEL_SCALAR_MAP_BODY, LABEL_SCALAR_MAP_PREV:
+# from the body, and from the previous decision's body position on the same current map; LABEL_UNREACHABLE where that
+# map has no route), two f32 among the label scalars (LABEL_SCALAR_COUNT 6, LABEL_BYTES 13848, was 13840): what the
+# potential term is paid on under potential.source "map". The messages' layout is protocol 32's but for the label
+# bytes, which the SPEC's label_bytes says.
 # 32: continuous outputs (heading.CONTRACT.md sec 4): SPEC ends with the continuous values per agent
 # (Spec.continuous_count: 1 in a stage whose layouts have a move block -- the heading -- else 0), and every ACT carries,
 # after the look, float32 continuous[E, A, continuous_count] in stage.json's top-level "continuous" order: the heading
@@ -106,6 +111,11 @@ MODE = struct.Struct(f"<IIIIII{POLICY_NAME_SIZE}s")
 # The learner plays the "human" stand-in's row with a frozen partner (dungeon-curriculum I7): an evaluation has it in
 # one seat of every party, training in its share of them; without the flag no party has one.
 MODE_FLAG_STAND_IN = 2
+# The seats of an evaluation do not adopt their map's shared memory at reset (the eval arm "no_shared_memory",
+# evaluation.run_evaluation): the reset's seeded draw still runs (so the episode's other draws are the seed's as in
+# the plain evaluation) and every seat starts blank. A sim without the flag ignores the bit (unknown MODE flags are;
+# Protocol.h ModeMsg::Flags) and adopts as the seed says: the arm checks the episodes' shared_memory column.
+MODE_FLAG_NO_SHARED_MEMORY = 4
 PRESENT_STAND_IN = 2  # a STEP's present for the stand-in's row (protocol 25)
 WEIGHTS_COUNT = struct.Struct("<I")  # then that many float32 weights, one per layout in SPEC order
 REPLAY = struct.Struct("<IfI")  # seed base, share of training resets, count; then that many uint32 seed indexes
@@ -128,7 +138,11 @@ MAP_FIELDS = ("map", "final_map")
 # The nav stages' labels (protocol 31, CONTRACT.md sec 3.1): LABEL_BYTES an agent, laid out as the offsets below say --
 # the fine crop's traversability classes (48 x 48 u8 TravClass, the fine map crop's frame), the coarse crop's (8 yd
 # cells), the fine and coarse route cost-to-go (48 x 48 f16 yards, LABEL_UNREACHABLE where unreachable or unknown),
-# then four f32: C(body), C(start), the goal's forward and right yards in the body frame.
+# then LABEL_SCALAR_COUNT f32 (LABEL_SCALAR_* index them): C(body) and C(start) on the bake's true route; (protocol
+# 33) the route cost-to-go from the body to the goal on the bot's OWN mental map and the same from the previous
+# decision's body position on the same (current) map, both LABEL_UNREACHABLE where that map has no route -- their
+# difference is the yards the move into this observation closed on the map the bot can see (potential.source "map",
+# mappo.buffer.compute_potential_map); and the goal's forward and right yards in the body frame.
 LABEL_FIELDS = ("labels",)
 LABEL_SIDE = 48
 LABEL_CELLS = LABEL_SIDE * LABEL_SIDE
@@ -137,7 +151,16 @@ LABEL_COARSE_CLASS = LABEL_CELLS
 LABEL_FINE_COST = 2 * LABEL_CELLS
 LABEL_COARSE_COST = LABEL_FINE_COST + 2 * LABEL_CELLS
 LABEL_SCALARS = LABEL_COARSE_COST + 2 * LABEL_CELLS
-LABEL_BYTES = LABEL_SCALARS + 4 * 4
+LABEL_SCALAR_BODY = 0           # C(body): the body's route cost-to-go on the bake, yards
+LABEL_SCALAR_START = 1          # C(start)
+LABEL_SCALAR_MAP_BODY = 2       # the body's route cost-to-go on the bot's own mental map (protocol 33)
+LABEL_SCALAR_MAP_PREV = 3       # the previous decision's body position's, on the same current map (protocol 33)
+LABEL_SCALAR_GOAL_FORWARD = 4   # the goal's forward yards in the body frame
+LABEL_SCALAR_GOAL_RIGHT = 5     # ... and its right yards
+LABEL_SCALAR_COUNT = 6
+LABEL_MAP_COST = LABEL_SCALARS + 4 * LABEL_SCALAR_MAP_BODY
+LABEL_MAP_COST_PREV = LABEL_SCALARS + 4 * LABEL_SCALAR_MAP_PREV
+LABEL_BYTES = LABEL_SCALARS + 4 * LABEL_SCALAR_COUNT
 LABEL_UNREACHABLE = 65504.0
 #: TravClass (Runtime/Vision/TravBake.h): the classes a label cell can carry, in order.
 TRAV_CLASS_NAMES = ("unknown", "free", "wall", "water", "hazard", "step_up", "jump", "drop_safe", "drop_hurt",
@@ -322,15 +345,31 @@ class Step:
     labels: np.ndarray | None = None
 
 
+def label_scalars_of(labels) -> np.ndarray:
+    """The label scalars of each label row, [..., LABEL_SCALAR_COUNT] float32 from `labels` [..., LABEL_BYTES] (numpy
+    or torch on any device; the latter is read on the host), LABEL_SCALAR_* naming the columns."""
+    if hasattr(labels, "detach"):
+        labels = labels.detach().cpu().numpy()
+    labels = np.asarray(labels, dtype=np.uint8)
+    scalars = np.ascontiguousarray(labels[..., LABEL_SCALARS:LABEL_SCALARS + 4 * LABEL_SCALAR_COUNT])
+    return scalars.view("<f4").astype(np.float32, copy=True)
+
+
 def c_body_of(labels) -> np.ndarray:
     """The body's route cost-to-go of each label row, [...] float32 from `labels` [..., LABEL_BYTES] (numpy or torch on
     any device; the latter is read on the host): the first f32 of the label scalars, LABEL_UNREACHABLE where the sim
     found no route (an empty seat's row too: the sim writes every cost unreachable for a seat without a body)."""
-    if hasattr(labels, "detach"):
-        labels = labels.detach().cpu().numpy()
-    labels = np.asarray(labels, dtype=np.uint8)
-    scalars = np.ascontiguousarray(labels[..., LABEL_SCALARS:LABEL_SCALARS + 4])
-    return scalars.view("<f4")[..., 0].astype(np.float32, copy=True)
+    return np.ascontiguousarray(label_scalars_of(labels)[..., LABEL_SCALAR_BODY])
+
+
+def c_map_of(labels) -> tuple[np.ndarray, np.ndarray]:
+    """The route cost-to-go on the bot's own mental map of each label row (protocol 33): (the body's, the previous
+    decision's body position's on the same current map), each [...] float32, LABEL_UNREACHABLE where that map has no
+    route (a blank map's unknown-priced route still is one; a seat without a body has none). Their difference,
+    previous - body, is what the move into this observation closed on the map the bot can see."""
+    scalars = label_scalars_of(labels)
+    return (np.ascontiguousarray(scalars[..., LABEL_SCALAR_MAP_BODY]),
+            np.ascontiguousarray(scalars[..., LABEL_SCALAR_MAP_PREV]))
 
 
 def no_frame(shape: tuple[int, ...]) -> np.ndarray:
@@ -623,16 +662,19 @@ def decode_act(payload: bytes | bytearray | memoryview, agents: int, goals: bool
 
 
 def encode_mode(evaluate: bool, seed_base: int = 0, episodes: int = 0, baseline: str = "",
-                first_seed: int = 0, arena: int = 0, stand_in: bool = False) -> bytes:
+                first_seed: int = 0, arena: int = 0, stand_in: bool = False,
+                no_shared_memory: bool = False) -> bytes:
     """MODE payload. An evaluation plays seed indexes [first_seed, first_seed + episodes) of seed_base, so a
     cluster's sims can each play their own share of one evaluation's seeds (ClusterEnv). `arena` pins it to a held-out
     arena (stage.json's index + 1; 0 = the stage's own draw, protocol 18). `stand_in` (MODE_FLAG_STAND_IN): the learner
     plays the "human" stand-in's row with a frozen partner -- in an evaluation one seat of every party has it (the eval
-    arm "with_human"), in training its share of the parties; without it no party has one."""
+    arm "with_human"), in training its share of the parties; without it no party has one. `no_shared_memory`
+    (MODE_FLAG_NO_SHARED_MEMORY): an evaluation whose seats start blank instead of adopting the map's shared memory
+    (the eval arm "no_shared_memory")."""
     name = baseline.encode("ascii")
     if len(name) >= POLICY_NAME_SIZE:
         raise ValueError(f"baseline policy name '{baseline}' is too long")
-    flags = MODE_FLAG_STAND_IN if stand_in else 0
+    flags = (MODE_FLAG_STAND_IN if stand_in else 0) | (MODE_FLAG_NO_SHARED_MEMORY if no_shared_memory else 0)
     return MODE.pack(int(evaluate), seed_base, episodes, flags, first_seed, arena, name)
 
 
@@ -649,6 +691,11 @@ def decode_mode_arena(payload: bytes) -> int:
 def decode_mode_stand_in(payload: bytes) -> bool:
     """Whether a MODE fields the human stand-in (every party of an evaluation, a share of training's)."""
     return bool(MODE.unpack(payload)[3] & MODE_FLAG_STAND_IN)
+
+
+def decode_mode_no_shared_memory(payload: bytes) -> bool:
+    """Whether a MODE's evaluation starts every seat blank (MODE_FLAG_NO_SHARED_MEMORY; the arm "no_shared_memory")."""
+    return bool(MODE.unpack(payload)[3] & MODE_FLAG_NO_SHARED_MEMORY)
 
 
 def decode_mode_first_seed(payload: bytes) -> int:

@@ -51,6 +51,17 @@ mappo:
   # V(standing) that drives the press is learned, not inferred from the sampled policy's quick escapes.
   greedy_env_fraction: 0.12
 
+# The potential paid on the bot's OWN map's route (potential.source "map", 2026-10-17; config.PotentialConfig,
+# mappo.buffer.compute_potential_map): the step is paid 0.05 x the yards the move closed on the route the bot's mental
+# map prices from the body to the goal (the sim labels every observation with that route's cost-to-go from the body
+# and from the previous decision's position, both on the same current map, so the term is the move alone). The reward
+# becomes the quantity the bot can perceive and that its classical waypoint displays, so following its own map's
+# route pays at the step: in a blank map the unknown-priced route is near the straight line (explore toward the goal),
+# in a known map it is the detour. nav1 stays on the bake's true route (as it trained); nav3+ inherit. The Outcome
+# terms (Arrive x SPL, the clock) are as they were: the true route still judges the trip.
+potential:
+  source: map
+
 status:
   targets:
     # SPL 0.85 at the 1.6-2.5 detour bin is the PLAN's reading; here the display target is the stage-wide SPL.

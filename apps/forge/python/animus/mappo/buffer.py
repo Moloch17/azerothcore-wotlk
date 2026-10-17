@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..protocol import LABEL_UNREACHABLE, c_body_of
+from ..protocol import LABEL_UNREACHABLE, c_body_of, c_map_of
 
 # Kept where the sim put them when it put them on the device.
 
@@ -33,6 +33,37 @@ def compute_potential(c_body: np.ndarray, c_valid: np.ndarray, dones: np.ndarray
         next_valid = last_c_valid if t == steps - 1 else c_valid[t + 1]
         term = np.float32(gamma) * next_phi - phi[t]
         paid = c_valid[t] & next_valid & ~dones[t][:, None]
+        out[t] = np.where(paid, term, 0.0).astype(np.float32)
+    return out
+
+
+#: What the potential term is paid on (potential.source; config.PotentialConfig): "true", the bake's route cost-to-go
+#: (compute_potential); "map", the route cost-to-go on the bot's own mental map (compute_potential_map); "blend",
+#: potential.blend of the map term and the rest of the true one.
+POTENTIAL_SOURCES = ("true", "map", "blend")
+
+
+def compute_potential_map(c_map_body: np.ndarray, c_map_prev: np.ndarray, dones: np.ndarray,
+                          last_c_map_body: np.ndarray, last_c_map_prev: np.ndarray, yards_scale: float,
+                          clip: float) -> np.ndarray:
+    """The progress term on the bot's OWN mental map of every step, [T, E, A] (potential.source "map"): yards_scale x
+    (min(C_prev, clip x 100) - min(C_body, clip x 100)) read off the labels of the observation the step led to --
+    c_map_body [T, E, A] and c_map_prev [T, E, A] are each observation's route cost-to-go on the bot's map from the
+    body and from the previous decision's body position, both on that same current map (protocol 33: the sim prices
+    both positions on one map, so the difference is the move alone, never the map changing between decisions; the
+    last step's are last_c_map_* [E, A], the observation after the rollout). A blank map prices the unknown as the
+    classical planner does, so its route is near the straight line and the term pays walking toward the goal; a
+    known map's route is the detour, and the term pays following it. 0 on a done row (the row after a reset describes
+    a position before it) and wherever either cost is unreachable (LABEL_UNREACHABLE). Not a potential difference
+    (the map changes), so no discount inside it."""
+    steps = c_map_body.shape[0]
+    cap = clip * 100.0
+    out = np.zeros_like(c_map_body, dtype=np.float32)
+    for t in range(steps):
+        body = last_c_map_body if t == steps - 1 else c_map_body[t + 1]
+        prev = last_c_map_prev if t == steps - 1 else c_map_prev[t + 1]
+        paid = (body < LABEL_UNREACHABLE) & (prev < LABEL_UNREACHABLE) & ~dones[t][:, None]
+        term = (np.minimum(prev, cap) - np.minimum(body, cap)).astype(np.float32) * np.float32(yards_scale)
         out[t] = np.where(paid, term, 0.0).astype(np.float32)
     return out
 
@@ -217,7 +248,13 @@ class RolloutBuffer:
         self.labels = np.zeros((*shape, label_bytes), dtype=np.uint8)
         self.c_body = np.full(shape, LABEL_UNREACHABLE, dtype=np.float32)
         self.c_valid = np.zeros(shape, dtype=bool)
+        # ... and the route cost-to-go on the bot's own map, from the body and from the previous decision's position
+        # (c_map_of; potential.source "map", compute_potential_map). `potential_map` is the map term's part of
+        # `potential` (all of it under "map", potential.blend of it under "blend", 0 under "true").
+        self.c_map_body = np.full(shape, LABEL_UNREACHABLE, dtype=np.float32)
+        self.c_map_prev = np.full(shape, LABEL_UNREACHABLE, dtype=np.float32)
         self.potential = np.zeros(shape, dtype=np.float32)
+        self.potential_map = np.zeros(shape, dtype=np.float32)
         # The plan each decision acted on (MappoTrainer._replan's cache: the planner's readouts and the pointer's
         # bonus), so the update replays the decision on the same plan rather than planning again.
         self.planner_readout = np.zeros((*shape, self.planner_widths[0]), dtype=np.float32)
@@ -277,6 +314,7 @@ class RolloutBuffer:
             self.labels[t] = labels
             self.c_body[t] = c_body_of(labels)
             self.c_valid[t] = self.c_body[t] < LABEL_UNREACHABLE
+            self.c_map_body[t], self.c_map_prev[t] = c_map_of(labels)
         for name, value in (("obs", obs), ("state", state), ("mask", mask), ("image", image)):
             if value is not None:       # None: store_rows wrote it already
                 self._store(name, t, value)
@@ -354,16 +392,48 @@ class RolloutBuffer:
     def finish(self, last_values: np.ndarray, gamma: float, gae_lambda: float, last_foresight=None,
                foresight_gammas: tuple[float, ...] = (), time_scale_decisions: float = 0.0,
                slow_goal: tuple[float, float] | None = None, obs_targets=None,
-               potential: tuple[float, float] | None = None, last_c_body: np.ndarray | None = None) -> None:
-        """`potential` (yards_scale, clip) with `last_c_body` [E, A] (the cost-to-go of the observation after the last
-        step; c_body_of(step.labels)) pays the potential term into the rewards before the advantages are taken, where
-        the stage sends labels."""
+               potential: tuple[float, float] | None = None, last_c_body: np.ndarray | None = None,
+               potential_source: str = "true", potential_blend: float = 0.0,
+               last_c_map: tuple[np.ndarray, np.ndarray] | None = None) -> None:
+        """`potential` (yards_scale, clip[, discount]) with `last_c_body` [E, A] (the cost-to-go of the observation
+        after the last step; c_body_of(step.labels)) pays the potential term into the rewards before the advantages
+        are taken, where the stage sends labels. `potential_source` (POTENTIAL_SOURCES) says what it is paid on:
+        "true" the bake's route (compute_potential, as before), "map" the bot's own map's (compute_potential_map, off
+        `last_c_map` = c_map_of(step.labels) for the last step), "blend" `potential_blend` of the map term and the
+        rest of the true one."""
         self.potential[:] = 0.0
-        if potential is not None and self.label_bytes and last_c_body is not None:
-            last = np.asarray(last_c_body, dtype=np.float32)
-            self.potential = compute_potential(self.c_body, self.c_valid, self.dones, last, last < LABEL_UNREACHABLE,
-                                               potential[2] if len(potential) > 2 else gamma, potential[0],
-                                               potential[1])
+        self.potential_map[:] = 0.0
+        if potential is None or not self.label_bytes:
+            pass
+        elif potential_source == "true":
+            if last_c_body is not None:
+                last = np.asarray(last_c_body, dtype=np.float32)
+                self.potential = compute_potential(self.c_body, self.c_valid, self.dones, last,
+                                                   last < LABEL_UNREACHABLE,
+                                                   potential[2] if len(potential) > 2 else gamma, potential[0],
+                                                   potential[1])
+        elif potential_source in ("map", "blend") and last_c_map is not None:
+            # (Without the observation after the rollout nothing is paid, as the true term's rule above.)
+            last_body = np.asarray(last_c_map[0], dtype=np.float32)
+            last_prev = np.asarray(last_c_map[1], dtype=np.float32)
+            map_term = compute_potential_map(self.c_map_body, self.c_map_prev, self.dones, last_body, last_prev,
+                                             potential[0], potential[1])
+            if potential_source == "map":
+                self.potential_map = map_term
+                self.potential = map_term.copy()
+            else:
+                if last_c_body is None:
+                    raise ValueError("potential.source blend: finish needs last_c_body too")
+                last = np.asarray(last_c_body, dtype=np.float32)
+                true_term = compute_potential(self.c_body, self.c_valid, self.dones, last, last < LABEL_UNREACHABLE,
+                                              potential[2] if len(potential) > 2 else gamma, potential[0],
+                                              potential[1])
+                weight = np.float32(potential_blend)
+                self.potential_map = map_term * weight
+                self.potential = (self.potential_map + true_term * (np.float32(1.0) - weight)).astype(np.float32)
+        elif potential_source not in POTENTIAL_SOURCES:
+            raise ValueError(f"potential.source: expected one of {list(POTENTIAL_SOURCES)}, got {potential_source!r}")
+        if potential is not None and self.label_bytes:
             self.rewards += self.potential
         self.advantages, self.returns = compute_gae(
             self.rewards,
@@ -480,3 +550,8 @@ class RolloutBuffer:
     def mean_potential(self) -> float:
         """Mean potential term per decision over the valid samples (reward_potential; 0 without labels)."""
         return float(self.potential[self.valid].mean()) if self.label_bytes and self.valid.any() else 0.0
+
+    def mean_potential_map(self) -> float:
+        """Mean of the map term's part of the potential per decision over the valid samples (reward_potential_map; 0
+        without labels or under potential.source "true")."""
+        return float(self.potential_map[self.valid].mean()) if self.label_bytes and self.valid.any() else 0.0

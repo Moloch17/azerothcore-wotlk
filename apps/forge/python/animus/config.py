@@ -131,6 +131,10 @@ class EvalConfig:
     #     region_*, clusters, searched_cells) zeroed (general search): what the coverage inputs are worth.
     #   no_party, no_recall: the party frames block's columns zeroed, or only its recall columns (member*_recall*,
     #     revision 3) (decision 0033): what the frames and dots, or the remembered and predicted places, are worth.
+    #   no_shared_memory: the sim told (MODE_FLAG_NO_SHARED_MEMORY) to start every seat blank instead of the seeded
+    #     half adopting the map's shared memory: the same trips with and without the memory (the plain evaluation's
+    #     shared_memory split is two different draws). Skipped on a stage without a shared memory, and dropped when
+    #     the sim ignored the flag (its shared_memory column still reads 1 somewhere).
     arms: dict = field(default_factory=dict)
     arms_every: int = 1
     # The routes of every evaluation, kept: the learner's scored seats' raw kinematic tracks (x, y, z, yaw, ...) with
@@ -426,7 +430,7 @@ MAX_HINDSIGHT_LOOKBACK = 256
 #: The evaluation arms beside the plain one ("all bots"): eval.arms names them (dungeon-curriculum I7).
 EVAL_ARMS = ("with_human", "with_partners", "no_flag", "no_camera", "no_compass", "no_map", "no_memory", "no_goal",
              "random_goal", "random_cell", "no_plan", "no_searched", "no_coverage", "no_party", "no_recall",
-             "no_planner")
+             "no_planner", "no_shared_memory")
 
 
 @dataclass
@@ -435,11 +439,20 @@ class PotentialConfig:
     mappo.buffer.compute_potential): at GAE time every step's reward gains gamma x phi(next) - phi(cur), with phi =
     -min(C, clip x 100) x yards_scale and C the body's route cost-to-go in yards the sim labels each observation with
     (protocol 31). 0 on a done row and wherever either C is unreachable. Policy-invariant with the learner's own gamma,
-    paid at x1 for the whole curriculum: nothing of it fades. Nothing happens in a stage without labels."""
+    paid at x1 for the whole curriculum: nothing of it fades. Nothing happens in a stage without labels.
+
+    `source` says which C (mappo.buffer.POTENTIAL_SOURCES): "true", the bake's route cost-to-go, which the bot cannot
+    see; "map", the route cost-to-go on the bot's OWN mental map -- the sim labels each observation with the body's
+    and the previous decision's position's on that same current map (protocol 33), and the step is paid yards_scale x
+    their difference, the yards the move closed on the map the bot perceives and its classical waypoint displays (0
+    where either is unreachable; mappo.buffer.compute_potential_map); "blend", `blend` of the map term and the rest
+    of the true one."""
 
     enabled: bool = True
     yards_scale: float = 0.01   # reward per yard of route cost-to-go
     clip: float = 50.0          # phi is capped at this many hundred yards (5,000 yd: beyond it, a trip is a trip)
+    source: str | bool = "true"     # "true" | "map" | "blend" (POTENTIAL_SOURCES); YAML's bare true reads as "true"
+    blend: float = 0.5              # under "blend": the map term's weight, the true term's 1 - blend
     # The gamma inside the difference: discount x phi(next) - phi(cur). 1 (the default): the plain difference, which
     # telescopes to the route yards closed and pays nothing for standing still. The learner's gamma (Ng's invariance)
     # needs phi = 0 where an episode ends; nav episodes end on the clock with the term zeroed, so with phi negative
@@ -454,6 +467,12 @@ class PotentialConfig:
             raise ValueError(f"potential.discount: expected (0, 1], got {self.discount!r}")
         if not self.clip > 0.0:
             raise ValueError(f"potential.clip: expected more than 0 (hundreds of yards), got {self.clip!r}")
+        if self.source is True:
+            self.source = "true"    # `source: true` unquoted is YAML's boolean
+        if self.source not in ("true", "map", "blend"):
+            raise ValueError(f"potential.source: expected one of ['true', 'map', 'blend'], got {self.source!r}")
+        if not 0.0 <= self.blend <= 1.0:
+            raise ValueError(f"potential.blend: expected 0 to 1 (the map term's weight), got {self.blend!r}")
 
 
 @dataclass
