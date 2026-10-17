@@ -88,10 +88,10 @@ namespace Animus::Vision
     /// 4 (2026-10-17): bodies that fell through a hole in a dungeon's collision were stood on the terrain over it
     /// (PlayerController's Resync) and painted it -- the Deadmines' 23,000 cells of floor at z 302 -- and the shore's
     /// dry edge was meshed as a hazard; a version 3 file holds both, and is not read. The bytes are version 3's.
-    /// 5 (2026-10-17, memv4): a ray's own hit on a liquid plane under the shore's dry floor painted the floor a hazard
-    /// (6-8 % of the Deadmines' and Shadowfang's dry ground; MentalMap::NoteHazard), and a wall a blank seat saw past
-    /// stayed (WallClears::SeenFree); a version 4 file holds those hazards and walls, and is not read. The bytes are
-    /// version 3's.
+    /// 5 (2026-10-17, memv4): a ray's own hit on a WMO's liquid plane under a known floor (the shore's dry edge, a
+    /// dock) painted the floor a hazard (MentalMap::NoteHazard; a few percent of the Deadmines' hazard cells), and a
+    /// wall a blank seat saw past stayed (WallClears::SeenFree); a version 4 file holds those hazards and walls, and
+    /// is not read. The bytes are version 3's.
     constexpr uint32_t MEMORY_VERSION = 5;
     /// When the memory's clock (seconds past its base) passes this, the base moves on to leave REBASE_KEEP seconds
     /// of history: a seat's map runs to MentalMap's 65000-second limit from wherever it was anchored.

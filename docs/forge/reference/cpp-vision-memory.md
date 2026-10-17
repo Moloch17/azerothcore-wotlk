@@ -125,9 +125,13 @@ slime (within `WRITE_REACH` a 1-yd cell, beyond it a far cell) is written after 
 when the cell's floor nearest the hit stands above it by more than `FLOOR_STEP` -- the mesh's guard for a hazard
 triangle applied to the direct hits too. The caster takes a WMO's liquid plane wherever a solid is not nearer
 (`VisionCaster.cpp` step 2 has no ground-below-the-plane test, unlike the terrain's at :557), so a ray through a gap in
-the collision, or along the shore's dry edge, hit the plane under dry floor: 6-8 % of the Deadmines' and Shadowfang's
-reachable floor read hazard in the version 4 memory (memv4). A hazard hit on a cell whose floor is not yet known is
-still written (the cell has no liquid level to judge by later).
+the collision, or along the shore's dry edge, hits the plane under a dry floor. Measured (tmp/mapfix/shore, 40 memv4
+"false hazard" poses a map, 8 frames each): the guard drops 3 % of the Deadmines' direct-hit hazard cells (895 of
+28,934; 0.5 % of its liquid hits land under dry solid) and none of Shadowfang's -- and at 21 of the 40 Deadmines
+poses and 39 of the 40 Shadowfang ones the body stands in water, so most of the 6-8 % of bake-Free floor that read
+hazard in the version 4 memory is the waterline the bake calls Free (it has no Water class in either map), not a
+writer. A hazard hit on a cell whose floor is not yet known is still written (the cell has no liquid level to judge by
+later).
 
 ### Invariants
 

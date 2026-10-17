@@ -475,10 +475,12 @@ namespace Animus::Vision
         /// MAP_WALL_FRAME marks removed; the frame's hazard hits written where no floor stands above them.
         void SettleFrame(MapWriteStats* stats);
         /// A water, magma or slime hit at height `z` on a 1-yd cell (far: a far cell): written at the frame's end
-        /// (SettleFrame) unless the cell's floor nearest the hit stands above it -- the shore's dry edge, which a WMO's
-        /// liquid plane runs on under (the caster takes the plane wherever a solid is not nearer: the Deadmines' and
-        /// Shadowfang's dry ground read 6-8 % hazard, memv4 2026-10-17). The frame's own floor hits count, whatever
-        /// their order among its rays.
+        /// (SettleFrame) unless the cell's floor nearest the hit stands above it -- a WMO's liquid plane runs on
+        /// under the shore's dry edge and under a dock, and the caster takes the plane wherever a solid is not nearer
+        /// (VisionCaster.cpp's model-liquid step has no ground-below test; the terrain's has). The frame's own floor
+        /// hits count, whatever their order among its rays. At the memv4 poses (2026-10-17) this was 3 % of the
+        /// Deadmines' hazard cells and none of Shadowfang's: most of the "false" hazards there are the waterline the
+        /// bake calls Free (it has no Water class in either map).
         void NoteHazard(int32_t cx, int32_t cy, float z, bool far);
         /// A hit beyond WRITE_REACH into the far tier: floor at its layer, a wall in the band of the far cell's floor
         /// (else the feet's), water or a hazard.
