@@ -2160,10 +2160,15 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
         float const shared = _stage.SharedMemoryShare;
         bool const adopt = !(env.Evaluating && _noSharedMemory.load(std::memory_order_relaxed));
         bool const hideObjects = env.Evaluating && _noObjectMemory.load(std::memory_order_relaxed);
+        bool const noGlobal = env.Evaluating && _noGlobal.load(std::memory_order_relaxed);
         for (SeatState& seat : data.Seats)
         {
             seat.MapPending = true;
             seat.MapKept = false;
+            // The "no_global" arm (MODE_FLAG_NO_GLOBAL): no draw of its own either. Every episode plans its global
+            // route afresh (the field is the goal's and this map's).
+            seat.GlobalOff = noGlobal;
+            seat.Global.Reset();
             // The "no_object_memory" arm (MODE_FLAG_NO_OBJECT_MEMORY): no draw of its own, so the seed's are the same.
             seat.ObjectsHidden = hideObjects;
             if (shared > 0.0f)
@@ -4300,6 +4305,8 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
         view.MapKept = seat.MapKept;
         view.Crop = &seat.Crop;
         view.CoverageOut = &seat.CoverageSummary;
+        view.Global = &seat.Global;
+        view.NoGlobal = seat.GlobalOff;
     }
     view.Option = &seat.Option;
     seat.RoomGoals = view.World.RoomGoals;
@@ -5387,6 +5394,15 @@ void Animus::Curriculum::StageScenario::SetNoObjectMemory(bool off)
         LOG_INFO("module.animus", "Animus forge: stage {}: {}", _stage.Name, off
             ? "the evaluation's seats have no object memory (the learner's no_object_memory arm)"
             : "the evaluation's seats remember objects as the seed draws");
+}
+
+void Animus::Curriculum::StageScenario::SetNoGlobal(bool off)
+{
+    bool const before = _noGlobal.exchange(off, std::memory_order_relaxed);
+    if (before != off && _stage.Has(BlockId::Map))
+        LOG_INFO("module.animus", "Animus forge: stage {}: {}", _stage.Name, off
+            ? "the evaluation's routes come from the window plan (no global route: the learner's no_global arm)"
+            : "the evaluation's routes come from the global route where it has one");
 }
 
 bool Animus::Curriculum::StageScenario::PinEvaluationArena(uint32 pin)

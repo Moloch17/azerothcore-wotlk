@@ -200,6 +200,8 @@ exact set is `stage.json` `episode_info` once built):
 | time_limit_seconds | The trip's clock: 3 x the best route at 7 yd/s + 15 s, the arena's `EpisodeSeconds` at least (and 30 s), 3 x them at most (`PointNav.Time*`); the arena's own seconds with `TimeFactor` 0 and in nav6. | s |
 | arrived_base_limit | Arrived within the arena's own `EpisodeSeconds` (nav1 60 s): `arrived` as the fixed clock of earlier runs would have read it, for comparison across the 2026-10-18 change. | 0/1 |
 | route_switches | Decisions whose map-block fine route was replaced by one that leaves it (`Vision::KeepRoute`, `CropPose::RouteSwitches`; a body that left the route is not counted). | count |
+| route_source_global_share | Share of the labelled decisions whose route scalars and labels came from the global route over the whole mental map (`Vision::GlobalRoute`, `CropPose::RouteGlobal`) rather than the window plan; 0 under the `no_global` arm. | 0-1 |
+| global_replans, global_replans_contradiction | The global route's recomputes after each trip's first plan (a wall or a remembered closed door on the route, 2000 newly seen cells, 20 s, the body leaving the domain), and those that were a contradiction of the route within 30 yd of walk. | count |
 | stuck_seconds, wall_seconds | As every stage (a key held with no motion; pressing into a wall). | s |
 | lost_seconds | Time with `C(body) > C(start) + PointNav.LostYards` (40): further from the goal by route than the start was. | s |
 | revisit_seconds | Time on ground stood on before this episode (arenas flagged `Revisit`: N4 on). | s |

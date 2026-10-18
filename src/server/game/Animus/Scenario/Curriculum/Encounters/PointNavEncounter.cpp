@@ -141,6 +141,19 @@ void Animus::Curriculum::PointNavEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     {
         return float(_scenario.Data(env).Seats[std::min<uint32>(seat, MAX_SEATS - 1)].Crop.RouteSwitches);
     });
+    // The route's source (MapBlock::Observe): the share of the labelled decisions whose route came from the global
+    // route over the whole mental map rather than the window plan, and the global route's recomputes after each
+    // trip's first plan -- all of them, and those a contradiction of the route about to be walked.
+    add("route_source_global_share", [seatOf](Env const& env, uint32 seat)
+    {
+        SeatNav const& s = seatOf(env, seat);
+        return s.RouteDecisions ? float(s.GlobalDecisions) / float(s.RouteDecisions) : 0.0f;
+    });
+    add("global_replans", [seatOf](Env const& env, uint32 seat) { return float(seatOf(env, seat).GlobalReplans); });
+    add("global_replans_contradiction", [seatOf](Env const& env, uint32 seat)
+    {
+        return float(seatOf(env, seat).GlobalContradictions);
+    });
     add("optimal_yards", [nav](Env const& env, uint32)
     {
         return nav(env).CStart >= Vision::TRAV_UNREACHABLE ? 0.0f : nav(env).CStart;
@@ -990,6 +1003,10 @@ void Animus::Curriculum::PointNavEncounter::WriteLabels(Env const& env, uint32 s
         if (!seat.HasLabelPos)
             seat.MapRouteStart = atBody;
         seat.MapRouteLast = atBody;
+        ++seat.RouteDecisions;
+        seat.GlobalDecisions += pose.RouteGlobal ? 1 : 0;
+        seat.GlobalReplans += pose.GlobalReplanned ? 1 : 0;
+        seat.GlobalContradictions += pose.GlobalContradiction ? 1 : 0;
     }
     seat.HasLabelPos = true;
     seat.LabelX = x;

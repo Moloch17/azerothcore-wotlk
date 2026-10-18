@@ -170,6 +170,64 @@ An L-shaped known corridor whose inner wall is unseen (tmp/keep/corridor.cpp): 6
 unknown corner at the old costs, 1 at the new; a seen 2-yd L corridor read 231 yd (old) and 123 yd (new) for an 80-yd
 route.
 
+**The global route** (`Vision/GlobalPlanner.{h,cpp}`, `Vision::GlobalField` / `GlobalRoute`, 2026-10-18;
+`SeatState::Global`, `MapBlock::Observe`): the window plan above sees the memory through 96 yd of 1-yd cells and an
+8-yd coarse ring, so a goal past ~48 yd was routed through the coarse blur even when the 1-yd memory held the whole
+dungeon (nav1_sight rung 2: no gain from the memory on long trips; the window plan's C_map at the first decision 1.33 x
+the true route with memory). The global route searches the seat's whole map at 1 yd, from the goal outward:
+- **2.5D graph**: a node is a (cell, floor layer); a floorless cell (unknown, or seen free with no floor) is one node
+  carrying the height of the node that reached it. A step into a neighbour goes to each of its floor layers the walk
+  from it may take -- rise at most `GLOBAL_STEP_UP` 1.5 yd, drop at most `GLOBAL_STEP_DOWN` 3 yd -- or to its
+  floorless node; a layer out of that band is another storey (no edge, no wall). The body and the goal attach to the
+  layer nearest their feet within `GLOBAL_ATTACH_BAND` 3 yd.
+- **Costs**: `PLAN_COSTS` (MapPlanner.h, shared: unknown 2, floor and door 1, hazard 5, wall 100), a node's wall its own
+  layer's flag, and the configuration space per node at its height (holes closed to 100, wall-adjacent floor
+  `PLAN_INFLATED` 1.3, a 2-yd passage `PLAN_PINCHED` 1.6), judged on the walls as read. **Gap rule**: a cell the seat
+  stood on (`MAP_VISITED`) is never closed; no other "walked" evidence exists in a memory (`MergeTile` strips
+  `MAP_VISITED`; `MAP_FREE` is any in-band pass) and the window plan closes the same gaps, so no format change
+  (`MEMORY_VERSION` stays 5). A known closed door or gate (the object memory's `Door` entries not seen open, not absent,
+  each a disc of max(radius, 1) yd: `MapBlock`'s `DoorBlocking`, the `GlobalBlocking` hook) is a wall. Hook for a
+  learned price of unseen cells: `GlobalUnknownCost` (default the flat `PLAN_UNKNOWN`; clamped at the floor's factor).
+- **Domain**: the kept 1-yd tiles' span plus the body's and goal's tiles and one tile of margin (at most 48 tiles
+  either side of the body-goal box); tiles not kept are unknown; folded coarse and far-tier cells are not read. A block
+  of 2 x 1024 nodes (26 KB) per tile the search reaches.
+- **Search**: an A* from the goal steered at the body (key = value + octile distance x the floor factor, consistent, so
+  every settled value is exact), run until the body's cell is settled and then every node keyed within
+  `GLOBAL_SETTLE_MARGIN` 24 of the body's value (a band round the route). A later read of an unsettled node re-aims the
+  kept heap at it (`Retarget`, more than 4 cells off the old target) and resumes; a cell whose node never appears (a
+  floorless cell reached at another storey's height) is given up `GLOBAL_GIVE_UP` 300 past its neighbourhood's value.
+- **Kept and recomputed** (`GlobalRoute::Update`): fresh at an episode's start (`StageScenario`'s reset and the first
+  decision's empty pose) and when the goal moves more than a yard; mid-trip when a node on the route from the body is
+  now a wall of its layer, or its layer is gone, or a remembered closed door sits on it -- within
+  `GLOBAL_CONTRADICTION_YARDS` 30 of walk a **contradiction**, further a route walled (both recompute at once; the walk
+  is checked every decision, at most 4096 nodes) -- when `GLOBAL_REPLAN_KNOWN` 2000 cells were first seen since the
+  plan (`MentalMap::KnownTotal`), every `GLOBAL_REPLAN_SECONDS` 20 of the map's clock, and when the body left the
+  domain. Between recomputes the field is fixed, so the labels' C(last) and C(body) are read on one field (movement
+  alone); on a recompute both are read on the new one.
+- **Used** when it routes the body: the goal's cell or a neighbour is known on the map, and the body's value is
+  reached. The eight fine scalars come from its walk (`GlobalField::Route`: the next node towards the goal, FineRoute's
+  read at 5/10/20/30 steps), the coarse four from the walk's cell 16 yd along it (`Coarse`: sin, cos, d / 16, valid),
+  `route_dist` and the labels' `[2]` / `[3]` from `ValueAt` (bilinear, blocked and unreached left out, as
+  `PlanValueAt`; the crop before's pose read within 16 yd), and the window plan is not made. Else the window plan as
+  above. **With the hysteresis**: the global field is itself stable (fixed between recomputes), so `KeepRoute` governs
+  the window-plan decisions only; the global walk's first 31 cells are written to `CropPose::Kept`, so a decision that
+  falls back on the window plan follows on from where the global route was going until the window plan undercuts it by
+  the margin. `route_switches` counts the window plan's switches alone.
+- **Off** under the `no_global` evaluation arm (`MODE_FLAG_NO_GLOBAL` 8, `SeatState::GlobalOff`, evaluations only).
+
+Measured (tmp/gp/harness.cpp, 2026-10-18; random start/goal pairs on the bake's free cells whose 1-yd memory cell holds a
+floor within 1.5 yd; truth = the trav bake's cost-to-go): on a **perfect memory** (every 1-yd cell from the bake's own
+class) the global route's walk is 0.94-0.98 x the true route (median; 1-yd octile against 2-yd octile), its value at
+the start 0.96-0.99 x, against the window plan's value at the start 1.24-1.31 x (Stockades, Ragefire); the direction
+5 yd out within 45 deg of the truth's 86-90 %. On the **recorded shared memories** (34.amem, 389.amem, current
+pricing, 200 pairs a map): the walk 0.99 x (Stockades) and 0.93 x (Ragefire) the true route, reached 91 % / 97 %, the
+direction within 45 deg 69 % / 65 % (the window plan's emulated walk: 64 % / 65 %, and it reaches the goal on 64 % /
+64 % of the pairs); 15 % / 7 % of the global walk's cells lie off the bake's passable ground -- the memory's own errors
+(Stockades: 19 % of the bake's passable cells read wall; every seen floorless cell lies outside the bake's passable
+ground; Ragefire: shortcuts over hazard and floors the bake calls impassable). Cost: the first plan 3.5-7 ms median,
+15-35 ms p90 (Deadmines 5 ms median, 78 ms p90), 1-1.5 ms on the perfect memory; a trip's later decisions 0.013-0.064 ms
+each on average (Update with the route check, Route, two reads; 0.33 recomputes a trip on a still memory).
+
 Cost on a synthetic room map (tmp/mapfix/check, 2026-10-17): 350-360 us a plan with the goal ahead (325-355 before the
 configuration space), 790 us with it 150 yd behind (820 before; most of the window settles before the body), 50-60 us
 with no coarse crop (30-40 before); the block's `map` cost row includes it. Planned once a decision a seat.

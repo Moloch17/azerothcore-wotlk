@@ -145,6 +145,13 @@ namespace Animus::Curriculum
             float LabelY = 0.0f;
             float MapRouteStart = Vision::TRAV_UNREACHABLE;
             float MapRouteLast = Vision::TRAV_UNREACHABLE;
+            // The route's source over the labelled decisions (CropPose::RouteGlobal: the global route, else the
+            // window plan) and the global route's recomputes past each trip's first plan, contradictions among them
+            // (the route_source_global_share, global_replans and global_replans_contradiction columns).
+            uint32 RouteDecisions = 0;
+            uint32 GlobalDecisions = 0;
+            uint32 GlobalReplans = 0;
+            uint32 GlobalContradictions = 0;
         };
 
         struct EnvNav

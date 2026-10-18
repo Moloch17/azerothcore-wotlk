@@ -25,6 +25,7 @@
 #include "Client.h"
 #include "EntityActions.h"
 #include "EntityMemory.h"
+#include "GlobalPlanner.h"
 #include "Identity.h"
 #include "MentalMap.h"
 #include "ObjectMemory.h"
@@ -258,6 +259,12 @@ namespace Animus::Curriculum
         /// This episode's seat reads no object memory (MODE_FLAG_NO_OBJECT_MEMORY, an evaluation's arm): it starts
         /// blank and the memory_entities block reads zeros.
         bool ObjectsHidden = false;
+        /// **Its global route** (Vision::GlobalRoute; the map block's): the field to its goal over its whole mental
+        /// map, kept between decisions and recomputed when due; reset at every episode's start. GlobalOff: this
+        /// episode's routes come from the window plan instead (MODE_FLAG_NO_GLOBAL, an evaluation's arm). Mutable
+        /// like the map.
+        mutable Vision::GlobalRoute Global;
+        bool GlobalOff = false;
         bool RecallKept = false;
         /// What each sight block slot named at its last observation (a raw GUID, 0 empty): the slots a press acts on.
         mutable std::array<uint64, SIGHT_SLOTS> SightGuids{};

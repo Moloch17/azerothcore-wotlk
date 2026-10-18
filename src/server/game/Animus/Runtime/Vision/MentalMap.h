@@ -397,6 +397,15 @@ namespace Animus::Vision
         /// The cell at world (x, y), or null when its tile is not kept (a coarse cell is not one).
         [[nodiscard]] MapCell const* Find(float x, float y) const;
         [[nodiscard]] MapCell const* FindCell(int32_t cx, int32_t cy) const;
+        /// The kept 1-yd tile (tx, ty)'s MAP_TILE_CELLS cells, row by row (y first), or null when it is not kept (a
+        /// folded coarse tile is not one). Valid until the map is next written (a borrowed tile is cloned on its first
+        /// write): the global route's read (GlobalPlanner.h), which fetches it afresh every decision.
+        [[nodiscard]] MapCell const* TileCells(int32_t tx, int32_t ty) const;
+        /// The tile coordinates the kept 1-yd tiles span, inclusive; false when none is kept.
+        bool TileBounds(int32_t& tx0, int32_t& ty0, int32_t& tx1, int32_t& ty1) const;
+        /// The 1-yd cells first seen since the map was last cleared (a cell's Seen going 0 -> a stamp; a borrowed
+        /// tile's cells were seen before and count nothing): the global route's replan trigger (GlobalRoute).
+        [[nodiscard]] uint64_t KnownTotal() const { return _knownTotal; }
         /// A window of `side` x `side` 1-yd cells from cell (x0, y0), row by row (y first), into `out`: each the kept
         /// tile's cell, else the folded coarse cell standing in for it (a realm's; the far tier never), else a blank
         /// cell. One copy of the tiles' rows rather than a tile lookup a sample (the crop's and the planner's read).
@@ -502,6 +511,7 @@ namespace Animus::Vision
         uint16_t _epoch = 1;            // the first Stamp() of this episode
         uint32_t _groundTotal = 0;
         uint32_t _searchedTotal = 0;
+        uint64_t _knownTotal = 0;
         double _lastGroundClock = 0.0;
         uint64_t _touch = 0;
         // The last tile Touch found: a frame writes runs of cells in one tile; and TouchFar's.

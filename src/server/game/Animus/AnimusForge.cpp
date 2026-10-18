@@ -2878,6 +2878,8 @@ bool AnimusForge::Forge::ApplyMode(ModeMsg const& mode)
     _pool->SetNoSharedMemory(mode.Mode == 1 && (mode.Flags & MODE_FLAG_NO_SHARED_MEMORY) != 0);
     // The "no_object_memory" arm: an evaluation's seats start with no object memory and read none.
     _pool->SetNoObjectMemory(mode.Mode == 1 && (mode.Flags & MODE_FLAG_NO_OBJECT_MEMORY) != 0);
+    // The "no_global" arm: an evaluation's routes come from the window plan, not the global route on the whole map.
+    _pool->SetNoGlobal(mode.Mode == 1 && (mode.Flags & MODE_FLAG_NO_GLOBAL) != 0);
     _pool->SetEvaluation(mode.Mode == 1, mode.SeedBase, mode.Episodes, baseline, mode.FirstSeed);
 
     if (mode.Mode == 1)

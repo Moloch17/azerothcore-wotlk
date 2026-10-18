@@ -347,6 +347,7 @@ void Animus::Vision::MentalMap::Clear()
     _epoch = 1;
     _groundTotal = 0;
     _searchedTotal = 0;
+    _knownTotal = 0;
     _lastGroundClock = 0.0;
     _frameWalls.clear();
     _frameClears.clear();
@@ -529,6 +530,37 @@ Animus::Vision::MapCell const* Animus::Vision::MentalMap::FindCell(int32_t cx, i
     return FindIn(_tiles, cx, cy);
 }
 
+Animus::Vision::MapCell const* Animus::Vision::MentalMap::TileCells(int32_t tx, int32_t ty) const
+{
+    auto const found = _tiles.find(TileKey(tx, ty));
+    if (found == _tiles.end())
+        return nullptr;
+    Tile const* tile = found->second.Read();
+    return tile ? tile->Cells.data() : nullptr;
+}
+
+bool Animus::Vision::MentalMap::TileBounds(int32_t& tx0, int32_t& ty0, int32_t& tx1, int32_t& ty1) const
+{
+    bool any = false;
+    for (auto const& [key, slot] : _tiles)
+    {
+        int32_t const tx = int32_t(key >> 32);
+        int32_t const ty = int32_t(uint32_t(uint64_t(key) & 0xffffffffu));
+        if (!any)
+        {
+            tx0 = tx1 = tx;
+            ty0 = ty1 = ty;
+            any = true;
+            continue;
+        }
+        tx0 = std::min(tx0, tx);
+        tx1 = std::max(tx1, tx);
+        ty0 = std::min(ty0, ty);
+        ty1 = std::max(ty1, ty);
+    }
+    return any;
+}
+
 Animus::Vision::MapCell const* Animus::Vision::MentalMap::FindFarCell(int32_t ccx, int32_t ccy) const
 {
     return FindIn(_far, ccx, ccy);
@@ -565,7 +597,10 @@ void Animus::Vision::MentalMap::MarkSeen(MapCell& cell, uint16_t stamp)
     if (Tile* tile = _lastTile)
     {
         if (!cell.Seen)
+        {
             ++tile->KnownCells;
+            ++_knownTotal;
+        }
         if (cell.Seen < _epoch && stamp >= _epoch)
         {
             if (tile->SearchedEpoch != _epoch)

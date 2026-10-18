@@ -379,6 +379,7 @@ namespace Animus::Curriculum
         void SetStandIn(bool standIn) override;
         void SetNoSharedMemory(bool off) override;
         void SetNoObjectMemory(bool off) override;
+        void SetNoGlobal(bool off) override;
         /// The encounters arena `arena` uses, in build order and in reward order.
         [[nodiscard]] std::vector<Encounter*> const& ActiveRewardOrder(Env const& env) const;
         /// Create and place seat `seat`'s next character (its layout is set). `map` is null for the env's first bot.
@@ -521,6 +522,8 @@ namespace Animus::Curriculum
         std::atomic<bool> _noSharedMemory{ false };
         /// Whether an evaluation's seats start with no object memory and read none (MODE_FLAG_NO_OBJECT_MEMORY).
         std::atomic<bool> _noObjectMemory{ false };
+        /// Whether an evaluation's routes come from the window plan, not the global route (MODE_FLAG_NO_GLOBAL).
+        std::atomic<bool> _noGlobal{ false };
         /// The running cleared share of training runs of a whole dungeon (NoteWingRun); runs on several map threads may
         /// lose a step to each other, which a running average does not mind.
         WingLadder _wingLadder;

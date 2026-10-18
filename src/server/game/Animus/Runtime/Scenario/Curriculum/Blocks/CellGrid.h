@@ -63,6 +63,13 @@ namespace Animus::Curriculum
         /// column), carried from pose to pose as the stall clock is.
         Vision::PlanWalk Kept;
         uint32 RouteSwitches = 0;
+        /// The route's source this decision (MapBlock::Observe; Vision::GlobalRoute): the global route over the whole
+        /// mental map (RouteGlobal), else the window plan; whether the global route was recomputed this decision past
+        /// its episode's first plan (GlobalReplanned), and whether that recompute was a contradiction of the route
+        /// about to be walked (GlobalContradiction) -- the nav columns' tallies (PointNavEncounter).
+        bool RouteGlobal = false;
+        bool GlobalReplanned = false;
+        bool GlobalContradiction = false;
     };
 
     /// A place the sim holds for a cell goal: the world point latched when the cell was chosen.

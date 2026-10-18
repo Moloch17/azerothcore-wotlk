@@ -185,8 +185,12 @@ eval:
     # The same seeds with the seats given no object memory (MODE_FLAG_NO_OBJECT_MEMORY; evaluation.OBJECT_MEMORY_ARM):
     # its memory_entities block zeros. Skipped with a line while the stage has no memory_entities block.
     no_object_memory: 64
+    # The same seeds with the routes from the window plan round the body instead of the global route over the whole
+    # mental map (MODE_FLAG_NO_GLOBAL; evaluation.GLOBAL_ARM): what planning on the whole memory is worth.
+    no_global: 64
   # The sim's episode columns (CONTRACT.md sec 3), and the learner's potential term summed over the episode.
-  report: [arrived, spl, time_ratio, arrived_base_limit, time_limit_seconds, route_switches, optimal_yards,
+  report: [arrived, spl, time_ratio, arrived_base_limit, time_limit_seconds, route_switches, route_source_global_share,
+           global_replans, global_replans_contradiction, optimal_yards,
            straight_yards, detour_factor, travelled_yards, stop_error_yards, falls, fall_damage_share, drowned, died,
            timed_out, stuck_seconds, wall_seconds, lost_seconds,
            revisit_seconds, jumps, swim_seconds, nav_rung, detour_bin, length_bin, replayed, waypoint_regret_yards,

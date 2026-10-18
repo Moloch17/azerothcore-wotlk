@@ -352,6 +352,11 @@ namespace AnimusForge
     /// memory. Not a wire change: an older sim ignores the bit (above) and the learner reads the episodes'
     /// shared_memory column to tell.
     constexpr uint32 MODE_FLAG_NO_SHARED_MEMORY = 4;
+    /// NO_GLOBAL (bit 3): an evaluation whose seats' route scalars and nav labels come from the window plan round the
+    /// body (Vision::PlanOnMap with its coarse ring and KeepRoute's hysteresis) instead of the global route over the
+    /// whole mental map (Vision::GlobalRoute) -- the learner's "no_global" arm, against the plain evaluation's same
+    /// trips (it draws nothing). Ignored by training MODE. Not a wire change (an older sim ignores the bit).
+    constexpr uint32 MODE_FLAG_NO_GLOBAL = 8;
     /// NO_OBJECT_MEMORY (bit 4; bit 3, 8, is the global planner's no_global): an evaluation whose seats neither adopt
     /// their map's shared object memory nor read the memory_entities block (it reads zeros), the seeded draws all
     /// still run -- the learner's "no_object_memory" arm, against the plain evaluation's same trips. Ignored by

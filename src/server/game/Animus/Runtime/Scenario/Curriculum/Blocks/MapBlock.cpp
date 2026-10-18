@@ -18,7 +18,9 @@
 
 #include "MapBlock.h"
 #include "CellGrid.h"
+#include "GlobalPlanner.h"
 #include "Layout.h"
+#include "ObjectMemory.h"
 #include "Player.h"
 #include "StageDefinition.h"
 #include "SeatView.h"
@@ -55,6 +57,47 @@ namespace
     std::atomic<bool> RouteKeep{ true };
     std::atomic<float> RouteKeepShare{ 0.1f };
     std::atomic<float> RouteKeepYards{ 5.0f };
+    /// How far from the body the crop before's pose is read on the global field (above the labels' 12-yd step).
+    constexpr float GLOBAL_LAST_YARDS = 16.0f;
+
+    /// The global route's doors (Vision::GlobalBlocking): the closed doors and gates the seat's object memory holds
+    /// (class Door, a game object, not seen open, not absent), gathered once a decision, so a route's cell is asked
+    /// of a handful of discs rather than the whole memory (ObjectMemory::BlockingAt's own scan, once a cell).
+    class DoorBlocking final : public Vi::GlobalBlocking
+    {
+    public:
+        explicit DoorBlocking(Vi::ObjectMemory const* objects)
+        {
+            if (!objects)
+                return;
+            thread_local std::vector<Vi::RememberedObject const*> found;
+            objects->Find(Vi::ObjectKind::Count, Vi::Class::Door, Vi::Vec3{}, 0.0f, found);
+            for (Vi::RememberedObject const* entry : found)
+                if (entry->GameObject && !entry->Open && !entry->Absent)
+                    _doors.push_back({ entry->Position.X, entry->Position.Y,
+                        std::max(entry->Radius, Vi::DOOR_MIN_RADIUS) });
+        }
+        [[nodiscard]] bool Any() const { return !_doors.empty(); }
+        [[nodiscard]] bool Blocked(int32_t cx, int32_t cy, float /*z*/) const override
+        {
+            // ObjectMemory::BlockingAt's rule: the door's middle within its radius of the cell's centre.
+            float const x = float(cx) + 0.5f;
+            float const y = float(cy) + 0.5f;
+            for (Door const& door : _doors)
+                if (std::hypot(door.X - x, door.Y - y) <= door.Radius)
+                    return true;
+            return false;
+        }
+
+    private:
+        struct Door
+        {
+            float X;
+            float Y;
+            float Radius;
+        };
+        std::vector<Door> _doors;
+    };
 
     /// A bearing off the facing as sin and cos, and a distance over the reach, into three scalars.
     void Bearing(float facing, float x, float y, float fromX, float fromY, float* out)
@@ -302,40 +345,91 @@ void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uin
         // The school's goal (OBS_GOAL_*): the same two numbers the plan is made from, in raw yards.
         obs[OBS_GOAL_FORWARD_YARDS] = goalForward;
         obs[OBS_GOAL_RIGHT_YARDS] = goalRight;
-        // The points the plan must settle beyond the body: the crop before's pose (the labels' C_map(last)) and the
-        // end of the walk the decision before followed (Vision::KeepRoute prices the kept walk to there).
-        Vi::PlanPoint near[2];
-        uint32 points = 0;
-        if (last.Valid)
-        {
-            float const lx = last.X - x;
-            float const ly = last.Y - y;
-            near[points++] = Vi::PlanPoint{ lx * cosYaw + ly * sinYaw, lx * sinYaw - ly * cosYaw };
-        }
-        if (Vi::KeptEnd(last.Kept, x, y, view.Facing, near[points]))
-            ++points;
-        thread_local Vi::MapPlan plan;
-        Vi::PlanOnMap(*map, x, y, z, view.Facing, goalForward, goalRight, coarse, plan, near, points);
+        // The global route over the whole mental map (Vision::GlobalRoute), where it routes the body: the goal a place
+        // the map has seen and the body's cost reached. Its field is kept between decisions and recomputed when the
+        // goal moves, the map contradicts the route (a new wall on it, a door remembered closed), new ground is seen
+        // or its clock is due; so the route the policy follows, the labels' C_map(body) and C_map(last), and the
+        // stall clock all read one fixed field between recomputes. Off under the "no_global" arm.
         pose.RouteValid = true;
-        pose.RouteBody = Vi::PlanValueAt(plan, 0.0f, 0.0f);
-        if (last.Valid)
+        Vi::GlobalRoute* router = view.NoGlobal ? nullptr : view.Global;
+        bool global = false;
+        if (router)
         {
-            pose.RouteLastValid = true;
-            pose.LastX = last.X;
-            pose.LastY = last.Y;
-            pose.RouteLast = Vi::PlanValueAt(plan, near[0].Forward, near[0].Right);
+            if (!last.Valid)
+                router->Reset();            // an episode's first decision (its pose was reset with the episode)
+            DoorBlocking const doors(view.ObjectsHidden ? nullptr : view.Objects);
+            global = router->Update(*map, x, y, z, view.Objective.GetPositionX(), view.Objective.GetPositionY(),
+                view.Objective.GetPositionZ(), doors.Any() ? &doors : nullptr);
+            Vi::GlobalReplan const did = router->ThisUpdate();
+            pose.GlobalReplanned = did != Vi::GlobalReplan::None && did != Vi::GlobalReplan::Fresh;
+            pose.GlobalContradiction = did == Vi::GlobalReplan::Contradiction;
         }
-        // The fine walk followed: the one the decision before followed, kept unless this plan's undercuts it by the
-        // margin (PointNav.RouteKeep*), else this plan's own (Vision::KeepRoute); the next decision keeps it in turn.
-        Vi::RouteKeeping keeping;
-        keeping.Enabled = RouteKeep.load(std::memory_order_relaxed);
-        keeping.Share = RouteKeepShare.load(std::memory_order_relaxed);
-        keeping.Yards = RouteKeepYards.load(std::memory_order_relaxed);
-        Vi::RouteChoice const choice = Vi::KeepRoute(plan, last.Kept, keeping);
-        pose.Kept = choice.Walk;
-        pose.RouteSwitches = last.RouteSwitches + (choice.Switched ? 1 : 0);
-        Vi::PlanRoute const& fine = choice.Route;
-        Vi::PlanWaypoint const far = Vi::CoarseWaypoint(plan);
+        Vi::PlanRoute fine;
+        Vi::PlanWaypoint far;
+        float routeDist = Vi::TRAV_UNREACHABLE;
+        if (global)
+        {
+            // The route points and the coarse waypoint off the global field (its walk from the body, 30 cells and 16
+            // yd of it), its value at the body and at the crop before's pose; the window plan is not made. The walk's
+            // first cells are kept as KeepRoute's, so a decision that falls back on the window plan follows on from
+            // where this route was going until the window plan undercuts it by the margin.
+            Vi::GlobalField& field = router->Field();
+            pose.RouteGlobal = true;
+            pose.RouteBody = field.ValueAt(x, y, z);
+            // The crop before's pose is read only within GLOBAL_LAST_YARDS of the body (the labels read it within
+            // their LABEL_STEP_MAX, 12 yd): a rise or a teleport would re-aim the search across the map for nothing.
+            if (last.Valid)
+            {
+                pose.RouteLastValid = true;
+                pose.LastX = last.X;
+                pose.LastY = last.Y;
+                pose.RouteLast = std::hypot(last.X - x, last.Y - y) <= GLOBAL_LAST_YARDS
+                    ? field.ValueAt(last.X, last.Y, last.Z) : Vi::TRAV_UNREACHABLE;
+            }
+            fine = field.Route(x, y, z, view.Facing);
+            far = field.Coarse(x, y, z, view.Facing);
+            field.Walk(x, y, z, pose.Kept);
+            pose.RouteSwitches = last.RouteSwitches;
+            routeDist = pose.RouteBody;
+        }
+        else
+        {
+            // The points the plan must settle beyond the body: the crop before's pose (the labels' C_map(last)) and
+            // the end of the walk the decision before followed (Vision::KeepRoute prices the kept walk to there).
+            Vi::PlanPoint near[2];
+            uint32 points = 0;
+            if (last.Valid)
+            {
+                float const lx = last.X - x;
+                float const ly = last.Y - y;
+                near[points++] = Vi::PlanPoint{ lx * cosYaw + ly * sinYaw, lx * sinYaw - ly * cosYaw };
+            }
+            if (Vi::KeptEnd(last.Kept, x, y, view.Facing, near[points]))
+                ++points;
+            thread_local Vi::MapPlan plan;
+            Vi::PlanOnMap(*map, x, y, z, view.Facing, goalForward, goalRight, coarse, plan, near, points);
+            pose.RouteBody = Vi::PlanValueAt(plan, 0.0f, 0.0f);
+            if (last.Valid)
+            {
+                pose.RouteLastValid = true;
+                pose.LastX = last.X;
+                pose.LastY = last.Y;
+                pose.RouteLast = Vi::PlanValueAt(plan, near[0].Forward, near[0].Right);
+            }
+            // The fine walk followed: the one the decision before followed, kept unless this plan's undercuts it by
+            // the margin (PointNav.RouteKeep*), else this plan's own (Vision::KeepRoute); the next decision keeps it
+            // in turn.
+            Vi::RouteKeeping keeping;
+            keeping.Enabled = RouteKeep.load(std::memory_order_relaxed);
+            keeping.Share = RouteKeepShare.load(std::memory_order_relaxed);
+            keeping.Yards = RouteKeepYards.load(std::memory_order_relaxed);
+            Vi::RouteChoice const choice = Vi::KeepRoute(plan, last.Kept, keeping);
+            pose.Kept = choice.Walk;
+            pose.RouteSwitches = last.RouteSwitches + (choice.Switched ? 1 : 0);
+            fine = choice.Route;
+            far = Vi::CoarseWaypoint(plan);
+            routeDist = choice.Kept ? choice.Cost : pose.RouteBody;
+        }
         static_assert(Vi::PLAN_ROUTE_POINTS == 4 && OBS_ROUTE_P30_COS == OBS_ROUTE_P5_SIN + 7);
         for (uint32 point = 0; point < Vi::PLAN_ROUTE_POINTS; ++point)
         {
@@ -352,7 +446,6 @@ void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uin
         // the body (a point's reading, blocked cells left out) -- and the stall clock carried from the pose before,
         // on the plan's value alone.
         bool const reachable = pose.RouteBody < Vi::TRAV_UNREACHABLE;
-        float const routeDist = choice.Kept ? choice.Cost : pose.RouteBody;
         if (routeDist < Vi::TRAV_UNREACHABLE)
         {
             obs[OBS_ROUTE_DIST] = std::min(1.0f, routeDist / Vi::PLAN_DIST_SCALE);

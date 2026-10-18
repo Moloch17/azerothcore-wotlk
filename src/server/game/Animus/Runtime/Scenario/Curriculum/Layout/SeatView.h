@@ -47,6 +47,7 @@ namespace Animus::Vision
     struct FrameHits;
     class MentalMap;
     class ObjectMemory;
+    class GlobalRoute;
     class EntityMemory;
 }
 
@@ -346,6 +347,11 @@ namespace Animus::Curriculum
         /// one; ObjectsHidden: the "no_object_memory" evaluation arm, whose block reads zeros.
         Vision::ObjectMemory* Objects = nullptr;
         bool ObjectsHidden = false;
+        /// **Its global route** (GlobalPlanner.h, SeatState::Global), in a stage with a map block: the map block's
+        /// route over the whole mental map. NoGlobal: the "no_global" evaluation arm, whose routes come from the
+        /// window plan. Null for a view without one.
+        Vision::GlobalRoute* Global = nullptr;
+        bool NoGlobal = false;
         /// **What each of the sight block's slots named at its last observation** (SeatState::SightGuids): the raw
         /// GUID a press on the slot acts on, 0 an empty slot; and the seat's client focus (SeatState::Focus), the
         /// friend its beneficial spells go to. Null for a view without a sight block.

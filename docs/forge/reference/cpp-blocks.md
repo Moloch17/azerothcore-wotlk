@@ -543,6 +543,12 @@ cell), its steps / 30 and valid (the walk moved and an objective is named; every
 Manifest: `route_points_yards [5, 10, 20, 30]`, `route_fine_reach_yards 30`, `route_coarse_reach_yards 16`, `route_dist_yards 300`,
 `route_stall_seconds 30`, `walls_channel` 7, `walls_max` 4; `goals.cells.channels` must say 8 too. The learner reads them by name and
 requires them to be the block's last seventeen. In the nav stages these are the goal's only observation (no compass since revision 7).
+**Their source** (2026-10-18, no revision change: the same seventeen, the same scale): the global route over the whole mental map
+(`Vision::GlobalRoute`, cpp-vision-memory.md "The global route") wherever it routes the body -- the goal's cell known on the map,
+the body's cost reached: the fine eight from its walk, the coarse four from its cell 16 yd along that walk (d / 16), `route_dist`
+from its value at the body -- else the window plan as above (with `KeepRoute`, continuing the global walk's cells it was handed).
+`route_stall` and the labels' C_map read whichever was used. The `no_global` evaluation arm (`MODE_FLAG_NO_GLOBAL`) forces the
+window plan.
 `Observe` advances the
 map clock, writes the frame's rays (`view.Hits`), the listed entities (`view.Seen`) and the body, crops heading-up. Entity sensing: also writes the listed entities' cells (`MentalMap::WriteEntities(*view.Seen)`), since the image no longer carries units or objects. Declared from move2 on.
 Reviewer notes: uses `bot->GetPosition*` for the crop centre before the body override only when no

@@ -229,6 +229,9 @@ namespace Animus
         /// Whether an evaluation's seats start with no object memory and read none (MODE_FLAG_NO_OBJECT_MEMORY, the
         /// learner's "no_object_memory" arm). Scenarios without one ignore it.
         virtual void SetNoObjectMemory(bool /*off*/) { }
+        /// Whether an evaluation's routes come from the window plan instead of the global route over the whole
+        /// mental map (MODE_FLAG_NO_GLOBAL, the learner's "no_global" arm). Scenarios without a map block ignore it.
+        virtual void SetNoGlobal(bool /*off*/) { }
         /// A cluster's shared curriculum state (StageScenario's dungeon ladder): a worker's runs since its last
         /// report, as a PROGRESS field (empty for none); the host folds every worker's into its own and sends the
         /// workers what it decided ("RUNG <n>"), which they follow instead of deciding for themselves.
