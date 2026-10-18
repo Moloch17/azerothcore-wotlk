@@ -21,6 +21,7 @@ Agents of a layout are identified by their features, not by a seat index: the sa
 from __future__ import annotations
 
 import math
+import os
 from collections.abc import Sequence
 
 import numpy as np
@@ -1202,6 +1203,40 @@ ROUTE_COLUMNS = ("route_p5_sin", "route_p5_cos", "route_p10_sin", "route_p10_cos
 #: ROUTE_COLUMNS by group, as MapEncoder.sim_waypoints scales them: (the columns, the valid flag that gates them; None
 #: for a column read as it is).
 ROUTE_GROUPS = ((tuple(range(0, 10)), 9), (tuple(range(10, 14)), 13), ((14,), 15), ((15,), None), ((16,), None))
+#: **The school's goal** (mappo.planner_waypoint_source "school"; MapEncoder.school_route; planner school stage 2):
+#: two map-block scalars the sim writes immediately before the route's seventeen -- the objective's forward and right
+#: yards in the body frame, the labels' goal_forward / goal_right convention (forward = dx cos yaw + dy sin yaw, right
+#: = dx sin yaw - dy cos yaw; 0 and 0 with no objective or one withheld, so a goal is present where either is not 0).
+#: They are the school planner's goal plane and nothing else's: the map's embedding never reads them (embed_scalars
+#: leaves them out as it does the route's, whatever the source), and the VIN's goal plane reads the compass alone
+#: (MapEncoder.goal) -- on a nav stage the straight line to the goal reaches the policy only as the school's route.
+#: Located by name (goal_of); optional: a block without them refuses the school source and nothing else.
+GOAL_COLUMNS = ("goal_forward_yards", "goal_right_yards")
+#: The map block's kept scalar (MapBlock OBS_KEPT: 1 when this episode's map was kept from the one before), by name:
+#: the memory flag the school planner reads at act time (the recorder's `kept` field; the shard's `memory` label
+#: prefers the episode's shared_memory column, which no observation carries). -1 without it (the flag is then 0).
+KEPT_COLUMN = "kept"
+#: **The school's route rule** (MapEncoder.school_route, route_from_fields; mappo.planner_waypoint_source "school"):
+#: the seventeen of ROUTE_COLUMNS computed from the school planner's fields on the 2-yd crop as the sim computes them
+#: on its 1-yd plan. The fine walk: networks.descend's rule from the anchor over the fine cost-to-go, every cell the
+#: reachable head rejects (logit at or below 0) at CLASSICAL_SENTINEL (school.metrics.walk_field), ROUTE_FINE_YARDS /
+#: cell = 15 moves at most (a move is a cell, a diagonal one counts one, as the sim's 1-yd steps do), starting from
+#: the one of the centre four cells (the body lies on their corner) with the least field value, the first in
+#: row-major order of equals (the anchor itself when the four tie) -- the sim starts on the body's own 1-yd cell, or
+#: the least round it when that is blocked; the point at Y yards is the walk's polyline of cell centres at Y / cell
+#: moves -- 2.5, 5, 10 and 15: the 5-yd point is the midpoint of the cells after the second and third moves, the
+#: others cells reached -- and a walk that stopped earlier repeats its end cell; sin = -right / d, cos = forward / d
+#: from the body (the crop's centre, 1 yd off any cell centre); reach = moves made x cell / ROUTE_FINE_YARDS; valid
+#: where it moved and a goal is present. The coarse waypoint: ROUTE_COARSE_STEPS moves from the anchor on the coarse
+#: field (gated by its reachable head too; the sim's CoarseWaypoint starts there), dist over steps x 8 yd, valid where
+#: it moved. route_dist: the least fine cost-to-go over the centre four cells the head calls reachable (the walk's
+#: start's), min(., ROUTE_DIST_YARDS) / ROUTE_DIST_YARDS, valid where one of the four is reachable and a goal is
+#: present. route_stall is the sim's column as it is (the bot's own clock; the school cannot know it). Each group
+#: times its valid flag as sim_waypoints gates the sim's.
+ROUTE_POINT_YARDS = (5.0, 10.0, 20.0, 30.0)
+ROUTE_FINE_YARDS = 30.0
+ROUTE_COARSE_STEPS = 2
+ROUTE_DIST_YARDS = 300.0
 MAP_HEIGHT_ZERO = 128
 #: The height byte's step (Vision::CROP_HEIGHT_STEP): the floor nearest the feet is at (byte - MAP_HEIGHT_ZERO) x
 #: MAP_HEIGHT_STEP yards over them, byte 0 no floor known; so the byte reaches +/- 31.75 yd and clamps there.
@@ -1264,8 +1299,47 @@ def _map_of(entry: dict, name: str) -> dict | None:
     # The sim's route (ROUTE_COLUMNS): the block's last seventeen columns, which the map's embedding leaves out (they
     # feed the policy through the waypoint's join alone, under mappo.planner_waypoint_source "sim").
     out["route"] = route_of(block, name)
-    out["embed_scalars"] = out["scalars"] - (len(ROUTE_COLUMNS) if out["route"] is not None else 0)
+    # The school's goal (GOAL_COLUMNS): the two columns before the route's, likewise left out of the embedding
+    # whatever the source; and the kept scalar's column (KEPT_COLUMN), the school's memory flag.
+    out["goal"] = goal_of(block, name, out["route"])
+    out["kept"] = kept_of(block)
+    out["embed_scalars"] = out["scalars"] - (len(ROUTE_COLUMNS) if out["route"] is not None else 0) \
+        - (len(GOAL_COLUMNS) if out["goal"] is not None else 0)
     return out
+
+
+def _block_names(block: dict) -> list[str]:
+    """A map block's column names: its obs_names, else its manifest's scalar_names."""
+    return list(block.get("obs_names") or (block.get("map") or {}).get("scalar_names") or ())
+
+
+def goal_of(block: dict, name: str, route: dict | None) -> dict | None:
+    """The school's goal columns of a map block (GOAL_COLUMNS) -- {"columns": [forward, right], their absolute
+    observation columns} -- or None when the block names neither. Refused: one of the two without the other, the two
+    without the route's seventeen, or the two not being the pair immediately before the route's first (the embedding
+    reads the block's prefix, embed_scalars: the goal and the route have to be its tail, in that order)."""
+    names = _block_names(block)
+    found = [column for column in GOAL_COLUMNS if column in names]
+    if not found:
+        return None
+    if len(found) != len(GOAL_COLUMNS):
+        raise ValueError(f"{name}: the map block names {found} of the goal columns {list(GOAL_COLUMNS)}")
+    if route is None:
+        raise ValueError(f"{name}: the map block names the goal columns {list(GOAL_COLUMNS)} but not the route's "
+                         f"{list(ROUTE_COLUMNS)}")
+    first = int(block["obs"][0])
+    columns = [first + names.index(column) for column in GOAL_COLUMNS]
+    expected = [route["first"] - len(GOAL_COLUMNS), route["first"] - 1]
+    if columns != expected:
+        raise ValueError(f"{name}: the goal columns are at {columns}, not the two before the route's first "
+                         f"({expected}) in {list(GOAL_COLUMNS)} order")
+    return {"columns": columns}
+
+
+def kept_of(block: dict) -> int:
+    """The absolute observation column of a map block's kept scalar (KEPT_COLUMN), -1 without one."""
+    names = _block_names(block)
+    return int(block["obs"][0]) + names.index(KEPT_COLUMN) if KEPT_COLUMN in names else -1
 
 
 def route_of(block: dict, name: str) -> dict | None:
@@ -1692,9 +1766,14 @@ CLASSICAL_SENTINEL = 1e6
 #: fine waypoint at p90 x 1.7 and the coarse past its p90, for about 40% less.
 CLASSICAL_WAYPOINT_ITERATIONS = (40, 40)
 #: Where the planned waypoint can come from (mappo.planner_waypoint_source; MapEncoder.waypoints): the learned
-#: planner's cost-to-go, the learner's classical planner's, or the sim's own route on the bot's map (ROUTE_COLUMNS:
-#: planned at 1 yd every decision and read off the observation; the index is the `waypoint_source` buffer's value).
-WAYPOINT_SOURCES = ("learned", "classical", "sim")
+#: planner's cost-to-go, the learner's classical planner's, the sim's own route on the bot's map (ROUTE_COLUMNS:
+#: planned at 1 yd every decision and read off the observation), or the school planner's route (the seventeen
+#: computed from the frozen school U-Net's fields on the crop, MapEncoder.school_route; mappo.school_checkpoint); the
+#: index is the `waypoint_source` buffer's value.
+WAYPOINT_SOURCES = ("learned", "classical", "sim", "school")
+#: The sources whose waypoint is the seventeen route scalars' layout (ROUTE_COLUMNS; MapEncoder.sim_waypoint): the
+#: school's reads the sim's columns too (route_stall, and the no_school arm's sixteen).
+ROUTE_SOURCES = ("sim", "school")
 #: **The classical planner over the map's own codes** (mappo.planner_waypoint_costs; MapEncoder.classical_plan,
 #: classical_factor; 2026-10-16): what the step cost of a cell is priced on. "head": the costmap head's softmax under
 #: CLASSICAL_COSTS everywhere (the rule as it was). "map": the crop's own code where the crop knows the cell, the
@@ -1874,6 +1953,87 @@ def descend(cost: torch.Tensor, start: int, steps: int) -> tuple[torch.Tensor, t
         row = torch.where(move, rows.gather(1, which[:, None])[:, 0], row)
         col = torch.where(move, cols.gather(1, which[:, None])[:, 0], col)
     return row, col
+
+
+@torch.no_grad()
+def descend_path(cost: torch.Tensor, start_row: torch.Tensor, start_col: torch.Tensor,
+                 steps: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """descend's walk from each row's own start cell ([N] long each) with every cell it visits: (rows, columns)
+    [N, steps + 1] long, the start first and, after a move that did not happen, the cell it stayed on (a walk that
+    stopped repeats its end), and the moves made [N] long (the index of the last cell that differs from the one
+    before it; 0 where it never moved)."""
+    n, height, width = cost.shape
+    flat = cost.reshape(n, -1).to(torch.float32)
+    offsets = torch.tensor(NEIGHBOURS, dtype=torch.long, device=cost.device)
+    row = start_row.reshape(n).long().clone()
+    col = start_col.reshape(n).long().clone()
+    rows_out, cols_out = [row], [col]
+    moved = torch.zeros((n,), dtype=torch.long, device=cost.device)
+    for step in range(1, int(steps) + 1):
+        here = flat.gather(1, (row * width + col)[:, None])[:, 0]
+        rows, cols = row[:, None] + offsets[None, :, 0], col[:, None] + offsets[None, :, 1]
+        inside = (rows >= 0) & (rows < height) & (cols >= 0) & (cols < width)
+        values = flat.gather(1, rows.clamp(0, height - 1) * width + cols.clamp(0, width - 1))
+        values = torch.where(inside, values, torch.full_like(values, math.inf))
+        best, which = values.min(dim=1)
+        move = best < here
+        row = torch.where(move, rows.gather(1, which[:, None])[:, 0], row)
+        col = torch.where(move, cols.gather(1, which[:, None])[:, 0], col)
+        moved = torch.where(move, torch.full_like(moved, step), moved)
+        rows_out.append(row)
+        cols_out.append(col)
+    return torch.stack(rows_out, dim=1), torch.stack(cols_out, dim=1), moved
+
+
+@torch.no_grad()
+def route_from_fields(fine_cost: torch.Tensor, fine_reach: torch.Tensor, coarse_cost: torch.Tensor,
+                      coarse_reach: torch.Tensor, present: torch.Tensor, stall: torch.Tensor,
+                      cells: Sequence[float], anchor: int) -> torch.Tensor:
+    """**The school's route** (ROUTE_POINT_YARDS and the rule there): ROUTE_COLUMNS' seventeen [N, 17] float32 from
+    the fine and coarse cost-to-go [N, H, W] (yards; lower is nearer) and reachable logits [N, H, W] of a planner on
+    the crop of `cells` yards a tier, whether a goal is present [N] bool, the sim's route_stall [N] (passed through)
+    and the walk's start cell. Every group times its valid flag; all 0 but the stall where no goal is present."""
+    sentinel = CLASSICAL_SENTINEL
+    n, side = fine_cost.shape[0], fine_cost.shape[-1]
+    centre = (side - 1) / 2.0
+    fine = torch.where(fine_reach > 0.0, fine_cost.to(torch.float32), torch.full_like(fine_cost, sentinel,
+                                                                                         dtype=torch.float32))
+    coarse = torch.where(coarse_reach > 0.0, coarse_cost.to(torch.float32),
+                         torch.full_like(coarse_cost, sentinel, dtype=torch.float32))
+    present = present.to(torch.bool)
+    # The fine walk from the least of the centre four (row-major first of equals) and its points.
+    c = int(math.floor(centre))
+    four = fine[:, c:c + 2, c:c + 2].reshape(n, -1)
+    body, which = four.min(dim=1)
+    steps = int(round(ROUTE_FINE_YARDS / float(cells[0])))
+    rows, cols, moved = descend_path(fine, c + which // 2, c + which % 2, steps)
+    forward = (centre - rows.to(torch.float32)) * float(cells[0])          # [N, steps + 1]
+    right = (cols.to(torch.float32) - centre) * float(cells[0])
+    fine_valid = ((moved > 0) & present).to(torch.float32)
+    columns = []
+    for yards in ROUTE_POINT_YARDS:
+        at = float(yards) / float(cells[0])
+        low = min(int(math.floor(at)), steps)
+        high = min(low + 1, steps)
+        frac = at - low
+        f = forward[:, low] * (1.0 - frac) + forward[:, high] * frac
+        r = right[:, low] * (1.0 - frac) + right[:, high] * frac
+        d = torch.sqrt(f * f + r * r).clamp(min=1e-6)
+        columns += [-r / d * fine_valid, f / d * fine_valid]
+    columns += [moved.to(torch.float32) * float(cells[0]) / ROUTE_FINE_YARDS * fine_valid, fine_valid]
+    # The coarse waypoint.
+    row, col = descend(coarse, anchor, ROUTE_COARSE_STEPS)
+    coarse_valid = (((row != anchor) | (col != anchor)) & present).to(torch.float32)
+    f = (centre - row.to(torch.float32)) * float(cells[1])
+    r = (col.to(torch.float32) - centre) * float(cells[1])
+    d = torch.sqrt(f * f + r * r).clamp(min=1e-6)
+    columns += [-r / d * coarse_valid, f / d * coarse_valid, d / (ROUTE_COARSE_STEPS * float(cells[1])) * coarse_valid,
+                coarse_valid]
+    # The own-map distance: the least reachable cost-to-go over the centre four (the walk's start's).
+    dist_valid = ((body < sentinel) & present).to(torch.float32)
+    columns += [body.clamp(max=ROUTE_DIST_YARDS) / ROUTE_DIST_YARDS * dist_valid, dist_valid,
+                stall.to(torch.float32)]
+    return torch.stack(columns, dim=-1)
 
 
 class CameraSplat(nn.Module):
@@ -2143,6 +2303,49 @@ def _spatial_softmax(features: torch.Tensor, grid_x: torch.Tensor, grid_y: torch
     return torch.cat([x, y], dim=-1)
 
 
+#: The school planner's keys in an actor's state (MapEncoder.school; mappo.school_checkpoint): frozen, saved with the
+#: policy, tolerated missing (the file's weights stand) and dropped into an actor without a school (load_actor_state,
+#: bootstrap._seed_map).
+SCHOOL_PREFIX = "vision.map.school."
+
+
+def load_school(path: str, height: int, width: int, tier_cells: Sequence[float]) -> nn.Module:
+    """The planner school's U-Net (school.model.SchoolPlanner) from a checkpoint animus.school.train wrote
+    (mappo.school_checkpoint), frozen: eval mode, no parameter requires a gradient. Refused: no path or no file; a
+    checkpoint of another model (the VIN comparison is not a policy's planner), of another protocol (the crop's bytes
+    or the labels' frame changed under it), or of another crop than this encoder's (the school is built for
+    school.data.SIDE cells of TIER_CELLS yards a tier)."""
+    from ..school import model as school_model
+    from ..school.data import SIDE, TIER_CELLS
+    from .. import protocol
+    if not path:
+        raise ValueError("mappo.planner_waypoint_source school needs mappo.school_checkpoint (a best.pt or latest.pt "
+                         "animus.school.train wrote)")
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"mappo.school_checkpoint: no file at {path}")
+    state = torch.load(path, map_location="cpu", weights_only=False)
+    config = dict(state.get("config") or {})
+    saved = dict(state.get("format") or {})
+    model_name = str(config.get("model", "unet"))
+    if model_name != "unet":
+        raise ValueError(f"mappo.school_checkpoint {path}: a {model_name!r} school; the policy's planner is the U-Net "
+                         f"(school.model.SchoolPlanner, config model \"unet\")")
+    if int(saved.get("protocol", -1)) != protocol.PROTOCOL_VERSION:
+        raise ValueError(f"mappo.school_checkpoint {path}: trained under protocol {saved.get('protocol')}, this "
+                         f"learner speaks {protocol.PROTOCOL_VERSION} (the crop or the labels changed: retrain the "
+                         f"school on this tree's shards)")
+    if (height, width) != (SIDE, SIDE) or tuple(float(c) for c in tier_cells) != tuple(TIER_CELLS):
+        raise ValueError(f"mappo.school_checkpoint: the school plans {SIDE} x {SIDE} cells of {TIER_CELLS} yards a "
+                         f"tier, this map is {height} x {width} of {tuple(tier_cells)}")
+    widths = tuple(int(w) for w in config.get("widths", (32, 64, 96, 128)))
+    school = school_model.SchoolPlanner(widths=widths)
+    school.load_state_dict(state["model"])
+    school.eval()
+    for parameter in school.parameters():
+        parameter.requires_grad_(False)
+    return school
+
+
 class MapEncoder(nn.Module):
     """**The mental map's encoder** (perception-goals REDESIGN §3, the Change): the one heading-up crop (48 x 48 cells
     of 2 yd, protocol 24's bytes after the camera's image), shared by every layout as the camera is. Per cell, the code
@@ -2222,6 +2425,26 @@ class MapEncoder(nn.Module):
     layout WITH a compass (M1) plans at act time off it as before; a withheld compass (its presence column 0) is a zero
     goal plane as before.
 
+    **The school's route** (mappo.planner_waypoint_source "school", `school_waypoint`; planner school stage 2,
+    2026-10-17): the seventeen route scalars computed by the learner from the planner school's U-Net
+    (school.model.SchoolPlanner, trained offline on the recorder's samples; mappo.school_checkpoint, loaded as the
+    frozen submodule `school`: no gradient, left out of every optimizer, saved in the policy's checkpoint and
+    exported with it) instead of read off the sim's Dijkstra -- the same seventeen columns, join and gating, so the
+    policy's input does not change (ROUTE_POINT_YARDS: the rule on the 2-yd crop; route_from_fields). Its goal plane
+    is the goal's forward and right yards from the map block's two goal columns (GOAL_COLUMNS, `goal_columns`; a
+    layout without them refuses the source), its memory flag the block's kept scalar (`kept_column`), its inputs the
+    crops the embedding decodes anyway. `school_route` runs it and `route_scalars` chooses: the school's seventeen,
+    or the sim's columns as they are while `school_off` (the eval arm no_school: the same seeds on the sim's route)
+    -- and always the sim's route_stall. It runs at ACT time alone, in MapEncoder.plan (MappoTrainer._replan calls
+    it for every seat every mappo.school_every decisions, eager and outside the rollout graph), and its seventeen are
+    the cached plan's waypoint slice, which forward() reads AS IT IS under the school -- the rollout, the evaluation
+    and the update's replay all read the slice the decision was made with (the rollout buffer records it) and the
+    U-Net is never run again on the update's rows; under "sim" forward() keeps overwriting the slice with the
+    observation's.
+    The sim's seventeen are left in plan_out's "sim_route" either way. In the aux pass (plan with `label_goal`) the
+    waypoint slice is the sim's, not the school's: the losses never read it. 1.18 GFLOP a row (both tiers, widths
+    32-128): 143 ms per 64 rows on the dev container's CPU at 8 threads, 532 ms per 192 (2026-10-17).
+
     **The hierarchy** (mappo.planner_hierarchical, `hierarchical`; 2026-10-16): the goal of a nav trip is mostly past
     the fine crop (96 yd across), where the fine goal plane was clamped to a border cell -- the wrong point -- and K
     iterations carried value only K cells. With the hierarchy the coarse tier plans first, as before; the fine tier's
@@ -2260,7 +2483,8 @@ class MapEncoder(nn.Module):
     def __init__(self, crop: dict, class_embedding: nn.Embedding, out_width: int, starts: Sequence[int],
                  compass: Sequence[dict | None] = (), planner_k: int = Planner.K, splat: dict | None = None,
                  splat_features: int = 0, waypoint: bool = False, planner_k_fine: int | None = None,
-                 hierarchical: bool = False, waypoint_source: str = "learned", waypoint_costs: str = "head"):
+                 hierarchical: bool = False, waypoint_source: str = "learned", waypoint_costs: str = "head",
+                 school_checkpoint: str = ""):
         super().__init__()
         if waypoint_source not in WAYPOINT_SOURCES:
             raise ValueError(f"mappo.planner_waypoint_source: expected one of {list(WAYPOINT_SOURCES)}, got "
@@ -2321,7 +2545,10 @@ class MapEncoder(nn.Module):
         # WAYPOINT_FEATURES) or, under the sim's route, ROUTE_COLUMNS' (waypoint_width): the sources' checks and the
         # flag come first, the join after them.
         self.waypoint = bool(waypoint) and self.tiers > 1
-        self.sim_waypoint = self.waypoint and waypoint_source == "sim"
+        # The seventeen route scalars' layout (ROUTE_SOURCES: the sim's route, and the school's, which reads the sim's
+        # columns too); the school's own flag after it.
+        self.sim_waypoint = self.waypoint and waypoint_source in ROUTE_SOURCES
+        self.school_waypoint = self.waypoint and waypoint_source == "school"
         self.waypoint_join = None
         if self.waypoint:
             self.waypoint_join = nn.Linear(self.waypoint_width, out_width)
@@ -2372,10 +2599,33 @@ class MapEncoder(nn.Module):
                     gates[column], gated[column] = (column, False) if gate is None else (gate, True)
             self.register_buffer("route_gate", torch.tensor(gates, dtype=torch.long), persistent=False)
             self.register_buffer("route_gated", torch.tensor(gated, dtype=torch.bool), persistent=False)
-            self.register_buffer("waypoint_source", torch.tensor(WAYPOINT_SOURCES.index("sim"), dtype=torch.long))
+            self.register_buffer("waypoint_source", torch.tensor(WAYPOINT_SOURCES.index(waypoint_source),
+                                                                 dtype=torch.long))
             # No layout carries a compass: the VIN has no goal at act time (the class docstring), so it is not run
             # there; the aux pass plans from the labels' goal.
             self.goal_blind = self.tiers > 1 and not any(c for c in compass)
+        # The school's route (mappo.planner_waypoint_source "school"; school_route): per layout the goal columns
+        # (GOAL_COLUMNS order; -1 without) and the kept scalar's column (-1 without), derived from stage.json, and the
+        # school planner itself, loaded frozen from mappo.school_checkpoint (the class docstring).
+        self.school = None
+        self.school_off = False
+        if self.school_waypoint:
+            goals = list(crop.get("goals") or ())
+            if not any(goal is not None for goal in goals):
+                raise ValueError("mappo.planner_waypoint_source school: no layout's map block names the goal columns "
+                                 f"{list(GOAL_COLUMNS)} (the objective's forward and right yards in the body frame, "
+                                 f"the two scalars before the route's {len(ROUTE_COLUMNS)}: the sim has to write "
+                                 f"them for the school planner's goal plane)")
+            columns = [goal["columns"] if goal is not None else [-1] * len(GOAL_COLUMNS) for goal in goals]
+            self.register_buffer("goal_columns", torch.tensor(columns, dtype=torch.long), persistent=False)
+            kept = [int(column) for column in (crop.get("kept") or [-1] * len(columns))]
+            self.register_buffer("kept_column", torch.tensor(kept, dtype=torch.long), persistent=False)
+            self.school = load_school(school_checkpoint, self.height, self.width, self.tier_cells)
+
+    @property
+    def school_widths(self) -> tuple[int, ...]:
+        """The school U-Net's level widths (the export writes them), () without a school."""
+        return tuple(self.school.widths) if self.school is not None else ()
 
     @property
     def classical_rule_tables(self) -> dict[str, torch.Tensor]:
@@ -2424,6 +2674,42 @@ class MapEncoder(nn.Module):
             picked = obs.gather(1, columns.clamp(min=0).clamp(max=obs.shape[-1] - 1)).to(torch.float32)
             valid = ((picked[:, self.route_gate] > 0.5) | ~self.route_gated[None, :]).to(torch.float32)
             return picked * valid * has
+
+    def route_scalars(self, obs: torch.Tensor, layout: torch.Tensor,
+                      decoded: list[dict[str, torch.Tensor]]) -> tuple[torch.Tensor, torch.Tensor]:
+        """The waypoint's seventeen route scalars and the sim's (the class docstring's "The school's route"), [N, 17]
+        float32 each: under the school (`school_waypoint`, and not `school_off`) the school's computed from the crops
+        (school_route), else the sim's columns (sim_waypoints) twice over."""
+        sim_route = self.sim_waypoints(obs, layout)
+        if not self.school_waypoint or self.school_off:
+            return sim_route, sim_route
+        return self.school_route(obs, layout, decoded, sim_route), sim_route
+
+    def school_route(self, obs: torch.Tensor, layout: torch.Tensor, decoded: list[dict[str, torch.Tensor]],
+                     sim_route: torch.Tensor) -> torch.Tensor:
+        """The school's seventeen (route_from_fields over the frozen school U-Net's fields; ROUTE_POINT_YARDS, the
+        rule), [N, 17] float32. The goal: each row's goal columns (GOAL_COLUMNS; present where either is not 0 and the
+        layout has them), as the hierarchy's goal planes (goal_plane: the fine unclamped, the coarse clamped to its
+        border -- school.data.prepare's); the memory flag the kept column (0 without one); `sim_route` for
+        route_stall. Without a gradient and outside autocast (the fields in float32, as the school was measured)."""
+        with torch.no_grad(), torch.autocast(device_type=obs.device.type, enabled=False):
+            layout = layout.reshape(-1).long()
+            columns = self.goal_columns[layout.clamp(max=self.goal_columns.shape[0] - 1)]
+            has = columns[:, 0] >= 0
+            picked = obs.gather(1, columns.clamp(min=0).clamp(max=obs.shape[-1] - 1)).to(torch.float32)
+            forward = torch.where(has, picked[:, 0], torch.zeros_like(picked[:, 0]))
+            right = torch.where(has, picked[:, 1], torch.zeros_like(picked[:, 1]))
+            present = has & ((forward != 0.0) | (right != 0.0))
+            kept = self.kept_column[layout.clamp(max=self.kept_column.shape[0] - 1)]
+            flag = obs.gather(1, kept.clamp(min=0).clamp(max=obs.shape[-1] - 1)[:, None])[:, 0].to(torch.float32)
+            memory = torch.where(kept >= 0, (flag > 0.5).to(torch.float32), torch.zeros_like(flag))
+            side = self.height
+            planes = [goal_plane(forward, right, present, side, self.tier_cells[0], clamp=False),
+                      goal_plane(forward, right, present, side, self.tier_cells[1], clamp=True)]
+            fields = self.school(decoded, planes, memory)
+            return route_from_fields(fields["cost"][0], fields["reach"][0], fields["cost"][1], fields["reach"][1],
+                                     present, sim_route[:, ROUTE_COLUMNS.index("route_stall")], self.tier_cells,
+                                     self.WAYPOINT_ANCHOR)
 
     def classical_plan(self, logits: list[torch.Tensor], goals: list[torch.Tensor],
                        codes: list[torch.Tensor] | None = None,
@@ -2536,12 +2822,14 @@ class MapEncoder(nn.Module):
         c = self.READOUT_FIRST
         out = {"costmap": [], "cost_to_go": [], "value": [], "goal_plane": []}
         if self.goal_blind and label_goal is None:
+            waypoint, sim_route = self.route_scalars(obs, layout, decoded)
             readout = torch.cat([obs.new_zeros((obs.shape[0], self.tiers * self.READOUT), dtype=torch.float32),
-                                 self.sim_waypoints(obs, layout)], dim=-1)
+                                 waypoint], dim=-1)
             pool = obs.new_zeros((obs.shape[0], self.pool_width), dtype=torch.float32)
             if self.planner_off:
                 readout = torch.zeros_like(readout)
-            out.update(waypoint=readout[:, self.tiers * self.READOUT:], readout=readout, pool=pool)
+            out.update(waypoint=readout[:, self.tiers * self.READOUT:], readout=readout, pool=pool,
+                       sim_route=sim_route)
             if plan_out is not None:
                 plan_out.update(out)
             return out["readout"]
@@ -2582,7 +2870,10 @@ class MapEncoder(nn.Module):
             # over the classical planner's cost-to-go with mappo.planner_waypoint_source "classical" (lower is nearer,
             # as the learned -value x 100 is: descend reads either as it is).
             if self.sim_waypoint:
-                out["waypoint"] = self.sim_waypoints(obs, layout)
+                # The aux pass (no `classical`: the losses never read the waypoint) keeps the sim's columns under
+                # the school too, so the school U-Net never runs on the update's rows.
+                out["waypoint"], out["sim_route"] = (self.route_scalars(obs, layout, decoded) if classical
+                                                     else (self.sim_waypoints(obs, layout),) * 2)
             elif not self.classical_waypoint:
                 out["waypoint"] = self.waypoints(out["cost_to_go"], present)
             elif classical:
@@ -2644,15 +2935,20 @@ class MapEncoder(nn.Module):
         out = self.join(silu(self.embed(torch.cat([*pooled, scalars], dim=-1))))
         if self.planner_on and planner is not None:
             readout = planner["readout"].to(torch.float32)
-            if self.sim_waypoint:
+            sim_route = self.sim_waypoints(obs, layout) if self.sim_waypoint else None
+            if self.sim_waypoint and not self.school_waypoint:
                 # The sim's waypoint is this decision's observation's, never the cache's (replanned every
                 # planner_every decisions): the cached slice is overwritten here, in the rollout and the replay alike.
-                readout = torch.cat([readout[:, :self.tiers * self.READOUT], self.sim_waypoints(obs, layout)], dim=-1)
+                # Under the school the cached slice IS this decision's (plan() ran for every seat, mappo.school_every)
+                # and the replay reads the slice recorded with the decision (the class docstring).
+                readout = torch.cat([readout[:, :self.tiers * self.READOUT], sim_route], dim=-1)
             if self.planner_off:
                 readout = torch.zeros_like(readout)
             if plan_out is not None:
                 pool = planner["pool"].to(torch.float32)
                 plan_out.update(readout=readout, pool=torch.zeros_like(pool) if self.planner_off else pool)
+                if sim_route is not None:
+                    plan_out["sim_route"] = sim_route
             out = out + self.join_plan(readout).to(out.dtype)
         elif self.planner_on and camera is not None:
             # The planner without a graph unless asked (the aux pass): its readouts are detached either way, and the
@@ -3057,7 +3353,8 @@ class VisionEncoder(nn.Module):
 
     def __init__(self, descriptors: Sequence[dict | None], drop: Sequence[str] = (), planner_k: int = Planner.K,
                  splat: bool = False, waypoint: bool = False, planner_k_fine: int | None = None,
-                 hierarchical: bool = False, waypoint_source: str = "learned", waypoint_costs: str = "head"):
+                 hierarchical: bool = False, waypoint_source: str = "learned", waypoint_costs: str = "head",
+                 school_checkpoint: str = ""):
         super().__init__()
         unknown = sorted(set(drop) - set(self.DROPPABLE))
         if unknown:
@@ -3112,14 +3409,18 @@ class VisionEncoder(nn.Module):
             crop = next(crop for crop in crops if crop is not None)
             # The crop's bytes follow the image in every row whether or not they are read (pixels() skips them).
             self.map_bytes = crop["map_bytes"]
-            # Per layout the sim's route waypoint columns (route_of; mappo.planner_waypoint_source "sim").
-            crop = {**crop, "routes": [c["route"] if c is not None else None for c in crops]}
+            # Per layout the sim's route waypoint columns (route_of; mappo.planner_waypoint_source "sim"), the
+            # school's goal columns and the kept column (goal_of, kept_of; "school").
+            crop = {**crop, "routes": [c["route"] if c is not None else None for c in crops],
+                    "goals": [c["goal"] if c is not None else None for c in crops],
+                    "kept": [c["kept"] if c is not None else -1 for c in crops]}
             if "map" not in self.dropped:
                 self.map = MapEncoder(crop, self.class_embed, self.EMBED,
                                       [c["first"] if c is not None else -1 for c in crops],
                                       [entry.get("compass") if entry is not None else None for entry in descriptors],
                                       planner_k, image if splat else None, self.WIDTHS[1], waypoint,
-                                      planner_k_fine, hierarchical, waypoint_source, waypoint_costs)
+                                      planner_k_fine, hierarchical, waypoint_source, waypoint_costs,
+                                      school_checkpoint)
         # The coarse coverage grid (general search sec 5), where the layouts have the block: its columns are read raw
         # by its own small encoder, whose join adds to the embedding as the map's does.
         grids = [entry.get("coverage") if entry is not None else None for entry in descriptors]
@@ -3477,7 +3778,8 @@ class HeadingHead(nn.Module):
 def _attach_vision(network: nn.Module, vision, encoder: "VisionEncoder | None" = None,
                    drop: Sequence[str] = (), planner_k: int = Planner.K, splat: bool = False,
                    waypoint: bool = False, planner_k_fine: int | None = None, hierarchical: bool = False,
-                   waypoint_source: str = "learned", waypoint_costs: str = "head") -> None:
+                   waypoint_source: str = "learned", waypoint_costs: str = "head",
+                   school_checkpoint: str = "") -> None:
     """Give an actor or critic the camera: the encoder (VisionEncoder) and its own join (VisionJoin), and keep the
     camera's columns -- image and scalars -- out of every layout's adapter (attach_blind_columns, tag "vision") and
     normaliser (RunningNorm.hide). `vision` is vision_of()'s per-layout image, or None (no camera: nothing changes).
@@ -3489,14 +3791,15 @@ def _attach_vision(network: nn.Module, vision, encoder: "VisionEncoder | None" =
     `planner_k_fine` the fine tier's own iterations (None: planner_k's; Planner), `hierarchical` the coarse -> fine
     hierarchy (MapEncoder, mappo.planner_hierarchical), `waypoint_source` what the waypoint walks over (MapEncoder,
     mappo.planner_waypoint_source) and `waypoint_costs` what the classical one prices its cells on (MapEncoder,
-    mappo.planner_waypoint_costs)."""
+    mappo.planner_waypoint_costs); `school_checkpoint` the school planner's weights under the "school" source
+    (MapEncoder.school, mappo.school_checkpoint)."""
     network.vision = None
     network.vision_join = None
     if vision is None:
         return
     if encoder is None:
         network.vision = VisionEncoder(vision, drop, planner_k, splat, waypoint, planner_k_fine, hierarchical,
-                                       waypoint_source, waypoint_costs)
+                                       waypoint_source, waypoint_costs, school_checkpoint)
     else:
         share_vision(network, encoder)
     network.vision_join = VisionJoin(network.vision.has_vision, network.adapters[0].out_features)
@@ -3838,7 +4141,11 @@ def load_actor_state(actor: nn.Module, state: dict) -> list[str]:
 
     The planner's schedule (PLANNER_SCHEDULE_KEYS: mappo.planner_k_fine, planner_hierarchical, and the waypoint's
     source, planner_waypoint_source): the configured one stands either way -- missing from the checkpoint, the actor's
-    own; in the checkpoint and not the actor's, dropped -- and says so. Nothing to grow: they are buffers."""
+    own; in the checkpoint and not the actor's, dropped -- and says so. Nothing to grow: they are buffers.
+
+    The school planner (SCHOOL_PREFIX; mappo.school_checkpoint): an actor with one reads a checkpoint without it with
+    the file's weights (mappo.school_checkpoint's) standing, and says so; a checkpoint with one loading into an actor
+    without is read with the school's tensors dropped, and says so. Frozen: no optimiser moment to carry."""
     sharing = getattr(actor, "shared_columns", None) is not None
     # Materialised either way, so the layouts' own weights are whole whatever the checkpoint shared.
     state = materialised_state(state, drop=not sharing)
@@ -3874,12 +4181,28 @@ def load_actor_state(actor: nn.Module, state: dict) -> list[str]:
         print(f"Load: the checkpoint's waypoint join reads {saved_width} numbers, this actor's {width} ({what}); the "
               f"join starts fresh at zero, so the policy computes what it did", flush=True)
         state = {key: value for key, value in state.items() if key not in rewidened}
+    school_dropped = [key for key in state if key.startswith(SCHOOL_PREFIX) and key not in current]
+    if school_dropped:
+        print(f"Load: the checkpoint's school planner ({len(school_dropped)} tensors) is not this actor's "
+              f"(mappo.planner_waypoint_source is not school); dropped", flush=True)
+        state = {key: value for key, value in state.items() if key not in school_dropped}
+    if any(key.startswith(SCHOOL_PREFIX) for key in current) \
+            and not any(key.startswith(SCHOOL_PREFIX) for key in state):
+        print("Load: the checkpoint has no school planner; this actor's (mappo.school_checkpoint) stands", flush=True)
     schedule_dropped = [key for key in PLANNER_SCHEDULE_KEYS if key in state and key not in current]
     if schedule_dropped:
         print(f"Load: the checkpoint's planner schedule ({', '.join(schedule_dropped)}) is not this actor's "
               f"(mappo.planner_k_fine, planner_hierarchical off, planner_waypoint_source learned, "
               f"planner_waypoint_costs head); dropped", flush=True)
         state = {key: value for key, value in state.items() if key not in schedule_dropped}
+    # ... and a schedule buffer both have reads the configured value, never the checkpoint's (a sim-route checkpoint
+    # resumed under the school source is the school's; the docstring's rule, which the copy broke before 2026-10-17).
+    schedule_kept = [key for key in PLANNER_SCHEDULE_KEYS if key in state and key in current
+                     and not torch.equal(state[key].to(current[key].device, current[key].dtype), current[key])]
+    if schedule_kept:
+        print(f"Load: the checkpoint's planner schedule ({', '.join(schedule_kept)}) differs from this actor's "
+              f"configured one, which stands", flush=True)
+        state = {key: value for key, value in state.items() if key not in schedule_kept}
     missing, unexpected = actor.load_state_dict(state, strict=False)
     # The blind-column masks are never taken from a checkpoint: an actor built with seat sets has its own already (the
     # stage's), which a resume keeps.
@@ -3888,17 +4211,19 @@ def load_actor_state(actor: nn.Module, state: dict) -> list[str]:
              and not key.split(".")[-1].startswith(BLIND_KEEP_PREFIXES)
              and key not in SHARED_PARAMETER_KEYS and key not in SHARED_INDEX_KEYS
              and not key.startswith(HEADING_PREFIX) and not (widened and key.startswith(SPLAT_PREFIX))
-             and not key.startswith(WAYPOINT_PREFIX) and key not in PLANNER_SCHEDULE_KEYS]
+             and not key.startswith(WAYPOINT_PREFIX) and key not in PLANNER_SCHEDULE_KEYS
+             and not key.startswith(SCHOOL_PREFIX)]
     if wrong or unexpected:
         raise RuntimeError(f"Error(s) in loading state_dict for {type(actor).__name__}: missing {wrong}, "
                            f"unexpected {list(unexpected)}")
     if any(key.startswith(HEADING_PREFIX) for key in missing):
         print("Load: the checkpoint has no heading head; the actor's starts as initialised", flush=True)
-    schedule_new = [key for key in PLANNER_SCHEDULE_KEYS if key in missing]
+    schedule_new = [key for key in PLANNER_SCHEDULE_KEYS if key in missing and key not in schedule_kept]
     if schedule_new:
         planner = actor.vision.map.planner if getattr(actor, "vision", None) is not None else None
         hierarchical = bool(getattr(actor.vision.map, "hierarchical", False)) if planner is not None else False
         source = ("classical" if planner is not None and getattr(actor.vision.map, "classical_waypoint", False)
+                  else "school" if planner is not None and getattr(actor.vision.map, "school_waypoint", False)
                   else "sim" if planner is not None and getattr(actor.vision.map, "sim_waypoint", False)
                   else "learned")
         costs = "map" if planner is not None and getattr(actor.vision.map, "map_costs", False) else "head"
@@ -3941,7 +4266,8 @@ class LayoutActor(nn.Module):
                  vision=None, drop_inputs: Sequence[str] = (), planner_k: int = Planner.K, sharing=None,
                  heading: Sequence[bool] | None = None, camera_splat: bool = False, planner_waypoint: bool = False,
                  planner_k_fine: int | None = None, planner_hierarchical: bool = False,
-                 planner_waypoint_source: str = "learned", planner_waypoint_costs: str = "head"):
+                 planner_waypoint_source: str = "learned", planner_waypoint_costs: str = "head",
+                 school_checkpoint: str = ""):
         """layouts: (obs dim, action count) per layout; hidden: widths, the first being the adapters' output.
 
         `foresight_outputs` adds a head on the trunk that predicts what happens after this decision (mappo.trainer's
@@ -4016,7 +4342,8 @@ class LayoutActor(nn.Module):
         # (mappo.drop_inputs).
         _attach_vision(self, vision, drop=drop_inputs, planner_k=planner_k, splat=camera_splat,
                        waypoint=planner_waypoint, planner_k_fine=planner_k_fine, hierarchical=planner_hierarchical,
-                       waypoint_source=planner_waypoint_source, waypoint_costs=planner_waypoint_costs)
+                       waypoint_source=planner_waypoint_source, waypoint_costs=planner_waypoint_costs,
+                       school_checkpoint=school_checkpoint)
         # The sight list's pointer heads (SightPointers), where the layouts have a sight block: the actor's own.
         sight = self.vision.sight if self.vision is not None else None
         self.sight_pointers = SightPointers(sight.presses, head_width) if sight is not None else None

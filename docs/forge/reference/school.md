@@ -5,8 +5,8 @@ bot steers by its waypoints (the plan in `.agents/plans/planner-school/`, 2026-1
 steer by the route the sim plans with Dijkstra over the bot's own mental map ([cpp-vision-memory.md](cpp-vision-memory.md),
 "The route on the map"): exact over what the bot knows, a straight-line guess through what it has not seen. The
 school learns to plot the route through unseen space from the crops alone, and is measured beside that Dijkstra and
-beside the oracle on the same samples. Stages 2 (the learned planner as the source of the seventeen route scalars)
-and 3 (the curriculum) are not built here.
+beside the oracle on the same samples. Stage 2 -- the school as the source of the policy's seventeen route scalars
+-- is the last section; stage 3 (the curriculum) is not built here.
 
 ## Map of the files
 
@@ -193,6 +193,62 @@ anchored. Earlier, the first smoke's U-Net at 12 epochs read 0.607 / 0.690 (unse
 3. Read `metrics.csv` / the table: the pass mark, `cost_mae_unseen`, `waypoint_regret_yards_unseen` against
    `dijkstra_*`, and `_mem_on` / `_mem_off` apart.
 
+## Stage 2: the school as the policy's route source (`mappo.planner_waypoint_source: school`, 2026-10-17)
+
+The learner computes the seventeen route scalars (`networks.ROUTE_COLUMNS`) from the school U-Net's fields instead of
+reading the sim's Dijkstra off the observation: the same columns, join and gating, so the policy's input does not
+change. The code is the map encoder's (`networks.MapEncoder.school_route`, `route_from_fields`, `load_school`;
+[py-mappo-networks.md](py-mappo-networks.md) "The school planner as the route's source"); the keys
+`mappo.school_checkpoint` (a `best.pt` / `latest.pt` of this trainer, loaded frozen and saved with the policy),
+`mappo.school_every` (1: every decision) and `mappo.school_finetune` (parsed, NOT implemented, true refused)
+([config-yaml.md](config-yaml.md)); the export .amdl version 20 ([file-formats.md](file-formats.md)).
+
+- **The goal at act time.** The seventeen cannot place the goal cell (route_dist is a path cost, the coarse waypoint
+  a 16-yd point), and the labels do not reach the actor, so the sim has to write two more map-block scalars,
+  `goal_forward_yards` and `goal_right_yards` (`networks.GOAL_COLUMNS`), immediately before the route's seventeen:
+  the objective's yards in the body frame, the labels' convention (`MapBlock::Observe` computes exactly these for
+  `PlanOnMap`; 0 and 0 with no objective or one withheld). **Not built in C++ yet**: a stage whose block lacks them
+  refuses the source. They feed the school's goal plane and nothing else -- the embedding never reads them (the
+  block's prefix shrinks by two whatever the source) and the VIN's goal plane reads the compass alone -- but they ARE
+  in the observation vector; the policy sees the straight line to the goal only as the school's route.
+- **The memory flag** is the block's `kept` scalar at act time (the recorder's `kept` field), not the shard's
+  `memory` label (the episode's shared_memory column, which no observation carries): a school meant for a
+  shared-memory stage should be trained with `kept` as its flag, or the flag's meaning differs between the school's
+  training and its use.
+- **The rule on 2-yd cells** (`networks.ROUTE_POINT_YARDS` and its comment): the fine walk `networks.descend`'s
+  rule over the fine cost with every cell the reachable head rejects at the sentinel (`metrics.walk_field`'s gate),
+  from the least of the centre four cells (the body lies on their corner; the sim starts on the body's own 1-yd
+  cell), 15 moves at most (a move a cell, as the sim's 1-yd steps); the point at Y yards is the polyline of visited
+  cell centres at Y / 2 moves -- 2.5, 5, 10, 15, the 5-yd point the midpoint of the cells after moves 2 and 3, a
+  stopped walk repeating its end -- as bearings from the body; reach = moves x 2 / 30; the coarse waypoint 2 moves
+  from the anchor on the gated coarse field; route_dist the least gated fine cost over the centre four, clamped at
+  300, over 300; route_stall the sim's column as it is (the bot's own clock). The 1-yd offset of a 2-yd cell's centre
+  from the body is in the bearings (a straight walk up column 23 reads right -1 yd).
+- **Where and how often.** The school runs at act time alone, in `MappoTrainer._replan` (eager, outside the rollout
+  graph) for every seat every `school_every` decisions, and its seventeen are the cached plan's waypoint slice, which
+  the decision reads as it is and the rollout buffer records: the update's replay reads the recorded slice and never
+  runs the U-Net (the sim source keeps overwriting the slice from the observation at every site). Measured on the
+  dev container's CPU at 8 threads (2026-10-17): 1.18 GFLOP a row for both tiers, 143 ms per 64 rows, 532 ms per 192
+  -- too slow for a CPU rollout every decision (a learner's decision is ~24 ms); on gfx1100 in float32 an estimated
+  10-25 ms per 192 rows (227 GFLOP at an effective 10-20 TFLOPS), a large share of the decision. A held route
+  (`school_every` > 1) goes stale as the body moves -- the fields are egocentric and the observation carries no pose
+  delta to re-register them, and a running body crosses a fine cell a decision -- so the default is every decision;
+  the knob is for a card that cannot afford it, and narrower widths or half precision are the better savings.
+- **The arm `no_school`** (`eval.arms`): the same seeds on the sim's route scalars (`MapEncoder.school_off`), so the
+  gap to the plain evaluation is what the school's route is worth like for like; `no_planner` still zeroes all
+  seventeen. Skipped with a line on a policy whose route is not the school's.
+- **Export** (.amdl 20): the school's weights, class table, widths and the rule's constants travel with the policy;
+  the C++ runtime (not built) computes the fields and the seventeen itself from the objective it knows.
+
+Smoke of 2026-10-17 (the dev container's CPU, a synthetic revision-7 stage with the goal columns inserted before
+nav2's seventeen, the synthetic smoke's `best.pt`, seeded from nav1_sight): the rule's walks on hand-made fields read
+as documented; the five config refusals and the missing-goal-columns refusal read as expected; the frozen school's 61
+tensors are in the actor's state and in no optimizer; seeding and both load paths leave it alone; a 16-decision
+rollout read finite seventeens whose stall equals the sim's, whose gates hold and whose no-goal rows are zero; the
+`no_school` arm restored the sim's gated columns and `no_planner` zeroed all 35; one full update was finite and left
+the school untouched while the join moved; the export round-tripped every school tensor bit for bit (13.6 MB a
+layout) and a sim-route actor still exports as 19.
+
 ## Open questions
 
 - The oracle's `dir_acc_body_seen` reads below Dijkstra's on the synthetic world: the hierarchy's 8-yd coarse ring
@@ -202,3 +258,5 @@ anchored. Earlier, the first smoke's U-Net at 12 epochs read 0.607 / 0.690 (unse
 - The real labels' coarse cost-to-go is the sim's own fold; the synthetic takes the least over the 16 world cells.
 - A third baseline off the recorded `route` scalars (the sim's 1-yd plan) is a comparison at the body only
   (bearings, not a field); not built.
+- Stage 2: the two goal columns in the map block (C++, `MapBlock`), and whether the school U-Net's cost on the rollout
+  card is acceptable every decision at 192 seats, are both open; the memory flag's two meanings (above) too.

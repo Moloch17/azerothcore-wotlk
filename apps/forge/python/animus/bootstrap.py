@@ -35,8 +35,8 @@ import io
 import torch
 
 from .mappo.networks import (COSTMAP_CONV1, MAP_BLOCK_REVISION, MAP_PATCH, PLANNER_SCHEDULE_KEYS, ROUTE_COLUMNS,
-                             SPLAT_PREFIX, WAYPOINT_PREFIX, MapEncoder, grow_costmap_inputs, grow_goal_rows,
-                             grow_map_planes, materialised_state)
+                             SCHOOL_PREFIX, SPLAT_PREFIX, WAYPOINT_PREFIX, MapEncoder, grow_costmap_inputs,
+                             grow_goal_rows, grow_map_planes, materialised_state)
 from .stages import Span, block_revisions, block_spans
 
 
@@ -689,8 +689,10 @@ def _seed_map(new: dict, old: dict) -> str | None:
 
     The planner's iteration counts and hierarchy (vision.map.planner.k, PLANNER_SCHEDULE_KEYS) are this network's own,
     from its config: never carried, never counted fresh (a seeded stage runs the K it is configured with)."""
+    # The school planner's tensors (SCHOOL_PREFIX) are the file's (mappo.school_checkpoint): never carried, never
+    # counted fresh (they have no output of their own into the embedding).
     keys = [key for key in new if key.startswith(MAP) and key not in PLANNER_SCHEDULE_KEYS
-            and key != "vision.map.planner.k"]
+            and key != "vision.map.planner.k" and not key.startswith(SCHOOL_PREFIX)]
     if not keys:
         return None
     saved_planes = int(old[MAP_PATCH].shape[1]) // (MapEncoder.PATCH ** 2) if MAP_PATCH in old else 0

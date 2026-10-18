@@ -7,6 +7,7 @@ for ``forge fast``) are merged over the whole result the same way, so one file c
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
@@ -430,7 +431,7 @@ MAX_HINDSIGHT_LOOKBACK = 256
 #: The evaluation arms beside the plain one ("all bots"): eval.arms names them (dungeon-curriculum I7).
 EVAL_ARMS = ("with_human", "with_partners", "no_flag", "no_camera", "no_compass", "no_map", "no_memory", "no_goal",
              "random_goal", "random_cell", "no_plan", "no_searched", "no_coverage", "no_party", "no_recall",
-             "no_planner", "no_shared_memory")
+             "no_planner", "no_school", "no_shared_memory")
 
 
 @dataclass
@@ -840,9 +841,26 @@ class TrainConfig:
             raise ValueError(f"mappo.planner_waypoint_costs: expected one of {list(WAYPOINT_COST_RULES)}, got {rule!r}")
         # ... "map" prices the classical waypoint; under "sim" the sim plans the waypoint and the rule prices only the
         # aux pass's classical measurement (which runs both rules whatever the waypoint walks), so it may stay set.
-        if rule != "head" and source not in ("classical", "sim"):
+        if rule != "head" and source not in ("classical", "sim", "school"):
             raise ValueError(f"mappo.planner_waypoint_costs {rule!r} needs mappo.planner_waypoint_source \"classical\" "
                              f"(the learned waypoint prices nothing)")
+        # The school planner (mappo.school_checkpoint, school_every, school_finetune; planner school stage 2): a
+        # checkpoint file only with the school source, a clock of whole decisions, and the fine-tuning not built.
+        checkpoint = self.mappo.school_checkpoint
+        if source == "school" and not checkpoint:
+            raise ValueError("mappo.planner_waypoint_source school needs mappo.school_checkpoint (a best.pt or "
+                             "latest.pt animus.school.train wrote)")
+        if checkpoint and source != "school":
+            raise ValueError(f"mappo.school_checkpoint is set but mappo.planner_waypoint_source is {source!r}: nothing "
+                             f"would read it (set the source to \"school\" or drop the path)")
+        if checkpoint and not os.path.isfile(checkpoint):
+            raise ValueError(f"mappo.school_checkpoint: no file at {checkpoint}")
+        every = self.mappo.school_every
+        if isinstance(every, bool) or not isinstance(every, int) or every < 1:
+            raise ValueError(f"mappo.school_every: expected a whole number of decisions from 1, got {every!r}")
+        if self.mappo.school_finetune:
+            raise ValueError("mappo.school_finetune: online fine-tuning of the school planner is not implemented yet "
+                             "(the school is frozen); set it false")
 
     @property
     def shared_runs(self) -> str:

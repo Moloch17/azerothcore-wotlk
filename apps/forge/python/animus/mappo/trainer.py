@@ -290,6 +290,21 @@ class MappoConfig:
     # The same walk and numbers; no parameter, so a checkpoint resumes. Read live as classical_map_dir_acc_* beside
     # classical_dir_acc_* (the aux pass measures both rules whatever the waypoint walks).
     planner_waypoint_costs: str = "head"
+    # The school planner (planner_waypoint_source "school"; MapEncoder.school, school_route; planner school stage 2,
+    # docs/forge/reference/school.md): the checkpoint animus.school.train wrote (best.pt / latest.pt), loaded frozen
+    # into the actor's map encoder and saved with the policy. Refused without a file, with a VIN school, or under a
+    # protocol other than this tree's. Set only with the school source (a path nothing reads is refused).
+    school_checkpoint: str = ""
+    # How often the school plans -- every this many decisions of a seat (1: every decision, the default; the
+    # seventeen are held between). The fields are egocentric and the observation carries no pose delta, so a held
+    # route goes stale as the body moves (a running body crosses a fine cell a decision); the knob is for a card that
+    # cannot afford the U-Net every decision (1.18 GFLOP a seat; 532 ms per 192 seats on a CPU), not a default.
+    # Under the school this is the plan's clock in place of planner_every (nothing else is planned at act time on a
+    # goal-blind map).
+    school_every: int = 1
+    # Online fine-tuning of the school's weights on the aux pass's labels during policy training: NOT IMPLEMENTED
+    # (the plan's stage 2 option); true is refused. The school stays frozen.
+    school_finetune: bool = False
 
 
 @dataclass
@@ -923,6 +938,9 @@ class MappoTrainer:
         # The planner's clock (mappo.planner_every; 0 = the goal clock): _replan runs it every this many decisions of
         # a seat and the acting state carries the plan in between.
         self.planner_every = max(1, int(config.planner_every) or int(config.goal_every_decisions))
+        # ... or the school's (mappo.school_every) under the school source: every seat's route is replanned on it.
+        if str(config.planner_waypoint_source) == "school":
+            self.planner_every = max(1, int(config.school_every))
         # The slots are drawn and scored by the slow loop's own update (_update_goals); a queue needs two slots behind
         # the pair held.
         if self.goal_slots > 1 and (not self.slow_goal_size or self.goal_slots < 3):
@@ -937,7 +955,8 @@ class MappoTrainer:
                                  planner_k_fine=int(config.planner_k_fine) or None,
                                  planner_hierarchical=bool(config.planner_hierarchical),
                                  planner_waypoint_source=str(config.planner_waypoint_source),
-                                 planner_waypoint_costs=str(config.planner_waypoint_costs)).to(self.train_device)
+                                 planner_waypoint_costs=str(config.planner_waypoint_costs),
+                                 school_checkpoint=str(config.school_checkpoint)).to(self.train_device)
         # Whether the actor steers by a continuous heading (protocol 32's ACT section; HeadingHead).
         self.heading = self.actor.heading_head is not None
         # (readout width, pool width) of the cached plan a row (VisionEncoder.planner_widths), (0, 0) without one.
@@ -1015,12 +1034,15 @@ class MappoTrainer:
         zero_grad would then drop; in both, it would be stepped twice with two Adam states. The update encodes each
         minibatch once and hands both networks the embedding as a leaf, so the encoder's backward pass runs once,
         over the two gradients added."""
-        return list(self.actor.vision.parameters()) if self.actor.vision is not None else []
+        # The school planner's parameters are frozen (MapEncoder.school, mappo.school_checkpoint): no optimizer's.
+        return ([p for p in self.actor.vision.parameters() if p.requires_grad]
+                if self.actor.vision is not None else [])
 
     def _actor_parameters(self) -> list[torch.nn.Parameter]:
-        """The actor's parameters its own optimizer steps: all but the slow loop's and the shared camera's."""
+        """The actor's parameters its own optimizer steps: all but the slow loop's, the shared camera's and the
+        frozen school planner's."""
         apart = {id(parameter) for parameter in self.slow_parameters() + self.vision_parameters()}
-        return [p for p in self.actor.parameters() if id(p) not in apart]
+        return [p for p in self.actor.parameters() if id(p) not in apart and p.requires_grad]
 
     def reset_optimizers(self) -> None:
         """Fresh Adam state: after a restart the step sizes are no longer shrunk by the old gradient history."""
@@ -1539,7 +1561,9 @@ class MappoTrainer:
         """Run the planner for the seats whose plan is due (mappo.planner_every decisions since the last, or none yet:
         a new episode's first decision) and write its readouts and pool into the acting state, which the decision
         then reads instead of planning (MapEncoder.forward's `planner`). Eager, on the rows due alone: the planner is
-        the one part of the decision that does not run every time, so it stays out of the captured graph."""
+        the one part of the decision that does not run every time, so it stays out of the captured graph. Under the
+        school source (mappo.school_every, planner_every here) this is where the school U-Net runs -- its seventeen
+        route scalars are the readouts' waypoint slice, which the decision reads as it is and the buffer records."""
         if state is None or state.planner_readout is None:
             return
         due = (state.planner_age < 0) | (state.planner_age >= self.planner_every)
@@ -1603,6 +1627,14 @@ class MappoTrainer:
             encoder = getattr(network, "vision", None)
             if encoder is not None and encoder.map is not None:
                 encoder.map.planner_off = bool(off)
+
+    def set_school_off(self, off: bool) -> None:
+        """The eval arm no_school (evaluation.ABLATIONS): the policy acts on the sim's route scalars instead of the
+        school's while set (MapEncoder.school_off, read where the school plans: _replan's eager pass)."""
+        for network in (self.actor, self._rollout_actor):
+            encoder = getattr(network, "vision", None)
+            if encoder is not None and encoder.map is not None:
+                encoder.map.school_off = bool(off)
 
     def look_entropy_coef(self) -> float:
         """The look's entropy coefficient now: mappo.look_entropy_coef (entropy_coef when None), following

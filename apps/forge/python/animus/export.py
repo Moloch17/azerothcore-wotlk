@@ -216,8 +216,10 @@ The .amdl format (little-endian); a reader must follow it exactly, and a change 
         In version 16 (a policy whose waypoint walks over the classical planner; mappo.planner_waypoint_source
         "classical", networks.MapEncoder.classical_plan and classical_cost_to_go), after the schedule's section:
         u32  waypoint_source                0: the learned value (version 14's walk as it is; nothing follows),
-                                            1: the classical planner, 2: (version 18 on) the sim's route
-        if waypoint_source == 2 (networks.MapEncoder.sim_waypoints; mappo.planner_waypoint_source "sim"):
+                                            1: the classical planner, 2: (version 18 on) the sim's route,
+                                            3: (version 20 on) the school planner's route (the route columns'
+                                            section as under 2, then the school's section)
+        if waypoint_source == 2 or 3 (networks.MapEncoder.sim_waypoints; mappo.planner_waypoint_source "sim"):
             u32  route_first                the observation column of the first route scalar; in version 18 the
                                             eight waypoint numbers -- fine sin, cos, dist, valid, coarse sin, cos,
                                             dist, valid, the walk's numbers a tier -- are the eight columns from it on
@@ -238,6 +240,53 @@ The .amdl format (little-endian); a reader must follow it exactly, and a change 
                                             goal_blind: the learner computes exactly that; the nav stages carry no
                                             compass). A withheld compass (presence 0 on a layout that has one) is a
                                             zero goal plane through the value iteration, as in version 14.
+        if waypoint_source == 3 (version 20; the school planner, networks.MapEncoder.school_route and
+        route_from_fields, school.model.SchoolPlanner; mappo.planner_waypoint_source "school"), after route_count:
+            u32  goal_forward_column, goal_right_column   the observation columns of the objective's forward and right
+                                            yards in the body frame (networks.GOAL_COLUMNS: the two before
+                                            route_first; the runtime knows the objective and may compute them itself:
+                                            forward = dx cos yaw + dy sin yaw, right = dx sin yaw - dy cos yaw; a
+                                            goal is present where either is not 0)
+            u32  kept_column                the map block's kept scalar's column (0xFFFFFFFF none: the flag is 0)
+            f32  point_yards[4] (5, 10, 20, 30), fine_yards (30), dist_yards (300), log_scale (log(1 + 600))
+            u32  coarse_steps (2), anchor (23)
+            u32  class_limit (32), class_embed (4)
+            f32  class_embed_weight[class_limit * class_embed]   the school's own entity-class table, row by row
+            u32  levels L (4); widths[L] (32, 64, 96, 128)
+            then twice, the COARSE U-Net first, then the FINE:
+            u32  convs                      2L + 2(L - 1) + 1 (15 at L = 4): the down blocks' two 3 x 3 convolutions
+                                            each, level by level; the up blocks' two each, deepest first; the 1 x 1
+                                            head
+            per convolution: u32 out, in, k; f32 weight[out * in * k * k] (PyTorch's [out][in][k][k] order),
+                                            bias[out]
+        The school (the reference: school.model.SchoolPlanner, tier_inputs, UNet, CoarseFrame; float32 throughout,
+        no value iteration for the waypoint, the readouts and the pointer's bonus zero as under 2 with every compass
+        column none). Per tier the input planes, [N, 18, 48, 48] in this order: the crop cell's code one-hot (5;
+        byte 0 clamped to 0..4), the entity class's row of class_embed_weight (4; byte 4 & 31), decode_map's seven
+        values (the floor's height (b1 - 128) / 127 where b1 != 0 else 0; b1 != 0; b2 != 0; b3 / 255; b5 != 0; b6 /
+        4; b7 / 4), the goal plane (networks.goal_plane: round(c - forward / cell), round(c + right / cell) with c =
+        23.5 -- the coarse tier's clamped to the crop's border along the line from the body when the goal lies past it,
+        the fine tier's all zero then; all zero without a goal), and the kept flag as a constant plane. Each U-Net:
+        the down blocks (conv 3 x 3 pad 1, SiLU, conv 3 x 3 pad 1, SiLU) at 48, 24, 12 and 6 cells, a 2 x 2 max-pool
+        between (the block's output before the pool kept as the level's skip, except the deepest); the up blocks: the
+        deeper output upsampled nearest 2 x to the skip's size, concatenated [up, skip] along channels, then the two
+        convolutions as the down blocks'; the head 1 x 1 to 1 + 1 + 8 + 11 planes: cost (log(1 + yards): the field is
+        exp(plane) - 1 after max(plane, 0)), the reachable logit, eight direction logits (unread), eleven class logits
+        (unread). The coarse U-Net reads the 18 planes alone; the fine U-Net reads 20: the 18 and the coarse pass's
+        clamped log cost over log_scale and sigmoid(coarse reachable logit), each resampled onto the fine cells as
+        version 15's frame B (bilinear at coarse row c + (i - c) x tier_cells[0] / tier_cells[1], likewise the column,
+        clamped to 0..47; the ring past the border is not read). Then the route (networks.route_from_fields,
+        ROUTE_POINT_YARDS): every fine cell whose reachable logit is at or below 0 at 1e6; version 14's walk from
+        (anchor, anchor) over that field, fine_yards / tier_cells[0] = 15 moves at most, every cell visited kept (a
+        walk that stopped repeats its end); the point at Y yards of point_yards is the polyline of the visited cells'
+        centres (forward = (c - row) x cell, right = (col - c) x cell) at Y / cell moves, linearly between two cells
+        (the 5-yd point the midpoint of the cells after moves 2 and 3); each point's -right / d, forward / d;
+        route_fine_reach = moves made x cell / fine_yards; route_fine_valid = 1 where it moved and a goal is present;
+        the coarse waypoint as version 14's walk over the coarse field (its reachable logit gating it the same way),
+        coarse_steps moves, dist over coarse_steps x tier_cells[1]; route_dist = min(the least fine field value over
+        rows and columns 23..24, dist_yards) / dist_yards, route_dist_valid = 1 where that least is below 1e6 and a
+        goal is present; route_stall the runtime's own clock as under 2. Each group times its valid flag exactly as
+        the sim's seventeen are gated, and the join reads the seventeen.
         if waypoint_source == 1:
             u32  classes C (11), iterations[tiers]   the fixed iterations of each tier, fine first (64, 64)
             f32  costs[C]                   each class's step cost multiple (CLASSICAL_COSTS, TRAV_CLASS_NAMES order)
@@ -377,8 +426,19 @@ AMDL_MAGIC = b"AMDL"
 # source 2 the route columns' count follows their first column, and the waypoint join reads F = 17. Written for a
 # policy whose waypoint is the sim's; a policy with the eight-channel map and another waypoint (or none) is still 18,
 # every other 17 or below. Such a checkpoint is never written as 18 or below (write_amdl refuses).
-AMDL_VERSION = 19
-AMDL_VERSIONS = (7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19)
+# 20: the school planner's route (planner school stage 2, 2026-10-17; mappo.planner_waypoint_source "school",
+# networks.MapEncoder.school_route): waypoint source 3, the route columns' section as under 2, then the school's
+# section -- the goal and kept columns, the rule's constants, the class table, the widths and both U-Nets' convolutions.
+# Written for a policy whose waypoint is the school's; one whose waypoint is the sim's is still 19, every other 18 or
+# below. Such a checkpoint is never written as 19 or below (write_amdl refuses).
+AMDL_VERSION = 20
+AMDL_VERSIONS = (7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20)
+#: The version a policy whose waypoint is the school planner's route is written as (AMDL_VERSION).
+AMDL_SCHOOL_VERSION = 20
+#: The version a policy whose waypoint is the sim's route of seventeen scalars is written as.
+AMDL_ROUTE_VERSION = 19
+#: The school section's constants (networks.ROUTE_POINT_YARDS and the rule there), in the file's order.
+SCHOOL_FLOATS = ("point_yards", "fine_yards", "dist_yards", "log_scale")
 #: The version a policy whose map decodes the walls plane (the eight-channel crop) and whose waypoint is not the sim's
 #: route is written as.
 AMDL_WALLS_VERSION = 18
@@ -481,6 +541,7 @@ def write_amdl(
     tail: dict | None = None,
 ) -> None:
     """Write one model. `tail` is the version 10 tail (tail_weights); without one the file is version 9. A tail with
+    the school's route is version 20, one with the sim's route 19, one with the eight-channel map 18, one with
     the classical waypoint over the map's codes is version 17, one with the classical waypoint over the head's classes
     16, one with the planner's schedule (the hierarchy or a fine K of its own; and the learned waypoint or none) 15,
     one with the planned waypoint (and no schedule) 14, one with the camera splat (and neither) 13, one with a heading
@@ -501,6 +562,7 @@ def write_amdl(
     classical = bool(planner and tail["planner"].get("classical"))
     map_costs = bool(classical and tail["planner"]["classical"].get("map_costs"))
     sim_route = bool(planner and tail["planner"].get("sim_route"))
+    school = bool(planner and tail["planner"].get("school"))
     walls = bool(tail and tail.get("camera") and tail["camera"].get("map")
                  and int(tail["camera"]["map"].get("value_planes", AMDL_LEGACY_VALUE_PLANES))
                  != AMDL_LEGACY_VALUE_PLANES)
@@ -509,7 +571,10 @@ def write_amdl(
     if sim_route and (not waypoint or classical):
         raise ValueError("the sim's waypoint needs the planned waypoint (mappo.planner_waypoint) and excludes the "
                          "classical one")
-    version = (AMDL_VERSION if sim_route else AMDL_WALLS_VERSION if walls else AMDL_MAP_COSTS_VERSION if map_costs
+    if school and not sim_route:
+        raise ValueError("the school's waypoint needs the route columns (the sim's route section)")
+    version = (AMDL_SCHOOL_VERSION if school else AMDL_ROUTE_VERSION if sim_route
+               else AMDL_WALLS_VERSION if walls else AMDL_MAP_COSTS_VERSION if map_costs
                else AMDL_CLASSICAL_VERSION if classical
                else AMDL_SCHEDULE_VERSION if schedule
                else AMDL_WAYPOINT_VERSION if waypoint else AMDL_SPLAT_VERSION if splat
@@ -533,8 +598,10 @@ def write_amdl(
                          "never 16 or below")
     if walls and version < AMDL_WALLS_VERSION:
         raise ValueError("a policy with the eight-channel map is written as version 18 or above, never 17 or below")
-    if sim_route and version < AMDL_VERSION:
-        raise ValueError("a policy with the sim's route is written as version 19, never 18 or below")
+    if sim_route and version < AMDL_ROUTE_VERSION:
+        raise ValueError("a policy with the sim's route is written as version 19 or above, never 18 or below")
+    if school and version < AMDL_SCHOOL_VERSION:
+        raise ValueError("a policy with the school's route is written as version 20, never 19 or below")
     with open(path, "wb") as out:
         out.write(AMDL_MAGIC)
         out.write(struct.pack("<IH", version, len(encoded)))
@@ -745,15 +812,20 @@ def _write_camera_tail(out, tail: dict, version: int) -> None:
     classical = planner.get("classical")
     map_costs = classical.get("map_costs") if classical else None
     sim_route = planner.get("sim_route")
-    if sim_route and version < AMDL_VERSION:
-        raise ValueError("a policy with the sim's route is written as version 19, never 18 or below")
+    school = planner.get("school")
+    if sim_route and version < AMDL_ROUTE_VERSION:
+        raise ValueError("a policy with the sim's route is written as version 19 or above, never 18 or below")
+    if school and version < AMDL_SCHOOL_VERSION:
+        raise ValueError("a policy with the school's route is written as version 20, never 19 or below")
     if version >= AMDL_CLASSICAL_VERSION:
-        out.write(struct.pack("<I", 2 if sim_route else 1 if classical else 0))
+        out.write(struct.pack("<I", 3 if school else 2 if sim_route else 1 if classical else 0))
         if sim_route:
             if int(sim_route["count"]) != int(waypoint["features"]):
                 raise ValueError(f"the sim's route has {sim_route['count']} columns, the waypoint join reads "
                                  f"{waypoint['features']}")
             out.write(struct.pack("<II", int(sim_route["first"]), int(sim_route["count"])))
+        if school:
+            _write_school(out, school)
         if classical:
             iterations, costs = list(classical["iterations"]), np.asarray(classical["costs"], dtype="<f4")
             if len(iterations) != int(planner["tiers"]) or costs.shape != (int(planner["classes"]),):
@@ -779,6 +851,45 @@ def _write_camera_tail(out, tail: dict, version: int) -> None:
     if map_costs and version < AMDL_MAP_COSTS_VERSION:
         raise ValueError("a policy whose classical waypoint prices the map's codes is written as version 17 or above, "
                          "never 16 or below")
+
+
+def _write_school(out, school: dict) -> None:
+    """The school's section (version 20; the format above): the columns, the constants, the class table, the widths
+    and the two U-Nets' convolutions, the coarse first."""
+    columns = [int(school["goal_forward_column"]), int(school["goal_right_column"]), int(school["kept_column"])]
+    out.write(struct.pack("<3I", *(column if column >= 0 else 0xFFFFFFFF for column in columns)))
+    _floats(out, np.asarray(school["point_yards"], dtype="<f4"),
+            np.asarray([school["fine_yards"], school["dist_yards"], school["log_scale"]], dtype="<f4"))
+    out.write(struct.pack("<II", int(school["coarse_steps"]), int(school["anchor"])))
+    table = np.asarray(school["class_embed"], dtype="<f4")
+    out.write(struct.pack("<II", table.shape[0], table.shape[1]))
+    _floats(out, table)
+    widths = [int(width) for width in school["widths"]]
+    out.write(struct.pack(f"<{1 + len(widths)}I", len(widths), *widths))
+    for net in ("coarse", "fine"):
+        convs = school[net]
+        out.write(struct.pack("<I", len(convs)))
+        for weight, bias in convs:
+            weight, bias = np.asarray(weight, dtype="<f4"), np.asarray(bias, dtype="<f4")
+            if weight.ndim != 4 or weight.shape[2] != weight.shape[3] or bias.shape != (weight.shape[0],):
+                raise ValueError(f"a school convolution of {weight.shape} with a bias of {bias.shape}")
+            out.write(struct.pack("<3I", weight.shape[0], weight.shape[1], weight.shape[2]))
+            _floats(out, weight, bias)
+
+
+def school_convolutions(actor_state: dict[str, torch.Tensor], net: str, levels: int) -> list[tuple]:
+    """One school U-Net's (weight, bias) pairs in the file's order (the format above) from the actor's state
+    (networks.SCHOOL_PREFIX): the down blocks' two convolutions a level, the up blocks' two each, the head."""
+    def pair(key: str) -> tuple:
+        return (actor_state[f"vision.map.school.{net}.{key}.weight"].detach().cpu().numpy().astype("<f4"),
+                actor_state[f"vision.map.school.{net}.{key}.bias"].detach().cpu().numpy().astype("<f4"))
+    convs = []
+    for level in range(levels):
+        convs += [pair(f"down.{level}.0"), pair(f"down.{level}.2")]
+    for level in range(levels - 1):
+        convs += [pair(f"up.{level}.0"), pair(f"up.{level}.2")]
+    convs.append(pair("head"))
+    return convs
 
 
 def memory_weights(actor_state: dict[str, torch.Tensor]) -> dict[str, np.ndarray] | None:
@@ -1106,16 +1217,16 @@ def tail_weights(actor_state: dict[str, torch.Tensor], stage: dict, names: list[
                     tail["planner"]["schedule"] = {"hierarchical": hierarchical, "k_tiers": [k_fine, k]}
                 # The waypoint's source (version 16; mappo.planner_waypoint_source): what its join reads.
                 source = int(actor_state.get("vision.map.waypoint_source", 0))
-                if source not in (0, 1, 2):
+                if source not in (0, 1, 2, 3):
                     raise ValueError(f"the waypoint's source buffer is {source}; this exporter knows 0 (learned), 1 "
-                                     f"(classical) and 2 (the sim's route)")
+                                     f"(classical), 2 (the sim's route) and 3 (the school's)")
                 # The planned waypoint (version 14): its walk and its join -- the walk's tiers x 4 numbers, or the
                 # sim's route's seventeen (version 19, networks.ROUTE_COLUMNS) under source 2.
                 if "vision.map.waypoint_join.weight" in actor_state:
                     weight = array("vision.map.waypoint_join.weight")
-                    features = len(ROUTE_COLUMNS) if source == 2 else tiers * MapEncoder.WAYPOINT_FEATURES
+                    features = len(ROUTE_COLUMNS) if source in (2, 3) else tiers * MapEncoder.WAYPOINT_FEATURES
                     if weight.shape[1] != features:
-                        what = ("the sim's route, networks.ROUTE_COLUMNS" if source == 2
+                        what = ("the sim's route, networks.ROUTE_COLUMNS" if source in (2, 3)
                                 else f"{tiers} x {MapEncoder.WAYPOINT_FEATURES}")
                         raise ValueError(f"the waypoint join reads {weight.shape[1]} inputs, the learner's {features} "
                                          f"({what})")
@@ -1124,7 +1235,7 @@ def tail_weights(actor_state: dict[str, torch.Tensor], stage: dict, names: list[
                         "steps": [MapEncoder.WAYPOINT_STEPS[min(t, len(MapEncoder.WAYPOINT_STEPS) - 1)]
                                   for t in range(tiers)],
                         "weight": weight, "bias": array("vision.map.waypoint_join.bias")}
-                if source == 2:
+                if source in (2, 3):
                     # The sim's route (version 19; mappo.planner_waypoint_source "sim"): the route columns' first
                     # observation column of this layout and their count; the runtime plans and fills them itself.
                     if "waypoint" not in tail["planner"]:
@@ -1134,6 +1245,30 @@ def tail_weights(actor_state: dict[str, torch.Tensor], stage: dict, names: list[
                         raise ValueError("the actor's waypoint is the sim's route, but this layout's map block names "
                                          "no route columns (map block revision 7): not exporting")
                     tail["planner"]["sim_route"] = {"first": int(route["first"]), "count": len(route["columns"])}
+                if source == 3:
+                    # The school's route (version 20; mappo.planner_waypoint_source "school"): the goal and kept
+                    # columns of this layout, the rule's constants and the frozen U-Nets (networks.MapEncoder.school).
+                    from .mappo.networks import (ROUTE_COARSE_STEPS, ROUTE_DIST_YARDS, ROUTE_FINE_YARDS,
+                                                 ROUTE_POINT_YARDS)
+                    from .school.model import LOG_SCALE
+                    goal = crop.get("goal")
+                    if goal is None:
+                        raise ValueError("the actor's waypoint is the school's route, but this layout's map block "
+                                         "names no goal columns (networks.GOAL_COLUMNS): not exporting")
+                    table = array("vision.map.school.class_embed.weight")
+                    widths = [int(actor_state[f"vision.map.school.coarse.down.{level}.0.weight"].shape[0])
+                              for level in range(len([key for key in actor_state
+                                                      if key.startswith("vision.map.school.coarse.down.")
+                                                      and key.endswith(".0.weight")]))]
+                    tail["planner"]["school"] = {
+                        "goal_forward_column": int(goal["columns"][0]), "goal_right_column": int(goal["columns"][1]),
+                        "kept_column": int(crop.get("kept", -1)),
+                        "point_yards": [float(y) for y in ROUTE_POINT_YARDS], "fine_yards": float(ROUTE_FINE_YARDS),
+                        "dist_yards": float(ROUTE_DIST_YARDS), "log_scale": float(LOG_SCALE),
+                        "coarse_steps": int(ROUTE_COARSE_STEPS), "anchor": MapEncoder.WAYPOINT_ANCHOR,
+                        "class_embed": table, "widths": widths,
+                        "coarse": school_convolutions(actor_state, "coarse", len(widths)),
+                        "fine": school_convolutions(actor_state, "fine", len(widths))}
                 if source == 1:
                     if "waypoint" not in tail["planner"]:
                         raise ValueError("the actor's waypoint walks over the classical planner but has no waypoint "
@@ -1535,16 +1670,38 @@ def read_amdl(path: str | Path) -> dict:
                 planner["schedule"] = {"hierarchical": bool(hierarchical), "k_tiers": list(k_tiers)}
             planner["classical"] = None
             planner["sim_route"] = None
+            planner["school"] = None
             if version >= 16:
                 (source,) = u32s(1)
-                if source == 2:
+                if source in (2, 3):
                     if version < AMDL_WALLS_VERSION:
                         raise ValueError(f"waypoint source 2 (the sim's route) in a version {version} file")
-                    if version >= AMDL_VERSION:
+                    if version >= AMDL_ROUTE_VERSION:
                         route_first, route_count = u32s(2)
                     else:
                         (route_first,), route_count = u32s(1), AMDL_LEGACY_ROUTE_COUNT
                     planner["sim_route"] = {"first": int(route_first), "count": int(route_count)}
+                    if source == 3:
+                        if version < AMDL_SCHOOL_VERSION:
+                            raise ValueError(f"waypoint source 3 (the school's route) in a version {version} file")
+                        columns = [int(c) if c != 0xFFFFFFFF else -1 for c in u32s(3)]
+                        school = {"goal_forward_column": columns[0], "goal_right_column": columns[1],
+                                  "kept_column": columns[2]}
+                        school["point_yards"] = floats(4, 4).tolist()
+                        school["fine_yards"], school["dist_yards"], school["log_scale"] = floats(3, 3).tolist()
+                        school["coarse_steps"], school["anchor"] = u32s(2)
+                        limit, dim = u32s(2)
+                        school["class_embed"] = floats(limit * dim, limit, dim)
+                        (levels,) = u32s(1)
+                        school["widths"] = list(u32s(levels))
+                        for net in ("coarse", "fine"):
+                            (convs,) = u32s(1)
+                            layers = []
+                            for _ in range(convs):
+                                out_c, in_c, k = u32s(3)
+                                layers.append((floats(out_c * in_c * k * k, out_c, in_c, k, k), floats(out_c, out_c)))
+                            school[net] = layers
+                        planner["school"] = school
                 elif source:
                     count, *iterations = u32s(1 + tiers)
                     costs = floats(count, count)

@@ -47,6 +47,14 @@ mappo:
   # Exported as .amdl version 17 under "classical". On from here (nav3+ inherit). Under planner_waypoint_source "sim"
   # the rule prices only the aux pass's measurement (the sim plans the waypoint); it stays set for a switch back.
   planner_waypoint_costs: map
+  # The school planner as the route's source (planner school stage 2; docs/forge/reference/school.md): the same
+  # seventeen computed by the learner from the school U-Net's fields on the crop instead of read off the sim's
+  # Dijkstra, with the sim's route_stall. Needs a sim that writes the goal columns (goal_forward_yards,
+  # goal_right_yards before the route's seventeen) and a checkpoint animus.school.train wrote. Every decision by
+  # default (school_every); no_school in eval.arms measures the school against the sim's route like for like.
+  # planner_waypoint_source: school
+  # school_checkpoint: ../../../var/animus-forge/shared/school/_runs/unet/best.pt
+  # school_every: 1
   # Greedy training envs (exploration v3; 0.12 of this learner's envs act with the argmax of the movement heads, their
   # movement policy-gradient rows masked, their states and rewards training the critic): the argmax policy the
   # evaluation and the export play froze on 3.5 % of nav2's trips (2026-10-16: 27 of 118 failures over three

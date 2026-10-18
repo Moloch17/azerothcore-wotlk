@@ -490,16 +490,19 @@ def standard_error(values: np.ndarray, groups: np.ndarray | None = None) -> floa
 #:               what remembering and predicting where each member is is worth beside the dots and the camera.
 #:   no_planner  (vision movement curriculum) the planner's value readouts into the trunk and the cell pointer's
 #:               planner bonus zeroed (MappoTrainer.set_planner_off): what the planner is worth beside the map.
+#:   no_school   (planner school stage 2) the policy acts on the sim's Dijkstra route scalars instead of the school
+#:               planner's (MappoTrainer.set_school_off; mappo.planner_waypoint_source school): the same seeds, so
+#:               the gap is what the school's route is worth, like for like.
 #: Beside them, not an ablation of the input: no_shared_memory (SHARED_MEMORY_ARM) is a MODE flag to the sim
 #: (MODE_FLAG_NO_SHARED_MEMORY, Run.evaluate_arms): the same seeds, every seat starting blank instead of the seeded
 #: half adopting the map's shared memory, so arrivals with and without the memory compare on the same trips (the
 #: plain evaluation's shared_memory split is two different draws of trips). `no_memory` is the GRU reset, not this.
 ABLATIONS = ("no_flag", "no_camera", "no_compass", "no_map", "no_memory", "no_goal", "random_goal", "random_cell",
-             "no_plan", "no_searched", "no_coverage", "no_party", "no_recall", "no_planner")
+             "no_plan", "no_searched", "no_coverage", "no_party", "no_recall", "no_planner", "no_school")
 #: The ablations that are a flag on the trainer's goal draw (Run.evaluate_arms sets them), not an edit of the input.
 GOAL_DRAW_ARMS = ("random_goal", "random_cell", "no_plan")
 #: ... and the ones that are a flag on the networks (Run.evaluate_arms likewise): the chooser edits nothing.
-NETWORK_FLAG_ARMS = ("no_planner",)
+NETWORK_FLAG_ARMS = ("no_planner", "no_school")
 #: The arms that zero a whole stage.json block of the observation, and the block (ablation_chooser; Run.evaluate_arms
 #: skips one whose block no layout of the stage has: the nav stages carry no compass block).
 ABLATION_BLOCKS = {"no_compass": "compass", "no_map": "map", "no_goal": "goal", "no_party": "party_frames"}

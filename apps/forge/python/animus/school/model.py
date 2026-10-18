@@ -133,6 +133,7 @@ class SchoolPlanner(nn.Module):
 
     def __init__(self, widths: tuple[int, ...] = (32, 64, 96, 128), class_embed: int = CLASS_EMBED):
         super().__init__()
+        self.widths = tuple(int(width) for width in widths)
         self.class_embed = nn.Embedding(networks.CLASS_LIMIT, class_embed)
         planes = MAP_CODES + class_embed + MAP_VALUE_PLANES + 2
         self.coarse = UNet(planes, HEAD_PLANES, tuple(widths))

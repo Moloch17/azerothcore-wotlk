@@ -1691,7 +1691,9 @@ class TrainingRun:
         "no_memory" (its recurrent state reset every decision), "random_goal" (its goals drawn uniformly over
         those on offer), "random_cell" (its cells drawn uniformly over the choosable blocks), "no_plan" (nothing held
         beside its primary goal or queued), "no_searched" and "no_coverage" (the searched-state and the coverage inputs
-        zeroed), all evaluation.ablation_chooser, "no_shared_memory" (the sim's seats started blank: a MODE flag) -- and
+        zeroed), all evaluation.ablation_chooser, "no_planner" and "no_school" (the planner's readouts zeroed; the
+        sim's route in place of the school planner's: flags on the networks), "no_shared_memory" (the sim's seats
+        started blank: a MODE flag) -- and
         reported apart as policy <arm> in eval.csv and eval.jsonl, with the gap to the plain one. A reading only:
         neither the tracker, the controller nor the partners' pool sees it."""
         config = self.config
@@ -1740,11 +1742,19 @@ class TrainingRun:
                                             and self.trainer.actor.vision.planner_on):
                 print(f"Arm {arm}: the stage's map has no planner (one map tier); skipped", flush=True)
                 continue
+            if arm == "no_school" and not (self.trainer.actor.vision is not None
+                                           and self.trainer.actor.vision.map is not None
+                                           and self.trainer.actor.vision.map.school_waypoint):
+                print(f"Arm {arm}: the policy's route is not the school planner's (mappo.planner_waypoint_source); "
+                      f"skipped", flush=True)
+                continue
             self.trainer.uniform_goals = arm == "random_goal"
             self.trainer.uniform_cells = arm == "random_cell"
             self.trainer.single_goal = arm == "no_plan"
             # no_planner (vision movement curriculum): the planner's readouts and the pointer's bonus zeroed.
             self.trainer.set_planner_off(arm == "no_planner")
+            # no_school (planner school stage 2): the sim's route scalars in place of the school's.
+            self.trainer.set_school_off(arm == "no_school")
             try:
                 result = self._evaluate_share(choose, episodes, config.eval.seed, arenas=self.arena_names,
                                               action_names=self.action_names,
@@ -1754,6 +1764,7 @@ class TrainingRun:
                 self.trainer.uniform_cells = False
                 self.trainer.single_goal = False
                 self.trainer.set_planner_off(False)
+                self.trainer.set_school_off(False)
             if self.cast is not None or self.partners is not None:
                 self._reset_far_side()
             if not self.ranks.leader:
