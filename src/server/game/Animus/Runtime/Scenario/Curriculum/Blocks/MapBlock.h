@@ -91,6 +91,12 @@ namespace Animus::Curriculum
             /// body over Vision::PLAN_DIST_SCALE with its valid (both 0 when unreachable); and the stall clock --
             /// seconds since that distance last fell below its least this episode, over Vision::PLAN_STALL_SECONDS,
             /// clamped to 1 (0 at the first decision; it keeps running while unreachable).
+            /// The objective in the body frame, raw yards forward and right (0 both with no objective or one withheld):
+            /// the planner school's goal (animus.school; its route is what the policy sees), never read by the
+            /// policy's own embedding, which stops before these -- the learner's rule. The columns sit immediately
+            /// before the route's seventeen.
+            OBS_GOAL_FORWARD_YARDS,
+            OBS_GOAL_RIGHT_YARDS,
             OBS_ROUTE_P5_SIN,
             OBS_ROUTE_P5_COS,
             OBS_ROUTE_P10_SIN,
@@ -137,7 +143,9 @@ namespace Animus::Curriculum
         /// on revision 5's bytes refuses it. 7 (2026-10-17): the eight route scalars are seventeen (route_p5_sin ..
         /// route_stall: the fine walk at four points, its reach, the coarse waypoint, the own-map distance and the
         /// stall clock), the planner works in the body's configuration space (Vision::ConfigurationSpace), and the
-        /// nav stages drop the compass: the route is the goal's only observation. The crop is unchanged.
+        /// nav stages drop the compass: the route is the goal's only observation. The crop is unchanged. Still 7
+        /// (2026-10-17, later): two scalars, goal_forward_yards and goal_right_yards, inserted before the seventeen
+        /// for the planner school's input (a learner finds them by name).
         [[nodiscard]] uint32 Revision() const override { return 7; }
         /// "map": { transport "bytes", height, width (Vision::CROP), cell (yards), tiers [{cell, bytes}...],
         /// tier_bytes (one tier's), channels (8), channel_names, map_bytes (every tier's), codes, code_names,

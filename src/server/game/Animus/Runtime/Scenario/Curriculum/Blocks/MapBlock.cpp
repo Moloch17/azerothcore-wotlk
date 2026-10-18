@@ -41,7 +41,8 @@ namespace
 {
     constexpr char const* SCALAR_NAMES[Animus::Curriculum::MapBlock::OBS_COUNT] = { "known", "frontier", "visited",
         "kept", "searched", "new_age", "total", "frontier_sin", "frontier_cos", "frontier_dist", "region_sin",
-        "region_cos", "region_dist", "clusters", "searched_cells", "route_p5_sin", "route_p5_cos", "route_p10_sin",
+        "region_cos", "region_dist", "clusters", "searched_cells", "goal_forward_yards", "goal_right_yards",
+        "route_p5_sin", "route_p5_cos", "route_p10_sin",
         "route_p10_cos", "route_p20_sin", "route_p20_cos", "route_p30_sin", "route_p30_cos", "route_fine_reach",
         "route_fine_valid", "route_coarse_sin", "route_coarse_cos", "route_coarse_dist", "route_coarse_valid",
         "route_dist", "route_dist_valid", "route_stall" };
@@ -277,6 +278,9 @@ void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uin
         float const dy = view.Objective.GetPositionY() - y;
         float const goalForward = dx * cosYaw + dy * sinYaw;
         float const goalRight = dx * sinYaw - dy * cosYaw;
+        // The school's goal (OBS_GOAL_*): the same two numbers the plan is made from, in raw yards.
+        obs[OBS_GOAL_FORWARD_YARDS] = goalForward;
+        obs[OBS_GOAL_RIGHT_YARDS] = goalRight;
         Vi::PlanPoint near[1];
         uint32 points = 0;
         if (last.Valid)
