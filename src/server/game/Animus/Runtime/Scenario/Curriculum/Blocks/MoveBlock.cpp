@@ -125,9 +125,10 @@ Animus::Curriculum::BlockSize Animus::Curriculum::MoveBlock::Size(Layout const& 
 void Animus::Curriculum::MoveBlock::DescribeManifest(Layout const& layout, boost::json::object& block) const
 {
     block["controls"] = "player-controller";
-    // Whether move_back is offered (StageDefinition::NoBackpedal): the action names say so too, and a player of the
-    // model must offer the same keys.
-    block["backpedal"] = Backpedals(layout);
+    // A stage without move_back (StageDefinition::NoBackpedal) says so; the action names say so too, and a player of
+    // the model must offer the same keys. Written only then, so every other stage's manifest is as it was.
+    if (!Backpedals(layout))
+        block["backpedal"] = false;
     block["trail_samples"] = uint32(TRAIL_SAMPLES);
     block["trail_interval_ms"] = uint32(MovementTrail::INTERVAL_MS);
     boost::json::array pitches;
@@ -360,21 +361,23 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
     }
     out[OBS_CAN_JUMP] = state.Alive && state.CanJump ? 1.0f : 0.0f;
 
-    if (!mask || !view.L)
+    if (!mask)
         return;
-    for (uint32 local = 0; local < ActionCount(*view.L); ++local)
-        mask[local] = MC::Allowed(ControlOf(*view.L, local), state) ? 1 : 0;
+    // Without a layout, the full set as before.
+    uint32 const count = view.L ? ActionCount(*view.L) : MC::ACTION_COUNT;
+    for (uint32 local = 0; local < count; ++local)
+        mask[local] = MC::Allowed(view.L ? ControlOf(*view.L, local) : local, state) ? 1 : 0;
 }
 
 void Animus::Curriculum::MoveBlock::Apply(SeatView& view, uint32 local, SeatActionResult& result) const
 {
     Player* bot = view.Bot;
-    if (!bot || !view.Controls || !view.L || local >= ActionCount(*view.L))
+    if (!bot || !view.Controls || local >= (view.L ? ActionCount(*view.L) : MC::ACTION_COUNT))
         return;
 
     // One held control changed (MoveControls::Press), priced by what it takes back of a recent choice. The value
     // already held, pressed again, is the key kept down: no press, no charge (SeatActionResult::KeyStillHeld).
-    MC::PressOutcome const pressed = MC::Press(*view.Controls, ControlOf(*view.L, local), view.NowMs,
+    MC::PressOutcome const pressed = MC::Press(*view.Controls, view.L ? ControlOf(*view.L, local) : local, view.NowMs,
         view.Options.JitterDecayMs);
     if (!pressed.Changed)
     {

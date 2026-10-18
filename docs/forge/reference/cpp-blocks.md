@@ -287,10 +287,11 @@ backward, `move_back` pressed 4,203 times against `move_forward`'s 2,272, at the
 7. The actions after `move_back` sit one index lower under the same names: `MoveBlock::ControlOf(layout, local)` turns a
 layout's local action into the `MoveControls` action (the mask, `Apply`, `ActionName` and StageScenario's `IsStep` /
 `IsPitch` judging read through it); `MoveBlock::ActionCount(layout)` is 14 or 15. The manifest says `backpedal`
-(true/false). The revision stays 8: the other stages' move block is unchanged, and the learner tells the two apart
-by width -- a resume across the change is refused (`layout_changes`: the move action span differs), and a seed takes
-the width-mismatch path (the move block "seeded from scratch") and then carries all 62 columns and the 14 remaining
-actions by name (`_by_name`; the head's rows are selected by name). Restart such a stage fresh.
+(`false`, written only in such a stage). The revision stays 8: the other stages' move block is unchanged, and the
+learner tells the two apart by width -- a resume across the change is refused (`resume_mismatch` on num_actions,
+`layout_changes` on the move action span), and a seed takes the width-mismatch path (the move block "seeded from
+scratch") and then carries all 62 columns and the 14 remaining actions by name (`_by_name`; the head's rows are
+selected by name). Restart such a stage fresh.
 
 Revision 6 (movement pacing M1, decision 0027, 2026-10-10) appends four columns after `trail_dwell`: `contact_side`
 (57: which side the controller's last blocked step found clear, +1 left / -1 right / 0 none, `BodyState::ContactSide`,
