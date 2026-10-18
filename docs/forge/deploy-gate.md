@@ -126,7 +126,7 @@ fingerprint equals the host's.
 - [ ] Stop **only that worker**: `ssh <worker> 'docker stop ac-animus-forge-worldserver'`. Confirm on the host
   (`forgectl status` or `forge status`) that M2 carries on without it (updates keep arriving for 5 minutes). If M2
   stalls, `docker start` the container at once and stop the rehearsal: report it, do not retry.
-- [ ] Check the tag is on the worker: `git fetch moloch@192.168.0.69:git/animus-forge.git --tags && git tag -l
+- [ ] Check the tag is on the worker: `git fetch origin --tags && git tag -l
   'pre-*'`. (Rehearse with the *current* tag, which is what the worker runs, and the *new* revision if it is already
   pushed: either way the point is the sequence.)
 - [ ] Take a conf backup the way the deploy will: `python3 apps/forge/tools/conf_prune.py --prune --ssh
@@ -171,12 +171,12 @@ the one you are about to deploy:
 ```
 ssh sarah@192.168.0.68 'git -C ~/animus-forge rev-parse HEAD'      # the deployed revision (every machine: same)
 git tag pre-<change>-<date> <that revision>                          # e.g. pre-cleanup-2026-10-07
-git push lan pre-<change>-<date> && git push origin pre-<change>-<date>
+git push origin pre-<change>-<date>
 python3 apps/codestyle/codestyle-cpp.py
 git rev-parse cleanup | tee var/gate/tested-sha.txt      # the revision every step tests; step 7 checks it
 ```
 
-Success: the tag is on `lan` and `origin` (`git ls-remote lan 'refs/tags/pre-*'`), the codestyle run ends with
+Success: the tag is on `origin` (`git ls-remote origin 'refs/tags/pre-*'`), the codestyle run ends with
 `Everything looks good` (exit status 0), and `var/gate/tested-sha.txt` holds the 40-character sha of the branch under
 test. **If the branch moves after this line, the gate starts again at step 1.**
 
@@ -479,13 +479,13 @@ Success: `--ff-only` merges without a merge commit (if it refuses, `forge` has m
 two printed shas are identical (`SAME`). Print them in the notes. A `DIFFERENT` is a stop: what you would deploy is
 not what was tested.
 
-Then push and rebuild. `forgectl build --cluster` checks the checkout is on `forge`, pushes it to `lan`, runs
+Then push and rebuild. `forgectl build --cluster` checks the checkout is on `forge`, pushes it to `origin` (GitHub), runs
 `cluster-pull.sh` on every machine **in parallel** and waits for each `AzerothCore rev. <sha> ... ready`, then prints
 one table (ready / PULL FAILED / UNREACHABLE / TIMED OUT, with times). The manual fallback, which **serialises** hours of
 `-march=native` builds (use it only if `forgectl build --cluster` is not available or R3 raised a doubt):
 
 ```
-git push lan forge && git push origin forge
+git push origin forge
 for m in sarah@192.168.0.68 spencer@192.168.0.66 thomas@192.168.0.67 moloch@192.168.0.117; do
   ssh -o BatchMode=yes $m 'cd ~/animus-forge && apps/forge/tools/cluster-pull.sh moloch@192.168.0.69'
 done
@@ -574,7 +574,7 @@ prune**
 (in `var/gate/NOTES.txt`, one per machine and file): never "the oldest backup", `ls -t | tail` or a guess.
 
 ```
-ssh <machine> 'cd ~/animus-forge && git fetch moloch@192.168.0.69:git/animus-forge.git --tags && \
+ssh <machine> 'cd ~/animus-forge && git fetch origin --tags && \
     git checkout pre-<change>-<date>'
 ETC='~/animus-forge/env/dist/etc'
 python3 apps/forge/tools/conf_prune.py --list-backups --ssh <machine>:$ETC/modules/mod_animus_forge.conf
@@ -641,7 +641,7 @@ what you saw; do not try a second fix.
 |---|---|---|---|
 | 0 | a machine is `UNREACHABLE`, `STALLED`, `DOWN`, or shows a `*` on its rev | **Stop** | Nothing is cancelled yet, so nothing is at risk. `forgectl logs <machine> --errors`; a `*` rev: that machine is on other code, re-run `forgectl build --cluster` **later**, not now. Reschedule the gate. |
 | 0 | disk under 30 GB on a machine, the dev card busy, someone else's job on the cluster, owner not told | **Stop** | Clear the disk (`docker builder prune`, old `archive/` runs) or wait for the card or the job; tell the owner; start step 0 again. |
-| 1 | the tag cannot be pushed, or codestyle fails | **Stop** | Fix the push (`git remote -v`, the `lan` repo is on the dev machine) or the style complaint; the tag must be on both remotes before anything is built. |
+| 1 | the tag cannot be pushed, or codestyle fails | **Stop** | Fix the push (`git remote -v`; `origin` is GitHub) or the style complaint; the tag must be on `origin` before anything is built. |
 | 2 | the build or the link fails | **Stop** | The link error `cannot find -l...` has the documented workaround in the step; any other error is the branch's. |
 | 3 | the card was busy | **Stop** | Not a result. Wait for an idle card and run it again. |
 | 3 | a GPU test fails, or the run prints no summary line (a segfault) | **Stop** | A failing GPU test blocks the deploy. Run once more; a second identical failure is real. Write the test name down for the owner. |

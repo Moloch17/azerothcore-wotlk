@@ -119,8 +119,8 @@ From `.gitignore` (excerpt): `/conf/*` except `conf/dist`, `/modules/*` except l
 
 - `forge` is the working and release branch; `master` is upstream AzerothCore and is never pushed to or used
   ([principles.md](../principles.md) item 20). Merges go on `forge`; no pull requests unless asked.
-- Remotes on the dev machine: `lan` = `/home/moloch/git/animus-forge.git` (bare repo the workers pull from; cluster.md
-  writes it as `moloch@192.168.0.69:git/animus-forge.git`), `origin` = GitHub fork `Moloch17/azerothcore-wotlk`,
+- Remotes: `origin` = GitHub fork `Moloch17/azerothcore-wotlk`, which every worker pulls from over HTTPS (the `lan`
+  bare repo on the dev machine was retired 2026-10-18),
   `upstream` = `azerothcore/azerothcore-wotlk`.
 - Tags that matter: `curriculum-v1`, `pre-cleanup-2026-10-07`, `curriculum-movement-v1`, `archive/movement-curriculum`.
 - Agent worktrees live under `.claude/worktrees/` on branches `worktree-agent-*`; `.claude/worktrees` is ignored.
@@ -200,7 +200,7 @@ Safety column: "reads" = never writes outside stdout (or a named output); "write
 | `gen_config_reference.py` | regenerate the key table in [config-keys.md](config-keys.md) | `--check`, `--stdout` | reads conf.dist and sources; writes only between its two marker lines | writes one docs file |
 | `collect-videos.sh` | (superseded by `forgectl collect`, which also brings the camera images and logs) copy workers' `runs/<stage>/videos` PNGs, JSON and HTML by `ssh ... find ... \| tar` into `runs/<stage>/videos/from-<worker>/` | `[--dry-run \| --check] [--workers "u@h ..."] [--remote-dir D] [--runs-dir D] <stage>` | default workers list includes sarah (the host) and omits eli (`collect-videos.sh:23`) | `--dry-run` prints; `--check` read-only ssh; default writes the local run folder |
 | `viz/server.py` | browser route viewer: every evaluation's bot routes laid on a top-down render of the map's baked scene (floor shaded by height, walls dark); filters by outcome, class and seed; time heatmap, wall contact, per-episode replay with body heading and camera cone; water and lava from the scene's liquid sections (a model's liquid only over its own basin: no ceiling between it and the floor); hover highlights a route, a click selects it in the list; the bot's view panel plays the learner evaluation's video (`videos/<env steps>/`, the same episodes, matched by seed and agent) frame by frame in step with the replay. Started with the worldserver (`forge-worldserver.sh`, port `FORGE_VIZ_PORT` 8770); offline: `./forge-viz.sh [--open] [--lan] [--port N]` in the repository root | `[--runs DIR] [--scenes DIR] [--host H] [--port 8770]` | reads `runs/<run>/eval_trace_<steps>_<policy>.npz`, `eval_episodes.jsonl`, `stage.json` and the baked scenes; writes rendered backgrounds only into `runs/<run>/viz/backgrounds/` | writes only `runs/<run>/viz/` |
-| `cluster-pull.sh` | on one machine: `git pull --ff-only <origin user@host>:git/animus-forge.git forge`; touch `env/dist/.forge-build`; `docker compose up -d --force-recreate ac-worldserver` | `[user@host]` | modifies the checkout and containers of the machine it runs on | writes |
+| `cluster-pull.sh` | on one machine: `git pull --ff-only origin <branch>` (GitHub); touch `env/dist/.forge-build`; `docker compose up -d --force-recreate ac-worldserver` | `[remote]` | modifies the checkout and containers of the machine it runs on | writes |
 | `patches/amdl8-check/*` | compare the in-game model reader (`mod-animus` `MlpPolicy`) to the learner's golden vectors; time a decision | `prep.py <dir>`, `run.py <dir> [Model dir]`, `bench.py <dir>` | needs `modules/mod-animus` and `var/syntax-build-animus/compile_commands.json` | writes in `<dir>` |
 
 ## forgectl code map
@@ -244,7 +244,7 @@ Usage and behaviour are in [../forgectl.md](../forgectl.md); this is where each 
 - `deploy.py`: `build` (both forms first read the plan state of the machine they restart, `stage.machine_plan_state`:
   the host for `--cluster`, this machine for a local build; refuse if a stage runs unless `--stop-running`; local:
   touch request + recreate container; `--cluster`:
-  `git push <lan> <branch>`, run `cluster-pull.sh` on each machine in parallel, wait for the log line
+  `git push origin <branch>`, run `cluster-pull.sh` on each machine in parallel, wait for the log line
   `AzerothCore rev. <sha9> ... ready`); `move_host` (cancel, copy run, rewrite roles, rebuild, edit `host =` in
   `cluster.toml`, resume) with `mixed_state_report`. It deploys the local `HEAD`: uncommitted work is not shipped.
 - `confsync.py`: `curriculum_keys`, `compare`, `synced_text` (replace differing, append missing under a comment, remove

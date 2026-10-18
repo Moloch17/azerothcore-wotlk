@@ -4,7 +4,8 @@
 
 [cluster]
 host = "dev"            # the machine that holds the run and decides (AnimusForge.Cluster.Role = "host")
-lan_remote = "lan"      # the remote the workers pull from (a bare repository on the dev machine)
+remote = "origin"       # the remote builds push to and every worker pulls from: GitHub (since 2026-10-18; the LAN
+                        # bare repository on dev is retired -- no large files go through git, the project builds them)
 branch = "forge-dev"    # the branch that is deployed (forge-dev: the owner's dev branch, 2026-10-12; forge otherwise)
 control_port = 7700     # worker -> host control; also the port in each worker's Cluster.Host
 data_port = 7701

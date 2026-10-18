@@ -91,7 +91,7 @@ def parser() -> argparse.ArgumentParser:
     bd = add("build", "rebuild the worldserver here, or with --cluster push and rebuild every machine "
                       "(refuses under a running stage)",
              "forgectl build --cluster")
-    bd.add_argument("--cluster", action="store_true", help="push to the lan remote, then cluster-pull on every "
+    bd.add_argument("--cluster", action="store_true", help="push to GitHub (cluster.toml remote), then cluster-pull on every "
                                                           "machine in the cluster, and wait for each to be ready")
     bd.add_argument("--yes", action="store_true", help="do not ask")
     bd.add_argument("--stop-running", action="store_true",

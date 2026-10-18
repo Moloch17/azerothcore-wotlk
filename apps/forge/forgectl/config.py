@@ -46,7 +46,7 @@ class Config:
     file: Path
     repo_root: Path
     host_name: str
-    lan_remote: str
+    remote: str
     branch: str
     control_port: int
     data_port: int
@@ -161,7 +161,7 @@ def parse(data: dict, file: Path, repo_root: Path) -> Config:
             raise ConfigError(f"{extra} cannot be read: {error}") from None
     config = Config(
         file=file, repo_root=repo_root, host_name=_need(cluster, "host", f"{file}: [cluster]", str),
-        lan_remote=_need(cluster, "lan_remote", f"{file}: [cluster]", str),
+        remote=_need(cluster, "remote", f"{file}: [cluster]", str),
         branch=_need(cluster, "branch", f"{file}: [cluster]", str),
         control_port=_need(cluster, "control_port", f"{file}: [cluster]", int),
         data_port=_need(cluster, "data_port", f"{file}: [cluster]", int),

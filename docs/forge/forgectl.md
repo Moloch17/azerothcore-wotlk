@@ -20,7 +20,7 @@ forever.
 system exactly as before; it must not construct a way around a refusal.** (A refusal here, such as the build under
 a running stage or `--yes` without `--archive-ok`, is the tool doing its job: it is not an obstacle to route around.)
 
-**The cluster file.** The machines, the host, the lan remote and branch, the ports, the container names and the dev
+**The cluster file.** The machines, the host, the remote (GitHub) and branch, the ports, the container names and the dev
 container are in one tracked file, [`apps/forge/cluster.toml`](../../apps/forge/cluster.toml). To add a worker, add a
 `[[machine]]` block with `in_cluster = true`; to drop one (like eli), set `in_cluster = false`. `--config FILE` or
 `$FORGECTL_CONFIG` points at another file. A mistake in the file is reported with the key's name.
@@ -455,7 +455,7 @@ problems; `--lines N` (default 40); `--wide` does not cut long lines. The defaul
   worldserver container (which
   recompiles the checkout with `-march=native`), then wait for its `ready` line. Asks first. **It has the same
   running-stage guard as `--cluster`, applied to this machine's own worldserver** (see below).
-- `forgectl build --cluster`: checks this checkout is on the cluster branch (`forge`), **pushes it to the lan remote**,
+- `forgectl build --cluster`: checks this checkout is on the cluster branch (`forge`), **pushes it to GitHub (`origin`)**,
   then runs `apps/forge/tools/cluster-pull.sh` on every machine in the cluster **in parallel**, and waits for each to
   print `AzerothCore rev. <sha> ... ready` for the new revision (up to `--timeout` minutes each, default 60; the
   slowest machines take the longest). Then one table: each machine's result, time and detail.

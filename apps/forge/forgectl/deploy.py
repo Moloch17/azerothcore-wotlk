@@ -136,8 +136,8 @@ def build(config: Config, cluster: bool, yes: bool, timeout_minutes: float, push
                           f"and kills it without the final checkpoint save that `stage cancel` makes. "
                           f"{cancel_first}, or pass --stop-running to cancel it as part of this build")
     if cluster:
-        plan = ([f"push {config.branch} ({sha[:9]}) to the remote {config.lan_remote!r}"] if push else []) + [
-            f"on {', '.join(m.name for m in targets)} (in parallel): run apps/forge/tools/cluster-pull.sh (pull, "
+        plan = ([f"push {config.branch} ({sha[:9]}) to the remote {config.remote!r} (GitHub)"] if push else []) + [
+            f"on {', '.join(m.name for m in targets)} (in parallel): run apps/forge/tools/cluster-pull.sh (pull from GitHub, "
             "then recreate the worldserver container, which recompiles from source)",
             "wait until each prints 'AzerothCore rev. <sha> ... ready', for up to "
             f"{timeout_minutes:.0f} min each",
@@ -174,8 +174,8 @@ def build(config: Config, cluster: bool, yes: bool, timeout_minutes: float, push
             stage_commands.send_checked(config, checked, "forge cancel")
         wait_plan_ended(config, checked)
     if cluster and push:
-        note(f"pushing {config.branch} to {config.lan_remote} ...")
-        local_git(config, "push", config.lan_remote, config.branch)
+        note(f"pushing {config.branch} to {config.remote} ...")
+        local_git(config, "push", config.remote, config.branch)
     note(f"deploying {sha[:9]} to {', '.join(m.name for m in targets)}; slow machines take a long time ...")
     outcomes = remote.parallel_map(lambda m: deploy_one(config, m, sha, timeout_minutes * 60, not cluster), targets)
     return report(outcomes, sha)

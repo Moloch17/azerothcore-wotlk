@@ -10,7 +10,7 @@ which forgectl reads.
 
 | Name | Address | Role now | CPU | Threads | RAM | Disk free | GPU |
 |---|---|---|---|---|---|---|---|
-| dev (this machine) | 192.168.0.69 | development; holds the `lan` git repo; **the cluster HOST since 2026-10-10** (owner: the biggest card, 20 GB; the fastest machine) | Ryzen 9 9950X3D | 32 | 30 GB | 1.3 TB | gfx1100 (two device lines in docker-compose.override.yml) |
+| dev (this machine) | 192.168.0.69 | development; **the cluster HOST since 2026-10-10** (owner: the biggest card, 20 GB; the fastest machine) | Ryzen 9 9950X3D | 32 | 30 GB | 1.3 TB | gfx1100 (two device lines in docker-compose.override.yml) |
 | sarah | 192.168.0.68 | worker (the host until 2026-10-10) | Ryzen 9 7900X | 24 | 30 GB | 221 GB | to confirm |
 | spencer | 192.168.0.66 | worker | i7-6700K | 8 | 15 GB | 228 GB | to confirm |
 | thomas | 192.168.0.67 | worker | Ryzen 7 3800X | 16 | 31 GB | 948 GB | about 8 GB |
@@ -31,24 +31,24 @@ which forgectl reads.
 
 ## Where the code comes from
 
-Machines pull from the bare repo on the dev machine, **not** from GitHub:
+Machines pull from GitHub (since 2026-10-18; the bare repo on the dev machine is retired, since no large file goes
+through git any more -- the project builds them at runtime):
 
-- remote `lan` is `moloch@192.168.0.69:git/animus-forge.git`;
-- push the work there (`git push lan forge`) and to `origin` (GitHub);
+- every checkout's `origin` is `https://github.com/Moloch17/azerothcore-wotlk.git` (the dev machine's pushes over SSH);
+- push the work there (`git push origin <branch>`); `forgectl build --cluster` does it for the cluster branch;
 - tags that matter: `curriculum-v1` (the first curriculum, before it was archived) and `pre-cleanup-2026-10-07`.
 
 ## Deploying a new build to the cluster
 
 ```
 forgectl stage cancel                 stop the plan first: a build restarts every worldserver
-forgectl build --cluster              push forge to lan, cluster-pull on every machine, wait for each "ready"
+forgectl build --cluster              push the branch to GitHub, cluster-pull on every machine, wait for each "ready"
 forgectl conf-sync --check            the AnimusForge.Curriculum.* keys must match the host's (drop --check to fix them)
 forgectl cluster                      one revision everywhere, every worldserver up, no refused workers
 forgectl stage resume <stage>
 ```
 
-Merge into `forge` and `git push origin forge` yourself; `forgectl build --cluster` pushes to `lan` (the bare repo on
-the dev machine the workers pull from). **The cluster fingerprint** must match: the host refuses a worker whose source
+`forgectl build --cluster` pushes the cluster branch to `origin` (GitHub), which every worker pulls from. **The cluster fingerprint** must match: the host refuses a worker whose source
 hash, protocol version or curriculum settings differ (`Cluster: refused the worker at ...`, which
 `forgectl cluster` shows). The curriculum settings are the `AnimusForge.Curriculum.*` keys in
 `mod_animus_forge.conf`, identical on every machine (239 of them on 2026-10-07).
@@ -89,8 +89,8 @@ beginning. Sarah then runs as a worker with the usual 64 envs.
 
 The by-hand versions, for when forgectl cannot be used.
 
-**Deploy.** Merge into `forge`, then `git push lan forge` and `git push origin forge`. On each machine:
-`cd ~/animus-forge && apps/forge/tools/cluster-pull.sh`. It pulls, touches `env/dist/.forge-build` and recreates the
+**Deploy.** `git push origin <branch>`. On each machine:
+`cd ~/animus-forge && apps/forge/tools/cluster-pull.sh`. It pulls from GitHub, touches `env/dist/.forge-build` and recreates the
 worldserver container, which builds from source with `-march=native`. The slowest machines take the longest; the log
 line `AzerothCore rev. <sha> ... ready` (`docker logs ac-animus-forge-worldserver`) means the build is done. Copy the
 host's `AnimusForge.Curriculum.*` keys to each worker's `mod_animus_forge.conf` (keep a `.bak-<date>` copy), then

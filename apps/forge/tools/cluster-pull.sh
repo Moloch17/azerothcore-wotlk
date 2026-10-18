@@ -1,36 +1,28 @@
 #!/usr/bin/env bash
 #
-# Bring a cluster machine up to date with the dev machine, over SSH: the code (this repository, the branch this checkout
-# is on: forge, or forge-dev while the cluster runs the dev branch), then rebuild and restart the worldserver.
+# Bring a cluster machine up to date: the code (this repository, the branch this checkout is on: forge, or forge-dev
+# while the cluster runs the dev branch) from its origin, GitHub, then rebuild and restart the worldserver.
 #
-#   apps/forge/tools/cluster-pull.sh [user@host]     default: the host the code was cloned from
+#   apps/forge/tools/cluster-pull.sh [remote]     default: origin (https://github.com/Moloch17/azerothcore-wotlk.git)
 #
 # First time on a new machine:
-#   git clone -b forge moloch@192.168.0.69:git/animus-forge.git azerothcore && cd azerothcore
+#   git clone -b forge-dev https://github.com/Moloch17/azerothcore-wotlk.git animus-forge && cd animus-forge
 #   apps/forge/tools/cluster-pull.sh
 # then copy the world data (maps, vmaps, mmaps, dbc) and import the database, set this machine's role in
 # env/dist/etc/modules/mod_animus_forge.conf (AnimusForge.Cluster.Role/Host), and start it with ./forge.sh.
 #
-# Each machine's own configs (env/dist/etc/*.conf) are not in either repository, so a pull never touches them. The
+# Each machine's own configs (env/dist/etc/*.conf) are not in the repository, so a pull never touches them. The
 # host refuses a worker whose code or curriculum settings differ from its own (the cluster
-# fingerprint): a machine left un-pulled cannot join with stale code.
+# fingerprint): a machine left un-pulled cannot join with stale code. Until 2026-10-18 the workers pulled from a bare
+# repository on the dev machine over SSH (git/animus-forge.git); no large file goes through git any more, so GitHub.
 
 set -euo pipefail
 cd "$(dirname "$0")/../../.."
 
-source="${1:-}"
-if [[ -z "$source" ]]; then
-    # user@host of the clone's origin, e.g. moloch@192.168.0.69 from moloch@192.168.0.69:git/animus-forge.git
-    source="$(git remote get-url origin | sed -n 's|^\([^:/]*@[^:]*\):.*|\1|p')"
-fi
-if [[ -z "$source" ]]; then
-    echo "Which machine? apps/forge/tools/cluster-pull.sh user@host" >&2
-    exit 1
-fi
-
+source="${1:-origin}"
 branch="$(git rev-parse --abbrev-ref HEAD)"
-echo "Code: pulling $branch from $source..."
-git pull --ff-only "$source:git/animus-forge.git" "$branch"
+echo "Code: pulling $branch from $source ($(git remote get-url "$source" 2>/dev/null || echo "$source"))..."
+git pull --ff-only "$source" "$branch"
 
 echo "Rebuilding and restarting the worldserver..."
 mkdir -p env/dist
