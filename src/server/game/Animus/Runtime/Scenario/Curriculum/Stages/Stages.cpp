@@ -913,8 +913,8 @@ namespace
         // RungBins0-3) -- uniformly in an evaluation, weighted toward the bins whose training trips fail in training
         // (PointNav.BinWeighting); 30 % of training episodes replay a failure (where a seat was pinned, fell, drowned
         // or timed out, with that goal: PointNav.ReplayShare). The trip's clock is its route's (PointNav.TimeFactor: 3 x
-        // the best route at run speed + 15 s, 30 s at least, the arena's EpisodeSeconds x 3 at most; the seconds named
-        // below are each arena's EpisodeSeconds). The seat spawns at the start cell facing a random way; the goal
+        // the best route at run speed + 15 s, the arena's EpisodeSeconds at least, 3 x them at most; the seconds
+        // named below are each arena's EpisodeSeconds). The seat spawns at the start cell facing a random way; the goal
         // is a point, no object. Arrive (Outcome) once, stopped within PointNav.ArriveYards of it on its own floor.
         // Costs: the step cost, Stuck and Wall at their fixed price, FallHurt per share of health a fall took, Death,
         // Drowned, Lost per second further from the goal by route than the start was by PointNav.LostYards, Revisit

@@ -515,9 +515,10 @@ bool Animus::Curriculum::PointNavEncounter::Build(Env& env, Map* map, uint8 /*le
     }
 
     // The trip's clock (PointNav.TimeFactor): TimeFactor x the best route at run speed + TimeSlackSeconds, at least
-    // TimeMinSeconds, at most the arena's EpisodeSeconds x TimeCap (StageScenario sizes the spec's longest episode by
-    // that cap); the arena's own length when off. The episode ends on it (EnvPool), the timeout is judged on it
-    // (Reward) and the critic's episode-time column reads it (STATE_EPISODE_TIME).
+    // TimeMinSeconds and the arena's own EpisodeSeconds (so no trip has less time than the fixed clock gave it, and
+    // arrived_base_limit compares exactly), at most the arena's EpisodeSeconds x TimeCap (StageScenario sizes the
+    // spec's longest episode by that cap); the arena's own length when off. The episode ends on it (EnvPool), the
+    // timeout is judged on it (Reward) and the critic's episode-time column reads it (STATE_EPISODE_TIME).
     {
         CurriculumTuning::PointNavTuning const& tuning = _scenario.Tuning().PointNav;
         uint32 const arenaMs = _scenario.ArenaEpisodeMs(env);
@@ -527,7 +528,7 @@ bool Animus::Curriculum::PointNavEncounter::Build(Env& env, Map* map, uint8 /*le
             float const capSeconds = float(arenaMs) / 1000.0f * std::max(1.0f, tuning.TimeCap);
             float const bestSeconds = nav.CStart / RUN_YARDS_PER_SECOND;
             float const seconds = std::clamp(tuning.TimeFactor * bestSeconds + tuning.TimeSlackSeconds,
-                std::min(std::max(0.0f, tuning.TimeMinSeconds), capSeconds), capSeconds);
+                std::min(std::max(tuning.TimeMinSeconds, float(arenaMs) / 1000.0f), capSeconds), capSeconds);
             env.EpisodeLengthMs = std::max<uint32>(1000, uint32(seconds * 1000.0f));
         }
     }

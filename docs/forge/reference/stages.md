@@ -638,9 +638,9 @@ its cell pointer; what the policy acts on is its own prediction, never the bake 
   whose `C` and `C / straight` fall in the bins; training weights the bins toward those whose trips fail
   (`PointNav.BinWeighting`, 2026-10-18). `PointNav.ReplayShare` (30%; 20% before 2026-10-18) of training episodes
   replay a failure. Evaluations draw seeded pairs uniformly, no replay. Each trip's clock is its route's
-  (`PointNav.TimeFactor`: 3 x the best route at 7 yd/s + 15 s, 30 s at least, the arena's seconds x 3 at most): the
-  seconds each nav stage names are its arenas' `EpisodeSeconds`, the cap's base. nav1_sight's `SharedMemoryShare` is
-  0.75 (0.5 before 2026-10-18), as nav2-nav6.
+  (`PointNav.TimeFactor`: 3 x the best route at 7 yd/s + 15 s, the arena's seconds at least, 3 x them at most): the
+  seconds each nav stage names are its arenas' `EpisodeSeconds`, the floor and the cap's base. nav1_sight's
+  `SharedMemoryShare` is 0.75 (0.5 before 2026-10-18), as nav2-nav6.
 * **The sim pays** (all Outcome/Cost, no Shaping): Arrive 3.0 once (stopped within 1 yd, 2D, on the floor); StepCost
   0.002 per decision; Stuck and Wall 0.02/s (Seek's); FallHurt 2.0 x the share of max health a fall took; Death 3.0;
   Drowned 3.0; Lost 0.02/s while `C(body) > C(start) + 40`; Revisit 0.002/s on ground stood on before (nav4 on);

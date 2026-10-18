@@ -513,8 +513,9 @@ namespace Animus::Curriculum
             float Turning = 0.01f;
             uint32 FailurePool = 512;
             /// **The trip's clock** (2026-10-18; PointNavEncounter::Build): a drawn trip lasts TimeFactor x the best
-            /// route at run speed (CStart / 7 yd/s) + TimeSlackSeconds, at least TimeMinSeconds and at most the
-            /// arena's EpisodeSeconds x TimeCap, in training and evaluation alike; TimeFactor 0 keeps the arena's
+            /// route at run speed (CStart / 7 yd/s) + TimeSlackSeconds, at least TimeMinSeconds and the arena's own
+            /// EpisodeSeconds (no trip has less time than the fixed clock gave it) and at most the arena's
+            /// EpisodeSeconds x TimeCap, in training and evaluation alike; TimeFactor 0 keeps the arena's
             /// EpisodeSeconds for every trip (as before). At 130M, nav1_sight's failed trips had walked 245 yd in its
             /// fixed 60 s and still stood 103 yd off: a 144-yd route had 3x its best time, a 30-yd one 14x. nav6's
             /// labels-only arenas keep the party follow's clock.

@@ -1102,10 +1102,12 @@ TravelTo about it but, `ObjectivePlaceKnown` being false without a compass, neve
 ### The trip's clock (2026-10-18; `Build`)
 
 A drawn trip's episode length (`env.EpisodeLengthMs`) is `PointNav.TimeFactor` (3) x the best route at run speed
-(`C(start)` / 7 yd/s, the `time_ratio` optimum) + `TimeSlackSeconds` (15), clamped to [`TimeMinSeconds` (30), the
-arena's `EpisodeSeconds` x `TimeCap` (3)], in training and evaluation alike (a replayed failure's from its own start);
+(`C(start)` / 7 yd/s, the `time_ratio` optimum) + `TimeSlackSeconds` (15), clamped to [the larger of
+`TimeMinSeconds` (30) and the arena's own `EpisodeSeconds`, the arena's `EpisodeSeconds` x `TimeCap` (3)] -- no trip
+has less time than the fixed clock gave it, so the change only lengthens long trips (nav1: routes past 105 yd; nav2
+and nav3: past 245 / 315 yd) -- in training and evaluation alike (a replayed failure's from its own start);
 `TimeFactor` 0 keeps the arena's `EpisodeSeconds` (`StageScenario::ArenaEpisodeMs`) for every trip. The arena's
-`EpisodeSeconds` is therefore the cap's base (nav1 60 -> at most 180 s), and `StageScenario` raises the spec's
+`EpisodeSeconds` is therefore the floor and the cap's base (nav1 60 to 180 s), and `StageScenario` raises the spec's
 `LongestEpisodeSeconds` to it so the learner's evaluation window and the eval video's frame bound fit. Everything
 that reads the length reads the trip's: the episode's end (`EnvPool`), `timed_out` (`Reward`), the critic's
 `STATE_EPISODE_TIME`. The policy's own `EpisodeTime` is elapsed over a fixed scale and never read the length.

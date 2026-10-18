@@ -6624,7 +6624,8 @@ AnimusForge.Curriculum.PointNav.FailurePool = 512
 #    AnimusForge.Curriculum.PointNav.TimeMinSeconds
 #    AnimusForge.Curriculum.PointNav.TimeCap
 #        Description: The trip's clock: TimeFactor x the best route at run speed (its yards / 7) + TimeSlackSeconds,
-#                     at least TimeMinSeconds, at most the arena's episode seconds x TimeCap, in training and in
+#                     at least TimeMinSeconds and the arena's episode seconds (no trip gets less than the fixed
+#                     clock gave it), at most the arena's episode seconds x TimeCap, in training and in
 #                     evaluation (the time_limit_seconds column). TimeFactor 0 gives every trip the arena's episode
 #                     seconds. nav6's labels-only arenas keep the party follow's clock.
 #        Default:     3.0, 15.0, 30.0, 3.0
