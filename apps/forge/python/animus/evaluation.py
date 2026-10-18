@@ -263,6 +263,19 @@ class EvalResult:
                 rows = values == index
                 if rows.any():
                     result["categories"][f"{column}={label}"] = means(rows)
+        # The trips with the map's shared memory and those started blank (the sim's shared_memory column, 1 = adopted),
+        # as summary fields of their own for the status headline: a released bot always has the memory, so the
+        # memory-on numbers are the ones that ship. Readings only; nothing judges them.
+        memory = self.column(SHARED_MEMORY_COLUMN)
+        if memory is not None:
+            for label, rows in (("on", memory >= 0.5), ("off", memory < 0.5)):
+                if not rows.any():
+                    continue
+                split = means(rows)
+                result[f"episodes_memory_{label}"] = split["episodes"]
+                for metric in MEMORY_SPLIT_METRICS:
+                    if metric in split:
+                        result[f"{metric}_memory_{label}"] = split[metric]
         levels = self.column("level")
         if levels is not None:
             for low, high in LEVEL_BANDS:
@@ -511,6 +524,8 @@ SHARED_MEMORY_ARM = "no_shared_memory"
 #: The sim's episode column that says whether the episode started from the map's shared memory (0/1; a stage with a
 #: SharedMemoryShare writes it): the arm above reads it to tell whether the sim honoured the flag.
 SHARED_MEMORY_COLUMN = "shared_memory"
+#: The summary's memory-on / memory-off pair (<metric>_memory_on, <metric>_memory_off): these columns, where present.
+MEMORY_SPLIT_METRICS = ("arrived", "spl", "arrived_base_limit", "time_ratio", "timed_out")
 #: What an ablation arm reports and shows in forge status (<column>_<arm>).
 ABLATION_COLUMNS = ("arrived", "arrived_no_compass", "arrived_with_compass", "objective_visible")
 #: Bit 5 of the class byte (byte 3) of every pixel: the objective flag (Vision EncodePixel, cpp-vision.md).

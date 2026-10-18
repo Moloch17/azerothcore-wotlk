@@ -107,11 +107,16 @@ encounter names an objective (`SeatView::HasObjective`, not withheld -- the sim'
 bot's: since revision 7 the nav stages carry no compass and no observation of the straight line to it), the map block
 plans the route to it on the map itself -- `PlanOnMap`: a 96 x 96 window of 1-yd cells, axis-aligned and centred on
 the body (`MentalMap::Window`, the fine crop's extent), each cell priced by `CodeOf` for the feet (`PLAN_COSTS` unknown
-1.5, floor and door 1, wall 100, hazard 5; a floor or door whose layer nearest the feet is more than `PLAN_HEIGHT_BAND`
+`PLAN_UNKNOWN` 2 -- 1.5 before 2026-10-18 --, floor and door 1, wall 100, hazard 5; a floor or door whose layer nearest the feet is more than `PLAN_HEIGHT_BAND`
 3 yd off them priced as unknown), then shaped into **the body's configuration space** (`ConfigurationSpace`): a
 non-wall cell whose two opposite neighbours are walls -- N and S, E and W, or both cells of either diagonal pair -- is a
 wall (a 1-yd gap is narrower than the body; judged on the walls as read, so a 2-yd passage stays open), and a passable
-cell 8-adjacent to a wall (after the closing; the window's edge is no wall) is priced at least `PLAN_INFLATED` 3, so a
+cell 8-adjacent to a wall (after the closing; the window's edge is no wall) is priced at least `PLAN_INFLATED` 1.3, and
+one of those with a wall within two cells on both sides of an axis or a diagonal (a 2-yd passage) `PLAN_PINCHED` 1.6
+(3 and 3 before 2026-10-18: at 3 against unknown 1.5 every remembered corridor cost twice the unseen ground beside it,
+and the plan took the straight line through the unknown -- 87 % of the failed trips' 10-yd points landed on true
+walls; now floor 1 <= inflated 1.3 <= pinched 1.6 < unknown 2, a `static_assert`, the constants in `MapPlanner.h` for
+the global planner to share), so a
 route runs down the middle of a corridor and a 2- or 3-yd passage is dear but routable (a hazard keeps its 5). The
 coarse plan is not shaped: its cells are 8 yd (a cell between two wall cells is a corridor), and in a dungeon nearly
 every coarse cell touches a wall cell, so inflation would triple the plane. Then an 8-neighbour min-plus (a step's
@@ -142,6 +147,29 @@ reset by a new least, running while the cost is unreachable; not advanced on a d
 own map throughout: non-privileged. The plan's value at the body and at the crop before's pose are carried on
 `CropPose::Route*` to the nav labels' `[2]` / `[3]` (cpp-encounters.md). The manifest says `route_points_yards [5, 10,
 20, 30]`, `route_fine_reach_yards 30`, `route_coarse_reach_yards 16`, `route_dist_yards 300`, `route_stall_seconds 30`.
+**The route kept** (`Vision::KeepRoute`, 2026-10-18; `PointNav.RouteKeep` 1, `RouteKeepShare` 0.1, `RouteKeepYards`
+5, set once by the scenario through `MapBlock::ConfigureRoute`, recorded in the manifest as `route_keep*`): the fine
+walk a decision followed is carried on `CropPose::Kept` (world 1-yd cells, the start and up to 30 steps) and followed
+again the next decision: joined from the body's start cell at its furthest-along cell within `PLAN_KEEP_OFF` 2 cells
+(two off only past an open middle cell), trimmed behind the join, priced on the current plan (each step's yards x the
+mean of its cells' factors, the Dijkstra's rule, plus the current value at its end, which `PlanOnMap` settles as a
+`near` point) and extended downhill on the current plan to 30 steps. The new plan's own walk (`FineWalk`) replaces it
+when its value at the start undercuts the kept cost by more than 10 % of it and 5 yd both, when a kept cell is now
+blocked, outside the window or its end unreached, or when the body is off it. The eight fine scalars (`route_p5_sin`
+.. `route_fine_valid`, `WalkRoute`) come from the walk followed and `route_dist` is its cost while kept (the plan's
+value at the body otherwise); `route_stall`, the coarse waypoint and the labels' `[2]` / `[3]` (`PlanValueAt`) are the
+plan's as before. `CropPose::RouteSwitches` counts the decisions whose followed walk was replaced by one leaving it (a
+cell of the new walk, as far as the old reaches, more than 2 cells from every cell of the old; a body that left the
+walk is not counted): PointNav's `route_switches` column. `RouteKeep` 0 is the old behaviour (`FineRoute` is
+`WalkRoute(FineWalk)`, byte-identical on tmp/mapfix/check). Harness (tmp/keep/keep.cpp, 2026-10-18): a body dithering
+0.6-1.2 yd on the line of symmetry before a 7-yd pillar flips the walk's side 9-11 times in 40 decisions without it, 1
+with it (0 switches); a wall dropped across the kept door switches at once (1 switch, either setting); a kept walk
+followed on an unchanged map prices within 1-2 % of the plan's value. Cost: no measurable change (330-370 us a
+decision with the goal ahead, 820-930 us 150 yd behind, old and new alike; the kept end settles before the body).
+An L-shaped known corridor whose inner wall is unseen (tmp/keep/corridor.cpp): 6 cells of the walk cut through the
+unknown corner at the old costs, 1 at the new; a seen 2-yd L corridor read 231 yd (old) and 123 yd (new) for an 80-yd
+route.
+
 Cost on a synthetic room map (tmp/mapfix/check, 2026-10-17): 350-360 us a plan with the goal ahead (325-355 before the
 configuration space), 790 us with it 150 yd behind (820 before; most of the window settles before the body), 50-60 us
 with no coarse crop (30-40 before); the block's `map` cost row includes it. Planned once a decision a seat.

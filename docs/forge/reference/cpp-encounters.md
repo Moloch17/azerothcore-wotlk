@@ -1080,10 +1080,15 @@ reachable from the seed cell (the map entrance or the box centre).
 
 ### The draw (`BeforeLevel` / `Build`)
 
-Per episode a detour bin and a length bin uniform over the rung's open bins (`PointNav.DetourBins`, `LengthBins`;
-`RungBins<rung>` = "detourMaxBin,lengthMaxBin"); the goal first, one Dijkstra, then the start uniform among the cells
+Per episode a detour bin and a length bin among the rung's open bins (`PointNav.DetourBins`, `LengthBins`;
+`RungBins<rung>` = "detourMaxBin,lengthMaxBin"): uniform in an evaluation or a seeded trip (the same two draws of the
+episode's generator as before 2026-10-18), and in training -- `PointNav.BinWeighting` 1, the default since 2026-10-18
+-- one draw of the joint (detour, length) bin weighted (1 - the bin's recent arrival rate) + `BinFloor` (0.1)
+(`DrawBin`): the rate an exponential average, 1 / `BinWindow` (200) a trip, over the arena's training trips of that bin
+that arrived or timed out (`NoteBinOutcome`; replayed failures are not counted; a bin no trip has ended in reads 0, the
+heaviest), kept per arena index under the pool's lock, never saved. The goal first, one Dijkstra, then the start uniform among the cells
 whose `C` is in the length bin and whose `C / straight` (3D) is in the detour bin; no fit: redraw the goal up to four
-times, then the nearest fit. `PointNav.ReplayShare` (20) percent of training episodes start at a point of the arena's
+times, then the nearest fit. `PointNav.ReplayShare` (30 since 2026-10-18; 20 before) percent of training episodes start at a point of the arena's
 failure pool (a ring of `FailurePool` 512: pinned >= `PinSeconds`, fell for damage, drowned, timed out; position and
 goal) with the same goal; evaluations draw seeded pairs by `EpisodeSeed`, no replay. `SightOnly` arenas (nav1) draw
 starts in line of sight of the goal; `BedShare` (30) percent of nav5's draws put the goal on a water cell's bed. The
@@ -1094,6 +1099,21 @@ plans the route to it on the seat's own map and hands the policy the route's poi
 seventeen route scalars; cpp-blocks.md "map", cpp-vision-memory.md "The route on the map"). The goal block offers
 TravelTo about it but, `ObjectivePlaceKnown` being false without a compass, never calls it reached.
 
+### The trip's clock (2026-10-18; `Build`)
+
+A drawn trip's episode length (`env.EpisodeLengthMs`) is `PointNav.TimeFactor` (3) x the best route at run speed
+(`C(start)` / 7 yd/s, the `time_ratio` optimum) + `TimeSlackSeconds` (15), clamped to [`TimeMinSeconds` (30), the
+arena's `EpisodeSeconds` x `TimeCap` (3)], in training and evaluation alike (a replayed failure's from its own start);
+`TimeFactor` 0 keeps the arena's `EpisodeSeconds` (`StageScenario::ArenaEpisodeMs`) for every trip. The arena's
+`EpisodeSeconds` is therefore the cap's base (nav1 60 -> at most 180 s), and `StageScenario` raises the spec's
+`LongestEpisodeSeconds` to it so the learner's evaluation window and the eval video's frame bound fit. Everything
+that reads the length reads the trip's: the episode's end (`EnvPool`), `timed_out` (`Reward`), the critic's
+`STATE_EPISODE_TIME`. The policy's own `EpisodeTime` is elapsed over a fixed scale and never read the length.
+Arrive x `ArriveWeight` 2 (route at run speed over the seconds taken) and `time_ratio` do not involve the limit.
+Labels-only arenas (nav6) keep the party follow's clock. Columns `time_limit_seconds` and `arrived_base_limit`
+(arrived within the arena's own `EpisodeSeconds`: the reading comparable with runs on the fixed clock). At 130M,
+nav1_sight's failed trips had walked 245 yd in the fixed 60 s and still stood 103 yd off the goal.
+
 ### Labels in STEP (protocol 33; `SpecMsg::LabelBytes` 13848)
 
 For the observation rows only, after the map section: fine costmap classes (48x48 u8 in the fine crop's frame),
@@ -1102,7 +1122,7 @@ six f32 at byte 13824 (`TravBake.h` `TRAV_LABEL_*`): `[0] C_body`, `[1] C_start`
 and `[3] C_map_last` (protocol 33, 2026-10-17: the route cost-to-go on the seat's OWN map at the body and at the
 previous decision's body position, both on the map as it is now -- since map block revision 6 the plan the map block
 made this observation on the map's own 1-yd cells, `Vision::PlanOnMap` (cpp-vision-memory.md: unknown 1.5 / floor and
-door 1 / wall 100 / hazard 5, a floor more than 3 yd off the feet priced as unknown, the coarse crop's value as the
+door 1 / wall 100 / hazard 5 -- unknown 2 since 2026-10-18 --, a floor more than 3 yd off the feet priced as unknown, the coarse crop's value as the
 window's ring, settled exactly by Dijkstra), read off `SeatState::Crop` (`CropPose::RouteBody`, `RouteLast` at
 `LastX/Y`, the pose of the crop before), so the policy's route scalars and the labels come from one plan; before
 revision 6 WriteLabels planned over the two crops' bytes itself. The first decision's `[3]` is `[2]`; a last position
@@ -1130,7 +1150,8 @@ and nothing is paid: `PartyFollowEncounter` pays.
 arrived, spl, time_ratio, optimal_yards, straight_yards, detour_factor, travelled_yards, stop_error_yards, falls,
 fall_damage_share, drowned, died, timed_out, stuck_seconds, wall_seconds, lost_seconds, revisit_seconds, jumps,
 swim_seconds, nav_rung, detour_bin, length_bin, replayed, map, start_x/y/z, goal_x/y/z, waypoint_regret_yards,
-waypoints_chosen, map_route_start_yards, map_route_end_yards (meanings in [metrics.md](metrics.md), N1-N6).
+waypoints_chosen, map_route_start_yards, map_route_end_yards, time_limit_seconds, arrived_base_limit, route_switches
+(`CropPose::RouteSwitches`, the map block's; meanings in [metrics.md](metrics.md), N1-N6).
 
 ### Stage definition it runs under
 

@@ -533,7 +533,7 @@ revision 3 ones. **Revision 7** (2026-10-17): those eight are seventeen, appende
 route_p10_sin, route_p10_cos, route_p20_sin, route_p20_cos, route_p30_sin, route_p30_cos, route_fine_reach, route_fine_valid,
 route_coarse_sin, route_coarse_cos, route_coarse_dist, route_coarse_valid, route_dist, route_dist_valid, route_stall` -- the sim's
 route on the bot's own map, planned at 1 yd every decision in the body's configuration space (cpp-vision-memory.md "The route on the
-map": holes closed, walls inflated to 3): the fine walk (`Vision::FineRoute`, the learner's `descend`, up to 30 steps of a cell) read
+map": holes closed, wall-adjacent floor 1.3, a 2-yd passage 1.6, unknown 2; the walk kept across decisions, `Vision::KeepRoute`): the fine walk (`Vision::FineRoute`, the learner's `descend`, up to 30 steps of a cell) read
 after 5, 10, 20 and 30 steps as sin = -right / d, cos = forward / d (the compass's convention; a walk that ends early repeats its end
 cell), its steps / 30 and valid (the walk moved and an objective is named; every fine value 0 otherwise); the coarse waypoint as before
 (2 steps of 8 yd from cell (23, 23): sin, cos, d / 16, valid); the own-map route distance at the body min(C, 300) / 300 with its valid

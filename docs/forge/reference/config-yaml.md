@@ -230,13 +230,20 @@ A name with a colon must end in `best` or `latest` (`config.py:426-431`).
 `headline` (), `targets` {} (each key must be in `headline`; value `">= x"` or `"<= x"`), `excluded` {} (name to reason;
 a
 reason is non-empty plain text without `;` or `=`). Carried to the sim flat through `progress.json`
-(`target_text`, `excluded_text`). Targets are a readout, never a gate.
+(`target_text`, `excluded_text`). Targets are a readout, never a gate. A headline name is a summary field: an
+episode column's mean, or a derived field such as `arrived_memory_on` / `spl_memory_off` (the evaluation's
+`shared_memory` split, `evaluation.MEMORY_SPLIT_METRICS`; nav1_sight's headline and so nav2-nav5's since 2026-10-18,
+with `arrived_base_limit` and `route_switches`).
+
 
 ### `layout_sampling:` (`LayoutSamplingConfig`, `config.py:536`), read by `evaluation.py:371-410` and
 `train.py:1495-1520`
 
 `enabled` false; `strength` 1.0; `max_ratio` 3.0; `metric` `""`; `replay_fraction` 0.0; `role_metrics` {}. No
-validation.
+validation. The nav stages leave `replay_fraction` 0: an evaluation seed replayed in training does not reproduce a
+PointNav trip (its pair is drawn from the episode seed only in an evaluation) and would train on the gate's own seeds;
+their failure replay is the sim's (`PointNav.ReplayShare`, 30 since 2026-10-18) and their failure weighting the sim's
+bin draw (`PointNav.BinWeighting`).
 
 ### `mappo:` (`MappoConfig`, `mappo/trainer.py:42`); no validation beyond types; read by `mappo/trainer.py` and
 `mappo/networks.py` ([py-mappo.md](py-mappo.md))

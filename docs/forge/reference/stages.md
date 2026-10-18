@@ -635,8 +635,12 @@ its cell pointer; what the policy acts on is its own prediction, never the bake 
   camera's scenes.
 * **The draw** (`PointNavEncounter`, contract sec 2): a detour bin and a length bin uniform over the bins the rung
   opens (`PointNav.DetourBins`, `LengthBins`, `RungBins0-3`); the goal first, one Dijkstra, the start among the cells
-  whose `C` and `C / straight` fall in the bins. `PointNav.ReplayShare` (20%) of training episodes replay a failure.
-  Evaluations draw seeded pairs, no replay.
+  whose `C` and `C / straight` fall in the bins; training weights the bins toward those whose trips fail
+  (`PointNav.BinWeighting`, 2026-10-18). `PointNav.ReplayShare` (30%; 20% before 2026-10-18) of training episodes
+  replay a failure. Evaluations draw seeded pairs uniformly, no replay. Each trip's clock is its route's
+  (`PointNav.TimeFactor`: 3 x the best route at 7 yd/s + 15 s, 30 s at least, the arena's seconds x 3 at most): the
+  seconds each nav stage names are its arenas' `EpisodeSeconds`, the cap's base. nav1_sight's `SharedMemoryShare` is
+  0.75 (0.5 before 2026-10-18), as nav2-nav6.
 * **The sim pays** (all Outcome/Cost, no Shaping): Arrive 3.0 once (stopped within 1 yd, 2D, on the floor); StepCost
   0.002 per decision; Stuck and Wall 0.02/s (Seek's); FallHurt 2.0 x the share of max health a fall took; Death 3.0;
   Drowned 3.0; Lost 0.02/s while `C(body) > C(start) + 40`; Revisit 0.002/s on ground stood on before (nav4 on);
@@ -693,7 +697,9 @@ ranges below are intent until a per-stage key or a stage-scaled reader exists (h
 **Evaluation.** 256 seeded pairs every 10M; `wailing` every evaluation; the four arms.
 
 **Status.** Headline: arrived, spl, time_ratio, stop_error_yards, wall_seconds, stuck_seconds, timed_out, died,
-costmap_iou, planner_mae_known. Never trained.
+costmap_iou, planner_mae_known; since 2026-10-18 also arrived_memory_on / spl_memory_on and arrived_memory_off /
+spl_memory_off (the evaluation's trips with and without the map's shared memory), arrived_base_limit and
+route_switches (nav2-nav5 inherit it). Never trained.
 
 ## 12. `nav2_detour`
 

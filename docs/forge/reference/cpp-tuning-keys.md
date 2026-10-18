@@ -620,7 +620,7 @@ through to `StandIn.Share`, so its default 0 is never consulted today (the "defe
 | PointNav | `PointNav.Lost` | 0.02f | float | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (Cost per second while C(body) > C(start) + LostYards) |
 | PointNav | `PointNav.LostYards` | 40.0f | float | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (the Lost threshold, yards of route) |
 | PointNav | `PointNav.Revisit` | 0.002f | float | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (Cost per second on ground stood on before (arenas flagged Revisit)) |
-| PointNav | `PointNav.ReplayShare` | 20 | int32 | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (percent of training episodes started from the failure pool) |
+| PointNav | `PointNav.ReplayShare` | 30 (20 before 2026-10-18) | int32 | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (percent of training episodes started from the failure pool) |
 | PointNav | `PointNav.BedShare` | 30 | int32 | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (percent of nav5's draws with the goal on a water cell's bed) |
 | PointNav | `PointNav.DropHurtYards` | 100.0f | float | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (the bake's price of a damaging drop: yards per share of health) |
 | PointNav | `PointNav.DetourBins` | "1.0,1.2,1.6,2.5,4.0" | std::string | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (detour bin edges (route / straight), comma list) |
@@ -631,6 +631,16 @@ through to `StandIn.Share`, so its default 0 is never consulted today (the "defe
 | PointNav | `PointNav.RungBins3` | "4,5" | std::string | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (rung 3) |
 | PointNav | `PointNav.PinSeconds` | 4 | uint32 | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (a controller pin this long is a failure (the pool)) |
 | PointNav | `PointNav.FailurePool` | 512 | uint32 | - | `Encounters/PointNavEncounter.cpp` (in flight, `UNVERIFIED`), `Vision/TravBake.cpp` for DropHurtYards | nav1-nav6 (the failure ring's size per arena) |
+| PointNav | `PointNav.TimeFactor` | 3.0f | float | the trip's clock: x the best route at 7 yd/s; 0 = the arena's EpisodeSeconds for every trip | `Encounters/PointNavEncounter.cpp` (`Build`), `StageScenario.cpp` (longest episode) | nav1-nav6 (2026-10-18) |
+| PointNav | `PointNav.TimeSlackSeconds` | 15.0f | float | seconds added to it | `Encounters/PointNavEncounter.cpp` (`Build`) | nav1-nav6 (2026-10-18) |
+| PointNav | `PointNav.TimeMinSeconds` | 30.0f | float | the clock's least | `Encounters/PointNavEncounter.cpp` (`Build`) | nav1-nav6 (2026-10-18) |
+| PointNav | `PointNav.TimeCap` | 3.0f | float | the clock's most, x the arena's EpisodeSeconds | `Encounters/PointNavEncounter.cpp` (`Build`), `StageScenario.cpp` | nav1-nav6 (2026-10-18) |
+| PointNav | `PointNav.BinWeighting` | 1 | uint32 | training draws the (detour, length) bin by (1 - recent arrival rate) + BinFloor; 0 uniform | `Encounters/PointNavEncounter.cpp` (`DrawBin`) | nav1-nav6 (2026-10-18) |
+| PointNav | `PointNav.BinFloor` | 0.1f | float | the weight's floor | `Encounters/PointNavEncounter.cpp` (`DrawBin`) | nav1-nav6 (2026-10-18) |
+| PointNav | `PointNav.BinWindow` | 200 | uint32 | the arrival rate's exponential window, trips | `Encounters/PointNavEncounter.cpp` (`NoteBinOutcome`) | nav1-nav6 (2026-10-18) |
+| PointNav | `PointNav.RouteKeep` | 1 | uint32 | the map block's fine route follows the walk kept from the decision before (Vision::KeepRoute); 0 the new plan's every decision | `Blocks/MapBlock.cpp` (`ConfigureRoute`, `Observe`), `Vision/MapPlanner.cpp` | nav1-nav6 (2026-10-18) |
+| PointNav | `PointNav.RouteKeepShare` | 0.1f | float | a new walk replaces the kept one only when cheaper by more than this share of its cost ... | `Vision/MapPlanner.cpp` (`KeepRoute`) | nav1-nav6 (2026-10-18) |
+| PointNav | `PointNav.RouteKeepYards` | 5.0f | float | ... and by more than these yards | `Vision/MapPlanner.cpp` (`KeepRoute`) | nav1-nav6 (2026-10-18) |
 
 ## 5. Reviewer notes
 

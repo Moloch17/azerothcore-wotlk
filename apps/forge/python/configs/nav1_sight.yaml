@@ -171,8 +171,9 @@ eval:
     # evaluation's memory-on episodes against the same trips without the memory. Dropped when the sim ignores the flag.
     no_shared_memory: 64
   # The sim's episode columns (CONTRACT.md sec 3), and the learner's potential term summed over the episode.
-  report: [arrived, spl, time_ratio, optimal_yards, straight_yards, detour_factor, travelled_yards, stop_error_yards,
-           falls, fall_damage_share, drowned, died, timed_out, stuck_seconds, wall_seconds, lost_seconds,
+  report: [arrived, spl, time_ratio, arrived_base_limit, time_limit_seconds, route_switches, optimal_yards,
+           straight_yards, detour_factor, travelled_yards, stop_error_yards, falls, fall_damage_share, drowned, died,
+           timed_out, stuck_seconds, wall_seconds, lost_seconds,
            revisit_seconds, jumps, swim_seconds, nav_rung, detour_bin, length_bin, replayed, waypoint_regret_yards,
            waypoints_chosen, at_top_rung, difficulty, course_kinks, control_changes_per_minute, movement_casts,
            reward_arrive, reward_step_cost, reward_stuck, reward_wall, reward_fall_hurt, reward_death, reward_drowned,
@@ -188,7 +189,12 @@ eval:
 # potential paid; the held-out dungeon's and the arms' spl. Targets are a readout, never a gate (no pass gates:
 # convergence alone ends the stage).
 status:
-  headline: [arrived, spl, time_ratio, stop_error_yards, falls, fall_damage_share, died, drowned, timed_out,
+  # arrived_base_limit: arrived within the arena's own EpisodeSeconds (60 s here), the fixed clock every trip had
+  # before the route-scaled one (PointNav.TimeFactor) -- the reading that compares with older runs. The memory pair
+  # (evaluation.MEMORY_SPLIT_METRICS): the trips with the map's shared memory and those started blank; a released
+  # bot always has it. Readings, never gates.
+  headline: [arrived, spl, arrived_memory_on, spl_memory_on, arrived_memory_off, spl_memory_off, arrived_base_limit,
+             time_ratio, route_switches, stop_error_yards, falls, fall_damage_share, died, drowned, timed_out,
              lost_seconds, wall_seconds, stuck_seconds, waypoint_regret_yards, waypoints_chosen, nav_rung, at_top_rung,
              costmap_iou, planner_mae_yards, planner_mae_known, planner_dir_acc_fine, planner_dir_acc_coarse,
              classical_dir_acc_fine, classical_dir_acc_coarse, classical_map_dir_acc_fine, classical_map_dir_acc_coarse,
