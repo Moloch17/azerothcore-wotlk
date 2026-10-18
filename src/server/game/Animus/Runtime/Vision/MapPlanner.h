@@ -109,6 +109,19 @@ namespace Animus::Vision
         "known passable ground must stay cheaper than unknown");
     /// The cost-to-go of a cell nothing reached (the learner's CLASSICAL_SENTINEL).
     constexpr float PLAN_SENTINEL = 1e6f;
+    /// **The goal stands clear** (2026-10-18): the goal is a place a body stands, so the 1-yd cells whose centres lie
+    /// within this of it are never a wall or a closed hole to either planner (at most PLAN_INFLATED; a dearer cell,
+    /// unknown or a hazard, keeps its own) -- the four round a bake cell's centre, a body's width. A goal by a wall
+    /// sat in the wall's band of cells, and the route to it paid a wall's price the last yard (the nav map audit:
+    /// 30 of 96 blocked trips were blocked within 3 yd of the goal). A wall behind it stays.
+    constexpr float PLAN_GOAL_CLEAR = 0.75f;
+    /// Whether 1-yd cell (cx, cy)'s centre lies within PLAN_GOAL_CLEAR of (gx, gy).
+    [[nodiscard]] inline bool GoalClear(int32_t cx, int32_t cy, float gx, float gy)
+    {
+        float const dx = (float(cx) + 0.5f) * MAP_CELL - gx;
+        float const dy = (float(cy) + 0.5f) * MAP_CELL - gy;
+        return dx * dx + dy * dy <= PLAN_GOAL_CLEAR * PLAN_GOAL_CLEAR;
+    }
     /// A floor more than this far from the feet, in yards, is priced as unknown (exactly this far is in band).
     constexpr float PLAN_HEIGHT_BAND = 3.0f;
     /// The fine plan's window: PLAN_SIDE x PLAN_SIDE 1-yd cells (the fine crop's extent), the body's cell PLAN_HALF

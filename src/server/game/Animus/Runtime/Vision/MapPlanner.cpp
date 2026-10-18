@@ -298,8 +298,23 @@ void Animus::Vision::PlanOnMap(MentalMap const& map, float x, float y, float z, 
     map.Window(out.X0, out.Y0, PLAN_SIDE, window.data());
     for (uint32_t index = 0; index < PLAN_CELLS; ++index)
         factor[index] = CellFactor(window[index], z);
-    // ... shaped into the body's configuration space: the 1-yd holes closed, the cells along the walls dear.
+    // ... shaped into the body's configuration space: the 1-yd holes closed, the cells along the walls dear; the
+    // goal's own cells standing clear (PLAN_GOAL_CLEAR): no wall to the shaping, and none closed by it.
+    float const goalX = x + goalForward * forwardX + goalRight * rightX;
+    float const goalY = y + goalForward * forwardY + goalRight * rightY;
+    auto const clearGoal = [&]()
+    {
+        int32_t const gc = MapCellOf(goalX) - out.X0;
+        int32_t const gr = MapCellOf(goalY) - out.Y0;
+        for (int32_t r = gr - 1; r <= gr + 1; ++r)
+            for (int32_t c = gc - 1; c <= gc + 1; ++c)
+                if (r >= 0 && c >= 0 && r < PLAN_SIDE && c < PLAN_SIDE
+                    && GoalClear(out.X0 + c, out.Y0 + r, goalX, goalY) && factor[r * PLAN_SIDE + c] >= PLAN_BLOCKED)
+                    factor[r * PLAN_SIDE + c] = PLAN_INFLATED;
+    };
+    clearGoal();
     ConfigurationSpace(factor.data(), PLAN_SIDE);
+    clearGoal();
     for (uint32_t index = 0; index < PLAN_CELLS; ++index)
     {
         out.FineFactor[index] = factor[index];
@@ -307,10 +322,8 @@ void Animus::Vision::PlanOnMap(MentalMap const& map, float x, float y, float z, 
     }
     // The goal's own cell when it lies inside the window (goal_plane without the clamp).
     {
-        float const gx = x + goalForward * forwardX + goalRight * rightX;
-        float const gy = y + goalForward * forwardY + goalRight * rightY;
-        int32_t const col = MapCellOf(gx) - out.X0;
-        int32_t const row = MapCellOf(gy) - out.Y0;
+        int32_t const col = MapCellOf(goalX) - out.X0;
+        int32_t const row = MapCellOf(goalY) - out.Y0;
         if (row >= 0 && row < PLAN_SIDE && col >= 0 && col < PLAN_SIDE)
             out.Fine[std::size_t(row * PLAN_SIDE + col)] = 0.0f;
     }

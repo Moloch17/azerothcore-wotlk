@@ -277,6 +277,8 @@ namespace Animus::Vision
         int32_t _targetX = 0;
         int32_t _targetY = 0;
         float _floorFactor = 1.0f;
+        float _goalPointX = 0.0f;   // the goal (Begin), whose own cells stand clear (PLAN_GOAL_CLEAR)
+        float _goalPointY = 0.0f;
         // Per domain tile: its block (-1 none), and its cells as fetched this call.
         std::vector<int32_t> _blockOf;
         std::vector<MapCell const*> _tileCells;

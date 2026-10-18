@@ -98,14 +98,17 @@ namespace Animus::Vision
     /// dock) painted the floor a hazard (MentalMap::NoteHazard; a few percent of the Deadmines' hazard cells), and a
     /// wall a blank seat saw past stayed (WallClears::SeenFree); a version 4 file holds those hazards and walls, and
     /// is not read. The bytes are version 3's.
-    constexpr uint32_t MEMORY_VERSION = 5;
+    /// 6 (2026-10-18): a wall hit's cell was the one holding the hit point, the floor's side of the face about half the
+    /// time (MentalMap's WALL_PUSH), so every wall a version 5 file holds carries a yard of floor walled with it; it
+    /// is not read. The bytes are version 3's.
+    constexpr uint32_t MEMORY_VERSION = 6;
     /// When the memory's clock (seconds past its base) passes this, the base moves on to leave REBASE_KEEP seconds
     /// of history: a seat's map runs to MentalMap's 65000-second limit from wherever it was anchored.
     constexpr double REBASE_AT = 40000.0;
     constexpr double REBASE_KEEP = 20000.0;
 
 #pragma pack(push, 1)
-    /// The .amem file's header; MEMORY_VERSION 5. Little-endian, as the forge's and the realm's machines are. The
+    /// The .amem file's header; MEMORY_VERSION 6. Little-endian, as the forge's and the realm's machines are. The
     /// tiles follow it, FineTiles then FarTiles records of (int64 tile key, MAP_TILE_CELLS MapCell: int16 Floor[2],
     /// uint8 Flags, uint8 Entity, uint16 Seen).
     struct MemoryFileHeader

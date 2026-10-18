@@ -185,6 +185,8 @@ bool Animus::Vision::GlobalField::WallAt(int32_t cx, int32_t cy, float z)
 {
     if (TileIndex(cx, cy) < 0)
         return false;           // the domain's edge is no wall, as the window's is not
+    if (GoalClear(cx, cy, _goalPointX, _goalPointY))
+        return false;           // the goal's own cells stand clear (PLAN_GOAL_CLEAR)
     MapCell const& cell = CellAt(cx, cy);
     int32_t const layer = NearestLayer(cell, z);
     if (layer < 0)
@@ -202,7 +204,8 @@ void Animus::Vision::GlobalField::Touch(int32_t node, int32_t cx, int32_t cy, in
     bool const floor = HasFloor(cell) && cell.Floor[slot] != NO_FLOOR;
     uint8_t const wall = floor ? WallBit(slot) : uint8_t(MAP_WALL_LOW | MAP_WALL_HIGH);
     float factor = 0.0f;
-    if ((cell.Flags & wall) || (_blocking && _blocking->Blocked(cx, cy, z)))
+    bool const doorBlocked = _blocking && _blocking->Blocked(cx, cy, z);
+    if ((cell.Flags & wall) || doorBlocked)
         factor = _pricing.Codes[uint8_t(MapCode::Wall)];
     else if (cell.Flags & MAP_DOOR)
         factor = _pricing.Codes[uint8_t(MapCode::Door)];
@@ -241,6 +244,9 @@ void Animus::Vision::GlobalField::Touch(int32_t node, int32_t cx, int32_t cy, in
             factor = std::max(factor, pinched ? _pricing.Pinched : _pricing.Inflated);
         }
     }
+    // The goal's own cells stand clear (PLAN_GOAL_CLEAR), but a closed door is still one.
+    if (factor >= PLAN_BLOCKED && !doorBlocked && GoalClear(cx, cy, _goalPointX, _goalPointY))
+        factor = _pricing.Inflated;
     _factor[std::size_t(node)] = factor;
     _height[std::size_t(node)] = QuantiseFloor(floor ? FloorHeight(cell.Floor[slot]) : z);
     _state[std::size_t(node)] |= uint8_t(NODE_TOUCHED | (floor ? NODE_FLOOR : 0));
@@ -288,6 +294,8 @@ void Animus::Vision::GlobalField::Begin(float gx, float gy, float gz, float bx, 
     _tileCells.assign(tiles, nullptr);
     _fetched.assign(tiles, 0u);
     _active = true;
+    _goalPointX = gx;
+    _goalPointY = gy;
 
     // The goal's node: its cell's floor layer nearest its height (any distance: the goal is where it is), else the
     // floorless cell's at the goal's height.

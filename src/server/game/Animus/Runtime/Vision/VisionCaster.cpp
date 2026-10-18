@@ -65,7 +65,7 @@ namespace
 
     /// Moller-Trumbore, one-sided: where the ray crosses the triangle going down through its upper face (the face
     /// whose normal points up), or -1. A ray from under the terrain does not see its underside.
-    [[nodiscard]] float RayTriangleFromAbove(Vec3 origin, Vec3 dir, Vec3 a, Vec3 b, Vec3 c, float& normalZ)
+    [[nodiscard]] float RayTriangleFromAbove(Vec3 origin, Vec3 dir, Vec3 a, Vec3 b, Vec3 c, Vec3& unit)
     {
         Vec3 const e1 = b - a;
         Vec3 const e2 = c - a;
@@ -91,7 +91,7 @@ namespace
         if (t < 0.0f)
             return -1.0f;
         float const length = Length(normal);
-        normalZ = length > 0.0f ? normal.Z / length : 1.0f;
+        unit = length > 0.0f ? normal * (1.0f / length) : Vec3{ 0.0f, 0.0f, 1.0f };
         return t;
     }
 
@@ -286,6 +286,8 @@ namespace
             // The hit triangle's own slope: a floor reads its tilt, a wall 0, a ceiling seen from under it below 0
             // (the encoding clamps it to 0, a wall's).
             best.NormalZ = hit.NormalZ;
+            best.NormalX = hit.NormalX;
+            best.NormalY = hit.NormalY;
             best.BackFace = hit.BackFace;
         }
 
@@ -301,6 +303,7 @@ namespace
                 best.What = liquid.Deadly ? Class::Deadly : Class::Water;
                 best.Z = origin.Z + dir.Z * liquid.Distance;
                 best.NormalZ = 1.0f;
+                best.NormalX = best.NormalY = 0.0f;
                 best.BackFace = false;
             }
         }
@@ -544,13 +547,15 @@ Animus::Vision::Hit Animus::Vision::CastTerrain(Vec3 origin, Vec3 dir, float lim
             Vec3 const triangles[4][3] = { { h1, h2, h5 }, { h1, h3, h5 }, { h2, h4, h5 }, { h3, h4, h5 } };
             for (auto const& triangle : triangles)
             {
-                float normalZ = 1.0f;
-                float const t = RayTriangleFromAbove(origin, dir, triangle[0], triangle[1], triangle[2], normalZ);
+                Vec3 unit{ 0.0f, 0.0f, 1.0f };
+                float const t = RayTriangleFromAbove(origin, dir, triangle[0], triangle[1], triangle[2], unit);
                 if (t >= 0.0f && t <= limit && (nearest < 0.0f || t < nearest))
                 {
                     nearest = t;
                     best.What = Class::Terrain;
-                    best.NormalZ = normalZ;
+                    best.NormalZ = unit.Z;
+                    best.NormalX = unit.X;
+                    best.NormalY = unit.Y;
                 }
             }
         }
@@ -569,6 +574,7 @@ Animus::Vision::Hit Animus::Vision::CastTerrain(Vec3 origin, Vec3 dir, float lim
                     nearest = t;
                     best.What = cell.Deadly ? Class::Deadly : Class::Water;
                     best.NormalZ = 1.0f;
+                    best.NormalX = best.NormalY = 0.0f;
                 }
             }
         }
@@ -869,7 +875,8 @@ uint32_t Animus::Vision::Render(Settings const& settings, Rig const& rig, Pose c
             PaintHazards(hit, rig.Camera, dir, sight, breakdown);
             // The map reads what the pixel does, a hazard painted on the floor included: its class marks the area.
             if (hits)
-                hits->Rays.push_back({ dir, hit.Distance, hit.Z, hit.NormalZ, hit.What, backside });
+                hits->Rays.push_back({ dir, hit.Distance, hit.Z, hit.NormalZ, hit.What, backside, hit.NormalX,
+                    hit.NormalY });
             // From the camera to the hit, or to where the ray left the loaded grids on sky (R12).
             bool const flag = ObjectiveFlag(rig.Camera, dir, hit.Distance, objective, objectiveRadius) > 0.5f;
             EncodePixel(hit, pose.Z, flag, target + (std::size_t(row) * cast.Width + col) * BYTES_PER_PIXEL);

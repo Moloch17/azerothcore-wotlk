@@ -137,6 +137,13 @@ namespace Animus::Vision
     /// ... and crossed at least this much of the cell, horizontally (a ray clipping a corner in front of a wall's
     /// face is no look at the cell).
     constexpr float FREE_CLEAR_SPAN = 0.5f;
+    /// **A wall hit's cell is the one behind its face** (2026-10-18): the hit point lies on the surface, so the cell
+    /// holding it is the floor's side about half the time, and every wall carried a yard of floor with it -- the nav
+    /// map audit's walls on the true route were 57-61 % a real wall's face, the passage beside it sealed. The point is
+    /// moved this far into the surface (against its horizontal normal; along the ray where the world gives none, a
+    /// door) before its cell is taken, so a cell is walled when the wall holds more than half of it, for a ray's hit
+    /// and the mesh's line between two.
+    constexpr float WALL_PUSH = 0.5f;
 
     /// **The bumper** (MarkBumped, 2026-10-18): a body pinned against something the camera never wrote -- a wall
     /// missing from the map, a doodad with no floor recorded under it -- feels it, as a player does, and the map takes
@@ -260,6 +267,9 @@ namespace Animus::Vision
         float NormalZ = 0.0f;
         Class What = Class::Sky;
         bool Backside = false;
+        /// The hit's normal, horizontally, facing the camera (0, 0 where the world gives none: a door, a liquid).
+        float NormalX = 0.0f;
+        float NormalY = 0.0f;
     };
 
     /// A frame's rays (Render's `hits`): the camera they start from and one per cast pixel, row by row.

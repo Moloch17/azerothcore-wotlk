@@ -411,6 +411,8 @@ Animus::Vision::SurfaceHit Animus::Vision::BakedWorld::StaticHit(Vec3 from, Vec3
     float const along = n.N[0] * ray.D[0] + n.N[1] * ray.D[1] + n.N[2] * ray.D[2];
     result.Distance = length;
     result.NormalZ = along > 0.0f ? -n.N[2] : n.N[2];
+    result.NormalX = along > 0.0f ? -n.N[0] : n.N[0];
+    result.NormalY = along > 0.0f ? -n.N[1] : n.N[1];
     result.BackFace = along > 0.0f;
     return result;
 }

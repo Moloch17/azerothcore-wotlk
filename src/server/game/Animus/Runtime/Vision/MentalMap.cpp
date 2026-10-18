@@ -44,6 +44,26 @@ namespace
 
     constexpr uint8_t MAP_WALLS = MAP_WALL_LOW | MAP_WALL_HIGH;
 
+    /// Where a wall hit's cell is read from (WALL_PUSH): (dx, dy) to add to the hit point.
+    void WallPush(Animus::Vision::RayHit const& ray, float& dx, float& dy)
+    {
+        using namespace Animus::Vision;
+        dx = dy = 0.0f;
+        float const along = std::hypot(ray.Dir.X, ray.Dir.Y);
+        float const normal = std::hypot(ray.NormalX, ray.NormalY);
+        // Into the surface: against the normal, which faces the camera -- never back toward it.
+        if (normal > 0.2f && -(ray.NormalX * ray.Dir.X + ray.NormalY * ray.Dir.Y) >= 0.0f)
+        {
+            dx = -ray.NormalX / normal * WALL_PUSH;
+            dy = -ray.NormalY / normal * WALL_PUSH;
+        }
+        else if (along > 1e-4f)
+        {
+            dx = ray.Dir.X / along * WALL_PUSH;
+            dy = ray.Dir.Y / along * WALL_PUSH;
+        }
+    }
+
     /// The wall flag of floor layer `layer` (0 the lower).
     [[nodiscard]] uint8_t WallFlag(int32_t layer)
     {
@@ -885,14 +905,26 @@ void Animus::Vision::MentalMap::WriteFrame(FrameHits const& hits, float feetZ, f
         bool const sky = ray.What == Class::Sky;
         bool const hitWithin = !sky && ray.Distance <= WRITE_REACH;
         float const reach = std::min(ray.Distance, WRITE_REACH);
-        float const hitXf = camera.X + ray.Dir.X * ray.Distance;
-        float const hitYf = camera.Y + ray.Dir.Y * ray.Distance;
-        int32_t const hitX = CellOf(hitXf);
-        int32_t const hitY = CellOf(hitYf);
+        float hitXf = camera.X + ray.Dir.X * ray.Distance;
+        float hitYf = camera.Y + ray.Dir.Y * ray.Distance;
         // A ray ending on a floor: the band above that floor near the hit is seen free too (part C).
         // A backside (RayHit::Backside) is no floor: the band over it is not seen free, and its cell takes nothing.
         bool const floorHit = (ray.What == Class::Terrain || ray.What == Class::Model) && ray.NormalZ >= FLOOR_NORMAL
             && !ray.Backside;
+        // A wall's cell is the one behind its face (WALL_PUSH); the cells the ray crossed before it, the face's own
+        // among them, are walked as passes.
+        bool const wallHit = (ray.What == Class::Terrain || ray.What == Class::Model) && !ray.Backside
+            && ray.NormalZ < FLOOR_NORMAL && ray.NormalZ > CEILING_NORMAL;
+        if (wallHit)
+        {
+            float dx = 0.0f;
+            float dy = 0.0f;
+            WallPush(ray, dx, dy);
+            hitXf += dx;
+            hitYf += dy;
+        }
+        int32_t const hitX = CellOf(hitXf);
+        int32_t const hitY = CellOf(hitYf);
 
         // **Seen free** (amendment 2): a 2D grid step over the map's cells from the camera to the hit (or the reach),
         // each cell taking the stretch of the ray above it; free only where that stretch is in the body's band.
@@ -1056,6 +1088,8 @@ void Animus::Vision::MentalMap::Mesh(FrameHits const& hits, float feetZ, float b
         float Z = 0.0f;
         float Range = 0.0f;
         float NormalZ = 0.0f;
+        float PushX = 0.0f;     // WallPush: a wall cell is read this far into the surface
+        float PushY = 0.0f;
         uint8_t Kind = KIND_NONE;
     };
     Vec3 const camera = hits.Camera;
@@ -1068,6 +1102,7 @@ void Animus::Vision::MentalMap::Mesh(FrameHits const& hits, float feetZ, float b
         point.X = camera.X + ray.Dir.X * ray.Distance;
         point.Y = camera.Y + ray.Dir.Y * ray.Distance;
         point.Z = ray.Z;
+        WallPush(ray, point.PushX, point.PushY);
         point.Range = ray.Distance;
         point.NormalZ = ray.NormalZ;
         point.Kind = KIND_NONE;
@@ -1213,9 +1248,10 @@ void Animus::Vision::MentalMap::Mesh(FrameHits const& hits, float feetZ, float b
         for (uint32_t step = 1; step < samples; ++step)
         {
             float const t = float(step) / float(samples);
-            float const x = a.X + (b.X - a.X) * t;
-            float const y = a.Y + (b.Y - a.Y) * t;
             float const z = a.Z + (b.Z - a.Z) * t;
+            // The near cells behind the face, as a ray's hit (WALL_PUSH); a far cell is 8 yd: as cast.
+            float const x = a.X + (b.X - a.X) * t + (far ? 0.0f : a.PushX + (b.PushX - a.PushX) * t);
+            float const y = a.Y + (b.Y - a.Y) * t + (far ? 0.0f : a.PushY + (b.PushY - a.PushY) * t);
             int32_t const cx = int32_t(std::floor(x / cell));
             int32_t const cy = int32_t(std::floor(y / cell));
             if (cx == lastX && cy == lastY)

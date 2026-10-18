@@ -406,10 +406,22 @@ void Animus::Curriculum::PointNavEncounter::RunAudit(Env const& env, uint32 seat
                 z = grid.StandingZ(bake);
             groundZ[at] = z;
             raw[at] = Vi::CellFactor(window[at], z);
+            // The goal's own cells stand clear, as both planners have them (PLAN_GOAL_CLEAR).
+            if (raw[at] >= Vi::PLAN_BLOCKED && Vi::GoalClear(x0 + col, y0 + row, nav.Goal.GetPositionX(),
+                nav.Goal.GetPositionY()))
+                raw[at] = Vi::PLAN_INFLATED;
             inBand[at] = bake != Vi::TRAV_NO_CELL && band.count(bake) ? 1 : 0;
         }
     shaped = raw;
     Vi::ConfigurationSpace(shaped.data(), side);
+    for (int32 row = 0; row < side; ++row)
+        for (int32 col = 0; col < side; ++col)
+        {
+            std::size_t const at = std::size_t(row) * std::size_t(side) + std::size_t(col);
+            if (shaped[at] >= Vi::PLAN_BLOCKED && raw[at] < Vi::PLAN_BLOCKED
+                && Vi::GoalClear(x0 + col, y0 + row, nav.Goal.GetPositionX(), nav.Goal.GetPositionY()))
+                shaped[at] = raw[at];
+        }
 
     // The cheapest way through the band, body to goal (the true route's last cell where it was cut).
     auto const local = [&](float x, float y, int32& at) -> bool

@@ -165,6 +165,8 @@ namespace Animus::Vision
     {
         float Distance = -1.0f;
         float NormalZ = 0.0f;
+        float NormalX = 0.0f;       // the normal's horizontal part, facing the ray (0, 0 where the world gives none)
+        float NormalY = 0.0f;
         void const* Object = nullptr;
         bool BackFace = false;
     };
@@ -272,6 +274,8 @@ namespace Animus::Vision
         Class What = Class::Sky;
         float Z = 0.0f;             // the hit's height
         float NormalZ = 0.0f;
+        float NormalX = 0.0f;       // SurfaceHit::NormalX, NormalY; the terrain's own; 0 for a liquid
+        float NormalY = 0.0f;
         bool BackFace = false;      // a model's triangle met from behind (SurfaceHit::BackFace)
     };
 
