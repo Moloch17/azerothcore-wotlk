@@ -248,8 +248,18 @@ class ConvergenceConfig:
     # evaluations (and its trend would not clear the margin as far ahead). 0 = never. Both wait for the cost ladder at
     # full price and honour `advance`; the finished reason is "converged", the condition in finished.json "why".
     top_plateau_evals: int = 0
+    # The anneal of a stage that ends on its last rung: with a gate-stepped ladder, the entropy coefficient and the
+    # learning rate hold at their full values until the ladder first reaches its last rung, then fall linearly to
+    # mappo.entropy_final_fraction / lr_final_fraction over this many env steps, and the last rung's end conditions
+    # wait for the anneal to finish -- so a stage that ends at 60M of a 150M ceiling hands on an annealed policy
+    # rather than one still at its exploration rate. 0 = the budget-long schedules (as before).
+    top_anneal_env_steps: int = 0
 
     def __post_init__(self) -> None:
+        if not isinstance(self.top_anneal_env_steps, int) or isinstance(self.top_anneal_env_steps, bool) \
+                or self.top_anneal_env_steps < 0:
+            raise ValueError(f"convergence.top_anneal_env_steps: expected 0 (off) or env steps, got "
+                             f"{self.top_anneal_env_steps!r}")
         for name in ("top_gate_evals", "top_plateau_evals"):
             value = getattr(self, name)
             if not isinstance(value, int) or isinstance(value, bool) or value < 0:

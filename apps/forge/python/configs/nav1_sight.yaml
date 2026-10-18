@@ -237,6 +237,9 @@ convergence:
   # to 0.63 -- and not by 140M under 6.
   top_gate_evals: 2
   top_plateau_evals: 6
+  # Entropy and learning rate hold until the ladder first reaches its last rung, then anneal over 20M steps; the
+  # end conditions above wait for that, so an early-ending stage hands on an annealed policy.
+  top_anneal_env_steps: 20000000
   patience: 3
   window: 4
   z: 2.0

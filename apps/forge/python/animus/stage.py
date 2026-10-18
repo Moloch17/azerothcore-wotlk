@@ -617,6 +617,10 @@ class ConvergenceController:
         self.baseline_summary: dict | None = None
         self.last_outcome: Outcome | None = None
         self.plateau_env_steps: int | None = None
+        # Env steps at which the gate-stepped ladder first stood on its last rung (convergence.top_anneal_env_steps),
+        # and the latest evaluation's env steps (the end conditions read them).
+        self.top_env_steps: int | None = None
+        self.seen_env_steps = 0
         # What the entropy floor multiplies mappo.entropy_coef by; 1 until the floor has reason to raise it.
         self.entropy_scale = 1.0
         self.evals = 0
@@ -673,14 +677,27 @@ class ConvergenceController:
 
     def entropy_coef(self, env_steps: int) -> float:
         mappo = self.config.mappo
+        window = self._top_anneal_window()
+        if window:
+            factor = 1.0 if self.top_env_steps is None else schedule(mappo.entropy_final_fraction,
+                                                                     env_steps - self.top_env_steps, window)
+            return mappo.entropy_coef * self.entropy_scale * factor
         return mappo.entropy_coef * self.entropy_scale * schedule(mappo.entropy_final_fraction, env_steps,
                                                                   self.config.total_env_steps)
+
+    def _top_anneal_window(self) -> int:
+        """convergence.top_anneal_env_steps where it applies (a gate-stepped ladder), else 0."""
+        window = self.config.convergence.top_anneal_env_steps
+        return window if window > 0 and self.fade.enabled and not self.fade.require_plateau else 0
 
     def lr_scale(self, env_steps: int) -> float:
         """The learning-rate factor: the configured linear anneal, held at 1 until the overall score has first
         plateaued (convergence.lr_hold_until_plateau) so the KL signal is not the schedule."""
         final = self.config.mappo.lr_final_fraction
         total = self.config.total_env_steps
+        window = self._top_anneal_window()
+        if window:
+            return 1.0 if self.top_env_steps is None else schedule(final, env_steps - self.top_env_steps, window)
         if not self.config.convergence.lr_hold_until_plateau or not self.evaluating:
             return schedule(final, env_steps, total)
         if self.plateau_env_steps is None:
@@ -749,6 +766,9 @@ class ConvergenceController:
                                               ladders_settled and (not fade_waits
                                                                    or (costs_ready and self.costs_message is None)),
                                               anneal_starting)
+        self.seen_env_steps = env_steps
+        if self.top_env_steps is None and self.fade.enabled and self.fade.rung == len(self.fade.rungs) - 1:
+            self.top_env_steps = env_steps
         # A ladder that moved changed the game the other one's step score was read in.
         if self.fade_message is not None:
             self.costs.rebase()
@@ -930,6 +950,9 @@ class ConvergenceController:
         if (not fade.enabled or fade.require_plateau or fade.rung != len(fade.rungs) - 1 or not self.costs.ready
                 or self.unread_message is not None):
             return None
+        window = self._top_anneal_window()
+        if window and (self.top_env_steps is None or self.seen_env_steps - self.top_env_steps < window):
+            return None     # the anneal from the last rung's first evaluation has not finished
         if c.top_gate_evals > 0 and fade.top_gate_streak >= c.top_gate_evals:
             return (f"the last rung's gate met at {fade.top_gate_streak} evaluations running ({fade.gate_line()}; "
                     f"convergence.top_gate_evals {c.top_gate_evals})")
@@ -986,6 +1009,7 @@ class ConvergenceController:
             "best_summary": self.best_summary,
             "baseline_summary": self.baseline_summary,
             "plateau_env_steps": self.plateau_env_steps,
+            "top_env_steps": self.top_env_steps,
             "baselined": dict(self.baselined),
             "evals": self.evals,
             "last_eval_env_steps": self.last_eval_env_steps,
@@ -1007,6 +1031,8 @@ class ConvergenceController:
         self.baseline_summary = state.get("baseline_summary")
         self.plateau_env_steps = state.get("plateau_env_steps")
         self.evals = int(state.get("evals", 0))
+        top = state.get("top_env_steps")
+        self.top_env_steps = int(top) if top is not None else None
         last = state.get("last_eval_env_steps")
         self.last_eval_env_steps = int(last) if last is not None else None
         self.fade.load_state_dict(state.get("fade"))
