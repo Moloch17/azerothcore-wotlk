@@ -3907,7 +3907,7 @@ def load_actor_state(actor: nn.Module, state: dict) -> list[str]:
               f"{planner.iterations if planner is not None else '-'}, hierarchical {hierarchical}, waypoint source "
               f"{source}, waypoint costs {costs} (mappo.planner_k_fine, planner_hierarchical, "
               f"planner_waypoint_source, planner_waypoint_costs)", flush=True)
-    if any(key.startswith(WAYPOINT_PREFIX) for key in missing):
+    if any(key.startswith(WAYPOINT_PREFIX) for key in missing) and not rewidened:
         print("Load: the checkpoint has no planned waypoint (mappo.planner_waypoint); its join starts at zero, so the "
               "policy computes what it did", flush=True)
     parameters = dict(actor.named_parameters())
