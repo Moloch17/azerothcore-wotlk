@@ -147,9 +147,9 @@ aux:
 # evaluation, at the start one and at the stage's last.
 #
 # The cost (nav1, 2026-10-17, 82-yd trips at rung 2): the plain 256 took ~33 s, the sampled 256 ~32 s, Wailing's 64
-# ~12 s and each arm's 64 ~11 s -- ~133 s an evaluation with five arms. Sampled at 128 (~16 s) and the arms on every
-# other evaluation, an evaluation is ~61 s without its arms and ~117 s with them: ~89 s on average, a third less
-# (~44 s, or ~11 minutes over a 150M-step stage's 15 evaluations; more with each arm added).
+# ~12 s and each arm's 64 ~11 s -- ~133 s an evaluation with the five arms it had. Sampled at 128 (~16 s) and the
+# arms on every other evaluation, an evaluation is ~61 s without its arms and ~117 s with them: ~89 s on average, a
+# third less (~44 s, or ~11 minutes over a 150M-step stage's 15 evaluations; ~6 s more saved for each arm added).
 eval:
   every_env_steps: 10000000
   at_start: true
@@ -229,11 +229,14 @@ convergence:
   measure: spl
   # The stage also ends on the ladder's last rung (stage.ConvergenceController.top_rung_end), the budget a ceiling:
   # its gate (fade.gate_metrics' last entries) met at 2 evaluations running, or SPL there with no new best beyond the
-  # tracker's margin (~0.08 at 256 trips) for 4 evaluations and no trend that would clear it. The per-class rule
+  # tracker's margin (~0.09 at 256 trips) for 6 evaluations and no trend that would clear it. The per-class rule
   # (score, KL, entropy, ladder, top rung all at once, for every class) met none of it in nav1's 150M steps (~12 h on
   # the cluster, 2026-10-18); six nav stages at their ceilings are a week before the dungeons. Inherited by nav2..nav6.
+  # 6, not 4: nav1's own rung-2 SPL (0.43, 0.47, 0.52, 0.50, 0.53, 0.54, 0.53, 0.56, 0.61, 0.63 from 40M), replayed as
+  # the last rung, read as a plateau at 100M under 4 -- a +0.015-an-evaluation climb under the margin, which went on
+  # to 0.63 -- and not by 140M under 6.
   top_gate_evals: 2
-  top_plateau_evals: 4
+  top_plateau_evals: 6
   patience: 3
   window: 4
   z: 2.0
