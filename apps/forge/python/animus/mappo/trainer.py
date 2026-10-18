@@ -2996,7 +2996,9 @@ class MappoTrainer:
         every other parameter keeps its own, matched by name: the saved ids are positions in the parameter order, which
         is this encoder's with the new parameters left out. Moments that would not fit their parameter (another
         change) leave the whole optimizer fresh, and say so."""
-        names = [f"vision.{name}" for name, _ in self.actor.vision.named_parameters()]
+        # The frozen school planner's parameters (MapEncoder.school) are no optimizer's (vision_parameters).
+        names = [f"vision.{name}" for name, parameter in self.actor.vision.named_parameters()
+                 if parameter.requires_grad]
         added = [name for name in names if name not in actor_state]
         if not added:
             self.vision_opt.load_state_dict(saved)
