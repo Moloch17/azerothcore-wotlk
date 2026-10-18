@@ -23,6 +23,7 @@
 #include "StageDefinition.h"
 #include "SeatView.h"
 #include "UnitBody.h"
+#include "TravBake.h"
 #include "VisionCost.h"
 #include <algorithm>
 #include <atomic>
@@ -40,9 +41,10 @@ namespace
 {
     constexpr char const* SCALAR_NAMES[Animus::Curriculum::MapBlock::OBS_COUNT] = { "known", "frontier", "visited",
         "kept", "searched", "new_age", "total", "frontier_sin", "frontier_cos", "frontier_dist", "region_sin",
-        "region_cos", "region_dist", "clusters", "searched_cells", "route_fine_sin", "route_fine_cos",
-        "route_fine_dist", "route_fine_valid", "route_coarse_sin", "route_coarse_cos", "route_coarse_dist",
-        "route_coarse_valid" };
+        "region_cos", "region_dist", "clusters", "searched_cells", "route_p5_sin", "route_p5_cos", "route_p10_sin",
+        "route_p10_cos", "route_p20_sin", "route_p20_cos", "route_p30_sin", "route_p30_cos", "route_fine_reach",
+        "route_fine_valid", "route_coarse_sin", "route_coarse_cos", "route_coarse_dist", "route_coarse_valid",
+        "route_dist", "route_dist_valid", "route_stall" };
 
     /// The analysis's sizes (MapBlock::ConfigureCoverage): the seek tuning's defaults until the scenario sets them.
     std::atomic<uint32> ClusterMinCells{ 2 };
@@ -114,12 +116,19 @@ void Animus::Curriculum::MapBlock::DescribeManifest(Layout const& layout, boost:
     map["frontier_channel"] = uint32(Vi::CROP_FRONTIER);
     map["searched_channel"] = uint32(Vi::CROP_SEARCHED);
     map["searched_max"] = Vi::SEARCHED_MAX;
-    // Revision 6: the walls channel, the crop's wall rule, and the route scalars' reaches.
+    // Revision 6: the walls channel and the crop's wall rule. Revision 7: the route scalars' frame -- the fine
+    // walk's points (steps of a cell: yards), its reach, the coarse walk's, the distance scale and the stall clock.
     map["walls_channel"] = uint32(Vi::CROP_WALLS);
     map["walls_max"] = Vi::CROP_WALLS_MAX;
     map["wall_min"] = Vi::CROP_WALL_MIN;
+    boost::json::array points;
+    for (uint32 step : Vi::PLAN_ROUTE_STEPS)
+        points.push_back(double(float(step) * Vi::MAP_CELL));
+    map["route_points_yards"] = std::move(points);
     map["route_fine_reach_yards"] = double(float(Vi::PLAN_FINE_STEPS) * Vi::MAP_CELL);
     map["route_coarse_reach_yards"] = double(float(Vi::PLAN_COARSE_STEPS) * float(Vi::COARSE_CELL));
+    map["route_dist_yards"] = double(Vi::PLAN_DIST_SCALE);
+    map["route_stall_seconds"] = double(Vi::PLAN_STALL_SECONDS);
     map["new_age_scale_s"] = double(Vi::GROUND_AGE_SCALE_S);
     // Revision 4: total and searched_cells are log1p(cells) / log1p(the max), clamped to 1 (MapBlock::LogShare).
     map["total_log_max"] = double(TOTAL_LOG_MAX);
@@ -254,12 +263,14 @@ void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uin
     // Where this crop was taken from and how many of its blocks a cell goal can name (free choice goals): the ACT that
     // answers this observation is decoded against exactly this pose (StageScenario::ApplyGoals).
     CropPose pose{ true, x, y, z, view.Facing, CellGrid::Count(crop) };
-    // The route on the seat's own map to the objective the compass shows (revision 6): planned once here, its
-    // waypoints the policy's and its values the labels' (CropPose::Route*). A withheld compass is no objective.
+    // The route on the seat's own map to the objective the encounter names (revision 7): planned once here, its
+    // points the policy's and its values the labels' (CropPose::Route*). The objective is the sim's knowledge, not
+    // the bot's: nothing of the straight line to it leaves this block, only the route on the bot's own map. An
+    // objective withheld from the seat (M1's ladder) is none.
     if (view.HasObjective && !view.CompassWithheld)
     {
         // The objective and the crop before's pose in the body frame: forward along the facing, right along
-        // (sin yaw, -cos yaw) -- what the compass says.
+        // (sin yaw, -cos yaw).
         float const cosYaw = std::cos(view.Facing);
         float const sinYaw = std::sin(view.Facing);
         float const dx = view.Objective.GetPositionX() - x;
@@ -286,16 +297,41 @@ void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uin
             pose.LastY = last.Y;
             pose.RouteLast = Vi::PlanValueAt(plan, near[0].Forward, near[0].Right);
         }
-        Vi::PlanWaypoint const fine = Vi::FineWaypoint(plan);
+        Vi::PlanRoute const fine = Vi::FineRoute(plan);
         Vi::PlanWaypoint const far = Vi::CoarseWaypoint(plan);
-        obs[OBS_ROUTE_FINE_SIN] = fine.Sin;
-        obs[OBS_ROUTE_FINE_COS] = fine.Cos;
-        obs[OBS_ROUTE_FINE_DIST] = fine.Dist;
+        static_assert(Vi::PLAN_ROUTE_POINTS == 4 && OBS_ROUTE_P30_COS == OBS_ROUTE_P5_SIN + 7);
+        for (uint32 point = 0; point < Vi::PLAN_ROUTE_POINTS; ++point)
+        {
+            obs[OBS_ROUTE_P5_SIN + 2 * point] = fine.Sin[point];
+            obs[OBS_ROUTE_P5_COS + 2 * point] = fine.Cos[point];
+        }
+        obs[OBS_ROUTE_FINE_REACH] = fine.Reach;
         obs[OBS_ROUTE_FINE_VALID] = fine.Valid;
         obs[OBS_ROUTE_COARSE_SIN] = far.Sin;
         obs[OBS_ROUTE_COARSE_COS] = far.Cos;
         obs[OBS_ROUTE_COARSE_DIST] = far.Dist;
         obs[OBS_ROUTE_COARSE_VALID] = far.Valid;
+        // The own-map route distance at the body, and the stall clock carried from the pose before (the body's
+        // own cost is the plan's at the body: a point's reading, blocked cells left out).
+        bool const reachable = pose.RouteBody < Vi::TRAV_UNREACHABLE;
+        if (reachable)
+        {
+            obs[OBS_ROUTE_DIST] = std::min(1.0f, pose.RouteBody / Vi::PLAN_DIST_SCALE);
+            obs[OBS_ROUTE_DIST_VALID] = 1.0f;
+        }
+        pose.RouteBestValid = last.RouteBestValid;
+        pose.RouteBest = last.RouteBest;
+        pose.RouteStall = last.RouteStall;
+        Vi::RouteStall(pose.RouteBody, reachable, last.Valid ? float(view.DecisionMs) / 1000.0f : 0.0f,
+            pose.RouteBestValid, pose.RouteBest, pose.RouteStall);
+        obs[OBS_ROUTE_STALL] = std::min(1.0f, pose.RouteStall / Vi::PLAN_STALL_SECONDS);
+    }
+    else
+    {
+        // No objective this decision: the clock neither runs nor resets, the least so far is kept.
+        pose.RouteBestValid = last.RouteBestValid;
+        pose.RouteBest = last.RouteBest;
+        pose.RouteStall = last.RouteStall;
     }
     if (view.Crop)
         *view.Crop = pose;

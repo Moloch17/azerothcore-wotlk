@@ -177,6 +177,53 @@ namespace
     }
 }
 
+void Animus::Vision::ConfigurationSpace(float* factor, int32_t side)
+{
+    // The walls as read, on a grid padded by one cell of no-wall all round (the window's edge is no wall: what lies
+    // past it is not known to be one), so a neighbour read needs no bounds check.
+    int32_t const padded = side + 2;
+    thread_local std::vector<uint8_t> wall;
+    wall.assign(std::size_t(padded * padded), 0);
+    auto const mark = [&]()
+    {
+        for (int32_t row = 0; row < side; ++row)
+        {
+            float const* from = factor + row * side;
+            uint8_t* to = wall.data() + (row + 1) * padded + 1;
+            for (int32_t col = 0; col < side; ++col)
+                to[col] = from[col] >= PLAN_BLOCKED ? 1 : 0;
+        }
+    };
+    mark();
+    // Hole closing: a cell walled on two opposite sides is a wall -- judged on the walls as read, so a closed hole
+    // does not close its neighbour in turn (two cells between walls are a 2-yd passage, which the body fits).
+    for (int32_t row = 0; row < side; ++row)
+        for (int32_t col = 0; col < side; ++col)
+        {
+            uint8_t const* at = wall.data() + (row + 1) * padded + col + 1;
+            if (*at)
+                continue;
+            bool const closed = (at[-padded] && at[padded]) || (at[-1] && at[1])
+                || (at[-padded - 1] && at[padded + 1]) || (at[-padded + 1] && at[padded - 1]);
+            if (closed)
+                factor[row * side + col] = PLAN_BLOCKED;
+        }
+    mark();
+    // Inflation: a passable cell 8-adjacent to a wall (the closed holes included) costs PLAN_INFLATED at least; a
+    // hazard's own 5 stands.
+    for (int32_t row = 0; row < side; ++row)
+        for (int32_t col = 0; col < side; ++col)
+        {
+            float& value = factor[row * side + col];
+            uint8_t const* at = wall.data() + (row + 1) * padded + col + 1;
+            if (*at || value >= PLAN_INFLATED)
+                continue;
+            if (at[-padded - 1] | at[-padded] | at[-padded + 1] | at[-1] | at[1] | at[padded - 1] | at[padded]
+                | at[padded + 1])
+                value = PLAN_INFLATED;
+        }
+}
+
 void Animus::Vision::PlanOnMap(MentalMap const& map, float x, float y, float z, float yaw, float goalForward,
     float goalRight, uint8_t const* coarse, MapPlan& out, PlanPoint const* near, uint32_t nearCount)
 {
@@ -233,10 +280,11 @@ void Animus::Vision::PlanOnMap(MentalMap const& map, float x, float y, float z, 
     // The fine tier: the map's own cells, each priced for the feet.
     map.Window(out.X0, out.Y0, PLAN_SIDE, window.data());
     for (uint32_t index = 0; index < PLAN_CELLS; ++index)
-    {
         factor[index] = CellFactor(window[index], z);
+    // ... shaped into the body's configuration space: the 1-yd holes closed, the cells along the walls dear.
+    ConfigurationSpace(factor.data(), PLAN_SIDE);
+    for (uint32_t index = 0; index < PLAN_CELLS; ++index)
         out.FineBlocked[index] = factor[index] >= PLAN_BLOCKED ? 1 : 0;
-    }
     // The goal's own cell when it lies inside the window (goal_plane without the clamp).
     {
         float const gx = x + goalForward * forwardX + goalRight * rightX;
@@ -337,10 +385,10 @@ float Animus::Vision::PlanValueAt(MapPlan const& plan, float forward, float righ
     return std::min(sum / weight, TRAV_UNREACHABLE);
 }
 
-Animus::Vision::PlanWaypoint Animus::Vision::FineWaypoint(MapPlan const& plan)
+Animus::Vision::PlanRoute Animus::Vision::FineRoute(MapPlan const& plan)
 {
     if (!plan.HasGoal)
-        return PlanWaypoint();
+        return PlanRoute();
     // The body's own cell; a wall's foot (blocked) stands in for nothing, so the lowest unblocked cell round the body
     // starts the walk instead.
     int32_t const bodyCol = MapCellOf(plan.X) - plan.X0;
@@ -366,14 +414,52 @@ Animus::Vision::PlanWaypoint Animus::Vision::FineWaypoint(MapPlan const& plan)
                 }
             }
     }
-    Descend(plan.Fine.data(), PLAN_SIDE, PLAN_FINE_STEPS, row, col);
-    if (row == bodyRow && col == bodyCol)
-        return PlanWaypoint();
-    float const dx = (float(plan.X0 + col) + 0.5f) * MAP_CELL - plan.X;
-    float const dy = (float(plan.Y0 + row) + 0.5f) * MAP_CELL - plan.Y;
+    // One step at a time, the cell after each of PLAN_ROUTE_STEPS steps noted; a walk that stops repeats its end.
     float const forwardX = std::cos(plan.Yaw);
     float const forwardY = std::sin(plan.Yaw);
-    return Waypoint(dx * forwardX + dy * forwardY, dx * forwardY - dy * forwardX, float(PLAN_FINE_STEPS) * MAP_CELL);
+    PlanRoute route;
+    uint32_t steps = 0;
+    uint32_t point = 0;
+    for (uint32_t step = 1; step <= PLAN_FINE_STEPS && point < PLAN_ROUTE_POINTS; ++step)
+    {
+        int32_t const fromRow = row;
+        int32_t const fromCol = col;
+        Descend(plan.Fine.data(), PLAN_SIDE, 1, row, col);
+        bool const moved = row != fromRow || col != fromCol;
+        if (moved)
+            steps = step;
+        if (moved && step < PLAN_ROUTE_STEPS[point])
+            continue;
+        // At a route point's step, or the walk's end: this cell is the point, and every later one when it ended.
+        float const dx = (float(plan.X0 + col) + 0.5f) * MAP_CELL - plan.X;
+        float const dy = (float(plan.Y0 + row) + 0.5f) * MAP_CELL - plan.Y;
+        float const forward = dx * forwardX + dy * forwardY;
+        float const right = dx * forwardY - dy * forwardX;
+        float const distance = std::max(1e-6f, std::hypot(forward, right));
+        for (; point < PLAN_ROUTE_POINTS && (!moved || step >= PLAN_ROUTE_STEPS[point]); ++point)
+        {
+            route.Sin[point] = -right / distance;
+            route.Cos[point] = forward / distance;
+        }
+        if (!moved)
+            break;
+    }
+    if (!steps || (row == bodyRow && col == bodyCol))
+        return PlanRoute();
+    route.Reach = float(steps) / float(PLAN_FINE_STEPS);
+    route.Valid = 1.0f;
+    return route;
+}
+
+void Animus::Vision::RouteStall(float cost, bool reachable, float seconds, bool& hasBest, float& best, float& stall)
+{
+    stall += std::max(0.0f, seconds);
+    if (reachable && (!hasBest || cost < best))
+    {
+        hasBest = true;
+        best = cost;
+        stall = 0.0f;
+    }
 }
 
 Animus::Vision::PlanWaypoint Animus::Vision::CoarseWaypoint(MapPlan const& plan)

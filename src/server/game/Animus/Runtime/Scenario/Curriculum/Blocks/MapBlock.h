@@ -44,12 +44,16 @@ namespace Animus::Curriculum
     /// in it comes from the navmesh or the map's data: an unseen cell is unknown, whatever is there. The frontier is
     /// worked out from the seat's own map, as a player reads a minimap's edge.
     ///
-    /// **The route scalars** (revision 6, memv4 2026-10-17; Vision::MapPlanner): when the compass shows an objective
+    /// **The route scalars** (revision 7, 2026-10-17; Vision::MapPlanner): when the encounter names an objective
     /// (SeatView::HasObjective, not withheld), the block plans the route to it on the seat's own map -- the 1-yd
-    /// cells round the body, the coarse crop as the ring beyond them -- and hands the policy the next waypoint of
-    /// each tier's plan (the learner's descend walk: Vision::FineWaypoint, CoarseWaypoint) as four scalars each. The
-    /// plan's value at the body and at the crop before's pose go with the crop's pose (CropPose::Route*) for the nav
-    /// labels (PointNavEncounter::WriteLabels), so the route is planned once a decision.
+    /// cells round the body shaped into the body's configuration space, the coarse crop as the ring beyond them --
+    /// and hands the policy the route itself: the fine plan's walk read at 5, 10, 20 and 30 steps (Vision::FineRoute),
+    /// the coarse plan's waypoint (Vision::CoarseWaypoint), the own-map route distance at the body and how long it
+    /// has been since that distance last fell (Vision::RouteStall). Nothing here is the straight line to the goal:
+    /// since revision 7 the nav stages carry no compass, and the route is the only word the policy gets of where
+    /// the goal lies. The plan's value at the body and at the crop before's pose go with the crop's pose
+    /// (CropPose::Route*) for the nav labels (PointNavEncounter::WriteLabels), so the route is planned once a
+    /// decision.
     ///
     /// The block also records where each crop was taken from (SeatView::Crop: the pose, and how many of its pooled
     /// blocks a cell goal can name, CellGrid::Count), which the scenario decodes the learner's cell choice against.
@@ -78,19 +82,32 @@ namespace Animus::Curriculum
             OBS_REGION_DIST,
             OBS_CLUSTERS,
             OBS_SEARCHED_CELLS,
-            /// **The route scalars** (revision 6): the fine plan's waypoint (a walk of Vision::PLAN_FINE_STEPS yards)
-            /// and the coarse plan's (Vision::PLAN_COARSE_STEPS coarse cells), each as sin and cos of its bearing off
-            /// the facing (the compass block's convention: sin positive to the left), its distance over the walk's
-            /// reach (past 1 on a diagonal), and valid 1 when the walk moved and an objective is shown; all four 0
-            /// otherwise.
-            OBS_ROUTE_FINE_SIN,
-            OBS_ROUTE_FINE_COS,
-            OBS_ROUTE_FINE_DIST,
+            /// **The route scalars** (revision 7; Vision::MapPlanner): the fine plan's walk from the body, read at
+            /// Vision::PLAN_ROUTE_STEPS (5, 10, 20, 30 steps of a cell) as sin and cos of each point's bearing off
+            /// the facing (the convention the compass block had: sin positive to the left), the steps the walk made
+            /// over Vision::PLAN_FINE_STEPS, and valid 1 when the walk moved and an objective is named (every fine
+            /// value 0 otherwise); the coarse plan's waypoint (Vision::PLAN_COARSE_STEPS coarse cells) as sin, cos,
+            /// its distance over the walk's reach (past 1 on a diagonal) and valid; the own-map route distance at the
+            /// body over Vision::PLAN_DIST_SCALE with its valid (both 0 when unreachable); and the stall clock --
+            /// seconds since that distance last fell below its least this episode, over Vision::PLAN_STALL_SECONDS,
+            /// clamped to 1 (0 at the first decision; it keeps running while unreachable).
+            OBS_ROUTE_P5_SIN,
+            OBS_ROUTE_P5_COS,
+            OBS_ROUTE_P10_SIN,
+            OBS_ROUTE_P10_COS,
+            OBS_ROUTE_P20_SIN,
+            OBS_ROUTE_P20_COS,
+            OBS_ROUTE_P30_SIN,
+            OBS_ROUTE_P30_COS,
+            OBS_ROUTE_FINE_REACH,
             OBS_ROUTE_FINE_VALID,
             OBS_ROUTE_COARSE_SIN,
             OBS_ROUTE_COARSE_COS,
             OBS_ROUTE_COARSE_DIST,
             OBS_ROUTE_COARSE_VALID,
+            OBS_ROUTE_DIST,
+            OBS_ROUTE_DIST_VALID,
+            OBS_ROUTE_STALL,
             OBS_COUNT
         };
         static constexpr float CLUSTER_SCALE = 8.0f;
@@ -117,16 +134,20 @@ namespace Animus::Curriculum
         /// 1 is byte-identical to revision 4. 6: the crop's eighth channel, walls (Vision::CROP_WALLS: CROP_BYTES
         /// 18,432 a tier), a crop cell a wall only when most of its 1-yd cells are (Vision::CROP_WALL_MIN), and the
         /// eight route scalars appended (route_fine_sin .. route_coarse_valid; memv4, 2026-10-17): a learner built
-        /// on revision 5's bytes refuses it.
-        [[nodiscard]] uint32 Revision() const override { return 6; }
+        /// on revision 5's bytes refuses it. 7 (2026-10-17): the eight route scalars are seventeen (route_p5_sin ..
+        /// route_stall: the fine walk at four points, its reach, the coarse waypoint, the own-map distance and the
+        /// stall clock), the planner works in the body's configuration space (Vision::ConfigurationSpace), and the
+        /// nav stages drop the compass: the route is the goal's only observation. The crop is unchanged.
+        [[nodiscard]] uint32 Revision() const override { return 7; }
         /// "map": { transport "bytes", height, width (Vision::CROP), cell (yards), tiers [{cell, bytes}...],
         /// tier_bytes (one tier's), channels (8), channel_names, map_bytes (every tier's), codes, code_names,
         /// code_channel, height_channel, height_step, height_zero, visited_channel, age_channel, age_scale, age_never,
         /// class_channel, classes (Vision::CLASS_LIMIT), frontier_channel, searched_channel, searched_max,
         /// walls_channel, walls_max, wall_min (Vision::CROP_WALL_MIN), new_age_scale_s, total_log_max, epoch
         /// ("episode"), scalars, scalar_names, coverage_cell_yards, coverage_reach_yards, cluster_scale,
-        /// searched_cells_log_max, cluster_min_cells, pocket_min_cells, route_fine_reach_yards,
-        /// route_coarse_reach_yards }
+        /// searched_cells_log_max, cluster_min_cells, pocket_min_cells, route_points_yards ([5, 10, 20, 30]),
+        /// route_fine_reach_yards (30), route_coarse_reach_yards (16), route_dist_yards (300), route_stall_seconds
+        /// (30) }
         /// -- the block's columns are the scalars; the crop is the STEP's map section.
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;

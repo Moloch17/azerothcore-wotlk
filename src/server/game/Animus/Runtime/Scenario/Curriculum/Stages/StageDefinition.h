@@ -331,8 +331,8 @@ namespace Animus::Curriculum
         /// episode's random numbers, training and evaluation alike (episode info `shared_memory`); the rest start
         /// blank. Either way what the seat sees goes into the shared memory, and the seat's own map is never kept
         /// across resets (Map.KeepShare is off in such a stage). 0 = no shared memory: the map lives as before
-        /// (Map.KeepShare), and no random number is drawn for it. The nav stages: 0.5 (the user, 2026-10-15: "half
-        /// of episodes use it, half do not").
+        /// (Map.KeepShare), and no random number is drawn for it. The nav stages: nav1 0.5 (the user, 2026-10-15:
+        /// "half of episodes use it, half do not"), nav2 to nav6 0.75 (2026-10-17).
         float SharedMemoryShare = 0.0f;
 
         [[nodiscard]] bool Has(BlockId block) const;

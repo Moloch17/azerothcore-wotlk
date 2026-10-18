@@ -670,15 +670,17 @@ namespace
         return arena;
     }
 
-    /// **The nav stages' blocks**: Core and the goal block the frame, Move the lesson, the compass the goal (the
-    /// minimap marker: bearing and distance to the point, exact, never withheld in a nav stage), the camera (with its
-    /// entity list, inserted after it) and the mental map -- two tiers of it here (StageDefinition::MapTiers 2: the
-    /// 2-yd crop and an 8-yd coarse crop, map block revision 5) -- what the costmap and planner heads read. No sight
-    /// block: nothing is pressed; no coverage block: the coarse tier is the far view.
+    /// **The nav stages' blocks**: Core and the goal block the frame, Move the lesson, the camera (with its entity
+    /// list, inserted after it) and the mental map -- two tiers of it here (StageDefinition::MapTiers 2: the 2-yd
+    /// crop and an 8-yd coarse crop, map block revision 5) -- what the costmap and planner heads read. No compass
+    /// (map block revision 7, 2026-10-17): no nav observation carries the straight line to the goal; the goal
+    /// reaches the policy only as the route the map block plans on the seat's own map (its seventeen route scalars),
+    /// the encounter alone knowing the point. No sight block: nothing is pressed; no coverage block: the coarse
+    /// tier is the far view.
     std::vector<BlockId> NavBlocks()
     {
         using enum BlockId;
-        return { Core, Move, Compass, Vision, Map, Goal };
+        return { Core, Move, Vision, Map, Goal };
     }
 
     /// Wailing Caverns (map 43), held out of every nav stage: never drawn in training nor in an ordinary evaluation
@@ -963,7 +965,7 @@ namespace
             .EvenLevels = true,
             .EvenRenderSizes = true,
             .MapTiers = 2,
-            .SharedMemoryShare = 0.5f,
+            .SharedMemoryShare = 0.75f,
         });
 
         // N3 -- vertical: step up, jump or go round; safe against hurting and lethal drops; stairs, ramps and decks
@@ -988,7 +990,7 @@ namespace
             .EvenLevels = true,
             .EvenRenderSizes = true,
             .MapTiers = 2,
-            .SharedMemoryShare = 0.5f,
+            .SharedMemoryShare = 0.75f,
         });
 
         // N4 -- beyond sight: the route is not in view -- plan over the mental map's two tiers, commit to a direction,
@@ -1017,7 +1019,7 @@ namespace
             .EvenLevels = true,
             .EvenRenderSizes = true,
             .MapTiers = 2,
-            .SharedMemoryShare = 0.5f,
+            .SharedMemoryShare = 0.75f,
         });
 
         // N5 -- water: swim or go round; banks taller than a step are walls; the bed as a goal (PointNav.BedShare of
@@ -1041,16 +1043,17 @@ namespace
             .EvenLevels = true,
             .EvenRenderSizes = true,
             .MapTiers = 2,
-            .SharedMemoryShare = 0.5f,
+            .SharedMemoryShare = 0.75f,
         });
 
         // N6 -- follow, the moving point: move4_follow's party (four learned followers and their group's leader, the
         // stock-path leader at a player's report cadence: PartyFollowEncounter, decision 0035) in an empty Ragefire
-        // Chasm or Deadmines, with the party frames and the compass. The arenas are Opposition::PartyFollow -- the
-        // encounter that places the leader, forms the group and pays the followers (FollowKept, Blocking, Lost, Death)
-        // -- with LabelsOnly set, which means: **also run PointNav as a labeller**. The leader's believed position (the
-        // party frames' recall) is the point the compass shows and the C-map is computed to; the C-map is recomputed
-        // only when the leader's cell changes; PointNav places nothing and pays nothing. The potential on the route
+        // Chasm or Deadmines, with the party frames. The arenas are Opposition::PartyFollow -- the encounter that
+        // places the leader, forms the group and pays the followers (FollowKept, Blocking, Lost, Death) -- with
+        // LabelsOnly set, which means: **also run PointNav as a labeller**. The leader's position as the server last
+        // had it is the point the map block's route is planned to (PointNavEncounter::View names it; no compass:
+        // revision 7) and the C-map is computed to; the C-map is recomputed only when the leader's cell changes;
+        // PointNav places nothing and pays nothing. The potential on the route
         // distance to the leader's believed position is the learner's, as in every nav stage. A frozen-checkpoint
         // leader walking its own PointNav trips (plan I9) is a follow-up: this build keeps the stock-path leader.
         // 300 s. The level: even over 1-80 as every nav stage (PartyFollowEncounter::BeforeLevel skips its dungeon
@@ -1060,9 +1063,8 @@ namespace
             .Suffix = "_nav",
             .Extends = "nav5_water",
             .Summary = "an empty Ragefire Chasm or Deadmines: four followers keep with their group's leader running "
-                "the dungeon's way, the leader's believed position the compass's point and the planner's goal; "
-                "Wailing Caverns held out",
-            .Blocks = { Core, Move, Compass, Vision, Map, PartyFrames, Goal },
+                "the dungeon's way, the leader's believed position the planner's goal; Wailing Caverns held out",
+            .Blocks = { Core, Move, Vision, Map, PartyFrames, Goal },
             .Arenas = {
                 { .Name = "ragefire", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::PartyFollow,
                     .PartySize = GROUP_MEMBERS, .EpisodeSeconds = 300, .MapId = MAP_RAGEFIRE_CHASM,
@@ -1079,7 +1081,7 @@ namespace
             .EvenLevels = true,
             .EvenRenderSizes = true,
             .MapTiers = 2,
-            .SharedMemoryShare = 0.5f,
+            .SharedMemoryShare = 0.75f,
         });
 
         // **The combat stages** (dungeon-curriculum C1-C3, approved 2026-10-06): fighting on a cleared Ragefire Chasm
@@ -1393,23 +1395,22 @@ namespace
             || !stage.Has(BlockId::PartyFrames)))
             return "a party follow is walked with the move block and the leader found with the camera and the party "
                 "frames";
-        // ... unless PointNav labels it (nav6, LabelsOnly): the leader's believed position is then the point the
-        // compass shows, the minimap marker a player's party frames give.
-        if (partyFollow && !arena.LabelsOnly && stage.Has(BlockId::Compass))
+        if (partyFollow && stage.Has(BlockId::Compass))
             return "a party follow's leader is no objective point: the compass would point at it";
         if (arena.PartySize && (arena.Seats != SeatPlan::Party || arena.PartySize > GROUP_SEATS))
             return "a party size is a party's, 1 to GROUP_SEATS";
 
         // The nav stages (decision 0036, PointNavEncounter): one seat on its own in a cleared instance, a point goal
-        // shown by the compass over the dungeon's traversability bake, seen with the camera and planned on the mental
-        // map (two tiers: StageDefinition::MapTiers); its start drawn from the bake, its dead rising at the start.
+        // over the dungeon's traversability bake, seen with the camera and planned on the mental map (two tiers:
+        // StageDefinition::MapTiers), whose route is the goal's only observation (map block revision 7: no compass,
+        // which would give the straight line away); its start drawn from the bake, its dead rising at the start.
         bool const pointNav = arena.Against == Opposition::PointNav;
         if (pointNav && (arena.Seats != SeatPlan::Solo || !arena.Rooms.empty() || !arena.Objects.empty()))
             return "a nav arena is one seat on its own, with no room or object of its own";
-        if (pointNav && (!stage.Has(BlockId::Move) || !stage.Has(BlockId::Compass) || !stage.Has(BlockId::Vision)
-            || !stage.Has(BlockId::Map)))
-            return "a nav arena is walked with the move block, pointed at by the compass, seen with the camera and "
-                "planned on the mental map";
+        if (pointNav && (!stage.Has(BlockId::Move) || !stage.Has(BlockId::Vision) || !stage.Has(BlockId::Map)))
+            return "a nav arena is walked with the move block, seen with the camera and planned on the mental map";
+        if (pointNav && stage.Has(BlockId::Compass))
+            return "a nav arena's goal is the route on the mental map: the compass would give the straight line away";
         if (pointNav && (!arena.MapId || !arena.RespawnAtEntrance))
             return "a nav arena is on a dungeon's own map and its dead rise at the start";
         if (pointNav && stage.MapTiers != 2)
@@ -1418,11 +1419,11 @@ namespace
             return "a sight-only draw, a revisit price and a bake box are a nav arena's";
         if (arena.HasBox && (arena.BoxMinX >= arena.BoxMaxX || arena.BoxMinY >= arena.BoxMaxY))
             return "a bake box is its min and max x and y, in order";
-        // PointNav as a labeller beside the party follow (nav6): the leader's believed position is the point, so the
-        // compass and the two-tier map are needed as in a nav arena, and nothing else of PointNav's.
-        if (arena.LabelsOnly && (!partyFollow || !stage.Has(BlockId::Compass) || !stage.Has(BlockId::Map)
-            || stage.MapTiers != 2))
-            return "labels-only PointNav rides on a party follow, with the compass and both tiers of the mental map";
+        // PointNav as a labeller beside the party follow (nav6): the leader's believed position is the point the
+        // map block's route is planned to, so the two-tier map is needed as in a nav arena, and nothing else of
+        // PointNav's.
+        if (arena.LabelsOnly && (!partyFollow || !stage.Has(BlockId::Map) || stage.MapTiers != 2))
+            return "labels-only PointNav rides on a party follow, with both tiers of the mental map";
 
         // The combat stages: one seat on a dungeon's own ground, seeing what it fights (the sight block and the combat
         // block's columns on it) and coming back at the entrance after a death.

@@ -49,6 +49,13 @@ namespace Animus::Curriculum
         float LastX = 0.0f;
         float LastY = 0.0f;
         float RouteLast = 0.0f;
+        /// The route_stall clock (map block revision 7; Vision::RouteStall): the least reachable own-map cost-to-go
+        /// at the body so far this episode (RouteBest, once RouteBestValid) and the seconds since it last fell
+        /// (RouteStall), carried from one decision's pose to the next by MapBlock::Observe; the episode's reset of
+        /// the pose (SeatState::ResetEpisode) starts them over.
+        bool RouteBestValid = false;
+        float RouteBest = 0.0f;
+        float RouteStall = 0.0f;
     };
 
     /// A place the sim holds for a cell goal: the world point latched when the cell was chosen.

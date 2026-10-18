@@ -563,10 +563,13 @@ bool Animus::Curriculum::PointNavEncounter::SelectTarget(Env const& env, uint32 
 void Animus::Curriculum::PointNavEncounter::View(Env const& env, uint32 /*seat*/, SeatView& view) const
 {
     EnvNav const& nav = _envs[env.Index];
-    if (nav.LabelsOnly)
+    // The point: the sim's knowledge of the goal, which the map block plans the route to on the seat's own map
+    // (the route scalars are the policy's only word of it: no compass in a nav stage, map block revision 7); never
+    // withheld; the camera flags nothing (there is no object). A labeller (nav6) names the leader's position as the
+    // server last had it, once Update has one: the party follow's own View (run before this one) names no objective.
+    if (nav.LabelsOnly && nav.GoalCell == Vision::TRAV_NO_CELL)
         return;
-    // The marker: a point the compass shows, never withheld; the camera flags nothing (there is no object).
-    view.HasObjective = nav.Placed;
+    view.HasObjective = nav.LabelsOnly || nav.Placed;
     view.Objective = nav.Goal;
     view.ObjectiveRadius = 0.0f;
     view.CompassWithheld = false;

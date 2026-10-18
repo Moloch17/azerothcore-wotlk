@@ -353,7 +353,10 @@ Does: whether there is an objective, its bearing and distance; no actions. Size 
 (`CompassBlock.cpp:27`). Columns (named): 0 objective, 1 objective_bearing_sin, 2 objective_bearing_cos, 3
 objective_distance (yards / 500, clamped), 4 objective_near (yards / 40).
 Declared
-by move1_controls only. `view.CompassWithheld` zeroes all five (M1's withholding ladder: an input removed, never a
+by move1_controls only: the nav stages carried it until map block revision 7 (2026-10-17), when it left them -- no nav
+observation carries the straight line to the goal; the goal reaches the policy as the route on the seat's own map
+(the map block's seventeen route scalars), and `Stages.cpp`'s `ArenaProblem` refuses a nav arena with the compass.
+`view.CompassWithheld` zeroes all five (M1's withholding ladder: an input removed, never a
 mask). Manifest: `objective_scale
 500`, `near_scale 40`. Reads `view.Body`, `view.Objective`, `view.Facing`. Revision 1: the columns that were the move
 block's up to its revision 4 (same names); revision 2 (2026-10-08, decision 0019) dropped the dead sixth column, and
@@ -525,13 +528,21 @@ channel_names +"searched", map_bytes 16128, scalars 7, scalar_names, and searche
 new_age_scale_s 120, total_scale 3000, epoch "episode". Revision 1 had 4 scalars and 6 channels. Revision 6 (2026-10-17, the
 learner's contract; `networks.MAP_BLOCK_REVISION`): the crop is 48x48x8 (18432 bytes a tier, 36864 for two) -- channel 7 `walls`, the
 count of the cell's four 1-yd cells that are wall (0..4; the coarse tier scaled to 0..4), and the code byte calls a cell `wall` by
-majority (3 or 4 of 4) alone, then door > hazard > floor > unknown over the rest -- and eight scalars are appended after the
-revision 3 ones, in this order: `route_fine_sin, route_fine_cos, route_fine_dist, route_fine_valid, route_coarse_sin,
-route_coarse_cos, route_coarse_dist, route_coarse_valid` (the sim's route on the bot's own map, planned at 1 yd every decision; a
-tier's four are `networks.descend`'s numbers -- sin = -right / d, cos = forward / d, d over the tier's reach of 10 / 16 yd, valid --
-all 0 without a waypoint). The manifest names them in `scalar_names` (or the block's `obs_names`), with `walls_channel` 7 and
-`walls_max` 4; `goals.cells.channels` must say 8 too. The learner reads them by name (`networks.route_of`) and requires them to be
-the block's last eight. `Observe` advances the
+majority (3 or 4 of 4) alone, then door > hazard > floor > unknown over the rest -- and eight scalars were appended after the
+revision 3 ones. **Revision 7** (2026-10-17): those eight are seventeen, appended last in this order: `route_p5_sin, route_p5_cos,
+route_p10_sin, route_p10_cos, route_p20_sin, route_p20_cos, route_p30_sin, route_p30_cos, route_fine_reach, route_fine_valid,
+route_coarse_sin, route_coarse_cos, route_coarse_dist, route_coarse_valid, route_dist, route_dist_valid, route_stall` -- the sim's
+route on the bot's own map, planned at 1 yd every decision in the body's configuration space (cpp-vision-memory.md "The route on the
+map": holes closed, walls inflated to 3): the fine walk (`Vision::FineRoute`, the learner's `descend`, up to 30 steps of a cell) read
+after 5, 10, 20 and 30 steps as sin = -right / d, cos = forward / d (the compass's convention; a walk that ends early repeats its end
+cell), its steps / 30 and valid (the walk moved and an objective is named; every fine value 0 otherwise); the coarse waypoint as before
+(2 steps of 8 yd from cell (23, 23): sin, cos, d / 16, valid); the own-map route distance at the body min(C, 300) / 300 with its valid
+(both 0 when unreachable); and the stall clock, seconds since that distance last fell below its least this episode / 30, clamped
+(`Vision::RouteStall` on `CropPose::RouteBest/RouteStall`; 0 at the first decision, runs while unreachable). The crop is unchanged.
+Manifest: `route_points_yards [5, 10, 20, 30]`, `route_fine_reach_yards 30`, `route_coarse_reach_yards 16`, `route_dist_yards 300`,
+`route_stall_seconds 30`, `walls_channel` 7, `walls_max` 4; `goals.cells.channels` must say 8 too. The learner reads them by name and
+requires them to be the block's last seventeen. In the nav stages these are the goal's only observation (no compass since revision 7).
+`Observe` advances the
 map clock, writes the frame's rays (`view.Hits`), the listed entities (`view.Seen`) and the body, crops heading-up. Entity sensing: also writes the listed entities' cells (`MentalMap::WriteEntities(*view.Seen)`), since the image no longer carries units or objects. Declared from move2 on.
 Reviewer notes: uses `bot->GetPosition*` for the crop centre before the body override only when no
 body exists; no actions.
@@ -647,6 +658,15 @@ every floor-like one has a height byte within 16 units (4 yd) of 128 and not 0. 
 floor-like cells over the feet. A cell word is `(ticket << 12) | (cell + 1)`, ticket 1..2047, 0 none. (`Locate` is the
 inverse of the centre: `r = floor(12 - forward / 4)`, `c = floor(12 + right / 4)`; the contract text had
 `floor(row / 2)` of the cell-centre coordinate, half a crop cell off.)
+
+**In the nav stages** (PointNav, nav1-nav6; map block revision 7, 2026-10-17): no episode there has `RoomGoals` or
+`CellGoals` (only `SeekEncounter` sets them), so the held-goal, place-slot and cell columns below are all zero; the
+block carries the kind and target availability (TravelTo about the assignment while the encounter names a point:
+`Available` keys on `SeatView::HasObjective`), ended / reached / event and the achieved one-hots. With the compass gone
+`SeatView::ObjectivePlaceKnown` is false (`StageScenario.cpp` derives it from `Has(BlockId::Compass)`), so `PlaceOf`
+gives the trip's objective no place and `goal_reached` / `goal_ended` / `goal_achieved_*` never fire on it -- the
+"within 20 yd" bit was the one straight-line reading left in the block, and `Goals.Reached` is no longer paid for
+that TravelTo. Nothing in the block is re-pointed at the route: the route lives in the map block's scalars.
 
 **Revision 3 (2026-10-09, M2 goals)** appends 40 columns after the 68 below, which do not move: 68-72 the held primary
 goal's place as M1's compass shows its mark (`goal_held_present`, `goal_held_sin`, `goal_held_cos`, `goal_held_dist`

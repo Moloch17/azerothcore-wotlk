@@ -102,23 +102,49 @@ alike. A coarse cell's code is a wall only when more than half of its 1-yd cells
 8-yd cell is a sixteenth of it), else the plurality of the other codes (unseen cells counted as unknown; a tie to the
 code the fine crop ranks higher).
 
-**The route on the map** (`MapPlanner.h`, map block revision 6, memv4 2026-10-17; `MapBlock::Observe`): when the compass
-shows an objective (not withheld), the map block plans the route to it on the map itself -- `PlanOnMap`: a 96 x 96
-window of 1-yd cells, axis-aligned and centred on the body (`MentalMap::Window`, the fine crop's extent), each cell
-priced by `CodeOf` for the feet (`PLAN_COSTS` unknown 1.5, floor and door 1, wall 100, hazard 5; a floor or door whose
-layer nearest the feet is more than `PLAN_HEIGHT_BAND` 3 yd off them priced as unknown), an 8-neighbour min-plus (a
-step's yards x the mean of the two cells' factors) settled exactly by Dijkstra; the goal's own cell at 0 when it lies in
-the window, and the coarse crop's plan (the learner's rule over the 8-yd bytes, as before) sampled bilinearly at the
+**The route on the map** (`MapPlanner.h`, map block revision 7, 2026-10-17; `MapBlock::Observe`): when the
+encounter names an objective (`SeatView::HasObjective`, not withheld -- the sim's knowledge of the goal, never the
+bot's: since revision 7 the nav stages carry no compass and no observation of the straight line to it), the map block
+plans the route to it on the map itself -- `PlanOnMap`: a 96 x 96 window of 1-yd cells, axis-aligned and centred on
+the body (`MentalMap::Window`, the fine crop's extent), each cell priced by `CodeOf` for the feet (`PLAN_COSTS` unknown
+1.5, floor and door 1, wall 100, hazard 5; a floor or door whose layer nearest the feet is more than `PLAN_HEIGHT_BAND`
+3 yd off them priced as unknown), then shaped into **the body's configuration space** (`ConfigurationSpace`): a
+non-wall cell whose two opposite neighbours are walls -- N and S, E and W, or both cells of either diagonal pair -- is a
+wall (a 1-yd gap is narrower than the body; judged on the walls as read, so a 2-yd passage stays open), and a passable
+cell 8-adjacent to a wall (after the closing; the window's edge is no wall) is priced at least `PLAN_INFLATED` 3, so a
+route runs down the middle of a corridor and a 2- or 3-yd passage is dear but routable (a hazard keeps its 5). The
+coarse plan is not shaped: its cells are 8 yd (a cell between two wall cells is a corridor), and in a dungeon nearly
+every coarse cell touches a wall cell, so inflation would triple the plane. Then an 8-neighbour min-plus (a step's
+yards x the mean of the two cells' factors) settled exactly by Dijkstra; the goal's own cell at 0 when it lies in the
+window, and the coarse crop's plan (the learner's rule over the 8-yd bytes, as before) sampled bilinearly at the
 centres of the cells just past the window's border, each turned into the crop's frame, as the ring. The search stops
 once the cells round the body and the crop before's pose are settled (a steepest-descent walk from a settled cell only
-reaches settled cells). Planned over the 2-yd crop, the shared memory's route read 2-3 x the bake's and 12-18 %
-unreachable; on the 1-yd cells the same memory's ratio is 1.01 (memv4). Outputs: the map block's eight route scalars
-(`FineWaypoint`: the learner's `descend` from the body's cell, 10 steps of a yard; `CoarseWaypoint`: from the
-learner's anchor cell (23, 23) on the coarse plan, 2 steps of 8 yd; each sin = -right / d, cos = forward / d, dist = d /
-reach, valid), and the plan's value at the body and at the crop before's pose, carried on `CropPose::Route*` to the
-nav labels' `[2]` / `[3]` (cpp-encounters.md). Cost on a synthetic room map (tmp/mapfix/check, 2026-10-17): 320-340 us
-a plan with the goal ahead, 760 us with it 150 yd behind (most of the window settles before the body), 40-50 us with
-no coarse crop; the block's `map` cost row includes it. Planned once a decision a seat.
+reaches settled cells). A wall is priced, not impassable: where no real route exists the plan's value is the one
+through a wall at a hundred yards a cell, and the walk takes it. Planned over the 2-yd crop, the shared memory's route
+read 2-3 x the bake's and 12-18 % unreachable; on the 1-yd cells the same memory's ratio is 1.01 (memv4), 1.03-1.06
+with the inflation (every door's cells are dear).
+
+Outputs: the map block's seventeen route scalars, appended last in this order -- `route_p5_sin, route_p5_cos,
+route_p10_sin, route_p10_cos, route_p20_sin, route_p20_cos, route_p30_sin, route_p30_cos, route_fine_reach,
+route_fine_valid, route_coarse_sin, route_coarse_cos, route_coarse_dist, route_coarse_valid, route_dist,
+route_dist_valid, route_stall`. `FineRoute`: the learner's `descend` from the body's cell (from the lowest unblocked
+cell round it when its own is a wall's foot), up to `PLAN_FINE_STEPS` 30 steps of a cell (a diagonal step counts one,
+as the learner's), the cell reached after 5, 10, 20 and 30 steps (`PLAN_ROUTE_STEPS`) each as sin = -right / d, cos =
+forward / d in the body's heading-up frame; a walk that ends earlier (the goal reached, no lower neighbour) repeats
+its end cell for the later points; `route_fine_reach` = the steps it made / 30; `route_fine_valid` 1 when it moved and
+an objective is named, every fine value 0 otherwise. `CoarseWaypoint` as before: from the learner's anchor cell (23,
+23) on the coarse plan, 2 steps of 8 yd, sin, cos, dist = d / 16 (past 1 on a diagonal), valid. `route_dist` =
+min(C_map(body), 300) / 300 with `route_dist_valid` 1 when the body's own-map cost-to-go is reachable, else both 0
+(`PLAN_DIST_SCALE`). `route_stall` (`RouteStall`; the clock on `CropPose::RouteBest/RouteStall`, carried from one
+decision's pose to the next and reset with the pose at an episode's start): seconds since the body's own-map cost-to-go
+last fell below its least so far this episode, over `PLAN_STALL_SECONDS` 30, clamped to 1 -- 0 at the first decision,
+reset by a new least, running while the cost is unreachable; not advanced on a decision with no objective. The bot's
+own map throughout: non-privileged. The plan's value at the body and at the crop before's pose are carried on
+`CropPose::Route*` to the nav labels' `[2]` / `[3]` (cpp-encounters.md). The manifest says `route_points_yards [5, 10,
+20, 30]`, `route_fine_reach_yards 30`, `route_coarse_reach_yards 16`, `route_dist_yards 300`, `route_stall_seconds 30`.
+Cost on a synthetic room map (tmp/mapfix/check, 2026-10-17): 350-360 us a plan with the goal ahead (325-355 before the
+configuration space), 790 us with it 150 yd behind (820 before; most of the window settles before the body), 50-60 us
+with no coarse crop (30-40 before); the block's `map` cost row includes it. Planned once a decision a seat.
 
 **Hazards at the frame's end** (`NoteHazard`, `SettleFrame`; memory version 5): a ray's own hit on water, magma or
 slime (within `WRITE_REACH` a 1-yd cell, beyond it a far cell) is written after the frame's floors, and not at all

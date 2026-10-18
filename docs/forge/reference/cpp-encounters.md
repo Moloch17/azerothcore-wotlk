@@ -1088,7 +1088,11 @@ failure pool (a ring of `FailurePool` 512: pinned >= `PinSeconds`, fell for dama
 goal) with the same goal; evaluations draw seeded pairs by `EpisodeSeed`, no replay. `SightOnly` arenas (nav1) draw
 starts in line of sight of the goal; `BedShare` (30) percent of nav5's draws put the goal on a water cell's bed. The
 spawn is the start cell's centre at ground z, facing random (`EpisodeSpawn`, as PartyFollow); the goal is a point,
-no object: the **compass block** shows it (bearing, distance), never withheld.
+no object. Until map block revision 7 the **compass block** showed it (bearing, distance); since 2026-10-17 no nav
+observation carries the straight line to it: `View` names it on `SeatView::Objective` for the map block alone, which
+plans the route to it on the seat's own map and hands the policy the route's points, distance and stall clock (its
+seventeen route scalars; cpp-blocks.md "map", cpp-vision-memory.md "The route on the map"). The goal block offers
+TravelTo about it but, `ObjectivePlaceKnown` being false without a compass, never calls it reached.
 
 ### Labels in STEP (protocol 33; `SpecMsg::LabelBytes` 13848)
 
@@ -1105,8 +1109,10 @@ revision 6 WriteLabels planned over the two crops' bytes itself. The first decis
 more than `LABEL_STEP_MAX` 12 yd off, past the window, or not the pose the block planned at reads 65504, unreachable),
 then `[4] goal_forward_yards`, `[5] goal_right_yards`. `AgentLabels` still hands WriteLabels the map rows
 (`EnvPool::DescribeAgents`), unread since revision 6. `LabelBytes = 0` in stages without PointNav. In nav6
-(labels-only) the point is the leader's believed position and the C-map is recomputed only when the leader's cell
-changes.
+(labels-only) the point is the leader's position as the server last had it (`Update`) and the C-map is recomputed only
+when the leader's cell changes; since 2026-10-17 `View` names that point on `SeatView::Objective` once `Update` has a
+goal cell (the party follow's own `View`, which runs first, names none), so the map block plans nav6's route and its
+labels `[2]` / `[3]` are read -- before, nothing named it and the route scalars were zero there.
 
 ### Rewards (no Shaping)
 
