@@ -638,6 +638,36 @@ class StatusConfig:
 
 
 @dataclass
+class SchoolConfig:
+    """The planner school's recorder (animus.school.record; docs/forge/reference/school.md): samples of a nav stage's
+    rollouts -- the map crops, the labels, the sim's route scalars, the memory flag -- written to sharded .npz files
+    for the offline planner training (`python -m animus.school.train`). Off by default; with `record` false nothing
+    is built and the rollout is exactly what it was."""
+
+    record: bool = False
+    # Decisions between two samples of the same env (every env's own clock, reset with its episode). 16: measured
+    # 0.41 ms a decision of 192 envs at 8 (the sampled rows' copies; ~1.7 % of a 24 ms decision), half that at 16,
+    # which still fills 500k samples in ~20 min of a 192-env learner's rollouts.
+    record_every: int = 16
+    # Where the shards go; "" is var/animus-forge/shared/school/<run_name>/ (the shared root beside shared/runs).
+    record_dir: str = ""
+    # Samples at most, this run's and the directory's existing ones together; 0 = no limit.
+    record_max_samples: int = 500_000
+    # Samples a shard.
+    record_shard: int = 4096
+
+    def __post_init__(self) -> None:
+        if isinstance(self.record_every, bool) or not isinstance(self.record_every, int) or self.record_every < 1:
+            raise ValueError(f"school.record_every: expected a whole number of decisions from 1, got "
+                             f"{self.record_every!r}")
+        if self.record_shard < 1:
+            raise ValueError(f"school.record_shard: expected 1 or more samples a shard, got {self.record_shard!r}")
+        if self.record_max_samples < 0:
+            raise ValueError(f"school.record_max_samples: expected 0 (no limit) or more, got "
+                             f"{self.record_max_samples!r}")
+
+
+@dataclass
 class LayoutSamplingConfig:
     """Training episodes draw a class/build uniformly, so each layout gets its share of the data whatever it is
     worth. A stage is gated on its weakest layout, though, so the data is worth most where the score is lowest --
@@ -774,6 +804,8 @@ class TrainConfig:
     # costmap / planner auxiliary losses (mappo.trainer.AuxConfig). Both are no-ops in a stage without labels.
     potential: PotentialConfig = field(default_factory=PotentialConfig)
     aux: AuxConfig = field(default_factory=AuxConfig)
+    # The planner school's recorder (animus.school.record); off by default.
+    school: SchoolConfig = field(default_factory=SchoolConfig)
 
     def __post_init__(self) -> None:
         # Anything else would read as "best" (animus.train.init_from_checkpoint), which a typo must not do quietly.

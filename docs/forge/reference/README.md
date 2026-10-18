@@ -70,6 +70,7 @@ person reviewing and refactoring the forge without an assistant.
 | `py-human-and-misc.md` | the human-capture and parity tools; the smaller learner modules |
 | `config-keys.md` | every non-Curriculum `AnimusForge.*` key (a generated table) |
 | `config-yaml.md` | every learner yaml field and the 10 live yamls' inheritance |
+| `school.md` | the planner school: the recorder's shards, the offline planner trainer, its metrics and baselines |
 | `tools-and-ops.md` | `apps/forge/tools`, forgectl internals, compose and docker, the repository layout |
 | `stages.md` | the 10 live stages, one section each, with the seed chain |
 | `known-issues.md` | the consolidated, ranked list of bugs, debts and refactor candidates |

@@ -288,6 +288,19 @@ The nav stages' potential-based progress term (CONTRACT.md sec 5); nothing happe
 
 `reward_potential` (metrics.csv, the evaluation's episode column) is the term as paid; `reward_potential_map` beside it is the map term's part (0 under `"true"`), `reward_potential_fallback_share` the share of valid decisions the true term stood in for the map's (`map_fallback`).
 
+### `school:` (`SchoolConfig`, `config.py` `SchoolConfig`), read by `train.py` `TrainingRun.__init__` and `animus/school/record.py`
+
+The planner school's recorder ([school.md](school.md)): samples of a nav stage's rollouts for the offline planner
+training. Off by default; with `record` false nothing is built and the rollout is exactly what it was.
+
+| Field | Default | Meaning |
+|---|---|---|
+| `record` | false | record samples (the map crops, the labels, the sim's route scalars, the memory flag, the map and arena, the layout and episode step) |
+| `record_every` | 16 | decisions between two samples of the same env (each env's own clock, reset with its episode); 0.41 ms a 192-env decision at 8, half at 16 |
+| `record_dir` | `""` | the shard directory; `""` is `var/animus-forge/shared/school/<run_name>/` |
+| `record_max_samples` | 500000 | samples at most, the directory's existing ones counted; 0 = no limit |
+| `record_shard` | 4096 | samples a shard (`rank<r>-<n>.npz`, compressed) |
+
 ## The 10 live yamls, field by field
 
 Each row lists what a yaml sets that differs from its parent's effective value (parent in brackets), derived by reading

@@ -1,0 +1,48 @@
+# The planner school (docs/forge/reference/school.md; animus.school.train): the route planner trained offline on the
+# recorder's shards (config `school.record` in a nav stage's yaml), measured beside Dijkstra over the crop and the
+# oracle over the truth. Not a stage yaml: TrainConfig does not read it.
+#
+#     python -m animus.school.train --config configs/school.yaml [--set epochs=3 --set data_dir=/tmp/x]
+
+# The shard directories (one or a list); the recorder's default is var/animus-forge/shared/school/<run_name>. Paths
+# are relative to the working directory, apps/forge/python in the command above (the repository's var/ is ../../../).
+data_dir: ../../../var/animus-forge/shared/school/nav2_detour
+# Checkpoints and metrics.csv under <out_dir>/<name>/.
+out_dir: ../../../var/animus-forge/shared/school/_runs
+name: unet
+
+# "unet" (SchoolPlanner: two four-level U-Nets, the coarse tier's plan resampled into the fine) or "vin"
+# (VinPlanner: networks.Planner with vin_k iterations and a tier one-hot).
+model: unet
+widths: [32, 64, 96, 128]
+vin_k: 40
+
+epochs: 10
+batch: 64
+lr: 0.001
+weight_decay: 0.0001
+grad_clip: 1.0
+# "auto": the first GPU torch sees, else the CPU.
+device: auto
+threads: 0
+seed: 1
+
+# Shards loaded at a time (a pool of 4 x 4096 samples is ~800 MB), and whether the training draw gives every
+# (map, memory flag) group of the pool an equal share.
+pool_shards: 4
+balance: true
+
+# The losses: Huber on the cost-to-go (reachable cells), BCE on reachability, the direction cross-entropy (graded
+# cells, the crop's unknown cells weighted unseen_weight), the class-balanced class cross-entropy (clipped at
+# balance_clip).
+cost_coef: 1.0
+reach_coef: 0.5
+dir_coef: 1.0
+cls_coef: 0.25
+unseen_weight: 3.0
+balance_clip: 10.0
+
+# Samples an evaluation split reads each epoch (0 all), a training epoch's cap (0 one pass over the shards).
+eval_samples: 4096
+train_samples: 0
+log_every: 50

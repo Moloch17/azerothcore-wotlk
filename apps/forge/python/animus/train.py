@@ -55,6 +55,7 @@ from .async_sync import Hub, Link, fetch_shared, shared_listing
 from .parallel import Ranks, Silent, weighted_share
 from .protocol import MAX_SPECS
 from .rewards import WARN_EVERY, audit, describe, outcome_terms, reward_mix
+from .school.record import SchoolRecorder, default_record_dir
 from .human import motion, realism
 from .style import HumanWindows, StyleReward, startup_line as style_line
 
@@ -807,6 +808,15 @@ class TrainingRun:
 
         self.make_trainer = lambda: make_trainer(config, spec, inputs, ranks=self.ranks.update)
         self.trainer = self.make_trainer()
+        # The planner school's recorder (config.school, animus.school.record): built only when asked, so a run without
+        # it has no thread, no copy and no line; observe() in _act_on_rows, episode_ended() in _take_outcome_of.
+        self.school: SchoolRecorder | None = None
+        if config.school.record:
+            record_dir = config.school.record_dir or default_record_dir(config.shared_runs, config.run_name)
+            self.school = SchoolRecorder(record_dir, config.school.record_every, config.school.record_shard,
+                                         config.school.record_max_samples, spec, self.stage, inputs.vision,
+                                         rank=config.rank, run_name=config.run_name)
+            print(self.school.describe(), flush=True)
         # ROCm wears the CUDA API's name: torch.cuda is HIP on an AMD card and the device prints as "cuda",
         # which reads as though the wrong backend were in use. Say what it actually is, and which card.
         def named(device: torch.device) -> str:
@@ -1369,6 +1379,10 @@ class TrainingRun:
                                            categories=self.episode_categories,
                                            score_column=self.config.eval.score_column(),
                                            potential=self.eval_potential(), **options)
+        # Every env starts a new episode with the training MODE after (no done): the school's pending samples of the
+        # episodes the evaluation interrupted would be stamped with the wrong episode.
+        if self.school is not None:
+            self.school.clear()
         parts = self.ranks.gather(result)
         return EvalResult.merged(parts) if self.ranks.leader else None
 
@@ -1950,6 +1964,8 @@ class TrainingRun:
                 cleared = np.zeros(envs, dtype=bool)
                 cleared[offset:offset + count] = True
                 self.acting.clear(cleared)
+                if self.school is not None:
+                    self.school.clear(cleared)
                 if self.cast is not None:
                     self.cast.clear(cleared)
                 if self.partners is not None:
@@ -2272,6 +2288,8 @@ class TrainingRun:
                      labels=getattr(part, "labels", None) if self.spec.label_bytes else None,
                      # The plan the decision acted on (the acting state's cache, refreshed by _replan before it).
                      planner_readout=acting.planner_readout, planner_pool=acting.planner_pool)
+        if self.school is not None:
+            self.school.observe(part, rows, trainer.rollout_stream)
         send(rows.start, rows.stop - rows.start, actions,
              trainer.wire_goals(goals[0], acting.queue, acting.plan) if goals is not None else None, look,
              trainer.wire_heading(heading))
@@ -2317,6 +2335,8 @@ class TrainingRun:
 
         ended = part.episode_info[done].reshape(-1, spec.episode_info_dim)
         ended_layouts = ended_layout.reshape(-1)
+        if self.school is not None:
+            self.school.episode_ended(rows, done, part.episode_info[done])
         present = self.present_column
         keep = np.ones(len(ended), dtype=bool) if present is None else ended[:, present] > 0.0
         keep &= ~partnered.reshape(-1)
@@ -2689,6 +2709,8 @@ class TrainingRun:
         self.progress.write("finished" if outcome else "stopped", self.update, self.env_steps,
                             outcome.reason if outcome else "", advanced=bool(outcome and outcome.action == ADVANCE))
         self.drain_update()
+        if self.school is not None:
+            print(self.school.close(), flush=True)
         if self.hub is not None:
             self.hub.close()
         if self.link is not None:
