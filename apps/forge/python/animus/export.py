@@ -130,8 +130,8 @@ The .amdl format (little-endian); a reader must follow it exactly, and a change 
             f32  code_embed[codes * code_width], patch_weight[patch_out * patch * patch * (code_width + class_width +
                  value_planes)], patch_bias, mix_weight[mix_out * patch_out], mix_bias, embed_weight[map_embed *
                  (tiers * 3 * mix_out + scalars)], embed_bias, join_weight[embed * map_embed], join_bias[embed]
-            (`scalars` is the count the embedding reads: from version 18 the block's scalars less the sim's eight route
-            columns, ROUTE_COLUMNS, which end the block and feed the waypoint alone)
+            (`scalars` is the count the embedding reads: from version 18 the block's scalars less the sim's route
+            columns, ROUTE_COLUMNS -- eight in 18, seventeen in 19 -- which end the block and feed the waypoint alone)
             if tiers > 1:  f32 tier_embed[tiers * mix_out]    added to each tier's patch features (version 11)
         f32  join_weight[adapter_out * embed], join_bias[adapter_out]        (VisionJoin)
         u32  look_heads, then sizes[look_heads]
@@ -179,7 +179,9 @@ The .amdl format (little-endian); a reader must follow it exactly, and a change 
         when anything did). Float32 throughout, as the learner computes it.
         In version 14 (a policy with the planned waypoint; mappo.planner_waypoint, networks.MapEncoder.waypoints),
         after pointer_weight:
-        u32  waypoint_features              F = tiers x 4 (0: none, and nothing follows)
+        u32  waypoint_features              F = tiers x 4 (0: none, and nothing follows); from version 19 a policy
+                                            whose waypoint is the sim's route (waypoint_source 2 below) has F = 17
+                                            (networks.ROUTE_COLUMNS), and anchor / steps are written but unread
         if F:
             u32  anchor (23), steps[tiers] (5, 2)
             f32  waypoint_weight[embed * F], waypoint_bias[embed]    added to the camera's embedding before its SiLU
@@ -216,12 +218,26 @@ The .amdl format (little-endian); a reader must follow it exactly, and a change 
         u32  waypoint_source                0: the learned value (version 14's walk as it is; nothing follows),
                                             1: the classical planner, 2: (version 18 on) the sim's route
         if waypoint_source == 2 (networks.MapEncoder.sim_waypoints; mappo.planner_waypoint_source "sim"):
-            u32  route_first                the observation column of route_fine_sin; the eight waypoint numbers --
-                                            fine sin, cos, dist, valid, coarse sin, cos, dist, valid, the walk's
-                                            numbers a tier (networks.ROUTE_COLUMNS) -- are the eight columns from it
-                                            on, as the sim writes them every decision (the runtime plans the route on
-                                            the bot's own map at 1 yd itself and fills them; nothing follows here).
-                                            The join reads each tier's four times its valid flag, as version 14's.
+            u32  route_first                the observation column of the first route scalar; in version 18 the
+                                            eight waypoint numbers -- fine sin, cos, dist, valid, coarse sin, cos,
+                                            dist, valid, the walk's numbers a tier -- are the eight columns from it on
+            u32  route_count                (version 19 on) how many route columns follow route_first: 17,
+                                            networks.ROUTE_COLUMNS in order -- route_p5_sin, route_p5_cos,
+                                            route_p10_sin, route_p10_cos, route_p20_sin, route_p20_cos, route_p30_sin,
+                                            route_p30_cos, route_fine_reach, route_fine_valid, route_coarse_sin,
+                                            route_coarse_cos, route_coarse_dist, route_coarse_valid, route_dist,
+                                            route_dist_valid, route_stall -- as the sim writes them every decision
+                                            (the runtime plans the route on the bot's own map at 1 yd itself and
+                                            fills all seventeen; nothing follows here). The join's F inputs are the
+                                            columns each times its valid flag: the first ten by route_fine_valid, the
+                                            coarse four by route_coarse_valid, route_dist by route_dist_valid,
+                                            route_dist_valid and route_stall as they are (networks.ROUTE_GROUPS).
+                                            With every compass column none (0xFFFFFFFF) the runtime runs no value
+                                            iteration: the readouts (tiers x readout) and the pointer's bonus are
+                                            zero and the waypoint join alone reads the route (networks.MapEncoder.
+                                            goal_blind: the learner computes exactly that; the nav stages carry no
+                                            compass). A withheld compass (presence 0 on a layout that has one) is a
+                                            zero goal plane through the value iteration, as in version 14.
         if waypoint_source == 1:
             u32  classes C (11), iterations[tiers]   the fixed iterations of each tier, fine first (64, 64)
             f32  costs[C]                   each class's step cost multiple (CLASSICAL_COSTS, TRAV_CLASS_NAMES order)
@@ -357,8 +373,17 @@ AMDL_MAGIC = b"AMDL"
 # the waypoint itself, no classical section follows). Written for a policy whose map decodes 7 value planes or whose
 # waypoint is the sim's; every other policy is still 17 or below. Such a checkpoint is never written as 17 or below
 # (write_amdl refuses).
-AMDL_VERSION = 18
-AMDL_VERSIONS = (7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18)
+# 19: the sim's route of seventeen scalars (map block revision 7, 2026-10-17; networks.ROUTE_COLUMNS): under waypoint
+# source 2 the route columns' count follows their first column, and the waypoint join reads F = 17. Written for a
+# policy whose waypoint is the sim's; a policy with the eight-channel map and another waypoint (or none) is still 18,
+# every other 17 or below. Such a checkpoint is never written as 18 or below (write_amdl refuses).
+AMDL_VERSION = 19
+AMDL_VERSIONS = (7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19)
+#: The version a policy whose map decodes the walls plane (the eight-channel crop) and whose waypoint is not the sim's
+#: route is written as.
+AMDL_WALLS_VERSION = 18
+#: The route columns a version-18 file's sim route has (the walk's four a tier, two tiers), before ROUTE_COLUMNS grew.
+AMDL_LEGACY_ROUTE_COUNT = 8
 #: The version a policy whose classical waypoint prices the map's own codes (mappo.planner_waypoint_costs "map") and
 #: whose map has the six value planes is written as.
 AMDL_MAP_COSTS_VERSION = 17
@@ -484,7 +509,7 @@ def write_amdl(
     if sim_route and (not waypoint or classical):
         raise ValueError("the sim's waypoint needs the planned waypoint (mappo.planner_waypoint) and excludes the "
                          "classical one")
-    version = (AMDL_VERSION if walls or sim_route else AMDL_MAP_COSTS_VERSION if map_costs
+    version = (AMDL_VERSION if sim_route else AMDL_WALLS_VERSION if walls else AMDL_MAP_COSTS_VERSION if map_costs
                else AMDL_CLASSICAL_VERSION if classical
                else AMDL_SCHEDULE_VERSION if schedule
                else AMDL_WAYPOINT_VERSION if waypoint else AMDL_SPLAT_VERSION if splat
@@ -506,9 +531,10 @@ def write_amdl(
     if map_costs and version < AMDL_MAP_COSTS_VERSION:
         raise ValueError("a policy whose classical waypoint prices the map's codes is written as version 17 or above, "
                          "never 16 or below")
-    if (walls or sim_route) and version < AMDL_VERSION:
-        raise ValueError("a policy with the eight-channel map or the sim's waypoint is written as version 18, never 17 "
-                         "or below")
+    if walls and version < AMDL_WALLS_VERSION:
+        raise ValueError("a policy with the eight-channel map is written as version 18 or above, never 17 or below")
+    if sim_route and version < AMDL_VERSION:
+        raise ValueError("a policy with the sim's route is written as version 19, never 18 or below")
     with open(path, "wb") as out:
         out.write(AMDL_MAGIC)
         out.write(struct.pack("<IH", version, len(encoded)))
@@ -666,10 +692,11 @@ def _write_camera_tail(out, tail: dict, version: int) -> None:
         elif tiers > 1:
             raise ValueError("a two-tier map is written as version 11, never 10")
         value_planes = int(crop.get("value_planes", AMDL_LEGACY_VALUE_PLANES))
-        if version >= AMDL_VERSION:
+        if version >= AMDL_WALLS_VERSION:
             out.write(struct.pack("<I", value_planes))
         elif value_planes != AMDL_LEGACY_VALUE_PLANES:
-            raise ValueError(f"a map of {value_planes} value planes a cell is written as version 18, never 17 or below")
+            raise ValueError(f"a map of {value_planes} value planes a cell is written as version 18 or above, never 17 "
+                             f"or below")
         _floats(out, *(crop[key] for key in MAP_ARRAYS))
         if tiers > 1:
             _floats(out, crop["tier_embed"])
@@ -719,11 +746,14 @@ def _write_camera_tail(out, tail: dict, version: int) -> None:
     map_costs = classical.get("map_costs") if classical else None
     sim_route = planner.get("sim_route")
     if sim_route and version < AMDL_VERSION:
-        raise ValueError("a policy with the sim's waypoint is written as version 18, never 17 or below")
+        raise ValueError("a policy with the sim's route is written as version 19, never 18 or below")
     if version >= AMDL_CLASSICAL_VERSION:
         out.write(struct.pack("<I", 2 if sim_route else 1 if classical else 0))
         if sim_route:
-            out.write(struct.pack("<I", int(sim_route["first"])))
+            if int(sim_route["count"]) != int(waypoint["features"]):
+                raise ValueError(f"the sim's route has {sim_route['count']} columns, the waypoint join reads "
+                                 f"{waypoint['features']}")
+            out.write(struct.pack("<II", int(sim_route["first"]), int(sim_route["count"])))
         if classical:
             iterations, costs = list(classical["iterations"]), np.asarray(classical["costs"], dtype="<f4")
             if len(iterations) != int(planner["tiers"]) or costs.shape != (int(planner["classes"]),):
@@ -1002,7 +1032,7 @@ def tail_weights(actor_state: dict[str, torch.Tensor], stage: dict, names: list[
         if crop is not None and "vision.map.patch.weight" in actor_state:
             from .mappo.networks import (CLASSICAL_COSTS, CLASSICAL_FLOOR_COSTS, CLASSICAL_SENTINEL,
                                          CLASSICAL_WAYPOINT_ITERATIONS, IMAGE_NEAR, MAP_CODE_COSTS, MAP_CODE_RULES,
-                                         MAP_VALUE_PLANES,
+                                         MAP_VALUE_PLANES, ROUTE_COLUMNS,
                                          VISION_SCALAR_BOOM, VISION_SCALAR_PITCH, VISION_SCALAR_RENDER_WIDTH,
                                          VISION_SCALAR_YAW_COS, VISION_SCALAR_YAW_SIN, VISION_ZOOM_SCALE, CameraSplat,
                                          CostmapHead, MapEncoder, Planner)
@@ -1074,32 +1104,36 @@ def tail_weights(actor_state: dict[str, torch.Tensor], stage: dict, names: list[
                     if tiers != 2:
                         raise ValueError(f"the planner's hierarchy / per-tier K is for two tiers, this map has {tiers}")
                     tail["planner"]["schedule"] = {"hierarchical": hierarchical, "k_tiers": [k_fine, k]}
-                # The planned waypoint (version 14): its walk and its join.
-                if "vision.map.waypoint_join.weight" in actor_state:
-                    weight = array("vision.map.waypoint_join.weight")
-                    if weight.shape[1] != tiers * MapEncoder.WAYPOINT_FEATURES:
-                        raise ValueError(f"the waypoint join reads {weight.shape[1]} inputs, the learner's "
-                                         f"{tiers} x {MapEncoder.WAYPOINT_FEATURES}")
-                    tail["planner"]["waypoint"] = {
-                        "features": tiers * MapEncoder.WAYPOINT_FEATURES, "anchor": MapEncoder.WAYPOINT_ANCHOR,
-                        "steps": [MapEncoder.WAYPOINT_STEPS[min(t, len(MapEncoder.WAYPOINT_STEPS) - 1)]
-                                  for t in range(tiers)],
-                        "weight": weight, "bias": array("vision.map.waypoint_join.bias")}
-                # The classical waypoint (version 16; mappo.planner_waypoint_source): its planner's constants.
+                # The waypoint's source (version 16; mappo.planner_waypoint_source): what its join reads.
                 source = int(actor_state.get("vision.map.waypoint_source", 0))
                 if source not in (0, 1, 2):
                     raise ValueError(f"the waypoint's source buffer is {source}; this exporter knows 0 (learned), 1 "
                                      f"(classical) and 2 (the sim's route)")
+                # The planned waypoint (version 14): its walk and its join -- the walk's tiers x 4 numbers, or the
+                # sim's route's seventeen (version 19, networks.ROUTE_COLUMNS) under source 2.
+                if "vision.map.waypoint_join.weight" in actor_state:
+                    weight = array("vision.map.waypoint_join.weight")
+                    features = len(ROUTE_COLUMNS) if source == 2 else tiers * MapEncoder.WAYPOINT_FEATURES
+                    if weight.shape[1] != features:
+                        what = ("the sim's route, networks.ROUTE_COLUMNS" if source == 2
+                                else f"{tiers} x {MapEncoder.WAYPOINT_FEATURES}")
+                        raise ValueError(f"the waypoint join reads {weight.shape[1]} inputs, the learner's {features} "
+                                         f"({what})")
+                    tail["planner"]["waypoint"] = {
+                        "features": features, "anchor": MapEncoder.WAYPOINT_ANCHOR,
+                        "steps": [MapEncoder.WAYPOINT_STEPS[min(t, len(MapEncoder.WAYPOINT_STEPS) - 1)]
+                                  for t in range(tiers)],
+                        "weight": weight, "bias": array("vision.map.waypoint_join.bias")}
                 if source == 2:
-                    # The sim's waypoint (version 18; mappo.planner_waypoint_source "sim"): the route columns' first
-                    # observation column of this layout; the runtime plans and fills them itself.
+                    # The sim's route (version 19; mappo.planner_waypoint_source "sim"): the route columns' first
+                    # observation column of this layout and their count; the runtime plans and fills them itself.
                     if "waypoint" not in tail["planner"]:
                         raise ValueError("the actor's waypoint is the sim's but it has no waypoint join: not exporting")
                     route = crop.get("route")
                     if route is None:
                         raise ValueError("the actor's waypoint is the sim's route, but this layout's map block names "
-                                         "no route columns (map block revision 6): not exporting")
-                    tail["planner"]["sim_route"] = {"first": int(route["first"])}
+                                         "no route columns (map block revision 7): not exporting")
+                    tail["planner"]["sim_route"] = {"first": int(route["first"]), "count": len(route["columns"])}
                 if source == 1:
                     if "waypoint" not in tail["planner"]:
                         raise ValueError("the actor's waypoint walks over the classical planner but has no waypoint "
@@ -1432,7 +1466,7 @@ def read_amdl(path: str | Path) -> dict:
                 crop = dict(zip(("first", "scalars", "height", "width", "patch", "codes", "code_width"), u32s(7)))
                 map_patch, map_mix, map_embed = u32s(3)
                 crop["tiers"] = u32s(1)[0] if version >= 11 else 1
-                crop["value_planes"] = u32s(1)[0] if version >= 18 else AMDL_LEGACY_VALUE_PLANES
+                crop["value_planes"] = u32s(1)[0] if version >= AMDL_WALLS_VERSION else AMDL_LEGACY_VALUE_PLANES
                 per_patch = crop["patch"] ** 2 * (crop["code_width"] + class_width + crop["value_planes"])
                 inputs = crop["tiers"] * 3 * map_mix + crop["scalars"]
                 crop.update(code_embed=floats(crop["codes"] * crop["code_width"], crop["codes"], crop["code_width"]),
@@ -1504,10 +1538,13 @@ def read_amdl(path: str | Path) -> dict:
             if version >= 16:
                 (source,) = u32s(1)
                 if source == 2:
-                    if version < 18:
+                    if version < AMDL_WALLS_VERSION:
                         raise ValueError(f"waypoint source 2 (the sim's route) in a version {version} file")
-                    (route_first,) = u32s(1)
-                    planner["sim_route"] = {"first": int(route_first)}
+                    if version >= AMDL_VERSION:
+                        route_first, route_count = u32s(2)
+                    else:
+                        (route_first,), route_count = u32s(1), AMDL_LEGACY_ROUTE_COUNT
+                    planner["sim_route"] = {"first": int(route_first), "count": int(route_count)}
                 elif source:
                     count, *iterations = u32s(1 + tiers)
                     costs = floats(count, count)

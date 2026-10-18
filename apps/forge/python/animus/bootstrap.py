@@ -34,8 +34,9 @@ import io
 
 import torch
 
-from .mappo.networks import (COSTMAP_CONV1, MAP_BLOCK_REVISION, MAP_PATCH, PLANNER_SCHEDULE_KEYS, SPLAT_PREFIX,
-                             MapEncoder, grow_costmap_inputs, grow_goal_rows, grow_map_planes, materialised_state)
+from .mappo.networks import (COSTMAP_CONV1, MAP_BLOCK_REVISION, MAP_PATCH, PLANNER_SCHEDULE_KEYS, ROUTE_COLUMNS,
+                             SPLAT_PREFIX, WAYPOINT_PREFIX, MapEncoder, grow_costmap_inputs, grow_goal_rows,
+                             grow_map_planes, materialised_state)
 from .stages import Span, block_revisions, block_spans
 
 
@@ -700,6 +701,15 @@ def _seed_map(new: dict, old: dict) -> str | None:
     for key in carried:
         new[key].copy_(old[key])
     fresh = [key for key in keys if key not in carried]
+    # The planned waypoint's join of another width (the walk's eight numbers against the sim's route's seventeen,
+    # networks.ROUTE_COLUMNS; mappo.planner_waypoint_source): fresh at zero, like one the checkpoint lacks, and said.
+    rewidened = [key for key in fresh if key.startswith(WAYPOINT_PREFIX) and key in old]
+    if rewidened:
+        width = int(new[rewidened[0]].shape[-1])
+        what = "the sim's route, networks.ROUTE_COLUMNS" if width == len(ROUTE_COLUMNS) else "the walk's"
+        print(f"  map encoder: the checkpoint's waypoint join reads {int(old[rewidened[0]].shape[-1])} numbers, this "
+              f"one {width} ({what}): the join starts fresh at zero, so the seeded policy computes what it did",
+              flush=True)
     # A join that was carried over an encoder that was not reads that encoder's fresh output through weights trained on
     # another one (exploration v3: a map of six channels has a patch and an embed of other shapes), so it is zeroed
     # too: the map comes in as the join learns, and the seeded policy acts as it did. The splat's own projection is

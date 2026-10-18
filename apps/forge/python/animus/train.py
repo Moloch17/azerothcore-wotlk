@@ -41,9 +41,9 @@ from .partners import PARTNERS_DIR, Partners, partner_snapshot, with_partners_ch
 from .config import TrainConfig
 from .distill import Distiller, auto_teachers, build_teacher
 from .env import ClusterEnv, ForgeEnv
-from .evaluation import (ABLATIONS, SHARED_MEMORY_ARM, SHARED_MEMORY_COLUMN, ConvergenceTracker, EvalResult,
-                         ablation_chooser, action_mask_table, casting_weights, format_summary, run_evaluation,
-                         trace_columns, write_trace)
+from .evaluation import (ABLATION_BLOCKS, ABLATIONS, SHARED_MEMORY_ARM, SHARED_MEMORY_COLUMN, ConvergenceTracker,
+                         EvalResult, ablation_chooser, action_mask_table, casting_weights, compass_spans,
+                         format_summary, run_evaluation, trace_columns, write_trace)
 from .mappo.buffer import RolloutBuffer
 from .mappo.trainer import (LOOK_COMMANDS, VISION_CHUNK_AUTO, VISION_CHUNK_FALLBACK, MappoTrainer, horizon_seconds,
                             per_decision, schedule)
@@ -1700,7 +1700,13 @@ class TrainingRun:
                 choose, options["excluded"] = with_partners_chooser(choose, arm_partners)
             elif arm in ABLATIONS:
                 # The learner's own input edited (flag, image, compass, map, goal block) or its memory reset: the same
-                # seeds, the sim untouched, so the plain evaluation's episode columns read the arm's own result.
+                # seeds, the sim untouched, so the plain evaluation's episode columns read the arm's own result. An
+                # arm that zeroes a block no layout of the stage has (no_compass on the nav stages, which carry no
+                # compass block since 2026-10-17) is skipped with a line, never a refusal.
+                block = ABLATION_BLOCKS.get(arm)
+                if block and not any(count for _, count in compass_spans(self.spec, self.stage, block)):
+                    print(f"Arm {arm}: no layout of the stage has a {block} block to zero; skipped", flush=True)
+                    continue
                 choose = ablation_chooser(choose, arm, self.spec, self.stage)
             elif arm == SHARED_MEMORY_ARM:
                 # The sim told to start every seat blank (MODE_FLAG_NO_SHARED_MEMORY): the same seeds and draws, no

@@ -15,8 +15,9 @@ from torch import nn
 from ..device import host
 from ..parallel import Ranks
 from ..protocol import GOAL_SLOTS_ON_WIRE
-from ..protocol import (LABEL_COARSE_CLASS, LABEL_COARSE_COST, LABEL_FINE_CLASS, LABEL_FINE_COST, LABEL_SIDE,
-                        LABEL_UNREACHABLE, TRAV_CLASS_NAMES, TRAV_CLASSES)
+from ..protocol import (LABEL_COARSE_CLASS, LABEL_COARSE_COST, LABEL_FINE_CLASS, LABEL_FINE_COST,
+                        LABEL_SCALAR_COUNT, LABEL_SCALAR_GOAL_FORWARD, LABEL_SCALAR_GOAL_RIGHT, LABEL_SCALARS,
+                        LABEL_SIDE, LABEL_UNREACHABLE, TRAV_CLASS_NAMES, TRAV_CLASSES)
 from .buffer import RolloutBuffer
 from .networks import (CLASSICAL_COSTS, CLASSICAL_ITERATIONS, CLASSICAL_OPEN_CEILING, CLASSICAL_ORACLE_UNKNOWN,
                        CLASSICAL_SENTINEL, MAP_CODE, MAP_HEIGHT, LayoutActor, LayoutCritic, MapEncoder,
@@ -273,9 +274,13 @@ class MappoConfig:
     # way 66 % of the time on the coarse tier against the VIN's 37 %, 46 % against 32 % on the fine. The same walk and
     # numbers, so waypoint_join reads what it read; the readouts stay the VIN's. No parameter: a checkpoint resumes.
     # "sim" (2026-10-17; MapEncoder.sim_waypoints, networks.ROUTE_COLUMNS): the sim plans the route on the bot's own
-    # map at 1 yd every decision and the waypoint's eight numbers are read off the map block's last eight scalars --
-    # the same numbers and join, refreshed every decision (the cached plan's slice is overwritten at act time); no
-    # value iteration runs for it (the aux pass still measures the classical planner). Needs map block revision 6.
+    # map at 1 yd every decision and the route's seventeen numbers (the fine path's points at 5/10/20/30 yd, its
+    # reach and valid flag, the coarse waypoint's four, the own-map cost-to-go and its flag, the stall clock) are read
+    # off the map block's last seventeen scalars through a join of their own width (Linear 17 -> embed, fresh at zero
+    # over a checkpoint without it or with the walk's eight), refreshed every decision (the cached plan's slice is
+    # overwritten at act time); no value iteration runs for it (the aux pass still measures the classical planner, its
+    # goal plane from the labels' goal: the nav stages carry no compass, and at act time the VIN is not run there,
+    # MapEncoder.goal_blind). Needs map block revision 7.
     planner_waypoint_source: str = "learned"
     # What the classical waypoint prices a cell on (MapEncoder.classical_plan, networks.classical_factor; with
     # planner_waypoint_source "classical"): "head", the costmap head's softmax under CLASSICAL_COSTS everywhere, or
@@ -2283,9 +2288,15 @@ class MappoTrainer:
             rows = rows[torch.randperm(rows.numel(), device=rows.device)[:aux.rows]]
         if rows.numel() == 0:
             return
-        plan: dict = {}
-        encoder(obs[rows], layout[rows], image[rows], plan_out=plan, grad=True)
         picked = labels[rows]
+        # The goal the plan is made from: the labels' goal in the body frame (protocol 33's scalars; the sim writes 0
+        # yards where there is no goal, so a goal is present where either is not 0), never the observation's -- the
+        # nav stages carry no compass (networks.MapEncoder.plan's `label_goal`).
+        scalars = picked[:, LABEL_SCALARS:LABEL_SCALARS + 4 * LABEL_SCALAR_COUNT].contiguous().view(torch.float32)
+        goal_forward, goal_right = scalars[:, LABEL_SCALAR_GOAL_FORWARD], scalars[:, LABEL_SCALAR_GOAL_RIGHT]
+        label_goal = (goal_forward, goal_right, (goal_forward != 0) | (goal_right != 0))
+        plan: dict = {}
+        encoder(obs[rows], layout[rows], image[rows], plan_out=plan, grad=True, label_goal=label_goal)
         n, side, cells = picked.shape[0], LABEL_SIDE, LABEL_SIDE * LABEL_SIDE
         classes = [picked[:, at:at + cells].long().reshape(n, side, side)
                    for at in (LABEL_FINE_CLASS, LABEL_COARSE_CLASS)]

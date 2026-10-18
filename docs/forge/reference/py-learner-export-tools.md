@@ -41,6 +41,8 @@ followed by tanh. The GRU's state feeds the action head. Goals: chosen every `go
 block's ended column is set. The module docstring says the format "must be followed exactly and a change bumps
 `AMDL_VERSION`".
 
+Since then the version has climbed to 19 (`AMDL_VERSION = 19`, readers accept 7..19): 18 for the eight-channel map, 19 (2026-10-17) for the sim's route of seventeen scalars (`networks.ROUTE_COLUMNS`; `route_first` + `route_count` under waypoint source 2, `waypoint_features` 17; compass columns 0xFFFFFFFF on the nav stages, which carry no compass block). The export.py module docstring is the field-by-field reference.
+
 `read_amdl` and `reference_decide` (numpy forward pass incl. goals, attention, pointers) are the reference for the C++
 loader, which is not in this repository (it lives in the mod-animus module; UNVERIFIED location).
 

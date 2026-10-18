@@ -500,6 +500,9 @@ ABLATIONS = ("no_flag", "no_camera", "no_compass", "no_map", "no_memory", "no_go
 GOAL_DRAW_ARMS = ("random_goal", "random_cell", "no_plan")
 #: ... and the ones that are a flag on the networks (Run.evaluate_arms likewise): the chooser edits nothing.
 NETWORK_FLAG_ARMS = ("no_planner",)
+#: The arms that zero a whole stage.json block of the observation, and the block (ablation_chooser; Run.evaluate_arms
+#: skips one whose block no layout of the stage has: the nav stages carry no compass block).
+ABLATION_BLOCKS = {"no_compass": "compass", "no_map": "map", "no_goal": "goal", "no_party": "party_frames"}
 #: ... and the one that is a flag on the sim's MODE (MODE_FLAG_NO_SHARED_MEMORY): nothing of the learner's changes.
 SHARED_MEMORY_ARM = "no_shared_memory"
 #: The sim's episode column that says whether the episode started from the map's shared memory (0/1; a stage with a
@@ -641,7 +644,7 @@ def ablation_chooser(choose: Callable, arm: str, spec, stage: dict | None) -> Ca
     `choose.acting`."""
     if arm not in ABLATIONS:
         raise ValueError(f"unknown ablation arm {arm!r}; expected one of {list(ABLATIONS)}")
-    block = {"no_compass": "compass", "no_map": "map", "no_goal": "goal", "no_party": "party_frames"}.get(arm)
+    block = ABLATION_BLOCKS.get(arm)
     spans = compass_spans(spec, stage, block) if block else []
     if block and not any(count for _, count in spans):
         raise ValueError(f"eval.arms.{arm}: the stage has no {block} block to zero")
@@ -714,8 +717,10 @@ TRACE_FIELDS = (
     # What the seat was told about its trip and its body, raw from the observation (the 0M arm collapse of
     # 2026-10-17: seats that stood turning from their first decision with the pose, the frame and the map the same as
     # a seat that walked -- these are the columns that tell the two apart): the compass (objective present, its
-    # bearing and its distance over OBJECTIVE_SCALE), the goal block's offer (the travel_to kind and the assignment
-    # target, 0/1) and the move block's airborne, in_water and can_jump bits. NaN / -1 where the layout lacks them.
+    # bearing and its distance over OBJECTIVE_SCALE; NaN on the nav stages, which carry no compass block since
+    # 2026-10-17 -- the route on the bot's own map stands in, networks.ROUTE_COLUMNS), the goal block's offer (the
+    # travel_to kind and the assignment target, 0/1) and the move block's airborne, in_water and can_jump bits.
+    # NaN / -1 where the layout lacks them.
     ("objective", np.float32), ("objective_sin", np.float32), ("objective_cos", np.float32),
     ("objective_dist", np.float32), ("travel_to_offered", np.int8), ("assignment_offered", np.int8),
     ("airborne", np.int8), ("in_water", np.int8), ("can_jump", np.int8))
@@ -736,7 +741,9 @@ TRACE_COLUMNS = {
     "objective_cos": ("compass", "objective_bearing_cos"), "objective_dist": ("compass", "objective_distance"),
     "travel_to_offered": ("goal", "goal_kind_travel_to"), "assignment_offered": ("goal", "goal_target_assignment"),
     "airborne": ("move", "airborne"), "in_water": ("move", "in_water"), "can_jump": ("move", "can_jump")}
-#: The held goal's distance is carried as yards / this (GoalBlock goal_held_dist).
+#: The held goal's distance is carried as yards / this (GoalBlock goal_held_dist). On the nav stages the held goal's
+#: direction and distance columns carry the ROUTE (the fine waypoint's bearing, the route's distance over the same
+#: scale), so the trace's goal_x / goal_y there is the waypoint's point, not the goal's.
 GOAL_HELD_DIST_SCALE = 500.0
 #: The sample columns of the protocol-20 kinematics (human.motion: t x y z yaw pitch ...).
 KIN_X, KIN_Y, KIN_Z, KIN_YAW = 1, 2, 3, 4
