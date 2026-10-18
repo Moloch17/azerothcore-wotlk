@@ -195,6 +195,10 @@ namespace Animus::Vision
     /// outside the window, or where every cell round the point is blocked or unreached.
     [[nodiscard]] float PlanValueAt(MapPlan const& plan, float forward, float right);
 
+    /// A 1-yd map cell's step cost multiple for feet at `z`: PLAN_COSTS by its code, a floor or door whose layer
+    /// nearest the feet is further than PLAN_HEIGHT_BAND off them priced as unknown.
+    [[nodiscard]] float CellFactor(MapCell const& cell, float z);
+
     /// Shapes a `side` x `side` grid of fine factors into the body's configuration space (the class comment): the
     /// holes closed to PLAN_BLOCKED, the passable cells next to a wall raised to PLAN_INFLATED at least, those walled
     /// within two cells on both sides to PLAN_PINCHED. Exposed for

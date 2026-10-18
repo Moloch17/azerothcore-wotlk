@@ -56,20 +56,6 @@ namespace
         }
     }
 
-    /// A 1-yd map cell's step cost multiple for feet at `z`: its code, a floor or door whose layer nearest the feet
-    /// is further than PLAN_HEIGHT_BAND off them priced as unknown.
-    [[nodiscard]] float CellFactor(MapCell const& cell, float z)
-    {
-        MapCode code = CodeOf(cell, z);
-        if (code == MapCode::Floor || code == MapCode::Door)
-        {
-            float floor = 0.0f;
-            if (NearestFloor(cell, z, floor) && std::fabs(floor - z) > PLAN_HEIGHT_BAND)
-                code = MapCode::Unknown;
-        }
-        return PLAN_COSTS[uint8_t(code)];
-    }
-
     struct Entry
     {
         float Value;
@@ -176,6 +162,18 @@ namespace
         float const distance = std::max(1e-6f, std::hypot(forward, right));
         return PlanWaypoint{ -right / distance, forward / distance, distance / reach, 1.0f };
     }
+}
+
+float Animus::Vision::CellFactor(MapCell const& cell, float z)
+{
+    MapCode code = CodeOf(cell, z);
+    if (code == MapCode::Floor || code == MapCode::Door)
+    {
+        float floor = 0.0f;
+        if (NearestFloor(cell, z, floor) && std::fabs(floor - z) > PLAN_HEIGHT_BAND)
+            code = MapCode::Unknown;
+    }
+    return PLAN_COSTS[uint8_t(code)];
 }
 
 void Animus::Vision::ConfigurationSpace(float* factor, int32_t side)

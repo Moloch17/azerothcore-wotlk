@@ -79,6 +79,49 @@ namespace Animus::Curriculum
         /// The failure pool's and the draw's bins are the tuning's lists; the ladder is the fade's four rungs.
         static constexpr uint32 RUNGS = 4;
 
+        /// **The map audit** (a diagnostic; nothing of it is observed or paid): at a trip's end short of the goal, the
+        /// bake's true route from the body (its cost-to-go descended along real edges) against the seat's own map --
+        /// a band one bake cell either side of it priced as the fine planner prices the map (Vision::CellFactor,
+        /// Vision::ConfigurationSpace), and the cheapest way through the band: its cells by what the map holds (a wall,
+        /// a hole the configuration space closed, unknown, a hazard, floor), the walls by their writer
+        /// (Vision::WallSource) and by what the bake has round them (a phantom on open floor, a real wall's face, a
+        /// step or a drop). The audit_* columns; a timed-out evaluation trip also writes the band (DumpAudit).
+        enum AuditField : uint32
+        {
+            AUDIT_UNREACHABLE = 0,  // 1: the body's bake cell has no route to the goal (or is off the bake)
+            AUDIT_TRUE_YARDS,       // the bake's route cost-to-go from the body
+            AUDIT_CORRIDOR_COST,    // the cheapest way through the band on the seat's map, planner yards
+            AUDIT_TRUNCATED,        // 1: the true route was cut at AUDIT_SIDE_MAX cells across
+            AUDIT_CELLS,            // the 1-yd cells of that way
+            AUDIT_WALL,             // ... the map holds a wall in
+            AUDIT_CLOSED,           // ... the configuration space closed (a 1-yd hole between walls)
+            AUDIT_UNKNOWN,
+            AUDIT_HAZARD,
+            AUDIT_FLOOR,            // ... known floor or door (inflated or pinched included)
+            AUDIT_FIRST_BLOCK,      // yards along the way to its first wall or closed cell (0: none)
+            AUDIT_WALL_RAY,         // the way's walls by writer
+            AUDIT_WALL_MESH,
+            AUDIT_WALL_BUMP,
+            AUDIT_WALL_INHERITED,
+            AUDIT_WALL_TRUE,        // ... by the bake round them: the bake's own cell is no ground
+            AUDIT_WALL_FACE,        // ... a neighbouring bake cell is (a real wall's face, smeared)
+            AUDIT_WALL_STEP,        // ... a step, jump or drop is there
+            AUDIT_WALL_PHANTOM,     // ... open floor all round
+            AUDIT_WALL_FLOORLESS,   // the way's walls on a cell with no floor known
+            AUDIT_WALL_LAYER_OFF,   // ... with floors, none within LAYER_MERGE of the bake's ground
+            AUDIT_COUNT
+        };
+        static constexpr char const* AUDIT_NAMES[AUDIT_COUNT] = { "audit_unreachable", "audit_true_yards",
+            "audit_corridor_cost", "audit_truncated", "audit_cells", "audit_wall", "audit_closed", "audit_unknown",
+            "audit_hazard", "audit_floor", "audit_first_block_yards", "audit_wall_ray", "audit_wall_mesh",
+            "audit_wall_bump", "audit_wall_inherited", "audit_wall_true", "audit_wall_face", "audit_wall_step",
+            "audit_wall_phantom", "audit_wall_floorless", "audit_wall_layer_off" };
+        /// The band's square, 1-yd cells a side, at most: a longer true route is audited from the body this far.
+        static constexpr int32 AUDIT_SIDE_MAX = 256;
+        /// Where a timed-out evaluation trip's band is written (`<seed>-seat<seat>.audit`); empty for nowhere. Set by
+        /// the forge as each evaluation's videos start (their directory's audit/).
+        static void SetAuditDir(std::string dir);
+
         /// The leader whose reported position is nav6's goal (set by the scenario after construction).
         void FollowLeader(PartyFollowEncounter const* follow) { _follow = follow; }
 
@@ -152,6 +195,9 @@ namespace Animus::Curriculum
             uint32 GlobalDecisions = 0;
             uint32 GlobalReplans = 0;
             uint32 GlobalContradictions = 0;
+            // The map audit (AuditField), made once at the episode's end by the first audit_* column read.
+            bool Audited = false;
+            std::array<float, AUDIT_COUNT> Audit{};
         };
 
         struct EnvNav
@@ -216,6 +262,8 @@ namespace Animus::Curriculum
         /// The waypoint regret of a cell goal the seat just chose: C(its block) less the least C over the choosable
         /// blocks of the crop it was chosen from; nothing when it cannot be read.
         void NoteWaypoint(Env const& env, uint32 seatIndex, EnvNav& nav, SeatNav& seat) const;
+        /// The map audit of `seat`'s trip into its SeatNav (AuditField), and a timed-out evaluation trip's band dumped.
+        void RunAudit(Env const& env, uint32 seat);
         /// The episode's generator (seeded in BeforeLevel: from the evaluation seed in an evaluation).
         [[nodiscard]] std::mt19937& Rng(Env const& env) const;
         [[nodiscard]] float Uniform(Env const& env) const;

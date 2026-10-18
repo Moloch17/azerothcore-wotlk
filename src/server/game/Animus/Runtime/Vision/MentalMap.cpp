@@ -352,6 +352,7 @@ void Animus::Vision::MentalMap::Clear()
     _bumpedTotal = 0;
     _lastBumpClock = -1.0e9;
     _bumpHolds.clear();
+    _wallSources.clear();
     _lastGroundClock = 0.0;
     _frameWalls.clear();
     _frameClears.clear();
@@ -378,6 +379,7 @@ void Animus::Vision::MentalMap::BeginEpisode()
     _groundTotal = 0;
     _searchedTotal = 0;
     _bumpedEpisode = 0;
+    _wallSources.clear();
     _lastGroundClock = _clock;
 }
 
@@ -651,8 +653,20 @@ void Animus::Vision::MentalMap::WriteFloor(int32_t cx, int32_t cy, float z, uint
         Touch(cx, cy).Flags |= MAP_EDGE;
 }
 
+void Animus::Vision::MentalMap::NoteWallSource(int32_t cx, int32_t cy, WallSource source)
+{
+    if (_trackSources)
+        _wallSources[TileKey(cx, cy)] = source;
+}
+
+Animus::Vision::WallSource Animus::Vision::MentalMap::WallSourceOf(int32_t cx, int32_t cy) const
+{
+    auto const found = _wallSources.find(TileKey(cx, cy));
+    return found == _wallSources.end() ? WallSource::Inherited : found->second;
+}
+
 bool Animus::Vision::MentalMap::WriteWall(int32_t cx, int32_t cy, float z, float feetZ, float bodyHeight,
-    uint16_t stamp)
+    uint16_t stamp, WallSource source)
 {
     // A wall within the body's band above a floor: the cell's own, else a neighbour's, else the feet's.
     float reference = 0.0f;
@@ -697,6 +711,7 @@ bool Animus::Vision::MentalMap::WriteWall(int32_t cx, int32_t cy, float z, float
     }
     MapCell& cell = Touch(cx, cy);
     cell.Flags |= flag;
+    NoteWallSource(cx, cy, source);
     if (!(cell.Flags & MAP_WALL_FRAME))
     {
         cell.Flags |= MAP_WALL_FRAME;
@@ -991,7 +1006,7 @@ void Animus::Vision::MentalMap::WriteFrame(FrameHits const& hits, float feetZ, f
                 }
                 if (ray.NormalZ <= CEILING_NORMAL)
                     break;
-                if (WriteWall(hitX, hitY, ray.Z, feetZ, bodyHeight, stamp) && stats)
+                if (WriteWall(hitX, hitY, ray.Z, feetZ, bodyHeight, stamp, WallSource::Ray) && stats)
                     ++stats->Walls;
                 break;
             }
@@ -1214,7 +1229,7 @@ void Animus::Vision::MentalMap::Mesh(FrameHits const& hits, float feetZ, float b
                 if (stats)
                     ++stats->MeshedFar;
             }
-            else if (WriteWall(cx, cy, z, feetZ, bodyHeight, stamp) && stats)
+            else if (WriteWall(cx, cy, z, feetZ, bodyHeight, stamp, WallSource::Mesh) && stats)
                 ++stats->Meshed;
         }
     };
@@ -1396,6 +1411,7 @@ uint32_t Animus::Vision::MentalMap::MarkBumped(float x, float y, float feetZ, fl
         if (!(cell.Flags & flag))
             ++walled;
         cell.Flags |= flag;
+        NoteWallSource(cx, cy, WallSource::Bump);
         MarkSeen(cell, stamp);
 
         // Held against the camera's clears: an earlier hold of the cell renewed, else a new one (the oldest giving

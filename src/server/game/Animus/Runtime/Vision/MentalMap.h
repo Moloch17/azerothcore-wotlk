@@ -171,6 +171,17 @@ namespace Animus::Vision
         MAP_WALL_FRAME = 0x80,      // a wall was written here this frame (inside WriteFrame only; never kept)
     };
 
+    /// Which writer last set a 1-yd cell's wall this episode (MentalMap::WallSourceOf; a diagnostic, never observed):
+    /// none for a wall the episode inherited (the shared memory, the map kept from the episode before).
+    enum class WallSource : uint8_t
+    {
+        Inherited = 0,
+        Ray,            // a ray's own wall hit (WriteFrame)
+        Mesh,           // the line between two neighbouring wall hits (Mesh)
+        Bump,           // the bumper (MarkBumped)
+        Count
+    };
+
     /// One yard of the map, eight bytes.
     struct MapCell
     {
@@ -434,6 +445,10 @@ namespace Animus::Vision
         /// it was pushing does not go through).
         [[nodiscard]] uint32_t BumpedCells() const { return _bumpedEpisode; }
         [[nodiscard]] uint64_t BumpedTotal() const { return _bumpedTotal; }
+        /// Record which writer sets each wall this episode (WallSourceOf), for the nav stages' map audit; off by
+        /// default. BeginEpisode and Clear forget the record.
+        void TrackWallSources(bool on) { _trackSources = on; }
+        [[nodiscard]] WallSource WallSourceOf(int32_t cx, int32_t cy) const;
 
         /// The cell at world (x, y), or null when its tile is not kept (a coarse cell is not one).
         [[nodiscard]] MapCell const* Find(float x, float y) const;
@@ -515,7 +530,9 @@ namespace Animus::Vision
         void WriteEntity(MapCell& cell, Class what, uint16_t stamp);
         /// A wall hit at height `z` on 1-yd cell (cx, cy), when it is in the body's band of a floor (the cell's own,
         /// else a neighbour's, else the feet's); true when it was written.
-        bool WriteWall(int32_t cx, int32_t cy, float z, float feetZ, float bodyHeight, uint16_t stamp);
+        bool WriteWall(int32_t cx, int32_t cy, float z, float feetZ, float bodyHeight, uint16_t stamp,
+            WallSource source);
+        void NoteWallSource(int32_t cx, int32_t cy, WallSource source);
         /// The 1-yd cell (cx, cy) when its tile is the map's own (not borrowed), else null.
         [[nodiscard]] MapCell* OwnCell(int32_t cx, int32_t cy);
         /// An observation of `cell`'s floor layer `layer` (-1: the cell has no floor known) with nothing in the way:
@@ -568,6 +585,8 @@ namespace Animus::Vision
         /// Whether 1-yd cell (cx, cy) is held against the camera's clears now.
         [[nodiscard]] bool BumpHeld(int32_t cx, int32_t cy) const;
         double _lastGroundClock = 0.0;
+        bool _trackSources = false;
+        std::unordered_map<int64_t, WallSource> _wallSources;   // TileKey-packed 1-yd cell -> its wall's writer
         uint64_t _touch = 0;
         // The last tile Touch found: a frame writes runs of cells in one tile; and TouchFar's.
         int64_t _lastKey = 0;

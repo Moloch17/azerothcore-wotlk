@@ -17,6 +17,7 @@
  */
 
 #include "AnimusForge.h"
+#include "PointNavEncounter.h"
 #include "GpuRuntime.h"
 #include "MoveBlock.h"
 #include "ReportCadence.h"
@@ -1673,6 +1674,7 @@ void AnimusForge::Forge::BeginEvalVideos(std::vector<ModeMsg> const& modes)
 
     Vi::EvalVideoOptions options;
     options.Dir = run.RunsDir() / _current / "videos" / label;
+    Animus::Curriculum::PointNavEncounter::SetAuditDir((options.Dir / "audit").string());
     options.Scenario = _current;
     options.Label = label;
     options.Camera = Vi::Current();

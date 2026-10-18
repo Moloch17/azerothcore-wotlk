@@ -4253,6 +4253,7 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
         else
             memory->Objects().Anchor(seat.Objects, now);
         seat.MapKept = seat.MapShared && seat.Map.Tiles() > 0;
+        seat.Map.TrackWallSources(true);
         seat.Map.BeginEpisode();
         seat.Recall.Configure(Vision::MemoryCurrent());
         seat.RecallKept = false;
@@ -4271,6 +4272,7 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
             seat.Map.Advance(std::max(seat.MapAgeOffset, 1.0f));
         else
             seat.Map.Clear();
+        seat.Map.TrackWallSources(true);
         seat.Map.BeginEpisode();
         seat.Map.Configure(Vision::MapCurrent().Caps);
         // Entity memory by the same roll and offset (I2): every sighting in it ages as the map's looks do.

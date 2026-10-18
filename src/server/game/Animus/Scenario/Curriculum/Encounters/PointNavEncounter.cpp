@@ -39,6 +39,7 @@
 #include "StageDefinition.h"
 #include "StageScenario.h"
 #include "StageState.h"
+#include "StringFormat.h"
 #include "Standing.h"
 #include "UnitBody.h"
 #include "UnitDefines.h"
@@ -46,6 +47,10 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <functional>
+#include <queue>
+#include <unordered_set>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -242,6 +247,338 @@ void Animus::Curriculum::PointNavEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
         float const yards = seatOf(env, seat).MapRouteLast;
         return yards >= Vision::TRAV_UNREACHABLE ? 0.0f : yards;
     });
+    // The map audit (AuditField): made by the first of its columns read, at the episode's end.
+    for (uint32 field = 0; field < AUDIT_COUNT; ++field)
+        add(AUDIT_NAMES[field], [this, field](Env const& env, uint32 seat)
+        {
+            SeatNav& s = _envs[env.Index].Seats[std::min<uint32>(seat, GROUP_SEATS - 1)];
+            if (!s.Audited)
+                RunAudit(env, std::min<uint32>(seat, GROUP_SEATS - 1));
+            return s.Audit[field];
+        });
+}
+
+namespace
+{
+    std::mutex AuditDirLock;
+    std::string AuditDir;
+
+    /// A bake cell no body stands on: rock, a void, a slope too steep.
+    bool AuditSolid(Animus::Vision::TravClass what)
+    {
+        using Animus::Vision::TravClass;
+        return what == TravClass::Unknown || what == TravClass::Wall || what == TravClass::Slope;
+    }
+
+    bool AuditStep(Animus::Vision::TravClass what)
+    {
+        using Animus::Vision::TravClass;
+        return what == TravClass::StepUp || what == TravClass::Jump || what == TravClass::DropSafe
+            || what == TravClass::DropHurt || what == TravClass::DropLethal;
+    }
+
+    /// A band cell's kind in the dump and the counts (AuditField's AUDIT_WALL .. AUDIT_FLOOR order).
+    enum AuditKind : uint8_t
+    {
+        KIND_FLOOR = 0,
+        KIND_WALL,
+        KIND_CLOSED,
+        KIND_UNKNOWN,
+        KIND_HAZARD,
+    };
+
+    AuditKind KindOf(float raw, float shaped)
+    {
+        if (raw >= Animus::Vision::PLAN_BLOCKED)
+            return KIND_WALL;
+        if (shaped >= Animus::Vision::PLAN_BLOCKED)
+            return KIND_CLOSED;
+        if (raw >= Animus::Vision::PLAN_COSTS[uint8_t(Animus::Vision::MapCode::Hazard)])
+            return KIND_HAZARD;
+        if (raw >= Animus::Vision::PLAN_UNKNOWN)
+            return KIND_UNKNOWN;
+        return KIND_FLOOR;
+    }
+}
+
+void Animus::Curriculum::PointNavEncounter::SetAuditDir(std::string dir)
+{
+    std::lock_guard<std::mutex> guard(AuditDirLock);
+    AuditDir = std::move(dir);
+}
+
+void Animus::Curriculum::PointNavEncounter::RunAudit(Env const& env, uint32 seatIndex)
+{
+    namespace Vi = Animus::Vision;
+    EnvNav const& nav = _envs[env.Index];
+    SeatNav& seat = _envs[env.Index].Seats[seatIndex];
+    seat.Audited = true;
+    seat.Audit.fill(0.0f);
+    if (!nav.Placed || nav.LabelsOnly || !nav.Grid || nav.GoalCell == Vi::TRAV_NO_CELL || nav.Cost.empty()
+        || seat.Reached || !seat.HasLastPos)
+        return;
+    Vi::TravGrid const& grid = *nav.Grid;
+    SeatState const& state = _scenario.Data(env).Seats[std::min<uint32>(seatIndex, MAX_SEATS - 1)];
+    Vi::MentalMap const& map = state.Map;
+    uint32 cell = grid.CellOf(seat.LastX, seat.LastY);
+    if (cell == Vi::TRAV_NO_CELL || nav.Cost[cell] >= Vi::TRAV_UNREACHABLE)
+    {
+        seat.Audit[AUDIT_UNREACHABLE] = 1.0f;
+        return;
+    }
+    seat.Audit[AUDIT_TRUE_YARDS] = nav.Cost[cell];
+
+    // The true route: from the body's bake cell down the cost-to-go, along the bake's own edges, to the goal; cut
+    // where its band would no longer fit AUDIT_SIDE_MAX cells across.
+    auto const cellBox = [&grid](uint32 at, int32& x0, int32& y0, int32& x1, int32& y1)
+    {
+        float const minX = grid.CentreX(at) - 0.5f * Vi::TRAV_CELL - Vi::TRAV_CELL;
+        float const minY = grid.CentreY(at) - 0.5f * Vi::TRAV_CELL - Vi::TRAV_CELL;
+        x0 = int32(std::floor(minX));
+        y0 = int32(std::floor(minY));
+        x1 = int32(std::floor(minX + 3.0f * Vi::TRAV_CELL)) - 1;
+        y1 = int32(std::floor(minY + 3.0f * Vi::TRAV_CELL)) - 1;
+    };
+    std::vector<uint32> path{ cell };
+    int32 bx0, by0, bx1, by1;
+    cellBox(cell, bx0, by0, bx1, by1);
+    bool truncated = false;
+    while (cell != nav.GoalCell)
+    {
+        uint32 best = Vi::TRAV_NO_CELL;
+        float bestCost = nav.Cost[cell];
+        for (int32 dir = 0; dir < Vi::TRAV_DIRS; ++dir)
+        {
+            if (Vi::TravEdge(grid.Edges[std::size_t(cell) * Vi::TRAV_DIRS + dir]) == Vi::TravEdge::None)
+                continue;
+            uint32 const next = grid.Neighbour(cell, dir);
+            if (next != Vi::TRAV_NO_CELL && nav.Cost[next] < bestCost)
+            {
+                best = next;
+                bestCost = nav.Cost[next];
+            }
+        }
+        if (best == Vi::TRAV_NO_CELL)
+            break;
+        int32 x0, y0, x1, y1;
+        cellBox(best, x0, y0, x1, y1);
+        int32 const nx0 = std::min(bx0, x0), ny0 = std::min(by0, y0);
+        int32 const nx1 = std::max(bx1, x1), ny1 = std::max(by1, y1);
+        if (nx1 - nx0 + 1 > AUDIT_SIDE_MAX || ny1 - ny0 + 1 > AUDIT_SIDE_MAX)
+        {
+            truncated = true;
+            break;
+        }
+        bx0 = nx0, by0 = ny0, bx1 = nx1, by1 = ny1;
+        cell = best;
+        path.push_back(cell);
+    }
+    seat.Audit[AUDIT_TRUNCATED] = truncated ? 1.0f : 0.0f;
+    std::unordered_set<uint32> band;
+    for (uint32 const at : path)
+    {
+        band.insert(at);
+        for (int32 dir = 0; dir < Vi::TRAV_DIRS; ++dir)
+            if (uint32 const next = grid.Neighbour(at, dir); next != Vi::TRAV_NO_CELL)
+                band.insert(next);
+    }
+
+    // The square over the band, the map's cells in it priced for the bake's ground there (the body's own, where the
+    // bake has none) as the fine planner prices them, then shaped into the configuration space.
+    int32 const side = std::max(bx1 - bx0, by1 - by0) + 1;
+    int32 const x0 = bx0;
+    int32 const y0 = by0;
+    std::size_t const cells = std::size_t(side) * std::size_t(side);
+    std::vector<Vi::MapCell> window(cells);
+    map.Window(x0, y0, side, window.data());
+    float const bodyZ = grid.StandingZ(grid.CellOf(seat.LastX, seat.LastY));
+    std::vector<float> raw(cells), shaped(cells), groundZ(cells);
+    std::vector<uint32> bakeOf(cells);
+    std::vector<uint8> inBand(cells);
+    for (int32 row = 0; row < side; ++row)
+        for (int32 col = 0; col < side; ++col)
+        {
+            std::size_t const at = std::size_t(row) * std::size_t(side) + std::size_t(col);
+            uint32 const bake = grid.CellOf(float(x0 + col) + 0.5f, float(y0 + row) + 0.5f);
+            bakeOf[at] = bake;
+            float z = bodyZ;
+            if (bake != Vi::TRAV_NO_CELL && grid.Ground[bake] != Vi::TRAV_NO_HEIGHT)
+                z = grid.StandingZ(bake);
+            groundZ[at] = z;
+            raw[at] = Vi::CellFactor(window[at], z);
+            inBand[at] = bake != Vi::TRAV_NO_CELL && band.count(bake) ? 1 : 0;
+        }
+    shaped = raw;
+    Vi::ConfigurationSpace(shaped.data(), side);
+
+    // The cheapest way through the band, body to goal (the true route's last cell where it was cut).
+    auto const local = [&](float x, float y, int32& at) -> bool
+    {
+        int32 const col = int32(std::floor(x)) - x0;
+        int32 const row = int32(std::floor(y)) - y0;
+        if (col < 0 || row < 0 || col >= side || row >= side)
+            return false;
+        at = row * side + col;
+        return true;
+    };
+    int32 from = 0, to = 0;
+    float const goalX = truncated ? grid.CentreX(path.back()) : nav.Goal.GetPositionX();
+    float const goalY = truncated ? grid.CentreY(path.back()) : nav.Goal.GetPositionY();
+    if (!local(seat.LastX, seat.LastY, from) || !local(goalX, goalY, to))
+        return;
+    inBand[std::size_t(from)] = inBand[std::size_t(to)] = 1;
+    constexpr int32 DX[8] = { 1, -1, 0, 0, 1, 1, -1, -1 };
+    constexpr int32 DY[8] = { 0, 0, 1, -1, 1, -1, 1, -1 };
+    constexpr float STEP[8] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.4142136f, 1.4142136f, 1.4142136f, 1.4142136f };
+    std::vector<float> dist(cells, std::numeric_limits<float>::infinity());
+    std::vector<int32> parent(cells, -1);
+    using Entry = std::pair<float, int32>;
+    std::priority_queue<Entry, std::vector<Entry>, std::greater<Entry>> open;
+    dist[std::size_t(from)] = 0.0f;
+    open.push({ 0.0f, from });
+    while (!open.empty())
+    {
+        auto const [value, at] = open.top();
+        open.pop();
+        if (value > dist[std::size_t(at)])
+            continue;
+        if (at == to)
+            break;
+        int32 const row = at / side;
+        int32 const col = at % side;
+        for (int32 dir = 0; dir < 8; ++dir)
+        {
+            int32 const r = row + DY[dir];
+            int32 const c = col + DX[dir];
+            if (r < 0 || c < 0 || r >= side || c >= side)
+                continue;
+            int32 const next = r * side + c;
+            if (!inBand[std::size_t(next)])
+                continue;
+            float const cost = value + shaped[std::size_t(next)] * STEP[dir];
+            if (cost < dist[std::size_t(next)])
+            {
+                dist[std::size_t(next)] = cost;
+                parent[std::size_t(next)] = at;
+                open.push({ cost, next });
+            }
+        }
+    }
+    if (parent[std::size_t(to)] < 0 && to != from)
+        return;
+    seat.Audit[AUDIT_CORRIDOR_COST] = dist[std::size_t(to)];
+
+    // The way's cells from the body on: what the map holds in each, and of its walls, who wrote them and what the
+    // bake has there.
+    std::vector<int32> way;
+    for (int32 at = to; at >= 0; at = parent[std::size_t(at)])
+        way.push_back(at);
+    std::reverse(way.begin(), way.end());
+    std::vector<uint8> onWay(cells);
+    float along = 0.0f;
+    bool blocked = false;
+    for (std::size_t index = 0; index < way.size(); ++index)
+    {
+        std::size_t const at = std::size_t(way[index]);
+        onWay[at] = 1;
+        if (index)
+        {
+            int32 const prev = way[index - 1];
+            bool const diagonal = prev % side != way[index] % side && prev / side != way[index] / side;
+            along += diagonal ? 1.4142136f : 1.0f;
+        }
+        seat.Audit[AUDIT_CELLS] += 1.0f;
+        AuditKind const kind = KindOf(raw[at], shaped[at]);
+        switch (kind)
+        {
+            case KIND_FLOOR: seat.Audit[AUDIT_FLOOR] += 1.0f; break;
+            case KIND_WALL: seat.Audit[AUDIT_WALL] += 1.0f; break;
+            case KIND_CLOSED: seat.Audit[AUDIT_CLOSED] += 1.0f; break;
+            case KIND_UNKNOWN: seat.Audit[AUDIT_UNKNOWN] += 1.0f; break;
+            case KIND_HAZARD: seat.Audit[AUDIT_HAZARD] += 1.0f; break;
+        }
+        if ((kind == KIND_WALL || kind == KIND_CLOSED) && !blocked)
+        {
+            blocked = true;
+            seat.Audit[AUDIT_FIRST_BLOCK] = std::max(along, 0.5f);
+        }
+        if (kind != KIND_WALL)
+            continue;
+        int32 const cx = x0 + way[index] % side;
+        int32 const cy = y0 + way[index] / side;
+        switch (map.WallSourceOf(cx, cy))
+        {
+            case Vi::WallSource::Ray: seat.Audit[AUDIT_WALL_RAY] += 1.0f; break;
+            case Vi::WallSource::Mesh: seat.Audit[AUDIT_WALL_MESH] += 1.0f; break;
+            case Vi::WallSource::Bump: seat.Audit[AUDIT_WALL_BUMP] += 1.0f; break;
+            default: seat.Audit[AUDIT_WALL_INHERITED] += 1.0f; break;
+        }
+        uint32 const bake = bakeOf[at];
+        bool solidNear = false, stepNear = bake != Vi::TRAV_NO_CELL && AuditStep(grid.ClassOf(bake));
+        if (bake != Vi::TRAV_NO_CELL)
+            for (int32 dir = 0; dir < Vi::TRAV_DIRS; ++dir)
+            {
+                uint32 const next = grid.Neighbour(bake, dir);
+                Vi::TravClass const what = next == Vi::TRAV_NO_CELL ? Vi::TravClass::Unknown : grid.ClassOf(next);
+                solidNear = solidNear || AuditSolid(what);
+                stepNear = stepNear || AuditStep(what);
+            }
+        if (bake == Vi::TRAV_NO_CELL || AuditSolid(grid.ClassOf(bake)))
+            seat.Audit[AUDIT_WALL_TRUE] += 1.0f;
+        else if (solidNear)
+            seat.Audit[AUDIT_WALL_FACE] += 1.0f;
+        else if (stepNear)
+            seat.Audit[AUDIT_WALL_STEP] += 1.0f;
+        else
+            seat.Audit[AUDIT_WALL_PHANTOM] += 1.0f;
+        float floor = 0.0f;
+        if (!Vi::NearestFloor(window[at], groundZ[at], floor))
+            seat.Audit[AUDIT_WALL_FLOORLESS] += 1.0f;
+        else if (std::fabs(floor - groundZ[at]) > Vi::LAYER_MERGE)
+            seat.Audit[AUDIT_WALL_LAYER_OFF] += 1.0f;
+    }
+
+    // A timed-out evaluation trip's band, for tools/nav_audit.py: a header, then a byte a cell for each of the map's
+    // code for the bake's ground (Vision::CodeOf), the way's kind (KindOf), the wall's writer (255: no wall), the
+    // bake's class, and flags (1 the band, 2 the true route's bake cells, 4 the way).
+    if (!env.Evaluating || !state.Combat.TimedOut)
+        return;
+    std::string dir;
+    {
+        std::lock_guard<std::mutex> guard(AuditDirLock);
+        dir = AuditDir;
+    }
+    if (dir.empty())
+        return;
+    std::unordered_set<uint32> route(path.begin(), path.end());
+    std::vector<uint8> bytes(cells * 5);
+    for (std::size_t at = 0; at < cells; ++at)
+    {
+        int32 const cx = x0 + int32(at % std::size_t(side));
+        int32 const cy = y0 + int32(at / std::size_t(side));
+        bytes[at] = uint8(Vi::CodeOf(window[at], groundZ[at]));
+        bytes[cells + at] = uint8(KindOf(raw[at], shaped[at]));
+        bytes[2 * cells + at] = raw[at] >= Vi::PLAN_BLOCKED ? uint8(map.WallSourceOf(cx, cy)) : 255;
+        bytes[3 * cells + at] = bakeOf[at] == Vi::TRAV_NO_CELL ? 0 : uint8(grid.ClassOf(bakeOf[at]));
+        bytes[4 * cells + at] = uint8((inBand[at] ? 1 : 0) | (bakeOf[at] != Vi::TRAV_NO_CELL
+            && route.count(bakeOf[at]) ? 2 : 0) | (onWay[at] ? 4 : 0));
+    }
+    std::error_code error;
+    std::filesystem::create_directories(dir, error);
+    std::filesystem::path const file = std::filesystem::path(dir)
+        / Acore::StringFormat("{}-seat{}.audit", env.EpisodeSeedIndex, seatIndex);
+    std::ofstream out(file, std::ios::binary);
+    if (!out)
+        return;
+    char const magic[8] = { 'N', 'A', 'V', 'A', 'U', 'D', '1', '\0' };
+    int32 const header[4] = { side, x0, y0, int32(env.EpisodeSeedIndex) };
+    float const where[5] = { seat.LastX, seat.LastY, nav.Goal.GetPositionX(), nav.Goal.GetPositionY(),
+        seat.MapRouteLast };
+    out.write(magic, sizeof(magic));
+    out.write(reinterpret_cast<char const*>(header), sizeof(header));
+    out.write(reinterpret_cast<char const*>(where), sizeof(where));
+    out.write(reinterpret_cast<char const*>(seat.Audit.data()), sizeof(float) * AUDIT_COUNT);
+    out.write(reinterpret_cast<char const*>(bytes.data()), std::streamsize(bytes.size()));
 }
 
 void Animus::Curriculum::PointNavEncounter::ResetEpisode(Env& env)
