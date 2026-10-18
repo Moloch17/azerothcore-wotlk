@@ -274,6 +274,7 @@ class EvalLog:
                 "env_steps": env_steps,
                 "action": outcome.action,
                 "reason": outcome.reason,
+                "why": outcome.detail,
                 "layouts": outcome.report,
             }) + "\n")
 
@@ -750,6 +751,8 @@ class TrainingRun:
         self.arena_names = tuple(arena["name"] for arena in (self.stage or {}).get("arenas", ()))
         self.heldout = heldout_arenas(config.eval.heldout, self.stage) if self.stage is not None else {}
         self.heldout_current = False   # whether the latest evaluation played them
+        # Whether the latest evaluation played eval.arms, and its plain summary (the leader's; None elsewhere).
+        self.arms_current, self.last_eval_summary = False, None
         # Exploration v3: the arenas the latest evaluation skipped under eval.heldout_cadence (the stage's last
         # evaluation plays them), and that evaluation's number (the leader's count, broadcast to every rank).
         self.heldout_skipped: list[str] = []
@@ -1443,10 +1446,11 @@ class TrainingRun:
             return True
         return False
 
-    def evaluate(self, final: bool = False) -> None:
+    def evaluate(self, final: bool = False, start: bool = False) -> None:
         """Score the networks on the seeds (and the baseline once per run); the next training STEP becomes current.
         With data-parallel learners every rank plays its share of the seeds and the leader scores them all. `final`:
-        the stage's last evaluation, which always plays the held-out arenas (eval.heldout_every)."""
+        the stage's last evaluation, which always plays the held-out arenas (eval.heldout_every) and the arms; `start`:
+        the run's start evaluation, which plays the arms under eval.arms_at_start."""
         self.drain_update()
         config, tracker, controller = self.config, self.tracker, self.controller
         leader = self.ranks.leader
@@ -1519,8 +1523,10 @@ class TrainingRun:
             heldout = bool(self.heldout) and heldout_due(len(tracker.history), config.eval.heldout_every, final,
                                                           improved, config.eval.heldout_on_best)
 
-        # The evaluation arms beside this one (eval.arms): due every eval.arms_every evaluations and on the last.
-        arms = leader and bool(config.eval.arms) and (final or len(tracker.history) % config.eval.arms_every == 0)
+        # The evaluation arms beside this one (eval.arms): due every eval.arms_every evaluations, on the last, and on
+        # the start one under eval.arms_at_start (the start-of-stage reading of what the seeded networks steer by).
+        arms = leader and bool(config.eval.arms) and (final or len(tracker.history) % config.eval.arms_every == 0
+                                                      or (start and config.eval.arms_at_start))
 
         # What the leader decided, carried out on every rank.
         sampled, heldout, arms, improved_best, self.eval_number = self.ranks.broadcast(
@@ -1533,6 +1539,9 @@ class TrainingRun:
         self.heldout_current = heldout
         if heldout:
             self.evaluate_heldout(final)
+        # Whether this evaluation played its arms, and the plain summary they compare with: a stage that ends on it
+        # plays them then if it did not (train, after ADVANCE).
+        self.arms_current, self.last_eval_summary = arms, summary
         if arms:
             self.evaluate_arms(summary)
 
@@ -1627,8 +1636,8 @@ class TrainingRun:
     def evaluate_sampled(self, argmax: dict) -> None:
         """Score sampled actions on the evaluation seeds, next to the argmax evaluation that just ran."""
         config = self.config
-        result = self._evaluate_share(self._acting(False), config.eval.episodes, config.eval.seed,
-                                      arenas=self.arena_names,
+        result = self._evaluate_share(self._acting(False), config.eval.sampled_episodes or config.eval.episodes,
+                                      config.eval.seed, arenas=self.arena_names,
                                       action_names=self.action_names, collect_motion=self.collects_motion)
         if self.cast is not None or self.partners is not None:
             self._reset_far_side()
@@ -1884,6 +1893,11 @@ class TrainingRun:
         self.eval_log.write_outcome(self.update, self.env_steps, outcome)
         pending = {name: row["missing"] for name, row in (outcome.report or {}).items() if not row["converged"]}
         best = "-" if tracker.best is None else format(tracker.best, ".4g")
+        if outcome.detail:
+            # Which end condition, first: under a ladder's last-rung end no class need have converged by the per-class
+            # rule, and the lines below say only what that rule still missed.
+            print(f"Stage complete ({outcome.reason}): {outcome.detail}", flush=True)
+            self.log_event(f"stage complete ({outcome.reason}): {outcome.detail}")
         print(f"Stage complete ({outcome.reason}): best {self.judged_kind or 'score'} {best} at "
               f"{tracker.best_env_steps} env steps; {len((outcome.report or {})) - len(pending)} of "
               f"{len((outcome.report or {}))} classes converged.",
@@ -2655,6 +2669,12 @@ class TrainingRun:
                         and (not self.heldout_current or self.heldout_skipped):
                     # ... and any arena its cadence skipped (eval.heldout_cadence) is played now.
                     self.evaluate_heldout(True, only=set(self.heldout_skipped) if self.heldout_current else None)
+                # ... and its arms, when eval.arms_every skipped them there (the stage's last reading of each), on a
+                # stage that may end on its ladder's last rung (convergence.top_gate_evals / top_plateau_evals).
+                ends_on_top = config.convergence.top_gate_evals > 0 or config.convergence.top_plateau_evals > 0
+                if decision is not None and decision.action == ADVANCE and config.eval.arms and ends_on_top \
+                        and not self.arms_current:
+                    self.evaluate_arms(self.last_eval_summary)
                 if self.handle(decision):
                     return decision
 
@@ -2688,7 +2708,7 @@ class TrainingRun:
         # empty history as a run never evaluated, twice.
         if self.ranks.broadcast(self.evaluating and self.config.eval.at_start and not self.resume_path
                                 and not self.tracker.history):
-            self.evaluate()
+            self.evaluate(start=True)
         last_eval = self.controller.last_eval_env_steps
         if last_eval is None:
             last_eval = self.tracker.history[-1][0] if self.tracker.history else self.env_steps
@@ -2709,6 +2729,7 @@ class TrainingRun:
         if outcome and self.ranks.leader:
             self.finished_path.write_text(json.dumps({
                 "reason": outcome.reason,
+                "why": outcome.detail,
                 "advanced": outcome.action == ADVANCE,
                 "env_steps": self.env_steps,
                 "update": self.update,
@@ -2716,7 +2737,8 @@ class TrainingRun:
                 "best_env_steps": tracker.best_env_steps,
                 "layouts": outcome.report,
             }, indent=2))
-            print(f"{self.config.run_name} finished: {outcome.reason}", flush=True)
+            print(f"{self.config.run_name} finished: {outcome.reason}"
+                  + (f" ({outcome.detail})" if outcome.detail else ""), flush=True)
         self.progress.write("finished" if outcome else "stopped", self.update, self.env_steps,
                             outcome.reason if outcome else "", advanced=bool(outcome and outcome.action == ADVANCE))
         self.drain_update()

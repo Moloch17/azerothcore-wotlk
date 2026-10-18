@@ -142,8 +142,14 @@ aux:
   planner_dir_temp: 1.0
 
 # Seeded evaluation every 10M steps: 256 trips at the training rung's bins over the two training dungeons (the pairs
-# seeded by EpisodeSeed, no failure replay), argmax; the sampled policy on the same seeds at every evaluation (the
-# argmax gap); Wailing Caverns, never trained on, every evaluation; and the ablation arms every evaluation.
+# seeded by EpisodeSeed, no failure replay), argmax; the sampled policy on the first 128 of those seeds at every
+# evaluation (the argmax gap); Wailing Caverns, never trained on, every evaluation; and the ablation arms every second
+# evaluation, at the start one and at the stage's last.
+#
+# The cost (nav1, 2026-10-17, 82-yd trips at rung 2): the plain 256 took ~33 s, the sampled 256 ~32 s, Wailing's 64
+# ~12 s and each arm's 64 ~11 s -- ~133 s an evaluation with five arms. Sampled at 128 (~16 s) and the arms on every
+# other evaluation, an evaluation is ~61 s without its arms and ~117 s with them: ~89 s on average, a third less
+# (~44 s, or ~11 minutes over a 150M-step stage's 15 evaluations; more with each arm added).
 eval:
   every_env_steps: 10000000
   at_start: true
@@ -151,6 +157,9 @@ eval:
   seed: 1000
   deterministic: true
   sampled_every: 1
+  # The sampled pass on the first 128 seeds (eval.sampled_episodes): its argmax_gap is those 128 against the plain
+  # 256, a reading of the gap and not a like-for-like difference; the argmax judges, the sampled pass only reads.
+  sampled_episodes: 128
   trace_episodes: 32
   trace_all: true
   heldout:
@@ -160,8 +169,11 @@ eval:
   # The learner's own inputs taken away on the evaluation's seeds (evaluation.ABLATIONS): no_camera (the image
   # blanked), no_map (the map block and both crop tiers zeroed), no_planner (the planner's readouts and the pointer's
   # bonus zeroed), no_memory (the recurrent state reset every decision). Readings, never gates: what the policy steers
-  # by, read as spl_no_camera and the like in forge status.
-  arms_every: 1
+  # by, read as spl_no_camera and the like in forge status. Every second evaluation at the rung (arms_every counts the
+  # rung's evaluations: a ladder's step starts it over), at the start evaluation (arms_at_start: what the seeded
+  # networks steer by) and the stage's last (the budget's, or the one it converged on).
+  arms_every: 2
+  arms_at_start: true
   arms:
     no_camera: 64
     no_map: 64
@@ -212,6 +224,13 @@ convergence:
   # Converged on the stage's own measure, the argmax SPL at the top rung of the ladder (at_top_rung); the ladder
   # settled is a convergence signal too.
   measure: spl
+  # The stage also ends on the ladder's last rung (stage.ConvergenceController.top_rung_end), the budget a ceiling:
+  # its gate (fade.gate_metrics' last entries) met at 2 evaluations running, or SPL there with no new best beyond the
+  # tracker's margin (~0.08 at 256 trips) for 4 evaluations and no trend that would clear it. The per-class rule
+  # (score, KL, entropy, ladder, top rung all at once, for every class) met none of it in nav1's 150M steps (~12 h on
+  # the cluster, 2026-10-18); six nav stages at their ceilings are a week before the dungeons. Inherited by nav2..nav6.
+  top_gate_evals: 2
+  top_plateau_evals: 4
   patience: 3
   window: 4
   z: 2.0
@@ -224,9 +243,21 @@ convergence:
 
 # The difficulty ladder (decision 0010), and nothing else: the stage pays no shaping, so the fade's scale is only the
 # rung the sim reads (PointNav.RungBins0..3: which detour and length bins are open, and the start bearing's spread).
-# It steps as soon as the evaluation's spl at the rung meets the rung's gate -- 0.6 off rung 0, 0.7 off rung 1, 0.8 off
-# rung 2 -- never waiting on a plateau (require_plateau false) and never back on the score; a collapse or stall only
+# It steps as soon as the evaluation at the rung meets every one of the rung's gates (fade.gate_metrics) -- arrived and
+# SPL -- never waiting on a plateau (require_plateau false) and never back on the score; a collapse or stall only
 # warns. A curriculum ladder, not a pass gate.
+#
+# Arriving with an SPL floor, not SPL alone (2026-10-18): SPL scores a failure 0 and any detour against the trip, so
+# at 80-yd trips it is mostly the arrival rate times a route-efficiency discount, and a gate on it alone asks for both
+# at once. nav1's curves (SPL gates 0.6 / 0.7 / 0.8): rung 0 (~24 yd) arrived 0.88 / SPL 0.84 at 10M; rung 1 (~44 yd)
+# 0.75-0.76 / 0.67-0.71 over 20-30M; rung 2 (~82 yd) 0.48 -> 0.72 / 0.43 -> 0.63 from 40M to 130M, 28% of the trips
+# timing out, and never met 0.8 -- the budget ended the stage on rung 2, rung 3 never played. The gates, one per rung
+# (the fourth the last rung's own, which convergence.top_gate_evals ends the stage on): rung 0 0.85 / 0.75 (met at
+# 10M); rung 1 0.75 / 0.65 (met at 20M, where SPL 0.7 took to 30M); rung 2 0.72 / 0.6, which nav1 reached at 120M --
+# the last gate must be one a run gets to; the top rung (~100+ yd) the same 0.72 / 0.6, with the plateau rule ending
+# the stage if it levels off below. SPL / arrived ran 0.87-0.95 at every rung, so the SPL floors (0.75-0.6) sit under
+# what arriving at those rates gives: arriving decides, and the floor turns away a policy that arrives by wandering.
+# gate_metric spl stays the collapse and stall alarms' metric.
 fade:
   enabled: true
   rungs: [1.0, 0.5, 0.25, 0.0]
@@ -234,8 +265,9 @@ fade:
   regress_z: 2.0
   give_up: 2
   gate_metric: spl
-  gate_value: 0.8
-  gate_values: [0.6, 0.7, 0.8]
+  gate_metrics:
+    arrived: [0.85, 0.75, 0.72, 0.72]
+    spl: [0.75, 0.65, 0.6, 0.6]
   require_plateau: false
   # A difficulty ladder: it steps on its gate whatever the cost ladder is doing (nothing to fade).
   wait_for_costs: false

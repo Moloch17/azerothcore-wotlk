@@ -31,6 +31,11 @@ classes still learning. It is still evaluated every evaluation, and if its score
 more than the margin it re-enters at full weight and must converge again -- the trunk the other classes keep
 training can move it. With every class converged the stage advances.
 
+A stage on a gate-stepped difficulty ladder (the nav stages) can also end on that ladder's last rung, when its config
+asks (ConvergenceController.top_rung_end, convergence.top_gate_evals / top_plateau_evals): the last rung's gate met at
+so many evaluations running, or the stage's measure there plateaued. The finished reason is "converged" either way,
+with the end condition in its own line (Outcome.detail: finished.json "why").
+
 The controller only decides; animus.train carries it out.
 """
 
@@ -56,6 +61,7 @@ class Outcome:
     action: str  # CONTINUE or ADVANCE
     reason: str = ""  # finished.json reason: "converged" or "budget"
     report: dict | None = None  # per-class signals at the decision
+    detail: str = ""  # why, in a line: which end condition (finished.json "why", stage.jsonl, the log)
 
 
 @dataclass
@@ -149,9 +155,18 @@ class ShapingFade:
         self.gate_metric = str(getattr(fade, "gate_metric", "") or "")
         self.gate_value = float(getattr(fade, "gate_value", 0.0))
         self.gate_values = tuple(float(value) for value in (getattr(fade, "gate_values", ()) or ()))
+        # A conjunction of gates (fade.gate_metrics: metric -> one gate per rung), which replaces gate_metric's when
+        # set; gate_metric stays the alarms' metric, else the first named here is.
+        self.gate_metrics = {str(name): tuple(float(value) for value in values)
+                             for name, values in (getattr(fade, "gate_metrics", None) or {}).items()}
+        if self.gate_metrics and not self.gate_metric:
+            self.gate_metric = next(iter(self.gate_metrics))
         self.require_plateau = bool(getattr(fade, "require_plateau", True)) or not self.gate_metric
         self.rung_metric = str(getattr(fade, "rung_metric", "") or "")
         self.gate_seen: float | None = None
+        self.gates_seen: dict[str, float | None] = {}  # each of gate_metrics' readings at the latest evaluation
+        # Evaluations in a row at the last rung whose gate was met (convergence.top_gate_evals ends the stage on it).
+        self.top_gate_streak = 0
         self.rungs = tuple(float(scale) for scale in fade.rungs)
         self.window = max(1, int(fade.window))
         self.regress_z = float(fade.regress_z)
@@ -234,6 +249,10 @@ class ShapingFade:
                 self.rebase_scores = None
         self._watch_collapse()
         self._watch_stall(env_steps)
+        # The last rung has no step to take; its gate (the gates' last entry for a rung past the list) is what a stage
+        # ends on (convergence.top_gate_evals), met at so many evaluations running.
+        if self.rung == len(self.rungs) - 1:
+            self.top_gate_streak = self.top_gate_streak + 1 if self.gate_metric and self._gated() else 0
 
         # A regression is read off the rung's last `window` scores, once it has that many: one noisy evaluation at
         # regress_z 2 is a ~2% false alarm, which over a rung of dozens of evaluations would hold the ladder short of
@@ -285,22 +304,48 @@ class ShapingFade:
                 f"at {self.rung_metric} {float(played):.3g}: not read -- no gate, no plateau and no best from it")
 
     def see_gate(self, summary: dict) -> None:
-        """The latest evaluation's gate metric (the ladder config's gate_metric), read before observe()."""
+        """The latest evaluation's gate metric (the ladder config's gate_metric), and each of gate_metrics', read
+        before observe()."""
         value = summary.get(self.gate_metric) if self.gate_metric else None
         self.gate_seen = float(value) if isinstance(value, (int, float)) else None
         self.gate_stderr = gate_stderr(summary, self.gate_metric, self.gate_seen)
+        self.gates_seen = {name: float(summary[name]) if isinstance(summary.get(name), (int, float)) else None
+                           for name in self.gate_metrics}
 
     @property
     def rung_gate(self) -> float:
         """The gate this rung must meet to step down: gate_values[rung] where the config gives rising gates (the last
         for a rung past the list), else gate_value for every rung."""
+        if self.gate_metrics and self.gate_metric in self.gate_metrics:
+            return self.metric_gate(self.gate_metric)
         if self.gate_values:
             return self.gate_values[min(self.rung, len(self.gate_values) - 1)]
         return self.gate_value
 
+    def metric_gate(self, name: str) -> float:
+        """gate_metrics[name]'s gate at this rung (the list's last entry for a rung past its end)."""
+        values = self.gate_metrics[name]
+        return values[min(self.rung, len(values) - 1)]
+
     def _gated(self) -> bool:
-        """The gate metric has reached its value, or there is no gate."""
+        """The gate metric has reached its value -- every one of gate_metrics' when set -- or there is no gate."""
+        if self.gate_metrics:
+            return all(self.gates_seen.get(name) is not None and self.gates_seen[name] >= self.metric_gate(name)
+                       for name in self.gate_metrics)
         return not self.gate_metric or (self.gate_seen is not None and self.gate_seen >= self.rung_gate)
+
+    def gate_line(self, rung: int | None = None) -> str:
+        """The gates at this rung (or `rung`) against the latest readings, for the log ("arrived 0.86 >= 0.85, spl 0.6
+        < 0.7")."""
+        if self.gate_metrics:
+            here = self.rung if rung is None else max(0, rung)
+            readings = [(name, self.gates_seen.get(name), values[min(here, len(values) - 1)])
+                        for name, values in self.gate_metrics.items()]
+        else:
+            readings = [(self.gate_metric, self.gate_seen, self.rung_gate)] if self.gate_metric else []
+        return ", ".join(f"{name} {'-' if seen is None else format(seen, '.3g')} "
+                         f"{'>=' if seen is not None and seen >= gate else '<'} {gate:g}"
+                         for name, seen, gate in readings)
 
     def _plateaued(self, env_steps: int, waited: int) -> bool:
         """The rung has been played long enough and the score has plateaued on it."""
@@ -335,6 +380,7 @@ class ShapingFade:
         self.gate_best_steps = 0
         self.evals_since_gate_best = 0
         self.stalled = False
+        self.top_gate_streak = 0
 
     COLLAPSE_EVALS = 3
     COLLAPSE_FLOOR = 0.1
@@ -382,6 +428,10 @@ class ShapingFade:
         self.stalled = now
 
     def _why(self) -> str:
+        if self.gate_metrics:
+            # Said after the step: the gates met were the rung left's.
+            gates = self.gate_line(self.rung - 1)
+            return f"with {gates}" if not self.require_plateau else f"plateaued with {gates}"
         if self.gate_metric and self.gate_seen is not None:
             return f"plateaued with {self.gate_metric} {self.gate_seen:.3g} (gate {self.rung_gate:g})"
         return "plateaued"
@@ -393,6 +443,7 @@ class ShapingFade:
         self.step_score = None
         self.step_stderr = 0.0
         self.rebase_scores = None
+        self.top_gate_streak = 0
 
     def report(self) -> dict:
         return {"scale": self.scale, "rung": self.rung, "settled": self.settled, "steps": self.steps,
@@ -405,7 +456,8 @@ class ShapingFade:
                 "falls": {str(rung): count for rung, count in self.falls.items()}, "steps": self.steps,
                 "rung_gates": list(self.rung_gates), "lower_gate": self.lower_gate, "collapsed": self.collapsed,
                 "gate_best": self.gate_best, "gate_best_steps": self.gate_best_steps,
-                "evals_since_gate_best": self.evals_since_gate_best, "stalled": self.stalled}
+                "evals_since_gate_best": self.evals_since_gate_best, "stalled": self.stalled,
+                "top_gate_streak": self.top_gate_streak}
 
     def load_state_dict(self, state: dict | None) -> None:
         if not state:
@@ -428,6 +480,7 @@ class ShapingFade:
         self.gate_best_steps = int(state.get("gate_best_steps", 0))
         self.evals_since_gate_best = int(state.get("evals_since_gate_best", 0))
         self.stalled = bool(state.get("stalled", False))
+        self.top_gate_streak = int(state.get("top_gate_streak", 0))
 
 
 class CostLadder(ShapingFade):
@@ -850,12 +903,53 @@ class ConvergenceController:
         } for name, state in self.layouts.items()}
 
     def after_eval(self, env_steps: int) -> Outcome:
-        """Call after each training evaluation: ADVANCE once every class the run plays has converged."""
+        """Call after each training evaluation: ADVANCE once every class the run plays has converged, or once a
+        gate-stepped ladder's last rung is done (top_rung_end: its gate met, or its measure plateaued)."""
         played = self.played_layouts()
         if (self.config.convergence.advance and played and self.evals >= self.config.convergence.window
                 and all(s.converged for s in played) and self.fade.settled and self.costs.ready):
-            return self._decide(Outcome(ADVANCE, "converged", self.report()))
+            return self._decide(Outcome(ADVANCE, "converged", self.report(), "every class converged"))
+        if self.config.convergence.advance and (ended := self.top_rung_end()):
+            return self._decide(Outcome(ADVANCE, "converged", self.report(), ended))
         return self._decide(Outcome(CONTINUE, report=self.report()))
+
+    def top_rung_end(self) -> str | None:
+        """Why the stage is done on its gate-stepped ladder's last rung, or None (convergence.top_gate_evals and
+        top_plateau_evals; both 0, the default, never end a stage).
+
+        The per-class rule waits for every class's KL, entropy and plateau at once, and a nav stage met none of it in
+        its whole budget (nav1, 2026-10-18: 150M steps, ~12 h, still on rung 2). A difficulty ladder says more simply
+        when the stage has taught its lesson: (a) the last rung's gate (the gates' last entry) met at
+        `top_gate_evals` evaluations running -- it does the real task well enough; or (b) the stage's measure at the
+        last rung (the overall tracker, re-baselined at the step onto it, so its history is that rung's alone) has set
+        no new best by the tracker's margin for `top_plateau_evals` evaluations and its trend over the last
+        convergence.window of them, projected as far ahead, would not clear the margin either -- more of the same rung
+        teaches nothing the next stage will not. Both wait for the cost ladder at full price (costs.ready), as the
+        per-class rule does; an evaluation not read (played at another rung) ends nothing."""
+        c, fade = self.config.convergence, self.fade
+        if (not fade.enabled or fade.require_plateau or fade.rung != len(fade.rungs) - 1 or not self.costs.ready
+                or self.unread_message is not None):
+            return None
+        if c.top_gate_evals > 0 and fade.top_gate_streak >= c.top_gate_evals:
+            return (f"the last rung's gate met at {fade.top_gate_streak} evaluations running ({fade.gate_line()}; "
+                    f"convergence.top_gate_evals {c.top_gate_evals})")
+        tracker = self.tracker
+        if c.top_plateau_evals > 0 and tracker.best is not None and tracker.evals_since_best >= c.top_plateau_evals:
+            points = tracker.history[-max(3, c.window):]
+            stderr = float(np.mean([point[2] for point in points])) if points else 0.0
+            margin = tracker.margin(stderr)
+            gain = None
+            if len(points) >= 3 and np.ptp([point[0] for point in points]) > 0:
+                steps = np.array([point[0] for point in points], dtype=np.float64)
+                slope = np.polyfit(steps, np.array([point[1] for point in points], dtype=np.float64), 1)[0]
+                gain = float(slope * np.ptp(steps) / (len(points) - 1) * c.top_plateau_evals)
+            if gain is None or gain <= margin:
+                judged = self.measure or "score"
+                trend = "" if gain is None else f", trend {gain:+.3g} over as many more"
+                return (f"plateau on the last rung: {judged} best {tracker.best:.3g} at {tracker.best_env_steps:,} "
+                        f"env steps, not beaten by its margin {margin:.2g} in {tracker.evals_since_best} evaluations"
+                        f"{trend} (convergence.top_plateau_evals {c.top_plateau_evals})")
+        return None
 
     def at_budget(self) -> Outcome:
         """Call once total_env_steps is reached: the ceiling advances the stage, and the report says who was not

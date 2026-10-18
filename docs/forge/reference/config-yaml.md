@@ -131,6 +131,7 @@ Read by `evaluation.py` (`run_evaluation`, line 451), `train.py` (1150-1310, 222
 | `report` | tuple[str] | `REPORT_COLUMNS` (`config.py:27-55`) | episode-info columns printed per band (`train.py:858`) |
 | `trace_episodes` | int | 0 | decision traces to `eval_trace.jsonl` |
 | `sampled_every` | int | 0 | every N evaluations also score sampled actions (`train.py:1303`) |
+| `sampled_episodes` | int | 0 | 0 or more (2026-10-18): the sampled pass plays the first N of the evaluation's seeds; 0 = `episodes`. Its `argmax_gap` is then those N against the plain pass's `episodes`, a reading and not a like-for-like difference. The nav yamls set 128 (of 256) |
 | `mask_actions` | tuple[str] | `()` | evaluation-only action mask by name; unknown name refused at startup (`evaluation.py:348-367`) |
 | `heldout` | dict | `{}` | arena name to episodes, played apart, never steers (`train.py:301-310`) |
 | `heldout_every` | int | 4 | at least 1 (`config.py:127-129`) |
@@ -138,7 +139,8 @@ Read by `evaluation.py` (`run_evaluation`, line 451), `train.py` (1150-1310, 222
 | `heldout_cadence` | dict | `{}` | exploration v3: arena name to N, played every N-th evaluation (and always on the last); keys must be held-out arenas; an empty map restated in a child file replaces the inherited one (M3, M4) |
 | `score` | str | `outcome` | `outcome` or `return` (checked in `score_column`, `config.py:131-134`, not at load) |
 | `arms` | dict | `{}` | arm name to episodes; arms must be in `EVAL_ARMS = (with_human, with_partners, no_flag, no_camera, no_compass, no_map, no_memory, no_goal, random_goal, random_cell, no_plan, no_searched, no_coverage, no_party, no_recall, no_planner, no_school, no_shared_memory)`, counts non-negative ints (`config.py` `EvalConfig.__post_init__`). `no_school` (2026-10-17, planner school stage 2) plays the same seeds on the sim's route scalars instead of the school planner's (`MappoTrainer.set_school_off`); skipped with a line unless `mappo.planner_waypoint_source` is `school`. `no_shared_memory` (2026-10-17) is not an input ablation but a MODE flag to the sim (`MODE_FLAG_NO_SHARED_MEMORY`): the same seeds with every seat started blank instead of the seeded half adopting the map's shared memory; skipped on a stage without a `shared_memory` episode column, and its rows dropped (with a printed line) when the sim ignores the flag (an older sim adopts as the seed says). The nav yamls run it at 64 episodes |
-| `arms_every` | int | 1 | at least 1 |
+| `arms_every` | int | 1 | at least 1; counts the evaluations at the rung (the overall tracker's history, emptied at a gate-stepped ladder's step), so the first evaluation of a rung plays none at 2 or more. The arms also play on the stage's last evaluation (the budget's `final`, and -- under `convergence.top_gate_evals` / `top_plateau_evals` -- the one a stage converged on, played after the decision when its cadence skipped them). The nav yamls set 2 |
+| `arms_at_start` | bool | false | 2026-10-18: the run's start evaluation (`at_start`, not on a resume) plays the arms whatever `arms_every` says (`TrainingRun.evaluate(start=True)`). The nav yamls set true |
 | `keep_motion_files` | int | 12 | 0 or more: how many evaluations' route files (`eval_motion_<env_steps>[_<policy>].npz`) and trace files (`eval_trace_<env_steps>_<policy>.npz`) are kept; 0 writes none and the held-out arenas collect no motion |
 | `trace_all` | bool | false | exploration v3: every seed of every evaluation set, per policy, as compact arrays in `eval_trace_<env_steps>_<policy>.npz`; with it the sampled and arm sets keep routes too. `move2_seek.yaml` true |
 
@@ -159,6 +161,19 @@ Read by `evaluation.py` (`run_evaluation`, line 451), `train.py` (1150-1310, 222
 | `lr_hold_until_plateau` | true | `stage.py:531` |
 | `top_rung` | true | a ladder stage converges only at its top rung (`stage.py:23, 589`) |
 | `measure` | `""` | the stage's own measure column (a 0-1 share): the per-class plateau and, since 2026-10-09 (decision 0022), the overall tracker (best.pt, the plateau the learning rate anneals from, `progress.json` `best_score` with `best_kind`) read it, with a binomial standard error; empty = the score |
+| `top_gate_evals` | 0 | 0 or more (2026-10-18): a gate-stepped fade (`require_plateau` false) on its last rung ends the stage once that rung's gate -- `fade.gate_metrics`' (or `gate_values`') last entry, every metric of it -- has been met at this many evaluations running (`ShapingFade.top_gate_streak`, counted in `observe`, reset at a step, saved in the checkpoint). 0 = never. The nav yamls set 2 |
+| `top_plateau_evals` | 0 | 0 or more (2026-10-18): ... or once the overall tracker on that last rung (re-baselined at the step onto it, so its history is the rung's alone; it judges `measure`) has gone this many evaluations without a new best by its margin (the larger of `min_improvement_abs`, `min_improvement` x best and `z` standard errors: ~0.08 SPL at 256 trips) and the trend of its last `window` scores, projected as many evaluations ahead, would not clear the margin either. 0 = never. The nav yamls set 4 |
+
+**How a stage ends** (`stage.py` `ConvergenceController.after_eval`, called by `train.py` `TrainingRun.train` after every
+evaluation): ADVANCE when every played class has converged by the per-class rule (score, KL, entropy, ladder, top rung)
+with the fade settled and the cost ladder ready -- or, with `top_gate_evals` / `top_plateau_evals` set, when
+`top_rung_end` says the last rung is done (both also need the cost ladder at full price, `costs.ready`, and `advance`
+true; an evaluation not read, played off the rung, ends nothing). Else at `total_env_steps`, a ceiling (`at_budget`,
+reason `budget`). The last-rung ends keep the reason `converged` (forgectl's watch reads `converged` as a converged
+stage) and say which condition in `Outcome.detail`: `finished.json` `"why"`, `stage.jsonl` `"why"`, the `Stage complete`
+line, `events.log`. The learner then exits 0; the sim (`AnimusForge::Forge`, `LearnerFinished`) finishes the plan entry
+as done and starts the next stage of the queue. The entropy and learning-rate schedules still run on
+`total_env_steps`: a stage that ends at a third of its budget ships a policy whose entropy and rates have not annealed.
 
 Overlays: `--overlay <yaml>` (repeatable) merges over the stage config and its extends chain, before any `--set`
 (`TrainConfig.load`). `configs/overlays/move2_seek_reseed.yaml` is the reseed overlay for a move2_seek run that starts at
@@ -181,6 +196,8 @@ semantics: every Shaping term (fade) or noise price (costs) is paid times the cu
 | `moving_classes` | 2 | (fade only) | 0 or more; `stage.py:680` |
 | `gate_metric` | `""` | `""` | the step-down waits for this summary column (`stage.py:149-151, 260`) |
 | `gate_value` | 0.0 | 0.0 | |
+| `gate_values` | () | (fade only) | rising gates, one per rung (`gate_values[rung]`, the last for a rung past the list); needs a `gate_metric`; may not fall |
+| `gate_metrics` | {} | (fade only) | 2026-10-18: a conjunction, metric -> one gate per rung (the last entry for a rung past the list; non-empty lists of numbers, which may fall from rung to rung). Set, the step waits for every metric's gate and `gate_metric` / `gate_value` / `gate_values` no longer gate; `gate_metric` (else the first named here) stays the collapse and stall alarms' metric. The child yaml that gates otherwise restates `gate_metrics: {}` (an empty map replaces the inherited one; nav6_follow). nav1_sight: `arrived [0.85, 0.75, 0.72, 0.72]`, `spl [0.75, 0.65, 0.6, 0.6]` (the fourth the last rung's own gate, `convergence.top_gate_evals`), from nav1's curves: SPL alone counts a failure 0 and every detour, a poor sole gate at 80-yd trips |
 | `require_plateau` | true | (fade only) | false: a gate-stepped ladder steps as soon as the gate is met (`stage.py:571, 641`) |
 | `stall_evals` | 4 | (fade only) | at least 1 (`config.py:223`); stall warning (`stage.py:174, 316`) |
 | `stall_env_steps` | 20,000,000 | (fade only) | 0 or more |

@@ -151,6 +151,14 @@ class EvalConfig:
     # (eval_motion_<env_steps>_learner_sampled.npz, _<arm>.npz) are saved alongside. False = the old behaviour
     # (eval.trace_episodes' JSONL for the plain set, routes for the plain set and the held-out arenas only).
     trace_all: bool = False
+    # Episodes of the sampled-policy pass (learner_sampled, every sampled_every evaluations): the first this many of
+    # the evaluation's seeds. 0 = eval.episodes. Fewer is cheaper but makes its argmax_gap the sampled policy on those
+    # seeds against the argmax on all of them -- a reading of the gap, not a like-for-like difference.
+    sampled_episodes: int = 0
+    # Also play the arms at the run's start evaluation (eval.at_start), whatever arms_every says: arms_every counts the
+    # evaluations at the rung (len of the overall tracker's history, re-baselined at a gate-stepped ladder's step), so
+    # with arms_every 2 the start evaluation, the first, plays none. False keeps the cadence alone.
+    arms_at_start: bool = False
 
     def __post_init__(self) -> None:
         if self.baseline not in ("", "random"):
@@ -164,6 +172,10 @@ class EvalConfig:
                 raise ValueError(f"eval.arms.{arm}: expected a number of episodes, got {episodes!r}")
         if self.arms_every < 1:
             raise ValueError(f"eval.arms_every: expected at least 1, got {self.arms_every!r}")
+        if not isinstance(self.sampled_episodes, int) or isinstance(self.sampled_episodes, bool) \
+                or self.sampled_episodes < 0:
+            raise ValueError(f"eval.sampled_episodes: expected 0 (eval.episodes) or a number of episodes, got "
+                             f"{self.sampled_episodes!r}")
         if not isinstance(self.keep_motion_files, int) or isinstance(self.keep_motion_files, bool) \
                 or self.keep_motion_files < 0:
             raise ValueError(f"eval.keep_motion_files: expected 0 (none) or a number of evaluations, got "
@@ -225,6 +237,20 @@ class ConvergenceConfig:
     # The stage's own measure, if not the evaluation score: an episode info column the per-class plateau reads (M1:
     # "arrived"), at the top rung on a ladder stage. Empty: the score.
     measure: str = ""
+    # A gate-stepped ladder's last rung ends the stage (stage.ConvergenceController.top_rung_end), beside the per-class
+    # rule above: once the last rung's gate (fade.gate_metrics' or gate_values' last entry) has been met at this many
+    # evaluations running ... 0 = never.
+    top_gate_evals: int = 0
+    # ... or once the stage's measure at the last rung has set no new best by the overall tracker's margin for this many
+    # evaluations (and its trend would not clear the margin as far ahead). 0 = never. Both wait for the cost ladder at
+    # full price and honour `advance`; the finished reason is "converged", the condition in finished.json "why".
+    top_plateau_evals: int = 0
+
+    def __post_init__(self) -> None:
+        for name in ("top_gate_evals", "top_plateau_evals"):
+            value = getattr(self, name)
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise ValueError(f"convergence.{name}: expected 0 (off) or a number of evaluations, got {value!r}")
 
 
 @dataclass
@@ -254,6 +280,13 @@ class FadeConfig:
     # Rising gates (move4-follow rework, B1): one gate per rung the ladder stands on, gate_values[rung] (the last entry
     # for a rung past the list's end). Empty: gate_value for every rung.
     gate_values: tuple[float, ...] = ()
+    # A conjunction of gates (nav stages, 2026-10-18): metric -> one gate per rung, gate_values' rule for each list
+    # (the last entry for a rung past its end), and a rung steps only when every metric meets its own -- e.g.
+    # {arrived: [0.85, 0.78], spl: [0.75, 0.65]}. SPL alone counts a failure as 0 and any detour against the trip, so
+    # at long trips it is a poor sole gate; arriving with an SPL floor says "gets there, efficiently enough". Replaces
+    # gate_metric / gate_value / gate_values for the step when set; gate_metric (else the first named here) stays the
+    # collapse and stall alarms' metric. The gates may fall from rung to rung (a harder rung asks less). {} = off.
+    gate_metrics: dict = field(default_factory=dict)
     # Off: a rung steps as soon as the gate is met at an evaluation (at least one evaluation at the rung), without
     # waiting for the score to plateau -- the dungeon plan's rule that every ladder steps at once on its gate (M1, 2026-10-06:
     # the fade sat at x1 for ~20M steps on a rising score with the gate long met). Needs a gate_metric.
@@ -286,6 +319,15 @@ class FadeConfig:
         if any(later < earlier for earlier, later in zip(gates, gates[1:])):
             raise ValueError(f"fade.gate_values: expected gates that never fall, got {self.gate_values!r}")
         self.gate_values = gates
+        if not isinstance(self.gate_metrics, dict):
+            raise ValueError(f"fade.gate_metrics: expected a mapping of metric -> gates per rung, got "
+                             f"{self.gate_metrics!r}")
+        for metric, values in self.gate_metrics.items():
+            if not isinstance(values, (list, tuple)) or not values or any(
+                    isinstance(value, bool) or not isinstance(value, (int, float)) for value in values):
+                raise ValueError(f"fade.gate_metrics.{metric}: expected a list of gates, one per rung, got {values!r}")
+        self.gate_metrics = {str(metric): tuple(float(value) for value in values)
+                             for metric, values in self.gate_metrics.items()}
         if self.window < 1:
             raise ValueError(f"fade.window: expected at least 1 evaluation, got {self.window!r}")
         if not self.regress_z > 0.0:
