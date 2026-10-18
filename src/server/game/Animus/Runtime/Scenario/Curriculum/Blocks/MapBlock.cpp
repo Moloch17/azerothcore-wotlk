@@ -61,8 +61,8 @@ namespace
     constexpr float GLOBAL_LAST_YARDS = 16.0f;
 
     /// The global route's doors (Vision::GlobalBlocking): the closed doors and gates the seat's object memory holds
-    /// (class Door, a game object, not seen open, not absent), gathered once a decision, so a route's cell is asked
-    /// of a handful of discs rather than the whole memory (ObjectMemory::BlockingAt's own scan, once a cell).
+    /// (ObjectMemory::Blocking: class Door, not seen open, not absent), gathered once a decision, so a route's cell is
+    /// asked of a handful of discs rather than the whole memory (BlockingAt's own scan, once a cell).
     class DoorBlocking final : public Vi::GlobalBlocking
     {
     public:
@@ -71,11 +71,10 @@ namespace
             if (!objects)
                 return;
             thread_local std::vector<Vi::RememberedObject const*> found;
-            objects->Find(Vi::ObjectKind::Count, Vi::Class::Door, Vi::Vec3{}, 0.0f, found);
+            objects->Blocking(found);
             for (Vi::RememberedObject const* entry : found)
-                if (entry->GameObject && !entry->Open && !entry->Absent)
-                    _doors.push_back({ entry->Position.X, entry->Position.Y,
-                        std::max(entry->Radius, Vi::DOOR_MIN_RADIUS) });
+                _doors.push_back({ entry->Position.X, entry->Position.Y,
+                    std::max(entry->Radius, Vi::DOOR_MIN_RADIUS) });
         }
         [[nodiscard]] bool Any() const { return !_doors.empty(); }
         [[nodiscard]] bool Blocked(int32_t cx, int32_t cy, float /*z*/) const override
