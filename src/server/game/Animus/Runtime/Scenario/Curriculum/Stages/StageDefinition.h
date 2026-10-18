@@ -338,6 +338,16 @@ namespace Animus::Curriculum
         /// keys, it turns and runs. The nav stages (2026-10-18): nav1's seats faced away from the goal and backpedalled
         /// to it at 4.5 yd/s against the run's 7, 98% of their travel. An unwanted action is removed, not priced.
         bool NoBackpedal = false;
+        /// Movement only: the core block offers no spell, item or rank action, only its no-op (CoreBlock::Offered),
+        /// and observes no spell. The nav stages (the user, 2026-10-18: "block all spells. This is movement only"):
+        /// nav1's seats pressed Gift of the Naaru (15% of presses), War Stomp (7%) and the rank keys (22%) on trips
+        /// with nothing to cast at. Removed, not priced.
+        bool NoSpells = false;
+        /// The camera's pitch is the conf's (AnimusForge.Vision.Pitch) for good: the look head's pitch choice is one,
+        /// rate 0 (VisionBlock's manifest "look" heads), while its yaw and zoom stay free. The nav stages
+        /// (2026-10-18): nav1's look head held a pitch rate until the camera sat at its -80 degree limit, the median
+        /// seat looking at its feet, so the camera showed nothing ahead to map and blanking it changed nothing.
+        bool LevelCamera = false;
 
         [[nodiscard]] bool Has(BlockId block) const;
         /// Seats per env: the largest arena's.

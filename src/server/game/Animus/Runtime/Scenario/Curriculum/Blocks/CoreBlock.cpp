@@ -133,18 +133,28 @@ static_assert(uint32(Animus::Curriculum::CoreBlock::OBS_RUNE_FIRST) + MAX_RUNES
 static_assert(uint32(Animus::Curriculum::CoreBlock::OBS_FORM_FIRST) + TRACKED_FORMS.size()
     <= uint32(Animus::Curriculum::CoreBlock::OBS_GCD));
 
+uint32 Animus::Curriculum::CoreBlock::Offered(Layout const& layout)
+{
+    uint32 const catalog = uint32(layout.Catalog().Actions().size());
+    return layout.Stage && layout.Stage->NoSpells ? std::min<uint32>(1, catalog) : catalog;
+}
+
+uint32 Animus::Curriculum::CoreBlock::RankTiers(Layout const& layout)
+{
+    return layout.Stage && layout.Stage->NoSpells ? 0 : ACTION_RANK_TIERS;
+}
+
 Animus::Curriculum::BlockSize Animus::Curriculum::CoreBlock::Size(Layout const& layout) const
 {
-    uint32 const actions = uint32(layout.Catalog().Actions().size());
+    uint32 const actions = Offered(layout);
     uint32 const talents = uint32(layout.Assets->Talents->Talents().size());
     return { OBS_GLOBAL_COUNT + actions * ACTION_FEATURES + talents + TalentBuilder::TREE_COUNT,
-             actions + ACTION_RANK_TIERS };
+             actions + RankTiers(layout) };
 }
 
 uint32 Animus::Curriculum::CoreBlock::TalentObsFirst(Layout const& layout)
 {
-    return layout.Slice(BlockId::Core).ObsFirst + OBS_GLOBAL_COUNT
-        + uint32(layout.Catalog().Actions().size()) * ACTION_FEATURES;
+    return layout.Slice(BlockId::Core).ObsFirst + OBS_GLOBAL_COUNT + Offered(layout) * ACTION_FEATURES;
 }
 
 void Animus::Curriculum::CoreBlock::DescribeRescaled(Layout const& layout, boost::json::array& out) const
@@ -172,14 +182,15 @@ uint32 Animus::Curriculum::CoreBlock::TreeObsFirst(Layout const& layout)
 Animus::Curriculum::ModeGroup Animus::Curriculum::CoreBlock::ModeGroupOf(Layout const& layout, uint32 local) const
 {
     std::vector<ActionCatalog::Action> const& actions = layout.Catalog().Actions();
+    uint32 const offered = Offered(layout);
     // The rank to cast at is a standing choice like a stance or an aura, not an act: paced by ModeLockMs so it
     // cannot be churned. Without this a fresh policy hammered the three tiers -- they do nothing in the world, so
     // every press was waste the repeat charge then had to pay for (0.29M into the first run with them: 22 repeated
     // presses an episode against 5 for the scripted baseline, which never presses them).
-    if (local >= actions.size())
+    if (local >= offered)
         return ModeGroup::RankTier;
 
-    SpellInfo const* info = local < actions.size() && actions[local].Type == ActionCatalog::Kind::Spell
+    SpellInfo const* info = actions[local].Type == ActionCatalog::Kind::Spell
         ? sSpellMgr->GetSpellInfo(actions[local].FirstRank) : nullptr;
     if (!info)
         return ModeGroup::None;
@@ -203,22 +214,29 @@ Animus::Curriculum::ModeGroup Animus::Curriculum::CoreBlock::ModeGroupOf(Layout 
 std::string Animus::Curriculum::CoreBlock::ActionName(Layout const& layout, uint32 local) const
 {
     std::vector<ActionCatalog::Action> const& actions = layout.Catalog().Actions();
-    if (local < actions.size())
+    uint32 const offered = Offered(layout);
+    if (local < offered)
         return actions[local].Name;
 
     static constexpr std::array<char const*, ACTION_RANK_TIERS> TIER_NAMES = { "rank_high", "rank_mid", "rank_low" };
     static_assert(TIER_NAMES.back() != nullptr, "every rank tier needs a name");
-    uint32 const tier = local - uint32(actions.size());
-    return tier < TIER_NAMES.size() ? TIER_NAMES[tier] : std::string();
+    uint32 const tier = local - offered;
+    return tier < RankTiers(layout) ? TIER_NAMES[tier] : std::string();
 }
 
 void Animus::Curriculum::CoreBlock::DescribeManifest(Layout const& layout, boost::json::object& block) const
 {
     block["action_features"] = ACTION_FEATURES;
+    // A stage without spells says so (StageDefinition::NoSpells); written only then, so every other stage's manifest
+    // is as it was.
+    if (layout.Stage && layout.Stage->NoSpells)
+        block["spells"] = false;
 
     boost::json::array& catalog = block["catalog"].emplace_array();
-    for (ActionCatalog::Action const& action : layout.Catalog().Actions())
+    std::vector<ActionCatalog::Action> const& offered = layout.Catalog().Actions();
+    for (uint32 index = 0; index < Offered(layout); ++index)
     {
+        ActionCatalog::Action const& action = offered[index];
         boost::json::object& entry = catalog.emplace_back(boost::json::object()).get_object();
         switch (action.Type)
         {
@@ -261,9 +279,10 @@ bool Animus::Curriculum::CoreBlock::KnowsInterrupt(SeatView const& view)
     if (!view.L)
         return false;
 
-    for (ActionCatalog::Action const& def : view.L->Catalog().Actions())
-        if (def.Type == ActionCatalog::Kind::Spell
-            && ActionCatalog::IsInterruptingSpell(Encoding::KnownRank(view, def)))
+    std::vector<ActionCatalog::Action> const& actions = view.L->Catalog().Actions();
+    for (uint32 action = 0; action < Offered(*view.L); ++action)
+        if (actions[action].Type == ActionCatalog::Kind::Spell
+            && ActionCatalog::IsInterruptingSpell(Encoding::KnownRank(view, actions[action])))
             return true;
 
     return false;
@@ -389,7 +408,8 @@ void Animus::Curriculum::CoreBlock::Observe(SeatView const& view, float* obs, ui
     }
 
     std::vector<ActionCatalog::Action> const& actions = view.L->Catalog().Actions();
-    for (uint32 action = 0; action < actions.size(); ++action)
+    uint32 const offered = Offered(*view.L);
+    for (uint32 action = 0; action < offered; ++action)
     {
         SpellInfo const* info = nullptr;
         if (actions[action].Type == ActionCatalog::Kind::Spell)
@@ -428,17 +448,19 @@ void Animus::Curriculum::CoreBlock::Observe(SeatView const& view, float* obs, ui
 
     // The rank tier to cast rankable spells at: always offered but the one already chosen, so a press is a change.
     if (mask)
-        for (uint32 tier = 0; tier < ACTION_RANK_TIERS; ++tier)
-            mask[actions.size() + tier] = view.Bot->IsAlive() && tier != view.RankTier ? 1 : 0;
+        for (uint32 tier = 0; tier < RankTiers(*view.L); ++tier)
+            mask[offered + tier] = view.Bot->IsAlive() && tier != view.RankTier ? 1 : 0;
 }
 
 void Animus::Curriculum::CoreBlock::Apply(SeatView& view, uint32 local, SeatActionResult& result) const
 {
     std::vector<ActionCatalog::Action> const& catalog = view.L->Catalog().Actions();
-    if (local >= catalog.size())
+    uint32 const offered = Offered(*view.L);
+    if (local >= offered)
     {
         // The rank to cast rankable spells at, until it is chosen again (EncoderSupport::KnownRank).
-        view.RankTier = std::min(local - uint32(catalog.size()), ACTION_RANK_TIERS - 1);
+        if (RankTiers(*view.L))
+            view.RankTier = std::min(local - offered, ACTION_RANK_TIERS - 1);
         return;
     }
 
@@ -485,7 +507,7 @@ bool Animus::Curriculum::CoreBlock::PressesFirst(Layout const& layout, uint32 lo
     // cooldown or mid-cast, and a walk stepped first turned it from its target, and the policy's own press failed
     // for something it never chose (2026-10-04: three in four refused presses).
     std::vector<ActionCatalog::Action> const& actions = layout.Catalog().Actions();
-    return local < actions.size()
+    return local < Offered(layout)
         && (actions[local].Type == ActionCatalog::Kind::Spell || actions[local].Type == ActionCatalog::Kind::Trinket);
 }
 
@@ -509,7 +531,7 @@ void Animus::Curriculum::CoreBlock::BeforeApply(SeatView& view, SeatActionResult
         return;
 
     std::vector<ActionCatalog::Action> const& actions = view.L->Catalog().Actions();
-    for (uint32 action = 0; action < actions.size(); ++action)
+    for (uint32 action = 0; action < Offered(*view.L); ++action)
     {
         ActionCatalog::Action const& def = actions[action];
         if (def.Type != ActionCatalog::Kind::Spell

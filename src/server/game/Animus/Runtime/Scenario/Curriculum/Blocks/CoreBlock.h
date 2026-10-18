@@ -136,6 +136,12 @@ namespace Animus::Curriculum
         /// The character as built (level, race, spec, talent build): written whether the bot is alive or not.
         static void ObserveCharacter(SeatView const& view, float* obs);
 
+        /// The catalog actions the layout's stage offers, from its first: all of them, or the no-op alone in a stage
+        /// without spells (StageDefinition::NoSpells, the nav stages: movement only). The block's actions, their
+        /// features and the manifest's catalog are these, then the rank tiers (RankTiers).
+        [[nodiscard]] static uint32 Offered(Layout const& layout);
+        /// The rank tiers after them: ACTION_RANK_TIERS, none in a stage without spells (nothing to cast at a rank).
+        [[nodiscard]] static uint32 RankTiers(Layout const& layout);
         [[nodiscard]] static uint32 TalentObsFirst(Layout const& layout);
         [[nodiscard]] static uint32 TreeObsFirst(Layout const& layout);
     };

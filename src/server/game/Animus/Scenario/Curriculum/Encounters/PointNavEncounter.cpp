@@ -154,6 +154,12 @@ void Animus::Curriculum::PointNavEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     {
         return float(seatOf(env, seat).GlobalContradictions);
     });
+    // The bumper (MapBlock::Observe, Vision::MentalMap::MarkBumped): the 1-yd cells walled this episode because the
+    // body was pinned against a wall its map lacked.
+    add("bumped_cells", [this](Env const& env, uint32 seat)
+    {
+        return float(_scenario.Data(env).Seats[std::min<uint32>(seat, MAX_SEATS - 1)].Crop.BumpedCells);
+    });
     add("optimal_yards", [nav](Env const& env, uint32)
     {
         return nav(env).CStart >= Vision::TRAV_UNREACHABLE ? 0.0f : nav(env).CStart;

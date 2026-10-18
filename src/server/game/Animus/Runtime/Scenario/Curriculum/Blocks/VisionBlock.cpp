@@ -87,13 +87,16 @@ void Animus::Curriculum::VisionBlock::DescribeManifest(Layout const& layout, boo
     image["render_weights"] = std::move(weights);
     block["image"] = std::move(image);
 
-    // The look head (free look): three categoricals, in ACT's order. Every choice is always allowed: no mask.
+    // The look head (free look): three categoricals, in ACT's order. Every choice is always allowed: no mask. In a
+    // stage with a level camera (StageDefinition::LevelCamera) the pitch head has one choice, rate 0
+    // (StageScenario::ApplyLook): the pitch stays the conf's.
+    bool const level = layout.Stage && layout.Stage->LevelCamera;
     boost::json::object look;
     boost::json::array heads;
     boost::json::array names;
     for (uint32 head = 0; head < Vi::FreeLook::HEADS; ++head)
     {
-        heads.push_back(Vi::FreeLook::HEAD_SIZES[head]);
+        heads.push_back(level && head == Vi::FreeLook::HEAD_PITCH_RATE ? 1u : Vi::FreeLook::HEAD_SIZES[head]);
         names.push_back(boost::json::string(Vi::FreeLook::HEAD_NAMES[head]));
     }
     look["heads"] = std::move(heads);
@@ -108,8 +111,11 @@ void Animus::Curriculum::VisionBlock::DescribeManifest(Layout const& layout, boo
         yawRates.push_back(double(rate));
     camera["yaw_rates"] = std::move(yawRates);
     boost::json::array pitchRates;
-    for (float rate : Vi::FreeLook::PITCH_RATES_DEG)
-        pitchRates.push_back(double(rate));
+    if (level)
+        pitchRates.push_back(double(Vi::FreeLook::PITCH_RATES_DEG[Vi::FreeLook::PITCH_STOP_INDEX]));
+    else
+        for (float rate : Vi::FreeLook::PITCH_RATES_DEG)
+            pitchRates.push_back(double(rate));
     camera["pitch_rates"] = std::move(pitchRates);
     boost::json::array zoomLevels;
     for (float level : Vi::FreeLook::ZOOM_LEVELS)

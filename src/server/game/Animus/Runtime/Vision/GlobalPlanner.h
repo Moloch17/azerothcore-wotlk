@@ -70,9 +70,11 @@
 /// its layer (or its layer is gone) where it was passable when reached -- within GLOBAL_CONTRADICTION_YARDS of walk a
 /// contradiction of the route the bot is about to take, further on a route walled -- or a door on the route is known
 /// closed (the GlobalBlocking hook); when GLOBAL_REPLAN_KNOWN cells were first seen since the plan
-/// (MentalMap::KnownTotal: new ground may open a shorter way); every GLOBAL_REPLAN_SECONDS of the map's clock; and when
-/// the body left the domain. Between recomputes the field is fixed, so the labels' C(last) and C(body) read the same
-/// field and their difference is movement alone.
+/// (MentalMap::KnownTotal: new ground may open a shorter way); when the body bumped a wall since the plan
+/// (MentalMap::BumpedTotal, the bumper: a wall felt beside the route as well as on it -- the walk's own cells may be a
+/// yard over from the face the body met -- says the way it was pushing does not go through); every
+/// GLOBAL_REPLAN_SECONDS of the map's clock; and when the body left the domain. Between recomputes the field is fixed,
+/// so the labels' C(last) and C(body) read the same field and their difference is movement alone.
 namespace Animus::Vision
 {
     /// The most a step from a cell onto its neighbour may rise and drop, yards (the walk's direction).
@@ -300,6 +302,7 @@ namespace Animus::Vision
         Known,          // GLOBAL_REPLAN_KNOWN cells first seen
         Clock,          // GLOBAL_REPLAN_SECONDS passed
         Left,           // the body left the domain
+        Bumped,         // the body felt a wall the map lacked (MentalMap::MarkBumped) off the route's own cells
     };
 
     /// **A seat's global route** (the class comment): the field to its goal, kept between decisions, and the recompute
@@ -331,6 +334,7 @@ namespace Animus::Vision
         float _goalZ = 0.0f;
         double _planClock = 0.0;
         uint64_t _planKnown = 0;
+        uint64_t _planBumped = 0;
         bool _goalKnown = false;
         uint32_t _plans = 0;
         uint32_t _replans = 0;

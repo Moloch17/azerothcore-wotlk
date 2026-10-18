@@ -64,7 +64,9 @@
 /// neighbour in the same frame (MAP_WALL_FRAME; a frame's clears wait for its end: a cell at a wall's foot holds floor
 /// and wall both, and a wall seen at a grazing angle is hit in some of its cells and passed in front of in the
 /// others). A meshed floor clears nothing (it is interpolated), nor does a far cell. A wall whose band has no layer in
-/// a cell that has floors (a ground wall under a deck the cell holds) is not written.
+/// a cell that has floors (a ground wall under a deck the cell holds) is not written. A wall the body felt -- pinned
+/// against it, keys held (MarkBumped, the bumper) -- is written as a camera's is, and the camera's clears pass it by
+/// for BUMP_HOLD_SECONDS.
 ///
 /// **Shared memory** (SharedMemory.h): a map's tiles can be borrowed read-only from a shared memory (copy-on-write: a
 /// borrowed tile is cloned on its first write), and its clock anchored to the shared memory's, so a memory 20
@@ -135,6 +137,26 @@ namespace Animus::Vision
     /// ... and crossed at least this much of the cell, horizontally (a ray clipping a corner in front of a wall's
     /// face is no look at the cell).
     constexpr float FREE_CLEAR_SPAN = 0.5f;
+
+    /// **The bumper** (MarkBumped, 2026-10-18): a body pinned against something the camera never wrote -- a wall
+    /// missing from the map, a doodad with no floor recorded under it -- feels it, as a player does, and the map takes
+    /// it as a wall. The felt cells lie this far past the body's radius along the way it was pushing (the contact
+    /// point, a skin past the radius, and a little into whatever stopped it), never in the body's own cell; ...
+    constexpr float BUMP_REACH = 0.3f;
+    /// ... one bump at most every BUMP_INTERVAL_SECONDS of the map's clock, at most BUMP_CELLS cells a bump (the
+    /// contact point's cell and the cells under the body's two front corners, a radius either side of it), so a body
+    /// held against one face writes it a yard or so at a time and never paints a passage shut in a breath; ...
+    constexpr float BUMP_INTERVAL_SECONDS = 1.0f;
+    constexpr uint32_t BUMP_CELLS = 3;
+    /// ... and a felt wall outranks a ray that did not see it for BUMP_HOLD_SECONDS: the camera's clears (a floor hit
+    /// on the cell, a ray passing low over it) are not applied to a held cell, else the very frame after the bump
+    /// would erase what the camera cannot see and the route would send the body back into it. The body standing on
+    /// the cell still clears it (WriteBody: the surest look there is). At most BUMP_HOLD_MAX cells are held, the
+    /// oldest giving way. The hold outlasts GLOBAL_REPLAN_SECONDS, so a clock recompute of the global route sees it.
+    /// What the shared memory does with the wall is a camera wall's lot: another seat's later pass low over the cell
+    /// may clear it there (MergeCell's newer look), and that seat bumps it back if it walks into it.
+    constexpr float BUMP_HOLD_SECONDS = 30.0f;
+    constexpr uint32_t BUMP_HOLD_MAX = 64;
 
     /// MapCell::Flags.
     enum MapFlag : uint8_t
@@ -393,6 +415,25 @@ namespace Animus::Vision
         /// Write where the body stands: visited, seen, and on the ground its floor; the cells on the line from where
         /// it last stood are visited too (a fast body crosses more than one a decision).
         void WriteBody(float x, float y, float z, bool grounded);
+        /// **A bump** (the bumper, BUMP_*): the body at (x, y) with its feet at `feetZ`, `radius` yards round, held
+        /// its keys along (dirX, dirY) -- any length; the world direction of the attempted move -- and got nowhere
+        /// against geometry (the caller's judgement: grounded, a move key held, pinned a second or more, the
+        /// controller's wall contact; MapBlock::Observe). Marks up to BUMP_CELLS 1-yd cells ahead of the body a wall
+        /// of the floor layer within LAYER_MERGE of the feet (MAP_WALL_LOW on a cell with no floor known; a cell whose
+        /// floors are all another storey's is left), stamped with this second's look as a camera's wall is, so the
+        /// shared memory merges it as one (MergeCell) and the planners read it as one; and holds them against the
+        /// camera's clears (BUMP_HOLD_SECONDS). Never the body's own cell, one it stood on (MAP_VISITED: it fits
+        /// there), a door's (MAP_DOOR: the object memory's to judge, open or closed) or one where a living unit was
+        /// seen under ENTITY_RECENT_SECONDS ago (the body's sweep meets no units, so one is never the contact, but a
+        /// creature moves on and its cell is left all the same). One bump every BUMP_INTERVAL_SECONDS of the map's
+        /// clock at most. Returns the cells newly walled (a cell already a wall at that layer is held again, not
+        /// counted).
+        uint32_t MarkBumped(float x, float y, float feetZ, float dirX, float dirY, float radius);
+        /// The 1-yd cells MarkBumped newly walled this episode (the nav columns' bumped_cells), and since the map was
+        /// last cleared (the global route's recompute trigger, GlobalRoute::Update: a bump is the body saying the way
+        /// it was pushing does not go through).
+        [[nodiscard]] uint32_t BumpedCells() const { return _bumpedEpisode; }
+        [[nodiscard]] uint64_t BumpedTotal() const { return _bumpedTotal; }
 
         /// The cell at world (x, y), or null when its tile is not kept (a coarse cell is not one).
         [[nodiscard]] MapCell const* Find(float x, float y) const;
@@ -512,6 +553,20 @@ namespace Animus::Vision
         uint32_t _groundTotal = 0;
         uint32_t _searchedTotal = 0;
         uint64_t _knownTotal = 0;
+        uint32_t _bumpedEpisode = 0;
+        uint64_t _bumpedTotal = 0;
+        /// The map second of the last bump (MarkBumped's rate), and the cells held against the camera's clears: the
+        /// cell and the map second it was bumped (BUMP_HOLD_SECONDS, at most BUMP_HOLD_MAX).
+        double _lastBumpClock = -1.0e9;
+        struct BumpHold
+        {
+            int32_t X;
+            int32_t Y;
+            double Clock;
+        };
+        std::vector<BumpHold> _bumpHolds;
+        /// Whether 1-yd cell (cx, cy) is held against the camera's clears now.
+        [[nodiscard]] bool BumpHeld(int32_t cx, int32_t cy) const;
         double _lastGroundClock = 0.0;
         uint64_t _touch = 0;
         // The last tile Touch found: a frame writes runs of cells in one tile; and TouchFar's.

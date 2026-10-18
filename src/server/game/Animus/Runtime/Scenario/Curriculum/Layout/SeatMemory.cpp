@@ -18,6 +18,7 @@
 
 #include "SeatMemory.h"
 #include "ActionCatalog.h"
+#include "CoreBlock.h"
 #include "DuelBlock.h"
 #include "Layout.h"
 #include "Player.h"
@@ -162,7 +163,7 @@ void Animus::Curriculum::SeatMemory::Press(Layout const& layout, uint32 action, 
 
     std::vector<ActionCatalog::Action> const& catalog = layout.Catalog().Actions();
     uint32 const coreFirst = layout.Slice(BlockId::Core).ActionFirst;
-    for (uint32 i = 0; i < catalog.size() && coreFirst + i < _readyMs.size(); ++i)
+    for (uint32 i = 0; i < CoreBlock::Offered(layout) && coreFirst + i < _readyMs.size(); ++i)
     {
         if (catalog[i].Type != ActionCatalog::Kind::Spell)
             continue;

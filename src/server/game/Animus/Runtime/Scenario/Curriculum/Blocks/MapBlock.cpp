@@ -59,6 +59,11 @@ namespace
     std::atomic<float> RouteKeepYards{ 5.0f };
     /// How far from the body the crop before's pose is read on the global field (above the labels' 12-yd step).
     constexpr float GLOBAL_LAST_YARDS = 16.0f;
+    /// The bumper's pin (Vision::MentalMap::MarkBumped): how long the held keys must have got nowhere (SeatView::
+    /// PinnedMs, under a tenth of what they asked -- under 0.7 yd a second at a run, 0.25 at a walk) before the body's
+    /// wall contact is a wall on the map. A body sliding along a face makes its way and never pins, so rubbing along a
+    /// wall paints nothing.
+    constexpr uint32 BUMP_PINNED_MS = 1000;
 
     /// The global route's doors (Vision::GlobalBlocking): the closed doors and gates the seat's object memory holds
     /// (ObjectMemory::Blocking: class Door, not seen open, not absent), gathered once a decision, so a route's cell is
@@ -270,6 +275,7 @@ void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uin
     {
         *view.Crop = CropPose();
         view.Crop->RouteSwitches = last.RouteSwitches;     // the episode's count survives a decision with no map
+        view.Crop->BumpedCells = last.BumpedCells;         // ... and the bumper's
     }
     if (view.CoverageOut)
         *view.CoverageOut = Coverage::Summary();
@@ -301,6 +307,29 @@ void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uin
     if (view.Seen)
         map->WriteEntities(*view.Seen);
     map->WriteBody(x, y, z, grounded);
+    // **The bumper** (Vision::MentalMap::MarkBumped): a body on the ground holding a move key that has got nowhere
+    // BUMP_PINNED_MS or more while the controller reports it against a wall felt what stopped it -- a wall the camera
+    // never wrote, a doodad with no floor recorded under it: the remembered route's false cells (7-15 % of them in the
+    // nav1_sight evaluation, where 39 of 256 trips were pinned ~57 of their 60 s). The cells ahead along the way the
+    // keys push are walled before the crop and the plans read the map, so this decision's crop, window plan and global
+    // route (its contradiction or bump recompute, GlobalRoute::Update) all see it. Perception-true: a player feels the
+    // collision; nothing of the actions or the observation's layout changes. Falling, swimming or flying never bumps
+    // (Mode::Ground only), nor a vertical key alone, nor a rooted body; the body's sweep meets geometry only
+    // (MapWorldQuery), never a unit.
+    if (Movement::BodyState const* body = view.Body; body && view.Controls && body->Kind == Movement::Mode::Ground
+        && body->AgainstWall && view.PinnedMs >= BUMP_PINNED_MS && !bot->HasUnitState(UNIT_STATE_ROOT))
+    {
+        Movement::ControlState const& held = view.Controls->Held;
+        if (held.Forward || held.Strafe)
+        {
+            // The push in the world: forward along the yaw, strafe right along (sin yaw, -cos yaw).
+            float const cosYaw = std::cos(body->Yaw);
+            float const sinYaw = std::sin(body->Yaw);
+            float const pushX = float(held.Forward) * cosYaw + float(held.Strafe) * sinYaw;
+            float const pushY = float(held.Forward) * sinYaw - float(held.Strafe) * cosYaw;
+            map->MarkBumped(x, y, z, pushX, pushY, Movement::ShapeOf(bot).Radius);
+        }
+    }
 
     thread_local std::vector<uint8> scratch(2 * Vi::CROP_BYTES);
     uint8* crop = view.MapRow ? view.MapRow : scratch.data();
@@ -327,6 +356,7 @@ void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uin
     // Where this crop was taken from and how many of its blocks a cell goal can name (free choice goals): the ACT that
     // answers this observation is decoded against exactly this pose (StageScenario::ApplyGoals).
     CropPose pose{ true, x, y, z, view.Facing, CellGrid::Count(crop) };
+    pose.BumpedCells = map->BumpedCells();
     // The route on the seat's own map to the objective the encounter names (revision 7): planned once here, its
     // points the policy's and its values the labels' (CropPose::Route*). The objective is the sim's knowledge, not
     // the bot's: nothing of the straight line to it leaves this block, only the route on the bot's own map. An

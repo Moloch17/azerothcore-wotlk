@@ -70,6 +70,9 @@ namespace Animus::Curriculum
         bool RouteGlobal = false;
         bool GlobalReplanned = false;
         bool GlobalContradiction = false;
+        /// The 1-yd cells the bumper walled this episode so far (Vision::MentalMap::BumpedCells: the body pinned
+        /// against a wall the map lacked), the bumped_cells column (PointNavEncounter).
+        uint32 BumpedCells = 0;
     };
 
     /// A place the sim holds for a cell goal: the world point latched when the cell was chosen.

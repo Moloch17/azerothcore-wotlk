@@ -772,6 +772,8 @@ bool Animus::Vision::GlobalRoute::Update(MentalMap const& map, float x, float y,
         reason = GlobalReplan::Left;
     else if (_field.RouteChanged(x, y, z, GLOBAL_CONTRADICTION_YARDS, yards))
         reason = yards <= GLOBAL_CONTRADICTION_YARDS ? GlobalReplan::Contradiction : GlobalReplan::RouteWalled;
+    else if (map.BumpedTotal() != _planBumped)
+        reason = GlobalReplan::Bumped;
     else if (map.KnownTotal() >= _planKnown + GLOBAL_REPLAN_KNOWN)
         reason = GlobalReplan::Known;
     else if (map.Clock() >= _planClock + double(GLOBAL_REPLAN_SECONDS))
@@ -785,6 +787,7 @@ bool Animus::Vision::GlobalRoute::Update(MentalMap const& map, float x, float y,
         _goalZ = gz;
         _planClock = map.Clock();
         _planKnown = map.KnownTotal();
+        _planBumped = map.BumpedTotal();
         _last = reason;
         if (++_plans > 1)
             ++_replans;

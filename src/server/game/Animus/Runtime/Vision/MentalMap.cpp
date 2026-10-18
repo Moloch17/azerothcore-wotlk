@@ -348,6 +348,10 @@ void Animus::Vision::MentalMap::Clear()
     _groundTotal = 0;
     _searchedTotal = 0;
     _knownTotal = 0;
+    _bumpedEpisode = 0;
+    _bumpedTotal = 0;
+    _lastBumpClock = -1.0e9;
+    _bumpHolds.clear();
     _lastGroundClock = 0.0;
     _frameWalls.clear();
     _frameClears.clear();
@@ -373,6 +377,7 @@ void Animus::Vision::MentalMap::BeginEpisode()
     _epoch = Stamp();
     _groundTotal = 0;
     _searchedTotal = 0;
+    _bumpedEpisode = 0;
     _lastGroundClock = _clock;
 }
 
@@ -731,6 +736,9 @@ void Animus::Vision::MentalMap::SettleFrame(MapWriteStats* stats)
     {
         MapCell* cell = OwnCell(clear.X, clear.Y);
         if (!cell || (cell->Flags & MAP_WALL_FRAME))
+            continue;
+        // A wall the body felt (MarkBumped) outranks a ray that did not see it, for a while (BUMP_HOLD_SECONDS).
+        if (!_bumpHolds.empty() && BumpHeld(clear.X, clear.Y))
             continue;
         bool walled = false;
         for (auto const& offset : NEIGHBOURS)
@@ -1300,9 +1308,121 @@ void Animus::Vision::MentalMap::WriteBody(float x, float y, float z, bool ground
     if (grounded)
         ClearWall(cell, InsertFloor(cell, z), nullptr);
     MarkSeen(cell, stamp);
+    // ... and a bumped cell the body now stands in was no wall: its hold goes with it.
+    if (!_bumpHolds.empty())
+    {
+        int32_t const cx = CellOf(x);
+        int32_t const cy = CellOf(y);
+        _bumpHolds.erase(std::remove_if(_bumpHolds.begin(), _bumpHolds.end(),
+            [cx, cy](BumpHold const& hold) { return hold.X == cx && hold.Y == cy; }), _bumpHolds.end());
+    }
     _hasBody = true;
     _bodyX = x;
     _bodyY = y;
+}
+
+uint32_t Animus::Vision::MentalMap::MarkBumped(float x, float y, float feetZ, float dirX, float dirY, float radius)
+{
+    float const length = std::sqrt(dirX * dirX + dirY * dirY);
+    if (!(length > 1e-3f) || _clock < _lastBumpClock + double(BUMP_INTERVAL_SECONDS))
+        return 0;
+    float const ux = dirX / length;
+    float const uy = dirY / length;
+    int32_t const bodyX = CellOf(x);
+    int32_t const bodyY = CellOf(y);
+    // The contact point: a little past the radius along the push, and out of the body's own cell -- a body near the
+    // back of its cell meets the face inside it, and the cell it stands in is never the wall (WriteBody clears it
+    // anyway). Half a cell further at a time, at most a diagonal's worth.
+    float reach = std::max(0.0f, radius) + BUMP_REACH;
+    float px = x + ux * reach;
+    float py = y + uy * reach;
+    for (int32_t step = 0; step < 3 && CellOf(px) == bodyX && CellOf(py) == bodyY; ++step)
+    {
+        reach += 0.5f * MAP_CELL;
+        px = x + ux * reach;
+        py = y + uy * reach;
+    }
+    if (CellOf(px) == bodyX && CellOf(py) == bodyY)
+        return 0;
+    _lastBumpClock = _clock;
+
+    // The contact point's cell and those under the body's two front corners (a radius either side, across the push):
+    // the face the body's width met. Duplicates, the body's cell and the cells the rules leave are skipped.
+    uint16_t const stamp = Stamp();
+    float const sideX = -uy * radius;
+    float const sideY = ux * radius;
+    float const sides[BUMP_CELLS] = { 0.0f, 1.0f, -1.0f };
+    int32_t done[BUMP_CELLS][2] = {};
+    uint32_t doneCount = 0;
+    uint32_t walled = 0;
+    for (float const side : sides)
+    {
+        int32_t const cx = CellOf(px + sideX * side);
+        int32_t const cy = CellOf(py + sideY * side);
+        if (cx == bodyX && cy == bodyY)
+            continue;
+        bool repeat = false;
+        for (uint32_t index = 0; index < doneCount && !repeat; ++index)
+            repeat = done[index][0] == cx && done[index][1] == cy;
+        if (repeat)
+            continue;
+        done[doneCount][0] = cx;
+        done[doneCount][1] = cy;
+        ++doneCount;
+
+        MapCell const* known = FindCell(cx, cy);
+        if (known && (known->Flags & (MAP_VISITED | MAP_DOOR)))
+            continue;
+        if (known)
+        {
+            double const age = EntityAge(*known, _clock);
+            uint8_t const what = uint8_t(known->Entity & CLASS_MASK);
+            if (age >= 0.0 && age < double(ENTITY_RECENT_SECONDS) && what >= uint8_t(Class::HostileCreature)
+                && what <= uint8_t(Class::Trainer))
+                continue;
+        }
+        // The body's floor layer in the cell: the one within LAYER_MERGE of the feet (a crate's top a yard up the
+        // camera took for a floor is that layer: the planners stepped onto it), MAP_WALL_LOW with no floor known; a
+        // cell whose floors are all another storey's is not the body's to wall.
+        int32_t layer = 0;
+        if (known && HasFloor(*known))
+        {
+            layer = LayerNear(*known, feetZ);
+            if (layer < 0)
+                continue;
+        }
+        MapCell& cell = Touch(cx, cy);
+        uint8_t const flag = WallFlag(layer);
+        if (!(cell.Flags & flag))
+            ++walled;
+        cell.Flags |= flag;
+        MarkSeen(cell, stamp);
+
+        // Held against the camera's clears: an earlier hold of the cell renewed, else a new one (the oldest giving
+        // way at the cap).
+        auto held = std::find_if(_bumpHolds.begin(), _bumpHolds.end(),
+            [cx, cy](BumpHold const& hold) { return hold.X == cx && hold.Y == cy; });
+        if (held == _bumpHolds.end())
+        {
+            if (_bumpHolds.size() >= BUMP_HOLD_MAX)
+                held = std::min_element(_bumpHolds.begin(), _bumpHolds.end(),
+                    [](BumpHold const& a, BumpHold const& b) { return a.Clock < b.Clock; });
+            else
+                held = _bumpHolds.insert(_bumpHolds.end(), BumpHold{ cx, cy, _clock });
+        }
+        *held = BumpHold{ cx, cy, _clock };
+    }
+    _bumpedEpisode += walled;
+    _bumpedTotal += walled;
+    return walled;
+}
+
+bool Animus::Vision::MentalMap::BumpHeld(int32_t cx, int32_t cy) const
+{
+    for (BumpHold const& hold : _bumpHolds)
+        if (hold.X == cx && hold.Y == cy)
+            return _clock - hold.Clock < double(BUMP_HOLD_SECONDS);
+    return false;
 }
 
 void Animus::Vision::MentalMap::Crop(float x, float y, float z, float yaw, uint8_t* out, float cell) const

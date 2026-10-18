@@ -3128,8 +3128,13 @@ void Animus::Curriculum::StageScenario::ApplyLook(Env& env, int32 const* look)
         // at the next tick's start and reports it with one SET_FACING, as a client does. Still free (R1): it is not a
         // press, so nothing prices, repeats or tallies it.
         Vision::FreeLook::State const before = seat.Look;
-        float const turn = Vision::FreeLook::Apply(seat.Look, look + std::size_t(agent) * Vision::FreeLook::HEADS,
-            settings);
+        // A level camera's pitch head has one choice (StageDefinition::LevelCamera; VisionBlock's manifest): whatever
+        // the row carries there -- the policy's 0, a placeholder's hold -- is rate 0.
+        std::array<int32, Vision::FreeLook::HEADS> choice;
+        std::copy_n(look + std::size_t(agent) * Vision::FreeLook::HEADS, Vision::FreeLook::HEADS, choice.begin());
+        if (_stage.LevelCamera)
+            choice[Vision::FreeLook::HEAD_PITCH_RATE] = int32(Vision::FreeLook::PITCH_STOP_INDEX);
+        float const turn = Vision::FreeLook::Apply(seat.Look, choice.data(), settings);
         if (turn != 0.0f)
             seat.Controls.Held.FaceTurn = turn;
         // A camera move (movement pacing M7): a rate, the zoom or the offset changed, or a turn to camera asked.
