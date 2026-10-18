@@ -64,6 +64,11 @@ mappo:
   # decision time (2026-10-13: 134.7 ms on dev).
   planner_k: 20
   planner_every: 8
+  # The route is the goal's only observation since map block revision 7 (no compass in any nav stage): the policy
+  # reads the sim's seventeen route scalars through the waypoint join (planner_waypoint_source sim). Without these
+  # two keys nav1 had no goal input at all (2026-10-17: 0% arrived at 10M on the route-only restart).
+  planner_waypoint: true
+  planner_waypoint_source: sim
   foresight_obs_targets: true
   foresight_feedback: true
   goal_lookahead: true
