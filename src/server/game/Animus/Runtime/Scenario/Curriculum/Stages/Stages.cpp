@@ -676,11 +676,12 @@ namespace
     /// (map block revision 7, 2026-10-17): no nav observation carries the straight line to the goal; the goal
     /// reaches the policy only as the route the map block plans on the seat's own map (its seventeen route scalars),
     /// the encounter alone knowing the point. No sight block: nothing is pressed; no coverage block: the coarse
-    /// tier is the far view.
+    /// tier is the far view. The remembered entities (2026-10-18; Vision::ObjectMemory): what the seat or the shared
+    /// memory saw before and does not see now, so a door, a lever or a patrol out of view is still known.
     std::vector<BlockId> NavBlocks()
     {
         using enum BlockId;
-        return { Core, Move, Vision, Map, Goal };
+        return { Core, Move, Vision, Map, MemoryEntities, Goal };
     }
 
     /// Wailing Caverns (map 43), held out of every nav stage: never drawn in training nor in an ordinary evaluation
@@ -1506,6 +1507,16 @@ namespace
         // The map block's crop has one tier, or two for the nav stages (the 8-yd coarse tier, revision 5).
         if (stage.MapTiers < 1 || stage.MapTiers > 2 || (stage.MapTiers == 2 && !stage.Has(BlockId::Map)))
             return "the mental map's tiers are 1 or 2, and two tiers need the map block";
+        // The remembered entities are written from the camera's entity list (Vision::ObjectMemory): the entities block
+        // observes first.
+        if (stage.Has(BlockId::MemoryEntities))
+        {
+            auto const entities = std::find(stage.Blocks.begin(), stage.Blocks.end(), BlockId::Entities);
+            auto const memory = std::find(stage.Blocks.begin(), stage.Blocks.end(), BlockId::MemoryEntities);
+            if (!stage.Has(BlockId::Vision) || entities == stage.Blocks.end() || memory < entities)
+                return "the memory entities block reads what the camera's entity list wrote: it needs the vision block, "
+                    "after it";
+        }
         // Entity memory is written from the camera's entity list, by the entities block before the sight block reads
         // it (dungeon-curriculum I2).
         if (stage.Has(BlockId::Sight))
