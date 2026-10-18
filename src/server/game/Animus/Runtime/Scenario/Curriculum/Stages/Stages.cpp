@@ -898,8 +898,8 @@ namespace
         });
 
         // **The nav stages** (the vision movement curriculum, decision 0036; .agents/plans/vision-movement-curriculum/,
-        // 2026-10-13): PointNav -- a point goal whose position is always known (the compass: the minimap marker) and
-        // whose route is not, in cleared dungeons, one seat, every race and class at every level, evenly (EvenLevels:
+        // 2026-10-13): PointNav -- a point goal the sim always knows and shows only as the route on the mental map,
+        // in cleared dungeons, one seat, every race and class at every level, evenly (EvenLevels:
         // 1-80, a death knight 55-80; the user, 2026-10-13), and every class equally often (no per-class reweighting
         // in the learner); the camera draws every render size equally often (EvenRenderSizes; the user, 2026-10-15).
         // A second root of the curriculum: nav1 seeds from nothing
@@ -928,8 +928,8 @@ namespace
             .Name = "nav1_sight",
             .Suffix = "_nav",
             .Extends = "",
-            .Summary = "an empty Stockades or Ragefire Chasm: walk to a point in sight, shown by the compass, as fast "
-                "as possible, and stop on it; Wailing Caverns held out",
+            .Summary = "an empty Stockades or Ragefire Chasm: walk to a point in sight, known only by the route on "
+                "the mental map, as fast as possible, and stop on it; Wailing Caverns held out",
             .Blocks = NavBlocks(),
             .Arenas = {
                 NavArena("stockades", MAP_STORMWIND_STOCKADE, 60, NavFlag::SightOnly),

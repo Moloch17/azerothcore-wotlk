@@ -36,8 +36,9 @@ namespace Animus::Curriculum
     class PartyFollowEncounter;
 
     /// **PointNav** (Opposition::PointNav; vision movement curriculum, decision 0036, CONTRACT.md secs 1-3): a point
-    /// goal over a cleared dungeon, shown to the seat as the compass (the minimap marker: bearing and distance, exact,
-    /// never withheld), the route unknown. The arena's traversability bake (Vision::TravRegistry, Runtime/Vision/
+    /// goal over a cleared dungeon, shown to the seat only as the route the map block plans to it on the seat's own
+    /// map (map block revision 7, 2026-10-17: no compass, no straight line; `View` names the point), the route to be
+    /// found. The arena's traversability bake (Vision::TravRegistry, Runtime/Vision/
     /// TravBake) is baked on the arena's first episode and gives every episode its pair: the goal first, one Dijkstra
     /// from it, then a start whose route length and detour (route over the straight line) fall in bins the rung opens
     /// (PointNav.DetourBins, LengthBins, RungBins0..3; the rung is the shaping fade's, SightDraw::Rung). ReplayShare

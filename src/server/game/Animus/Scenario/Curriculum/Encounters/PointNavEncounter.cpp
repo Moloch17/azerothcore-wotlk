@@ -859,7 +859,7 @@ void Animus::Curriculum::PointNavEncounter::WriteLabels(Env const& env, uint32 s
         return;
     scalars[Vi::TRAV_LABEL_C_BODY] = CostAt(nav, x, y);
     scalars[Vi::TRAV_LABEL_C_START] = nav.CStart;
-    // The goal in the body frame: forward along the facing, right along (sin yaw, -cos yaw) -- what the compass says.
+    // The goal in the body frame: forward along the facing, right along (sin yaw, -cos yaw): a label, no observation.
     float const cosYaw = std::cos(yaw);
     float const sinYaw = std::sin(yaw);
     float const dx = nav.Goal.GetPositionX() - x;
