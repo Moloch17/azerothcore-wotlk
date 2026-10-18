@@ -247,7 +247,8 @@ name; blocked when the ray stops more than radius + `LOOK_SLACK` 1 yd short; sky
 `MISSED_LOOKS` 4 in a row set Absent (a gathered node, a looted chest, a moved NPC, a despawned corpse). No rays (a frame
 without an image): nothing is judged. **Decay** (every `DECAY_EVERY_SECONDS` 5): players after `PLAYER_KEEP_SECONDS`
 120 s unseen, any other GUID-keyed thing after `TRANSIENT_KEEP_SECONDS` 600 s. Spawned creatures are kept like fixed
-objects and NPCs (the spawn point and the patrol trace); their age says how stale the state is. **Cap**
+objects and NPCs (the spawn point and the patrol trace); their age says how stale the state is -- a choice (the brief
+said creatures decay): a spawn's place is where it will be again after a reset, and its trace is the remembered patrol. **Cap**
 `OBJECT_SEAT_CAP` 1024 a seat, `OBJECT_SHARED_CAP` 8192 a map: full, the entry not listed by this write that matters
 least goes (GUID-keyed / players, then creatures, then objects and NPCs; oldest sighting first).
 
@@ -273,7 +274,9 @@ refused (logged) and overwritten at the next save. The clock carries on from the
 **Planner API** (no caller yet): `Find(kind or ObjectKind::Count, class or Class::Count, near, radius, out)` the
 matches nearest first (Absent included); `BlockingAt(cx, cy)` -- a remembered closed door/gate (class Door, game object,
 not Open, not Absent) whose middle is within max(radius, `DOOR_MIN_RADIUS` 1) of the 1-yd cell's centre: a wall to a
-route until a look sees it open (the global planner's contradiction replanning). Linear over the entries.
+route until a look sees it open (the global planner's contradiction replanning); a single-cell probe, linear over the
+entries. `Blocking(out)` lists the closed doors and gates (the same rule, identity order) for a planner to stamp each
+footprint once over a window.
 
 **The policy's view**: the `memory_entities` block (cpp-blocks.md). **The arm**: `no_object_memory`
 (`MODE_FLAG_NO_OBJECT_MEMORY` 16; `SeatState::ObjectsHidden`, set at the reset for an evaluation): no adoption, no write,

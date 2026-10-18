@@ -221,7 +221,12 @@ namespace Animus::Vision
             std::vector<RememberedObject const*>& out) const;
         /// **For a planner**: whether a remembered closed door or gate (class Door, not Open, not Absent) covers the
         /// 1-yd map cell (cx, cy): its middle within max(radius, DOOR_MIN_RADIUS) of the cell's centre.
+        /// The single-cell probe: a linear scan of the entries. A planner over a window stamps Blocking's
+        /// footprints once instead.
         [[nodiscard]] bool BlockingAt(int32_t cx, int32_t cy) const;
+        /// **For a planner**: the remembered closed doors and gates (BlockingAt's rule), into `out` (cleared first),
+        /// in identity order; each shuts the cells within max(Radius, DOOR_MIN_RADIUS) of its Position. How many.
+        uint32_t Blocking(std::vector<RememberedObject const*>& out) const;
 
         /// The `count` most relevant entries not listed by the last write, into `out`, most relevant first: nearest
         /// `from`, sooner seen, a fixed thing or an NPC before a creature, an Absent one after the rest (score

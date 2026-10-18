@@ -515,14 +515,34 @@ uint32_t Animus::Vision::ObjectMemory::Find(ObjectKind kind, Class what, Vec3 ne
     return uint32_t(out.size());
 }
 
+namespace
+{
+    [[nodiscard]] bool Shut(RememberedObject const& entry)
+    {
+        return entry.What == Class::Door && entry.GameObject && !entry.Open && !entry.Absent;
+    }
+}
+
 bool Animus::Vision::ObjectMemory::BlockingAt(int32_t cx, int32_t cy) const
 {
     Vec3 const centre{ float(cx) + 0.5f, float(cy) + 0.5f, 0.0f };
     for (RememberedObject const& entry : _entries)
-        if (entry.What == Class::Door && entry.GameObject && !entry.Open && !entry.Absent
-            && Flat(entry.Position, centre) <= std::max(entry.Radius, DOOR_MIN_RADIUS))
+        if (Shut(entry) && Flat(entry.Position, centre) <= std::max(entry.Radius, DOOR_MIN_RADIUS))
             return true;
     return false;
+}
+
+uint32_t Animus::Vision::ObjectMemory::Blocking(std::vector<RememberedObject const*>& out) const
+{
+    out.clear();
+    for (RememberedObject const& entry : _entries)
+        if (Shut(entry))
+            out.push_back(&entry);
+    std::sort(out.begin(), out.end(), [](RememberedObject const* a, RememberedObject const* b)
+    {
+        return a->Key < b->Key;
+    });
+    return uint32_t(out.size());
 }
 
 uint32_t Animus::Vision::ObjectMemory::Recall(Vec3 from, RememberedObject const** out, uint32_t count) const
