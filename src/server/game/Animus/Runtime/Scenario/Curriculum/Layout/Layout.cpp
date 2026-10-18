@@ -115,6 +115,7 @@ std::string_view Animus::Curriculum::BlockName(BlockId id)
         case BlockId::Combat:    return "combat";
         case BlockId::Goal:      return "goal";
         case BlockId::Coverage:  return "coverage";
+        case BlockId::MemoryEntities: return "memory_entities";
         case BlockId::Count:     break;
     }
 

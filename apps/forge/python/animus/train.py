@@ -41,9 +41,9 @@ from .partners import PARTNERS_DIR, Partners, partner_snapshot, with_partners_ch
 from .config import TrainConfig
 from .distill import Distiller, auto_teachers, build_teacher
 from .env import ClusterEnv, ForgeEnv
-from .evaluation import (ABLATION_BLOCKS, ABLATIONS, SHARED_MEMORY_ARM, SHARED_MEMORY_COLUMN, ConvergenceTracker,
-                         EvalResult, ablation_chooser, action_mask_table, casting_weights, compass_spans,
-                         format_summary, run_evaluation, trace_columns, write_trace)
+from .evaluation import (ABLATION_BLOCKS, ABLATIONS, OBJECT_MEMORY_ARM, OBJECT_MEMORY_BLOCK, SHARED_MEMORY_ARM,
+                         SHARED_MEMORY_COLUMN, ConvergenceTracker, EvalResult, ablation_chooser, action_mask_table,
+                         casting_weights, compass_spans, format_summary, run_evaluation, trace_columns, write_trace)
 from .mappo.buffer import RolloutBuffer
 from .mappo.trainer import (LOOK_COMMANDS, VISION_CHUNK_AUTO, VISION_CHUNK_FALLBACK, MappoTrainer, horizon_seconds,
                             per_decision, schedule)
@@ -1702,7 +1702,7 @@ class TrainingRun:
         beside its primary goal or queued), "no_searched" and "no_coverage" (the searched-state and the coverage inputs
         zeroed), all evaluation.ablation_chooser, "no_planner" and "no_school" (the planner's readouts zeroed; the
         sim's route in place of the school planner's: flags on the networks), "no_shared_memory" (the sim's seats
-        started blank: a MODE flag) -- and
+        started blank: a MODE flag), "no_object_memory" (the sim's seats with no object memory: a MODE flag) -- and
         reported apart as policy <arm> in eval.csv and eval.jsonl, with the gap to the plain one. A reading only:
         neither the tracker, the controller nor the partners' pool sees it."""
         config = self.config
@@ -1741,6 +1741,13 @@ class TrainingRun:
                           flush=True)
                     continue
                 options["no_shared_memory"] = True
+            elif arm == OBJECT_MEMORY_ARM:
+                # The sim told to give the seats no object memory (MODE_FLAG_NO_OBJECT_MEMORY): the same seeds, the
+                # memory_entities block zeros. A stage without the block reads nothing of the memory: skipped.
+                if not any(count for _, count in compass_spans(self.spec, self.stage, OBJECT_MEMORY_BLOCK)):
+                    print(f"Arm {arm}: no layout of the stage has a {OBJECT_MEMORY_BLOCK} block; skipped", flush=True)
+                    continue
+                options["no_object_memory"] = True
             # random_goal, random_cell, no_plan: the goal head's draws are edited for the length of the arm
             # (MappoTrainer.uniform_goals, uniform_cells, single_goal).
             if arm in ("random_cell", "no_plan") and not (

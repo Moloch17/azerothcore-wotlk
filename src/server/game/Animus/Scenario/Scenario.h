@@ -226,6 +226,9 @@ namespace Animus
         /// Whether an evaluation's seats start blank instead of adopting their map's shared memory
         /// (MODE_FLAG_NO_SHARED_MEMORY, the learner's "no_shared_memory" arm). Scenarios without one ignore it.
         virtual void SetNoSharedMemory(bool /*off*/) { }
+        /// Whether an evaluation's seats start with no object memory and read none (MODE_FLAG_NO_OBJECT_MEMORY, the
+        /// learner's "no_object_memory" arm). Scenarios without one ignore it.
+        virtual void SetNoObjectMemory(bool /*off*/) { }
         /// A cluster's shared curriculum state (StageScenario's dungeon ladder): a worker's runs since its last
         /// report, as a PROGRESS field (empty for none); the host folds every worker's into its own and sends the
         /// workers what it decided ("RUNG <n>"), which they follow instead of deciding for themselves.

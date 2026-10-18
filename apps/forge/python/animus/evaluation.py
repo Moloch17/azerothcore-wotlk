@@ -521,6 +521,10 @@ NETWORK_FLAG_ARMS = ("no_planner", "no_school")
 ABLATION_BLOCKS = {"no_compass": "compass", "no_map": "map", "no_goal": "goal", "no_party": "party_frames"}
 #: ... and the one that is a flag on the sim's MODE (MODE_FLAG_NO_SHARED_MEMORY): nothing of the learner's changes.
 SHARED_MEMORY_ARM = "no_shared_memory"
+#: ... and the object memory's (MODE_FLAG_NO_OBJECT_MEMORY): the same seeds, the seats neither adopting the map's
+#: shared object memory nor reading the memory_entities block (zeros in the sim). Skipped on a stage without the block.
+OBJECT_MEMORY_ARM = "no_object_memory"
+OBJECT_MEMORY_BLOCK = "memory_entities"
 #: The sim's episode column that says whether the episode started from the map's shared memory (0/1; a stage with a
 #: SharedMemoryShare writes it): the arm above reads it to tell whether the sim honoured the flag.
 SHARED_MEMORY_COLUMN = "shared_memory"
@@ -967,7 +971,7 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
                    any_playing: Callable[[bool], bool] | None = None,
                    score_column: str = SCORE_COLUMN, arena: int = 0,
                    collect_motion: bool = False, stand_in: bool = False, training_stand_in: bool = False,
-                   no_shared_memory: bool = False,
+                   no_shared_memory: bool = False, no_object_memory: bool = False,
                    excluded: Callable[[int], np.ndarray] | None = None,
                    trace_all: dict[str, np.ndarray] | None = None,
                    potential: tuple | None = None) -> tuple[EvalResult, p.Step]:
@@ -995,7 +999,8 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
     which the chooser plays with a frozen partner, and its episode info's present column is 0, so it is never scored);
     `training_stand_in` is the training MODE's after the evaluation (the learner can field one). `no_shared_memory`
     (MODE_FLAG_NO_SHARED_MEMORY, the arm of that name) starts every seat blank instead of adopting the map's shared
-    memory, the seeds and their other draws as they are. `excluded(env)` -> [A]
+    memory, the seeds and their other draws as they are; `no_object_memory` (MODE_FLAG_NO_OBJECT_MEMORY) gives the seats
+    no object memory and zeros their memory_entities block. `excluded(env)` -> [A]
     bool names rows of env's episode that just ended that are not the learner's to be scored (the eval arms
     "with_partners" and "with_human": the partners' seats); it is asked before the chooser sees the next episode's first
     STEP.
@@ -1028,6 +1033,8 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
         share["stand_in"] = True
     if no_shared_memory:
         share["no_shared_memory"] = True
+    if no_object_memory:
+        share["no_object_memory"] = True
     step = env.set_mode(True, seed, episodes, baseline, **share)
     # Decisions of the envs that might be tracing, kept until their episode ends and its seed is known.
     tracing: dict[int, list[dict]] = {env: [] for env in range(envs)} if trace_episodes else {}

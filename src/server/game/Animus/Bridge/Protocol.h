@@ -352,6 +352,11 @@ namespace AnimusForge
     /// memory. Not a wire change: an older sim ignores the bit (above) and the learner reads the episodes'
     /// shared_memory column to tell.
     constexpr uint32 MODE_FLAG_NO_SHARED_MEMORY = 4;
+    /// NO_OBJECT_MEMORY (bit 4; bit 3, 8, is the global planner's no_global): an evaluation whose seats neither adopt
+    /// their map's shared object memory nor read the memory_entities block (it reads zeros), the seeded draws all
+    /// still run -- the learner's "no_object_memory" arm, against the plain evaluation's same trips. Ignored by
+    /// training MODE. Not a wire change (an older sim ignores the bit).
+    constexpr uint32 MODE_FLAG_NO_OBJECT_MEMORY = 16;
 
     struct ModeMsg
     {

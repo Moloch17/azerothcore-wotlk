@@ -116,6 +116,10 @@ MODE_FLAG_STAND_IN = 2
 # the plain evaluation) and every seat starts blank. A sim without the flag ignores the bit (unknown MODE flags are;
 # Protocol.h ModeMsg::Flags) and adopts as the seed says: the arm checks the episodes' shared_memory column.
 MODE_FLAG_NO_SHARED_MEMORY = 4
+# The seats of an evaluation neither adopt their map's shared object memory nor read the memory_entities block (it
+# reads zeros): the eval arm "no_object_memory", the seeds' draws as they are. Bit 3 (8) is the global planner's
+# no_global. A sim without the flag ignores the bit.
+MODE_FLAG_NO_OBJECT_MEMORY = 16
 PRESENT_STAND_IN = 2  # a STEP's present for the stand-in's row (protocol 25)
 WEIGHTS_COUNT = struct.Struct("<I")  # then that many float32 weights, one per layout in SPEC order
 REPLAY = struct.Struct("<IfI")  # seed base, share of training resets, count; then that many uint32 seed indexes
@@ -664,18 +668,20 @@ def decode_act(payload: bytes | bytearray | memoryview, agents: int, goals: bool
 
 def encode_mode(evaluate: bool, seed_base: int = 0, episodes: int = 0, baseline: str = "",
                 first_seed: int = 0, arena: int = 0, stand_in: bool = False,
-                no_shared_memory: bool = False) -> bytes:
+                no_shared_memory: bool = False, no_object_memory: bool = False) -> bytes:
     """MODE payload. An evaluation plays seed indexes [first_seed, first_seed + episodes) of seed_base, so a
     cluster's sims can each play their own share of one evaluation's seeds (ClusterEnv). `arena` pins it to a held-out
     arena (stage.json's index + 1; 0 = the stage's own draw, protocol 18). `stand_in` (MODE_FLAG_STAND_IN): the learner
     plays the "human" stand-in's row with a frozen partner -- in an evaluation one seat of every party has it (the eval
     arm "with_human"), in training its share of the parties; without it no party has one. `no_shared_memory`
     (MODE_FLAG_NO_SHARED_MEMORY): an evaluation whose seats start blank instead of adopting the map's shared memory
-    (the eval arm "no_shared_memory")."""
+    (the eval arm "no_shared_memory"). `no_object_memory` (MODE_FLAG_NO_OBJECT_MEMORY): an evaluation whose seats have
+    no object memory and read none (the eval arm "no_object_memory")."""
     name = baseline.encode("ascii")
     if len(name) >= POLICY_NAME_SIZE:
         raise ValueError(f"baseline policy name '{baseline}' is too long")
-    flags = (MODE_FLAG_STAND_IN if stand_in else 0) | (MODE_FLAG_NO_SHARED_MEMORY if no_shared_memory else 0)
+    flags = (MODE_FLAG_STAND_IN if stand_in else 0) | (MODE_FLAG_NO_SHARED_MEMORY if no_shared_memory else 0) \
+        | (MODE_FLAG_NO_OBJECT_MEMORY if no_object_memory else 0)
     return MODE.pack(int(evaluate), seed_base, episodes, flags, first_seed, arena, name)
 
 
@@ -697,6 +703,11 @@ def decode_mode_stand_in(payload: bytes) -> bool:
 def decode_mode_no_shared_memory(payload: bytes) -> bool:
     """Whether a MODE's evaluation starts every seat blank (MODE_FLAG_NO_SHARED_MEMORY; the arm "no_shared_memory")."""
     return bool(MODE.unpack(payload)[3] & MODE_FLAG_NO_SHARED_MEMORY)
+
+
+def decode_mode_no_object_memory(payload: bytes) -> bool:
+    """Whether a MODE's evaluation has no object memory (MODE_FLAG_NO_OBJECT_MEMORY; the arm "no_object_memory")."""
+    return bool(MODE.unpack(payload)[3] & MODE_FLAG_NO_OBJECT_MEMORY)
 
 
 def decode_mode_first_seed(payload: bytes) -> int:

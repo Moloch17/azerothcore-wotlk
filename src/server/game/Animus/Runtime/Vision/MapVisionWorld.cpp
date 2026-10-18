@@ -433,6 +433,8 @@ void Animus::Vision::ClassifySeen(Player* seat, GatheredSight const& gathered, S
                 info.Reaction = seat->IsHostileTo(unit) ? -1 : (seat->IsFriendlyTo(unit) ? 1 : 0);
                 info.Orientation = unit->GetOrientation();
                 info.Dead = !unit->IsAlive();
+                if (Creature const* creature = unit->ToCreature())
+                    info.SpawnId = creature->GetSpawnId();
                 break;
             }
             case SensedShape::Hazard:
@@ -451,6 +453,7 @@ void Animus::Vision::ClassifySeen(Player* seat, GatheredSight const& gathered, S
                 info.Entry = go->GetEntry();
                 info.GameObject = true;
                 info.Orientation = go->GetOrientation();
+                info.SpawnId = go->GetSpawnId();
                 bool const door = go->GetGoType() == GAMEOBJECT_TYPE_DOOR || go->GetGoType() == GAMEOBJECT_TYPE_BUTTON;
                 // A door or button stands open in either of its active states (the cannon blows the Iron Clad Door
                 // into the alternative one).

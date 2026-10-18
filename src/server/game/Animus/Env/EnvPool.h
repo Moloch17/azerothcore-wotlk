@@ -132,6 +132,7 @@ namespace Animus
         bool PinEvaluationArena(uint32 pin) { return _scenario.PinEvaluationArena(pin); }
         void SetStandIn(bool standIn) { _scenario.SetStandIn(standIn); }
         void SetNoSharedMemory(bool off) { _scenario.SetNoSharedMemory(off); }
+        void SetNoObjectMemory(bool off) { _scenario.SetNoObjectMemory(off); }
 
         /// Replaying lost evaluation episodes (the forge's REPLAY message): `fraction` of training resets rebuild one
         /// of `seeds` -- evaluation seed indexes of `seedBase` -- from the very random numbers the evaluation built it

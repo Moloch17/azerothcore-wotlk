@@ -1548,6 +1548,13 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
                 GetBlock(id).DescribeManifest(layout, manifest);
                 block["sight"] = manifest["sight"];
             }
+            // The remembered entities (object memory), for the learner's encoder beside the entity list's.
+            if (id == BlockId::MemoryEntities)
+            {
+                boost::json::object manifest;
+                GetBlock(id).DescribeManifest(layout, manifest);
+                block["memory_entities"] = manifest["memory_entities"];
+            }
             // Its columns by name, where the block names them: a seed follows a column that moved (bootstrap).
             boost::json::array names;
             GetBlock(id).DescribeColumns(layout, names);
@@ -2152,10 +2159,13 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
         Vision::MapRunSettings const& maps = Vision::MapCurrent();
         float const shared = _stage.SharedMemoryShare;
         bool const adopt = !(env.Evaluating && _noSharedMemory.load(std::memory_order_relaxed));
+        bool const hideObjects = env.Evaluating && _noObjectMemory.load(std::memory_order_relaxed);
         for (SeatState& seat : data.Seats)
         {
             seat.MapPending = true;
             seat.MapKept = false;
+            // The "no_object_memory" arm (MODE_FLAG_NO_OBJECT_MEMORY): no draw of its own, so the seed's are the same.
+            seat.ObjectsHidden = hideObjects;
             if (shared > 0.0f)
             {
                 bool const drawn = frand(0.0f, 1.0f) < shared;
@@ -3741,6 +3751,12 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
         view.SightGuids = &seat.SightGuids;
         view.Focus = &seat.Focus;
     }
+    // Its object memory, in a stage with a mental map or a sight list (ObjectMemory.h).
+    if (_stage.Has(BlockId::Map) || _stage.Has(BlockId::Sight))
+    {
+        view.Objects = &seat.Objects;
+        view.ObjectsHidden = seat.ObjectsHidden;
+    }
     // Its memory of where its party was, in a stage with party frames (revision 3, decision 0033).
     view.Party = _stage.Has(BlockId::PartyFrames) ? &seat.Party : nullptr;
     // Until this episode's client has taken its body from the server, the seat reads the server's (Client::Stop).
@@ -4208,6 +4224,9 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
         Vision::SharedMemories& memories = Vision::SharedMemories::Instance();
         if (seat.Map.Anchored() && seat.MapAbsorb)
             memories.Get(seat.MapMapId, now)->Absorb(seat.Map, now);
+        // Its object memory (ObjectMemory.h) goes back by the same rule.
+        if (seat.Objects.Anchored() && seat.MapAbsorb)
+            memories.Get(seat.MapMapId, now)->Objects().Absorb(seat.Objects, now);
         // An evaluation reads the memory by its seeded draw but never writes it: its scores would drift as it filled,
         // and a held-out map only evaluations visit would get a memory built from them.
         seat.MapAbsorb = !env.Evaluating;
@@ -4217,6 +4236,12 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
             memory->Adopt(seat.Map, now);
         else
             memory->Anchor(seat.Map, now);
+        // The object memory with it, at the same draw (never under the no_object_memory arm).
+        seat.Objects.Configure(Vision::OBJECT_SEAT_CAP);
+        if (seat.MapShared && !seat.ObjectsHidden)
+            memory->Objects().Adopt(seat.Objects, now);
+        else
+            memory->Objects().Anchor(seat.Objects, now);
         seat.MapKept = seat.MapShared && seat.Map.Tiles() > 0;
         seat.Map.BeginEpisode();
         seat.Recall.Configure(Vision::MemoryCurrent());
@@ -4245,6 +4270,12 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
             seat.Recall.Advance(seat.MapAgeOffset);
         else
             seat.Recall.Clear();
+        // The object memory by the same roll, on the same map (its identities are spawns: any instance of it).
+        seat.Objects.Configure(Vision::OBJECT_SEAT_CAP);
+        if (seat.MapKeep && seat.MapMapId == bot->GetMapId() && !seat.ObjectsHidden && seat.Objects.Count() > 0)
+            seat.Objects.Advance(seat.MapAgeOffset);
+        else
+            seat.Objects.Clear();
         seat.MapMapId = bot->GetMapId();
         seat.MapInstanceId = bot->GetInstanceId();
     }
@@ -5347,6 +5378,15 @@ void Animus::Curriculum::StageScenario::SetNoSharedMemory(bool off)
         LOG_INFO("module.animus", "Animus forge: stage {}: {}", _stage.Name, off
             ? "the evaluation's seats start blank (no shared memory: the learner's no_shared_memory arm)"
             : "the evaluation's seats adopt the shared memory as the seed draws");
+}
+
+void Animus::Curriculum::StageScenario::SetNoObjectMemory(bool off)
+{
+    bool const before = _noObjectMemory.exchange(off, std::memory_order_relaxed);
+    if (before != off && (_stage.Has(BlockId::Map) || _stage.Has(BlockId::Sight)))
+        LOG_INFO("module.animus", "Animus forge: stage {}: {}", _stage.Name, off
+            ? "the evaluation's seats have no object memory (the learner's no_object_memory arm)"
+            : "the evaluation's seats remember objects as the seed draws");
 }
 
 bool Animus::Curriculum::StageScenario::PinEvaluationArena(uint32 pin)

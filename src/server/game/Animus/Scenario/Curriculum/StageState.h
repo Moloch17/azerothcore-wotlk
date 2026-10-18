@@ -27,6 +27,7 @@
 #include "EntityMemory.h"
 #include "Identity.h"
 #include "MentalMap.h"
+#include "ObjectMemory.h"
 #include "LinkMemory.h"
 #include "ObjectGuid.h"
 #include "Position.h"
@@ -248,6 +249,15 @@ namespace Animus::Curriculum
         /// offset (MapKeep, MapAgeOffset), on the same instance; RecallKept says this episode's was. Mutable like the
         /// map.
         mutable Vision::EntityMemory Recall;
+        /// **Its object memory** (ObjectMemory.h), in a stage with a map or sight block: the things its camera listed,
+        /// by identity, written by the entities block from each frame's list. In a stage with a shared memory it
+        /// adopts or anchors on its map's shared object memory with the map (MapShared; never under the
+        /// "no_object_memory" arm, ObjectsHidden) and goes back into it when the map does (MapAbsorb); otherwise kept
+        /// across resets on the same map by the map's roll (MapKeep, MapAgeOffset). Mutable like the map.
+        mutable Vision::ObjectMemory Objects;
+        /// This episode's seat reads no object memory (MODE_FLAG_NO_OBJECT_MEMORY, an evaluation's arm): it starts
+        /// blank and the memory_entities block reads zeros.
+        bool ObjectsHidden = false;
         bool RecallKept = false;
         /// What each sight block slot named at its last observation (a raw GUID, 0 empty): the slots a press acts on.
         mutable std::array<uint64, SIGHT_SLOTS> SightGuids{};

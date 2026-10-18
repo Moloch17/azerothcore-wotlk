@@ -281,6 +281,16 @@ Invariants: all layouts' lists must agree on slots/width/presses (raises otherwi
 columns equal the entity list's (`_sight_of`).
 Pointer logits use the same tokens as the camera embedding (`tokens(obs, layout)`: both are from the observation alone).
 
+`MemoryEntities` (object memory, 2026-10-18; only where a layout has the `memory_entities` block, `_memory_entities_of`
+refuses one whose first `base_width` columns are not the entity list's): token = `shared.token(raw[..., :20])` (the
+entity list's encoder by reference) + `extra` Linear(15 -> 64) over the memory columns; present slots pooled (mean +
+max, zero when none present) through `pool` Linear(128 -> 256), added to the camera embedding after the sight list's;
+its columns are in `blind`. Seeding (`bootstrap._seed_memory_entities`, prefix `vision.memory_entities.`, kept out of
+`_seed_vision`'s camera keys so a new module never resets the camera's join): carried at the same revision and shapes,
+else fresh with `pool` zeroed -- a seeded policy computes exactly what it did (tmp/objmem/smoke.py: outputs
+bit-identical whatever the block holds; a stage without the block bit-identical to the code before). Not exportable
+(`export.py` refuses it, like the sight list).
+
 ## `VisionEncoder` (`:1541`)
 
 Camera for all layouts. Constants: `PATCH` (class default 4, per instance the manifest's `patch`, 8 live; the instance

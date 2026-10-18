@@ -46,6 +46,7 @@ namespace Animus::Vision
     struct SeenList;
     struct FrameHits;
     class MentalMap;
+    class ObjectMemory;
     class EntityMemory;
 }
 
@@ -340,6 +341,11 @@ namespace Animus::Curriculum
         /// without a sight block.
         Vision::EntityMemory* Recall = nullptr;
         bool RecallKept = false;
+        /// **Its object memory** (ObjectMemory.h, SeatState::Objects), in a stage with a map or sight block: written
+        /// by the entities block from each frame's list, read by the memory_entities block. Null for a view without
+        /// one; ObjectsHidden: the "no_object_memory" evaluation arm, whose block reads zeros.
+        Vision::ObjectMemory* Objects = nullptr;
+        bool ObjectsHidden = false;
         /// **What each of the sight block's slots named at its last observation** (SeatState::SightGuids): the raw
         /// GUID a press on the slot acts on, 0 an empty slot; and the seat's client focus (SeatState::Focus), the
         /// friend its beneficial spells go to. Null for a view without a sight block.

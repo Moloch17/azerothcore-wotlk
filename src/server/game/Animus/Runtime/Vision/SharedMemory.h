@@ -19,6 +19,7 @@
 #define ANIMUS_VISION_SHARED_MEMORY_H
 
 #include "MentalMap.h"
+#include "ObjectMemory.h"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -70,6 +71,11 @@
 /// checksum, the clock, the wall time, the tile counts and a payload checksum) and its tiles; a file of another
 /// version, map, layout or scene, or one that does not check out, is ignored (and overwritten at the next save). The
 /// format is kept stable: a realm keeps these files for good, and a change to it is a new MEMORY_VERSION.
+///
+/// **Object memory** (ObjectMemory.h, 2026-10-18): each memory carries its map's shared object memory (Objects(): the
+/// things seats' cameras listed, by spawn id), adopted and absorbed by the same seats at the same draw, saved beside
+/// the tiles in `<Dir>/<mapId>.aobj` (its own versioned format, OBJECT_MEMORY_VERSION, so the terrain's stays) on the
+/// same cadence, and loaded with them.
 namespace Animus::Vision
 {
     /// Where the memories live and their caps; set once at startup (SharedMemories::Configure).
@@ -153,6 +159,9 @@ namespace Animus::Vision
         [[nodiscard]] std::size_t Tiles() const;
         [[nodiscard]] std::size_t FarTiles() const;
 
+        /// The map's shared object memory (its own lock): a seat adopts or anchors on it beside the tiles.
+        [[nodiscard]] SharedObjects& Objects() { return _objects; }
+
     private:
         struct Entry
         {
@@ -182,6 +191,7 @@ namespace Animus::Vision
         uint64_t _touch = 0;
         uint64_t _revision = 0;         // merges so far
         uint64_t _savedRevision = 0;    // ... as of the last save or load
+        SharedObjects _objects;
     };
 
     /// The process's shared memories, one per game map id, made (and loaded from disk) the first time each is asked
@@ -205,6 +215,8 @@ namespace Animus::Vision
         void SaveAll(double now);
 
         [[nodiscard]] std::string PathOf(uint32_t mapId) const;
+        /// The map's object memory file, `<Dir>/<mapId>.aobj` ("" with no Dir).
+        [[nodiscard]] std::string ObjectPathOf(uint32_t mapId) const;
 
     private:
         SharedMemories() = default;

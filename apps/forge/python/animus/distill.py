@@ -25,7 +25,7 @@ from .stages import Span, arena_names, arena_state_span, block_spans, revised_bl
 
 #: The blocks the camera's encoder reads (VisionEncoder, its MapEncoder, the entity list, SightEntities and the
 #: CoverageEncoder): a frozen actor with a camera reads them only at the revision and width it was trained on.
-CAMERA_BLOCKS = ("vision", "map", "entities", "sight", "coverage")
+CAMERA_BLOCKS = ("vision", "map", "entities", "sight", "coverage", "memory_entities")
 #: What a camera's image has to agree on for one encoder to read another sim's bytes (vision_of's description).
 IMAGE_KEYS = ("height", "width", "channels", "classes", "class_channel", "class_limit", "bytes_per_pixel",
               "pixel_classes", "image_bytes")

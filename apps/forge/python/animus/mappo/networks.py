@@ -1161,6 +1161,9 @@ ENTITIES_BLOCK = "entities"
 #: The sight block in stage.json (BlockId::Sight, dungeon-curriculum I1 and I2): the visible and remembered entities
 #: as one list, and the pointer presses on it.
 SIGHT_BLOCK = "sight"
+#: The remembered entities in stage.json (BlockId::MemoryEntities, object memory 2026-10-18): the seat's object memory's
+#: most relevant entries not in view, each slot the entity list's columns then the memory's (MemoryEntities).
+MEMORY_ENTITIES_BLOCK = "memory_entities"
 #: The mental map's block in stage.json (BlockId::Map, perception-goals REDESIGN §3): its manifest's "map" describes
 #: the crop that travels as bytes after the image (protocol 24).
 MAP_BLOCK = "map"
@@ -1477,6 +1480,34 @@ def _sight_of(entry: dict, name: str, entities: dict | None) -> dict | None:
     return out
 
 
+def _memory_entities_of(entry: dict, name: str, entities: dict | None) -> dict | None:
+    """A layout's remembered entities as its memory_entities block describes them (object memory): {"first", "slots",
+    "width", "base_width", "present", "class_column", "type_column", "object_column", "memory_column", "type_buckets",
+    "features"} -- or None without one. Refused: the block without the camera's entity list, or whose leading
+    base_width columns are not that list's (its tokens are read with that list's encoder)."""
+    block = next((b for b in entry.get("blocks", ()) if b.get("name") == MEMORY_ENTITIES_BLOCK), None)
+    if block is None:
+        return None
+    described = block.get(MEMORY_ENTITIES_BLOCK)
+    if not described:
+        raise ValueError(f"{name}: stage.json has a memory_entities block without its description")
+    out = {key: int(described[key]) for key in ("first", "slots", "width", "base_width", "present", "class_column",
+                                                 "type_column", "object_column", "memory_column", "type_buckets")}
+    out["features"] = tuple(str(f) for f in described.get("features", ()))
+    first, count = int(block["obs"][0]), int(block["obs"][1])
+    if out["first"] != first or out["slots"] * out["width"] != count:
+        raise ValueError(f"{name}: the memory_entities block spans {count} columns from {first}, its description "
+                         f"{out['slots']} slots of {out['width']} from {out['first']}")
+    if entities is None:
+        raise ValueError(f"{name}: a memory_entities block without the camera's entity list, whose encoder it shares")
+    if (out["base_width"] != entities["width"] or out["width"] <= out["base_width"]
+            or any(out[key] != entities[key] for key in ("class_column", "type_column", "object_column",
+                                                         "memory_column", "type_buckets"))):
+        raise ValueError(f"{name}: the remembered entities ({out}) do not lead with the entity list's columns "
+                         f"({entities}): they are read with that list's encoder")
+    return out
+
+
 def vision_of(stage: dict | None, layout_names: Sequence[str]) -> list[dict | None] | None:
     """Per layout, in `layout_names` order, its camera as the vision block of stage.json describes it -- {"first": the
     block's first observation column (its scalars), "height", "width", "channels", "classes", "class_channel",
@@ -1575,6 +1606,9 @@ def vision_of(stage: dict | None, layout_names: Sequence[str]) -> list[dict | No
         sight = _sight_of(entry, name, listed)
         if sight is not None:
             described_layout["sight"] = sight
+        remembered = _memory_entities_of(entry, name, listed)
+        if remembered is not None:
+            described_layout["memory_entities"] = remembered
         out.append(described_layout)
     maps = [entry["map"] for entry in out if entry is not None]
     if any(crop is None for crop in maps) and any(crop is not None for crop in maps):
@@ -3255,6 +3289,71 @@ class SightEntities(nn.Module):
         return logits
 
 
+class MemoryEntities(nn.Module):
+    """**What the seat remembers and does not see now** (object memory, 2026-10-18; the memory_entities block): its
+    slots -- the object memory's most relevant entries not in this frame's list -- read by the entity list's own
+    encoder (VisibleEntities.token, shared by reference: a remembered door is tokenised as a visible one, its columns
+    the entity list's from the frame's camera to where it was, los 0), each token plus a projection of the memory's
+    columns (age, sightings, absent, kind, open / used / dead, the body-frame bearing and distance, height, trace
+    span). The present slots are pooled (mean and max) onto the camera's embedding width; seeding zeroes the pool when
+    the checkpoint has none (bootstrap._seed_memory_entities), so a seeded policy acts exactly as it did and the memory
+    comes in as the pool learns. A layout without the block adds zero; a stage without it builds no module."""
+
+    def __init__(self, descriptors: Sequence[dict | None], visible: "VisibleEntities", out_width: int,
+                 embed: int = 64):
+        super().__init__()
+        spec = next(entry for entry in descriptors if entry is not None)
+        for entry in descriptors:
+            if entry is not None and any(entry[key] != spec[key] for key in ("slots", "width", "base_width")):
+                raise ValueError(f"the remembered entities of the layouts differ ({entry} against {spec}): one "
+                                 f"encoder reads them all")
+        if spec["base_width"] != visible.width_:
+            raise ValueError(f"the remembered entities lead with {spec['base_width']} columns, the entity list's "
+                             f"tokens read {visible.width_}")
+        self.slots, self.width_, self.base = spec["slots"], spec["width"], spec["base_width"]
+        self.__dict__["shared"] = visible
+        self.extra = _linear(self.width_ - self.base, embed, 1.0)
+        self.pool = _linear(2 * embed, out_width, 1.0)
+        layouts = len(descriptors)
+        columns = torch.zeros(layouts, self.slots * self.width_, dtype=torch.long)
+        present = torch.full((layouts, self.slots), -1, dtype=torch.long)
+        self.blind = {}
+        for index, entry in enumerate(descriptors):
+            if entry is None:
+                continue
+            start = entry["first"]
+            columns[index] = torch.arange(start, start + self.slots * self.width_)
+            present[index] = start + torch.arange(self.slots) * self.width_ + entry["present"]
+            self.blind[index] = list(range(start, start + self.slots * self.width_))
+        # Derived from stage.json, not learned: kept out of the state dict.
+        self.register_buffer("columns", columns, persistent=False)
+        self.register_buffer("present_at", present, persistent=False)
+        self.register_buffer("has_memory", present[:, 0] >= 0, persistent=False)
+
+    def tokens(self, obs: torch.Tensor, layout: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """The slots' tokens [N, slots, embed] and which are present [N, slots]."""
+        rows = obs.shape[0]
+        layout = layout.reshape(-1).long()
+        raw = obs.gather(1, self.columns[layout]).reshape(rows, self.slots, self.width_)
+        dtype = self.pool.weight.dtype
+        codes = self.shared.token(raw[..., : self.base]) + self.extra(raw[..., self.base:].to(dtype))
+        present_at = self.present_at[layout]
+        present = (present_at >= 0) & (obs.gather(1, present_at.clamp(min=0)) > 0.5)
+        return codes, present
+
+    def forward(self, obs: torch.Tensor, layout: torch.Tensor) -> torch.Tensor:
+        """What the remembered entities add to the camera's embedding: [N, out], zero for a layout without them and for
+        a row with none present."""
+        codes, present = self.tokens(obs, layout)
+        weight = present.to(codes.dtype)[..., None]
+        mean = (codes * weight).sum(dim=1) / weight.sum(dim=1).clamp(min=1.0)
+        peak = torch.where(present[..., None], codes, torch.full_like(codes, -1.0)).amax(dim=1)
+        any_present = present.any(dim=1, keepdim=True)
+        peak = torch.where(any_present, peak, torch.zeros_like(peak))
+        out = self.pool(torch.cat([mean, peak], dim=-1)) * any_present.to(codes.dtype)
+        return out * self.has_memory[layout.reshape(-1).long()][:, None].to(out.dtype)
+
+
 class SightPointers(nn.Module):
     """The sight list's pointer queries (SightEntities.with_pointers): one per press, a Linear from the actor's
     features to the token width, initialised small as the other pointer queries are. The actor's own (the critic
@@ -3439,6 +3538,14 @@ class VisionEncoder(nn.Module):
             if self.entities is None:
                 raise ValueError("a sight block needs the camera's entity list, whose encoder it shares")
             self.sight = SightEntities(sights, self.entities, self.EMBED)
+        # The remembered entities (object memory), where the layouts have the block: the entity list's tokens plus the
+        # memory's columns, pooled onto the embedding.
+        remembered = [entry.get("memory_entities") if entry is not None else None for entry in descriptors]
+        self.memory_entities = None
+        if any(entry is not None for entry in remembered):
+            if self.entities is None:
+                raise ValueError("a memory_entities block needs the camera's entity list, whose encoder it shares")
+            self.memory_entities = MemoryEntities(remembered, self.entities, self.EMBED)
         #: Per layout with the camera, the columns its adapter and normaliser do not read: the block's scalars, which
         #: the encoder reads raw, its entity list's, which the list's encoder reads, its map's scalars, its coverage
         #: grid's, and its sight list's.
@@ -3456,6 +3563,8 @@ class VisionEncoder(nn.Module):
                 columns += list(range(grids[index]["first"], grids[index]["first"] + grids[index]["width"]))
             if self.sight is not None:
                 columns += self.sight.blind.get(index, [])
+            if self.memory_entities is not None:
+                columns += self.memory_entities.blind.get(index, [])
             self.blind[index] = columns
 
     def gather(self, obs: torch.Tensor, layout: torch.Tensor,
@@ -3529,6 +3638,8 @@ class VisionEncoder(nn.Module):
             if self.sight is not None:
                 codes, present = self.sight.tokens(obs, layout)
                 out = out + self.sight.pooled(codes, present, layout, obs).to(out.dtype)
+            if self.memory_entities is not None:
+                out = out + self.memory_entities(obs, layout).to(out.dtype)
         return nn.functional.silu(out)
 
 

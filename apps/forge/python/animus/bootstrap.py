@@ -634,6 +634,11 @@ SIGHT_POINTERS = "sight_pointers."
 #: in a layout with the combat block (dungeon-curriculum I3) -- the combat columns appended after them. A list that
 #: grew those columns keeps the narrower list's weights for the columns it had, the new ones starting at zero.
 SIGHT_EXTRA = "vision.sight.extra.weight"
+#: The remembered entities' encoder inside the camera's (MemoryEntities, object memory): seeded on its own, so a camera
+#: carries from a checkpoint without the block, and the memory starts fresh with its pool zeroed -- the seeded policy
+#: acts as it did.
+MEMORY_ENTITIES = "vision.memory_entities."
+MEMORY_ENTITIES_ZEROED = "vision.memory_entities.pool."
 
 
 def _block_revision(stage: dict | None, name: str) -> int | None:
@@ -655,11 +660,12 @@ def _seed_vision(new: dict, old: dict, new_stage: dict | None, old_stage: dict |
     (a revision re-laid the image, so the encoder starts fresh like the block's columns). Returns what happened, or
     None when this network has no camera. Left fresh, its join is zeroed: the seeded policy starts as it was, and the
     camera comes in as the join learns (a network trained from scratch keeps its join's ordinary initialisation)."""
-    keys = [key for key in new if key.startswith(VISION) and not key.startswith((MAP, SIGHT, COVERAGE))]
+    keys = [key for key in new if key.startswith(VISION) and not key.startswith((MAP, SIGHT, COVERAGE,
+                                                                                    MEMORY_ENTITIES))]
     if not keys:
         return None
     fresh = None
-    if not any(key.startswith(VISION) and not key.startswith((MAP, SIGHT, COVERAGE)) for key in old):
+    if not any(key.startswith(VISION) and not key.startswith((MAP, SIGHT, COVERAGE, MEMORY_ENTITIES)) for key in old):
         fresh = "fresh (the checkpoint has none)"
     elif _vision_revision(new_stage) != _vision_revision(old_stage):
         fresh = f"fresh (vision revision {_vision_revision(old_stage)} -> {_vision_revision(new_stage)})"
@@ -816,6 +822,27 @@ def _seed_sight(new: dict, old: dict, new_stage: dict | None = None, old_stage: 
     return "carried"
 
 
+def _seed_memory_entities(new: dict, old: dict, new_stage: dict | None = None,
+                          old_stage: dict | None = None) -> str | None:
+    """Carry the remembered entities' encoder from a checkpoint that has it at the same block revision and shapes;
+    else it starts fresh with its pool zeroed, so the seeded policy acts as it did (object memory). None when this
+    network has none (a stage without the memory_entities block)."""
+    keys = [key for key in new if key.startswith(MEMORY_ENTITIES)]
+    if not keys:
+        return None
+    same = _block_revision(new_stage, "memory_entities") == _block_revision(old_stage, "memory_entities")
+    if same and all(key in old and old[key].shape == new[key].shape for key in keys):
+        for key in keys:
+            new[key].copy_(old[key])
+        return "carried"
+    for key in keys:
+        if key.startswith(MEMORY_ENTITIES_ZEROED):
+            new[key].zero_()
+    if not any(key.startswith(MEMORY_ENTITIES) for key in old):
+        return "fresh (the checkpoint has none), its pool at zero"
+    return "fresh (its revision or shape changed), its pool at zero"
+
+
 #: The free look's head (LookHead, camera-vision.FREELOOK.md D): the actor's own, not a shared part.
 LOOK_HEAD = "look_head."
 #: The heading head's keys (HeadingHead), carried by _seed_heading.
@@ -932,6 +959,10 @@ def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, ove
         sight = _seed_sight(actor, old["actor"], stage, old_stage)
         if sight is not None:
             print(f"  sight list: {sight}", flush=True)
+        remembered = _seed_memory_entities(actor, old["actor"], stage, old_stage)
+        _seed_memory_entities(critic, old["critic"], stage, old_stage)
+        if remembered is not None:
+            print(f"  remembered entities: {remembered}", flush=True)
         look = _seed_look(actor, old["actor"], stage, old_stage)
         if look is not None:
             print(f"  look head: {look}", flush=True)

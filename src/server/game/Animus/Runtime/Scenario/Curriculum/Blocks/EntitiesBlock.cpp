@@ -18,6 +18,7 @@
 
 #include "EntitiesBlock.h"
 #include "Layout.h"
+#include "ObjectMemory.h"
 #include "SeatView.h"
 #include <algorithm>
 #include <boost/json/array.hpp>
@@ -70,6 +71,13 @@ void Animus::Curriculum::EntitiesBlock::Observe(SeatView const& view, float* obs
     {
         memory->Advance(float(view.DecisionMs) / 1000.0f);
         memory->Write(*view.Seen);
+    }
+    // Object memory's one write (ObjectMemory.h): its clock likewise, then the list, and the looks the frame's rays
+    // judge (a thing in view that is not listed). The no_object_memory arm keeps none.
+    if (Vi::ObjectMemory* objects = view.Objects; objects && !view.ObjectsHidden)
+    {
+        objects->Advance(double(view.DecisionMs) / 1000.0);
+        objects->Write(*view.Seen, Vi::LookOf(*view.Seen, Vi::Current()), view.Hits);
     }
     Write(*view.Seen, obs, view.Recall);
 }

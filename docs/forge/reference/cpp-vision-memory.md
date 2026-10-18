@@ -217,6 +217,73 @@ In-process only: `Remembered` is never serialized (a grep of `Vision/` finds no 
 
 `InstanceEncounter.cpp:2464` iterates `Recall.Entries()` (encounter logic reading memory; see cpp-encounters.md).
 
+## ObjectMemory (Vision/ObjectMemory.*, 2026-10-18)
+
+"I want it to remember objects it has seen so it knows where to find them." Entity marks in the mental map are one
+class + age byte a cell, which the shared memory drops on merge and the crop shows only under 60 s old; `EntityMemory`
+(above) lives one seat's episode. `ObjectMemory` is the lasting list: per seat (`SeatState::Objects`, in a stage with a
+map or sight block), per map id shared (`SharedMemory::Objects()`, a `SharedObjects`), saved to disk.
+
+**Perception-true**: the one write is `EntitiesBlock::Observe` (after the entity memory's): `Advance(DecisionMs)` then
+`Write(*view.Seen, LookOf(seen, settings), view.Hits)`. Nothing else writes it; nothing from the server's object lists.
+
+**Identity** (`KeyOf`): `EntityInfo::SpawnId` (new field, filled in `MapVisionWorld.cpp` `ClassifySeen` from
+`Creature::GetSpawnId` / `GameObject::GetSpawnId`: the DB guid, the same in every instance and after a restart) as
+`ObjectSource::CreatureSpawn` / `ObjectSpawn`; else the raw GUID (`Guid`: players, summons, temporary objects; never
+persisted). Ground hazards are not kept.
+
+**Entry** (`RememberedObject`): key, template entry, class at the last sighting, kind (`ObjectKind`: `Fixed` every game
+object -- door, gate, lever, chest, mailbox, node; `Npc` a unit of class quest giver / vendor / trainer, or usable and
+not hostile -- vendor, trainer, flight master; sticky once set; `Creature`; `Player` -- `KindOf`), state as seen (`Open`,
+`Used`, `Dead`; the seeing seat's `Quest`, `Lootable`, `Usable`), `Absent` + `Missed`, reaction, level, health, middle
+(x, y, z), facing, radius, height, `FirstSeen` / `LastSeen` / `LastLook` (memory seconds, double), `Sightings`, and a
+trace of `OBJECT_TRACE` 8 points (creatures and players: a point when it moved `TRACE_STEP` 2 yd from the last).
+
+**Rules**: a sighting updates in place (fields as seen, Sightings + 1, Missed 0, Absent off). **Expected but unseen**:
+an entry not listed whose middle is within `LOOK_REACH` 40 yd of the camera (and the frame's range; nearer than the
+list's farthest entry when the list is full at 32), inside the frame's field of view (`look.FovH/FovV`), and not behind
+the ray nearest its direction (`FrameHits`, found by hill-climbing the rays' own directions from the pixel the angles
+name; blocked when the ray stops more than radius + `LOOK_SLACK` 1 yd short; sky never blocks) is a missed look;
+`MISSED_LOOKS` 4 in a row set Absent (a gathered node, a looted chest, a moved NPC, a despawned corpse). No rays (a frame
+without an image): nothing is judged. **Decay** (every `DECAY_EVERY_SECONDS` 5): players after `PLAYER_KEEP_SECONDS`
+120 s unseen, any other GUID-keyed thing after `TRANSIENT_KEEP_SECONDS` 600 s. Spawned creatures are kept like fixed
+objects and NPCs (the spawn point and the patrol trace); their age says how stale the state is. **Cap**
+`OBJECT_SEAT_CAP` 1024 a seat, `OBJECT_SHARED_CAP` 8192 a map: full, the entry not listed by this write that matters
+least goes (GUID-keyed / players, then creatures, then objects and NPCs; oldest sighting first).
+
+**Sharing** (`SharedObjects`, its own mutex): in a stage with `SharedMemoryShare`, at the episode's first observation
+(`StageScenario::ObserveSeat`, beside the terrain's): the episode before's memory is absorbed when anchored and
+`MapAbsorb` (training only: evaluations never write), then the seat adopts (`MapShared`, the same draw as the terrain's;
+never under the `no_object_memory` arm) or anchors blank. Absorb merges the entries looked at since anchoring, their
+times moved onto the store's clock (the seat's newest look reads as now), by identity: the newer `LastSeen` decides the
+place, state, class and trace (`Sightings` the larger, `FirstSeen` the earlier, an NPC stays one); the newer `LastLook`
+decides Missed/Absent. Seat facts are stripped on the way in (quest giver -> usable object / friendly creature, lootable
+corpse -> corpse, quest object -> usable object, `Quest`/`Lootable` off). Without a shared memory the seat's memory is
+kept by the map's roll (`MapKeep`, aged `MapAgeOffset`) on the same map id (any instance: spawn ids), else cleared.
+
+**Persistence**: `<DataDir>/memory/<mapId>.aobj` beside the `.amem` (its own format, so `MEMORY_VERSION` 5 is
+unchanged), loaded in `SharedMemories::Get`, written in `SaveList` (periodic saver thread and shutdown) when
+`SharedObjects::Dirty`. `ObjectFileHeader` 64 bytes: magic `AOBJ`, `OBJECT_MEMORY_VERSION` 1, map id, record bytes 176,
+clock (double), wall seconds, count, FNV-1a 64 of the records, reserved. Then `ObjectRecord`s (176 bytes, packed: source,
+kind, class, flags `OBJECT_FLAG_*` (game object, open, used, dead, absent, usable), id, entry, reaction, missed, trace
+count, level, health, xyz, facing, radius, height, first/last seen, last look, sightings, 8 x xyz trace), lasting keys
+only (no GUIDs, no players), in identity order. A file of another version, map or record size, or a bad checksum, is
+refused (logged) and overwritten at the next save. The clock carries on from the save plus the wall-clock downtime.
+
+**Planner API** (no caller yet): `Find(kind or ObjectKind::Count, class or Class::Count, near, radius, out)` the
+matches nearest first (Absent included); `BlockingAt(cx, cy)` -- a remembered closed door/gate (class Door, game object,
+not Open, not Absent) whose middle is within max(radius, `DOOR_MIN_RADIUS` 1) of the 1-yd cell's centre: a wall to a
+route until a look sees it open (the global planner's contradiction replanning). Linear over the entries.
+
+**The policy's view**: the `memory_entities` block (cpp-blocks.md). **The arm**: `no_object_memory`
+(`MODE_FLAG_NO_OBJECT_MEMORY` 16; `SeatState::ObjectsHidden`, set at the reset for an evaluation): no adoption, no write,
+the block reads zeros.
+
+Cost: a write is one hash lookup a listed entity plus one pass over the entries (frustum test; a hill climb only for
+the few in view); `Recall` ranks all entries (partial sort). Harness: `tmp/objmem/check.cpp` (identity merge, decay,
+expected-but-unseen incl. occlusion / frustum / full list / no rays, cap order, shared newest-wins, adopt / absorb,
+`.aobj` round trip, other-map and corrupt files refused): all pass.
+
 ## Observed issues
 
 1. `MentalMap::Advance` clears the whole map at 65000 s (MentalMap.cpp:228): a realm bot loses all memory after about 18 h.

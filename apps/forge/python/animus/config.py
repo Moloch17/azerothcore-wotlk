@@ -136,6 +136,9 @@ class EvalConfig:
     #     half adopting the map's shared memory: the same trips with and without the memory (the plain evaluation's
     #     shared_memory split is two different draws). Skipped on a stage without a shared memory, and dropped when
     #     the sim ignored the flag (its shared_memory column still reads 1 somewhere).
+    #   no_object_memory: the sim told (MODE_FLAG_NO_OBJECT_MEMORY) that the seats neither adopt the map's shared
+    #     object memory nor read the memory_entities block (zeros): what remembering objects is worth on the same
+    #     trips. Skipped on a stage without the memory_entities block.
     arms: dict = field(default_factory=dict)
     arms_every: int = 1
     # The routes of every evaluation, kept: the learner's scored seats' raw kinematic tracks (x, y, z, yaw, ...) with
@@ -473,7 +476,7 @@ MAX_HINDSIGHT_LOOKBACK = 256
 #: The evaluation arms beside the plain one ("all bots"): eval.arms names them (dungeon-curriculum I7).
 EVAL_ARMS = ("with_human", "with_partners", "no_flag", "no_camera", "no_compass", "no_map", "no_memory", "no_goal",
              "random_goal", "random_cell", "no_plan", "no_searched", "no_coverage", "no_party", "no_recall",
-             "no_planner", "no_school", "no_shared_memory")
+             "no_planner", "no_school", "no_shared_memory", "no_object_memory")
 
 
 @dataclass

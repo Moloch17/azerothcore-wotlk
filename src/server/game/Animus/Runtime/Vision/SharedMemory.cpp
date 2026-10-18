@@ -80,7 +80,8 @@ namespace
 }
 
 Animus::Vision::SharedMemory::SharedMemory(uint32_t mapId, uint64_t sceneChecksum,
-    SharedMemorySettings const& settings) : _mapId(mapId), _sceneChecksum(sceneChecksum), _settings(settings)
+    SharedMemorySettings const& settings) : _mapId(mapId), _sceneChecksum(sceneChecksum), _settings(settings),
+    _objects(mapId)
 {
 }
 
@@ -404,6 +405,14 @@ std::string Animus::Vision::SharedMemories::PathOf(uint32_t mapId) const
     return (Fs::path(_settings.Dir) / (std::to_string(mapId) + ".amem")).string();
 }
 
+std::string Animus::Vision::SharedMemories::ObjectPathOf(uint32_t mapId) const
+{
+    std::lock_guard lock(_lock);
+    if (_settings.Dir.empty())
+        return "";
+    return (Fs::path(_settings.Dir) / (std::to_string(mapId) + ".aobj")).string();
+}
+
 Animus::Vision::SharedMemory* Animus::Vision::SharedMemories::Get(uint32_t mapId, double now)
 {
     std::lock_guard lock(_lock);
@@ -422,6 +431,14 @@ Animus::Vision::SharedMemory* Animus::Vision::SharedMemories::Get(uint32_t mapId
         else if (error != "no file")
             LOG_WARN("module.animus", "Shared memory of map {}: {} not used ({}); the memory starts empty", mapId,
                 path, error);
+        // Its object memory, from its own file (ObjectMemory.h).
+        std::string const objects = (Fs::path(_settings.Dir) / (std::to_string(mapId) + ".aobj")).string();
+        if (memory->Objects().Load(objects, now, error))
+            LOG_INFO("module.animus", "Shared memory of map {}: loaded {} remembered objects from {}", mapId,
+                memory->Objects().Count(), objects);
+        else if (error != "no file")
+            LOG_WARN("module.animus", "Shared memory of map {}: {} not used ({}); its object memory starts empty",
+                mapId, objects, error);
     }
     SharedMemory* raw = memory.get();
     _memories.emplace(mapId, std::move(memory));
@@ -441,12 +458,11 @@ void Animus::Vision::SharedMemories::SaveList(std::vector<SharedMemory*> const& 
 {
     for (SharedMemory* memory : memories)
     {
-        if (!memory->Dirty())
-            continue;
-        std::string const path = PathOf(memory->MapId());
         std::string error;
-        if (!memory->Save(path, now, error))
+        if (memory->Dirty() && !memory->Save(PathOf(memory->MapId()), now, error))
             LOG_WARN("module.animus", "Shared memory of map {}: not saved ({})", memory->MapId(), error);
+        if (memory->Objects().Dirty() && !memory->Objects().Save(ObjectPathOf(memory->MapId()), now, error))
+            LOG_WARN("module.animus", "Shared memory of map {}: its objects not saved ({})", memory->MapId(), error);
     }
 }
 
@@ -481,6 +497,7 @@ void Animus::Vision::SharedMemories::SaveAll(double now)
     std::vector<SharedMemory*> const memories = List();
     SaveList(memories, now);
     for (SharedMemory* memory : memories)
-        LOG_INFO("module.animus", "Shared memory of map {}: {} tiles and {} far tiles kept in {}", memory->MapId(),
-            memory->Tiles(), memory->FarTiles(), PathOf(memory->MapId()));
+        LOG_INFO("module.animus", "Shared memory of map {}: {} tiles and {} far tiles kept in {}, {} objects in {}",
+            memory->MapId(), memory->Tiles(), memory->FarTiles(), PathOf(memory->MapId()), memory->Objects().Count(),
+            ObjectPathOf(memory->MapId()));
 }

@@ -97,7 +97,8 @@ here, one case in `BlockName` (`Layout/Layout.cpp:103`).
 | 25 | combat | CombatBlock |
 | 26 | goal | GoalBlock |
 | 27 | coverage | CoverageBlock (general search, 2026-10-10) |
-| 28 | Count (`BLOCK_COUNT`) | not a block |
+| 28 | memory_entities | MemoryEntitiesBlock (object memory, 2026-10-18) |
+| 29 | Count (`BLOCK_COUNT`) | not a block |
 
 Ids 6-10 and 12-19 are unused gaps (first curriculum's deleted blocks). The comment says they are never reused; nothing
 in code enforces it other than the explicit numbers (`Block.h:83`). `Layout::_blockMask` is a `uint32` so ids must stay
@@ -703,6 +704,24 @@ slot is the trip objective when the stage has no seen places (`WorldView::HasSee
 `RoutePlaces`), only while `ObjectivePlaceKnown`). Constants
 `PROTECT_REACHED_PCT 70`, `PLACE_REACH 20`, `OBJECTIVE_SCALE 500`, `NEAR_SCALE 40`, `AGE_SCALE_S 120`,
 `GOAL_ROOM_SLOTS 6` / `GOAL_PLACE_SLOTS 7`, `GOAL_CELL_TARGET 21` / `GOAL_CELL_JOINT 228` (`Block.h`; 159 before revision 5).
+
+## memory_entities (id 28, revision 1, 2026-10-18)
+
+What the seat remembers and does not see now: `MemoryEntitiesBlock::MEMORY_SLOTS` 16 slots x 35 columns = 560, no
+actions. The seat's `ObjectMemory::Recall` from the body (score `distance / 20 + log2(1 + age) / 2`, -1 for a fixed
+object or NPC, +2 when Absent; ties by identity), entries not listed by this frame. Columns 0-19 are the entity list's
+(`EntitiesBlock::WriteSlot` on a one-entity list with this frame's camera: class, type, object, level, level delta,
+health, reaction, quest, lootable, usable, distance, yaw/pitch sin/cos from the view, los 0, angular size, memory id 0),
+so the learner tokenises a remembered thing with the visible list's encoder; then 20 `age` (log2(1+s) / log2(1+3600)),
+21 `sightings` (log1p(n) / log1p(64)), 22 `absent`, 23-26 kind one-hot (`kind_fixed, kind_npc, kind_creature,
+kind_player`), 27 `open`, 28 `used`, 29 `dead`, 30-31 `body_sin, body_cos` (bearing off the body's facing; sin = -right
+/ d), 32 `body_distance` (log1p(2D yd) / log1p(500)), 33 `height_delta` ((z - feet) / 10, +-1), 34 `trace_span` (/ 40).
+Zeros without a frame, without an object memory (a stage without map/sight) or under `no_object_memory`.
+Manifest / stage.json `memory_entities`: `name "remembered", slots, width, base_width 20, first, present, class_column,
+type_column, object_column, memory_column, classes, type_buckets, kinds, age_scale_s, sightings_log_max,
+distance_log_max, height_scale, trace_scale, missed_looks, features`. **No live stage declares it**: a stage opts in by
+listing `BlockId::MemoryEntities` after `Entities` in its `Blocks` (no `Problem()` rule yet: without a camera it reads
+zeros). Learner: `MemoryEntities` (py-mappo-networks.md).
 
 ## Observed issues
 

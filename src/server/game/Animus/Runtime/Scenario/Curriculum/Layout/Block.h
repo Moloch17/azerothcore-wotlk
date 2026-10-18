@@ -81,7 +81,11 @@ namespace Animus::Curriculum
         /// decision 0027): COVERAGE_GRID x COVERAGE_GRID tiles of 32 yd from the mental map's per-tile counters; no
         /// actions. After the map block, whose map it samples; before the goal block, which stays last.
         Coverage = 27,
-        Count = 28
+        /// What the seat remembers and does not see now (object memory, 2026-10-18): the most relevant entries of its
+        /// object memory (Vision::ObjectMemory) not in this frame's list, each in the entity list's columns and the
+        /// memory's own; no actions. After the entities block, whose write fills the memory; no live stage has it.
+        MemoryEntities = 28,
+        Count = 29
     };
 
     /// **The ids are explicit and never reused.** A manifest, a checkpoint and the learner's seeding by name know a block

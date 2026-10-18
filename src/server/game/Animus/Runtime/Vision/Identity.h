@@ -109,6 +109,10 @@ namespace Animus::Vision
         int8_t Reaction = 0;
         Vec3 Centre;
         uint64_t Guid = 0;
+        /// Its spawn's id (the DB guid: Creature::GetSpawnId, GameObject::GetSpawnId): the same thing in every
+        /// instance of its map and after a restart, where the GUID is the instance's own; 0 for a player, a summon,
+        /// a temporary object and a ground hazard. Never observed; object memory keys what it remembers by it.
+        uint32_t SpawnId = 0;
         float Orientation = 0.0f;
         bool Dead = false;
         bool Open = false;

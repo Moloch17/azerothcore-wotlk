@@ -1109,9 +1109,11 @@ def tail_weights(actor_state: dict[str, torch.Tensor], stage: dict, names: list[
             needed = True
 
     if own is not None:
-        if any(key.startswith(("vision.coverage.", "vision.sight.", "sight_pointers.")) for key in actor_state) \
-                or own.get("coverage") is not None or own.get("sight") is not None:
-            raise ValueError("the camera's coverage grid and sight list have no .amdl section: not exporting")
+        if any(key.startswith(("vision.coverage.", "vision.sight.", "sight_pointers.", "vision.memory_entities."))
+               for key in actor_state) or own.get("coverage") is not None or own.get("sight") is not None \
+                or own.get("memory_entities") is not None:
+            raise ValueError("the camera's coverage grid, sight list and remembered entities have no .amdl section: "
+                             "not exporting")
         if own["bytes_per_pixel"] != IMAGE_BYTES_PER_PIXEL:
             raise ValueError(f"a camera of {own['bytes_per_pixel']} bytes a pixel")
         camera = {"height": own["height"], "width": own["width"], "patch": own["patch"], "scalars": own["scalars"],
