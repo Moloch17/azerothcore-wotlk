@@ -274,10 +274,23 @@ item each call (3 reads per action per decision). `OBS_GCD` is set inside the lo
 for the rage column says "/ 100" but the code divides by 1000. `KnowsInterrupt` counts knockbacks and stuns/fears as
 interrupts via `IsInterruptingSpell`.
 
-## move (id 1, revision 6)
+## move (id 1, revision 8)
 
-Does: where the seat puts its feet, as the player controller's held keys and mouse. No target needed. Size: 61 obs (57
-up to revision 5), 25 actions, class-independent (`MoveBlock.cpp:103`). Pin hash `a9e15899154cf795` (revision 5).
+Does: where the seat puts its feet, as the player controller's held keys and mouse. No target needed. Size: 62 obs (57
+up to revision 5), 15 actions since revision 8 (14 in a `NoBackpedal` stage, below), class-independent
+(`MoveBlock::Size`). Pin hash `a9e15899154cf795` (revision 5).
+
+**No backpedal** (2026-10-18, still revision 8): a stage with `StageDefinition::NoBackpedal` (nav1_sight .. nav6_follow,
+set in Stages.cpp) is offered no `move_back`, so no key of the policy's ever moves the body backward (strafe is
+sideways; the heading is a yaw the body turns to). Evidence: nav1's evaluations travelled 98% of their distance
+backward, `move_back` pressed 4,203 times against `move_forward`'s 2,272, at the 4.5 yd/s back speed against the run's
+7. The actions after `move_back` sit one index lower under the same names: `MoveBlock::ControlOf(layout, local)` turns a
+layout's local action into the `MoveControls` action (the mask, `Apply`, `ActionName` and StageScenario's `IsStep` /
+`IsPitch` judging read through it); `MoveBlock::ActionCount(layout)` is 14 or 15. The manifest says `backpedal`
+(true/false). The revision stays 8: the other stages' move block is unchanged, and the learner tells the two apart
+by width -- a resume across the change is refused (`layout_changes`: the move action span differs), and a seed takes
+the width-mismatch path (the move block "seeded from scratch") and then carries all 62 columns and the 14 remaining
+actions by name (`_by_name`; the head's rows are selected by name). Restart such a stage fresh.
 
 Revision 6 (movement pacing M1, decision 0027, 2026-10-10) appends four columns after `trail_dwell`: `contact_side`
 (57: which side the controller's last blocked step found clear, +1 left / -1 right / 0 none, `BodyState::ContactSide`,
@@ -318,10 +331,10 @@ Columns (named by `MoveBlock::ColumnName`; all in the block):
 | 40-55 | trail_<i>_ahead / trail_<i>_left | last 8 positions (1 per second) in the seat's frame / 40, oldest first, newest in the last pair |
 | 56 | trail_dwell | share of samples within 6 yd |
 
-Actions (25, `MoveControls.h:57`, names `NAMES`): 0 move_forward, 1 move_back, 2 move_stop, 3 strafe_left, 4
-strafe_right, 5 strafe_stop, 6-14 turn_right_360, _180, _90, _30, turn_stop, turn_left_30, _90, _180, _360 (rates in
-degrees per second, `TURN_RATES_DEG`, + is left), 15-19 pitch_down_90, pitch_down_30, pitch_stop, pitch_up_30,
-pitch_up_90, 20 ascend, 21 descend, 22 vertical_stop, 23 jump, 24 walk_toggle. Every action is a movement
+Actions (15 since revision 8, `MoveControls.h`, names `NAMES`): 0 move_forward, 1 move_back, 2 move_stop, 3
+strafe_left, 4 strafe_right, 5 strafe_stop, 6-10 pitch_down_90, pitch_down_30, pitch_stop, pitch_up_30, pitch_up_90,
+11 ascend, 12 descend, 13 vertical_stop, 14 jump (walk_toggle left at revision 7, the turn rates at 8 for the
+continuous heading). A `NoBackpedal` stage has 14: move_back gone, the rest one lower. Every action is a movement
 (`IsMovement`), so `Actions.Repeat` is never charged on them.
 
 Masks (`MoveControls::Allowed`): a dead seat presses nothing; pitch rates other than stop, ascend, descend need

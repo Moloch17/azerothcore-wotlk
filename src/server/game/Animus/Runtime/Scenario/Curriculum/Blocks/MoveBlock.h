@@ -174,6 +174,15 @@ namespace Animus::Curriculum
         [[nodiscard]] static std::string ColumnName(uint32 column);
         void DescribeColumns(Layout const& layout, boost::json::array& names) const override;
 
+        /// **The keys a stage offers** (StageDefinition::NoBackpedal): every MoveControls action, or all but
+        /// move_back. A stage without it never holds back, so the body only ever runs where it faces (or strafes);
+        /// the actions after move_back move down one index, under the same names. ControlOf turns a layout's local
+        /// action into the MoveControls action it presses -- everything that reads a move press by its kind (IsStep,
+        /// IsPitch) reads it through ControlOf.
+        [[nodiscard]] static bool Backpedals(Layout const& layout);
+        [[nodiscard]] static uint32 ActionCount(Layout const& layout);
+        [[nodiscard]] static uint32 ControlOf(Layout const& layout, uint32 local);
+
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;

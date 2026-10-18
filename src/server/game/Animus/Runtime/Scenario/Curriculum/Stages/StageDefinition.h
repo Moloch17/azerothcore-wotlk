@@ -334,6 +334,10 @@ namespace Animus::Curriculum
         /// (Map.KeepShare), and no random number is drawn for it. The nav stages: nav1 0.5 (the user, 2026-10-15:
         /// "half of episodes use it, half do not"), nav2 to nav6 0.75 (2026-10-17).
         float SharedMemoryShare = 0.0f;
+        /// The move block offers no move_back (MoveBlock::ActionCount): the body never backpedals from the policy's
+        /// keys, it turns and runs. The nav stages (2026-10-18): nav1's seats faced away from the goal and backpedalled
+        /// to it at 4.5 yd/s against the run's 7, 98% of their travel. An unwanted action is removed, not priced.
+        bool NoBackpedal = false;
 
         [[nodiscard]] bool Has(BlockId block) const;
         /// Seats per env: the largest arena's.

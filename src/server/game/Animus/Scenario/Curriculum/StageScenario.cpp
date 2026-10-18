@@ -4912,12 +4912,12 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
         // A step (forward, back, a strafe, a climb or dive, a jump) is judged at the reward, by the gap it closed or
         // opened (SettleIntent). Pitch rates and stops are neutral: the jitter charge prices a head that cannot
         // settle. The heading is no press (revision 8) and never comes here.
-        bool const step = MoveControls::IsStep(local);
+        bool const step = MoveControls::IsStep(MoveBlock::ControlOf(layout, local));
         if (step && !Encoding::StandingInHazards(bot, nullptr))
             seat.MoveGap = GoalGap(seat, bot, target);
         // A repeated step waits for its verdict; a repeated stop served nothing. Pitch rates are steering
         // corrections, which come in runs: the jitter charge prices the ones that undo each other.
-        bool const steer = MoveControls::IsPitch(local);
+        bool const steer = MoveControls::IsPitch(MoveBlock::ControlOf(layout, local));
         if (seat.PendingRepeat && seat.MoveGap < 0.0f && !steer)
             chargeRepeat();
         seat.MoveRepeat = seat.PendingRepeat && seat.MoveGap >= 0.0f;

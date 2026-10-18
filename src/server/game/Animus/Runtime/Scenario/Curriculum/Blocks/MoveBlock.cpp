@@ -21,6 +21,7 @@
 #include "Layout.h"
 #include "MapWorldQuery.h"
 #include "SeatView.h"
+#include "StageDefinition.h"
 #include "UnitBody.h"
 #include "Map.h"
 #include "MapDefines.h"
@@ -100,14 +101,33 @@ namespace
     }
 }
 
-Animus::Curriculum::BlockSize Animus::Curriculum::MoveBlock::Size(Layout const& /*layout*/) const
+bool Animus::Curriculum::MoveBlock::Backpedals(Layout const& layout)
 {
-    return BlockSize{ OBS_COUNT, MC::ACTION_COUNT };
+    return !(layout.Stage && layout.Stage->NoBackpedal);
 }
 
-void Animus::Curriculum::MoveBlock::DescribeManifest(Layout const& /*layout*/, boost::json::object& block) const
+uint32 Animus::Curriculum::MoveBlock::ActionCount(Layout const& layout)
+{
+    return Backpedals(layout) ? MC::ACTION_COUNT : MC::ACTION_COUNT - 1;
+}
+
+uint32 Animus::Curriculum::MoveBlock::ControlOf(Layout const& layout, uint32 local)
+{
+    // Without move_back, every action from it on sits one index lower than its MoveControls action.
+    return !Backpedals(layout) && local >= MC::ACTION_MOVE_BACK ? local + 1 : local;
+}
+
+Animus::Curriculum::BlockSize Animus::Curriculum::MoveBlock::Size(Layout const& layout) const
+{
+    return BlockSize{ OBS_COUNT, ActionCount(layout) };
+}
+
+void Animus::Curriculum::MoveBlock::DescribeManifest(Layout const& layout, boost::json::object& block) const
 {
     block["controls"] = "player-controller";
+    // Whether move_back is offered (StageDefinition::NoBackpedal): the action names say so too, and a player of the
+    // model must offer the same keys.
+    block["backpedal"] = Backpedals(layout);
     block["trail_samples"] = uint32(TRAIL_SAMPLES);
     block["trail_interval_ms"] = uint32(MovementTrail::INTERVAL_MS);
     boost::json::array pitches;
@@ -199,9 +219,9 @@ void Animus::Curriculum::MoveBlock::DescribeColumns(Layout const& /*layout*/, bo
         names.emplace_back(ColumnName(column));
 }
 
-std::string Animus::Curriculum::MoveBlock::ActionName(Layout const& /*layout*/, uint32 local) const
+std::string Animus::Curriculum::MoveBlock::ActionName(Layout const& layout, uint32 local) const
 {
-    return local < MC::ACTION_COUNT ? MC::NAMES[local] : std::string();
+    return local < ActionCount(layout) ? MC::NAMES[ControlOf(layout, local)] : std::string();
 }
 
 void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, uint8* mask) const
@@ -340,21 +360,22 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
     }
     out[OBS_CAN_JUMP] = state.Alive && state.CanJump ? 1.0f : 0.0f;
 
-    if (!mask)
+    if (!mask || !view.L)
         return;
-    for (uint32 action = 0; action < MC::ACTION_COUNT; ++action)
-        mask[action] = MC::Allowed(action, state) ? 1 : 0;
+    for (uint32 local = 0; local < ActionCount(*view.L); ++local)
+        mask[local] = MC::Allowed(ControlOf(*view.L, local), state) ? 1 : 0;
 }
 
 void Animus::Curriculum::MoveBlock::Apply(SeatView& view, uint32 local, SeatActionResult& result) const
 {
     Player* bot = view.Bot;
-    if (!bot || !view.Controls || local >= MC::ACTION_COUNT)
+    if (!bot || !view.Controls || !view.L || local >= ActionCount(*view.L))
         return;
 
     // One held control changed (MoveControls::Press), priced by what it takes back of a recent choice. The value
     // already held, pressed again, is the key kept down: no press, no charge (SeatActionResult::KeyStillHeld).
-    MC::PressOutcome const pressed = MC::Press(*view.Controls, local, view.NowMs, view.Options.JitterDecayMs);
+    MC::PressOutcome const pressed = MC::Press(*view.Controls, ControlOf(*view.L, local), view.NowMs,
+        view.Options.JitterDecayMs);
     if (!pressed.Changed)
     {
         result.KeyStillHeld = true;
