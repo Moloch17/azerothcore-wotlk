@@ -243,6 +243,14 @@ costs:
   gate_metric: arrived
   gate_value: 0.8
 
+# The planner school's data (animus.school; docs/forge/reference/school.md): every 32nd decision of an env the
+# learner keeps the bot's map crops and the labels (the true route) as a sample under shared/school/<run>/, for the
+# offline planner to learn paths through unseen space from. Costs under 1% of the rollout; the policy path is untouched.
+school:
+  record: true
+  record_every: 32
+  record_max_samples: 600000
+
 entropy_floor:
   fraction: 0.3
   max_boost: 4.0
