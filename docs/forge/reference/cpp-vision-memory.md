@@ -204,8 +204,9 @@ the true route with memory). The global route searches the seat's whole map at 1
   plan (`MentalMap::KnownTotal`), every `GLOBAL_REPLAN_SECONDS` 20 of the map's clock, and when the body left the
   domain. Between recomputes the field is fixed, so the labels' C(last) and C(body) are read on one field (movement
   alone); on a recompute both are read on the new one.
-- **Used** when it routes the body: the goal's cell or a neighbour is known on the map, and the body's value is
-  reached. The eight fine scalars come from its walk (`GlobalField::Route`: the next node towards the goal, FineRoute's
+- **Used** when it routes the body: the goal's cell or a neighbour is known on the map (until it is nothing is
+  planned at all -- a blank seat's search through unknown ground would be the dearest there is -- and the first
+  decision it is known plans afresh), and the body's value is reached. The eight fine scalars come from its walk (`GlobalField::Route`: the next node towards the goal, FineRoute's
   read at 5/10/20/30 steps), the coarse four from the walk's cell 16 yd along it (`Coarse`: sin, cos, d / 16, valid),
   `route_dist` and the labels' `[2]` / `[3]` from `ValueAt` (bilinear, blocked and unreached left out, as
   `PlanValueAt`; the crop before's pose read within 16 yd), and the window plan is not made. Else the window plan as

@@ -311,7 +311,8 @@ namespace Animus::Vision
         void Reset();
         /// This decision's field for the body at (x, y, z) and the goal at (gx, gy, gz), recomputed when due; true when
         /// it routes the body: the goal's cell (or one of its eight neighbours) is known on the map, and the body's
-        /// cost-to-go is reached. `map` must not be written between this and the decision's other reads.
+        /// cost-to-go is reached. Nothing is planned (the field is cleared) while the goal is not known. `map` must
+        /// not be written between this and the decision's other reads, and `blocking` must outlive them.
         bool Update(MentalMap const& map, float x, float y, float z, float gx, float gy, float gz,
             GlobalBlocking const* blocking = nullptr);
         [[nodiscard]] GlobalField& Field() { return _field; }

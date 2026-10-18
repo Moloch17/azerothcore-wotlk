@@ -749,6 +749,20 @@ bool Animus::Vision::GlobalRoute::Update(MentalMap const& map, float x, float y,
 {
     _tiles.Bind(map);
     _field.Use(_tiles, blocking);
+    _this = GlobalReplan::None;
+    // The goal is a place the map has seen: its cell or a neighbour known (asked every decision: a goal first seen
+    // mid-trip routes from then on). Until it is, nothing is planned -- a blank seat's search through unknown ground
+    // would be the dearest there is, and is never used -- and the first decision it is known plans afresh.
+    _goalKnown = false;
+    for (int32_t dy = -1; dy <= 1 && !_goalKnown; ++dy)
+        for (int32_t dx = -1; dx <= 1 && !_goalKnown; ++dx)
+            if (MapCell const* cell = map.FindCell(MapCellOf(gx) + dx, MapCellOf(gy) + dy))
+                _goalKnown = Known(*cell);
+    if (!_goalKnown)
+    {
+        _field.Clear();
+        return false;
+    }
     GlobalReplan reason = GlobalReplan::None;
     float yards = 0.0f;
     if (!_field.Active() || std::hypot(gx - _goalX, gy - _goalY) > GLOBAL_GOAL_MOVED
@@ -777,13 +791,6 @@ bool Animus::Vision::GlobalRoute::Update(MentalMap const& map, float x, float y,
         if (reason == GlobalReplan::Contradiction)
             ++_contradictions;
     }
-    // The goal is a place the map has seen: its cell or a neighbour known (asked every decision: a goal first seen
-    // mid-trip routes from then on).
-    _goalKnown = false;
-    for (int32_t dy = -1; dy <= 1 && !_goalKnown; ++dy)
-        for (int32_t dx = -1; dx <= 1 && !_goalKnown; ++dx)
-            if (MapCell const* cell = map.FindCell(MapCellOf(gx) + dx, MapCellOf(gy) + dy))
-                _goalKnown = Known(*cell);
     _field.SettleAround(x, y, z);
-    return _goalKnown && _field.ValueAt(x, y, z) < TRAV_UNREACHABLE;
+    return _field.ValueAt(x, y, z) < TRAV_UNREACHABLE;
 }

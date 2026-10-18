@@ -352,11 +352,13 @@ void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uin
         pose.RouteValid = true;
         Vi::GlobalRoute* router = view.NoGlobal ? nullptr : view.Global;
         bool global = false;
+        // The doors outlive every read of the field this decision: a read that resumes the search touches new nodes,
+        // and a node's first touch asks them.
+        DoorBlocking const doors(router && !view.ObjectsHidden ? view.Objects : nullptr);
         if (router)
         {
             if (!last.Valid)
                 router->Reset();            // an episode's first decision (its pose was reset with the episode)
-            DoorBlocking const doors(view.ObjectsHidden ? nullptr : view.Objects);
             global = router->Update(*map, x, y, z, view.Objective.GetPositionX(), view.Objective.GetPositionY(),
                 view.Objective.GetPositionZ(), doors.Any() ? &doors : nullptr);
             Vi::GlobalReplan const did = router->ThisUpdate();
