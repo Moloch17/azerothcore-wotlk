@@ -49,11 +49,13 @@ namespace Animus::Curriculum
     /// cells round the body shaped into the body's configuration space, the coarse crop as the ring beyond them --
     /// and hands the policy the route itself: the fine plan's walk read at 5, 10, 20 and 30 steps (Vision::FineRoute),
     /// the coarse plan's waypoint (Vision::CoarseWaypoint), the own-map route distance at the body and how long it
-    /// has been since that distance last fell (Vision::RouteStall). Nothing here is the straight line to the goal:
-    /// since revision 7 the nav stages carry no compass, and the route is the only word the policy gets of where
-    /// the goal lies. The plan's value at the body and at the crop before's pose go with the crop's pose
-    /// (CropPose::Route*) for the nav labels (PointNavEncounter::WriteLabels), so the route is planned once a
-    /// decision.
+    /// has been since that distance last fell (Vision::RouteStall). The fine walk is the one the decision before
+    /// followed, kept until a new one undercuts it by a margin (Vision::KeepRoute; ConfigureRoute; 2026-10-18), so
+    /// two near-equal ways round a pillar do not trade places decision by decision. Nothing here is the straight
+    /// line to the goal: since revision 7 the nav stages carry no compass, and the route is the only word the
+    /// policy gets of where the goal lies. The plan's value at the body and at the crop before's pose go with the
+    /// crop's pose (CropPose::Route*) for the nav labels (PointNavEncounter::WriteLabels), so the route is planned
+    /// once a decision.
     ///
     /// The block also records where each crop was taken from (SeatView::Crop: the pose, and how many of its pooled
     /// blocks a cell goal can name, CellGrid::Count), which the scenario decodes the learner's cell choice against.
@@ -168,6 +170,9 @@ namespace Animus::Curriculum
         /// The cluster and pocket sizes the analysis uses (Coverage::Analyse), the process's (AnimusForge.Map.* has
         /// none: they are the seek tuning's, set once at startup by the scenario; the manifest records them).
         static void ConfigureCoverage(uint32 clusterMinCells, uint32 pocketMinCells);
+        /// The fine route's hysteresis (Vision::KeepRoute), the process's: the nav tuning's PointNav.RouteKeep,
+        /// RouteKeepShare and RouteKeepYards, set once at startup by the scenario (the manifest records them).
+        static void ConfigureRoute(bool keep, float share, float yards);
     };
 }
 

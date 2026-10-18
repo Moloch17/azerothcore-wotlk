@@ -20,6 +20,7 @@
 #define ANIMUS_LIB_CURRICULUM_CELL_GRID_H
 
 #include "Define.h"
+#include "MapPlanner.h"
 #include "MentalMap.h"
 #include "Position.h"
 #include <algorithm>
@@ -56,6 +57,12 @@ namespace Animus::Curriculum
         bool RouteBestValid = false;
         float RouteBest = 0.0f;
         float RouteStall = 0.0f;
+        /// The route kept (Vision::KeepRoute; PointNav.RouteKeep): the fine walk this decision's route scalars came
+        /// from, as world 1-yd cells, which the next decision follows again unless a better one undercuts it by the
+        /// margin; and the episode's count of switches to a walk that leaves the one followed (the route_switches
+        /// column), carried from pose to pose as the stall clock is.
+        Vision::PlanWalk Kept;
+        uint32 RouteSwitches = 0;
     };
 
     /// A place the sim holds for a cell goal: the world point latched when the cell was chosen.

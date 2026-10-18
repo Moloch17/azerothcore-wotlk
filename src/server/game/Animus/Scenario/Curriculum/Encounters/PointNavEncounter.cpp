@@ -127,6 +127,20 @@ void Animus::Curriculum::PointNavEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
             return 0.0f;
         return (float(s.ArriveMs) / 1000.0f) / std::max(0.25f, optimal / RUN_YARDS_PER_SECOND);
     });
+    // The trip's clock (PointNav.TimeFactor: its route's, in a drawn trip; the arena's otherwise), and how often the
+    // map block's kept route was given up for another (CropPose::RouteSwitches, Vision::KeepRoute).
+    add("time_limit_seconds", [](Env const& env, uint32) { return float(env.EpisodeLengthMs) / 1000.0f; });
+    // Arrived within the arena's own EpisodeSeconds (the clock every trip had before PointNav.TimeFactor): the
+    // measure an evaluation compares with runs on the fixed clock by.
+    add("arrived_base_limit", [this, seatOf](Env const& env, uint32 seat)
+    {
+        SeatNav const& s = seatOf(env, seat);
+        return s.Reached && s.ArriveMs <= _scenario.ArenaEpisodeMs(env) ? 1.0f : 0.0f;
+    });
+    add("route_switches", [this](Env const& env, uint32 seat)
+    {
+        return float(_scenario.Data(env).Seats[std::min<uint32>(seat, MAX_SEATS - 1)].Crop.RouteSwitches);
+    });
     add("optimal_yards", [nav](Env const& env, uint32)
     {
         return nav(env).CStart >= Vision::TRAV_UNREACHABLE ? 0.0f : nav(env).CStart;
@@ -334,8 +348,18 @@ bool Animus::Curriculum::PointNavEncounter::DrawPair(Env& env, Map* map, Player*
     OpenBins const open = BinsOf(nav.Rung);
     uint32 const detourBins = std::min<uint32>(open.Detour, uint32(detours.size()) - 1);
     uint32 const lengthBins = std::min<uint32>(open.Length, uint32(lengths.size()) - 1);
-    nav.DetourBin = uint32(pick(detourBins));
-    nav.LengthBin = uint32(pick(lengthBins));
+    // Training draws the bin by where trips fail (PointNav.BinWeighting); an evaluation, and a seeded trip, uniformly
+    // as ever, from the same two draws of its generator.
+    bool const training = !env.Evaluating && env.EpisodeSeedIndex == Animus::NO_EPISODE_SEED;
+    nav.LengthBins = uint32(lengths.size()) - 1;
+    nav.BinCounted = training;
+    if (training && tuning.BinWeighting)
+        DrawBin(env, detourBins, lengthBins, nav.LengthBins, nav);
+    else
+    {
+        nav.DetourBin = uint32(pick(detourBins));
+        nav.LengthBin = uint32(pick(lengthBins));
+    }
     float const detourLow = detours[nav.DetourBin];
     float const detourHigh = detours[nav.DetourBin + 1];
     float const lengthLow = lengths[nav.LengthBin];
@@ -365,6 +389,7 @@ bool Animus::Curriculum::PointNavEncounter::DrawPair(Env& env, Map* map, Player*
                     // the bake vouches for.
                     nav.Start = CellPoint(grid, start, false);
                     nav.Replayed = true;
+                    nav.BinCounted = false;     // its pair is not the drawn bin's
                 }
             }
         }
@@ -489,6 +514,24 @@ bool Animus::Curriculum::PointNavEncounter::Build(Env& env, Map* map, uint8 /*le
         return false;
     }
 
+    // The trip's clock (PointNav.TimeFactor): TimeFactor x the best route at run speed + TimeSlackSeconds, at least
+    // TimeMinSeconds, at most the arena's EpisodeSeconds x TimeCap (StageScenario sizes the spec's longest episode by
+    // that cap); the arena's own length when off. The episode ends on it (EnvPool), the timeout is judged on it
+    // (Reward) and the critic's episode-time column reads it (STATE_EPISODE_TIME).
+    {
+        CurriculumTuning::PointNavTuning const& tuning = _scenario.Tuning().PointNav;
+        uint32 const arenaMs = _scenario.ArenaEpisodeMs(env);
+        env.EpisodeLengthMs = arenaMs;
+        if (tuning.TimeFactor > 0.0f && nav.CStart < Vision::TRAV_UNREACHABLE)
+        {
+            float const capSeconds = float(arenaMs) / 1000.0f * std::max(1.0f, tuning.TimeCap);
+            float const bestSeconds = nav.CStart / RUN_YARDS_PER_SECOND;
+            float const seconds = std::clamp(tuning.TimeFactor * bestSeconds + tuning.TimeSlackSeconds,
+                std::min(std::max(0.0f, tuning.TimeMinSeconds), capSeconds), capSeconds);
+            env.EpisodeLengthMs = std::max<uint32>(1000, uint32(seconds * 1000.0f));
+        }
+    }
+
     // The seat at its start, facing a random way; the start is the episode's spawn, so the critic's origin and the
     // rise after a death are both there.
     float const facing = Uniform(env) * TWO_PI;
@@ -592,6 +635,56 @@ void Animus::Curriculum::PointNavEncounter::NoteFailure(Env const& env, EnvNav c
     }
 }
 
+void Animus::Curriculum::PointNavEncounter::DrawBin(Env const& env, uint32 detourBins, uint32 lengthBins,
+    uint32 lengthCount, EnvNav& nav)
+{
+    CurriculumTuning::PointNavTuning const& tuning = _scenario.Tuning().PointNav;
+    float const floor = std::max(0.0f, tuning.BinFloor);
+    std::lock_guard lock(_poolLock);
+    std::vector<float>& rates = _binRates[_scenario.Data(env).Arena];
+    std::size_t const cells = std::size_t(lengthCount) * std::max<uint32>(detourBins, 1);
+    if (rates.size() < cells)
+        rates.resize(cells, 0.0f);
+    // Each open bin's weight: (1 - its arrival rate) + the floor; a bin no trip has ended in reads rate 0.
+    auto const weight = [&](uint32 detour, uint32 length)
+    {
+        float const rate = std::clamp(rates[std::size_t(detour) * lengthCount + length], 0.0f, 1.0f);
+        return 1.0f - rate + floor;
+    };
+    float total = 0.0f;
+    for (uint32 detour = 0; detour < detourBins; ++detour)
+        for (uint32 length = 0; length < lengthBins; ++length)
+            total += weight(detour, length);
+    nav.DetourBin = 0;
+    nav.LengthBin = 0;
+    if (total <= 0.0f)
+        return;
+    float draw = Uniform(env) * total;
+    for (uint32 detour = 0; detour < detourBins; ++detour)
+        for (uint32 length = 0; length < lengthBins; ++length)
+        {
+            nav.DetourBin = detour;
+            nav.LengthBin = length;
+            draw -= weight(detour, length);
+            if (draw < 0.0f)
+                return;
+        }
+}
+
+void Animus::Curriculum::PointNavEncounter::NoteBinOutcome(Env const& env, EnvNav& nav, bool arrived)
+{
+    if (!nav.BinCounted || nav.Replayed || env.Evaluating || !nav.LengthBins)
+        return;
+    nav.BinCounted = false;
+    float const alpha = 1.0f / float(std::max<uint32>(1, _scenario.Tuning().PointNav.BinWindow));
+    std::lock_guard lock(_poolLock);
+    std::vector<float>& rates = _binRates[_scenario.Data(env).Arena];
+    std::size_t const index = std::size_t(nav.DetourBin) * nav.LengthBins + nav.LengthBin;
+    if (rates.size() <= index)
+        rates.resize(index + 1, 0.0f);
+    rates[index] += alpha * ((arrived ? 1.0f : 0.0f) - rates[index]);
+}
+
 void Animus::Curriculum::PointNavEncounter::NoteWaypoint(Env const& env, uint32 seatIndex, EnvNav& nav,
     SeatNav& seat) const
 {
@@ -671,6 +764,7 @@ void Animus::Curriculum::PointNavEncounter::Reward(Env& env, uint32 seatIndex, P
         {
             nav.TimedOutNoted = true;
             NoteFailure(env, nav, bot->GetPosition());
+            NoteBinOutcome(env, nav, false);
         }
     }
     if (seat.Reached)
@@ -776,6 +870,7 @@ void Animus::Curriculum::PointNavEncounter::Reward(Env& env, uint32 seatIndex, P
     seat.Reached = true;
     seat.ArriveMs = env.EpisodeElapsedMs;
     seat.StopError = distance;
+    NoteBinOutcome(env, nav, true);
     // Paid by PointNav.ArriveWeight: 1 the route over the yards walked (the spl column); 2 the route at run speed over
     // the seconds taken (1 over the time_ratio column, at most 1).
     float share = 1.0f;

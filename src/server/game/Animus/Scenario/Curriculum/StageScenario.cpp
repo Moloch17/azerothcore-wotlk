@@ -289,6 +289,9 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     _dataDir = settings.DataDir;
     // The coverage analysis's sizes (MapBlock::Observe, general search) are the seek tuning's: set once here.
     MapBlock::ConfigureCoverage(_tuning.Seek.ClusterMinCells, _tuning.Seek.PocketMinCells);
+    // The route's hysteresis (MapBlock::Observe, Vision::KeepRoute) is the nav tuning's: set once here too.
+    MapBlock::ConfigureRoute(_tuning.PointNav.RouteKeep != 0, _tuning.PointNav.RouteKeepShare,
+        _tuning.PointNav.RouteKeepYards);
 
     if (MapEntry const* mapEntry = sMapStore.LookupEntry(_spawnMapId))
         _continent = !mapEntry->Instanceable();
@@ -502,6 +505,10 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
             * IN_MILLISECONDS;
         _arenaEpisodeMs.push_back(episodeMs);
         longestMs = std::max(longestMs, episodeMs);
+        // A nav trip's clock is its route's (PointNav.TimeFactor; PointNavEncounter::Build), up to the arena's
+        // EpisodeSeconds x PointNav.TimeCap: the learner sizes its evaluation windows by the longest.
+        if (hasPointNav(arena) && !arena.LabelsOnly && _tuning.PointNav.TimeFactor > 0.0f)
+            longestMs = std::max(longestMs, uint32(float(episodeMs) * std::max(1.0f, _tuning.PointNav.TimeCap)));
     }
 
     if (std::all_of(_arenaWeightsFinal.begin(), _arenaWeightsFinal.end(), [](uint32 weight) { return weight == 0; }))

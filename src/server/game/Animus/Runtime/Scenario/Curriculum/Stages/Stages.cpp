@@ -909,9 +909,12 @@ namespace
         // can walk, step up, jump, drop and swim, with route costs in yards) over the instance's loaded grids.
         //
         // **The episode** (PointNavEncounter): a goal cell and a start cell drawn from the bake by a detour bin (route
-        // over straight line) and a length bin, uniform over the bins the rung opens (PointNav.DetourBins, LengthBins,
-        // RungBins0-3); a fifth of training episodes replay a failure (where a seat was pinned, fell, drowned or timed
-        // out, with that goal: PointNav.ReplayShare). The seat spawns at the start cell facing a random way; the goal
+        // over straight line) and a length bin among the bins the rung opens (PointNav.DetourBins, LengthBins,
+        // RungBins0-3) -- uniformly in an evaluation, weighted toward the bins whose training trips fail in training
+        // (PointNav.BinWeighting); 30 % of training episodes replay a failure (where a seat was pinned, fell, drowned
+        // or timed out, with that goal: PointNav.ReplayShare). The trip's clock is its route's (PointNav.TimeFactor: 3 x
+        // the best route at run speed + 15 s, 30 s at least, the arena's EpisodeSeconds x 3 at most; the seconds named
+        // below are each arena's EpisodeSeconds). The seat spawns at the start cell facing a random way; the goal
         // is a point, no object. Arrive (Outcome) once, stopped within PointNav.ArriveYards of it on its own floor.
         // Costs: the step cost, Stuck and Wall at their fixed price, FallHurt per share of health a fall took, Death,
         // Drowned, Lost per second further from the goal by route than the start was by PointNav.LostYards, Revisit
@@ -941,7 +944,7 @@ namespace
             .EvenLevels = true,
             .EvenRenderSizes = true,
             .MapTiers = 2,
-            .SharedMemoryShare = 0.5f,
+            .SharedMemoryShare = 0.75f,
         });
 
         // N2 -- detour: the straight line is blocked in view (doors, pillars, room walls: the Stockades' rooms, the

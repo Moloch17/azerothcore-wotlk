@@ -164,6 +164,8 @@ namespace Animus::Curriculum
             uint32 Rung = 0;
             uint32 DetourBin = 0;
             uint32 LengthBin = 0;
+            uint32 LengthBins = 0;          // the length bins the tuning lists (the bin table's row length)
+            bool BinCounted = false;        // the trip's outcome goes to its bin's arrival rate (DrawPair)
             bool Replayed = false;
             bool TimedOutNoted = false;
             std::array<SeatNav, GROUP_SEATS> Seats{};
@@ -195,6 +197,11 @@ namespace Animus::Curriculum
         bool DrawPair(Env& env, Map* map, Player* bot, EnvNav& nav);
         /// A failure of `env`'s arena noted at `where` with the episode's goal, for the replay draw.
         void NoteFailure(Env const& env, EnvNav const& nav, Position const& where);
+        /// A training trip's (detour, length) bin among the `detourBins` x `lengthBins` its rung opens, by the
+        /// arena's failure weights (PointNav.BinWeighting), into `nav`; `lengthCount` the bins the tuning lists.
+        void DrawBin(Env const& env, uint32 detourBins, uint32 lengthBins, uint32 lengthCount, EnvNav& nav);
+        /// The trip's outcome (arrived, else timed out) into its bin's arrival rate, once, when the draw counts it.
+        void NoteBinOutcome(Env const& env, EnvNav& nav, bool arrived);
         /// The world point of a bake cell: its centre at the standing height (the bed when `bed`).
         [[nodiscard]] static Position CellPoint(Vision::TravGrid const& grid, uint32 cell, bool bed);
         /// The route distance at a world point: TRAV_UNREACHABLE off the bake.
@@ -211,6 +218,9 @@ namespace Animus::Curriculum
         PartyFollowEncounter const* _follow = nullptr;
         std::mutex _poolLock;
         std::map<uint32, FailurePool> _pools;   // per arena index
+        /// Per arena index, each (detour, length) bin's recent arrival rate over training trips (row-major by detour
+        /// bin, LengthBins a row; 0 until a trip of the bin ends), under _poolLock.
+        std::map<uint32, std::vector<float>> _binRates;
     };
 }
 

@@ -19,6 +19,7 @@
 #include "TravBake.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <functional>
 #include <vector>
 
@@ -209,18 +210,36 @@ void Animus::Vision::ConfigurationSpace(float* factor, int32_t side)
                 factor[row * side + col] = PLAN_BLOCKED;
         }
     mark();
-    // Inflation: a passable cell 8-adjacent to a wall (the closed holes included) costs PLAN_INFLATED at least; a
-    // hazard's own 5 stands.
+    // Inflation: a passable cell 8-adjacent to a wall (the closed holes included) costs PLAN_INFLATED at least, one
+    // of those with a wall within two cells on both sides along an axis or a diagonal (a 2-yd passage) PLAN_PINCHED;
+    // dearer cells (unknown, a hazard) keep their own. Read two cells out, past the one cell of padding: the bounds
+    // are checked.
+    auto const wallAt = [&](int32_t row, int32_t col)
+    {
+        if (row < 0 || col < 0 || row >= side || col >= side)
+            return false;
+        return wall[std::size_t((row + 1) * padded + col + 1)] != 0;
+    };
+    constexpr int32_t AXES[4][2] = { { 1, 0 }, { 0, 1 }, { 1, 1 }, { 1, -1 } };
     for (int32_t row = 0; row < side; ++row)
         for (int32_t col = 0; col < side; ++col)
         {
             float& value = factor[row * side + col];
             uint8_t const* at = wall.data() + (row + 1) * padded + col + 1;
-            if (*at || value >= PLAN_INFLATED)
+            if (*at || value >= PLAN_PINCHED)
                 continue;
-            if (at[-padded - 1] | at[-padded] | at[-padded + 1] | at[-1] | at[1] | at[padded - 1] | at[padded]
-                | at[padded + 1])
-                value = PLAN_INFLATED;
+            if (!(at[-padded - 1] | at[-padded] | at[-padded + 1] | at[-1] | at[1] | at[padded - 1] | at[padded]
+                | at[padded + 1]))
+                continue;
+            bool pinched = false;
+            for (auto const& axis : AXES)
+            {
+                bool const one = wallAt(row + axis[0], col + axis[1]) || wallAt(row + 2 * axis[0], col + 2 * axis[1]);
+                bool const other = wallAt(row - axis[0], col - axis[1])
+                    || wallAt(row - 2 * axis[0], col - 2 * axis[1]);
+                pinched = pinched || (one && other);
+            }
+            value = std::max(value, pinched ? PLAN_PINCHED : PLAN_INFLATED);
         }
 }
 
@@ -284,7 +303,10 @@ void Animus::Vision::PlanOnMap(MentalMap const& map, float x, float y, float z, 
     // ... shaped into the body's configuration space: the 1-yd holes closed, the cells along the walls dear.
     ConfigurationSpace(factor.data(), PLAN_SIDE);
     for (uint32_t index = 0; index < PLAN_CELLS; ++index)
+    {
+        out.FineFactor[index] = factor[index];
         out.FineBlocked[index] = factor[index] >= PLAN_BLOCKED ? 1 : 0;
+    }
     // The goal's own cell when it lies inside the window (goal_plane without the clamp).
     {
         float const gx = x + goalForward * forwardX + goalRight * rightX;
@@ -385,16 +407,15 @@ float Animus::Vision::PlanValueAt(MapPlan const& plan, float forward, float righ
     return std::min(sum / weight, TRAV_UNREACHABLE);
 }
 
-Animus::Vision::PlanRoute Animus::Vision::FineRoute(MapPlan const& plan)
+Animus::Vision::PlanWalk Animus::Vision::FineWalk(MapPlan const& plan)
 {
+    PlanWalk walk;
     if (!plan.HasGoal)
-        return PlanRoute();
+        return walk;
     // The body's own cell; a wall's foot (blocked) stands in for nothing, so the lowest unblocked cell round the body
     // starts the walk instead.
-    int32_t const bodyCol = MapCellOf(plan.X) - plan.X0;
-    int32_t const bodyRow = MapCellOf(plan.Y) - plan.Y0;
-    int32_t row = bodyRow;
-    int32_t col = bodyCol;
+    int32_t row = MapCellOf(plan.Y) - plan.Y0;
+    int32_t col = MapCellOf(plan.X) - plan.X0;
     if (plan.FineBlocked[std::size_t(row * PLAN_SIDE + col)])
     {
         float best = PLAN_SENTINEL;
@@ -414,41 +435,200 @@ Animus::Vision::PlanRoute Animus::Vision::FineRoute(MapPlan const& plan)
                 }
             }
     }
-    // One step at a time, the cell after each of PLAN_ROUTE_STEPS steps noted; a walk that stops repeats its end.
-    float const forwardX = std::cos(plan.Yaw);
-    float const forwardY = std::sin(plan.Yaw);
-    PlanRoute route;
-    uint32_t steps = 0;
-    uint32_t point = 0;
-    for (uint32_t step = 1; step <= PLAN_FINE_STEPS && point < PLAN_ROUTE_POINTS; ++step)
+    walk.X[0] = plan.X0 + col;
+    walk.Y[0] = plan.Y0 + row;
+    walk.Count = 1;
+    // One step at a time, downhill, until PLAN_FINE_STEPS or no lower neighbour.
+    while (walk.Count < PLAN_KEPT_CELLS)
     {
         int32_t const fromRow = row;
         int32_t const fromCol = col;
         Descend(plan.Fine.data(), PLAN_SIDE, 1, row, col);
-        bool const moved = row != fromRow || col != fromCol;
-        if (moved)
-            steps = step;
-        if (moved && step < PLAN_ROUTE_STEPS[point])
-            continue;
-        // At a route point's step, or the walk's end: this cell is the point, and every later one when it ended.
-        float const dx = (float(plan.X0 + col) + 0.5f) * MAP_CELL - plan.X;
-        float const dy = (float(plan.Y0 + row) + 0.5f) * MAP_CELL - plan.Y;
+        if (row == fromRow && col == fromCol)
+            break;
+        walk.X[walk.Count] = plan.X0 + col;
+        walk.Y[walk.Count] = plan.Y0 + row;
+        ++walk.Count;
+    }
+    return walk;
+}
+
+Animus::Vision::PlanRoute Animus::Vision::WalkRoute(MapPlan const& plan, PlanWalk const& walk)
+{
+    // No step, or a walk that ends on the body's own cell, is no route.
+    if (walk.Count < 2)
+        return PlanRoute();
+    uint32_t const steps = walk.Count - 1;
+    if (walk.X[steps] == MapCellOf(plan.X) && walk.Y[steps] == MapCellOf(plan.Y))
+        return PlanRoute();
+    float const forwardX = std::cos(plan.Yaw);
+    float const forwardY = std::sin(plan.Yaw);
+    PlanRoute route;
+    for (uint32_t point = 0; point < PLAN_ROUTE_POINTS; ++point)
+    {
+        // The cell after PLAN_ROUTE_STEPS[point] steps; a walk that ended earlier, its end.
+        uint32_t const index = std::min(PLAN_ROUTE_STEPS[point], steps);
+        float const dx = (float(walk.X[index]) + 0.5f) * MAP_CELL - plan.X;
+        float const dy = (float(walk.Y[index]) + 0.5f) * MAP_CELL - plan.Y;
         float const forward = dx * forwardX + dy * forwardY;
         float const right = dx * forwardY - dy * forwardX;
         float const distance = std::max(1e-6f, std::hypot(forward, right));
-        for (; point < PLAN_ROUTE_POINTS && (!moved || step >= PLAN_ROUTE_STEPS[point]); ++point)
-        {
-            route.Sin[point] = -right / distance;
-            route.Cos[point] = forward / distance;
-        }
-        if (!moved)
-            break;
+        route.Sin[point] = -right / distance;
+        route.Cos[point] = forward / distance;
     }
-    if (!steps || (row == bodyRow && col == bodyCol))
-        return PlanRoute();
     route.Reach = float(steps) / float(PLAN_FINE_STEPS);
     route.Valid = 1.0f;
     return route;
+}
+
+Animus::Vision::PlanRoute Animus::Vision::FineRoute(MapPlan const& plan)
+{
+    return WalkRoute(plan, FineWalk(plan));
+}
+
+bool Animus::Vision::KeptEnd(PlanWalk const& kept, float x, float y, float yaw, PlanPoint& out)
+{
+    if (!kept.Count)
+        return false;
+    float const dx = (float(kept.X[kept.Count - 1]) + 0.5f) * MAP_CELL - x;
+    float const dy = (float(kept.Y[kept.Count - 1]) + 0.5f) * MAP_CELL - y;
+    out = PlanPoint{ dx * std::cos(yaw) + dy * std::sin(yaw), dx * std::sin(yaw) - dy * std::cos(yaw) };
+    return true;
+}
+
+Animus::Vision::RouteChoice Animus::Vision::KeepRoute(MapPlan const& plan, PlanWalk const& kept,
+    RouteKeeping const& keeping)
+{
+    RouteChoice choice;
+    PlanWalk const fresh = FineWalk(plan);
+    auto const indexOf = [&plan](int32_t wx, int32_t wy, int32_t& index)
+    {
+        int32_t const col = wx - plan.X0;
+        int32_t const row = wy - plan.Y0;
+        if (row < 0 || col < 0 || row >= PLAN_SIDE || col >= PLAN_SIDE)
+            return false;
+        index = row * PLAN_SIDE + col;
+        return true;
+    };
+    auto const chebyshev = [](int32_t ax, int32_t ay, int32_t bx, int32_t by)
+    {
+        return std::max(std::abs(ax - bx), std::abs(ay - by));
+    };
+    float freshCost = TRAV_UNREACHABLE;
+    int32_t startIndex = 0;
+    if (fresh.Count && indexOf(fresh.X[0], fresh.Y[0], startIndex)
+        && plan.Fine[std::size_t(startIndex)] < PLAN_SENTINEL)
+        freshCost = std::min(plan.Fine[std::size_t(startIndex)], TRAV_UNREACHABLE);
+
+    // The kept walk from its cell nearest the body's start, re-priced on this plan and extended on it.
+    PlanWalk follow;
+    bool onKept = false;
+    bool blocked = false;
+    float keptCost = TRAV_UNREACHABLE;
+    uint32_t nearest = 0;
+    if (kept.Count && fresh.Count)
+    {
+        int32_t const sx = fresh.X[0];
+        int32_t const sy = fresh.Y[0];
+        // The join: the furthest-along cell of it within PLAN_KEEP_OFF of the start, so the walk never steps back to
+        // where the body was; a join two cells off only past an open middle cell (no step through a 1-yd wall).
+        auto const open = [&](int32_t wx, int32_t wy)
+        {
+            int32_t cell = 0;
+            return indexOf(wx, wy, cell) && !plan.FineBlocked[std::size_t(cell)];
+        };
+        for (uint32_t index = kept.Count; index-- > 0 && !onKept;)
+        {
+            int32_t const jx = kept.X[index];
+            int32_t const jy = kept.Y[index];
+            int32_t const d = chebyshev(jx, jy, sx, sy);
+            if (d > PLAN_KEEP_OFF)
+                continue;
+            if (d > 1)
+            {
+                int32_t const mx = sx + jx;
+                int32_t const my = sy + jy;
+                if (!open(mx >> 1, my >> 1) || !open((mx + 1) >> 1, (my + 1) >> 1))
+                    continue;
+            }
+            nearest = index;
+            onKept = true;
+        }
+    }
+    if (onKept)
+    {
+        follow.X[0] = fresh.X[0];
+        follow.Y[0] = fresh.Y[0];
+        follow.Count = 1;
+        int32_t previous = startIndex;
+        float cost = 0.0f;
+        for (uint32_t index = nearest; index < kept.Count && follow.Count < PLAN_KEPT_CELLS; ++index)
+        {
+            int32_t const wx = kept.X[index];
+            int32_t const wy = kept.Y[index];
+            if (wx == follow.X[follow.Count - 1] && wy == follow.Y[follow.Count - 1])
+                continue;
+            int32_t cell = 0;
+            if (!indexOf(wx, wy, cell) || plan.FineBlocked[std::size_t(cell)])
+            {
+                blocked = true;
+                break;
+            }
+            // The Dijkstra's edge rule: the step's yards x the mean of its two cells' factors.
+            float const yards = MAP_CELL
+                * std::hypot(float(wx - follow.X[follow.Count - 1]), float(wy - follow.Y[follow.Count - 1]));
+            cost += yards * 0.5f * (plan.FineFactor[std::size_t(previous)] + plan.FineFactor[std::size_t(cell)]);
+            follow.X[follow.Count] = wx;
+            follow.Y[follow.Count] = wy;
+            ++follow.Count;
+            previous = cell;
+        }
+        float const endValue = plan.Fine[std::size_t(previous)];
+        if (!blocked && endValue < PLAN_SENTINEL)
+        {
+            keptCost = std::min(cost + endValue, TRAV_UNREACHABLE);
+            // Extended downhill on this plan from its end (settled: the end was a `near` point).
+            int32_t row = previous / PLAN_SIDE;
+            int32_t col = previous % PLAN_SIDE;
+            while (follow.Count < PLAN_KEPT_CELLS)
+            {
+                int32_t const fromRow = row;
+                int32_t const fromCol = col;
+                Descend(plan.Fine.data(), PLAN_SIDE, 1, row, col);
+                if (row == fromRow && col == fromCol)
+                    break;
+                follow.X[follow.Count] = plan.X0 + col;
+                follow.Y[follow.Count] = plan.Y0 + row;
+                ++follow.Count;
+            }
+        }
+        else
+            blocked = true;
+    }
+
+    // Kept unless the new walk undercuts it by more than the margin (both parts), or it is blocked.
+    bool const keep = keeping.Enabled && onKept && !blocked && keptCost < TRAV_UNREACHABLE
+        && !(freshCost < keptCost - std::max(keeping.Share * keptCost, keeping.Yards));
+    choice.Kept = keep;
+    choice.Walk = keep ? follow : fresh;
+    choice.Cost = keep ? keptCost : freshCost;
+    choice.Route = WalkRoute(plan, choice.Walk);
+    if (keep || !onKept || fresh.Count < 2)
+        return choice;
+    // The new walk followed instead: a switch when it leaves the old one -- a cell of it, as far along as the old one
+    // reaches, more than PLAN_KEEP_OFF cells from every cell of the old (the kept walk as extended, or what is left
+    // of it from the body when it was blocked).
+    PlanWalk const& old = blocked ? kept : follow;
+    uint32_t const first = blocked ? nearest : 0;
+    uint32_t const reach = std::min(fresh.Count, old.Count - first);
+    for (uint32_t index = 0; index < reach && !choice.Switched; ++index)
+    {
+        bool near = false;
+        for (uint32_t other = first; other < old.Count && !near; ++other)
+            near = chebyshev(fresh.X[index], fresh.Y[index], old.X[other], old.Y[other]) <= PLAN_KEEP_OFF;
+        choice.Switched = !near;
+    }
+    return choice;
 }
 
 void Animus::Vision::RouteStall(float cost, bool reachable, float seconds, bool& hasBest, float& best, float& stall)

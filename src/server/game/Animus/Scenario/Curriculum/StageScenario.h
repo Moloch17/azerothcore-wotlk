@@ -167,6 +167,9 @@ namespace Animus::Curriculum
         [[nodiscard]] uint32 TrainableArenaCount() const;
         /// The env's current episode's arena.
         [[nodiscard]] ArenaDefinition const& Arena(Env const& env) const;
+        /// The env's current arena's episode length (its EpisodeSeconds, else the stage's), in milliseconds: what the
+        /// reset set env.EpisodeLengthMs to before an encounter's Build changed it.
+        [[nodiscard]] uint32 ArenaEpisodeMs(Env const& env) const { return _arenaEpisodeMs[Data(env).Arena]; }
         /// Whether the env's current episode uses `encounter`.
         [[nodiscard]] bool Uses(Env const& env, Encounter const& encounter) const;
         /// The encounters the env's current episode uses, in build order.

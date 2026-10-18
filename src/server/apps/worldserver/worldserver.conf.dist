@@ -6597,7 +6597,7 @@ AnimusForge.Curriculum.PointNav.LostYards = 40.0
 AnimusForge.Curriculum.PointNav.Revisit = 0.002
 #   the draw: failure replay (percent of training episodes), the bed goal (percent of nav5's draws), the bake's
 #   price of a damaging drop (yards per share of health)
-AnimusForge.Curriculum.PointNav.ReplayShare = 20
+AnimusForge.Curriculum.PointNav.ReplayShare = 30
 AnimusForge.Curriculum.PointNav.BedShare = 30
 AnimusForge.Curriculum.PointNav.DropHurtYards = 100.0
 #   the bins (comma lists of edges) and what each rung of the ladder opens ("detourMaxBin,lengthMaxBin")
@@ -6618,6 +6618,48 @@ AnimusForge.Curriculum.PointNav.PinSeconds = 4
 
 AnimusForge.Curriculum.PointNav.Turning = 0.01
 AnimusForge.Curriculum.PointNav.FailurePool = 512
+
+#    AnimusForge.Curriculum.PointNav.TimeFactor
+#    AnimusForge.Curriculum.PointNav.TimeSlackSeconds
+#    AnimusForge.Curriculum.PointNav.TimeMinSeconds
+#    AnimusForge.Curriculum.PointNav.TimeCap
+#        Description: The trip's clock: TimeFactor x the best route at run speed (its yards / 7) + TimeSlackSeconds,
+#                     at least TimeMinSeconds, at most the arena's episode seconds x TimeCap, in training and in
+#                     evaluation (the time_limit_seconds column). TimeFactor 0 gives every trip the arena's episode
+#                     seconds. nav6's labels-only arenas keep the party follow's clock.
+#        Default:     3.0, 15.0, 30.0, 3.0
+
+AnimusForge.Curriculum.PointNav.TimeFactor = 3.0
+AnimusForge.Curriculum.PointNav.TimeSlackSeconds = 15.0
+AnimusForge.Curriculum.PointNav.TimeMinSeconds = 30.0
+AnimusForge.Curriculum.PointNav.TimeCap = 3.0
+
+#    AnimusForge.Curriculum.PointNav.BinWeighting
+#    AnimusForge.Curriculum.PointNav.BinFloor
+#    AnimusForge.Curriculum.PointNav.BinWindow
+#        Description: Failure-weighted bins: a training trip draws its (detour, length) bin among those its rung opens
+#                     with weight (1 - the bin's recent arrival rate) + BinFloor, the rate an exponential average
+#                     (1 / BinWindow a trip) over the arena's training trips of that bin that arrived or timed out
+#                     (replayed failures are not counted). 0 draws uniformly; an evaluation always does.
+#        Default:     1, 0.1, 200
+
+AnimusForge.Curriculum.PointNav.BinWeighting = 1
+AnimusForge.Curriculum.PointNav.BinFloor = 0.1
+AnimusForge.Curriculum.PointNav.BinWindow = 200
+
+#    AnimusForge.Curriculum.PointNav.RouteKeep
+#    AnimusForge.Curriculum.PointNav.RouteKeepShare
+#    AnimusForge.Curriculum.PointNav.RouteKeepYards
+#        Description: The map block's route hysteresis: the fine route scalars follow the walk the decision before
+#                     followed (re-priced on the current map, extended on the current plan) until the new plan's
+#                     cost-to-go from the body undercuts it by more than RouteKeepShare of its cost and more than
+#                     RouteKeepYards, a cell of it turns blocked, or the body leaves it (the route_switches column).
+#                     0 takes the new plan's walk every decision.
+#        Default:     1, 0.1, 5.0
+
+AnimusForge.Curriculum.PointNav.RouteKeep = 1
+AnimusForge.Curriculum.PointNav.RouteKeepShare = 0.1
+AnimusForge.Curriculum.PointNav.RouteKeepYards = 5.0
 
 #
 #    AnimusForge.Curriculum.Seek.*

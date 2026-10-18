@@ -496,7 +496,9 @@ namespace Animus::Curriculum
             float Lost = 0.02f;
             float LostYards = 40.0f;
             float Revisit = 0.002f;
-            int32 ReplayShare = 20;
+            /// 30 since 2026-10-18 (20 before): nav1_sight's long trips timed out (46% arrived on rung 2's longest
+            /// bin at 130M), and a replayed failure starts the seat where one gave up.
+            int32 ReplayShare = 30;
             int32 BedShare = 30;
             float DropHurtYards = 100.0f;
             std::string DetourBins = "1.0,1.2,1.6,2.5,4.0";
@@ -510,6 +512,34 @@ namespace Animus::Curriculum
             /// spinning at the controller's fastest (360 deg/s) for a whole 60 s episode 3.8.
             float Turning = 0.01f;
             uint32 FailurePool = 512;
+            /// **The trip's clock** (2026-10-18; PointNavEncounter::Build): a drawn trip lasts TimeFactor x the best
+            /// route at run speed (CStart / 7 yd/s) + TimeSlackSeconds, at least TimeMinSeconds and at most the
+            /// arena's EpisodeSeconds x TimeCap, in training and evaluation alike; TimeFactor 0 keeps the arena's
+            /// EpisodeSeconds for every trip (as before). At 130M, nav1_sight's failed trips had walked 245 yd in its
+            /// fixed 60 s and still stood 103 yd off: a 144-yd route had 3x its best time, a 30-yd one 14x. nav6's
+            /// labels-only arenas keep the party follow's clock.
+            float TimeFactor = 3.0f;
+            float TimeSlackSeconds = 15.0f;
+            float TimeMinSeconds = 30.0f;
+            float TimeCap = 3.0f;
+            /// **Failure-weighted bins** (2026-10-18; PointNavEncounter::DrawPair): a training trip draws its (detour,
+            /// length) bin among those its rung opens with weight (1 - the bin's recent arrival rate) + BinFloor, the
+            /// rate an average over the arena's last ~BinWindow drawn trips of that bin (an exponential one, 1 /
+            /// BinWindow a trip; a bin no trip has ended in yet reads 0, the heaviest), from the sim's own training
+            /// outcomes (arrived, or timed out; replayed failures and evaluations are not counted). BinWeighting 0
+            /// draws uniformly over the open bins (as before); an evaluation always does.
+            uint32 BinWeighting = 1;
+            float BinFloor = 0.1f;
+            uint32 BinWindow = 200;
+            /// **The route kept** (2026-10-18; Vision::KeepRoute, MapBlock::Observe): the map block's fine route
+            /// (route_p5 .. route_fine_valid, route_dist) follows the walk it gave the decision before -- re-priced
+            /// on the current map, trimmed behind the body and extended on the current plan -- until the new plan's
+            /// cost-to-go from the body undercuts the kept walk's by more than RouteKeepShare of it and RouteKeepYards
+            /// both, or a cell of it turns blocked, or the body leaves it. RouteKeep 0 takes the new plan's walk every
+            /// decision (as before). Process-wide, set once by the scenario (MapBlock::ConfigureRoute).
+            uint32 RouteKeep = 1;
+            float RouteKeepShare = 0.1f;
+            float RouteKeepYards = 5.0f;
         } PointNav;
 
         /// The seek stage (Opposition::Seek, M2: SeekEncounter): one real object in one of the Stockades' rooms, found
@@ -1388,6 +1418,16 @@ namespace Animus::Curriculum
             f("PointNav.PinSeconds", tuning.PointNav.PinSeconds);
             f("PointNav.Turning", tuning.PointNav.Turning);
             f("PointNav.FailurePool", tuning.PointNav.FailurePool);
+            f("PointNav.TimeFactor", tuning.PointNav.TimeFactor);
+            f("PointNav.TimeSlackSeconds", tuning.PointNav.TimeSlackSeconds);
+            f("PointNav.TimeMinSeconds", tuning.PointNav.TimeMinSeconds);
+            f("PointNav.TimeCap", tuning.PointNav.TimeCap);
+            f("PointNav.BinWeighting", tuning.PointNav.BinWeighting);
+            f("PointNav.BinFloor", tuning.PointNav.BinFloor);
+            f("PointNav.BinWindow", tuning.PointNav.BinWindow);
+            f("PointNav.RouteKeep", tuning.PointNav.RouteKeep);
+            f("PointNav.RouteKeepShare", tuning.PointNav.RouteKeepShare);
+            f("PointNav.RouteKeepYards", tuning.PointNav.RouteKeepYards);
         }
 
         /// The values of the config keys <prefix><key>, each defaulting to the value above; min/max pairs are

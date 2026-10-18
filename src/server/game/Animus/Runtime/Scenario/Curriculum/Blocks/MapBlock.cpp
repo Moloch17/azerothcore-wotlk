@@ -50,6 +50,11 @@ namespace
     /// The analysis's sizes (MapBlock::ConfigureCoverage): the seek tuning's defaults until the scenario sets them.
     std::atomic<uint32> ClusterMinCells{ 2 };
     std::atomic<uint32> PocketMinCells{ 6 };
+    /// The route's hysteresis (MapBlock::ConfigureRoute; Vision::KeepRoute): the nav tuning's defaults until the
+    /// scenario sets them.
+    std::atomic<bool> RouteKeep{ true };
+    std::atomic<float> RouteKeepShare{ 0.1f };
+    std::atomic<float> RouteKeepYards{ 5.0f };
 
     /// A bearing off the facing as sin and cos, and a distance over the reach, into three scalars.
     void Bearing(float facing, float x, float y, float fromX, float fromY, float* out)
@@ -65,6 +70,13 @@ void Animus::Curriculum::MapBlock::ConfigureCoverage(uint32 clusterMinCells, uin
 {
     ClusterMinCells.store(std::max<uint32>(1, clusterMinCells), std::memory_order_relaxed);
     PocketMinCells.store(std::max<uint32>(1, pocketMinCells), std::memory_order_relaxed);
+}
+
+void Animus::Curriculum::MapBlock::ConfigureRoute(bool keep, float share, float yards)
+{
+    RouteKeep.store(keep, std::memory_order_relaxed);
+    RouteKeepShare.store(std::max(0.0f, share), std::memory_order_relaxed);
+    RouteKeepYards.store(std::max(0.0f, yards), std::memory_order_relaxed);
 }
 
 Animus::Curriculum::BlockSize Animus::Curriculum::MapBlock::Size(Layout const& /*layout*/) const
@@ -130,6 +142,12 @@ void Animus::Curriculum::MapBlock::DescribeManifest(Layout const& layout, boost:
     map["route_coarse_reach_yards"] = double(float(Vi::PLAN_COARSE_STEPS) * float(Vi::COARSE_CELL));
     map["route_dist_yards"] = double(Vi::PLAN_DIST_SCALE);
     map["route_stall_seconds"] = double(Vi::PLAN_STALL_SECONDS);
+    // The fine route's hysteresis (Vision::KeepRoute; the same scalars, followed differently): on or off, and the
+    // margin a new walk must undercut the kept one's cost by (a share of it and yards, both).
+    map["route_keep"] = RouteKeep.load(std::memory_order_relaxed);
+    map["route_keep_share"] = double(RouteKeepShare.load(std::memory_order_relaxed));
+    map["route_keep_yards"] = double(RouteKeepYards.load(std::memory_order_relaxed));
+    map["route_keep_off_cells"] = Vi::PLAN_KEEP_OFF;
     map["new_age_scale_s"] = double(Vi::GROUND_AGE_SCALE_S);
     // Revision 4: total and searched_cells are log1p(cells) / log1p(the max), clamped to 1 (MapBlock::LogShare).
     map["total_log_max"] = double(TOTAL_LOG_MAX);
@@ -207,7 +225,10 @@ void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uin
     if (view.MapRow)
         std::memset(view.MapRow, 0, std::size_t(Vi::CROP_BYTES) * tiers);
     if (view.Crop)
+    {
         *view.Crop = CropPose();
+        view.Crop->RouteSwitches = last.RouteSwitches;     // the episode's count survives a decision with no map
+    }
     if (view.CoverageOut)
         *view.CoverageOut = Coverage::Summary();
     Vi::MentalMap* map = view.Map;
@@ -281,15 +302,18 @@ void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uin
         // The school's goal (OBS_GOAL_*): the same two numbers the plan is made from, in raw yards.
         obs[OBS_GOAL_FORWARD_YARDS] = goalForward;
         obs[OBS_GOAL_RIGHT_YARDS] = goalRight;
-        Vi::PlanPoint near[1];
+        // The points the plan must settle beyond the body: the crop before's pose (the labels' C_map(last)) and the
+        // end of the walk the decision before followed (Vision::KeepRoute prices the kept walk to there).
+        Vi::PlanPoint near[2];
         uint32 points = 0;
         if (last.Valid)
         {
             float const lx = last.X - x;
             float const ly = last.Y - y;
-            near[0] = Vi::PlanPoint{ lx * cosYaw + ly * sinYaw, lx * sinYaw - ly * cosYaw };
-            points = 1;
+            near[points++] = Vi::PlanPoint{ lx * cosYaw + ly * sinYaw, lx * sinYaw - ly * cosYaw };
         }
+        if (Vi::KeptEnd(last.Kept, x, y, view.Facing, near[points]))
+            ++points;
         thread_local Vi::MapPlan plan;
         Vi::PlanOnMap(*map, x, y, z, view.Facing, goalForward, goalRight, coarse, plan, near, points);
         pose.RouteValid = true;
@@ -301,7 +325,16 @@ void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uin
             pose.LastY = last.Y;
             pose.RouteLast = Vi::PlanValueAt(plan, near[0].Forward, near[0].Right);
         }
-        Vi::PlanRoute const fine = Vi::FineRoute(plan);
+        // The fine walk followed: the one the decision before followed, kept unless this plan's undercuts it by the
+        // margin (PointNav.RouteKeep*), else this plan's own (Vision::KeepRoute); the next decision keeps it in turn.
+        Vi::RouteKeeping keeping;
+        keeping.Enabled = RouteKeep.load(std::memory_order_relaxed);
+        keeping.Share = RouteKeepShare.load(std::memory_order_relaxed);
+        keeping.Yards = RouteKeepYards.load(std::memory_order_relaxed);
+        Vi::RouteChoice const choice = Vi::KeepRoute(plan, last.Kept, keeping);
+        pose.Kept = choice.Walk;
+        pose.RouteSwitches = last.RouteSwitches + (choice.Switched ? 1 : 0);
+        Vi::PlanRoute const& fine = choice.Route;
         Vi::PlanWaypoint const far = Vi::CoarseWaypoint(plan);
         static_assert(Vi::PLAN_ROUTE_POINTS == 4 && OBS_ROUTE_P30_COS == OBS_ROUTE_P5_SIN + 7);
         for (uint32 point = 0; point < Vi::PLAN_ROUTE_POINTS; ++point)
@@ -315,12 +348,14 @@ void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uin
         obs[OBS_ROUTE_COARSE_COS] = far.Cos;
         obs[OBS_ROUTE_COARSE_DIST] = far.Dist;
         obs[OBS_ROUTE_COARSE_VALID] = far.Valid;
-        // The own-map route distance at the body, and the stall clock carried from the pose before (the body's
-        // own cost is the plan's at the body: a point's reading, blocked cells left out).
+        // The own-map route distance at the body -- the kept walk's cost when it is followed, else the plan's value at
+        // the body (a point's reading, blocked cells left out) -- and the stall clock carried from the pose before,
+        // on the plan's value alone.
         bool const reachable = pose.RouteBody < Vi::TRAV_UNREACHABLE;
-        if (reachable)
+        float const routeDist = choice.Kept ? choice.Cost : pose.RouteBody;
+        if (routeDist < Vi::TRAV_UNREACHABLE)
         {
-            obs[OBS_ROUTE_DIST] = std::min(1.0f, pose.RouteBody / Vi::PLAN_DIST_SCALE);
+            obs[OBS_ROUTE_DIST] = std::min(1.0f, routeDist / Vi::PLAN_DIST_SCALE);
             obs[OBS_ROUTE_DIST_VALID] = 1.0f;
         }
         pose.RouteBestValid = last.RouteBestValid;
@@ -332,10 +367,12 @@ void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uin
     }
     else
     {
-        // No objective this decision: the clock neither runs nor resets, the least so far is kept.
+        // No objective this decision: the clock neither runs nor resets, the least so far is kept; no walk is kept
+        // (there is nothing to plan to), and the switches so far stand.
         pose.RouteBestValid = last.RouteBestValid;
         pose.RouteBest = last.RouteBest;
         pose.RouteStall = last.RouteStall;
+        pose.RouteSwitches = last.RouteSwitches;
     }
     if (view.Crop)
         *view.Crop = pose;
