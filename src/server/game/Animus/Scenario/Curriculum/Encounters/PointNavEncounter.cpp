@@ -945,7 +945,11 @@ void Animus::Curriculum::PointNavEncounter::BuildPairs(Env const& env, Map* map,
             pair.Rise = goalPoint.GetPositionZ() - startPoint.GetPositionZ();
             std::vector<std::array<float, 2>> line{ { startPoint.GetPositionX(), startPoint.GetPositionY() } };
             uint32 node = from;
-            float level = grid.StandingZ(from);
+            // A level change: the route's height more than 3 yd from the last plateau, then flat for PLAIN_EDGES
+            // edges (a staircase is one storey, not one per 3 yd of it).
+            constexpr uint32 PLAIN_EDGES = 3;
+            float plateau = grid.StandingZ(from);
+            uint32 flat = 0;
             bool walked = true;
             for (uint32 step = 0; node != goal; ++step)
             {
@@ -975,11 +979,11 @@ void Animus::Curriculum::PointNavEncounter::BuildPairs(Env const& env, Map* map,
                 }
                 if (kind == Vi::TravEdge::Swim)
                     pair.SwimYards += Vi::TravGrid::StepYards(bestDir);
-                // A level: the route's height more than 3 yd from where the last level was.
-                if (std::fabs(grid.StandingZ(best) - level) > 3.0f)
+                flat = std::fabs(fall) < 0.5f ? flat + 1 : 0;
+                if (flat >= PLAIN_EDGES && std::fabs(grid.StandingZ(best) - plateau) > 3.0f)
                 {
                     pair.Levels = uint8(std::min<uint32>(255, pair.Levels + 1u));
-                    level = grid.StandingZ(best);
+                    plateau = grid.StandingZ(best);
                 }
                 node = best;
                 uint32 const cell = Vi::TravGrid::CellOfNode(node);
@@ -1058,17 +1062,21 @@ void Animus::Curriculum::PointNavEncounter::BuildPairs(Env const& env, Map* map,
         }
     }
     uint32 inSight = 0, levels = 0, drops = 0, traps = 0;
+    uint32 fits[RUNGS] = {};
     for (NavPair const& pair : pool.Pairs)
     {
         inSight += pair.InSight;
         levels += pair.Levels > 0;
         drops += pair.Drops > 0;
         traps += pair.TrapNear;
+        for (uint32 rung = 0; rung < RUNGS; ++rung)
+            fits[rung] += PairMiss(pair, _scenario.Stage().PairKind, rung) <= 0.0f;
     }
     LOG_INFO("module.animus", "{}: arena {} pair pool: {} pairs ({:.1f} s, navmesh {}): {} in sight, {} change level, "
-        "{} drop, {} with a trap drop near the start", _scenario.Name(), _scenario.Arena(env).Name, pool.Pairs.size(),
+        "{} drop, {} with a trap drop near the start; fits by rung {} {} {} {}", _scenario.Name(),
+        _scenario.Arena(env).Name, pool.Pairs.size(),
         std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(), query ? "yes" : "none",
-        inSight, levels, drops, traps);
+        inSight, levels, drops, traps, fits[0], fits[1], fits[2], fits[3]);
 }
 
 float Animus::Curriculum::PointNavEncounter::PairMiss(NavPair const& pair, uint32 kind, uint32 rung) const

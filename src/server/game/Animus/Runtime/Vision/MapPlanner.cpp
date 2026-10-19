@@ -235,7 +235,8 @@ void Animus::Vision::ConfigurationSpace(float* factor, int32_t side)
 }
 
 void Animus::Vision::PlanOnMap(MentalMap const& map, float x, float y, float z, float yaw, float goalForward,
-    float goalRight, uint8_t const* coarse, MapPlan& out, PlanPoint const* near, uint32_t nearCount, float clearance)
+    float goalRight, uint8_t const* coarse, MapPlan& out, PlanPoint const* near, uint32_t nearCount, float clearance,
+    float goalZ)
 {
     thread_local std::vector<float> factor(PLAN_CELLS);
     thread_local std::vector<uint8_t> wanted(PLAN_CELLS);
@@ -313,12 +314,22 @@ void Animus::Vision::PlanOnMap(MentalMap const& map, float x, float y, float z, 
         out.FineFactor[index] = factor[index];
         out.FineBlocked[index] = factor[index] >= PLAN_BLOCKED ? 1 : 0;
     }
-    // The goal's own cell when it lies inside the window (goal_plane without the clamp).
+    // The goal's own cell when it lies inside the window (goal_plane without the clamp) -- unless every floor the cell
+    // holds is another storey's than the goal's (2026-10-19): then the plan has no goal, not one on the floor under it.
     {
         int32_t const col = MapCellOf(goalX) - out.X0;
         int32_t const row = MapCellOf(goalY) - out.Y0;
         if (row >= 0 && row < PLAN_SIDE && col >= 0 && col < PLAN_SIDE)
-            out.Fine[std::size_t(row * PLAN_SIDE + col)] = 0.0f;
+        {
+            MapCell const& cell = window[std::size_t(row * PLAN_SIDE + col)];
+            float floor = 0.0f;
+            bool const storey = std::isnan(goalZ) || !NearestFloor(cell, goalZ, floor)
+                || std::fabs(floor - goalZ) <= PLAN_HEIGHT_BAND;
+            if (storey)
+                out.Fine[std::size_t(row * PLAN_SIDE + col)] = 0.0f;
+            else
+                out.HasGoal = false;
+        }
     }
     // The ring just past the window's border, seeded from the coarse value at each ring cell's centre turned into
     // the crop's frame (coarse_frame), a step onto it priced at the border cell's own factor.

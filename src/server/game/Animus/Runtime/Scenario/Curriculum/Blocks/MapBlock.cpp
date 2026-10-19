@@ -444,7 +444,8 @@ void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uin
             if (Vi::KeptEnd(last.Kept, x, y, view.Facing, near[points]))
                 ++points;
             thread_local Vi::MapPlan plan;
-            Vi::PlanOnMap(*map, x, y, z, view.Facing, goalForward, goalRight, coarse, plan, near, points, clearance);
+            Vi::PlanOnMap(*map, x, y, z, view.Facing, goalForward, goalRight, coarse, plan, near, points, clearance,
+                view.Objective.GetPositionZ());
             pose.RouteBody = Vi::PlanValueAt(plan, 0.0f, 0.0f);
             if (last.Valid)
             {

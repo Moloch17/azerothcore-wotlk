@@ -21,6 +21,7 @@
 #include "MentalMap.h"
 #include <array>
 #include <cstdint>
+#include <limits>
 
 /// **The route on the seat's own map** (2026-10-17): a classical planner over the mental map, run in the sim -- so a
 /// label can price a decision on the route distance the bot itself can perceive, not the bake's truth, and so the
@@ -210,9 +211,11 @@ namespace Animus::Vision
     /// the window's ring. The fine search stops once the cells round the body and the `near` points (the ones
     /// PlanValueAt will be asked for) are settled.
     /// `clearance`: the body's (BodyClearance), yards of signed distance a cell's centre needs.
+    /// `goalZ` (NaN: unknown): the goal's height -- a goal cell whose floors are all more than PLAN_HEIGHT_BAND off
+    /// it is another storey's, and the plan has no goal (HasGoal false) rather than one on the floor under it.
     void PlanOnMap(MentalMap const& map, float x, float y, float z, float yaw, float goalForward, float goalRight,
         uint8_t const* coarse, MapPlan& out, PlanPoint const* near = nullptr, uint32_t nearCount = 0,
-        float clearance = PLAN_CLEARANCE);
+        float clearance = PLAN_CLEARANCE, float goalZ = std::numeric_limits<float>::quiet_NaN());
 
     /// The plan's fine value at (`forward`, `right`) yards in the body's frame, in yards: bilinear over the four cells
     /// round the point, blocked and unreached cells left out and the weights renormalised (a wall's own cell holds a
