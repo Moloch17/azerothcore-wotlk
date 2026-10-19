@@ -348,6 +348,11 @@ namespace Animus::Curriculum
         /// (2026-10-18): nav1's look head held a pitch rate until the camera sat at its -80 degree limit, the median
         /// seat looking at its feet, so the camera showed nothing ahead to map and blanking it changed nothing.
         bool LevelCamera = false;
+        /// **What a nav stage's trips are** (PointNavEncounter's pair pool, 2026-10-19): the kind of (start, goal) pair
+        /// its rungs draw -- 1 sight (nav1), 2 detour (nav2), 3 vertical (nav3), 4 beyond (nav4), 5 water (nav5); 0
+        /// draws by the old length and detour bins alone. Each rung of a kind caps the route's corners and turning
+        /// on the server's navmesh and asks the kind's own feature (PointNavEncounter::PairFits).
+        uint8 PairKind = 0;
 
         [[nodiscard]] bool Has(BlockId block) const;
         /// Seats per env: the largest arena's.

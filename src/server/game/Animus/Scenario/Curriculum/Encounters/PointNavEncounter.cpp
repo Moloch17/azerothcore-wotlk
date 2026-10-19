@@ -30,7 +30,9 @@
 #include "MapPlanner.h"
 #include "MapVisionWorld.h"
 #include "ObjectMgr.h"
+#include "MMapMgr.h"
 #include "ObjectPool.h"
+#include "DetourNavMeshQuery.h"
 #include "PartyFollowEncounter.h"
 #include "Player.h"
 #include "Random.h"
@@ -44,6 +46,8 @@
 #include "UnitBody.h"
 #include "UnitDefines.h"
 #include <algorithm>
+#include <array>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -189,6 +193,35 @@ void Animus::Curriculum::PointNavEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     add("drowned", [this](Env const& env, uint32 seat)
     {
         return _scenario.Data(env).Seats[std::min<uint32>(seat, MAX_SEATS - 1)].Drowned ? 1.0f : 0.0f;
+    });
+    // The trip's pair (StageDefinition::PairKind): what its true route asks, as the pool measured it.
+    add("route_corners", [nav](Env const& env, uint32)
+    {
+        return nav(env).PairValid ? float(nav(env).Pair.Corners) : 0.0f;
+    });
+    add("route_turn_degrees", [nav](Env const& env, uint32)
+    {
+        return nav(env).PairValid ? float(nav(env).Pair.TurnDegrees) : 0.0f;
+    });
+    add("route_levels", [nav](Env const& env, uint32)
+    {
+        return nav(env).PairValid ? float(nav(env).Pair.Levels) : 0.0f;
+    });
+    add("route_drops", [nav](Env const& env, uint32)
+    {
+        return nav(env).PairValid ? float(nav(env).Pair.Drops) : 0.0f;
+    });
+    add("route_swim_yards", [nav](Env const& env, uint32)
+    {
+        return nav(env).PairValid ? nav(env).Pair.SwimYards : 0.0f;
+    });
+    add("pair_in_sight", [nav](Env const& env, uint32)
+    {
+        return nav(env).PairValid && nav(env).Pair.InSight ? 1.0f : 0.0f;
+    });
+    add("pair_trap_near", [nav](Env const& env, uint32)
+    {
+        return nav(env).PairValid && nav(env).Pair.TrapNear ? 1.0f : 0.0f;
     });
     // Dead ground (STRANDED_*): the times the body was stranded after a drop, charged and risen as a death.
     add("stranded", [seatOf](Env const& env, uint32 seat) { return float(seatOf(env, seat).Strandings); });
@@ -771,6 +804,442 @@ float Animus::Curriculum::PointNavEncounter::Uniform(Env const& env) const
     return std::uniform_real_distribution<float>(0.0f, 1.0f)(Rng(env));
 }
 
+namespace
+{
+    /// A polyline's corners (turns over 20 degrees) and its turning in all, after Douglas-Peucker at `tolerance`
+    /// yards: a bake route's, where the navmesh cannot walk it (a drop).
+    void PolylineTurns(std::vector<std::array<float, 2>> const& points, float tolerance, uint32& corners,
+        float& turning)
+    {
+        corners = 0;
+        turning = 0.0f;
+        if (points.size() < 3)
+            return;
+        std::vector<uint8> keep(points.size(), 0);
+        keep.front() = keep.back() = 1;
+        std::vector<std::pair<std::size_t, std::size_t>> stack{ { 0, points.size() - 1 } };
+        while (!stack.empty())
+        {
+            auto const [a, b] = stack.back();
+            stack.pop_back();
+            float const ax = points[a][0], ay = points[a][1];
+            float const dx = points[b][0] - ax, dy = points[b][1] - ay;
+            float const length = std::max(1e-4f, std::hypot(dx, dy));
+            std::size_t worst = a;
+            float worstOff = 0.0f;
+            for (std::size_t i = a + 1; i < b; ++i)
+            {
+                float const off = std::fabs((points[i][0] - ax) * dy - (points[i][1] - ay) * dx) / length;
+                if (off > worstOff)
+                {
+                    worstOff = off;
+                    worst = i;
+                }
+            }
+            if (worstOff > tolerance)
+            {
+                keep[worst] = 1;
+                stack.push_back({ a, worst });
+                stack.push_back({ worst, b });
+            }
+        }
+        std::vector<std::array<float, 2>> kept;
+        for (std::size_t i = 0; i < points.size(); ++i)
+            if (keep[i])
+                kept.push_back(points[i]);
+        for (std::size_t i = 2; i < kept.size(); ++i)
+        {
+            float const a1 = std::atan2(kept[i - 1][1] - kept[i - 2][1], kept[i - 1][0] - kept[i - 2][0]);
+            float const a2 = std::atan2(kept[i][1] - kept[i - 1][1], kept[i][0] - kept[i - 1][0]);
+            float const turn = std::fabs(std::remainder(a2 - a1, 2.0f * float(M_PI)));
+            turning += turn;
+            if (turn > 0.35f)
+                ++corners;
+        }
+    }
+}
+
+Animus::Curriculum::PointNavEncounter::PairPool const* Animus::Curriculum::PointNavEncounter::EnsurePairs(
+    Env const& env, Map* map, Player const* bot, Vision::TravGrid const& grid)
+{
+    std::lock_guard lock(_poolLock);
+    PairPool& pool = _pairPools[_scenario.Data(env).Arena];
+    if (!pool.Built)
+    {
+        BuildPairs(env, map, bot, grid, pool);
+        pool.Built = true;
+    }
+    return pool.Pairs.empty() ? nullptr : &pool;
+}
+
+void Animus::Curriculum::PointNavEncounter::BuildPairs(Env const& env, Map* map, Player const* bot,
+    Vision::TravGrid const& grid, PairPool& pool) const
+{
+    namespace Vi = Animus::Vision;
+    auto const start = std::chrono::steady_clock::now();
+    pool.Pairs.clear();
+    if (grid.Reachable.size() < 2 || !map)
+        return;
+    CurriculumTuning::PointNavTuning const& tuning = _scenario.Tuning().PointNav;
+
+    // The map's navmesh, a copy of the server's own (MMapMgr: its .mmap and every tile there is), with its own query.
+    std::shared_ptr<dtNavMesh> mesh = MMAP::MMapMgr::LoadNavMesh(grid.MapId);
+    MMAP::ManagedNavMeshQuery query;
+    if (mesh)
+    {
+        for (int32 x = 0; x < 64; ++x)
+            for (int32 y = 0; y < 64; ++y)
+                MMAP::MMapMgr::LoadTile(mesh.get(), grid.MapId, x, y);
+        query = MMAP::MMapMgr::CreateNavMeshQuery(mesh.get());
+    }
+    dtQueryFilter filter;
+    filter.setIncludeFlags(0xFFFF);
+    filter.setExcludeFlags(0);
+    // A point on the navmesh's floor at its own height (Detour's axes are WoW's y, z, x), within a yard and a half.
+    auto const snap = [&](float x, float y, float z, dtPolyRef& ref, float* at) -> bool
+    {
+        float const point[3] = { y, z, x };
+        float const extents[3] = { 1.5f, 2.0f, 1.5f };
+        ref = 0;
+        if (!query || dtStatusFailed(query->findNearestPoly(point, extents, &filter, &ref, at)) || !ref)
+            return false;
+        return std::fabs(at[1] - z) <= 1.5f && std::hypot(at[0] - y, at[2] - x) <= 1.5f;
+    };
+    Vi::MapVisionWorld const world(map, bot ? bot->GetPhaseMask() : 1);
+    std::mt19937 rng(0x9E3779B9u ^ (uint32(_scenario.Data(env).Arena) * 2654435761u) ^ grid.MapId);
+    std::vector<float> cost;
+    std::vector<dtPolyRef> polys(4096);
+    std::vector<float> corners(3 * 512);
+    std::vector<uint8> trapSeen(grid.Nodes(), 0);
+    std::vector<uint32> trapTouched;
+    uint32 const goals = std::min<uint32>(PAIR_GOALS, uint32(grid.Reachable.size()));
+    for (uint32 g = 0; g < goals; ++g)
+    {
+        uint32 const goal = grid.Reachable[rng() % grid.Reachable.size()];
+        Vi::CostToGo(grid, goal, tuning.DropHurtYards, cost);
+        Position const goalPoint = CellPoint(grid, goal, false);
+        dtPolyRef goalRef = 0;
+        float goalAt[3];
+        bool const goalOnMesh = snap(goalPoint.GetPositionX(), goalPoint.GetPositionY(), goalPoint.GetPositionZ(),
+            goalRef, goalAt);
+        if (query && !goalOnMesh)
+            continue;       // the bake's floor and the navmesh's disagree here: no goal
+        for (uint32 tries = 0, made = 0; tries < 4 * PAIR_STARTS && made < PAIR_STARTS; ++tries)
+        {
+            uint32 const from = grid.Reachable[rng() % grid.Reachable.size()];
+            if (from == goal || cost[from] >= Vi::TRAV_UNREACHABLE || cost[from] <= 0.0f)
+                continue;
+            Position const startPoint = CellPoint(grid, from, false);
+            dtPolyRef startRef = 0;
+            float startAt[3];
+            if (query && !snap(startPoint.GetPositionX(), startPoint.GetPositionY(), startPoint.GetPositionZ(),
+                startRef, startAt))
+                continue;
+
+            // The true route, down the cost-to-go: its drops, swims, level changes and its points.
+            NavPair pair;
+            pair.Start = from;
+            pair.Goal = goal;
+            pair.Route = cost[from];
+            pair.Straight = std::max(0.5f, startPoint.GetExactDist(&goalPoint));
+            pair.Rise = goalPoint.GetPositionZ() - startPoint.GetPositionZ();
+            std::vector<std::array<float, 2>> line{ { startPoint.GetPositionX(), startPoint.GetPositionY() } };
+            uint32 node = from;
+            float level = grid.StandingZ(from);
+            bool walked = true;
+            for (uint32 step = 0; node != goal; ++step)
+            {
+                uint32 best = Vi::TRAV_NO_CELL;
+                int32 bestDir = -1;
+                for (int32 dir = 0; dir < Vi::TRAV_DIRS; ++dir)
+                {
+                    uint32 const next = grid.EdgeTarget(node, dir);
+                    if (next != Vi::TRAV_NO_CELL && cost[next] < (best == Vi::TRAV_NO_CELL ? cost[node] : cost[best]))
+                    {
+                        best = next;
+                        bestDir = dir;
+                    }
+                }
+                if (best == Vi::TRAV_NO_CELL || step > 4096)
+                {
+                    walked = false;
+                    break;
+                }
+                Vi::TravEdge const kind = Vi::EdgeKind(grid.Edges[std::size_t(node) * Vi::TRAV_DIRS + bestDir]);
+                float const fall = grid.StandingZ(node) - grid.StandingZ(best);
+                if (kind == Vi::TravEdge::DropSafe || kind == Vi::TravEdge::DropHurt)
+                {
+                    pair.Drops = uint8(std::min<uint32>(255, pair.Drops + 1u));
+                    pair.HurtDrops = uint8(std::min<uint32>(255, pair.HurtDrops + (kind == Vi::TravEdge::DropHurt)));
+                    pair.MaxDrop = std::max(pair.MaxDrop, fall);
+                }
+                if (kind == Vi::TravEdge::Swim)
+                    pair.SwimYards += Vi::TravGrid::StepYards(bestDir);
+                // A level: the route's height more than 3 yd from where the last level was.
+                if (std::fabs(grid.StandingZ(best) - level) > 3.0f)
+                {
+                    pair.Levels = uint8(std::min<uint32>(255, pair.Levels + 1u));
+                    level = grid.StandingZ(best);
+                }
+                node = best;
+                uint32 const cell = Vi::TravGrid::CellOfNode(node);
+                line.push_back({ grid.CentreX(cell), grid.CentreY(cell) });
+            }
+            if (!walked)
+                continue;
+
+            // Corners and turning: the route string-pulled on the navmesh where it walks it; a route with a drop, or
+            // a map with no navmesh, the bake's route simplified. A drop-free route the navmesh cannot walk is a
+            // disagreement between the two, and no pair.
+            uint32 bends = 0;
+            float turning = 0.0f;
+            if (query)
+            {
+                int32 count = 0;
+                dtStatus const status = query->findPath(startRef, goalRef, startAt, goalAt, &filter, polys.data(),
+                    &count, int32(polys.size()));
+                pair.NavWalks = count > 0 && !(status & DT_PARTIAL_RESULT) && polys[std::size_t(count - 1)] == goalRef;
+                if (pair.NavWalks && !pair.Drops)
+                {
+                    int32 points = 0;
+                    query->findStraightPath(startAt, goalAt, polys.data(), count, corners.data(), nullptr, nullptr,
+                        &points, 512);
+                    std::vector<std::array<float, 2>> taut;
+                    for (int32 i = 0; i < points; ++i)
+                        taut.push_back({ corners[3 * std::size_t(i) + 2], corners[3 * std::size_t(i)] });
+                    PolylineTurns(taut, 0.0f, bends, turning);
+                }
+                else if (!pair.Drops)
+                    continue;
+            }
+            if (!query || pair.Drops)
+                PolylineTurns(line, 1.5f, bends, turning);
+            pair.Corners = uint8(std::min<uint32>(255, bends));
+            pair.TurnDegrees = uint16(std::min(65535.0f, turning * 57.29578f));
+
+            // In sight: the camera's ray from the start's eye to the goal.
+            pair.InSight = SightDraw::InSight({ startPoint.GetPositionX(), startPoint.GetPositionY(),
+                startPoint.GetPositionZ() + 1.6f }, { goalPoint.GetPositionX(), goalPoint.GetPositionY(),
+                goalPoint.GetPositionZ() + 1.0f }, Vi::OBJECTIVE_RADIUS, world);
+
+            // A trap near the start: within PAIR_TRAP_YARDS of walking, a drop onto ground with no route to the goal.
+            {
+                std::vector<std::pair<float, uint32>> open{ { 0.0f, from } };
+                trapSeen[from] = 1;
+                trapTouched.assign(1, from);
+                while (!open.empty() && !pair.TrapNear)
+                {
+                    auto const [walkedYards, at] = open.back();
+                    open.pop_back();
+                    for (int32 dir = 0; dir < Vi::TRAV_DIRS && !pair.TrapNear; ++dir)
+                    {
+                        uint32 const next = grid.EdgeTarget(at, dir);
+                        if (next == Vi::TRAV_NO_CELL)
+                            continue;
+                        Vi::TravEdge const kind = Vi::EdgeKind(grid.Edges[std::size_t(at) * Vi::TRAV_DIRS + dir]);
+                        if (kind == Vi::TravEdge::DropSafe || kind == Vi::TravEdge::DropHurt)
+                        {
+                            pair.TrapNear = cost[next] >= Vi::TRAV_UNREACHABLE;
+                            continue;
+                        }
+                        float const yards = walkedYards + Vi::TravGrid::StepYards(dir);
+                        if (kind != Vi::TravEdge::Walk || yards > PAIR_TRAP_YARDS || trapSeen[next])
+                            continue;
+                        trapSeen[next] = 1;
+                        trapTouched.push_back(next);
+                        open.push_back({ yards, next });
+                    }
+                }
+                for (uint32 touched : trapTouched)
+                    trapSeen[touched] = 0;
+            }
+            pool.Pairs.push_back(pair);
+            ++made;
+        }
+    }
+    uint32 inSight = 0, levels = 0, drops = 0, traps = 0;
+    for (NavPair const& pair : pool.Pairs)
+    {
+        inSight += pair.InSight;
+        levels += pair.Levels > 0;
+        drops += pair.Drops > 0;
+        traps += pair.TrapNear;
+    }
+    LOG_INFO("module.animus", "{}: arena {} pair pool: {} pairs ({:.1f} s, navmesh {}): {} in sight, {} change level, "
+        "{} drop, {} with a trap drop near the start", _scenario.Name(), _scenario.Arena(env).Name, pool.Pairs.size(),
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(), query ? "yes" : "none",
+        inSight, levels, drops, traps);
+}
+
+float Animus::Curriculum::PointNavEncounter::PairMiss(NavPair const& pair, uint32 kind, uint32 rung) const
+{
+    rung = std::min<uint32>(rung, RUNGS - 1);
+    float miss = 0.0f;
+    auto const range = [&](float value, float low, float high)
+    {
+        if (value < low)
+            miss += (low - value) / std::max(1.0f, low);
+        else if (value > high)
+            miss += (value - high) / std::max(1.0f, high);
+    };
+    auto const require = [&](bool ok) { miss += ok ? 0.0f : 1.0f; };
+    // The winding a rung allows (the nav2 evaluation at 10M: 96 % arrived with no corner, 62 % with four or five, 10 %
+    // with six or more): corners over 20 degrees and the turning in all, on the route string-pulled on the navmesh.
+    constexpr float CORNERS[RUNGS] = { 1.0f, 3.0f, 5.0f, 1000.0f };
+    constexpr float TURNING[RUNGS] = { 90.0f, 180.0f, 360.0f, 100000.0f };
+    constexpr float FAR_CORNERS[RUNGS] = { 5.0f, 8.0f, 12.0f, 1000.0f };
+    constexpr float FAR_TURNING[RUNGS] = { 360.0f, 540.0f, 900.0f, 100000.0f };
+    bool const far = kind == 4;
+    range(float(pair.Corners), 0.0f, far ? FAR_CORNERS[rung] : CORNERS[rung]);
+    range(float(pair.TurnDegrees), 0.0f, far ? FAR_TURNING[rung] : TURNING[rung]);
+    float const detour = pair.Route / std::max(0.5f, pair.Straight);
+    bool const flat = std::fabs(pair.Rise) <= 3.0f && pair.Levels == 0 && pair.Drops == 0;
+    switch (kind)
+    {
+        case 1:     // sight: a point in view on the same level, then further and partly out of view
+        {
+            require(flat);
+            require(pair.SwimYards <= 0.0f);
+            constexpr float LOW[RUNGS] = { 5.0f, 20.0f, 40.0f, 60.0f };
+            constexpr float HIGH[RUNGS] = { 20.0f, 60.0f, 120.0f, 250.0f };
+            range(pair.Route, LOW[rung], HIGH[rung]);
+            if (rung < 2)
+                require(pair.InSight);
+            break;
+        }
+        case 2:     // detour: the straight line blocked, the way round longer at each rung, on one level
+        {
+            require(flat);
+            require(pair.SwimYards <= 0.0f);
+            require(!pair.InSight);
+            constexpr float LOW[RUNGS] = { 10.0f, 20.0f, 30.0f, 40.0f };
+            constexpr float HIGH[RUNGS] = { 40.0f, 60.0f, 120.0f, 250.0f };
+            constexpr float DETOUR_LOW[RUNGS] = { 1.0f, 1.2f, 1.6f, 2.5f };
+            constexpr float DETOUR_HIGH[RUNGS] = { 1.6f, 1.6f, 2.5f, 100.0f };
+            range(pair.Route, LOW[rung], HIGH[rung]);
+            range(detour, DETOUR_LOW[rung], DETOUR_HIGH[rung]);
+            if (rung == 0)
+                require(pair.Corners >= 1);
+            break;
+        }
+        case 3:     // vertical: a level by stairs, then a safe drop, then several levels, then the damaging drop
+        {
+            require(pair.SwimYards <= 0.0f);
+            constexpr float LOW[RUNGS] = { 10.0f, 15.0f, 20.0f, 20.0f };
+            constexpr float HIGH[RUNGS] = { 60.0f, 80.0f, 120.0f, 160.0f };
+            range(pair.Route, LOW[rung], HIGH[rung]);
+            if (rung == 0)
+            {
+                require(pair.Levels == 1);
+                require(pair.Drops == 0);
+            }
+            else if (rung == 1)
+            {
+                require(pair.Levels >= 1);
+                require(pair.Drops >= 1);
+                require(pair.HurtDrops == 0);
+            }
+            else if (rung == 2)
+            {
+                require(pair.Levels >= 2);
+                require(pair.HurtDrops == 0);
+            }
+            else
+                require(pair.Drops >= 1);
+            break;
+        }
+        case 4:     // beyond: out of view, hundreds of yards
+        {
+            require(!pair.InSight);
+            constexpr float LOW[RUNGS] = { 60.0f, 120.0f, 200.0f, 300.0f };
+            constexpr float HIGH[RUNGS] = { 120.0f, 200.0f, 300.0f, 400.0f };
+            range(pair.Route, LOW[rung], HIGH[rung]);
+            break;
+        }
+        case 5:     // water: a swim, longer at each rung
+        {
+            constexpr float LOW[RUNGS] = { 2.0f, 15.0f, 5.0f, 2.0f };
+            constexpr float HIGH[RUNGS] = { 15.0f, 40.0f, 400.0f, 400.0f };
+            range(pair.SwimYards, LOW[rung], HIGH[rung]);
+            break;
+        }
+        default:
+            break;
+    }
+    return miss;
+}
+
+bool Animus::Curriculum::PointNavEncounter::DrawFromPool(Env& env, PairPool const& pool, Player const* bot, EnvNav& nav)
+{
+    CurriculumTuning::PointNavTuning const& tuning = _scenario.Tuning().PointNav;
+    Vision::TravGrid const& grid = *nav.Grid;
+    uint32 const kind = _scenario.Stage().PairKind;
+    // The pairs this body stands at: neither end in liquid it would swim (as the bin draw has it).
+    float const swimDepth = Movement::SWIM_ENTER * Movement::ShapeOf(bot).Height;
+    auto const dry = [&](uint32 node) { return grid.Liquid[node] - grid.Ground[node] < swimDepth; };
+    std::vector<uint32> fits;
+    std::vector<uint32> traps;
+    uint32 nearest = UINT32_MAX;
+    float nearestMiss = std::numeric_limits<float>::infinity();
+    for (uint32 index = 0; index < pool.Pairs.size(); ++index)
+    {
+        NavPair const& pair = pool.Pairs[index];
+        if (!dry(pair.Start) || !dry(pair.Goal))
+            continue;
+        float const miss = PairMiss(pair, kind, nav.Rung);
+        if (miss <= 0.0f)
+        {
+            fits.push_back(index);
+            if (pair.TrapNear)
+                traps.push_back(index);
+        }
+        else if (miss < nearestMiss)
+        {
+            nearestMiss = miss;
+            nearest = index;
+        }
+    }
+    auto const pick = [&](std::vector<uint32> const& from)
+    {
+        return from[std::min<std::size_t>(from.size() - 1, std::size_t(Uniform(env) * float(from.size())))];
+    };
+    uint32 chosen = UINT32_MAX;
+    // The vertical stage's last rung: a trip whose start has a drop onto dead ground nearby, a third of the time, so
+    // which drops lead somewhere is learned and not guessed.
+    bool const preferTrap = kind == 3 && nav.Rung + 1 >= RUNGS && !traps.empty() && Uniform(env) < 0.33f;
+    if (preferTrap)
+        chosen = pick(traps);
+    else if (!fits.empty())
+        chosen = pick(fits);
+    else
+        chosen = nearest;
+    if (chosen == UINT32_MAX)
+        return false;
+    NavPair const& pair = pool.Pairs[chosen];
+    nav.Pair = pair;
+    nav.PairValid = true;
+    nav.StartCell = pair.Start;
+    nav.GoalCell = pair.Goal;
+    Vision::CostToGo(grid, nav.GoalCell, tuning.DropHurtYards, nav.Cost);
+    nav.Start = CellPoint(grid, nav.StartCell, false);
+    nav.GoalAtBed = grid.ClassOf(nav.GoalCell) == Vision::TravClass::Water
+        && Uniform(env) * 100.0f < float(tuning.BedShare);
+    // The detour and length bins the trip falls in, for the columns and the bin outcomes.
+    std::vector<float> detours = ParseList(tuning.DetourBins);
+    std::vector<float> lengths = ParseList(tuning.LengthBins);
+    float const detour = pair.Route / std::max(0.5f, pair.Straight);
+    nav.DetourBin = 0;
+    for (std::size_t bin = 0; bin + 1 < detours.size(); ++bin)
+        if (detour >= detours[bin])
+            nav.DetourBin = uint32(bin);
+    nav.LengthBin = 0;
+    for (std::size_t bin = 0; bin + 1 < lengths.size(); ++bin)
+        if (pair.Route >= lengths[bin])
+            nav.LengthBin = uint32(bin);
+    nav.BinCounted = false;
+    return true;
+}
+
 bool Animus::Curriculum::PointNavEncounter::DrawPair(Env& env, Map* map, Player* bot, EnvNav& nav)
 {
     CurriculumTuning::PointNavTuning const& tuning = _scenario.Tuning().PointNav;
@@ -837,6 +1306,17 @@ bool Animus::Curriculum::PointNavEncounter::DrawPair(Env& env, Map* map, Player*
             }
         }
     }
+
+    // A stage with a pair kind draws from the arena's measured pairs (StageDefinition::PairKind).
+    if (!nav.Replayed && _scenario.Stage().PairKind)
+        if (PairPool const* pool = EnsurePairs(env, map, bot, grid))
+            if (DrawFromPool(env, *pool, bot, nav))
+            {
+                nav.Goal = CellPoint(grid, nav.GoalCell, nav.GoalAtBed);
+                nav.CStart = nav.Cost[nav.StartCell];
+                nav.Straight = nav.Start.GetExactDist(&nav.Goal);
+                return nav.CStart < Vision::TRAV_UNREACHABLE;
+            }
 
     if (!nav.Replayed)
     {

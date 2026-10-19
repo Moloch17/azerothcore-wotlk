@@ -299,12 +299,26 @@ void Animus::Vision::GlobalField::Begin(float gx, float gy, float gz, float bx, 
     _goalPointX = gx;
     _goalPointY = gy;
 
-    // The goal's node: its cell's floor layer nearest its height (any distance: the goal is where it is), else the
-    // floorless cell's at the goal's height.
+    // The goal's node: its cell's floor layer nearest its height, else the floorless cell's at the goal's height.
     int32_t const cx = MapCellOf(gx);
     int32_t const cy = MapCellOf(gy);
     MapCell const& cell = CellAt(cx, cy);
-    int32_t const layer = NearestLayer(cell, gz);
+    int32_t layer = NearestLayer(cell, gz);
+    // A floor far off the goal's height is another storey's (2026-10-19): the goal on a deck the map has not seen is
+    // not on the hall floor under it -- attached there, the route said "here" and the body waited under the goal (nav2,
+    // the Deadmines). It takes the cell's free layer, a floorless node at its own height, when there is one.
+    if (layer >= 0 && std::fabs(FloorHeight(cell.Floor[layer]) - gz) > GLOBAL_ATTACH_BAND)
+        for (int32_t free = 0; free < 2; ++free)
+            if (cell.Floor[free] == NO_FLOOR)
+            {
+                layer = -1;
+                Touch(NodeOf(cx, cy, free), cx, cy, free, gz);
+                _value[std::size_t(NodeOf(cx, cy, free))] = 0.0f;
+                _targetX = MapCellOf(bx);
+                _targetY = MapCellOf(by);
+                _heap.push_back({ Heuristic(cx, cy), 0.0f, NodeOf(cx, cy, free) });
+                return;
+            }
     int32_t const slot = std::max(0, layer);
     int32_t const node = NodeOf(cx, cy, slot);
     Touch(node, cx, cy, slot, gz);

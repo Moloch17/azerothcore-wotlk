@@ -128,6 +128,11 @@ namespace Animus::Curriculum
         /// height (RouteNear) is stranded: charged PointNav.Death, and out until it rises at the start after the
         /// respawn delay, exactly as a death -- the drop led nowhere, and the planner should learn which drops do.
         static constexpr uint32 STRANDED_DECISIONS = 2;
+        /// The pair pool's size: goals drawn, and starts for each (one cost-to-go a goal), and how far round a start a
+        /// trap drop is looked for (TrapNear).
+        static constexpr uint32 PAIR_GOALS = 200;
+        static constexpr uint32 PAIR_STARTS = 40;
+        static constexpr float PAIR_TRAP_YARDS = 20.0f;
         static constexpr float STRANDED_REACH = 4.0f;
         static constexpr float STRANDED_RISE = 3.0f;
         /// Where a timed-out evaluation trip's band is written (`<seed>-seat<seat>.audit`); empty for nowhere. Set by
@@ -163,6 +168,36 @@ namespace Animus::Curriculum
         [[nodiscard]] static std::vector<float> ParseList(std::string const& list);
 
     private:
+        /// **A measured pair** (the pair pool, 2026-10-19): a (start, goal) of bake nodes and what its true route
+        /// asks -- its length, the straight line, the rise, the corners and turning of the route string-pulled on the
+        /// server's navmesh (or of the bake's own route where it drops), the level changes, drops, damaging drops and
+        /// the highest, the yards swum, whether the goal is in sight from the start, whether the navmesh walks it, and
+        /// whether a drop onto dead ground lies within PAIR_TRAP_YARDS of the start.
+        struct NavPair
+        {
+            uint32 Start = Vision::TRAV_NO_CELL;
+            uint32 Goal = Vision::TRAV_NO_CELL;
+            float Route = 0.0f;
+            float Straight = 0.0f;
+            float Rise = 0.0f;
+            float MaxDrop = 0.0f;
+            float SwimYards = 0.0f;
+            uint16 TurnDegrees = 0;
+            uint8 Corners = 0;
+            uint8 Levels = 0;
+            uint8 Drops = 0;
+            uint8 HurtDrops = 0;
+            bool InSight = false;
+            bool NavWalks = false;
+            bool TrapNear = false;
+        };
+        /// An arena's measured pairs, built once on its first trip (BuildPairs).
+        struct PairPool
+        {
+            bool Built = false;
+            std::vector<NavPair> Pairs;
+        };
+
         struct SeatNav
         {
             RespawnClock Clock;
@@ -233,6 +268,9 @@ namespace Animus::Curriculum
             std::vector<float> Cost;        // the route cost-to-go to GoalCell (Vision::CostToGo)
             uint32 GoalCell = Vision::TRAV_NO_CELL;
             uint32 StartCell = Vision::TRAV_NO_CELL;
+            /// The pair drawn from the pool (PairKind stages; its measures are the route_* columns), when one was.
+            NavPair Pair;
+            bool PairValid = false;
             Position Start;
             Position Goal;
             bool GoalAtBed = false;
@@ -272,6 +310,18 @@ namespace Animus::Curriculum
         [[nodiscard]] Vision::TravGrid const* EnsureGrid(Env const& env, Map* map, Player const* bot) const;
         /// The pair draw (sec 2): the goal, its cost map and the start, into `nav`. False when the bake has no pair.
         bool DrawPair(Env& env, Map* map, Player* bot, EnvNav& nav);
+        /// The arena's pair pool, built on first use (BuildPairs) under _poolLock; null when it has no pair.
+        [[nodiscard]] PairPool const* EnsurePairs(Env const& env, Map* map, Player const* bot,
+            Vision::TravGrid const& grid);
+        /// Measures the arena's pairs: PAIR_GOALS goals, PAIR_STARTS starts each, on the bake and the map's navmesh.
+        void BuildPairs(Env const& env, Map* map, Player const* bot, Vision::TravGrid const& grid,
+            PairPool& pool) const;
+        /// How far `pair` misses being a trip of the stage's PairKind at rung `rung` (StageDefinition::PairKind), 0
+        /// when it fits: the draw takes a fit, else the nearest miss.
+        [[nodiscard]] float PairMiss(NavPair const& pair, uint32 kind, uint32 rung) const;
+        /// The pair draw from the pool: the stage's kind at the rung, uniform over the fits that this body can stand at
+        /// (swim depth), else the nearest miss. False when the pool is empty.
+        bool DrawFromPool(Env& env, PairPool const& pool, Player const* bot, EnvNav& nav);
         /// A failure of `env`'s arena noted at `where` with the episode's goal, for the replay draw.
         void NoteFailure(Env const& env, EnvNav const& nav, Position const& where);
         /// A training trip's (detour, length) bin among the `detourBins` x `lengthBins` its rung opens, by the
@@ -302,6 +352,7 @@ namespace Animus::Curriculum
         PartyFollowEncounter const* _follow = nullptr;
         std::mutex _poolLock;
         std::map<uint32, FailurePool> _pools;   // per arena index
+        std::map<uint32, PairPool> _pairPools;  // per arena index, under _poolLock
         /// Per arena index, each (detour, length) bin's recent arrival rate over training trips (row-major by detour
         /// bin, LengthBins a row; 0 until a trip of the bin ends), under _poolLock.
         std::map<uint32, std::vector<float>> _binRates;

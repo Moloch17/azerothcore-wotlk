@@ -949,6 +949,7 @@ namespace
             .NoBackpedal = true,
             .NoSpells = true,
             .LevelCamera = true,
+            .PairKind = 1,
         });
 
         // N2 -- detour: the straight line is blocked in view (doors, pillars, room walls: the Stockades' rooms, the
@@ -976,6 +977,7 @@ namespace
             .NoBackpedal = true,
             .NoSpells = true,
             .LevelCamera = true,
+            .PairKind = 2,
         });
 
         // N3 -- vertical: step up, jump or go round; safe against hurting and lethal drops; stairs, ramps and decks
@@ -1004,6 +1006,7 @@ namespace
             .NoBackpedal = true,
             .NoSpells = true,
             .LevelCamera = true,
+            .PairKind = 3,
         });
 
         // N4 -- beyond sight: the route is not in view -- plan over the mental map's two tiers, commit to a direction,
@@ -1036,6 +1039,7 @@ namespace
             .NoBackpedal = true,
             .NoSpells = true,
             .LevelCamera = true,
+            .PairKind = 4,
         });
 
         // N5 -- water: swim or go round; banks taller than a step are walls; the bed as a goal (PointNav.BedShare of
@@ -1063,6 +1067,7 @@ namespace
             .NoBackpedal = true,
             .NoSpells = true,
             .LevelCamera = true,
+            .PairKind = 5,
         });
 
         // N6 -- follow, the moving point: move4_follow's party (four learned followers and their group's leader, the
