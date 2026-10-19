@@ -412,6 +412,7 @@ void Animus::Vision::MentalMap::Clear()
     _epoch = 1;
     _groundTotal = 0;
     _searchedTotal = 0;
+    _searchedAhead = 0;
     _knownTotal = 0;
     _bumpedEpisode = 0;
     _bumpedTotal = 0;
@@ -443,6 +444,7 @@ void Animus::Vision::MentalMap::BeginEpisode()
     _epoch = Stamp();
     _groundTotal = 0;
     _searchedTotal = 0;
+    _searchedAhead = 0;
     _bumpedEpisode = 0;
     _wallSources.clear();
     _lastGroundClock = _clock;
@@ -682,6 +684,19 @@ void Animus::Vision::MentalMap::MarkSeen(MapCell& cell, uint16_t stamp)
             }
             ++tile->SearchedCells;
             ++_searchedTotal;
+            // Inside the look-ahead cone (SetLookCone): the cell's place from its tile (_lastKey) and its index.
+            std::ptrdiff_t const index = &cell - tile->Cells.data();
+            if (_cone.On && index >= 0 && index < MAP_TILE_CELLS)
+            {
+                int32_t const tx = int32_t(_lastKey >> 32);
+                int32_t const ty = int32_t(uint32_t(_lastKey & 0xFFFFFFFF));
+                float const dx = (float(tx * MAP_TILE + int32_t(index % MAP_TILE)) + 0.5f) * MAP_CELL - _cone.X;
+                float const dy = (float(ty * MAP_TILE + int32_t(index / MAP_TILE)) + 0.5f) * MAP_CELL - _cone.Y;
+                float const distance = std::sqrt(dx * dx + dy * dy);
+                if (distance > 0.0f && distance <= LOOK_AHEAD_REACH
+                    && dx * _cone.DirX + dy * _cone.DirY >= LOOK_AHEAD_COS * distance)
+                    ++_searchedAhead;
+            }
         }
     }
     cell.Seen = stamp;

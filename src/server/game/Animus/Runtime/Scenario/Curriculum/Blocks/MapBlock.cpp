@@ -301,6 +301,8 @@ void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uin
 
     // The map's clock is the seat's decisions; then this decision's frame (as cast) and the body are written.
     map->Advance(float(view.DecisionMs) / 1000.0f);
+    // The look-ahead cone the writes are counted against (PointNav.Explore): the body and its facing.
+    map->SetLookCone(x, y, std::cos(view.Facing), std::sin(view.Facing));
     if (view.Hits && !view.Hits->Rays.empty())
         map->WriteFrame(*view.Hits, z, bodyHeight);
     // The entities the sensor listed this decision (the image no longer carries them).

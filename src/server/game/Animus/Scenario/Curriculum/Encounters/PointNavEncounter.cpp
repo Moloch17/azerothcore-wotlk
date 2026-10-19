@@ -1104,14 +1104,17 @@ void Animus::Curriculum::PointNavEncounter::Reward(Env& env, uint32 seatIndex, P
     float const seconds = float(stepMs) / 1000.0f;
     ++seat.Decisions;
 
-    // Looking around (PointNav.Explore): the cells first looked at this episode since the last decision.
+    // Looking ahead (PointNav.Explore): the cells first looked at this episode inside the look-ahead cone since the
+    // last decision (MentalMap::SearchedAhead); ExploreCap 0 is no cap.
     {
-        uint32 const searched = state.Map.SearchedCells();
+        uint32 const searched = state.Map.SearchedAhead();
         ledger.SetShapingFloor(tuning.ExploreFloor);
-        if (seat.HasSearched && searched > seat.LastSearched && seat.ExplorePaid < tuning.ExploreCap)
+        bool const room = tuning.ExploreCap <= 0.0f || seat.ExplorePaid < tuning.ExploreCap;
+        if (seat.HasSearched && searched > seat.LastSearched && room)
         {
-            float const pay = std::min(tuning.Explore * float(searched - seat.LastSearched),
-                tuning.ExploreCap - seat.ExplorePaid);
+            float pay = tuning.Explore * float(searched - seat.LastSearched);
+            if (tuning.ExploreCap > 0.0f)
+                pay = std::min(pay, tuning.ExploreCap - seat.ExplorePaid);
             seat.ExplorePaid += pay;
             ledger.Add(RewardTerm::Explore, pay);
         }

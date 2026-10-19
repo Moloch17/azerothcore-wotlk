@@ -158,6 +158,9 @@ namespace Animus::Vision
     /// 1-Lipschitz) -- so seeing the floor at a wall's foot never wears the wall away.
     constexpr float SDF_FREE = SDF_FRONT;
     constexpr float SDF_THROUGH = 0.35f;
+    /// The look-ahead cone (MentalMap::SetLookCone): 60 degrees either side of the facing, 40 yd out.
+    constexpr float LOOK_AHEAD_COS = 0.5f;
+    constexpr float LOOK_AHEAD_REACH = 40.0f;
     constexpr uint8_t SDF_WEIGHT_MAX = 32;
     constexpr uint8_t SDF_HIT_WEIGHT = 2;      // a ray's own wall hit
     constexpr uint8_t SDF_MESH_WEIGHT = 1;     // the mesh's line between two
@@ -451,6 +454,15 @@ namespace Animus::Vision
         /// The 1-yd cells looked at this episode (a look stamped at or after the epoch, counted at its first such
         /// stamp), over the whole map: the map block's searched_cells scalar (general search, decision 0027).
         [[nodiscard]] uint32_t SearchedCells() const { return _searchedTotal; }
+        /// **Looking ahead** (PointNav.Explore, 2026-10-19): the cone the next writes are judged against -- the body
+        /// at (x, y) facing (dirX, dirY), a unit vector -- and the 1-yd cells first looked at this episode inside it
+        /// (within LOOK_AHEAD_REACH yards and LOOK_AHEAD_COS of the facing), counted as SearchedCells is. Set before
+        /// each frame's writes; BeginEpisode and Clear restart the count.
+        void SetLookCone(float x, float y, float dirX, float dirY)
+        {
+            _cone = LookCone{ true, x, y, dirX, dirY };
+        }
+        [[nodiscard]] uint32_t SearchedAhead() const { return _searchedAhead; }
         /// The per-tile counters the coverage block samples (CoverageBlock): the cells of tile (tx, ty) ever seen, the
         /// cells the body stood on, and the cells looked at this episode (0 when the tile's count is an earlier
         /// episode's). Zeros for a tile not kept (a coarse tile has no counters).
@@ -618,6 +630,16 @@ namespace Animus::Vision
         uint16_t _epoch = 1;            // the first Stamp() of this episode
         uint32_t _groundTotal = 0;
         uint32_t _searchedTotal = 0;
+        struct LookCone
+        {
+            bool On = false;
+            float X = 0.0f;
+            float Y = 0.0f;
+            float DirX = 1.0f;
+            float DirY = 0.0f;
+        };
+        LookCone _cone;
+        uint32_t _searchedAhead = 0;
         uint64_t _knownTotal = 0;
         uint32_t _bumpedEpisode = 0;
         uint64_t _bumpedTotal = 0;
