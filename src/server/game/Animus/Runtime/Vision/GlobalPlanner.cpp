@@ -216,7 +216,12 @@ void Animus::Vision::GlobalField::Touch(int32_t node, int32_t cx, int32_t cy, in
     else
         factor = _unknownCost ? std::max(_floorFactor, _unknownCost->Factor(cx, cy, z))
             : _pricing.Codes[uint8_t(MapCode::Unknown)];
-    // The configuration space at this node's height: a hole the body never stood in closed, a cell by a wall dear.
+    // The configuration space at this node's height (as the fine plan's, CellFactor): a centre nearer a measured
+    // face than the body's clearance blocked, unless the body stood there; a cell by a wall dear.
+    int32_t const measured = floor ? slot : 0;
+    if (factor < PLAN_BLOCKED && !(cell.Flags & (MAP_VISITED | MAP_DOOR)) && cell.Weight[measured]
+        && float(cell.Dist[measured]) * SDF_UNIT < _clearance)
+        factor = PLAN_BLOCKED;
     if (factor < PLAN_BLOCKED)
     {
         bool w[8];
@@ -226,10 +231,7 @@ void Animus::Vision::GlobalField::Touch(int32_t node, int32_t cx, int32_t cy, in
             w[dir] = WallAt(cx + DC[dir], cy + DR[dir], z);
             any = any || w[dir];
         }
-        bool const closed = (w[1] && w[6]) || (w[3] && w[4]) || (w[0] && w[7]) || (w[2] && w[5]);
-        if (closed && !(cell.Flags & MAP_VISITED))
-            factor = PLAN_BLOCKED;
-        else if (any && factor < _pricing.Pinched)
+        if (any && factor < _pricing.Pinched)
         {
             // A 2-yd passage: a wall within two cells on both sides along an axis or a diagonal (the directions
             // d and 7 - d are opposite).
@@ -691,16 +693,16 @@ bool Animus::Vision::GlobalField::RouteChanged(float x, float y, float z, float 
                 // The layer it was: gone, or moved to another storey (a new layer under it renumbers the two).
                 changed = cell.Floor[slot] == NO_FLOOR
                     || std::fabs(FloorHeight(cell.Floor[slot]) - height) > LAYER_MERGE
-                    || (cell.Flags & WallBit(slot));
+                    || ConfirmedWall(cell, slot);
             }
             else
             {
                 int32_t const layer = NearestLayer(cell, height);
                 if (layer < 0)
-                    changed = (cell.Flags & (MAP_WALL_LOW | MAP_WALL_HIGH)) != 0;
+                    changed = ConfirmedWall(cell, 0);
                 else
                     changed = std::fabs(FloorHeight(cell.Floor[layer]) - height) <= PLAN_HEIGHT_BAND
-                        && (cell.Flags & WallBit(layer));
+                        && ConfirmedWall(cell, layer);
             }
             if (!changed && _blocking && yards <= hookYards)
                 changed = _blocking->Blocked(cx, cy, height);
@@ -744,6 +746,9 @@ float Animus::Vision::GlobalField::WalkYards(float x, float y, float z, uint32_t
 void Animus::Vision::GlobalRoute::Reset()
 {
     _field.Clear();
+    _trial.Clear();
+    _kept = 0;
+    _keptThis = false;
     _plans = 0;
     _replans = 0;
     _contradictions = 0;
@@ -753,11 +758,13 @@ void Animus::Vision::GlobalRoute::Reset()
 }
 
 bool Animus::Vision::GlobalRoute::Update(MentalMap const& map, float x, float y, float z, float gx, float gy,
-    float gz, GlobalBlocking const* blocking)
+    float gz, GlobalBlocking const* blocking, float clearance)
 {
     _tiles.Bind(map);
     _field.Use(_tiles, blocking);
+    _field.SetClearance(clearance);
     _this = GlobalReplan::None;
+    _keptThis = false;
     // The goal is a place the map has seen: its cell or a neighbour known (asked every decision: a goal first seen
     // mid-trip routes from then on). Until it is, nothing is planned -- a blank seat's search through unknown ground
     // would be the dearest there is, and is never used -- and the first decision it is known plans afresh.
@@ -786,10 +793,34 @@ bool Animus::Vision::GlobalRoute::Update(MentalMap const& map, float x, float y,
         reason = GlobalReplan::Known;
     else if (map.Clock() >= _planClock + double(GLOBAL_REPLAN_SECONDS))
         reason = GlobalReplan::Clock;
+    // A recompute for new ground or the clock challenges the route followed (GLOBAL_KEEP_*): made beside it, it
+    // replaces it only when it undercuts it by the margin.
+    if (reason == GlobalReplan::Known || reason == GlobalReplan::Clock)
+    {
+        _trial.Use(_tiles, blocking);
+        _trial.SetClearance(clearance);
+        _trial.Begin(gx, gy, gz, x, y);
+        _trial.SettleAround(x, y, z);
+        _field.SettleAround(x, y, z);
+        float const kept = _field.ValueAt(x, y, z);
+        float const fresh = _trial.ValueAt(x, y, z);
+        if (kept < TRAV_UNREACHABLE && fresh >= kept - std::max(GLOBAL_KEEP_YARDS, GLOBAL_KEEP_SHARE * kept))
+        {
+            _keptThis = true;
+            ++_kept;
+            _planClock = map.Clock();
+            _planKnown = map.KnownTotal();
+            _this = GlobalReplan::None;
+            _field.SettleAround(x, y, z);
+            return _field.ValueAt(x, y, z) < TRAV_UNREACHABLE;
+        }
+        std::swap(_field, _trial);
+    }
+    else if (reason != GlobalReplan::None)
+        _field.Begin(gx, gy, gz, x, y);
     _this = reason;
     if (reason != GlobalReplan::None)
     {
-        _field.Begin(gx, gy, gz, x, y);
         _goalX = gx;
         _goalY = gy;
         _goalZ = gz;

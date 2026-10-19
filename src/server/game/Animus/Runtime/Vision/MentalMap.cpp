@@ -44,24 +44,23 @@ namespace
 
     constexpr uint8_t MAP_WALLS = MAP_WALL_LOW | MAP_WALL_HIGH;
 
-    /// Where a wall hit's cell is read from (WALL_PUSH): (dx, dy) to add to the hit point.
-    void WallPush(Animus::Vision::RayHit const& ray, float& dx, float& dy)
+    /// A wall hit's face, horizontally, as a unit normal facing the camera: the hit's own normal, or against the ray
+    /// where the world gives none (a door) or it faces away. False for a ray with no horizontal part.
+    bool HitNormal(Animus::Vision::RayHit const& ray, float& nx, float& ny)
     {
-        using namespace Animus::Vision;
-        dx = dy = 0.0f;
         float const along = std::hypot(ray.Dir.X, ray.Dir.Y);
         float const normal = std::hypot(ray.NormalX, ray.NormalY);
-        // Into the surface: against the normal, which faces the camera -- never back toward it.
-        if (normal > 0.2f && -(ray.NormalX * ray.Dir.X + ray.NormalY * ray.Dir.Y) >= 0.0f)
+        if (normal > 0.2f && ray.NormalX * ray.Dir.X + ray.NormalY * ray.Dir.Y <= 0.0f)
         {
-            dx = -ray.NormalX / normal * WALL_PUSH;
-            dy = -ray.NormalY / normal * WALL_PUSH;
+            nx = ray.NormalX / normal;
+            ny = ray.NormalY / normal;
+            return true;
         }
-        else if (along > 1e-4f)
-        {
-            dx = ray.Dir.X / along * WALL_PUSH;
-            dy = ray.Dir.Y / along * WALL_PUSH;
-        }
+        if (along <= 1e-4f)
+            return false;
+        nx = -ray.Dir.X / along;
+        ny = -ray.Dir.Y / along;
+        return true;
     }
 
     /// The wall flag of floor layer `layer` (0 the lower).
@@ -102,6 +101,8 @@ namespace
         if (!swap)
             return false;
         std::swap(cell.Floor[0], cell.Floor[1]);
+        std::swap(cell.Dist[0], cell.Dist[1]);
+        std::swap(cell.Weight[0], cell.Weight[1]);
         uint8_t const low = cell.Flags & MAP_WALL_LOW;
         uint8_t const high = cell.Flags & MAP_WALL_HIGH;
         cell.Flags = uint8_t((cell.Flags & ~MAP_WALLS) | (low ? MAP_WALL_HIGH : 0) | (high ? MAP_WALL_LOW : 0));
@@ -128,21 +129,12 @@ namespace
             {
                 at = std::fabs(FloorHeight(cell.Floor[0]) - z) <= std::fabs(FloorHeight(cell.Floor[1]) - z) ? 0 : 1;
                 cell.Flags &= uint8_t(~WallFlag(at));
+                cell.Dist[at] = 0;
+                cell.Weight[at] = 0;
             }
         }
         cell.Floor[at] = q;
         return SortLayers(cell) ? 1 - at : at;
-    }
-
-    /// An observation of floor layer `layer` with nothing in its way: its wall goes.
-    void ClearWall(MapCell& cell, int32_t layer, MapWriteStats* stats)
-    {
-        uint8_t const flag = WallFlag(layer);
-        if (!(cell.Flags & flag))
-            return;
-        cell.Flags &= uint8_t(~flag);
-        if (stats)
-            ++stats->WallsCleared;
     }
 
     /// When the entity filed in a cell was seen, in map seconds (approximate: its bucket's start before the cell's
@@ -196,31 +188,30 @@ namespace
 
         // A wall moves with its layer: the source's layer i is wherever its height landed among the target's layers
         // (the insertions may have reordered them, or a second insertion evicted the first: its wall is then lost).
-        auto const settle = [&](int32_t target, bool wall, bool existed)
+        // A coarse cell (Union) takes any wall of either; a 1-yd cell folds the source's signed distance into the
+        // target's (FuseDistance), the evidence of both weighed, and its wall follows the sign; a far cell, which has
+        // no distance, adds its wall.
+        auto const settle = [&](int32_t target, int32_t source, bool wall)
         {
-            uint8_t const flag = WallFlag(target);
-            if (!existed || union_ || !(newer || older))
+            if (union_)
             {
                 if (wall)
-                    into.Flags |= flag;
+                    into.Flags |= WallFlag(target);
             }
-            else if (newer)
-            {
-                if (wall)
-                    into.Flags |= flag;
-                else if (mode == WallMerge::Newest || (mode == WallMerge::NewestFree && (from.Flags & MAP_FREE)))
-                    into.Flags &= uint8_t(~flag);
-            }
+            else if (from.Weight[source])
+                FuseDistance(into, target, float(from.Dist[source]) * SDF_UNIT, from.Weight[source]);
+            else if (wall)
+                into.Flags |= WallFlag(target);     // a far cell's wall: a flag, no distance
         };
         if (!HasFloor(from))
         {
             // A wall with no floor known (in the band of the feet that saw it): with no floor in the target either
             // the same; with one layer, the only band it can be in; with two, its height is unknown and it is
-            // dropped. A floorless look without a wall clears only a floorless wall.
+            // dropped.
             int32_t const layers = FloorLayers(into);
             bool const wall = from.Flags & MAP_WALLS;
-            if (layers == 0 || (layers == 1 && wall))
-                settle(0, wall, true);
+            if (layers == 0 || (layers == 1 && (wall || !union_)))
+                settle(0, 0, wall);
         }
         else
             for (int32_t layer = 0; layer < 2; ++layer)
@@ -229,8 +220,12 @@ namespace
                     continue;
                 int32_t const target = LayerNear(into, FloorHeight(heights[layer]));
                 if (target >= 0)
-                    settle(target, from.Flags & WallFlag(layer), held[layer]);
+                    settle(target, layer, from.Flags & WallFlag(layer));
             }
+        // A newer look that saw the cell's floor and no liquid on it: the hazard the target holds was the mesh's or a
+        // plane's under that floor (a walkway over magma meshed before its floor was seen), and goes.
+        if (!union_ && newer && HasFloor(from) && !(from.Flags & MAP_HAZARD))
+            into.Flags &= uint8_t(~MAP_HAZARD);
         into.Flags |= uint8_t(from.Flags & ~(MAP_WALLS | MAP_WALL_FRAME));
         if (from.Entity & CLASS_MASK)
         {
@@ -261,6 +256,56 @@ namespace
     {
         return what >= Class::Door;
     }
+}
+
+int32_t Animus::Vision::NearestLayerOf(MapCell const& cell, float feetZ)
+{
+    int32_t best = -1;
+    float distance = 0.0f;
+    for (int32_t layer = 0; layer < 2; ++layer)
+    {
+        if (cell.Floor[layer] == NO_FLOOR)
+            continue;
+        float const d = std::fabs(FloorHeight(cell.Floor[layer]) - feetZ);
+        if (best < 0 || d < distance)
+        {
+            best = layer;
+            distance = d;
+        }
+    }
+    return best;
+}
+
+bool Animus::Vision::ClearanceOf(MapCell const& cell, float feetZ, float& yards)
+{
+    int32_t const slot = std::max(0, NearestLayerOf(cell, feetZ));
+    if (!cell.Weight[slot])
+        return false;
+    yards = float(cell.Dist[slot]) * SDF_UNIT;
+    return true;
+}
+
+bool Animus::Vision::ConfirmedWall(MapCell const& cell, int32_t layer)
+{
+    int32_t const slot = std::clamp(layer, 0, 1);
+    return cell.Weight[slot] >= SDF_CONFIRM_WEIGHT && float(cell.Dist[slot]) * SDF_UNIT <= -SDF_CONFIRM_DEPTH;
+}
+
+void Animus::Vision::FuseDistance(MapCell& cell, int32_t layer, float yards, uint8_t weight)
+{
+    if (!weight)
+        return;
+    int32_t const slot = std::clamp(layer, 0, 1);
+    float const held = float(cell.Weight[slot]);
+    float const added = float(weight);
+    float const mean = (float(cell.Dist[slot]) * SDF_UNIT * held + yards * added) / (held + added);
+    cell.Dist[slot] = int8_t(std::clamp(std::lround(mean / SDF_UNIT), -127L, 127L));
+    cell.Weight[slot] = uint8_t(std::min<uint32_t>(SDF_WEIGHT_MAX, uint32_t(cell.Weight[slot]) + weight));
+    uint8_t const flag = WallFlag(slot);
+    if (cell.Dist[slot] < 0)
+        cell.Flags |= flag;
+    else
+        cell.Flags &= uint8_t(~flag);
 }
 
 void Animus::Vision::MergeCell(MapCell& into, MapCell const& from, WallClears clears)
@@ -648,11 +693,15 @@ void Animus::Vision::MentalMap::WriteEntity(MapCell& cell, Class what, uint16_t 
     cell.Entity = uint8_t(uint8_t(what) & CLASS_MASK);
 }
 
-void Animus::Vision::MentalMap::WriteFloor(int32_t cx, int32_t cy, float z, uint16_t stamp, MapWriteStats* stats)
+void Animus::Vision::MentalMap::WriteFloor(int32_t cx, int32_t cy, float z, uint16_t stamp, MapWriteStats* stats,
+    float centre)
 {
     MapCell& cell = Touch(cx, cy);
-    // A floor hit is a look at its layer with nothing in the way: its wall goes at the frame's end (SettleFrame).
-    NoteClear(cx, cy, cell, InsertFloor(cell, z));
+    // A floor hit is a look at its layer with nothing in the way: its distance rises at the frame's end
+    // (SettleFrame). And the ray met solid ground here, not a liquid: a hazard the cell held (the mesh's, from a plane
+    // seen past an edge before this floor was) goes -- a hazard hit this frame writes it again at the frame's end.
+    NoteClear(cx, cy, cell, InsertFloor(cell, z), centre);
+    cell.Flags &= uint8_t(~MAP_HAZARD);
     MarkSeen(cell, stamp);
     if (stats)
         ++stats->Floors;
@@ -685,23 +734,21 @@ Animus::Vision::WallSource Animus::Vision::MentalMap::WallSourceOf(int32_t cx, i
     return found == _wallSources.end() ? WallSource::Inherited : found->second;
 }
 
-bool Animus::Vision::MentalMap::WriteWall(int32_t cx, int32_t cy, float z, float feetZ, float bodyHeight,
-    uint16_t stamp, WallSource source)
+bool Animus::Vision::MentalMap::WriteWall(float px, float py, float z, float nx, float ny, float feetZ,
+    float bodyHeight, uint16_t stamp, WallSource source, uint8_t weight, float lateral)
 {
-    // A wall within the body's band above a floor: the cell's own, else a neighbour's, else the feet's.
+    int32_t const cx = CellOf(px);
+    int32_t const cy = CellOf(py);
+    // A wall within the body's band above a floor: the hit cell's own, else a neighbour's, else the feet's.
     float reference = 0.0f;
     bool referenced = false;
-    uint8_t flag = MAP_WALL_LOW;
-    MapCell const* here = FindCell(cx, cy);
-    if (here)
+    if (MapCell const* here = FindCell(cx, cy))
         for (int32_t layer = 0; layer < 2; ++layer)
             if (here->Floor[layer] != NO_FLOOR && FloorHeight(here->Floor[layer]) <= z + WALL_SLACK)
             {
                 reference = FloorHeight(here->Floor[layer]);
                 referenced = true;
-                flag = WallFlag(layer);
             }
-    bool const own = referenced;
     if (!referenced)
     {
         static int32_t const NEIGHBOURS[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
@@ -720,24 +767,56 @@ bool Animus::Vision::MentalMap::WriteWall(int32_t cx, int32_t cy, float z, float
         : z >= feetZ - FREE_BAND && z <= feetZ + bodyHeight + WALL_SLACK;
     if (!inBand)
         return false;
-    // The cell has floors, all above the hit: the band's floor (a neighbour's, or the feet's) is the cell's layer
-    // within LAYER_MERGE of it, or none -- a ground wall under a deck the cell holds is no wall of the deck.
-    if (!own && here && HasFloor(*here))
-    {
-        int32_t const layer = LayerNear(*here, referenced ? reference : feetZ);
-        if (layer < 0)
-            return false;
-        flag = WallFlag(layer);
-    }
-    MapCell& cell = Touch(cx, cy);
-    cell.Flags |= flag;
-    NoteWallSource(cx, cy, source);
-    if (!(cell.Flags & MAP_WALL_FRAME))
-    {
-        cell.Flags |= MAP_WALL_FRAME;
-        _frameWalls.push_back(TileKey(cx, cy));
-    }
-    MarkSeen(cell, stamp);
+    // The floor the wall rises from: the band's.
+    float const band = referenced ? reference : feetZ;
+
+    // The cells round the face: each centre's distance from the hit's plane (positive toward the camera), within
+    // SDF_FRONT in front, SDF_BEHIND behind and `lateral` along the face.
+    int32_t const reach = int32_t(std::ceil(SDF_FRONT / MAP_CELL));
+    for (int32_t dy = -reach; dy <= reach; ++dy)
+        for (int32_t dx = -reach; dx <= reach; ++dx)
+        {
+            int32_t const ncx = cx + dx;
+            int32_t const ncy = cy + dy;
+            float const ox = (float(ncx) + 0.5f) * MAP_CELL - px;
+            float const oy = (float(ncy) + 0.5f) * MAP_CELL - py;
+            float const d = ox * nx + oy * ny;
+            float const t = oy * nx - ox * ny;
+            if (d > SDF_FRONT || d < -SDF_BEHIND || std::fabs(t) > lateral)
+                continue;
+            int32_t layer = 0;
+            if (MapCell const* known = FindCell(ncx, ncy); known && HasFloor(*known))
+            {
+                layer = LayerNear(*known, band);
+                if (layer < 0)
+                {
+                    // Every floor of the cell is off the band's: a storey overhead (a deck, a balcony) is no wall of
+                    // the band's floor, but a raised top the body can neither walk under nor step onto -- a crate,
+                    // a ledge, seen from beside it -- stands in its way. Behind the face, the band's floor goes in
+                    // under it and is walled.
+                    float lowest = std::numeric_limits<float>::infinity();
+                    for (int16_t const floor : known->Floor)
+                        if (floor != NO_FLOOR)
+                            lowest = std::min(lowest, FloorHeight(floor));
+                    if (d >= 0.0f || lowest <= band || lowest >= band + bodyHeight + WALL_SLACK)
+                        continue;
+                    layer = InsertFloor(Touch(ncx, ncy), band);
+                }
+            }
+            MapCell& cell = Touch(ncx, ncy);
+            FuseDistance(cell, layer, d, weight);
+            // The face and what lies behind it is this frame's: no pass clears it at the frame's end (SettleFrame) --
+            // a wall seen at a grazing angle is hit in some of its cells and passed in front of in others.
+            if (d <= 0.25f && !(cell.Flags & MAP_WALL_FRAME))
+            {
+                cell.Flags |= MAP_WALL_FRAME;
+                _frameWalls.push_back(TileKey(ncx, ncy));
+            }
+            if (d < 0.0f)
+                NoteWallSource(ncx, ncy, source);
+            if (ncx == cx && ncy == cy)
+                MarkSeen(cell, stamp);
+        }
     return true;
 }
 
@@ -751,14 +830,15 @@ Animus::Vision::MapCell* Animus::Vision::MentalMap::OwnCell(int32_t cx, int32_t 
     return &found->second.Own->Cells[std::size_t((cy - ty * MAP_TILE) * MAP_TILE + (cx - tx * MAP_TILE))];
 }
 
-void Animus::Vision::MentalMap::NoteClear(int32_t cx, int32_t cy, MapCell const& cell, int32_t layer)
+void Animus::Vision::MentalMap::NoteClear(int32_t cx, int32_t cy, MapCell const& cell, int32_t layer,
+    float centre)
 {
-    // Only a layer with a wall has anything to clear; -1 is the wall of a cell with no floor known.
-    if (!(cell.Flags & WallFlag(std::max(0, layer))))
+    // Only a measured layer (or one with a wall) has a distance to raise; -1 is a cell with no floor known.
+    if (!(cell.Flags & WallFlag(std::max(0, layer))) && !cell.Weight[std::max(0, layer)])
         return;
     float const z = layer >= 0 && cell.Floor[layer] != NO_FLOOR ? FloorHeight(cell.Floor[layer])
         : std::numeric_limits<float>::quiet_NaN();
-    _frameClears.push_back({ cx, cy, z });
+    _frameClears.push_back({ cx, cy, z, centre });
 }
 
 void Animus::Vision::MentalMap::SettleFrame(MapWriteStats* stats)
@@ -788,8 +868,21 @@ void Animus::Vision::MentalMap::SettleFrame(MapWriteStats* stats)
         if (walled)
             continue;
         int32_t const layer = std::isnan(clear.Z) ? (HasFloor(*cell) ? -1 : 0) : LayerNear(*cell, clear.Z);
-        if (layer >= 0)
-            ClearWall(*cell, layer, stats);
+        if (layer < 0)
+            continue;
+        // Seen through the centre: the distance rises toward SDF_FREE. Seen free further off: the centre lies no
+        // deeper behind a face than that (SDF_THROUGH).
+        bool const wasWall = cell->Flags & WallFlag(layer);
+        if (clear.Centre <= SDF_THROUGH)
+            FuseDistance(*cell, layer, SDF_FREE, SDF_FREE_WEIGHT);
+        else if (cell->Weight[layer] && float(cell->Dist[layer]) * SDF_UNIT < -clear.Centre)
+        {
+            cell->Dist[layer] = int8_t(std::clamp(std::lround(-clear.Centre / SDF_UNIT), -127L, 127L));
+            if (cell->Dist[layer] >= 0)
+                cell->Flags &= uint8_t(~WallFlag(layer));
+        }
+        if (stats && wasWall && !(cell->Flags & WallFlag(layer)))
+            ++stats->WallsCleared;
     }
     _frameClears.clear();
     // The marks go: a tile evicted since went with its own.
@@ -905,24 +998,16 @@ void Animus::Vision::MentalMap::WriteFrame(FrameHits const& hits, float feetZ, f
         bool const sky = ray.What == Class::Sky;
         bool const hitWithin = !sky && ray.Distance <= WRITE_REACH;
         float const reach = std::min(ray.Distance, WRITE_REACH);
-        float hitXf = camera.X + ray.Dir.X * ray.Distance;
-        float hitYf = camera.Y + ray.Dir.Y * ray.Distance;
+        float const hitXf = camera.X + ray.Dir.X * ray.Distance;
+        float const hitYf = camera.Y + ray.Dir.Y * ray.Distance;
         // A ray ending on a floor: the band above that floor near the hit is seen free too (part C).
         // A backside (RayHit::Backside) is no floor: the band over it is not seen free, and its cell takes nothing.
         bool const floorHit = (ray.What == Class::Terrain || ray.What == Class::Model) && ray.NormalZ >= FLOOR_NORMAL
             && !ray.Backside;
-        // A wall's cell is the one behind its face (WALL_PUSH); the cells the ray crossed before it, the face's own
-        // among them, are walked as passes.
+        // A wall hit writes the distances round its face itself (WriteWall): the passes within SDF_FRONT of it are
+        // left to it.
         bool const wallHit = (ray.What == Class::Terrain || ray.What == Class::Model) && !ray.Backside
             && ray.NormalZ < FLOOR_NORMAL && ray.NormalZ > CEILING_NORMAL;
-        if (wallHit)
-        {
-            float dx = 0.0f;
-            float dy = 0.0f;
-            WallPush(ray, dx, dy);
-            hitXf += dx;
-            hitYf += dy;
-        }
         int32_t const hitX = CellOf(hitXf);
         int32_t const hitY = CellOf(hitYf);
 
@@ -990,8 +1075,21 @@ void Animus::Vision::MentalMap::WriteFrame(FrameHits const& hits, float feetZ, f
                 {
                     MapCell& cell = Touch(cx, cy);
                     cell.Flags |= MAP_FREE;
-                    if (low <= passFloor + FREE_CLEAR_RISE && (leave - enter) * horizontal >= FREE_CLEAR_SPAN)
-                        NoteClear(cx, cy, cell, passLayer);
+                    bool const nearWall = wallHit && hitWithin && (ray.Distance - leave) * horizontal < SDF_FRONT;
+                    if (!nearWall && low <= passFloor + FREE_CLEAR_RISE
+                        && (leave - enter) * horizontal >= FREE_CLEAR_SPAN)
+                    {
+                        // The pass's nearest approach to the cell's centre, horizontally.
+                        float const ax = camera.X + ray.Dir.X * enter;
+                        float const ay = camera.Y + ray.Dir.Y * enter;
+                        float const sx = ray.Dir.X * (leave - enter);
+                        float const sy = ray.Dir.Y * (leave - enter);
+                        float const ox = (float(cx) + 0.5f) * MAP_CELL - ax;
+                        float const oy = (float(cy) + 0.5f) * MAP_CELL - ay;
+                        float const s2 = sx * sx + sy * sy;
+                        float const u = s2 > 1e-9f ? std::clamp((ox * sx + oy * sy) / s2, 0.0f, 1.0f) : 0.0f;
+                        NoteClear(cx, cy, cell, passLayer, std::hypot(ox - u * sx, oy - u * sy));
+                    }
                     MarkSeen(cell, stamp);
                     if (stats)
                     {
@@ -1033,12 +1131,16 @@ void Animus::Vision::MentalMap::WriteFrame(FrameHits const& hits, float feetZ, f
             {
                 if (ray.NormalZ >= FLOOR_NORMAL)
                 {
-                    WriteFloor(hitX, hitY, ray.Z, stamp, stats);
+                    WriteFloor(hitX, hitY, ray.Z, stamp, stats, std::hypot(hitXf - (float(hitX) + 0.5f) * MAP_CELL,
+                        hitYf - (float(hitY) + 0.5f) * MAP_CELL));
                     break;
                 }
                 if (ray.NormalZ <= CEILING_NORMAL)
                     break;
-                if (WriteWall(hitX, hitY, ray.Z, feetZ, bodyHeight, stamp, WallSource::Ray) && stats)
+                float nx = 0.0f;
+                float ny = 0.0f;
+                if (HitNormal(ray, nx, ny) && WriteWall(hitXf, hitYf, ray.Z, nx, ny, feetZ, bodyHeight, stamp,
+                    WallSource::Ray, SDF_HIT_WEIGHT, SDF_LATERAL) && stats)
                     ++stats->Walls;
                 break;
             }
@@ -1088,8 +1190,9 @@ void Animus::Vision::MentalMap::Mesh(FrameHits const& hits, float feetZ, float b
         float Z = 0.0f;
         float Range = 0.0f;
         float NormalZ = 0.0f;
-        float PushX = 0.0f;     // WallPush: a wall cell is read this far into the surface
-        float PushY = 0.0f;
+        float NX = 0.0f;        // the face's horizontal unit normal toward the camera (HitNormal)
+        float NY = 0.0f;
+        bool Faced = false;
         uint8_t Kind = KIND_NONE;
     };
     Vec3 const camera = hits.Camera;
@@ -1102,7 +1205,7 @@ void Animus::Vision::MentalMap::Mesh(FrameHits const& hits, float feetZ, float b
         point.X = camera.X + ray.Dir.X * ray.Distance;
         point.Y = camera.Y + ray.Dir.Y * ray.Distance;
         point.Z = ray.Z;
-        WallPush(ray, point.PushX, point.PushY);
+        point.Faced = HitNormal(ray, point.NX, point.NY);
         point.Range = ray.Distance;
         point.NormalZ = ray.NormalZ;
         point.Kind = KIND_NONE;
@@ -1228,8 +1331,9 @@ void Animus::Vision::MentalMap::Mesh(FrameHits const& hits, float feetZ, float b
             }
     };
 
-    // A pair of neighbouring wall hits at a near range (one wall, no doorway or corner between them): the cells on
-    // the line between them, each a wall at its interpolated height when it is in the band (WriteWall).
+    // A pair of neighbouring wall hits at a near range on one face (no doorway or corner between them: their normals
+    // agree and the line between them lies along the face, MESH_FACE_*): the line between them, each point a wall hit
+    // at its interpolated height on the face's mean normal (WriteWall), its own strip of the face.
     auto const wall = [&](Point const& a, Point const& b)
     {
         float const span = std::hypot(b.X - a.X, b.Y - a.Y);
@@ -1237,6 +1341,18 @@ void Animus::Vision::MentalMap::Mesh(FrameHits const& hits, float feetZ, float b
         if (std::fabs(a.Range - b.Range) > MESH_WALL_JUMP * std::min(a.Range, b.Range) + MESH_WALL_SLACK
             || span > (far ? MESH_SPAN_FAR : MESH_SPAN_NEAR))
             return reject();
+        float mx = a.NX + b.NX;
+        float my = a.NY + b.NY;
+        if (!far)
+        {
+            float const length = std::hypot(mx, my);
+            if (!a.Faced || !b.Faced || length < 1e-3f || a.NX * b.NX + a.NY * b.NY < MESH_FACE_COS)
+                return reject();
+            mx /= length;
+            my /= length;
+            if (std::fabs((b.X - a.X) * mx + (b.Y - a.Y) * my) > MESH_FACE_SLACK + MESH_FACE_SHARE * span)
+                return reject();
+        }
         float const cell = far ? float(COARSE_CELL) : MAP_CELL;
         uint32_t const samples = uint32_t(std::ceil(span / (0.5f * cell)));
         if (samples < 2)
@@ -1249,24 +1365,25 @@ void Animus::Vision::MentalMap::Mesh(FrameHits const& hits, float feetZ, float b
         {
             float const t = float(step) / float(samples);
             float const z = a.Z + (b.Z - a.Z) * t;
-            // The near cells behind the face, as a ray's hit (WALL_PUSH); a far cell is 8 yd: as cast.
-            float const x = a.X + (b.X - a.X) * t + (far ? 0.0f : a.PushX + (b.PushX - a.PushX) * t);
-            float const y = a.Y + (b.Y - a.Y) * t + (far ? 0.0f : a.PushY + (b.PushY - a.PushY) * t);
+            float const x = a.X + (b.X - a.X) * t;
+            float const y = a.Y + (b.Y - a.Y) * t;
+            --budget;
+            if (!far)
+            {
+                if (WriteWall(x, y, z, mx, my, feetZ, bodyHeight, stamp, WallSource::Mesh, SDF_MESH_WEIGHT,
+                    0.5f * MAP_CELL) && stats)
+                    ++stats->Meshed;
+                continue;
+            }
             int32_t const cx = int32_t(std::floor(x / cell));
             int32_t const cy = int32_t(std::floor(y / cell));
             if (cx == lastX && cy == lastY)
                 continue;
             lastX = cx;
             lastY = cy;
-            --budget;
-            if (far)
-            {
-                WriteFar(Class::Model, x, y, z, 0.0f, feetZ, bodyHeight, stamp, nullptr);
-                if (stats)
-                    ++stats->MeshedFar;
-            }
-            else if (WriteWall(cx, cy, z, feetZ, bodyHeight, stamp, WallSource::Mesh) && stats)
-                ++stats->Meshed;
+            WriteFar(Class::Model, x, y, z, 0.0f, feetZ, bodyHeight, stamp, nullptr);
+            if (stats)
+                ++stats->MeshedFar;
         }
     };
 
@@ -1355,9 +1472,18 @@ void Animus::Vision::MentalMap::WriteBody(float x, float y, float z, bool ground
     MapCell& cell = Touch(CellOf(x), CellOf(y));
     NoteGround(cell);
     cell.Flags |= MAP_VISITED;
-    // Standing on a floor is the surest look at its layer: its wall goes (ClearWall).
+    // Standing on a floor is the surest look at its layer: the body fits there, so its centre is no wall.
     if (grounded)
-        ClearWall(cell, InsertFloor(cell, z), nullptr);
+    {
+        int32_t const layer = InsertFloor(cell, z);
+        int8_t const stood = int8_t(std::lround(0.25f / SDF_UNIT));
+        if (!cell.Weight[layer] || cell.Dist[layer] < stood)
+        {
+            cell.Dist[layer] = std::max(cell.Dist[layer], stood);
+            cell.Weight[layer] = std::max<uint8_t>(cell.Weight[layer], 1);
+            cell.Flags &= uint8_t(~WallFlag(layer));
+        }
+    }
     MarkSeen(cell, stamp);
     // ... and a bumped cell the body now stands in was no wall: its hold goes with it.
     if (!_bumpHolds.empty())
@@ -1444,9 +1570,11 @@ uint32_t Animus::Vision::MentalMap::MarkBumped(float x, float y, float feetZ, fl
         }
         MapCell& cell = Touch(cx, cy);
         uint8_t const flag = WallFlag(layer);
-        if (!(cell.Flags & flag))
+        bool const before = cell.Flags & flag;
+        // The face the body met lies at the contact point: the cell's centre, past it, is behind it.
+        FuseDistance(cell, layer, -0.25f, SDF_BUMP_WEIGHT);
+        if (!before && (cell.Flags & flag))
             ++walled;
-        cell.Flags |= flag;
         NoteWallSource(cx, cy, WallSource::Bump);
         MarkSeen(cell, stamp);
 

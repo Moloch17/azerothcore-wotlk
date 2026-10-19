@@ -164,7 +164,7 @@ namespace
     }
 }
 
-float Animus::Vision::CellFactor(MapCell const& cell, float z)
+float Animus::Vision::CellFactor(MapCell const& cell, float z, float clearance)
 {
     MapCode code = CodeOf(cell, z);
     if (code == MapCode::Floor || code == MapCode::Door)
@@ -173,6 +173,10 @@ float Animus::Vision::CellFactor(MapCell const& cell, float z)
         if (NearestFloor(cell, z, floor) && std::fabs(floor - z) > PLAN_HEIGHT_BAND)
             code = MapCode::Unknown;
     }
+    // The body's configuration space: a centre nearer a measured face than the body's clearance is no place for it.
+    float yards = 0.0f;
+    if (code != MapCode::Wall && code != MapCode::Door && ClearanceOf(cell, z, yards) && yards < clearance)
+        return PLAN_BLOCKED;
     return PLAN_COSTS[uint8_t(code)];
 }
 
@@ -194,21 +198,7 @@ void Animus::Vision::ConfigurationSpace(float* factor, int32_t side)
         }
     };
     mark();
-    // Hole closing: a cell walled on two opposite sides is a wall -- judged on the walls as read, so a closed hole
-    // does not close its neighbour in turn (two cells between walls are a 2-yd passage, which the body fits).
-    for (int32_t row = 0; row < side; ++row)
-        for (int32_t col = 0; col < side; ++col)
-        {
-            uint8_t const* at = wall.data() + (row + 1) * padded + col + 1;
-            if (*at)
-                continue;
-            bool const closed = (at[-padded] && at[padded]) || (at[-1] && at[1])
-                || (at[-padded - 1] && at[padded + 1]) || (at[-padded + 1] && at[padded - 1]);
-            if (closed)
-                factor[row * side + col] = PLAN_BLOCKED;
-        }
-    mark();
-    // Inflation: a passable cell 8-adjacent to a wall (the closed holes included) costs PLAN_INFLATED at least, one
+    // Inflation: a passable cell 8-adjacent to a blocked one (a wall, or too near one) costs PLAN_INFLATED at least, one
     // of those with a wall within two cells on both sides along an axis or a diagonal (a 2-yd passage) PLAN_PINCHED;
     // dearer cells (unknown, a hazard) keep their own. Read two cells out, past the one cell of padding: the bounds
     // are checked.
@@ -242,7 +232,7 @@ void Animus::Vision::ConfigurationSpace(float* factor, int32_t side)
 }
 
 void Animus::Vision::PlanOnMap(MentalMap const& map, float x, float y, float z, float yaw, float goalForward,
-    float goalRight, uint8_t const* coarse, MapPlan& out, PlanPoint const* near, uint32_t nearCount)
+    float goalRight, uint8_t const* coarse, MapPlan& out, PlanPoint const* near, uint32_t nearCount, float clearance)
 {
     thread_local std::vector<float> factor(PLAN_CELLS);
     thread_local std::vector<uint8_t> wanted(PLAN_CELLS);
@@ -297,9 +287,9 @@ void Animus::Vision::PlanOnMap(MentalMap const& map, float x, float y, float z, 
     // The fine tier: the map's own cells, each priced for the feet.
     map.Window(out.X0, out.Y0, PLAN_SIDE, window.data());
     for (uint32_t index = 0; index < PLAN_CELLS; ++index)
-        factor[index] = CellFactor(window[index], z);
-    // ... shaped into the body's configuration space: the 1-yd holes closed, the cells along the walls dear; the
-    // goal's own cells standing clear (PLAN_GOAL_CLEAR): no wall to the shaping, and none closed by it.
+        factor[index] = CellFactor(window[index], z, clearance);
+    // ... shaped into the body's configuration space: the cells along the blocked ones dear; the goal's own cells
+    // standing clear (PLAN_GOAL_CLEAR): no wall or narrows to the shaping.
     float const goalX = x + goalForward * forwardX + goalRight * rightX;
     float const goalY = y + goalForward * forwardY + goalRight * rightY;
     auto const clearGoal = [&]()

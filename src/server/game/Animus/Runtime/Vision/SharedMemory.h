@@ -101,16 +101,18 @@ namespace Animus::Vision
     /// 6 (2026-10-18): a wall hit's cell was the one holding the hit point, the floor's side of the face about half the
     /// time (MentalMap's WALL_PUSH), so every wall a version 5 file holds carries a yard of floor walled with it; it
     /// is not read. The bytes are version 3's.
-    constexpr uint32_t MEMORY_VERSION = 6;
+    /// 7 (2026-10-18): the cell is twelve bytes, a signed distance and its evidence a floor layer (MentalMap's SDF_*);
+    /// the walls are its sign, and a hazard a newer look saw floor on goes.
+    constexpr uint32_t MEMORY_VERSION = 7;
     /// When the memory's clock (seconds past its base) passes this, the base moves on to leave REBASE_KEEP seconds
     /// of history: a seat's map runs to MentalMap's 65000-second limit from wherever it was anchored.
     constexpr double REBASE_AT = 40000.0;
     constexpr double REBASE_KEEP = 20000.0;
 
 #pragma pack(push, 1)
-    /// The .amem file's header; MEMORY_VERSION 6. Little-endian, as the forge's and the realm's machines are. The
+    /// The .amem file's header; MEMORY_VERSION 7. Little-endian, as the forge's and the realm's machines are. The
     /// tiles follow it, FineTiles then FarTiles records of (int64 tile key, MAP_TILE_CELLS MapCell: int16 Floor[2],
-    /// uint8 Flags, uint8 Entity, uint16 Seen).
+    /// uint8 Flags, uint8 Entity, uint16 Seen, int8 Dist[2], uint8 Weight[2]).
     struct MemoryFileHeader
     {
         char Magic[4] = { 'A', 'M', 'E', 'M' };

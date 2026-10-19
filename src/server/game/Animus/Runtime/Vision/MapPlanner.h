@@ -43,10 +43,11 @@
 /// stands in.
 ///
 /// **A configuration space, not a point's** (2026-10-17; ConfigurationSpace): the body is wider than a cell, so the
-/// fine factors are shaped before the search. (1) Hole closing: a non-wall cell whose two opposite neighbours are walls
-/// -- north and south, east and west, or both cells of either diagonal pair -- is a wall (PLAN_BLOCKED): a 1-yd gap is
-/// narrower than the body, and a route through it is one the body cannot walk. (2) Inflation: a passable cell
-/// 8-adjacent to a wall (after the closing; the window's edge counts as no wall) is priced at least PLAN_INFLATED 1.3,
+/// fine factors are shaped before the search. (1) Clearance (2026-10-18, the signed-distance map; CellFactor): a cell
+/// whose centre lies nearer a measured face than the body's clearance is blocked -- the passage's real width, read to
+/// a fraction of a yard. It replaced hole closing (a cell walled on two opposite sides was a wall), which sealed every
+/// doorway a yard of smear had narrowed (the Stockades' corridors, the nav map audit). (2) Inflation: a passable cell
+/// 8-adjacent to a blocked one (the window's edge counts as no wall) is priced at least PLAN_INFLATED 1.3,
 /// and one of those with a wall within two cells on both sides along an axis or a diagonal (a 2-yd passage) at least
 /// PLAN_PINCHED 1.6 -- a surcharge, so a route runs down the middle of a corridor and hugs no wall, while **known
 /// passable ground is never dearer than unknown** (floor 1 <= inflated 1.3 <= pinched 1.6 < PLAN_UNKNOWN 2; 2026-10-18:
@@ -121,6 +122,15 @@ namespace Animus::Vision
         float const dx = (float(cx) + 0.5f) * MAP_CELL - gx;
         float const dy = (float(cy) + 0.5f) * MAP_CELL - gy;
         return dx * dx + dy * dy <= PLAN_GOAL_CLEAR * PLAN_GOAL_CLEAR;
+    }
+    /// The clearance a body's centre needs from a measured face (BodyClearance): its collision radius less
+    /// PLAN_CLEARANCE_SLACK, the slack of reading the distance at 1-yd cell centres (a 1.4-yd passage always has a
+    /// centre the body passes); PLAN_CLEARANCE where no body is known.
+    constexpr float PLAN_CLEARANCE = 0.25f;
+    constexpr float PLAN_CLEARANCE_SLACK = 0.15f;
+    [[nodiscard]] inline float BodyClearance(float radius)
+    {
+        return std::max(0.1f, radius - PLAN_CLEARANCE_SLACK);
     }
     /// A floor more than this far from the feet, in yards, is priced as unknown (exactly this far is in band).
     constexpr float PLAN_HEIGHT_BAND = 3.0f;
@@ -199,8 +209,10 @@ namespace Animus::Vision
     /// CROP_BYTES at COARSE_CELL yards; null for none: the fine tier then plans alone, with no ring) planned first as
     /// the window's ring. The fine search stops once the cells round the body and the `near` points (the ones
     /// PlanValueAt will be asked for) are settled.
+    /// `clearance`: the body's (BodyClearance), yards of signed distance a cell's centre needs.
     void PlanOnMap(MentalMap const& map, float x, float y, float z, float yaw, float goalForward, float goalRight,
-        uint8_t const* coarse, MapPlan& out, PlanPoint const* near = nullptr, uint32_t nearCount = 0);
+        uint8_t const* coarse, MapPlan& out, PlanPoint const* near = nullptr, uint32_t nearCount = 0,
+        float clearance = PLAN_CLEARANCE);
 
     /// The plan's fine value at (`forward`, `right`) yards in the body's frame, in yards: bilinear over the four cells
     /// round the point, blocked and unreached cells left out and the weights renormalised (a wall's own cell holds a
@@ -209,13 +221,13 @@ namespace Animus::Vision
     [[nodiscard]] float PlanValueAt(MapPlan const& plan, float forward, float right);
 
     /// A 1-yd map cell's step cost multiple for feet at `z`: PLAN_COSTS by its code, a floor or door whose layer
-    /// nearest the feet is further than PLAN_HEIGHT_BAND off them priced as unknown.
-    [[nodiscard]] float CellFactor(MapCell const& cell, float z);
+    /// nearest the feet is further than PLAN_HEIGHT_BAND off them priced as unknown, and a cell whose measured signed
+    /// distance is under `clearance` blocked (PLAN_BLOCKED).
+    [[nodiscard]] float CellFactor(MapCell const& cell, float z, float clearance = PLAN_CLEARANCE);
 
-    /// Shapes a `side` x `side` grid of fine factors into the body's configuration space (the class comment): the
-    /// holes closed to PLAN_BLOCKED, the passable cells next to a wall raised to PLAN_INFLATED at least, those walled
-    /// within two cells on both sides to PLAN_PINCHED. Exposed for
-    /// the harness; PlanOnMap applies it to the fine window.
+    /// Shapes a `side` x `side` grid of fine factors into the body's configuration space (the class comment; the
+    /// clearance is CellFactor's): the passable cells next to a blocked one raised to PLAN_INFLATED at least, those
+    /// blocked within two cells on both sides to PLAN_PINCHED. PlanOnMap applies it to the fine window.
     void ConfigurationSpace(float* factor, int32_t side);
 
     /// The fine plan's route points: the walk from the body's cell (from the lowest unblocked cell round the body

@@ -357,6 +357,9 @@ void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uin
     // answers this observation is decoded against exactly this pose (StageScenario::ApplyGoals).
     CropPose pose{ true, x, y, z, view.Facing, CellGrid::Count(crop) };
     pose.BumpedCells = map->BumpedCells();
+    // The body's clearance (signed-distance map): what both planners and the nav audit hold a cell's centre to.
+    float const clearance = Vi::BodyClearance(Movement::ShapeOf(bot).Radius);
+    pose.Clearance = clearance;
     // The route on the seat's own map to the objective the encounter names (revision 7): planned once here, its
     // points the policy's and its values the labels' (CropPose::Route*). The objective is the sim's knowledge, not
     // the bot's: nothing of the straight line to it leaves this block, only the route on the bot's own map. An
@@ -390,7 +393,8 @@ void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uin
             if (!last.Valid)
                 router->Reset();            // an episode's first decision (its pose was reset with the episode)
             global = router->Update(*map, x, y, z, view.Objective.GetPositionX(), view.Objective.GetPositionY(),
-                view.Objective.GetPositionZ(), doors.Any() ? &doors : nullptr);
+                view.Objective.GetPositionZ(), doors.Any() ? &doors : nullptr, clearance);
+            pose.GlobalKept = router->KeptThisUpdate();
             Vi::GlobalReplan const did = router->ThisUpdate();
             pose.GlobalReplanned = did != Vi::GlobalReplan::None && did != Vi::GlobalReplan::Fresh;
             pose.GlobalContradiction = did == Vi::GlobalReplan::Contradiction;
@@ -438,7 +442,7 @@ void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uin
             if (Vi::KeptEnd(last.Kept, x, y, view.Facing, near[points]))
                 ++points;
             thread_local Vi::MapPlan plan;
-            Vi::PlanOnMap(*map, x, y, z, view.Facing, goalForward, goalRight, coarse, plan, near, points);
+            Vi::PlanOnMap(*map, x, y, z, view.Facing, goalForward, goalRight, coarse, plan, near, points, clearance);
             pose.RouteBody = Vi::PlanValueAt(plan, 0.0f, 0.0f);
             if (last.Valid)
             {

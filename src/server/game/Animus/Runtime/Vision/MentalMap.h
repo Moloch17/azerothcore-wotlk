@@ -137,13 +137,42 @@ namespace Animus::Vision
     /// ... and crossed at least this much of the cell, horizontally (a ray clipping a corner in front of a wall's
     /// face is no look at the cell).
     constexpr float FREE_CLEAR_SPAN = 0.5f;
-    /// **A wall hit's cell is the one behind its face** (2026-10-18): the hit point lies on the surface, so the cell
-    /// holding it is the floor's side about half the time, and every wall carried a yard of floor with it -- the nav
-    /// map audit's walls on the true route were 57-61 % a real wall's face, the passage beside it sealed. The point is
-    /// moved this far into the surface (against its horizontal normal; along the ray where the world gives none, a
-    /// door) before its cell is taken, so a cell is walled when the wall holds more than half of it, for a ray's hit
-    /// and the mesh's line between two.
-    constexpr float WALL_PUSH = 0.5f;
+    /// **The signed distance** (2026-10-18; MapCell::Dist, Weight): each 1-yd cell keeps, for each floor layer, how far
+    /// its centre lies from the nearest surface the rays met there -- positive in front, negative behind -- as a
+    /// weighted mean of the hits' point-to-plane distances (the hit's horizontal normal; along the ray where the world
+    /// gives none, a door), so a wall's face is placed to a fraction of a yard instead of to the cell its hit fell in
+    /// (the nav map audit: 57-61 % of the walls on failed trips' true routes were a real wall's face, a yard of floor
+    /// walled with it, the passage beside it sealed). A wall is a cell whose centre lies behind a surface (Dist < 0):
+    /// MAP_WALL_LOW / HIGH are derived from the distance, so every reader of the flags reads the same walls; the
+    /// planners read the distance itself as clearance (CellFactor). A hit writes the cells within SDF_FRONT in front of
+    /// its plane and SDF_BEHIND behind it (a thin wall's far side is not walled through), SDF_LATERAL along it; a ray
+    /// seen free through a cell, a floor hit on it or the body on it pull its distance up; a bump pulls it down.
+    /// Distances are SDF_UNIT steps (int8), weights saturate at SDF_WEIGHT_MAX so a wrong wall can still be undone.
+    constexpr float SDF_UNIT = 1.0f / 32.0f;
+    constexpr float SDF_FRONT = 1.5f;
+    constexpr float SDF_BEHIND = 1.0f;     // a full cell: some centre lies within it behind any face
+    constexpr float SDF_LATERAL = 0.75f;
+    /// A free look's distance: "nothing within this" (the most a hit writes in front). A pass or a floor hit within
+    /// SDF_THROUGH of a cell's centre is a look at the centre and pulls its distance toward SDF_FREE; one further off
+    /// only bounds it -- a free point r yards away puts the centre no deeper than r behind a face (the distance is
+    /// 1-Lipschitz) -- so seeing the floor at a wall's foot never wears the wall away.
+    constexpr float SDF_FREE = SDF_FRONT;
+    constexpr float SDF_THROUGH = 0.35f;
+    constexpr uint8_t SDF_WEIGHT_MAX = 32;
+    constexpr uint8_t SDF_HIT_WEIGHT = 2;      // a ray's own wall hit
+    constexpr uint8_t SDF_MESH_WEIGHT = 1;     // the mesh's line between two
+    constexpr uint8_t SDF_FREE_WEIGHT = 1;     // a pass, a floor hit
+    constexpr uint8_t SDF_BUMP_WEIGHT = 8;     // the body felt it
+    /// A wall the global route counts as a contradiction (GlobalField::RouteChanged): this much evidence behind it, and
+    /// this far behind the face -- one grazing hit at the edge of a frame does not turn a route round.
+    constexpr uint8_t SDF_CONFIRM_WEIGHT = 4;
+    constexpr float SDF_CONFIRM_DEPTH = 0.1f;
+    /// The mesh joins two neighbouring wall hits only when they are one face: their normals within this cosine, and
+    /// the line between them off that face by at most MESH_FACE_SLACK yards plus MESH_FACE_SHARE of its length -- the
+    /// two sides of a doorway seen square on are two faces, not one.
+    constexpr float MESH_FACE_COS = 0.85f;
+    constexpr float MESH_FACE_SLACK = 0.2f;
+    constexpr float MESH_FACE_SHARE = 0.1f;
 
     /// **The bumper** (MarkBumped, 2026-10-18): a body pinned against something the camera never wrote -- a wall
     /// missing from the map, a doodad with no floor recorded under it -- feels it, as a player does, and the map takes
@@ -198,8 +227,12 @@ namespace Animus::Vision
         /// EntityAgeBucket): how long before the cell was last seen the entity was.
         uint8_t Entity = 0;
         uint16_t Seen = 0;                          // the map second it was last seen, + 1; 0 never
+        /// Each floor layer's signed distance at the centre (SDF_UNIT steps; slot 0 for a cell with no floor known)
+        /// and its evidence (0: never measured).
+        int8_t Dist[2] = { 0, 0 };
+        uint8_t Weight[2] = { 0, 0 };
     };
-    static_assert(sizeof(MapCell) == 8, "a map cell is eight bytes");
+    static_assert(sizeof(MapCell) == 12, "a map cell is twelve bytes");
 
     [[nodiscard]] inline int16_t QuantiseFloor(float z)
     {
@@ -536,18 +569,24 @@ namespace Animus::Vision
         /// Stamp a look on `cell`, which Touch returned last (its tile is _lastTile, whose counters move).
         void MarkSeen(MapCell& cell, uint16_t stamp);
         void NoteGround(MapCell const& cell);
-        void WriteFloor(int32_t cx, int32_t cy, float z, uint16_t stamp, MapWriteStats* stats);
+        /// `centre`: how far the hit lies from the cell's centre, horizontally (SDF_THROUGH).
+        void WriteFloor(int32_t cx, int32_t cy, float z, uint16_t stamp, MapWriteStats* stats, float centre);
         void WriteEntity(MapCell& cell, Class what, uint16_t stamp);
         /// A wall hit at height `z` on 1-yd cell (cx, cy), when it is in the body's band of a floor (the cell's own,
         /// else a neighbour's, else the feet's); true when it was written.
-        bool WriteWall(int32_t cx, int32_t cy, float z, float feetZ, float bodyHeight, uint16_t stamp,
-            WallSource source);
+        /// A wall hit at (px, py), height `z`, its face's horizontal unit normal (nx, ny) facing the camera, when it is
+        /// in the body's band of a floor (the hit cell's own, else a neighbour's, else the feet's): the signed
+        /// distance of every cell round it (SDF_FRONT, SDF_BEHIND, `lateral` along the face) at `weight`. True when
+        /// it was written.
+        bool WriteWall(float px, float py, float z, float nx, float ny, float feetZ, float bodyHeight, uint16_t stamp,
+            WallSource source, uint8_t weight, float lateral);
         void NoteWallSource(int32_t cx, int32_t cy, WallSource source);
         /// The 1-yd cell (cx, cy) when its tile is the map's own (not borrowed), else null.
         [[nodiscard]] MapCell* OwnCell(int32_t cx, int32_t cy);
         /// An observation of `cell`'s floor layer `layer` (-1: the cell has no floor known) with nothing in the way:
         /// its wall, if it has one, is cleared at the frame's end (SettleFrame).
-        void NoteClear(int32_t cx, int32_t cy, MapCell const& cell, int32_t layer);
+        /// `centre`: the free point's (or the pass's nearest) distance from the cell's centre (SDF_THROUGH).
+        void NoteClear(int32_t cx, int32_t cy, MapCell const& cell, int32_t layer, float centre);
         /// The frame's end: the noted clears applied, except on or beside a cell with a wall written this frame; the
         /// MAP_WALL_FRAME marks removed; the frame's hazard hits written where no floor stands above them.
         void SettleFrame(MapWriteStats* stats);
@@ -615,6 +654,7 @@ namespace Animus::Vision
             int32_t X;
             int32_t Y;
             float Z;
+            float Centre;
         };
         std::vector<PendingClear> _frameClears;
         /// The frame's hazard hits (NoteHazard): the cell, the hit's height, and whether the cell is a far one.
@@ -635,6 +675,17 @@ namespace Animus::Vision
     [[nodiscard]] bool NearestFloor(MapCell const& cell, float feetZ, float& z);
     /// Whether a cell was ever seen (any look at all: a hit, a pass in the band, the body).
     [[nodiscard]] inline bool Known(MapCell const& cell) { return cell.Seen != 0; }
+    /// The floor layer of `cell` nearest `feetZ`, or -1 when it has none.
+    [[nodiscard]] int32_t NearestLayerOf(MapCell const& cell, float feetZ);
+    /// The signed distance (yards) of the layer the feet are nearest -- slot 0 on a cell with no floor known -- and
+    /// whether it was ever measured (Weight).
+    [[nodiscard]] bool ClearanceOf(MapCell const& cell, float feetZ, float& yards);
+    /// Layer `layer`'s wall (slot 0 with no floor) as the evidence confirms it: SDF_CONFIRM_WEIGHT and
+    /// SDF_CONFIRM_DEPTH behind the face.
+    [[nodiscard]] bool ConfirmedWall(MapCell const& cell, int32_t layer);
+    /// `yards` of signed distance at weight `weight` folded into layer `layer`'s (the weighted mean, the weight
+    /// saturating at SDF_WEIGHT_MAX), and the layer's wall flag set from its sign.
+    void FuseDistance(MapCell& cell, int32_t layer, float yards, uint8_t weight);
     /// How a merge treats a wall the newer source lacks on a layer both hold (MergeCell).
     enum class WallClears : uint8_t
     {

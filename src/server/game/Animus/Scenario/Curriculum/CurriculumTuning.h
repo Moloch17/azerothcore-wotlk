@@ -496,6 +496,14 @@ namespace Animus::Curriculum
             float Lost = 0.02f;
             float LostYards = 40.0f;
             float Revisit = 0.002f;
+            /// **Look around** (2026-10-18; RewardTerm::Explore, category Exploring): each 1-yd cell the seat's camera
+            /// looks at for the first time this episode (MentalMap::SearchedCells; its first decision's look is not
+            /// paid) earns Explore, until ExploreCap (nominal) an episode; the fade leaves ExploreFloor of it. At 20M
+            /// nav1_sight's look head was 92 % of its entropy's maximum -- the camera wandered, pointed more than 90
+            /// degrees off the way the body went half the time -- since nothing a look did was worth anything.
+            float Explore = 0.0005f;
+            float ExploreCap = 1.0f;
+            float ExploreFloor = 0.25f;
             /// 30 since 2026-10-18 (20 before): nav1_sight's long trips timed out (46% arrived on rung 2's longest
             /// bin at 130M), and a replayed failure starts the seat where one gave up.
             int32 ReplayShare = 30;
@@ -1407,6 +1415,9 @@ namespace Animus::Curriculum
             f("PointNav.Lost", tuning.PointNav.Lost);
             f("PointNav.LostYards", tuning.PointNav.LostYards);
             f("PointNav.Revisit", tuning.PointNav.Revisit);
+            f("PointNav.Explore", tuning.PointNav.Explore);
+            f("PointNav.ExploreCap", tuning.PointNav.ExploreCap);
+            f("PointNav.ExploreFloor", tuning.PointNav.ExploreFloor);
             f("PointNav.ReplayShare", tuning.PointNav.ReplayShare);
             f("PointNav.BedShare", tuning.PointNav.BedShare);
             f("PointNav.DropHurtYards", tuning.PointNav.DropHurtYards);

@@ -100,6 +100,14 @@ namespace Animus::Vision
     constexpr uint64_t GLOBAL_REPLAN_KNOWN = 2000;
     constexpr uint32_t GLOBAL_PATH_CHECK = 4096;
     constexpr float GLOBAL_CONTRADICTION_YARDS = 30.0f;
+    /// **The route is kept** (2026-10-18): a recompute only for new ground seen or the clock (Known, Clock) replaces
+    /// the field the body is following only when its cost from the body is lower by more than GLOBAL_KEEP_YARDS and
+    /// GLOBAL_KEEP_SHARE of the kept one's (KeepRoute's margin) -- otherwise two near-equal ways round a pillar or a
+    /// cliff trade places as each new look tips them, and the body walks back and forth between them (the nav
+    /// evaluation's failed trips: 46 replans a trip against 4.7 for the trips that arrived). A contradiction, a bump,
+    /// leaving the domain or another goal still replace it outright.
+    constexpr float GLOBAL_KEEP_YARDS = 5.0f;
+    constexpr float GLOBAL_KEEP_SHARE = 0.1f;
     constexpr float GLOBAL_GOAL_MOVED = 1.0f;
     /// The global route's coarse waypoint: the route's cell this many yards of walk from the body (the window plan's
     /// coarse walk reaches PLAN_COARSE_STEPS x COARSE_CELL).
@@ -178,6 +186,8 @@ namespace Animus::Vision
         /// The unknown-cell price (null: the default flat factor); held by pointer, read at a node's first touch.
         void SetUnknownCost(GlobalUnknownCost const* cost) { _unknownCost = cost; }
         void SetPricing(GlobalPricing const& pricing) { _pricing = pricing; }
+        /// The body's clearance (BodyClearance): a node's centre nearer a measured face is blocked. Before Begin.
+        void SetClearance(float clearance) { _clearance = clearance; }
         /// Starts the field to the goal at (gx, gy, gz), its domain round the goal and the body at (bx, by).
         void Begin(float gx, float gy, float gz, float bx, float by);
         /// Forgets the field (its blocks kept for reuse).
@@ -277,6 +287,7 @@ namespace Animus::Vision
         int32_t _targetX = 0;
         int32_t _targetY = 0;
         float _floorFactor = 1.0f;
+        float _clearance = PLAN_CLEARANCE;
         float _goalPointX = 0.0f;   // the goal (Begin), whose own cells stand clear (PLAN_GOAL_CLEAR)
         float _goalPointY = 0.0f;
         // Per domain tile: its block (-1 none), and its cells as fetched this call.
@@ -318,8 +329,9 @@ namespace Animus::Vision
         /// it routes the body: the goal's cell (or one of its eight neighbours) is known on the map, and the body's
         /// cost-to-go is reached. Nothing is planned (the field is cleared) while the goal is not known. `map` must
         /// not be written between this and the decision's other reads, and `blocking` must outlive them.
+        /// `clearance`: the body's (BodyClearance).
         bool Update(MentalMap const& map, float x, float y, float z, float gx, float gy, float gz,
-            GlobalBlocking const* blocking = nullptr);
+            GlobalBlocking const* blocking = nullptr, float clearance = PLAN_CLEARANCE);
         [[nodiscard]] GlobalField& Field() { return _field; }
         /// Recomputes this episode after its first plan, those of them a contradiction, and the last one's reason.
         [[nodiscard]] uint32_t Replans() const { return _replans; }
@@ -327,10 +339,17 @@ namespace Animus::Vision
         [[nodiscard]] GlobalReplan LastReplan() const { return _last; }
         /// What the last Update did: GlobalReplan::None when it kept the field.
         [[nodiscard]] GlobalReplan ThisUpdate() const { return _this; }
+        /// The route kept this update: a Known or Clock recompute's field did not undercut it by the margin
+        /// (GLOBAL_KEEP_*), and the field the body was following stayed; and how many times since Reset.
+        [[nodiscard]] bool KeptThisUpdate() const { return _keptThis; }
+        [[nodiscard]] uint32_t Kept() const { return _kept; }
 
     private:
         GlobalField _field;
+        GlobalField _trial;     // a Known or Clock recompute, made beside the field it may replace
         MapTiles _tiles;
+        bool _keptThis = false;
+        uint32_t _kept = 0;
         float _goalX = 0.0f;
         float _goalY = 0.0f;
         float _goalZ = 0.0f;

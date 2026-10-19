@@ -147,8 +147,11 @@ namespace Animus::Curriculum
         /// stall clock), the planner works in the body's configuration space (Vision::ConfigurationSpace), and the
         /// nav stages drop the compass: the route is the goal's only observation. The crop is unchanged. Still 7
         /// (2026-10-17, later): two scalars, goal_forward_yards and goal_right_yards, inserted before the seventeen
-        /// for the planner school's input (a learner finds them by name).
-        [[nodiscard]] uint32 Revision() const override { return 7; }
+        /// for the planner school's input (a learner finds them by name). 8 (2026-10-18): the bytes are revision 7's,
+        /// but the walls are a signed-distance map's (a cell walled when its centre lies behind a face; MentalMap's
+        /// SDF_*), the planners hold cells to the body's clearance instead of closing holes, and a hazard a floor hit
+        /// lands on goes: the wall and route channels mean other things.
+        [[nodiscard]] uint32 Revision() const override { return 8; }
         /// "map": { transport "bytes", height, width (Vision::CROP), cell (yards), tiers [{cell, bytes}...],
         /// tier_bytes (one tier's), channels (8), channel_names, map_bytes (every tier's), codes, code_names,
         /// code_channel, height_channel, height_step, height_zero, visited_channel, age_channel, age_scale, age_never,

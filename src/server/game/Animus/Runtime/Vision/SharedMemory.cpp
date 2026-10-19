@@ -151,7 +151,8 @@ void Animus::Vision::SharedMemory::MergeTile(Store& store, int64_t key, MapTile 
     for (std::size_t index = 0; index < MAP_TILE_CELLS; ++index)
     {
         MapCell cell = from.Cells[index];
-        if (!cell.Seen && !cell.Flags && cell.Floor[0] == NO_FLOOR && cell.Floor[1] == NO_FLOOR)
+        if (!cell.Seen && !cell.Flags && cell.Floor[0] == NO_FLOOR && cell.Floor[1] == NO_FLOOR && !cell.Weight[0]
+            && !cell.Weight[1])
             continue;
         // A body's own ground stays its own (the map block's ground counters and visited channel), and so is what
         // it saw standing there: a unit's class is a sighting of the moment, not a feature of the ground (kept, the

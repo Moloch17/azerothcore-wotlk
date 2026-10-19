@@ -94,7 +94,7 @@ namespace Animus::Curriculum
             AUDIT_TRUNCATED,        // 1: the true route was cut at AUDIT_SIDE_MAX cells across
             AUDIT_CELLS,            // the 1-yd cells of that way
             AUDIT_WALL,             // ... the map holds a wall in
-            AUDIT_CLOSED,           // ... the configuration space closed (a 1-yd hole between walls)
+            AUDIT_CLOSED,           // ... too narrow for the body (its centre within the clearance of a face)
             AUDIT_UNKNOWN,
             AUDIT_HAZARD,
             AUDIT_FLOOR,            // ... known floor or door (inflated or pinched included)
@@ -195,6 +195,11 @@ namespace Animus::Curriculum
             uint32 GlobalDecisions = 0;
             uint32 GlobalReplans = 0;
             uint32 GlobalContradictions = 0;
+            uint32 GlobalKept = 0;
+            // Looking around (PointNav.Explore): the map's searched cells at the last reward, and what was paid.
+            bool HasSearched = false;
+            uint32 LastSearched = 0;
+            float ExplorePaid = 0.0f;
             // The map audit (AuditField), made once at the episode's end by the first audit_* column read.
             bool Audited = false;
             std::array<float, AUDIT_COUNT> Audit{};

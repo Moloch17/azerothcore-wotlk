@@ -76,7 +76,8 @@ Animus::Curriculum::PointNavEncounter::PointNavEncounter(StageScenario& scenario
 std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::PointNavEncounter::RewardTerms() const
 {
     return { RewardTerm::Arrive, RewardTerm::StepCost, RewardTerm::Death, RewardTerm::FallHurt, RewardTerm::Drowned,
-        RewardTerm::Lost, RewardTerm::Revisit, RewardTerm::Stuck, RewardTerm::Wall, RewardTerm::Turning };
+        RewardTerm::Lost, RewardTerm::Revisit, RewardTerm::Stuck, RewardTerm::Wall, RewardTerm::Turning,
+        RewardTerm::Explore };
 }
 
 std::vector<float> Animus::Curriculum::PointNavEncounter::ParseList(std::string const& list)
@@ -155,6 +156,8 @@ void Animus::Curriculum::PointNavEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
         return s.RouteDecisions ? float(s.GlobalDecisions) / float(s.RouteDecisions) : 0.0f;
     });
     add("global_replans", [seatOf](Env const& env, uint32 seat) { return float(seatOf(env, seat).GlobalReplans); });
+    // The recomputes for new ground or the clock that did not undercut the route followed (GLOBAL_KEEP_*).
+    add("global_replans_kept", [seatOf](Env const& env, uint32 seat) { return float(seatOf(env, seat).GlobalKept); });
     add("global_replans_contradiction", [seatOf](Env const& env, uint32 seat)
     {
         return float(seatOf(env, seat).GlobalContradictions);
@@ -287,11 +290,12 @@ namespace
         KIND_HAZARD,
     };
 
-    AuditKind KindOf(float raw, float shaped)
+    /// `wall`: the map's code is a wall; else a blocked cell is one too narrow for the body (its clearance).
+    AuditKind KindOf(float raw, float shaped, bool wall)
     {
-        if (raw >= Animus::Vision::PLAN_BLOCKED)
+        if (wall && raw >= Animus::Vision::PLAN_BLOCKED)
             return KIND_WALL;
-        if (shaped >= Animus::Vision::PLAN_BLOCKED)
+        if (raw >= Animus::Vision::PLAN_BLOCKED || shaped >= Animus::Vision::PLAN_BLOCKED)
             return KIND_CLOSED;
         if (raw >= Animus::Vision::PLAN_COSTS[uint8_t(Animus::Vision::MapCode::Hazard)])
             return KIND_HAZARD;
@@ -394,7 +398,8 @@ void Animus::Curriculum::PointNavEncounter::RunAudit(Env const& env, uint32 seat
     float const bodyZ = grid.StandingZ(grid.CellOf(seat.LastX, seat.LastY));
     std::vector<float> raw(cells), shaped(cells), groundZ(cells);
     std::vector<uint32> bakeOf(cells);
-    std::vector<uint8> inBand(cells);
+    std::vector<uint8> inBand(cells), walled(cells);
+    float const clearance = state.Crop.Clearance;
     for (int32 row = 0; row < side; ++row)
         for (int32 col = 0; col < side; ++col)
         {
@@ -405,7 +410,8 @@ void Animus::Curriculum::PointNavEncounter::RunAudit(Env const& env, uint32 seat
             if (bake != Vi::TRAV_NO_CELL && grid.Ground[bake] != Vi::TRAV_NO_HEIGHT)
                 z = grid.StandingZ(bake);
             groundZ[at] = z;
-            raw[at] = Vi::CellFactor(window[at], z);
+            raw[at] = Vi::CellFactor(window[at], z, clearance);
+            walled[at] = Vi::CodeOf(window[at], z) == Vi::MapCode::Wall ? 1 : 0;
             // The goal's own cells stand clear, as both planners have them (PLAN_GOAL_CLEAR).
             if (raw[at] >= Vi::PLAN_BLOCKED && Vi::GoalClear(x0 + col, y0 + row, nav.Goal.GetPositionX(),
                 nav.Goal.GetPositionY()))
@@ -500,7 +506,7 @@ void Animus::Curriculum::PointNavEncounter::RunAudit(Env const& env, uint32 seat
             along += diagonal ? 1.4142136f : 1.0f;
         }
         seat.Audit[AUDIT_CELLS] += 1.0f;
-        AuditKind const kind = KindOf(raw[at], shaped[at]);
+        AuditKind const kind = KindOf(raw[at], shaped[at], walled[at]);
         switch (kind)
         {
             case KIND_FLOOR: seat.Audit[AUDIT_FLOOR] += 1.0f; break;
@@ -569,7 +575,7 @@ void Animus::Curriculum::PointNavEncounter::RunAudit(Env const& env, uint32 seat
         int32 const cx = x0 + int32(at % std::size_t(side));
         int32 const cy = y0 + int32(at / std::size_t(side));
         bytes[at] = uint8(Vi::CodeOf(window[at], groundZ[at]));
-        bytes[cells + at] = uint8(KindOf(raw[at], shaped[at]));
+        bytes[cells + at] = uint8(KindOf(raw[at], shaped[at], walled[at]));
         bytes[2 * cells + at] = raw[at] >= Vi::PLAN_BLOCKED ? uint8(map.WallSourceOf(cx, cy)) : 255;
         bytes[3 * cells + at] = bakeOf[at] == Vi::TRAV_NO_CELL ? 0 : uint8(grid.ClassOf(bakeOf[at]));
         bytes[4 * cells + at] = uint8((inBand[at] ? 1 : 0) | (bakeOf[at] != Vi::TRAV_NO_CELL
@@ -1098,6 +1104,21 @@ void Animus::Curriculum::PointNavEncounter::Reward(Env& env, uint32 seatIndex, P
     float const seconds = float(stepMs) / 1000.0f;
     ++seat.Decisions;
 
+    // Looking around (PointNav.Explore): the cells first looked at this episode since the last decision.
+    {
+        uint32 const searched = state.Map.SearchedCells();
+        ledger.SetShapingFloor(tuning.ExploreFloor);
+        if (seat.HasSearched && searched > seat.LastSearched && seat.ExplorePaid < tuning.ExploreCap)
+        {
+            float const pay = std::min(tuning.Explore * float(searched - seat.LastSearched),
+                tuning.ExploreCap - seat.ExplorePaid);
+            seat.ExplorePaid += pay;
+            ledger.Add(RewardTerm::Explore, pay);
+        }
+        seat.HasSearched = true;
+        seat.LastSearched = searched;
+    }
+
     // The clock, and a death (paid each time; the seat rises at the start, Update). Drowning is the death under
     // water the scenario noted (SeatState::Drowned), paid once.
     CombatTally& tally = state.Combat;
@@ -1362,6 +1383,7 @@ void Animus::Curriculum::PointNavEncounter::WriteLabels(Env const& env, uint32 s
         seat.GlobalDecisions += pose.RouteGlobal ? 1 : 0;
         seat.GlobalReplans += pose.GlobalReplanned ? 1 : 0;
         seat.GlobalContradictions += pose.GlobalContradiction ? 1 : 0;
+        seat.GlobalKept += pose.GlobalKept ? 1 : 0;
     }
     seat.HasLabelPos = true;
     seat.LabelX = x;

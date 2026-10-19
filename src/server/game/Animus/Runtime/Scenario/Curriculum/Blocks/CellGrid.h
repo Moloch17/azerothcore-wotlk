@@ -73,6 +73,10 @@ namespace Animus::Curriculum
         /// The 1-yd cells the bumper walled this episode so far (Vision::MentalMap::BumpedCells: the body pinned
         /// against a wall the map lacked), the bumped_cells column (PointNavEncounter).
         uint32 BumpedCells = 0;
+        /// The body's clearance the plans were made with (Vision::BodyClearance), and whether the global route kept
+        /// the field it was following against a recompute this decision (GlobalRoute::KeptThisUpdate).
+        float Clearance = Vision::PLAN_CLEARANCE;
+        bool GlobalKept = false;
     };
 
     /// A place the sim holds for a cell goal: the world point latched when the cell was chosen.
