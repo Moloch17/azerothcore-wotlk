@@ -396,6 +396,9 @@ void Animus::Curriculum::PointNavEncounter::RunAudit(Env const& env, uint32 seat
         for (int32 dir = 0; dir < Vi::TRAV_DIRS; ++dir)
         {
             uint32 const next = grid.EdgeTarget(node, dir);
+            Vi::TravEdge const edge = Vi::EdgeKind(grid.Edges[std::size_t(node) * Vi::TRAV_DIRS + dir]);
+            if (WalksOnly() && (edge == Vi::TravEdge::DropSafe || edge == Vi::TravEdge::DropHurt))
+                continue;
             if (next != Vi::TRAV_NO_CELL && nav.Cost[next] < bestCost)
             {
                 best = next;
@@ -914,6 +917,7 @@ void Animus::Curriculum::PointNavEncounter::BuildPairs(Env const& env, Map* map,
     Vi::MapVisionWorld const world(map, bot ? bot->GetPhaseMask() : 1);
     std::mt19937 rng(0x9E3779B9u ^ (uint32(_scenario.Data(env).Arena) * 2654435761u) ^ grid.MapId);
     std::vector<float> cost;
+    bool const walking = WalksOnly();
     std::vector<dtPolyRef> polys(4096);
     std::vector<float> corners(3 * 512);
     std::vector<uint8> trapSeen(grid.Nodes(), 0);
@@ -930,11 +934,22 @@ void Animus::Curriculum::PointNavEncounter::BuildPairs(Env const& env, Map* map,
             goalRef, goalAt);
         if (query && !goalOnMesh)
             continue;       // the bake's floor and the navmesh's disagree here: no goal
-        for (uint32 tries = 0, made = 0; tries < 4 * PAIR_STARTS && made < PAIR_STARTS; ++tries)
+        // The starts, evenly over the route's length bands (a uniform start is hundreds of yards off in a big
+        // dungeon: the Deadmines' median pair was 365 yd and 13 corners, 52 of 5,803 within rung 0's 40 yd).
+        constexpr float BANDS[] = { 5.0f, 20.0f, 60.0f, 120.0f, 250.0f, 400.0f };
+        constexpr uint32 BAND_COUNT = uint32(std::size(BANDS)) - 1;
+        std::array<std::vector<uint32>, BAND_COUNT> banded;
+        for (uint32 node : grid.Reachable)
+            if (node != goal && cost[node] < Vi::TRAV_UNREACHABLE)
+                for (uint32 band = 0; band < BAND_COUNT; ++band)
+                    if (cost[node] >= BANDS[band] && cost[node] < BANDS[band + 1])
+                        banded[band].push_back(node);
+        std::vector<uint32> starts;
+        for (auto const& band : banded)
+            for (uint32 i = 0; i < PAIR_STARTS / BAND_COUNT && !band.empty(); ++i)
+                starts.push_back(band[rng() % band.size()]);
+        for (uint32 from : starts)
         {
-            uint32 const from = grid.Reachable[rng() % grid.Reachable.size()];
-            if (from == goal || cost[from] >= Vi::TRAV_UNREACHABLE || cost[from] <= 0.0f)
-                continue;
             Position const startPoint = CellPoint(grid, from, false);
             dtPolyRef startRef = 0;
             float startAt[3];
@@ -964,6 +979,9 @@ void Animus::Curriculum::PointNavEncounter::BuildPairs(Env const& env, Map* map,
                 for (int32 dir = 0; dir < Vi::TRAV_DIRS; ++dir)
                 {
                     uint32 const next = grid.EdgeTarget(node, dir);
+                    Vi::TravEdge const edge = Vi::EdgeKind(grid.Edges[std::size_t(node) * Vi::TRAV_DIRS + dir]);
+                    if (walking && (edge == Vi::TravEdge::DropSafe || edge == Vi::TravEdge::DropHurt))
+                        continue;
                     if (next != Vi::TRAV_NO_CELL && cost[next] < (best == Vi::TRAV_NO_CELL ? cost[node] : cost[best]))
                     {
                         best = next;
@@ -1064,7 +1082,6 @@ void Animus::Curriculum::PointNavEncounter::BuildPairs(Env const& env, Map* map,
                     trapSeen[touched] = 0;
             }
             pool.Pairs.push_back(pair);
-            ++made;
         }
     }
     // The measures beside the bake, for reading a rung's fits off-line: <trav>/<map>-<arena>.<stage>.pairs.csv.
