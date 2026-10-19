@@ -231,7 +231,7 @@ int main(int argc, char** argv)
                 if (m >= 0 && !seen[size_t(m)])
                 {
                     seen[size_t(m)] = 1;
-                    bakeLinks = uint32_t(m) == b;
+                    bakeLinks = bakeLinks || uint32_t(m) == b;
                     open.push(uint32_t(m));
                 }
             }

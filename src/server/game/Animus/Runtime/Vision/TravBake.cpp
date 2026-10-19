@@ -335,7 +335,24 @@ namespace
                 float const dz = zTo - zFrom;
                 TravEdge kind = TravEdge::None;
                 float hurt = 0.0f;
-                if (water[from] && water[to])
+                // Stairs: a rise or fall of more than a step across the 2-yd edge that is two steps at most, the
+                // floor halfway along it within a step of both ends (a staircase's treads: the controller climbs it a
+                // tread at a time; read whole, a tower's spiral stair was a jump up and a drop down, and its floors
+                // were reached only by falling from the top).
+                bool stairs = false;
+                if (!water[from] && !water[to] && std::fabs(dz) > TRAV_STEP_UP && std::fabs(dz) <= 2.0f * TRAV_STEP_UP)
+                {
+                    float const midX = 0.5f * (fromX + grid.CentreX(toCell));
+                    float const midY = 0.5f * (fromY + grid.CentreY(toCell));
+                    float const top = std::max(zFrom, zTo);
+                    float const mid = query.FloorBelow(midX, midY, top + PROBE_RISE, std::fabs(dz) + 2.0f * PROBE_RISE);
+                    stairs = mid > Animus::Movement::INVALID_FLOOR + 1.0f && std::fabs(mid - zFrom) <= TRAV_STEP_UP
+                        && std::fabs(zTo - mid) <= TRAV_STEP_UP
+                        && query.FloorNormalZ(midX, midY, mid) >= TRAV_WALKABLE_NORMAL_Z;
+                }
+                if (stairs)
+                    kind = TravEdge::Walk;
+                else if (water[from] && water[to])
                     kind = std::fabs(dz) <= JUMP_RISE ? TravEdge::Swim : TravEdge::None;
                 else if (!water[from] && water[to])
                     kind = dz <= JUMP_RISE ? TravEdge::Swim : TravEdge::None;   // a drop into water hurts nobody

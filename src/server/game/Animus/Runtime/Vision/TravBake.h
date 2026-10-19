@@ -76,7 +76,7 @@ namespace Animus::Vision
     /// two yards, stairs more.
     constexpr float TRAV_STEP_FROM = 0.6f;
     /// The bake's file format (the cache is rebaked when it changes).
-    constexpr uint32_t TRAV_VERSION = 2;    // 2: floor layers (TRAV_LAYERS)
+    constexpr uint32_t TRAV_VERSION = 3;    // 2: floor layers (TRAV_LAYERS); 3: stairs climbed in two steps
     /// Most cells a side the bake allows (a 2048-yd box): a dungeon is a few hundred.
     constexpr int32_t TRAV_MAX_SIDE = 1024;
     /// Cells a side of a label grid (the map crop's CROP), and the coarse tier's cell.
