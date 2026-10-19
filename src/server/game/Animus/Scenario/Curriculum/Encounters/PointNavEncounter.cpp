@@ -859,6 +859,12 @@ namespace
     }
 }
 
+bool Animus::Curriculum::PointNavEncounter::WalksOnly() const
+{
+    uint8 const kind = _scenario.Stage().PairKind;
+    return kind == 1 || kind == 2;
+}
+
 Animus::Curriculum::PointNavEncounter::PairPool const* Animus::Curriculum::PointNavEncounter::EnsurePairs(
     Env const& env, Map* map, Player const* bot, Vision::TravGrid const& grid)
 {
@@ -916,7 +922,7 @@ void Animus::Curriculum::PointNavEncounter::BuildPairs(Env const& env, Map* map,
     for (uint32 g = 0; g < goals; ++g)
     {
         uint32 const goal = grid.Reachable[rng() % grid.Reachable.size()];
-        Vi::CostToGo(grid, goal, tuning.DropHurtYards, cost);
+        Vi::CostToGo(grid, goal, tuning.DropHurtYards, cost, !WalksOnly());
         Position const goalPoint = CellPoint(grid, goal, false);
         dtPolyRef goalRef = 0;
         float goalAt[3];
@@ -1061,6 +1067,22 @@ void Animus::Curriculum::PointNavEncounter::BuildPairs(Env const& env, Map* map,
             ++made;
         }
     }
+    // The measures beside the bake, for reading a rung's fits off-line: <trav>/<map>-<arena>.<stage>.pairs.csv.
+    {
+        std::filesystem::path const path = std::filesystem::path(_scenario.DataDir()) / "trav"
+            / Acore::StringFormat("{}.{}.pairs.csv", grid.Name, _scenario.Name());
+        std::ofstream out(path);
+        if (out)
+        {
+            out << "start,goal,route,straight,rise,corners,turn_degrees,levels,drops,hurt_drops,max_drop,swim_yards,"
+                   "in_sight,nav_walks,trap_near\n";
+            for (NavPair const& pair : pool.Pairs)
+                out << pair.Start << ',' << pair.Goal << ',' << pair.Route << ',' << pair.Straight << ',' << pair.Rise
+                    << ',' << uint32(pair.Corners) << ',' << pair.TurnDegrees << ',' << uint32(pair.Levels) << ','
+                    << uint32(pair.Drops) << ',' << uint32(pair.HurtDrops) << ',' << pair.MaxDrop << ','
+                    << pair.SwimYards << ',' << pair.InSight << ',' << pair.NavWalks << ',' << pair.TrapNear << '\n';
+        }
+    }
     uint32 inSight = 0, levels = 0, drops = 0, traps = 0;
     uint32 fits[RUNGS] = {};
     for (NavPair const& pair : pool.Pairs)
@@ -1101,12 +1123,11 @@ float Animus::Curriculum::PointNavEncounter::PairMiss(NavPair const& pair, uint3
     range(float(pair.Corners), 0.0f, far ? FAR_CORNERS[rung] : CORNERS[rung]);
     range(float(pair.TurnDegrees), 0.0f, far ? FAR_TURNING[rung] : TURNING[rung]);
     float const detour = pair.Route / std::max(0.5f, pair.Straight);
-    bool const flat = std::fabs(pair.Rise) <= 3.0f && pair.Levels == 0 && pair.Drops == 0;
     switch (kind)
     {
-        case 1:     // sight: a point in view on the same level, then further and partly out of view
+        case 1:     // sight: a point in view, walking, then further and partly out of view
         {
-            require(flat);
+            require(pair.Drops == 0);
             require(pair.SwimYards <= 0.0f);
             constexpr float LOW[RUNGS] = { 5.0f, 20.0f, 40.0f, 60.0f };
             constexpr float HIGH[RUNGS] = { 20.0f, 60.0f, 120.0f, 250.0f };
@@ -1115,9 +1136,9 @@ float Animus::Curriculum::PointNavEncounter::PairMiss(NavPair const& pair, uint3
                 require(pair.InSight);
             break;
         }
-        case 2:     // detour: the straight line blocked, the way round longer at each rung, on one level
-        {
-            require(flat);
+        case 2:     // detour: the straight line blocked, the way round longer at each rung, walking (ramps and stairs
+        {           // are walking; drops are nav3's)
+            require(pair.Drops == 0);
             require(pair.SwimYards <= 0.0f);
             require(!pair.InSight);
             constexpr float LOW[RUNGS] = { 10.0f, 20.0f, 30.0f, 40.0f };
@@ -1228,7 +1249,7 @@ bool Animus::Curriculum::PointNavEncounter::DrawFromPool(Env& env, PairPool cons
     nav.PairValid = true;
     nav.StartCell = pair.Start;
     nav.GoalCell = pair.Goal;
-    Vision::CostToGo(grid, nav.GoalCell, tuning.DropHurtYards, nav.Cost);
+    Vision::CostToGo(grid, nav.GoalCell, tuning.DropHurtYards, nav.Cost, !WalksOnly());
     nav.Start = CellPoint(grid, nav.StartCell, false);
     nav.GoalAtBed = grid.ClassOf(nav.GoalCell) == Vision::TravClass::Water
         && Uniform(env) * 100.0f < float(tuning.BedShare);
@@ -1297,7 +1318,7 @@ bool Animus::Curriculum::PointNavEncounter::DrawPair(Env& env, Map* map, Player*
                 failure.Where.GetPositionZ());
             if (failure.GoalCell < grid.Nodes() && start != Vision::TRAV_NO_CELL)
             {
-                Vision::CostToGo(grid, failure.GoalCell, tuning.DropHurtYards, nav.Cost);
+                Vision::CostToGo(grid, failure.GoalCell, tuning.DropHurtYards, nav.Cost, !WalksOnly());
                 if (nav.Cost[start] < Vision::TRAV_UNREACHABLE)
                 {
                     nav.GoalCell = failure.GoalCell;
@@ -1355,7 +1376,7 @@ bool Animus::Curriculum::PointNavEncounter::DrawPair(Env& env, Map* map, Player*
         for (uint32 attempt = 0; attempt < GOAL_TRIES && nav.StartCell == Vision::TRAV_NO_CELL; ++attempt)
         {
             uint32 const goal = drawable[pick(drawable.size())];
-            Vision::CostToGo(grid, goal, tuning.DropHurtYards, nav.Cost);
+            Vision::CostToGo(grid, goal, tuning.DropHurtYards, nav.Cost, !WalksOnly());
             Position const goalPoint = CellPoint(grid, goal, false);
             fits.clear();
             for (uint32 cell : drawable)
@@ -1400,7 +1421,7 @@ bool Animus::Curriculum::PointNavEncounter::DrawPair(Env& env, Map* map, Player*
             if (bestCell == Vision::TRAV_NO_CELL)
                 return false;
             // The nearest fit's goal may be an earlier try's: its cost map again.
-            Vision::CostToGo(grid, nav.GoalCell, tuning.DropHurtYards, nav.Cost);
+            Vision::CostToGo(grid, nav.GoalCell, tuning.DropHurtYards, nav.Cost, !WalksOnly());
             nav.StartCell = bestCell;
         }
         nav.Start = CellPoint(grid, nav.StartCell, false);
@@ -1500,7 +1521,7 @@ void Animus::Curriculum::PointNavEncounter::Update(Env& env)
         if (cell != Vision::TRAV_NO_CELL && cell != nav.GoalCell)
         {
             nav.GoalCell = cell;
-            Vision::CostToGo(*nav.Grid, cell, _scenario.Tuning().PointNav.DropHurtYards, nav.Cost);
+            Vision::CostToGo(*nav.Grid, cell, _scenario.Tuning().PointNav.DropHurtYards, nav.Cost, !WalksOnly());
             nav.CStart = nav.StartCell == Vision::TRAV_NO_CELL ? Vision::TRAV_UNREACHABLE : nav.Cost[nav.StartCell];
         }
         return;

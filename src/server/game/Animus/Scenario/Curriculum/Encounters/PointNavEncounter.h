@@ -310,6 +310,10 @@ namespace Animus::Curriculum
         [[nodiscard]] Vision::TravGrid const* EnsureGrid(Env const& env, Map* map, Player const* bot) const;
         /// The pair draw (sec 2): the goal, its cost map and the start, into `nav`. False when the bake has no pair.
         bool DrawPair(Env& env, Map* map, Player* bot, EnvNav& nav);
+        /// A walking stage (PairKind sight or detour): its pairs and its true route take no drop -- ramps and stairs
+        /// are walking, drops are the vertical stage's (the cheapest route through the Deadmines dropped in 4,621 of
+        /// 6,200 pairs).
+        [[nodiscard]] bool WalksOnly() const;
         /// The arena's pair pool, built on first use (BuildPairs) under _poolLock; null when it has no pair.
         [[nodiscard]] PairPool const* EnsurePairs(Env const& env, Map* map, Player const* bot,
             Vision::TravGrid const& grid);

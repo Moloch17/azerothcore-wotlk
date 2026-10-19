@@ -580,7 +580,8 @@ Animus::Vision::TravGrid const* Animus::Vision::TravRegistry::Ensure(TravBakeReq
     return raw;
 }
 
-void Animus::Vision::CostToGo(TravGrid const& grid, uint32_t goal, float dropHurtYards, std::vector<float>& out)
+void Animus::Vision::CostToGo(TravGrid const& grid, uint32_t goal, float dropHurtYards, std::vector<float>& out,
+    bool drops)
 {
     uint32_t const nodes = grid.Nodes();
     out.assign(nodes, TRAV_UNREACHABLE);
@@ -611,7 +612,8 @@ void Animus::Vision::CostToGo(TravGrid const& grid, uint32_t goal, float dropHur
                 std::size_t const slot = std::size_t(from) * TRAV_DIRS + std::size_t(TRAV_OPPOSITE[dir]);
                 uint8_t const edge = grid.Edges[slot];
                 TravEdge const kind = EdgeKind(edge);
-                if (kind == TravEdge::None || EdgeLayer(edge) != layer)
+                if (kind == TravEdge::None || EdgeLayer(edge) != layer
+                    || (!drops && (kind == TravEdge::DropSafe || kind == TravEdge::DropHurt)))
                     continue;
                 float const next = cost + TravEdgeCost(kind, TravGrid::StepYards(dir), grid.EdgeHurt[slot],
                     dropHurtYards);

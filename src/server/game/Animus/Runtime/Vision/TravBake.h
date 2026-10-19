@@ -361,7 +361,9 @@ namespace Animus::Vision
 
     /// **The route cost-to-go** from every node to node `goal`, yards (TRAV_UNREACHABLE where no route reaches it;
     /// edges are directed, so this is Dijkstra over the reversed edges from the goal). `out` is sized to the nodes.
-    void CostToGo(TravGrid const& grid, uint32_t goal, float dropHurtYards, std::vector<float>& out);
+    /// `drops` false: walking only -- no drop edge (a walking stage's true route, PointNavEncounter::WalksOnly).
+    void CostToGo(TravGrid const& grid, uint32_t goal, float dropHurtYards, std::vector<float>& out,
+        bool drops = true);
 
     /// **A label grid** (CONTRACT.md sec 3.1): TRAV_LABEL_SIDE x TRAV_LABEL_SIDE cells of `cell` yards in the map
     /// crop's frame -- heading-up for `yaw`, row 0 the furthest ahead, column 0 the furthest left, the body at the
