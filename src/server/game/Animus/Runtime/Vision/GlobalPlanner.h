@@ -34,9 +34,10 @@
 /// no floor known (unknown, or seen free with no floor hit) is one node that carries the height of the node it was
 /// reached from (the last to lower its value; the search settles it once). A step from a node at height h into a
 /// neighbouring cell goes to each of that cell's floor layers the body could walk between -- walking from the neighbour
-/// onto h it may rise at most GLOBAL_STEP_UP and drop at most GLOBAL_STEP_DOWN (the search runs from the goal, so the
-/// walk is the reverse of the relaxation) -- or to its floorless node at h. A floor layer out of that band is no wall
-/// either: it is another storey, and no edge.
+/// onto h it may rise at most GLOBAL_STEP_UP and step down at most GLOBAL_STEP_DOWN, or drop further off a ledge short
+/// of a lethal fall at a drop's price (GLOBAL_DROP_*; the search runs from the goal, so the walk is the reverse of the
+/// relaxation) -- or to its floorless node at h. A floor layer out of that band is no wall either: it is another
+/// storey, and no edge.
 ///
 /// **Costs as the fine plan's** (PLAN_COSTS): floor and door 1, unknown PLAN_UNKNOWN 2 (GlobalUnknownCost: the hook a
 /// learned price of unseen cells plugs into), hazard 5, wall 100, a node's wall the wall of ITS layer (MAP_WALL_LOW for
@@ -80,6 +81,14 @@ namespace Animus::Vision
     /// The most a step from a cell onto its neighbour may rise and drop, yards (the walk's direction).
     constexpr float GLOBAL_STEP_UP = 1.5f;
     constexpr float GLOBAL_STEP_DOWN = 3.0f;
+    /// **Drops** (2026-10-19): past GLOBAL_STEP_DOWN a step down is a drop off a ledge onto a floor the map holds
+    /// below -- planned as the bake plans one (TravBake's DropSafe and DropHurt: one way, up to the lethal height
+    /// FALL_LETHAL_FROM, not included), priced at the step's length plus GLOBAL_DROP_SURCHARGE yards plus the fall's
+    /// damage (Player::HandleFall's line, FALL_DAMAGE_*) at GLOBAL_DROP_HURT_YARDS a whole health bar (the bake's
+    /// PointNav.DropHurtYards). A landing the map has never seen is no floor and plans no drop; climbing back stays
+    /// GLOBAL_STEP_UP. Before, any step down past 3 yd was refused and every drop a bot took was an accident.
+    constexpr float GLOBAL_DROP_SURCHARGE = 2.0f;
+    constexpr float GLOBAL_DROP_HURT_YARDS = 100.0f;
     /// A body or goal stands on a cell's floor layer within this of its feet (the fine plan's band).
     constexpr float GLOBAL_ATTACH_BAND = PLAN_HEIGHT_BAND;
     /// The domain's margin past the kept tiles, and its cap either side of the body-goal box, in tiles.

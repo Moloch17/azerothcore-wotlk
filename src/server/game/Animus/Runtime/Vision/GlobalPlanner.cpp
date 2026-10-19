@@ -359,14 +359,15 @@ bool Animus::Vision::GlobalField::Step()
         CellOfNode(top.Node, cx, cy, slot);
         float const height = FloorHeight(_height[at]);
         float const half = 0.5f * _factor[at];
-        auto const relax = [&](int32_t nx, int32_t ny, int32_t nslot, float nz, int32_t dir, bool carried)
+        auto const relax = [&](int32_t nx, int32_t ny, int32_t nslot, float nz, int32_t dir, bool carried,
+            float extra)
         {
             int32_t const next = NodeOf(nx, ny, nslot);
             std::size_t const n = std::size_t(next);
             if (_state[n] & NODE_SETTLED)
                 return;
             Touch(next, nx, ny, nslot, nz);
-            float const candidate = top.Value + DIST[dir] * (half + 0.5f * _factor[n]);
+            float const candidate = top.Value + DIST[dir] * (half + 0.5f * _factor[n]) + extra;
             if (candidate >= _value[n])
                 return;
             _value[n] = candidate;
@@ -387,7 +388,7 @@ bool Animus::Vision::GlobalField::Step()
             MapCell const cell = CellAt(nx, ny);
             if (!HasFloor(cell))
             {
-                relax(nx, ny, 0, height, dir, true);
+                relax(nx, ny, 0, height, dir, true, 0.0f);
                 continue;
             }
             for (int32_t layer = 0; layer < 2; ++layer)
@@ -395,11 +396,22 @@ bool Animus::Vision::GlobalField::Step()
                 if (cell.Floor[layer] == NO_FLOOR)
                     continue;
                 float const floor = FloorHeight(cell.Floor[layer]);
-                // Walking from the neighbour's floor onto this node: a rise of height - floor.
+                // Walking from the neighbour's floor onto this node: a rise of height - floor; a step down past
+                // GLOBAL_STEP_DOWN a drop off the neighbour's ledge onto this floor, priced as the bake's.
                 float const rise = height - floor;
-                if (rise > GLOBAL_STEP_UP || -rise > GLOBAL_STEP_DOWN)
+                if (rise > GLOBAL_STEP_UP)
                     continue;
-                relax(nx, ny, layer, floor, dir, false);
+                float extra = 0.0f;
+                if (-rise > GLOBAL_STEP_DOWN)
+                {
+                    float const drop = -rise;
+                    if (drop >= FALL_LETHAL_FROM)
+                        continue;
+                    float const hurt = drop < FALL_DAMAGE_FROM ? 0.0f
+                        : std::clamp(FALL_DAMAGE_SLOPE * drop + FALL_DAMAGE_INTERCEPT, 0.0f, 1.0f);
+                    extra = GLOBAL_DROP_SURCHARGE + hurt * GLOBAL_DROP_HURT_YARDS;
+                }
+                relax(nx, ny, layer, floor, dir, false, extra);
             }
         }
         return true;

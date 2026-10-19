@@ -115,7 +115,8 @@ namespace
         FileHeader header;
         in.read(reinterpret_cast<char*>(&header), sizeof(header));
         if (!in || header.Magic != TRAV_MAGIC || header.Version != TRAV_VERSION || header.MapId != grid.MapId
-            || header.Digest != digest || header.Columns == 0 || header.Rows == 0
+            || header.Digest != digest || header.Reserved[0] != uint32_t(TRAV_LAYERS) || header.Columns == 0
+            || header.Rows == 0
             || header.Columns > uint32_t(TRAV_MAX_SIDE) || header.Rows > uint32_t(TRAV_MAX_SIDE))
             return false;
         grid.Columns = int32_t(header.Columns);
@@ -123,13 +124,13 @@ namespace
         grid.Box = { header.Box[0], header.Box[1], header.Box[2], header.Box[3] };
         grid.Seed = header.Seed;
         grid.Digest = header.Digest;
-        std::size_t const cells = grid.Cells();
-        if (!ReadAll(in, grid.Classes, cells) || !ReadAll(in, grid.Ground, cells) || !ReadAll(in, grid.Liquid, cells)
-            || !ReadAll(in, grid.Edges, cells * TRAV_DIRS) || !ReadAll(in, grid.EdgeHurt, cells * TRAV_DIRS)
+        std::size_t const nodes = grid.Nodes();
+        if (!ReadAll(in, grid.Classes, nodes) || !ReadAll(in, grid.Ground, nodes) || !ReadAll(in, grid.Liquid, nodes)
+            || !ReadAll(in, grid.Edges, nodes * TRAV_DIRS) || !ReadAll(in, grid.EdgeHurt, nodes * TRAV_DIRS)
             || !ReadAll(in, grid.Reachable, header.Reachable))
             return false;
-        for (uint32_t cell : grid.Reachable)
-            if (cell >= cells)
+        for (uint32_t node : grid.Reachable)
+            if (node >= nodes)
                 return false;
         return true;
     }
@@ -157,6 +158,7 @@ namespace
             header.Box[3] = grid.Box.MaxY;
             header.Digest = grid.Digest;
             header.Reachable = uint32_t(grid.Reachable.size());
+            header.Reserved[0] = uint32_t(TRAV_LAYERS);
             out.write(reinterpret_cast<char const*>(&header), sizeof(header));
             WriteAll(out, grid.Classes);
             WriteAll(out, grid.Ground);
@@ -190,122 +192,144 @@ namespace
     {
         Map* map = request.World;
         Animus::Movement::MapWorldQuery const query(map, request.PhaseMask, false);
-        uint32_t const cells = grid.Cells();
-        grid.Classes.assign(cells, uint8_t(TravClass::Unknown));
-        grid.Ground.assign(cells, TRAV_NO_HEIGHT);
-        grid.Liquid.assign(cells, TRAV_NO_HEIGHT);
-        grid.Edges.assign(std::size_t(cells) * TRAV_DIRS, uint8_t(TravEdge::None));
-        grid.EdgeHurt.assign(std::size_t(cells) * TRAV_DIRS, 0.0f);
+        uint32_t const nodes = grid.Nodes();
+        grid.Classes.assign(nodes, uint8_t(TravClass::Unknown));
+        grid.Ground.assign(nodes, TRAV_NO_HEIGHT);
+        grid.Liquid.assign(nodes, TRAV_NO_HEIGHT);
+        grid.Edges.assign(std::size_t(nodes) * TRAV_DIRS, uint8_t(TravEdge::None));
+        grid.EdgeHurt.assign(std::size_t(nodes) * TRAV_DIRS, 0.0f);
         grid.Reachable.clear();
 
-        enum Probe : uint8_t { UNPROBED = 0, NO_GROUND, GROUND };
-        std::vector<uint8_t> probed(cells, UNPROBED);
-        std::vector<uint8_t> water(cells, 0);
-        std::vector<uint8_t> blocked(cells, 0);         // magma, slime or too steep: never entered
-        std::vector<uint8_t> entered(cells, 0);
-        std::vector<uint8_t> walkIn(cells, 0);          // entered by something other than a jump
-        std::vector<uint8_t> jumpIn(cells, 0);
-        std::vector<float> climbIn(cells, std::numeric_limits<float>::infinity());    // the least walk-in climb
-        std::vector<uint8_t> worstDrop(cells, 0);       // 1 safe, 2 hurt, 3 lethal: the worst drop leaving the cell
-        // The wall test is symmetric, so each undirected pair is cast once: a cell's +x, +y, +x+y and +x-y lines
-        // (directions 0, 2, 4, 5), -1 untested, 0 blocked, 1 clear.
-        std::vector<int8_t> lineClear(std::size_t(cells) * 4, int8_t(-1));
-        auto const lineSlot = [&](uint32_t cell, int32_t dir, uint32_t& owner, uint32_t& slot)
+        std::vector<uint8_t> water(nodes, 0);
+        std::vector<uint8_t> blocked(nodes, 0);         // magma, slime or too steep: never entered
+        std::vector<uint8_t> entered(nodes, 0);
+        std::vector<uint8_t> walkIn(nodes, 0);          // entered by something other than a jump
+        std::vector<uint8_t> jumpIn(nodes, 0);
+        std::vector<float> climbIn(nodes, std::numeric_limits<float>::infinity());    // the least walk-in climb
+        std::vector<uint8_t> worstDrop(nodes, 0);       // 1 safe, 2 hurt, 3 lethal: the worst drop leaving the node
+        // The wall test is symmetric, so each undirected pair is cast once: a node's +x, +y, +x+y and +x-y lines
+        // (directions 0, 2, 4, 5) to each layer of the cell there, -1 untested, 0 blocked, 1 clear.
+        std::vector<int8_t> lineClear(std::size_t(nodes) * 4 * TRAV_LAYERS, int8_t(-1));
+        auto const lineSlot = [&](uint32_t from, uint32_t to, int32_t dir) -> int8_t&
         {
-            if (dir == 0 || dir == 2 || dir == 4 || dir == 5)
-            {
-                owner = cell;
-                slot = dir == 0 ? 0 : dir == 2 ? 1 : dir == 4 ? 2 : 3;
-                return;
-            }
-            // The other end owns the line: -x is the neighbour's +x, -y its +y, -x-y its +x+y, -x+y its +x-y.
-            owner = grid.Neighbour(cell, dir);
-            slot = dir == 1 ? 0 : dir == 3 ? 1 : dir == 7 ? 2 : 3;
+            bool const own = dir == 0 || dir == 2 || dir == 4 || dir == 5;
+            // The other end owns a line the other way: -x is the neighbour's +x, -y its +y, -x-y its +x+y, -x+y
+            // its +x-y.
+            uint32_t const owner = own ? from : to;
+            uint32_t const other = own ? to : from;
+            int32_t const slot = own ? (dir == 0 ? 0 : dir == 2 ? 1 : dir == 4 ? 2 : 3)
+                : (dir == 1 ? 0 : dir == 3 ? 1 : dir == 7 ? 2 : 3);
+            return lineClear[(std::size_t(owner) * 4 + std::size_t(slot)) * TRAV_LAYERS
+                + std::size_t(TravGrid::LayerOfNode(other))];
         };
 
-        auto const probe = [&](uint32_t cell, float fromZ, float search = PROBE_SEARCH)
+        // A cell's floor as a body arriving at height fromZ finds it (the jump apex down, PROBE_SEARCH below): the
+        // layer it is (a floor within TRAV_LAYER_MATCH of one the cell holds), else a new layer, classed on its
+        // first find; TRAV_NO_CELL for no ground. A cell with every layer taken gives the nearest.
+        auto const probe = [&](uint32_t cell, float fromZ, float search = PROBE_SEARCH) -> uint32_t
         {
-            if (probed[cell] != UNPROBED)
-                return;
             float const cx = grid.CentreX(cell);
             float const cy = grid.CentreY(cell);
             float const floor = query.FloorBelow(cx, cy, fromZ + PROBE_RISE, search + PROBE_RISE);
             if (floor <= Animus::Movement::INVALID_FLOOR + 1.0f)
+                return TRAV_NO_CELL;
+            uint32_t nearest = TRAV_NO_CELL;
+            float nearestGap = 0.0f;
+            uint32_t free = TRAV_NO_CELL;
+            for (int32_t layer = 0; layer < TRAV_LAYERS; ++layer)
             {
-                probed[cell] = NO_GROUND;
-                return;
+                uint32_t const node = TravGrid::NodeAt(cell, layer);
+                if (grid.Ground[node] == TRAV_NO_HEIGHT)
+                {
+                    if (free == TRAV_NO_CELL)
+                        free = node;
+                    continue;
+                }
+                float const gap = std::fabs(grid.Ground[node] - floor);
+                if (gap <= TRAV_LAYER_MATCH)
+                    return node;
+                if (nearest == TRAV_NO_CELL || gap < nearestGap)
+                {
+                    nearest = node;
+                    nearestGap = gap;
+                }
             }
-            probed[cell] = GROUND;
-            grid.Ground[cell] = floor;
+            if (free == TRAV_NO_CELL)
+                return nearest;
+            uint32_t const node = free;
+            grid.Ground[node] = floor;
             Animus::Movement::Liquid const liquid = query.LiquidAt(cx, cy, floor + 0.5f);
             if (liquid.Present)
             {
-                grid.Liquid[cell] = liquid.Level;
+                grid.Liquid[node] = liquid.Level;
                 if (liquid.Deadly)
                 {
-                    blocked[cell] = 1;
-                    grid.Classes[cell] = uint8_t(TravClass::Hazard);
-                    return;
+                    blocked[node] = 1;
+                    grid.Classes[node] = uint8_t(TravClass::Hazard);
+                    return node;
                 }
                 if (liquid.Level - floor > TRAV_WATER_DEPTH)
                 {
-                    water[cell] = 1;
-                    return;
+                    water[node] = 1;
+                    return node;
                 }
             }
             if (query.FloorNormalZ(cx, cy, floor) < TRAV_WALKABLE_NORMAL_Z)
             {
-                blocked[cell] = 1;
-                grid.Classes[cell] = uint8_t(TravClass::Slope);
+                blocked[node] = 1;
+                grid.Classes[node] = uint8_t(TravClass::Slope);
             }
+            return node;
         };
-        auto const standing = [&](uint32_t cell) { return water[cell] ? grid.Liquid[cell] : grid.Ground[cell]; };
+        auto const standing = [&](uint32_t node) { return water[node] ? grid.Liquid[node] : grid.Ground[node]; };
 
         // The seed: the entrance's cell at the entrance's floor, else the box's centre from the highest floor.
         float const seedX = request.HasSeed ? request.SeedX : 0.5f * (grid.Box.MinX + grid.Box.MaxX);
         float const seedY = request.HasSeed ? request.SeedY : 0.5f * (grid.Box.MinY + grid.Box.MaxY);
         float const seedZ = request.HasSeed ? request.SeedZ : HIGH_PROBE;
         float const seedSearch = request.HasSeed ? PROBE_SEARCH : HIGH_SEARCH;
-        uint32_t const seed = grid.CellOf(seedX, seedY);
-        grid.Seed = seed;
-        if (seed == TRAV_NO_CELL)
+        uint32_t const seedCell = grid.CellOf(seedX, seedY);
+        grid.Seed = TRAV_NO_CELL;
+        if (seedCell == TRAV_NO_CELL)
             return;
-        probe(seed, seedZ, seedSearch);
-        if (probed[seed] != GROUND || blocked[seed])
+        uint32_t seed = probe(seedCell, seedZ, seedSearch);
+        if (seed == TRAV_NO_CELL || blocked[seed])
         {
             // The entrance stands where the probe found nothing (a trigger just outside the walls): try its
             // neighbours before giving the arena up.
-            uint32_t found = TRAV_NO_CELL;
-            for (int32_t dir = 0; dir < TRAV_DIRS && found == TRAV_NO_CELL; ++dir)
-                if (uint32_t const next = grid.Neighbour(seed, dir); next != TRAV_NO_CELL)
+            seed = TRAV_NO_CELL;
+            for (int32_t dir = 0; dir < TRAV_DIRS && seed == TRAV_NO_CELL; ++dir)
+                if (uint32_t const next = grid.Neighbour(seedCell, dir); next != TRAV_NO_CELL)
                 {
-                    probe(next, seedZ, seedSearch);
-                    if (probed[next] == GROUND && !blocked[next])
-                        found = next;
+                    uint32_t const node = probe(next, seedZ, seedSearch);
+                    if (node != TRAV_NO_CELL && !blocked[node])
+                        seed = node;
                 }
-            if (found == TRAV_NO_CELL)
+            if (seed == TRAV_NO_CELL)
                 return;
-            grid.Seed = found;
         }
+        grid.Seed = seed;
 
         std::queue<uint32_t> open;
-        entered[grid.Seed] = 1;
-        walkIn[grid.Seed] = 1;
-        open.push(grid.Seed);
+        entered[seed] = 1;
+        walkIn[seed] = 1;
+        open.push(seed);
         while (!open.empty())
         {
             uint32_t const from = open.front();
             open.pop();
+            uint32_t const fromCell = TravGrid::CellOfNode(from);
             float const zFrom = standing(from);
-            float const fromX = grid.CentreX(from);
-            float const fromY = grid.CentreY(from);
+            float const fromX = grid.CentreX(fromCell);
+            float const fromY = grid.CentreY(fromCell);
             for (int32_t dir = 0; dir < TRAV_DIRS; ++dir)
             {
-                uint32_t const to = grid.Neighbour(from, dir);
-                if (to == TRAV_NO_CELL)
+                uint32_t const toCell = grid.Neighbour(fromCell, dir);
+                if (toCell == TRAV_NO_CELL)
                     continue;
-                probe(to, zFrom);
-                if (probed[to] != GROUND || blocked[to])
+                // Every arrival probes: a walkway's neighbour from the walkway, the courtyard's from the courtyard.
+                uint32_t const to = probe(toCell, zFrom);
+                if (to == TRAV_NO_CELL || blocked[to])
                     continue;
                 float const zTo = standing(to);
                 float const dz = zTo - zFrom;
@@ -343,15 +367,12 @@ namespace
 
                 // The wall test: the knee and chest lines between the two standing points, at the higher one's
                 // height (a step's riser is under the knee line; a drop's lip is behind the body, not in the line).
-                uint32_t owner = TRAV_NO_CELL;
-                uint32_t slot = 0;
-                lineSlot(from, dir, owner, slot);
-                int8_t& clear = lineClear[std::size_t(owner) * 4 + slot];
+                int8_t& clear = lineSlot(from, to, dir);
                 if (clear < 0)
                 {
                     float const top = std::max(zFrom, zTo);
-                    float const toX = grid.CentreX(to);
-                    float const toY = grid.CentreY(to);
+                    float const toX = grid.CentreX(toCell);
+                    float const toY = grid.CentreY(toCell);
                     bool const knee = map->isInLineOfSight(fromX, fromY, top + KNEE, toX, toY, top + KNEE,
                         request.PhaseMask, LINEOFSIGHT_CHECK_VMAP, VMAP::ModelIgnoreFlags::Nothing);
                     bool const chest = knee && map->isInLineOfSight(fromX, fromY, top + CHEST, toX, toY, top + CHEST,
@@ -361,7 +382,7 @@ namespace
                 if (!clear)
                     continue;
 
-                grid.Edges[std::size_t(from) * TRAV_DIRS + dir] = uint8_t(kind);
+                grid.Edges[std::size_t(from) * TRAV_DIRS + dir] = MakeEdge(kind, TravGrid::LayerOfNode(to));
                 grid.EdgeHurt[std::size_t(from) * TRAV_DIRS + dir] = hurt;
                 if (kind == TravEdge::Jump)
                     jumpIn[to] = 1;
@@ -379,45 +400,62 @@ namespace
             }
         }
 
-        // No cutting a corner: a diagonal edge needs both cells it passes between to be ground the flood entered
-        // (the line of sight clears a pillar's corner that a body's radius does not).
-        for (uint32_t cell = 0; cell < cells; ++cell)
+        // No cutting a corner: a diagonal edge needs ground the flood entered in both cells it passes between, at a
+        // height within a step of the edge's own (the line of sight clears a pillar's corner that a body's radius
+        // does not; a courtyard under the corner's walkway is not the corner's ground).
+        auto const sideEntered = [&](uint32_t cell, float low, float high)
+        {
+            if (cell == TRAV_NO_CELL)
+                return false;
+            for (int32_t layer = 0; layer < TRAV_LAYERS; ++layer)
+            {
+                uint32_t const node = TravGrid::NodeAt(cell, layer);
+                if (entered[node] && standing(node) >= low - TRAV_STEP_UP && standing(node) <= high + TRAV_STEP_UP)
+                    return true;
+            }
+            return false;
+        };
+        for (uint32_t node = 0; node < nodes; ++node)
             for (int32_t dir = 4; dir < TRAV_DIRS; ++dir)
             {
-                uint8_t& edge = grid.Edges[std::size_t(cell) * TRAV_DIRS + dir];
-                if (edge == uint8_t(TravEdge::None))
+                uint8_t& edge = grid.Edges[std::size_t(node) * TRAV_DIRS + dir];
+                if (EdgeKind(edge) == TravEdge::None)
                     continue;
+                uint32_t const cell = TravGrid::CellOfNode(node);
+                uint32_t const to = TravGrid::NodeAt(grid.Neighbour(cell, dir), EdgeLayer(edge));
+                float const low = std::min(standing(node), standing(to));
+                float const high = std::max(standing(node), standing(to));
                 uint32_t const sideX = grid.Neighbour(cell, TRAV_DX[dir] > 0 ? 0 : 1);
                 uint32_t const sideY = grid.Neighbour(cell, TRAV_DY[dir] > 0 ? 2 : 3);
-                if (sideX == TRAV_NO_CELL || sideY == TRAV_NO_CELL || !entered[sideX] || !entered[sideY])
+                if (!sideEntered(sideX, low, high) || !sideEntered(sideY, low, high))
                     edge = uint8_t(TravEdge::None);
             }
 
         // The classes, from what the flood found: a floor never entered is a wall; a floor entered is free, a step
-        // when every walk into it climbs, a jump when only jumps reach it; and the cell a drop starts from is
+        // when every walk into it climbs, a jump when only jumps reach it; and the node a drop starts from is
         // labelled by its worst drop, which is what the costmap must learn to see.
-        for (uint32_t cell = 0; cell < cells; ++cell)
+        for (uint32_t node = 0; node < nodes; ++node)
         {
-            if (probed[cell] != GROUND || blocked[cell])
+            if (grid.Ground[node] == TRAV_NO_HEIGHT || blocked[node])
                 continue;
-            if (!entered[cell])
+            if (!entered[node])
             {
-                grid.Classes[cell] = uint8_t(TravClass::Wall);
+                grid.Classes[node] = uint8_t(TravClass::Wall);
                 continue;
             }
             TravClass label = TravClass::Free;
-            if (water[cell])
+            if (water[node])
                 label = TravClass::Water;
-            else if (!walkIn[cell] && jumpIn[cell])
+            else if (!walkIn[node] && jumpIn[node])
                 label = TravClass::Jump;
-            else if (walkIn[cell] && climbIn[cell] > TRAV_STEP_FROM && climbIn[cell] < TRAV_STEP_UP + 1.0f)
+            else if (walkIn[node] && climbIn[node] > TRAV_STEP_FROM && climbIn[node] < TRAV_STEP_UP + 1.0f)
                 label = TravClass::StepUp;
-            if (!water[cell] && worstDrop[cell])
-                label = worstDrop[cell] == 1 ? TravClass::DropSafe : worstDrop[cell] == 2 ? TravClass::DropHurt
+            if (!water[node] && worstDrop[node])
+                label = worstDrop[node] == 1 ? TravClass::DropSafe : worstDrop[node] == 2 ? TravClass::DropHurt
                     : TravClass::DropLethal;
-            grid.Classes[cell] = uint8_t(label);
+            grid.Classes[node] = uint8_t(label);
             if (label == TravClass::Free || label == TravClass::StepUp)
-                grid.Reachable.push_back(cell);
+                grid.Reachable.push_back(node);
         }
     }
 }
@@ -527,9 +565,9 @@ Animus::Vision::TravGrid const* Animus::Vision::TravRegistry::Ensure(TravBakeReq
 
 void Animus::Vision::CostToGo(TravGrid const& grid, uint32_t goal, float dropHurtYards, std::vector<float>& out)
 {
-    uint32_t const cells = grid.Cells();
-    out.assign(cells, TRAV_UNREACHABLE);
-    if (goal >= cells)
+    uint32_t const nodes = grid.Nodes();
+    out.assign(nodes, TRAV_UNREACHABLE);
+    if (goal >= nodes)
         return;
     using Entry = std::pair<float, uint32_t>;
     std::priority_queue<Entry, std::vector<Entry>, std::greater<Entry>> open;
@@ -537,33 +575,41 @@ void Animus::Vision::CostToGo(TravGrid const& grid, uint32_t goal, float dropHur
     open.emplace(0.0f, goal);
     while (!open.empty())
     {
-        auto const [cost, cell] = open.top();
+        auto const [cost, node] = open.top();
         open.pop();
-        if (cost > out[cell])
+        if (cost > out[node])
             continue;
-        // Every cell with an edge into this one: the neighbour in direction d has its edge back along OPPOSITE[d].
+        uint32_t const cell = TravGrid::CellOfNode(node);
+        int32_t const layer = TravGrid::LayerOfNode(node);
+        // Every node with an edge into this one: a node of the neighbour in direction d whose edge back along
+        // OPPOSITE[d] lands on this node's layer.
         for (int32_t dir = 0; dir < TRAV_DIRS; ++dir)
         {
-            uint32_t const from = grid.Neighbour(cell, dir);
-            if (from == TRAV_NO_CELL)
+            uint32_t const fromCell = grid.Neighbour(cell, dir);
+            if (fromCell == TRAV_NO_CELL)
                 continue;
-            std::size_t const slot = std::size_t(from) * TRAV_DIRS + std::size_t(TRAV_OPPOSITE[dir]);
-            TravEdge const kind = TravEdge(grid.Edges[slot]);
-            if (kind == TravEdge::None)
-                continue;
-            float const next = cost + TravEdgeCost(kind, TravGrid::StepYards(dir), grid.EdgeHurt[slot],
-                dropHurtYards);
-            if (next < out[from])
+            for (int32_t fromLayer = 0; fromLayer < TRAV_LAYERS; ++fromLayer)
             {
-                out[from] = next;
-                open.emplace(next, from);
+                uint32_t const from = TravGrid::NodeAt(fromCell, fromLayer);
+                std::size_t const slot = std::size_t(from) * TRAV_DIRS + std::size_t(TRAV_OPPOSITE[dir]);
+                uint8_t const edge = grid.Edges[slot];
+                TravEdge const kind = EdgeKind(edge);
+                if (kind == TravEdge::None || EdgeLayer(edge) != layer)
+                    continue;
+                float const next = cost + TravEdgeCost(kind, TravGrid::StepYards(dir), grid.EdgeHurt[slot],
+                    dropHurtYards);
+                if (next < out[from])
+                {
+                    out[from] = next;
+                    open.emplace(next, from);
+                }
             }
         }
     }
 }
 
-void Animus::Vision::SampleLabels(TravGrid const& grid, std::vector<float> const& cost, float x, float y, float yaw,
-    float cell, uint8_t* classes, uint16_t* costs)
+void Animus::Vision::SampleLabels(TravGrid const& grid, std::vector<float> const& cost, float x, float y, float z,
+    float yaw, float cell, uint8_t* classes, uint16_t* costs)
 {
     // The crop's frame (MentalMap::Crop): forward along (cos yaw, sin yaw), right along (sin yaw, -cos yaw).
     float const forwardX = std::cos(yaw);
@@ -572,7 +618,7 @@ void Animus::Vision::SampleLabels(TravGrid const& grid, std::vector<float> const
     float const rightY = -forwardX;
     uint32_t const samples = std::max<uint32_t>(1, uint32_t(std::lround(cell / TRAV_CELL)));
     float const centre = float(TRAV_LABEL_SIDE) * 0.5f;
-    bool const haveCost = cost.size() == grid.Cells();
+    bool const haveCost = cost.size() == grid.Nodes();
     for (uint32_t row = 0; row < TRAV_LABEL_SIDE; ++row)
         for (uint32_t col = 0; col < TRAV_LABEL_SIDE; ++col)
         {
@@ -585,10 +631,18 @@ void Animus::Vision::SampleLabels(TravGrid const& grid, std::vector<float> const
                 {
                     float const f = forward + ((float(i) + 0.5f) / float(samples) - 0.5f) * cell;
                     float const r = right + ((float(j) + 0.5f) / float(samples) - 0.5f) * cell;
-                    uint32_t const at = grid.CellOf(x + f * forwardX + r * rightX, y + f * forwardY + r * rightY);
-                    if (at == TRAV_NO_CELL)
+                    float const px = x + f * forwardX + r * rightX;
+                    float const py = y + f * forwardY + r * rightY;
+                    if (grid.CellOf(px, py) == TRAV_NO_CELL)
                     {
                         ++counts[0];
+                        continue;
+                    }
+                    // The floor of the body's own storey there; a cell with none is rock or a void (a Wall).
+                    uint32_t const at = grid.NodeOf(px, py, z);
+                    if (at == TRAV_NO_CELL)
+                    {
+                        ++counts[uint32_t(TravClass::Wall)];
                         continue;
                     }
                     // No ground inside the bake's box is rock or a void: a wall to the body. Left Unknown it was

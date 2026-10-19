@@ -76,7 +76,7 @@ namespace Animus::Vision
     /// two yards, stairs more.
     constexpr float TRAV_STEP_FROM = 0.6f;
     /// The bake's file format (the cache is rebaked when it changes).
-    constexpr uint32_t TRAV_VERSION = 1;
+    constexpr uint32_t TRAV_VERSION = 2;    // 2: floor layers (TRAV_LAYERS)
     /// Most cells a side the bake allows (a 2048-yd box): a dungeon is a few hundred.
     constexpr int32_t TRAV_MAX_SIDE = 1024;
     /// Cells a side of a label grid (the map crop's CROP), and the coarse tier's cell.
@@ -167,8 +167,27 @@ namespace Animus::Vision
     /// Ground[] and Liquid[] of a cell with no floor or no liquid.
     constexpr float TRAV_NO_HEIGHT = -200000.0f;
 
-    /// **One arena's bake**: the grid, its cells' classes and heights, and the edges. Immutable once baked or loaded
-    /// and shared by every env and thread (TravRegistry keeps it).
+    /// **Floor layers** (bake version 2, 2026-10-19): a 2-yd cell holds up to TRAV_LAYERS floors -- a walkway and the
+    /// courtyard under it, a ledge and the pit below -- each a node of its own (cell x TRAV_LAYERS + layer). A floor
+    /// found within TRAV_LAYER_MATCH of a layer the cell has is that layer (below a step's rise, so a step and the
+    /// floor under it stay two). Version 1 kept one floor a cell, the first the flood probed: Shadowfang's courtyards
+    /// under its walls and the floors a drop lands on were missing, and a body there had no route (nav2, 2026-10-19);
+    /// tools/navcheck found 84.5 % of the navmesh's floors inside its box missing from the bake, every one above z 90
+    /// (the keep's towers stack a floor every ten yards or so: eight layers, not four).
+    constexpr int32_t TRAV_LAYERS = 8;
+    constexpr float TRAV_LAYER_MATCH = 1.0f;
+    /// An edge byte: its TravEdge in bits 0-3, the layer it lands on in bits 4-6.
+    [[nodiscard]] inline TravEdge EdgeKind(uint8_t edge) { return TravEdge(edge & 0x0F); }
+    [[nodiscard]] inline int32_t EdgeLayer(uint8_t edge) { return (edge >> 4) & 0x07; }
+    [[nodiscard]] inline uint8_t MakeEdge(TravEdge kind, int32_t layer)
+    {
+        return uint8_t(uint8_t(kind) | (uint8_t(layer & 0x07) << 4));
+    }
+    static_assert(TRAV_LAYERS <= 8, "an edge byte names the landing layer in three bits");
+
+    /// **One arena's bake**: the grid, its nodes' classes and heights, and the edges. Immutable once baked or loaded
+    /// and shared by every env and thread (TravRegistry keeps it). A node is cell x TRAV_LAYERS + layer; a layer with
+    /// no floor is Unknown at TRAV_NO_HEIGHT.
     struct TravGrid
     {
         uint32_t MapId = 0;
@@ -177,16 +196,23 @@ namespace Animus::Vision
         int32_t Columns = 0;
         int32_t Rows = 0;
         uint64_t Digest = 0;
-        uint32_t Seed = TRAV_NO_CELL;   // the cell the flood began at
-        std::vector<uint8_t> Classes;   // TravClass per cell
+        uint32_t Seed = TRAV_NO_CELL;   // the node the flood began at
+        std::vector<uint8_t> Classes;   // TravClass per node
         std::vector<float> Ground;      // the floor's height, TRAV_NO_HEIGHT for none
         std::vector<float> Liquid;      // the liquid's level, TRAV_NO_HEIGHT for none
-        std::vector<uint8_t> Edges;     // TravEdge, cells x TRAV_DIRS
-        std::vector<float> EdgeHurt;    // DropHurt's damageperc (share of max health), cells x TRAV_DIRS
-        /// The cells a pair may be drawn from: Free or StepUp, entered by the flood from the seed.
+        std::vector<uint8_t> Edges;     // MakeEdge(kind, layer), nodes x TRAV_DIRS
+        std::vector<float> EdgeHurt;    // DropHurt's damageperc (share of max health), nodes x TRAV_DIRS
+        /// The nodes a pair may be drawn from: Free or StepUp, entered by the flood from the seed.
         std::vector<uint32_t> Reachable;
 
         [[nodiscard]] uint32_t Cells() const { return uint32_t(Columns) * uint32_t(Rows); }
+        [[nodiscard]] uint32_t Nodes() const { return Cells() * uint32_t(TRAV_LAYERS); }
+        [[nodiscard]] static uint32_t NodeAt(uint32_t cell, int32_t layer)
+        {
+            return cell * uint32_t(TRAV_LAYERS) + uint32_t(layer);
+        }
+        [[nodiscard]] static uint32_t CellOfNode(uint32_t node) { return node / uint32_t(TRAV_LAYERS); }
+        [[nodiscard]] static int32_t LayerOfNode(uint32_t node) { return int32_t(node % uint32_t(TRAV_LAYERS)); }
         /// The cell holding world (x, y), or TRAV_NO_CELL outside the box.
         [[nodiscard]] uint32_t CellOf(float x, float y) const
         {
@@ -196,6 +222,38 @@ namespace Animus::Vision
                 return TRAV_NO_CELL;
             return uint32_t(row) * uint32_t(Columns) + uint32_t(col);
         }
+        /// The node a body at (x, y) with its feet at z stands on: of the cell's floors, the nearest at or below a
+        /// step over the feet (a body stands on a floor, not under one), else the nearest; TRAV_NO_CELL off the box or
+        /// where the cell has none.
+        [[nodiscard]] uint32_t NodeOf(float x, float y, float z) const
+        {
+            uint32_t const cell = CellOf(x, y);
+            if (cell == TRAV_NO_CELL)
+                return TRAV_NO_CELL;
+            uint32_t below = TRAV_NO_CELL;
+            uint32_t any = TRAV_NO_CELL;
+            float belowGap = 0.0f;
+            float anyGap = 0.0f;
+            for (int32_t layer = 0; layer < TRAV_LAYERS; ++layer)
+            {
+                uint32_t const node = NodeAt(cell, layer);
+                if (Ground[node] == TRAV_NO_HEIGHT)
+                    continue;
+                float const standing = StandingZ(node);
+                float const gap = std::fabs(standing - z);
+                if (standing <= z + TRAV_STEP_UP && (below == TRAV_NO_CELL || gap < belowGap))
+                {
+                    below = node;
+                    belowGap = gap;
+                }
+                if (any == TRAV_NO_CELL || gap < anyGap)
+                {
+                    any = node;
+                    anyGap = gap;
+                }
+            }
+            return below != TRAV_NO_CELL ? below : any;
+        }
         [[nodiscard]] float CentreX(uint32_t cell) const
         {
             return Box.MinX + (float(cell % uint32_t(Columns)) + 0.5f) * TRAV_CELL;
@@ -204,14 +262,14 @@ namespace Animus::Vision
         {
             return Box.MinY + (float(cell / uint32_t(Columns)) + 0.5f) * TRAV_CELL;
         }
-        [[nodiscard]] TravClass ClassOf(uint32_t cell) const
+        [[nodiscard]] TravClass ClassOf(uint32_t node) const
         {
-            return cell < Classes.size() ? TravClass(Classes[cell]) : TravClass::Unknown;
+            return node < Classes.size() ? TravClass(Classes[node]) : TravClass::Unknown;
         }
-        /// Where a body stands on the cell: the liquid's surface of a water cell, else the floor.
-        [[nodiscard]] float StandingZ(uint32_t cell) const
+        /// Where a body stands on the node: the liquid's surface of a water node, else the floor.
+        [[nodiscard]] float StandingZ(uint32_t node) const
         {
-            return ClassOf(cell) == TravClass::Water ? Liquid[cell] : Ground[cell];
+            return ClassOf(node) == TravClass::Water ? Liquid[node] : Ground[node];
         }
         /// The neighbour of `cell` in direction `dir`, or TRAV_NO_CELL off the grid.
         [[nodiscard]] uint32_t Neighbour(uint32_t cell, int32_t dir) const
@@ -221,6 +279,15 @@ namespace Animus::Vision
             if (col < 0 || row < 0 || col >= Columns || row >= Rows)
                 return TRAV_NO_CELL;
             return uint32_t(row) * uint32_t(Columns) + uint32_t(col);
+        }
+        /// The node `node`'s edge in direction `dir` lands on, or TRAV_NO_CELL for no edge.
+        [[nodiscard]] uint32_t EdgeTarget(uint32_t node, int32_t dir) const
+        {
+            uint8_t const edge = Edges[std::size_t(node) * TRAV_DIRS + std::size_t(dir)];
+            if (EdgeKind(edge) == TravEdge::None)
+                return TRAV_NO_CELL;
+            uint32_t const cell = Neighbour(CellOfNode(node), dir);
+            return cell == TRAV_NO_CELL ? TRAV_NO_CELL : NodeAt(cell, EdgeLayer(edge));
         }
         /// The yards an edge's step covers: 2 straight, 2.83 diagonal.
         [[nodiscard]] static float StepYards(int32_t dir) { return dir < 4 ? TRAV_CELL : TRAV_CELL * 1.4142136f; }
@@ -292,19 +359,20 @@ namespace Animus::Vision
         }
     }
 
-    /// **The route cost-to-go** from every cell to `goal`, yards (TRAV_UNREACHABLE where no route reaches it; edges
-    /// are directed, so this is Dijkstra over the reversed edges from the goal). `out` is sized to the grid.
+    /// **The route cost-to-go** from every node to node `goal`, yards (TRAV_UNREACHABLE where no route reaches it;
+    /// edges are directed, so this is Dijkstra over the reversed edges from the goal). `out` is sized to the nodes.
     void CostToGo(TravGrid const& grid, uint32_t goal, float dropHurtYards, std::vector<float>& out);
 
     /// **A label grid** (CONTRACT.md sec 3.1): TRAV_LABEL_SIDE x TRAV_LABEL_SIDE cells of `cell` yards in the map
     /// crop's frame -- heading-up for `yaw`, row 0 the furthest ahead, column 0 the furthest left, the body at the
-    /// centre: MentalMap::Crop's geometry -- each the bake's class and cost-to-go at the cell, a bake cell with no
-    /// ground (rock or a void inside the box) labelled Wall. A cell wider than the bake's (the coarse tier) covers
-    /// several bake cells: the majority class of those that are not Unknown, Wall only when none of them is passable
-    /// (Unknown when the cell is outside the box), and the least cost. `classes` gets TRAV_LABEL_CELLS bytes, `costs` as many halves. An empty
-    /// `cost` (no goal) writes TRAV_UNREACHABLE everywhere.
-    void SampleLabels(TravGrid const& grid, std::vector<float> const& cost, float x, float y, float yaw, float cell,
-        uint8_t* classes, uint16_t* costs);
+    /// centre: MentalMap::Crop's geometry -- each the bake's class and cost-to-go at the cell, of the node a body at
+    /// height `z` would stand on there (TravGrid::NodeOf: the body's own storey), a bake cell with no ground (rock or
+    /// a void inside the box) labelled Wall. A cell wider than the bake's (the coarse tier) covers several bake cells:
+    /// the majority class of those that are not Unknown, Wall only when none of them is passable (Unknown when the
+    /// cell is outside the box), and the least cost. `classes` gets TRAV_LABEL_CELLS bytes, `costs` as many halves.
+    /// An empty `cost` (no goal) writes TRAV_UNREACHABLE everywhere.
+    void SampleLabels(TravGrid const& grid, std::vector<float> const& cost, float x, float y, float z, float yaw,
+        float cell, uint8_t* classes, uint16_t* costs);
 }
 
 #endif

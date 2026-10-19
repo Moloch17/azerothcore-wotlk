@@ -109,15 +109,27 @@ namespace Animus::Curriculum
             AUDIT_WALL_PHANTOM,     // ... open floor all round
             AUDIT_WALL_FLOORLESS,   // the way's walls on a cell with no floor known
             AUDIT_WALL_LAYER_OFF,   // ... with floors, none within LAYER_MERGE of the bake's ground
+            AUDIT_FELL,             // the trip's landings from 2 yd or more (SeatState::Drops)
+            AUDIT_STRANDED,         // ... after which the body stood on dead ground (StrandedCheck)
+            AUDIT_ROUTE_DROPS,      // the drops on the true route from the body
+            AUDIT_ROUTE_DROPS_SEEN, // ... onto a floor the seat's map had seen
             AUDIT_COUNT
         };
         static constexpr char const* AUDIT_NAMES[AUDIT_COUNT] = { "audit_unreachable", "audit_true_yards",
             "audit_corridor_cost", "audit_truncated", "audit_cells", "audit_wall", "audit_closed", "audit_unknown",
             "audit_hazard", "audit_floor", "audit_first_block_yards", "audit_wall_ray", "audit_wall_mesh",
             "audit_wall_bump", "audit_wall_inherited", "audit_wall_true", "audit_wall_face", "audit_wall_step",
-            "audit_wall_phantom", "audit_wall_floorless", "audit_wall_layer_off" };
+            "audit_wall_phantom", "audit_wall_floorless", "audit_wall_layer_off", "audit_fell", "audit_stranded",
+            "audit_route_drops", "audit_route_drops_seen" };
         /// The band's square, 1-yd cells a side, at most: a longer true route is audited from the body this far.
         static constexpr int32 AUDIT_SIDE_MAX = 256;
+        /// **Dead ground** (2026-10-19): after a landing from 2 yd or more, a body on the ground STRANDED_DECISIONS
+        /// decisions running with no route to the goal from any walkable floor within STRANDED_REACH yards at its
+        /// height (RouteNear) is stranded: charged PointNav.Death, and out until it rises at the start after the
+        /// respawn delay, exactly as a death -- the drop led nowhere, and the planner should learn which drops do.
+        static constexpr uint32 STRANDED_DECISIONS = 2;
+        static constexpr float STRANDED_REACH = 4.0f;
+        static constexpr float STRANDED_RISE = 3.0f;
         /// Where a timed-out evaluation trip's band is written (`<seed>-seat<seat>.audit`); empty for nowhere. Set by
         /// the forge as each evaluation's videos start (their directory's audit/).
         static void SetAuditDir(std::string dir);
@@ -162,6 +174,13 @@ namespace Animus::Curriculum
             float LastTurned = 0.0f;        // SeatState::TurnedRadians at the last reward
             float LastX = 0.0f;
             float LastY = 0.0f;
+            float LastZ = 0.0f;
+            // Dead ground (StrandedCheck): the landings counted at the last reward, the grounded decisions still to
+            // wait after the newest, whether the seat is stranded (out until the rise, as a death), and how often.
+            uint32 LastDrops = 0;
+            uint32 LandedChecks = 0;
+            bool Stranded = false;
+            uint32 Strandings = 0;
             bool HasLastPos = false;
             uint32 Decisions = 0;
             uint32 LastStuckMs = 0;
@@ -260,15 +279,20 @@ namespace Animus::Curriculum
         void DrawBin(Env const& env, uint32 detourBins, uint32 lengthBins, uint32 lengthCount, EnvNav& nav);
         /// The trip's outcome (arrived, else timed out) into its bin's arrival rate, once, when the draw counts it.
         void NoteBinOutcome(Env const& env, EnvNav& nav, bool arrived);
-        /// The world point of a bake cell: its centre at the standing height (the bed when `bed`).
-        [[nodiscard]] static Position CellPoint(Vision::TravGrid const& grid, uint32 cell, bool bed);
-        /// The route distance at a world point: TRAV_UNREACHABLE off the bake.
-        [[nodiscard]] static float CostAt(EnvNav const& nav, float x, float y);
+        /// The world point of a bake node: its cell's centre at the standing height (the bed when `bed`).
+        [[nodiscard]] static Position CellPoint(Vision::TravGrid const& grid, uint32 node, bool bed);
+        /// The route distance at a world point, on the floor a body with its feet at z stands on there
+        /// (TravGrid::NodeOf): TRAV_UNREACHABLE off the bake.
+        [[nodiscard]] static float CostAt(EnvNav const& nav, float x, float y, float z);
         /// The waypoint regret of a cell goal the seat just chose: C(its block) less the least C over the choosable
         /// blocks of the crop it was chosen from; nothing when it cannot be read.
         void NoteWaypoint(Env const& env, uint32 seatIndex, EnvNav& nav, SeatNav& seat) const;
         /// The map audit of `seat`'s trip into its SeatNav (AuditField), and a timed-out evaluation trip's band dumped.
         void RunAudit(Env const& env, uint32 seat);
+        /// Whether a walkable bake node within STRANDED_REACH yards of (x, y), its floor within STRANDED_RISE of the
+        /// feet at z, has a route to the goal: dead ground is ground with none (the snap absorbs the 2-yd bake's
+        /// reading of stairs, ramps and ledges as slope or a drop).
+        [[nodiscard]] bool RouteNear(EnvNav const& nav, float x, float y, float z) const;
         /// The episode's generator (seeded in BeforeLevel: from the evaluation seed in an evaluation).
         [[nodiscard]] std::mt19937& Rng(Env const& env) const;
         [[nodiscard]] float Uniform(Env const& env) const;

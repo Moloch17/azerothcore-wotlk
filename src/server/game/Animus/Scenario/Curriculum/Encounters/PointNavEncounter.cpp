@@ -50,6 +50,7 @@
 #include <fstream>
 #include <functional>
 #include <queue>
+#include <unordered_map>
 #include <unordered_set>
 #include <limits>
 #include <sstream>
@@ -189,6 +190,8 @@ void Animus::Curriculum::PointNavEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     {
         return _scenario.Data(env).Seats[std::min<uint32>(seat, MAX_SEATS - 1)].Drowned ? 1.0f : 0.0f;
     });
+    // Dead ground (STRANDED_*): the times the body was stranded after a drop, charged and risen as a death.
+    add("stranded", [seatOf](Env const& env, uint32 seat) { return float(seatOf(env, seat).Strandings); });
     add("died", [this](Env const& env, uint32 seat)
     {
         return _scenario.Data(env).Seats[std::min<uint32>(seat, MAX_SEATS - 1)].Combat.Died ? 1.0f : 0.0f;
@@ -324,41 +327,46 @@ void Animus::Curriculum::PointNavEncounter::RunAudit(Env const& env, uint32 seat
     Vi::TravGrid const& grid = *nav.Grid;
     SeatState const& state = _scenario.Data(env).Seats[std::min<uint32>(seatIndex, MAX_SEATS - 1)];
     Vi::MentalMap const& map = state.Map;
-    uint32 cell = grid.CellOf(seat.LastX, seat.LastY);
-    if (cell == Vi::TRAV_NO_CELL || nav.Cost[cell] >= Vi::TRAV_UNREACHABLE)
+    // How the trip went vertically: the landings from 2 yd or more (SeatState::Drops), and the times the body was
+    // stranded on dead ground after one (StrandedCheck).
+    seat.Audit[AUDIT_FELL] = float(state.Drops);
+    seat.Audit[AUDIT_STRANDED] = float(seat.Strandings);
+    uint32 node = grid.NodeOf(seat.LastX, seat.LastY, seat.LastZ);
+    if (node == Vi::TRAV_NO_CELL || nav.Cost[node] >= Vi::TRAV_UNREACHABLE)
     {
         seat.Audit[AUDIT_UNREACHABLE] = 1.0f;
         return;
     }
-    seat.Audit[AUDIT_TRUE_YARDS] = nav.Cost[cell];
+    seat.Audit[AUDIT_TRUE_YARDS] = nav.Cost[node];
 
-    // The true route: from the body's bake cell down the cost-to-go, along the bake's own edges, to the goal; cut
-    // where its band would no longer fit AUDIT_SIDE_MAX cells across.
+    // The true route: from the body's bake node down the cost-to-go, along the bake's own edges (a drop onto the floor
+    // below among them), to the goal; cut where its band would no longer fit AUDIT_SIDE_MAX cells across.
     auto const cellBox = [&grid](uint32 at, int32& x0, int32& y0, int32& x1, int32& y1)
     {
-        float const minX = grid.CentreX(at) - 0.5f * Vi::TRAV_CELL - Vi::TRAV_CELL;
-        float const minY = grid.CentreY(at) - 0.5f * Vi::TRAV_CELL - Vi::TRAV_CELL;
+        uint32 const cell = Vi::TravGrid::CellOfNode(at);
+        float const minX = grid.CentreX(cell) - 0.5f * Vi::TRAV_CELL - Vi::TRAV_CELL;
+        float const minY = grid.CentreY(cell) - 0.5f * Vi::TRAV_CELL - Vi::TRAV_CELL;
         x0 = int32(std::floor(minX));
         y0 = int32(std::floor(minY));
         x1 = int32(std::floor(minX + 3.0f * Vi::TRAV_CELL)) - 1;
         y1 = int32(std::floor(minY + 3.0f * Vi::TRAV_CELL)) - 1;
     };
-    std::vector<uint32> path{ cell };
+    std::vector<uint32> path{ node };
     int32 bx0, by0, bx1, by1;
-    cellBox(cell, bx0, by0, bx1, by1);
+    cellBox(node, bx0, by0, bx1, by1);
     bool truncated = false;
-    while (cell != nav.GoalCell)
+    while (node != nav.GoalCell)
     {
         uint32 best = Vi::TRAV_NO_CELL;
-        float bestCost = nav.Cost[cell];
+        int32 bestDir = -1;
+        float bestCost = nav.Cost[node];
         for (int32 dir = 0; dir < Vi::TRAV_DIRS; ++dir)
         {
-            if (Vi::TravEdge(grid.Edges[std::size_t(cell) * Vi::TRAV_DIRS + dir]) == Vi::TravEdge::None)
-                continue;
-            uint32 const next = grid.Neighbour(cell, dir);
+            uint32 const next = grid.EdgeTarget(node, dir);
             if (next != Vi::TRAV_NO_CELL && nav.Cost[next] < bestCost)
             {
                 best = next;
+                bestDir = dir;
                 bestCost = nav.Cost[next];
             }
         }
@@ -373,18 +381,42 @@ void Animus::Curriculum::PointNavEncounter::RunAudit(Env const& env, uint32 seat
             truncated = true;
             break;
         }
+        // A drop on the true route, and whether the seat's map had seen the floor it lands on (a floor layer within
+        // LAYER_MERGE of the landing in any of the bake cell's 1-yd cells): what a planner of drops needs first.
+        Vi::TravEdge const kind = Vi::EdgeKind(grid.Edges[std::size_t(node) * Vi::TRAV_DIRS + std::size_t(bestDir)]);
+        if (kind == Vi::TravEdge::DropSafe || kind == Vi::TravEdge::DropHurt)
+        {
+            seat.Audit[AUDIT_ROUTE_DROPS] += 1.0f;
+            uint32 const landing = Vi::TravGrid::CellOfNode(best);
+            float const landZ = grid.StandingZ(best);
+            bool seen = false;
+            for (int32 oy = 0; oy < 2 && !seen; ++oy)
+                for (int32 ox = 0; ox < 2 && !seen; ++ox)
+                {
+                    Vi::MapCell const* known = map.Find(grid.CentreX(landing) - 0.5f + float(ox),
+                        grid.CentreY(landing) - 0.5f + float(oy));
+                    float floor = 0.0f;
+                    seen = known && Vi::NearestFloor(*known, landZ, floor)
+                        && std::fabs(floor - landZ) <= Vi::LAYER_MERGE;
+                }
+            seat.Audit[AUDIT_ROUTE_DROPS_SEEN] += seen ? 1.0f : 0.0f;
+        }
         bx0 = nx0, by0 = ny0, bx1 = nx1, by1 = ny1;
-        cell = best;
-        path.push_back(cell);
+        node = best;
+        path.push_back(node);
     }
     seat.Audit[AUDIT_TRUNCATED] = truncated ? 1.0f : 0.0f;
-    std::unordered_set<uint32> band;
+    // The band: the route's cells and their neighbours, each at the height of the route's floor there (a drop's cells
+    // at the floor it lands on), which the 1-yd cells are read at.
+    std::unordered_map<uint32, float> band;
     for (uint32 const at : path)
     {
-        band.insert(at);
+        uint32 const cell = Vi::TravGrid::CellOfNode(at);
+        float const z = grid.StandingZ(at);
+        band[cell] = z;
         for (int32 dir = 0; dir < Vi::TRAV_DIRS; ++dir)
-            if (uint32 const next = grid.Neighbour(at, dir); next != Vi::TRAV_NO_CELL)
-                band.insert(next);
+            if (uint32 const next = grid.Neighbour(cell, dir); next != Vi::TRAV_NO_CELL)
+                band.emplace(next, z);
     }
 
     // The square over the band, the map's cells in it priced for the bake's ground there (the body's own, where the
@@ -395,7 +427,7 @@ void Animus::Curriculum::PointNavEncounter::RunAudit(Env const& env, uint32 seat
     std::size_t const cells = std::size_t(side) * std::size_t(side);
     std::vector<Vi::MapCell> window(cells);
     map.Window(x0, y0, side, window.data());
-    float const bodyZ = grid.StandingZ(grid.CellOf(seat.LastX, seat.LastY));
+    float const bodyZ = seat.LastZ;
     std::vector<float> raw(cells), shaped(cells), groundZ(cells);
     std::vector<uint32> bakeOf(cells);
     std::vector<uint8> inBand(cells), walled(cells);
@@ -404,10 +436,15 @@ void Animus::Curriculum::PointNavEncounter::RunAudit(Env const& env, uint32 seat
         for (int32 col = 0; col < side; ++col)
         {
             std::size_t const at = std::size_t(row) * std::size_t(side) + std::size_t(col);
-            uint32 const bake = grid.CellOf(float(x0 + col) + 0.5f, float(y0 + row) + 0.5f);
+            float const px = float(x0 + col) + 0.5f;
+            float const py = float(y0 + row) + 0.5f;
+            uint32 const cell = grid.CellOf(px, py);
+            auto const inPath = cell == Vi::TRAV_NO_CELL ? band.end() : band.find(cell);
+            float const reference = inPath != band.end() ? inPath->second : bodyZ;
+            uint32 const bake = grid.NodeOf(px, py, reference);
             bakeOf[at] = bake;
-            float z = bodyZ;
-            if (bake != Vi::TRAV_NO_CELL && grid.Ground[bake] != Vi::TRAV_NO_HEIGHT)
+            float z = reference;
+            if (bake != Vi::TRAV_NO_CELL)
                 z = grid.StandingZ(bake);
             groundZ[at] = z;
             raw[at] = Vi::CellFactor(window[at], z, clearance);
@@ -416,7 +453,7 @@ void Animus::Curriculum::PointNavEncounter::RunAudit(Env const& env, uint32 seat
             if (raw[at] >= Vi::PLAN_BLOCKED && Vi::GoalClear(x0 + col, y0 + row, nav.Goal.GetPositionX(),
                 nav.Goal.GetPositionY()))
                 raw[at] = Vi::PLAN_INFLATED;
-            inBand[at] = bake != Vi::TRAV_NO_CELL && band.count(bake) ? 1 : 0;
+            inBand[at] = inPath != band.end() ? 1 : 0;
         }
     shaped = raw;
     Vi::ConfigurationSpace(shaped.data(), side);
@@ -440,8 +477,8 @@ void Animus::Curriculum::PointNavEncounter::RunAudit(Env const& env, uint32 seat
         return true;
     };
     int32 from = 0, to = 0;
-    float const goalX = truncated ? grid.CentreX(path.back()) : nav.Goal.GetPositionX();
-    float const goalY = truncated ? grid.CentreY(path.back()) : nav.Goal.GetPositionY();
+    float const goalX = truncated ? grid.CentreX(Vi::TravGrid::CellOfNode(path.back())) : nav.Goal.GetPositionX();
+    float const goalY = truncated ? grid.CentreY(Vi::TravGrid::CellOfNode(path.back())) : nav.Goal.GetPositionY();
     if (!local(seat.LastX, seat.LastY, from) || !local(goalX, goalY, to))
         return;
     inBand[std::size_t(from)] = inBand[std::size_t(to)] = 1;
@@ -536,7 +573,10 @@ void Animus::Curriculum::PointNavEncounter::RunAudit(Env const& env, uint32 seat
         if (bake != Vi::TRAV_NO_CELL)
             for (int32 dir = 0; dir < Vi::TRAV_DIRS; ++dir)
             {
-                uint32 const next = grid.Neighbour(bake, dir);
+                // The neighbouring cell's floor at this node's height (none there: rock).
+                uint32 const nextCell = grid.Neighbour(Vi::TravGrid::CellOfNode(bake), dir);
+                uint32 const next = nextCell == Vi::TRAV_NO_CELL ? Vi::TRAV_NO_CELL
+                    : grid.NodeOf(grid.CentreX(nextCell), grid.CentreY(nextCell), grid.StandingZ(bake));
                 Vi::TravClass const what = next == Vi::TRAV_NO_CELL ? Vi::TravClass::Unknown : grid.ClassOf(next);
                 solidNear = solidNear || AuditSolid(what);
                 stepNear = stepNear || AuditStep(what);
@@ -679,18 +719,46 @@ Animus::Vision::TravGrid const* Animus::Curriculum::PointNavEncounter::EnsureGri
     return grid;
 }
 
-Position Animus::Curriculum::PointNavEncounter::CellPoint(Vision::TravGrid const& grid, uint32 cell, bool bed)
+bool Animus::Curriculum::PointNavEncounter::RouteNear(EnvNav const& nav, float x, float y, float z) const
 {
-    float const z = bed ? grid.Ground[cell] : grid.StandingZ(cell);
+    if (!nav.Grid || nav.Cost.size() != nav.Grid->Nodes())
+        return true;    // nothing to judge by: never stranded
+    Vision::TravGrid const& grid = *nav.Grid;
+    int32 const reach = int32(std::ceil(STRANDED_REACH / Vision::TRAV_CELL));
+    for (int32 dy = -reach; dy <= reach; ++dy)
+        for (int32 dx = -reach; dx <= reach; ++dx)
+        {
+            uint32 const cell = grid.CellOf(x + float(dx) * Vision::TRAV_CELL, y + float(dy) * Vision::TRAV_CELL);
+            if (cell == Vision::TRAV_NO_CELL)
+                continue;
+            for (int32 layer = 0; layer < Vision::TRAV_LAYERS; ++layer)
+            {
+                uint32 const node = Vision::TravGrid::NodeAt(cell, layer);
+                Vision::TravClass const what = grid.ClassOf(node);
+                bool const walkable = what == Vision::TravClass::Free || what == Vision::TravClass::StepUp
+                    || what == Vision::TravClass::Jump || what == Vision::TravClass::DropSafe
+                    || what == Vision::TravClass::DropHurt || what == Vision::TravClass::Water;
+                if (walkable && std::fabs(grid.StandingZ(node) - z) <= STRANDED_RISE
+                    && nav.Cost[node] < Vision::TRAV_UNREACHABLE)
+                    return true;
+            }
+        }
+    return false;
+}
+
+Position Animus::Curriculum::PointNavEncounter::CellPoint(Vision::TravGrid const& grid, uint32 node, bool bed)
+{
+    float const z = bed ? grid.Ground[node] : grid.StandingZ(node);
+    uint32 const cell = Vision::TravGrid::CellOfNode(node);
     return Position(grid.CentreX(cell), grid.CentreY(cell), z, 0.0f);
 }
 
-float Animus::Curriculum::PointNavEncounter::CostAt(EnvNav const& nav, float x, float y)
+float Animus::Curriculum::PointNavEncounter::CostAt(EnvNav const& nav, float x, float y, float z)
 {
-    if (!nav.Grid || nav.Cost.size() != nav.Grid->Cells())
+    if (!nav.Grid || nav.Cost.size() != nav.Grid->Nodes())
         return Vision::TRAV_UNREACHABLE;
-    uint32 const cell = nav.Grid->CellOf(x, y);
-    return cell == Vision::TRAV_NO_CELL ? Vision::TRAV_UNREACHABLE : nav.Cost[cell];
+    uint32 const node = nav.Grid->NodeOf(x, y, z);
+    return node == Vision::TRAV_NO_CELL ? Vision::TRAV_UNREACHABLE : nav.Cost[node];
 }
 
 std::mt19937& Animus::Curriculum::PointNavEncounter::Rng(Env const& env) const
@@ -748,8 +816,9 @@ bool Animus::Curriculum::PointNavEncounter::DrawPair(Env& env, Map* map, Player*
         if (found != _pools.end() && !found->second.Ring.empty())
         {
             Failure const& failure = found->second.Ring[pick(found->second.Ring.size())];
-            uint32 const start = grid.CellOf(failure.Where.GetPositionX(), failure.Where.GetPositionY());
-            if (failure.GoalCell < grid.Cells() && start != Vision::TRAV_NO_CELL)
+            uint32 const start = grid.NodeOf(failure.Where.GetPositionX(), failure.Where.GetPositionY(),
+                failure.Where.GetPositionZ());
+            if (failure.GoalCell < grid.Nodes() && start != Vision::TRAV_NO_CELL)
             {
                 Vision::CostToGo(grid, failure.GoalCell, tuning.DropHurtYards, nav.Cost);
                 if (nav.Cost[start] < Vision::TRAV_UNREACHABLE)
@@ -878,7 +947,7 @@ bool Animus::Curriculum::PointNavEncounter::Build(Env& env, Map* map, uint8 /*le
     {
         // Nothing placed: the leader's position is the goal (Update), the party's start the follow's.
         nav.Start = _scenario.SpawnPointFor(env);
-        nav.StartCell = nav.Grid->CellOf(nav.Start.GetPositionX(), nav.Start.GetPositionY());
+        nav.StartCell = nav.Grid->NodeOf(nav.Start.GetPositionX(), nav.Start.GetPositionY(), nav.Start.GetPositionZ());
         return true;
     }
     if (!DrawPair(env, map, bot, nav))
@@ -918,7 +987,7 @@ bool Animus::Curriculum::PointNavEncounter::Build(Env& env, Map* map, uint8 /*le
     data.HasEpisodeSpawn = true;
     nav.Placed = true;
     if (_scenario.Arena(env).Revisit)
-        nav.Seats[0].Stood.assign(nav.Grid->Cells(), 0);
+        nav.Seats[0].Stood.assign(nav.Grid->Nodes(), 0);
     return true;
 }
 
@@ -938,7 +1007,7 @@ void Animus::Curriculum::PointNavEncounter::Update(Env& env)
         float z = 0.0f;
         if (!_follow || !_follow->LeaderReported(env, x, y, z))
             return;
-        uint32 const cell = nav.Grid->CellOf(x, y);
+        uint32 const cell = nav.Grid->NodeOf(x, y, z);
         nav.Goal.Relocate(x, y, z, 0.0f);
         if (cell != Vision::TRAV_NO_CELL && cell != nav.GoalCell)
         {
@@ -958,13 +1027,17 @@ void Animus::Curriculum::PointNavEncounter::Update(Env& env)
         if (!bot || !bot->IsInWorld())
             continue;
         SeatNav& seat = nav.Seats[seatIndex];
-        RespawnClock::Step const step = seat.Clock.Note(env.EpisodeElapsedMs, bot->IsAlive(), -1.0f,
-            respawn.DelayMs, respawn.RejoinYards);
+        // A stranded seat (dead ground, STRANDED_*) is down as a dead one is, and rises the same way.
+        RespawnClock::Step const step = seat.Clock.Note(env.EpisodeElapsedMs, bot->IsAlive() && !seat.Stranded,
+            -1.0f, respawn.DelayMs, respawn.RejoinYards);
         if (step == RespawnClock::Step::Rise)
         {
             RiseAtEntrance(bot, data.Seats[seatIndex], nav.Start, env.EpisodeElapsedMs);
             seat.Clock.Risen(env.EpisodeElapsedMs);
             seat.HasLastPos = false;
+            seat.Stranded = false;
+            seat.LandedChecks = 0;
+            seat.LastDrops = data.Seats[seatIndex].Drops;
         }
     }
 }
@@ -1082,9 +1155,10 @@ void Animus::Curriculum::PointNavEncounter::NoteWaypoint(Env const& env, uint32 
             if (!CellGrid::Choosable(crop.data(), r, c))
                 continue;
             Position const point = CellGrid::WorldPoint(crop.data(), pose, r, c);
-            best = std::min(best, CostAt(nav, point.GetPositionX(), point.GetPositionY()));
+            best = std::min(best, CostAt(nav, point.GetPositionX(), point.GetPositionY(), point.GetPositionZ()));
         }
-    float const chosen = CostAt(nav, held.Place.GetPositionX(), held.Place.GetPositionY());
+    float const chosen = CostAt(nav, held.Place.GetPositionX(), held.Place.GetPositionY(),
+        held.Place.GetPositionZ());
     if (best >= Vision::TRAV_UNREACHABLE || chosen >= Vision::TRAV_UNREACHABLE)
         return;
     seat.RegretSum += std::max(0.0f, chosen - best);
@@ -1188,7 +1262,29 @@ void Animus::Curriculum::PointNavEncounter::Reward(Env& env, uint32 seatIndex, P
     bool const firstLook = !seat.HasLastPos;
     seat.LastX = bodyX;
     seat.LastY = bodyY;
+    seat.LastZ = bodyZ;
     seat.HasLastPos = true;
+
+    // Dead ground (STRANDED_*): a landing from 2 yd or more (SeatState::Drops), then the body on the ground
+    // STRANDED_DECISIONS decisions running where no walkable floor near it routes to the goal -- charged as a death,
+    // and out until it rises at the start (Update).
+    if (state.Drops != seat.LastDrops)
+    {
+        seat.LastDrops = state.Drops;
+        seat.LandedChecks = STRANDED_DECISIONS;
+    }
+    if (seat.LandedChecks && !seat.Stranded && bot->IsAlive())
+    {
+        bool const grounded = !state.Mover.Started() || state.Mover.Body.Kind == Movement::Mode::Ground;
+        if (!grounded)
+            seat.LandedChecks = STRANDED_DECISIONS;
+        else if (--seat.LandedChecks == 0 && !RouteNear(nav, bodyX, bodyY, bodyZ))
+        {
+            seat.Stranded = true;
+            ++seat.Strandings;
+            ledger.Add(RewardTerm::Death, -tuning.Death);
+        }
+    }
 
     // Wall and Stuck at their fixed price (as M1), and a pin PinSeconds long into the failure pool, once per pin.
     uint32 const stuckMs = state.StuckMs - std::min(state.StuckMs, seat.LastStuckMs);
@@ -1233,13 +1329,13 @@ void Animus::Curriculum::PointNavEncounter::Reward(Env& env, uint32 seatIndex, P
     // The route distance where the body stands: Lost while it exceeds the start's by LostYards (off the bake is
     // lost too); Revisit on stepping onto a bake cell stood on before, in the arenas that ask -- a step, not a
     // dwell: standing still on one's own cell costs nothing (the plan's standing-still-pays-0).
-    seat.CBody = CostAt(nav, bodyX, bodyY);
+    seat.CBody = CostAt(nav, bodyX, bodyY, bodyZ);
     if (seat.CBody > nav.CStart + tuning.LostYards)
     {
         seat.LostMs += stepMs;
         ledger.Add(RewardTerm::Lost, -tuning.Lost * seconds);
     }
-    uint32 const cell = nav.Grid->CellOf(bodyX, bodyY);
+    uint32 const cell = nav.Grid->NodeOf(bodyX, bodyY, bodyZ);
     if (!seat.Stood.empty() && cell != Vision::TRAV_NO_CELL)
     {
         if (cell != seat.LastCell && seat.Stood[cell])
@@ -1336,16 +1432,17 @@ void Animus::Curriculum::PointNavEncounter::WriteLabels(Env const& env, uint32 s
     CropPose const& pose = state.Crop;
     float const x = pose.Valid ? pose.X : bot->GetPositionX();
     float const y = pose.Valid ? pose.Y : bot->GetPositionY();
+    float const z = pose.Valid ? pose.Z : bot->GetPositionZ();
     float const yaw = pose.Valid ? pose.Yaw : bot->GetOrientation();
-    bool const haveGoal = nav.GoalCell != Vi::TRAV_NO_CELL && nav.Cost.size() == nav.Grid->Cells();
+    bool const haveGoal = nav.GoalCell != Vi::TRAV_NO_CELL && nav.Cost.size() == nav.Grid->Nodes();
     static std::vector<float> const noCost;
     std::vector<float> const& cost = haveGoal ? nav.Cost : noCost;
-    Vi::SampleLabels(*nav.Grid, cost, x, y, yaw, Vi::TRAV_CELL, out + Vi::TRAV_LABEL_FINE_CLASSES, fineCost);
-    Vi::SampleLabels(*nav.Grid, cost, x, y, yaw, Vi::TRAV_LABEL_COARSE_CELL, out + Vi::TRAV_LABEL_COARSE_CLASSES,
-        coarseCost);
+    Vi::SampleLabels(*nav.Grid, cost, x, y, z, yaw, Vi::TRAV_CELL, out + Vi::TRAV_LABEL_FINE_CLASSES, fineCost);
+    Vi::SampleLabels(*nav.Grid, cost, x, y, z, yaw, Vi::TRAV_LABEL_COARSE_CELL,
+        out + Vi::TRAV_LABEL_COARSE_CLASSES, coarseCost);
     if (!haveGoal)
         return;
-    scalars[Vi::TRAV_LABEL_C_BODY] = CostAt(nav, x, y);
+    scalars[Vi::TRAV_LABEL_C_BODY] = CostAt(nav, x, y, z);
     scalars[Vi::TRAV_LABEL_C_START] = nav.CStart;
     // The goal in the body frame: forward along the facing, right along (sin yaw, -cos yaw): a label, no observation.
     float const cosYaw = std::cos(yaw);

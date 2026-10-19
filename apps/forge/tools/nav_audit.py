@@ -19,7 +19,8 @@ from pathlib import Path
 NAMES = ["audit_unreachable", "audit_true_yards", "audit_corridor_cost", "audit_truncated", "audit_cells",
          "audit_wall", "audit_closed", "audit_unknown", "audit_hazard", "audit_floor", "audit_first_block_yards",
          "audit_wall_ray", "audit_wall_mesh", "audit_wall_bump", "audit_wall_inherited", "audit_wall_true",
-         "audit_wall_face", "audit_wall_step", "audit_wall_phantom", "audit_wall_floorless", "audit_wall_layer_off"]
+         "audit_wall_face", "audit_wall_step", "audit_wall_phantom", "audit_wall_floorless", "audit_wall_layer_off",
+         "audit_fell", "audit_stranded", "audit_route_drops", "audit_route_drops_seen"]
 SOLID = {0, 2, 10}
 STEP = {5, 6, 7, 8, 9}
 
@@ -35,8 +36,10 @@ def summary(path, steps):
         return
 
     def bin_of(r):
+        if r.get("audit_stranded"):
+            return "stranded after a drop"
         if r["audit_unreachable"]:
-            return "unreachable"
+            return "fell, no route" if r.get("audit_fell") else "no route (bake reading)"
         if r["audit_wall"] or r["audit_closed"]:
             return "map blocks the true way"
         if r["audit_corridor_cost"] > 1.5 * max(1.0, r["audit_true_yards"]) and r["audit_unknown"]:
