@@ -173,9 +173,11 @@ float Animus::Vision::CellFactor(MapCell const& cell, float z, float clearance)
         if (NearestFloor(cell, z, floor) && std::fabs(floor - z) > PLAN_HEIGHT_BAND)
             code = MapCode::Unknown;
     }
-    // The body's configuration space: a centre nearer a measured face than the body's clearance is no place for it.
+    // The body's configuration space: a centre nearer a measured face than the body's clearance is no place for it --
+    // unless the body stood there (as the global route's: its own footsteps never seal the way back).
     float yards = 0.0f;
-    if (code != MapCode::Wall && code != MapCode::Door && ClearanceOf(cell, z, yards) && yards < clearance)
+    if (code != MapCode::Wall && code != MapCode::Door && !(cell.Flags & MAP_VISITED) && ClearanceOf(cell, z, yards)
+        && yards < clearance)
         return PLAN_BLOCKED;
     return PLAN_COSTS[uint8_t(code)];
 }
@@ -198,8 +200,9 @@ void Animus::Vision::ConfigurationSpace(float* factor, int32_t side)
         }
     };
     mark();
-    // Inflation: a passable cell 8-adjacent to a blocked one (a wall, or too near one) costs PLAN_INFLATED at least, one
-    // of those with a wall within two cells on both sides along an axis or a diagonal (a 2-yd passage) PLAN_PINCHED;
+    // Inflation: a passable cell 8-adjacent to a blocked one (a wall, or too near one) costs PLAN_INFLATED at least,
+    // one of those with a wall within two cells on both sides along an axis or a diagonal (a 2-yd passage)
+    // PLAN_PINCHED;
     // dearer cells (unknown, a hazard) keep their own. Read two cells out, past the one cell of padding: the bounds
     // are checked.
     auto const wallAt = [&](int32_t row, int32_t col)

@@ -502,7 +502,7 @@ namespace Animus::Curriculum
             /// nav1_sight's look head was 92 % of its entropy's maximum -- the camera wandered, pointed more than 90
             /// degrees off the way the body went half the time -- since nothing a look did was worth anything.
             float Explore = 0.0005f;
-            float ExploreCap = 1.0f;
+            float ExploreCap = 0.5f;
             float ExploreFloor = 0.25f;
             /// 30 since 2026-10-18 (20 before): nav1_sight's long trips timed out (46% arrived on rung 2's longest
             /// bin at 130M), and a replayed failure starts the seat where one gave up.
