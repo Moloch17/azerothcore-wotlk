@@ -197,6 +197,8 @@ namespace Animus::Vision
         void SetPricing(GlobalPricing const& pricing) { _pricing = pricing; }
         /// The body's clearance (BodyClearance): a node's centre nearer a measured face is blocked. Before Begin.
         void SetClearance(float clearance) { _clearance = clearance; }
+        /// Whether a step down past GLOBAL_STEP_DOWN may be a drop (GLOBAL_DROP_*). Before Begin.
+        void SetDrops(bool drops) { _drops = drops; }
         /// Starts the field to the goal at (gx, gy, gz), its domain round the goal and the body at (bx, by).
         void Begin(float gx, float gy, float gz, float bx, float by);
         /// Forgets the field (its blocks kept for reuse).
@@ -297,6 +299,7 @@ namespace Animus::Vision
         int32_t _targetY = 0;
         float _floorFactor = 1.0f;
         float _clearance = PLAN_CLEARANCE;
+        bool _drops = true;
         float _goalPointX = 0.0f;   // the goal (Begin), whose own cells stand clear (PLAN_GOAL_CLEAR)
         float _goalPointY = 0.0f;
         // Per domain tile: its block (-1 none), and its cells as fetched this call.
@@ -338,9 +341,9 @@ namespace Animus::Vision
         /// it routes the body: the goal's cell (or one of its eight neighbours) is known on the map, and the body's
         /// cost-to-go is reached. Nothing is planned (the field is cleared) while the goal is not known. `map` must
         /// not be written between this and the decision's other reads, and `blocking` must outlive them.
-        /// `clearance`: the body's (BodyClearance).
+        /// `clearance`: the body's (BodyClearance); `drops`: whether a drop may be planned (GLOBAL_DROP_*).
         bool Update(MentalMap const& map, float x, float y, float z, float gx, float gy, float gz,
-            GlobalBlocking const* blocking = nullptr, float clearance = PLAN_CLEARANCE);
+            GlobalBlocking const* blocking = nullptr, float clearance = PLAN_CLEARANCE, bool drops = true);
         [[nodiscard]] GlobalField& Field() { return _field; }
         /// Recomputes this episode after its first plan, those of them a contradiction, and the last one's reason.
         [[nodiscard]] uint32_t Replans() const { return _replans; }

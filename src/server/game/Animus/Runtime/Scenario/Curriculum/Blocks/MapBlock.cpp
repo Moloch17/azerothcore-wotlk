@@ -395,7 +395,7 @@ void Animus::Curriculum::MapBlock::Observe(SeatView const& view, float* obs, uin
             if (!last.Valid)
                 router->Reset();            // an episode's first decision (its pose was reset with the episode)
             global = router->Update(*map, x, y, z, view.Objective.GetPositionX(), view.Objective.GetPositionY(),
-                view.Objective.GetPositionZ(), doors.Any() ? &doors : nullptr, clearance);
+                view.Objective.GetPositionZ(), doors.Any() ? &doors : nullptr, clearance, view.PlanDrops);
             pose.GlobalKept = router->KeptThisUpdate();
             Vi::GlobalReplan const did = router->ThisUpdate();
             pose.GlobalReplanned = did != Vi::GlobalReplan::None && did != Vi::GlobalReplan::Fresh;

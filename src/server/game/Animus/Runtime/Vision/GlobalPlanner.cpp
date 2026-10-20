@@ -419,7 +419,7 @@ bool Animus::Vision::GlobalField::Step()
                 if (-rise > GLOBAL_STEP_DOWN)
                 {
                     float const drop = -rise;
-                    if (drop >= FALL_LETHAL_FROM)
+                    if (!_drops || drop >= FALL_LETHAL_FROM)
                         continue;
                     float const hurt = drop < FALL_DAMAGE_FROM ? 0.0f
                         : std::clamp(FALL_DAMAGE_SLOPE * drop + FALL_DAMAGE_INTERCEPT, 0.0f, 1.0f);
@@ -784,11 +784,12 @@ void Animus::Vision::GlobalRoute::Reset()
 }
 
 bool Animus::Vision::GlobalRoute::Update(MentalMap const& map, float x, float y, float z, float gx, float gy,
-    float gz, GlobalBlocking const* blocking, float clearance)
+    float gz, GlobalBlocking const* blocking, float clearance, bool drops)
 {
     _tiles.Bind(map);
     _field.Use(_tiles, blocking);
     _field.SetClearance(clearance);
+    _field.SetDrops(drops);
     _this = GlobalReplan::None;
     _keptThis = false;
     // The goal is a place the map has seen: its cell or a neighbour known (asked every decision: a goal first seen
@@ -825,6 +826,7 @@ bool Animus::Vision::GlobalRoute::Update(MentalMap const& map, float x, float y,
     {
         _trial.Use(_tiles, blocking);
         _trial.SetClearance(clearance);
+        _trial.SetDrops(drops);
         _trial.Begin(gx, gy, gz, x, y);
         _trial.SettleAround(x, y, z);
         _field.SettleAround(x, y, z);

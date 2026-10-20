@@ -85,3 +85,11 @@ status:
     # SPL 0.85 at the 1.6-2.5 detour bin is the PLAN's reading; here the display target is the stage-wide SPL.
     spl: ">= 0.85"
     stop_error_yards: null
+
+# nav2's own ladder gates (2026-10-19): its rungs come from the pair pool (StageDefinition::PairKind detour) and are
+# harder each than nav1's bins were, and nav1's gates (0.85, 0.75, 0.72) stepped a policy arriving 73-77 % in
+# evaluation to the top rung by 20M, where it arrived 41 %. A rung is left when its evaluation arrives 85 % at SPL 0.75.
+fade:
+  gate_metrics:
+    arrived: [0.85, 0.85, 0.85, 0.85]
+    spl: [0.75, 0.75, 0.75, 0.75]

@@ -352,6 +352,10 @@ namespace Animus::Curriculum
         /// window plan. Null for a view without one.
         Vision::GlobalRoute* Global = nullptr;
         bool NoGlobal = false;
+        /// Whether the global route may plan a drop (GLOBAL_DROP_*): not in a walking stage (StageDefinition::PairKind
+        /// sight or detour), whose true routes take none -- planned there, the route led bodies off ledges onto ground
+        /// with no walking way back (nav2, 2026-10-19: 21 % of rung-3 trips stranded).
+        bool PlanDrops = true;
         /// **What each of the sight block's slots named at its last observation** (SeatState::SightGuids): the raw
         /// GUID a press on the slot acts on, 0 an empty slot; and the seat's client focus (SeatState::Focus), the
         /// friend its beneficial spells go to. Null for a view without a sight block.
