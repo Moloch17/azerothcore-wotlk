@@ -1206,15 +1206,18 @@ float Animus::Curriculum::PointNavEncounter::PairMiss(NavPair const& pair, uint3
                 require(pair.Levels == 1);
                 require(pair.Drops == 0);
             }
+            // One drop, then two at most: the nav3 evaluations from 40M to 70M in the Deadmines and Shadowfang
+            // arrived 73 % with one drop, 21 % with two to five.
             else if (rung == 1)
             {
                 require(pair.Levels >= 1);
-                require(pair.Drops >= 1);
+                require(pair.Drops == 1);
                 require(pair.HurtDrops == 0);
             }
             else if (rung == 2)
             {
                 require(pair.Levels >= 2);
+                require(pair.Drops <= 2);
                 require(pair.HurtDrops == 0);
             }
             else
