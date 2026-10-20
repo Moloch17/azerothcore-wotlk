@@ -691,7 +691,7 @@ void Animus::Curriculum::PointNavEncounter::BeforeLevel(Env& env)
     ArenaDefinition const& arena = _scenario.Arena(env);
     EnvNav& nav = _envs[env.Index];
     nav.LabelsOnly = arena.LabelsOnly;
-    uint32 const mapId = arena.MapId ? arena.MapId : _scenario.Stage().MapId;
+    uint32 const mapId = arena.OwnMap() ? arena.MapId : _scenario.Stage().MapId;
     if (env.Evaluating && env.EpisodeSeedIndex != Animus::NO_EPISODE_SEED)
         _rngs[env.Index].seed(uint32(env.EpisodeSeedIndex) * 2654435761u ^ (mapId * 40503u + 0x7f4a7c15u));
     else

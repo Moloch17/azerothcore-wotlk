@@ -275,6 +275,9 @@ namespace Animus::Curriculum
         /// boxed round the tower and seeded from SpawnPoints[0].
         bool Tower = false;
 
+        /// Whether the arena names its own map: MapId 0 is "the stage's" -- except for a tower, whose 0 is the Eastern
+        /// Kingdoms.
+        [[nodiscard]] bool OwnMap() const { return MapId != 0 || Tower; }
         [[nodiscard]] uint32 SeatCount() const;
     };
 

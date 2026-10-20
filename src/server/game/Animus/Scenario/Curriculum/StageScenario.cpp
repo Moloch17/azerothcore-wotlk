@@ -302,7 +302,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     _resetsStayOnMap = _continent && !stage.AnyArena([this](ArenaDefinition const& arena)
     {
         return arena.PartyGroup || arena.Against == Opposition::Instance
-            || (arena.MapId && arena.MapId != _spawnMapId);
+            || (arena.OwnMap() && arena.MapId != _spawnMapId);
     });
 
     // A map-thread reset cannot load a grid's collision and navmesh: while map tasks run, those wait for the world
@@ -2113,7 +2113,7 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     // An arena on a map of its own (ArenaDefinition::MapId) sends the episode there; an encounter that fixes its
     // own map (an instance rung, a quest giver's) still decides later, in BeforeLevel.
     data.EpisodeMapId = _stage.Arenas[data.Arena].MapId;
-    data.HasEpisodeMap = data.EpisodeMapId != 0;
+    data.HasEpisodeMap = _stage.Arenas[data.Arena].OwnMap();
     data.EpisodeLevel = 0;
     data.EpisodeTeam = 0;
     data.DungeonDifficulty = 0;

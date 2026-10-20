@@ -161,7 +161,7 @@ namespace
             return boxes;
         for (Animus::Curriculum::StageDefinition const& stage : Animus::Curriculum::CurriculumStages())
             for (Animus::Curriculum::ArenaDefinition const& arena : stage.Arenas)
-                if (arena.MapId == mapId && arena.HasBox)
+                if (arena.OwnMap() && arena.MapId == mapId && arena.HasBox)
                     boxes.push_back({ arena.BoxMinX - SCENE_BOX_MARGIN, arena.BoxMinY - SCENE_BOX_MARGIN,
                         arena.BoxMaxX + SCENE_BOX_MARGIN, arena.BoxMaxY + SCENE_BOX_MARGIN });
         auto const key = [](SceneBaker::SceneBox const& box)

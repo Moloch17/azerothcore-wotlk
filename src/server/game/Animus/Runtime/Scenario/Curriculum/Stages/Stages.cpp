@@ -1480,8 +1480,8 @@ namespace
             return "a nav arena is walked with the move block, seen with the camera and planned on the mental map";
         if (pointNav && stage.Has(BlockId::Compass))
             return "a nav arena's goal is the route on the mental map: the compass would give the straight line away";
-        if (pointNav && (!arena.MapId || !arena.RespawnAtEntrance))
-            return "a nav arena is on a dungeon's own map and its dead rise at the start";
+        if (pointNav && (!arena.OwnMap() || !arena.RespawnAtEntrance))
+            return "a nav arena is on a dungeon's own map (or a tower's) and its dead rise at the start";
         if (pointNav && stage.MapTiers != 2)
             return "a nav arena's planner reads both tiers of the mental map (MapTiers 2)";
         if ((arena.SightOnly || arena.Revisit || arena.HasBox) && !pointNav)
@@ -1526,7 +1526,7 @@ namespace
             return "a friend to guard is a single fight's (CombatDrill::Fight)";
         if (combat && (arena.MapId ? arena.MapId : stage.MapId) == 0)
             return "a combat arena is on a dungeon's own map";
-        if (arena.RespawnAtEntrance && (arena.MapId ? arena.MapId : stage.MapId) == 0)
+        if (arena.RespawnAtEntrance && !arena.Tower && (arena.MapId ? arena.MapId : stage.MapId) == 0)
             return "a seat comes back at an instance's entrance, so the arena is on an instance's map";
 
         if (!seek && !arena.Rooms.empty())
@@ -1771,7 +1771,7 @@ std::map<uint32, std::vector<std::string>> Animus::Curriculum::StageMaps(uint32 
                     add(rows[std::size_t(arena.InstanceRow)].MapId, stage);
                 continue;
             }
-            if (arena.MapId)
+            if (arena.OwnMap())
                 add(arena.MapId, stage);
             else
                 placedByStage = true;
