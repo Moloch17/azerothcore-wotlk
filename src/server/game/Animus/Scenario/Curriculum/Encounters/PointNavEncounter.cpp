@@ -1147,12 +1147,16 @@ float Animus::Curriculum::PointNavEncounter::PairMiss(NavPair const& pair, uint3
     // three corners): its dial is the height, not the turns.
     constexpr float STAIR_CORNERS[RUNGS] = { 3.0f, 5.0f, 8.0f, 1000.0f };
     constexpr float STAIR_TURNING[RUNGS] = { 180.0f, 360.0f, 540.0f, 100000.0f };
-    // A tower (ArenaDefinition::Tower): the climb, higher at each rung, its stair winding as it winds; walked up, no
-    // swim. The way back down is the second leg (TwoLeg).
+    // A tower (ArenaDefinition::Tower): the climb, higher at each rung, its stair winding held to the vertical stage's
+    // (the nav3 evaluations from 50M to 70M: 95 % arrived up three corners or fewer, 25 % up four to six, none up seven
+    // or more -- North Point's spiral, 18 corners, came at the first rung); walked up, no swim. The way back down is
+    // the second leg (TwoLeg).
     if (tower)
     {
         constexpr float RISE[RUNGS] = { 4.0f, 8.0f, 14.0f, 14.0f };
         range(pair.Rise, RISE[rung], 1000.0f);
+        range(float(pair.Corners), 0.0f, STAIR_CORNERS[rung]);
+        range(float(pair.TurnDegrees), 0.0f, STAIR_TURNING[rung]);
         range(pair.Route, 5.0f, 150.0f);
         require(pair.Drops == 0);
         require(pair.SwimYards <= 0.0f);
