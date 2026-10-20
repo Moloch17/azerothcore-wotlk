@@ -3773,6 +3773,7 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     view.Body = seat.Mover.Started() ? &seat.Mover.Body : nullptr;
     view.PinnedMs = seat.StuckRunMs;
     view.PlanDrops = _stage.PairKind != 1 && _stage.PairKind != 2;
+    view.SeeOtherPlayers = _stage.PairKind == 0;
     view.Facing = seat.Facing;
     view.Trail = &seat.Trail;
     // Whether its legs are getting anywhere, measured for every seat (TrackMotion). The travel encounter's View

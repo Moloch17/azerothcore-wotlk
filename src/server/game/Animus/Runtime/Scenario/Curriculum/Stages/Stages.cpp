@@ -687,6 +687,40 @@ namespace
     /// Wailing Caverns (map 43), held out of every nav stage: never drawn in training nor in an ordinary evaluation
     /// (EvalOnly), played only by the learner's eval.heldout, so a policy that learned a dungeon's routes is told from
     /// one that learned to find routes. The learner's yamls name it `wailing`.
+    /// **A lookout tower** (nav3, 2026-10-20): a continent arena boxed TOWER_BOX_YARDS round the tower (its bake and
+    /// its camera scene, SceneBaker's boxes), started at its named place (game_tele), whose trips climb the tower and
+    /// come back down (ArenaDefinition::Tower). The continent's own creatures are in another phase than the env's.
+    constexpr float TOWER_BOX_YARDS = 50.0f;
+    ArenaDefinition TowerArena(char const* name, uint32 mapId, float x, float y, float z, uint32 episodeSeconds)
+    {
+        ArenaDefinition arena = NavArena(name, mapId, episodeSeconds);
+        arena.HasBox = true;
+        arena.BoxMinX = x - TOWER_BOX_YARDS;
+        arena.BoxMinY = y - TOWER_BOX_YARDS;
+        arena.BoxMaxX = x + TOWER_BOX_YARDS;
+        arena.BoxMaxY = y + TOWER_BOX_YARDS;
+        arena.SpawnPoints = { Position(x, y, z, 0.0f) };
+        arena.Tower = true;
+        return arena;
+    }
+
+    /// The lookouts nav3 climbs: Eastern Kingdoms' and Kalimdor's towers and posts, at their game_tele places.
+    std::vector<ArenaDefinition> TowerArenas(uint32 episodeSeconds)
+    {
+        return {
+            TowerArena("sentinel_tower", 0, -10512.0f, 1053.0f, 59.0f, episodeSeconds),
+            TowerArena("westfall_lighthouse", 0, -11405.0f, 1970.0f, 9.0f, episodeSeconds),
+            TowerArena("ridgepoint_tower", 0, -9759.0f, -1371.0f, 58.0f, episodeSeconds),
+            TowerArena("tower_of_ilgalar", 0, -9285.0f, -3347.0f, 110.0f, episodeSeconds),
+            TowerArena("stonewatch_tower", 0, -9298.0f, -2973.0f, 125.0f, episodeSeconds),
+            TowerArena("southpoint_tower", 0, -695.0f, 407.0f, 75.0f, episodeSeconds),
+            TowerArena("far_watch_post", 1, 277.0f, -3690.0f, 28.0f, episodeSeconds),
+            TowerArena("north_point_tower", 1, -2862.0f, -3423.0f, 39.0f, episodeSeconds),
+            TowerArena("crossroads", 1, -453.0f, -2651.0f, 96.0f, episodeSeconds),
+            TowerArena("tower_of_althalaxx", 1, 7166.0f, -772.0f, 55.0f, episodeSeconds),
+        };
+    }
+
     ArenaDefinition NavHeldOut(uint32 episodeSeconds, NavFlag flag = NavFlag::None)
     {
         ArenaDefinition arena = NavArena("wailing", MAP_WAILING_CAVERNS, episodeSeconds, flag);
@@ -990,13 +1024,21 @@ namespace
             .Summary = "an empty Deadmines, Shadowfang Keep, Gnomeregan or Razorfen Kraul: a point a storey away -- "
                 "step up, jump or go round, drop where it is safe, never where it kills; Wailing Caverns held out",
             .Blocks = NavBlocks(),
-            .Arenas = {
-                NavArena("deadmines", MAP_DEADMINES, 150),
-                ShadowfangNav(150),
-                NavArena("gnomeregan", MAP_GNOMEREGAN, 150),
-                NavArena("razorfen", MAP_RAZORFEN_KRAUL, 150),
-                NavHeldOut(150),
-            },
+            // The four dungeons at weight 5 each and the ten towers at 1: a third of the trips climb a tower.
+            .Arenas = [] {
+                std::vector<ArenaDefinition> arenas = {
+                    NavArena("deadmines", MAP_DEADMINES, 150),
+                    ShadowfangNav(150),
+                    NavArena("gnomeregan", MAP_GNOMEREGAN, 150),
+                    NavArena("razorfen", MAP_RAZORFEN_KRAUL, 150),
+                };
+                for (ArenaDefinition& arena : arenas)
+                    arena.Weight = 5;
+                for (ArenaDefinition& tower : TowerArenas(150))
+                    arenas.push_back(tower);
+                arenas.push_back(NavHeldOut(150));
+                return arenas;
+            }(),
             .MapId = MAP_DEADMINES,
             .SpawnPoints = { DungeonEntrance(MAP_DEADMINES) },
             .EvenLevels = true,

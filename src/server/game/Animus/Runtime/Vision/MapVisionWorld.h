@@ -91,7 +91,9 @@ namespace Animus::Vision
     ///   bounding box, turned as it is;
     /// - every hostile ground effect, as a disc.
     /// Visits the grid around the seat: on the seat's own map thread only (not under AnimusForge.ObserveAfterJoin).
-    void GatherCandidates(Player* seat, Vec3 pivot, float range, GatheredSight& out);
+    /// `otherPlayers` false: no other player, nor anything one owns, is a candidate unless it is of the seat's own
+    /// group -- the nav stages' bodies share a continent's towers and must not see one another (2026-10-20).
+    void GatherCandidates(Player* seat, Vec3 pivot, float range, GatheredSight& out, bool otherPlayers = true);
 
     /// The entity list from what the sensor found: for each of `sensed` (at most ENTITY_SLOTS, nearest first), as
     /// this seat's client knows it (Classify over FactsOf: the class, the level, the nameplate, the quest marks, a

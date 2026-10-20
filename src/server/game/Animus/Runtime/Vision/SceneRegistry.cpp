@@ -37,7 +37,7 @@ Animus::Vision::SceneRegistry& Animus::Vision::SceneRegistry::Instance()
 }
 
 bool Animus::Vision::SceneRegistry::Ensure(std::string const& dataDir, std::string const& sceneDir, uint32_t mapId,
-    SceneEnsure& report, std::string& error)
+    SceneEnsure& report, std::string& error, std::vector<SceneBaker::SceneBox> const& boxes)
 {
     std::unique_lock lock(_lock);
     auto const start = std::chrono::steady_clock::now();
@@ -71,10 +71,10 @@ bool Animus::Vision::SceneRegistry::Ensure(std::string const& dataDir, std::stri
             auto const identityStart = std::chrono::steady_clock::now();
             uint64_t digest = 0;
             bool const haveDigest = SceneBaker::SourceDigest(dataDir, mapId, scene->SourceModels(), digest,
-                identityError);
+                identityError, boxes);
             if (haveDigest && header.SourceFilesDigest == digest)
                 report.Check = "file times";
-            else if (!SceneBaker::SourceIdentity(dataDir, mapId, source, identityError))
+            else if (!SceneBaker::SourceIdentity(dataDir, mapId, source, identityError, boxes))
             {
                 error = where + ": cannot read the map's source data in " + dataDir + ": " + identityError;
                 return false;
@@ -107,7 +107,7 @@ bool Animus::Vision::SceneRegistry::Ensure(std::string const& dataDir, std::stri
     {
         SceneBaker::BakeReport baked;
         std::string bakeError;
-        if (!SceneBaker::BakeMap(dataDir, mapId, path, baked, bakeError))
+        if (!SceneBaker::BakeMap(dataDir, mapId, path, baked, bakeError, boxes))
         {
             error = where + ": " + report.Reason + ", and baking it from " + dataDir + " failed: " + bakeError
                 + ". The same bake by hand: scene_baker bake " + dataDir + " " + std::to_string(mapId) + " " + path;

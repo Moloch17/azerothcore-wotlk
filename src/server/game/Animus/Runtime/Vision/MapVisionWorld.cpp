@@ -299,7 +299,7 @@ bool Animus::Vision::HostileGround(Player* seat, DynamicObject const* area)
     return info && !info->IsPositive() && (!caster || !seat->IsFriendlyTo(caster));
 }
 
-void Animus::Vision::GatherCandidates(Player* seat, Vec3 pivot, float range, GatheredSight& out)
+void Animus::Vision::GatherCandidates(Player* seat, Vec3 pivot, float range, GatheredSight& out, bool otherPlayers)
 {
     out.Candidates.clear();
     out.Objects.clear();
@@ -323,6 +323,10 @@ void Animus::Vision::GatherCandidates(Player* seat, Vec3 pivot, float range, Gat
         {
             if (unit == seat || !within(unit) || !seat->CanSeeOrDetect(unit))
                 return;
+            if (!otherPlayers)
+                if (Player const* owner = unit->GetCharmerOrOwnerPlayerOrPlayerItself();
+                    owner && owner != seat && !seat->IsInSameGroupWith(owner))
+                    return;
             Movement::Body const shape = Movement::ShapeOf(unit);
             SensorCandidate candidate;
             candidate.Shape = SensedShape::Unit;

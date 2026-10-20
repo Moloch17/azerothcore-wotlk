@@ -145,6 +145,38 @@ namespace
     }
 }
 
+namespace
+{
+    /// How far round an outdoor arena's box its camera scene reaches (SceneBaker::SceneBox): what a body at the box's
+    /// edge sees of the world beyond it.
+    constexpr float SCENE_BOX_MARGIN = 100.0f;
+
+    /// The boxes a continent map's scene is limited to: every boxed arena of a stage on it, widened by
+    /// SCENE_BOX_MARGIN, in a fixed order (the scene's identity covers them). Empty for an instance map, and for a
+    /// continent no boxed arena uses (its whole map, as before).
+    std::vector<SceneBaker::SceneBox> StageSceneBoxes(uint32 mapId)
+    {
+        std::vector<SceneBaker::SceneBox> boxes;
+        if (mapId != 0 && mapId != 1 && mapId != 530 && mapId != 571)
+            return boxes;
+        for (Animus::Curriculum::StageDefinition const& stage : Animus::Curriculum::CurriculumStages())
+            for (Animus::Curriculum::ArenaDefinition const& arena : stage.Arenas)
+                if (arena.MapId == mapId && arena.HasBox)
+                    boxes.push_back({ arena.BoxMinX - SCENE_BOX_MARGIN, arena.BoxMinY - SCENE_BOX_MARGIN,
+                        arena.BoxMaxX + SCENE_BOX_MARGIN, arena.BoxMaxY + SCENE_BOX_MARGIN });
+        auto const key = [](SceneBaker::SceneBox const& box)
+        {
+            return std::make_tuple(box.MinX, box.MinY, box.MaxX, box.MaxY);
+        };
+        std::sort(boxes.begin(), boxes.end(), [&](auto const& a, auto const& b) { return key(a) < key(b); });
+        boxes.erase(std::unique(boxes.begin(), boxes.end(), [&](auto const& a, auto const& b)
+        {
+            return key(a) == key(b);
+        }), boxes.end());
+        return boxes;
+    }
+}
+
 void AnimusForge::Forge::PrepareScenes()
 {
     _sceneProblems.clear();
@@ -162,7 +194,11 @@ void AnimusForge::Forge::PrepareScenes()
 
         Animus::Vision::SceneEnsure result;
         std::string error;
-        if (!Animus::Vision::SceneRegistry::Instance().Ensure(dataDir, sceneDir, mapId, result, error))
+        std::vector<SceneBaker::SceneBox> const boxes = StageSceneBoxes(mapId);
+        if (!boxes.empty())
+            LOG_INFO("module.animus", "Scene map {}: limited to {} arena box(es) and {:.0f} yd round them", mapId,
+                boxes.size(), SCENE_BOX_MARGIN);
+        if (!Animus::Vision::SceneRegistry::Instance().Ensure(dataDir, sceneDir, mapId, result, error, boxes))
         {
             LOG_ERROR("module.animus", "Scene for map {} FAILED: {}", mapId, error);
             _sceneProblems.push_back(Acore::StringFormat("map {} (stages {}): {}", mapId, names, error));

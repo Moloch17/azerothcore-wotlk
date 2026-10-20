@@ -19,6 +19,7 @@
 #define ANIMUS_VISION_SCENE_REGISTRY_H
 
 #include "BakedWorld.h"
+#include "SceneBaker.h"
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -64,8 +65,10 @@ namespace Animus::Vision
         /// (the server's DataDir: vmaps/, maps/, dbc/) into `sceneDir` and loads that. The directory is created
         /// when missing. False, with `error` naming the map, the path and the cause, when neither works: there is
         /// no fallback.
+        /// `boxes` (SceneBaker::SceneBox): the scene is limited to them -- a continent's outdoor arenas -- and a
+        /// change of them rebakes it; none, the whole map.
         [[nodiscard]] bool Ensure(std::string const& dataDir, std::string const& sceneDir, uint32_t mapId,
-            SceneEnsure& report, std::string& error);
+            SceneEnsure& report, std::string& error, std::vector<SceneBaker::SceneBox> const& boxes = {});
 
         /// The loaded scene of a map, or null.
         [[nodiscard]] BakedWorld const* Get(uint32_t mapId) const;

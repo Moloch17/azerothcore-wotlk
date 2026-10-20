@@ -20,6 +20,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 /// **The scene baker** (baked-camera decision 0020): turns a map's extracted data (vmaps/, maps/, dbc/LiquidType.dbc
 /// of a server's DataDir) into the scene file BakedWorld reads. Library code, shared by the scene_baker tool, the forge
@@ -31,7 +32,20 @@ namespace SceneBaker
 {
     /// Bump when the baker's output for the same source could differ (a fix, a new field): every scene baked by an
     /// older baker is then invalid and is baked again.
-    constexpr uint32_t BAKER_VERSION = 2;
+    /// 3 (2026-10-20): a bake may be limited to boxes (SceneBox): only the spawns and terrain tiles that reach them.
+    constexpr uint32_t BAKER_VERSION = 3;
+
+    /// **A box a scene is limited to** (2026-10-20, the outdoor tower arenas): world x and y, yards. A continent's
+    /// whole scene is far too big to bake or hold on every worker, and a tower arena's bodies stay in its box; a bake
+    /// given boxes keeps the model spawns whose bounds reach one and the terrain tiles that overlap one, and the camera
+    /// sees sky past them (BakedWorld: a tile off the footprint is not loaded). No boxes: the whole map, as before.
+    struct SceneBox
+    {
+        float MinX = 0.0f;
+        float MinY = 0.0f;
+        float MaxX = 0.0f;
+        float MaxY = 0.0f;
+    };
 
     /// What a bake did, for the log.
     struct BakeReport
@@ -64,8 +78,9 @@ namespace SceneBaker
     /// map's .vmtree and .vmtile files, every model file its spawns name and every .map terrain tile (not their
     /// sizes or times, which differ between machines that hold the same extraction). False, with `error`, when the
     /// map has no vmap tree or a file cannot be read.
+    /// `boxes` (SceneBox): only the files a boxed bake reads, and the boxes themselves, are covered.
     [[nodiscard]] bool SourceIdentity(std::string const& dataDir, uint32_t mapId, uint64_t& hash,
-        std::string& error);
+        std::string& error, std::vector<SceneBox> const& boxes = {});
 
     /// **The cheap pre-check of the identity** (scene format 3): FNV-1a 64 over the name, size and modification time
     /// (nanoseconds) of every source file the identity covers -- LiquidType.dbc, the map's .vmtree and .vmtile files,
@@ -75,7 +90,7 @@ namespace SceneBaker
     /// this one is current; otherwise the content hash (SourceIdentity) decides, and when it equals the scene's the
     /// digest is refreshed (RefreshDigest). The content hash alone is authoritative for correctness.
     [[nodiscard]] bool SourceDigest(std::string const& dataDir, uint32_t mapId, std::string const& modelNames,
-        uint64_t& digest, std::string& error);
+        uint64_t& digest, std::string& error, std::vector<SceneBox> const& boxes = {});
 
     /// Rewrites the digest field of the scene file `scenePath` in place (eight bytes; the checksum does not cover it).
     [[nodiscard]] bool RefreshDigest(std::string const& scenePath, uint64_t digest, std::string& error);
@@ -84,8 +99,9 @@ namespace SceneBaker
     /// written to a temporary name beside it and renamed into place, so a reader never sees half a file and two
     /// processes baking at once leave one whole file (their bytes are the same). False, with `error`, when it
     /// cannot: no vmap tree, a damaged map file, an unwritable `outPath` (named in the error).
+    /// `boxes`: limit the bake to them (SceneBox); none, the whole map.
     [[nodiscard]] bool BakeMap(std::string const& dataDir, uint32_t mapId, std::string const& outPath,
-        BakeReport& report, std::string& error);
+        BakeReport& report, std::string& error, std::vector<SceneBox> const& boxes = {});
 }
 
 #endif

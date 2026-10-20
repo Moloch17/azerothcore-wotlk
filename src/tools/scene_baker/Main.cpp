@@ -23,6 +23,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -30,7 +31,11 @@ namespace
     {
         std::printf(
             "usage:\n"
-            "  %1$s bake <data dir> <map id> [out file]    bake <data dir>/scenes/<map>.scene from vmaps/, maps/ and dbc/\n"
+            "  %1$s bake <data dir> <map id> [out file]\n"
+            "      [--box minX,minY,maxX,maxY]...\n"
+            "                                              bake <data dir>/scenes/<map>.scene from vmaps/, maps/\n"
+            "                                              and dbc/,\n"
+            "                                              limited to the boxes when given (SceneBaker::SceneBox)\n"
             "  %1$s ensure <data dir> <scene dir> <map id>...\n"
             "                                              what the worldserver does at startup: load each scene if it\n"
             "                                              is whole and current, else bake it (and say why)\n"
@@ -55,10 +60,23 @@ int main(int argc, char** argv)
     if (command == "bake" && argc >= 4)
     {
         uint32_t const mapId = uint32_t(std::strtoul(argv[3], nullptr, 10));
-        std::string const out = argc >= 5 ? argv[4]
-            : (std::filesystem::path(argv[2]) / "scenes" / SceneBaker::SceneFileName(mapId)).string();
+        std::string out = (std::filesystem::path(argv[2]) / "scenes" / SceneBaker::SceneFileName(mapId)).string();
+        std::vector<SceneBaker::SceneBox> boxes;
+        for (int arg = 4; arg < argc; ++arg)
+        {
+            std::string const value = argv[arg];
+            if (value == "--box" && arg + 1 < argc)
+            {
+                SceneBaker::SceneBox box;
+                if (std::sscanf(argv[++arg], "%f,%f,%f,%f", &box.MinX, &box.MinY, &box.MaxX, &box.MaxY) != 4)
+                    return Usage(argv[0]);
+                boxes.push_back(box);
+            }
+            else
+                out = value;
+        }
         SceneBaker::BakeReport report;
-        if (!SceneBaker::BakeMap(argv[2], mapId, out, report, error))
+        if (!SceneBaker::BakeMap(argv[2], mapId, out, report, error, boxes))
         {
             std::printf("bake of map %u failed: %s\n", mapId, error.c_str());
             return 1;

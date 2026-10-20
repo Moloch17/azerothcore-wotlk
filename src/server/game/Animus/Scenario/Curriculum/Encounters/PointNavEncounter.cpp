@@ -737,8 +737,15 @@ Animus::Vision::TravGrid const* Animus::Curriculum::PointNavEncounter::EnsureGri
     request.Arena = arena.Name;
     request.HasBox = arena.HasBox;
     request.Box = { arena.BoxMinX, arena.BoxMinY, arena.BoxMaxX, arena.BoxMaxY };
-    // The flood starts at the dungeon's door: where the entrance's trigger puts a player.
-    if (AreaTriggerTeleport const* entrance = sObjectMgr->GetMapEntranceTrigger(map->GetId()))
+    // The flood starts at the dungeon's door: where the entrance's trigger puts a player; a tower's at its place.
+    if (arena.Tower && !arena.SpawnPoints.empty())
+    {
+        request.HasSeed = true;
+        request.SeedX = arena.SpawnPoints.front().GetPositionX();
+        request.SeedY = arena.SpawnPoints.front().GetPositionY();
+        request.SeedZ = arena.SpawnPoints.front().GetPositionZ();
+    }
+    else if (AreaTriggerTeleport const* entrance = sObjectMgr->GetMapEntranceTrigger(map->GetId()))
     {
         request.HasSeed = true;
         request.SeedX = entrance->target_X;
@@ -1109,7 +1116,7 @@ void Animus::Curriculum::PointNavEncounter::BuildPairs(Env const& env, Map* map,
         drops += pair.Drops > 0;
         traps += pair.TrapNear;
         for (uint32 rung = 0; rung < RUNGS; ++rung)
-            fits[rung] += PairMiss(pair, _scenario.Stage().PairKind, rung) <= 0.0f;
+            fits[rung] += PairMiss(pair, _scenario.Stage().PairKind, rung, _scenario.Arena(env).Tower) <= 0.0f;
     }
     LOG_INFO("module.animus", "{}: arena {} pair pool: {} pairs ({:.1f} s, navmesh {}): {} in sight, {} change level, "
         "{} drop, {} with a trap drop near the start; fits by rung {} {} {} {}", _scenario.Name(),
@@ -1118,7 +1125,7 @@ void Animus::Curriculum::PointNavEncounter::BuildPairs(Env const& env, Map* map,
         inSight, levels, drops, traps, fits[0], fits[1], fits[2], fits[3]);
 }
 
-float Animus::Curriculum::PointNavEncounter::PairMiss(NavPair const& pair, uint32 kind, uint32 rung) const
+float Animus::Curriculum::PointNavEncounter::PairMiss(NavPair const& pair, uint32 kind, uint32 rung, bool tower) const
 {
     rung = std::min<uint32>(rung, RUNGS - 1);
     float miss = 0.0f;
@@ -1140,6 +1147,17 @@ float Animus::Curriculum::PointNavEncounter::PairMiss(NavPair const& pair, uint3
     // three corners): its dial is the height, not the turns.
     constexpr float STAIR_CORNERS[RUNGS] = { 3.0f, 5.0f, 8.0f, 1000.0f };
     constexpr float STAIR_TURNING[RUNGS] = { 180.0f, 360.0f, 540.0f, 100000.0f };
+    // A tower (ArenaDefinition::Tower): the climb, higher at each rung, its stair winding as it winds; walked up, no
+    // swim. The way back down is the second leg (TwoLeg).
+    if (tower)
+    {
+        constexpr float RISE[RUNGS] = { 4.0f, 8.0f, 14.0f, 14.0f };
+        range(pair.Rise, RISE[rung], 1000.0f);
+        range(pair.Route, 5.0f, 150.0f);
+        require(pair.Drops == 0);
+        require(pair.SwimYards <= 0.0f);
+        return miss;
+    }
     bool const far = kind == 4;
     bool const stairs = kind == 3;
     range(float(pair.Corners), 0.0f, far ? FAR_CORNERS[rung] : stairs ? STAIR_CORNERS[rung] : CORNERS[rung]);
@@ -1225,6 +1243,7 @@ bool Animus::Curriculum::PointNavEncounter::DrawFromPool(Env& env, PairPool cons
     CurriculumTuning::PointNavTuning const& tuning = _scenario.Tuning().PointNav;
     Vision::TravGrid const& grid = *nav.Grid;
     uint32 const kind = _scenario.Stage().PairKind;
+    bool const tower = _scenario.Arena(env).Tower;
     // The pairs this body stands at: neither end in liquid it would swim (as the bin draw has it).
     float const swimDepth = Movement::SWIM_ENTER * Movement::ShapeOf(bot).Height;
     auto const dry = [&](uint32 node) { return grid.Liquid[node] - grid.Ground[node] < swimDepth; };
@@ -1237,7 +1256,7 @@ bool Animus::Curriculum::PointNavEncounter::DrawFromPool(Env& env, PairPool cons
         NavPair const& pair = pool.Pairs[index];
         if (!dry(pair.Start) || !dry(pair.Goal))
             continue;
-        float const miss = PairMiss(pair, kind, nav.Rung);
+        float const miss = PairMiss(pair, kind, nav.Rung, tower);
         if (miss <= 0.0f)
         {
             fits.push_back(index);
@@ -1271,6 +1290,16 @@ bool Animus::Curriculum::PointNavEncounter::DrawFromPool(Env& env, PairPool cons
     nav.PairValid = true;
     nav.StartCell = pair.Start;
     nav.GoalCell = pair.Goal;
+    // A tower's trip comes back down (TwoLeg): the way from the top to where it began, priced now for the clock.
+    nav.TwoLeg = tower;
+    nav.Leg = 0;
+    nav.BackYards = 0.0f;
+    if (tower)
+    {
+        Vision::CostToGo(grid, nav.StartCell, tuning.DropHurtYards, nav.Cost, !WalksOnly());
+        nav.BackYards = nav.Cost[nav.GoalCell] < Vision::TRAV_UNREACHABLE ? nav.Cost[nav.GoalCell] : 0.0f;
+        nav.TwoLeg = nav.BackYards > 0.0f;
+    }
     Vision::CostToGo(grid, nav.GoalCell, tuning.DropHurtYards, nav.Cost, !WalksOnly());
     nav.Start = CellPoint(grid, nav.StartCell, false);
     nav.GoalAtBed = grid.ClassOf(nav.GoalCell) == Vision::TravClass::Water
@@ -1364,7 +1393,7 @@ bool Animus::Curriculum::PointNavEncounter::DrawPair(Env& env, Map* map, Player*
             if (DrawFromPool(env, *pool, bot, nav))
             {
                 nav.Goal = CellPoint(grid, nav.GoalCell, nav.GoalAtBed);
-                nav.CStart = nav.Cost[nav.StartCell];
+                nav.CStart = nav.Cost[nav.StartCell] + nav.BackYards;
                 nav.Straight = nav.Start.GetExactDist(&nav.Goal);
                 return nav.CStart < Vision::TRAV_UNREACHABLE;
             }
@@ -1887,6 +1916,20 @@ void Animus::Curriculum::PointNavEncounter::Reward(Env& env, uint32 seatIndex, P
     bool const stopped = Standing::Stopped(bot->GetUnitMovementFlags(), moved, tuning.StopMoved);
     if (firstLook || !(stopped && inside))
         return;
+    // A tower's top reached (TwoLeg, leg 0): half the arrival, on the climb's own time, and the goal is the way back
+    // down to where the trip began; the trip's measures (SPL, its time, the other half) are the whole trip's.
+    if (nav.TwoLeg && nav.Leg == 0)
+    {
+        nav.Leg = 1;
+        float const climb = nav.CStart - nav.BackYards;
+        float const climbShare = std::min(1.0f, std::max(0.25f, climb / RUN_YARDS_PER_SECOND)
+            / std::max(0.25f, float(env.EpisodeElapsedMs) / 1000.0f));
+        ledger.Add(RewardTerm::Arrive, 0.5f * tuning.Arrive * climbShare);
+        nav.GoalCell = nav.StartCell;
+        nav.Goal = CellPoint(*nav.Grid, nav.GoalCell, false);
+        Vision::CostToGo(*nav.Grid, nav.GoalCell, tuning.DropHurtYards, nav.Cost, !WalksOnly());
+        return;
+    }
     seat.Reached = true;
     seat.ArriveMs = env.EpisodeElapsedMs;
     seat.StopError = distance;
@@ -1899,7 +1942,7 @@ void Animus::Curriculum::PointNavEncounter::Reward(Env& env, uint32 seatIndex, P
     else if (tuning.ArriveWeight == 2 && nav.CStart < Vision::TRAV_UNREACHABLE)
         share = std::min(1.0f, std::max(0.25f, nav.CStart / RUN_YARDS_PER_SECOND)
             / std::max(0.25f, float(seat.ArriveMs) / 1000.0f));
-    ledger.Add(RewardTerm::Arrive, tuning.Arrive * share);
+    ledger.Add(RewardTerm::Arrive, (nav.TwoLeg ? 0.5f : 1.0f) * tuning.Arrive * share);
 }
 
 bool Animus::Curriculum::PointNavEncounter::IsTerminal(Env const& env) const

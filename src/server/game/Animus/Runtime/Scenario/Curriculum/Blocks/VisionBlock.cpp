@@ -207,7 +207,7 @@ void Animus::Curriculum::VisionBlock::Observe(SeatView const& view, float* obs, 
     thread_local Vi::GatheredSight gathered;
     thread_local Vi::SensorOutput sensed;
     Vi::Breakdown* breakdown = nullptr;
-    Vi::GatherCandidates(bot, rig.Pivot, settings.Range + camera.Zoom, gathered);
+    Vi::GatherCandidates(bot, rig.Pivot, settings.Range + camera.Zoom, gathered, view.SeeOtherPlayers);
     Vi::Sense(rig, settings, world, gathered.Candidates, sensed, breakdown);
     if (Vi::SeenList* seen = view.Seen)
     {

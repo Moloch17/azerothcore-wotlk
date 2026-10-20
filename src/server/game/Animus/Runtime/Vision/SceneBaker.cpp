@@ -152,6 +152,30 @@ namespace
         return name;
     }
 
+    /// Whether grid tile (x, y) -- a .map or .vmtile file's indices, BakedWorld's TileX and TileY: tile t spans world
+    /// coordinates (32 - t - 1) x SIZE_OF_GRIDS to (32 - t) x SIZE_OF_GRIDS -- overlaps a box; any tile when none.
+    bool TileReaches(int32_t x, int32_t y, std::vector<SceneBaker::SceneBox> const& boxes)
+    {
+        if (boxes.empty())
+            return true;
+        float const grid = float(SIZE_OF_GRIDS);
+        float const highX = (32.0f - float(x)) * grid;
+        float const highY = (32.0f - float(y)) * grid;
+        for (SceneBaker::SceneBox const& box : boxes)
+            if (box.MaxX >= highX - grid && box.MinX <= highX && box.MaxY >= highY - grid && box.MinY <= highY)
+                return true;
+        return false;
+    }
+
+    /// The boxes as bytes, for the content hash and the digest: a changed box rebakes the scene.
+    std::vector<uint8_t> BoxBytes(std::vector<SceneBaker::SceneBox> const& boxes)
+    {
+        std::vector<uint8_t> bytes(boxes.size() * sizeof(SceneBaker::SceneBox));
+        if (!boxes.empty())
+            std::memcpy(bytes.data(), boxes.data(), bytes.size());
+        return bytes;
+    }
+
     /// LiquidType.dbc: entry -> Type (0 water, 1 ocean, 2 magma, 3 slime). The file is WDBC: a 20-byte header (magic,
     /// records, fields, record size, string block size) then fixed records of uint32 fields; field 0 is the id and
     /// field 3 the type (LiquidTypefmt "nxxix...").
@@ -496,13 +520,14 @@ namespace
         std::map<uint32_t, uint32_t> LiquidTypes;
         std::vector<TerrainTile> Terrain;   // sorted by (TileX, TileY)
         std::vector<std::string> ModelNames;    // the model files read (below vmaps/), in a fixed order
+        std::vector<uint8_t> Keep;          // per spawn: it reaches a box (SceneBox; every spawn without boxes)
         std::vector<FileStat> Stats;        // each source file, stat'ed just before it was read
         uint64_t Hash = 0;
     };
 
     /// `parseTerrain`: also decode the .map tiles (an identity check only hashes them).
     bool OpenSource(std::string const& dataDir, uint32_t mapId, bool parseTerrain, Source& source,
-        std::string& error)
+        std::string& error, std::vector<SceneBaker::SceneBox> const& boxes)
     {
         SourceHasher hash;
         Fs::path const root(dataDir);
@@ -527,7 +552,7 @@ namespace
             for (uint32_t y = 0; y < 64; ++y)
             {
                 std::string const name = VMAP::StaticMapTree::getTileFileName(mapId, x, y);
-                if (Fs::exists(root / "vmaps" / name, ec))
+                if (TileReaches(int32_t(x), int32_t(y), boxes) && Fs::exists(root / "vmaps" / name, ec))
                 {
                     source.Stats.push_back(StatFile(root, "vmaps/" + name));
                     if (!ReadFile(root / "vmaps" / name, file, error))
@@ -548,7 +573,8 @@ namespace
         if (source.Tiled)
             for (uint32_t x = 0; x < 64; ++x)
                 for (uint32_t y = 0; y < 64; ++y)
-                    source.Tree->LoadMapTile(x, y);
+                    if (TileReaches(int32_t(x), int32_t(y), boxes))
+                        source.Tree->LoadMapTile(x, y);
         source.Tree->GetModelInstances(source.Models, source.Count);
         if (!source.Models)
         {
@@ -556,9 +582,38 @@ namespace
             return false;
         }
 
+        // The spawns a boxed bake keeps: their world bounds (internal x and y run against the world's, about the
+        // grid's middle) reach a box; a spawn with no bound, its position within SPAWN_REACH of one.
+        constexpr double SPAWN_REACH = 50.0;
+        double const mid = double(0.5f * MAX_NUMBER_OF_GRIDS * SIZE_OF_GRIDS);
+        source.Keep.assign(source.Count, 1);
+        if (!boxes.empty())
+            for (uint32_t i = 0; i < source.Count; ++i)
+            {
+                VMAP::ModelInstance const& instance = source.Models[i];
+                double lowX = mid - double(instance.iPos.x) - SPAWN_REACH;
+                double highX = mid - double(instance.iPos.x) + SPAWN_REACH;
+                double lowY = mid - double(instance.iPos.y) - SPAWN_REACH;
+                double highY = mid - double(instance.iPos.y) + SPAWN_REACH;
+                if (instance.flags & VMAP::MOD_HAS_BOUND)
+                {
+                    lowX = mid - double(instance.iBound.high().x);
+                    highX = mid - double(instance.iBound.low().x);
+                    lowY = mid - double(instance.iBound.high().y);
+                    highY = mid - double(instance.iBound.low().y);
+                }
+                bool reaches = false;
+                for (SceneBaker::SceneBox const& box : boxes)
+                    reaches = reaches || (double(box.MaxX) >= lowX && double(box.MinX) <= highX
+                        && double(box.MaxY) >= lowY && double(box.MinY) <= highY);
+                source.Keep[i] = reaches ? 1 : 0;
+            }
+        if (!boxes.empty())
+            hash.AddFile("scene boxes", BoxBytes(boxes));
+
         std::set<std::string> models;
         for (uint32_t i = 0; i < source.Count; ++i)
-            if (source.Models[i].getWorldModel())
+            if (source.Keep[i] && source.Models[i].getWorldModel())
                 models.insert(source.Models[i].name);
         for (std::string const& name : models)
         {
@@ -578,7 +633,7 @@ namespace
             {
                 std::string const name = TileMapName(mapId, x, y);
                 Fs::path const path = root / "maps" / name;
-                if (!Fs::exists(path, ec))
+                if (!TileReaches(x, y, boxes) || !Fs::exists(path, ec))
                     continue;
                 source.Stats.push_back(StatFile(root, "maps/" + name));
                 if (!ReadFile(path, file, error))
@@ -747,17 +802,18 @@ std::string SceneBaker::SceneFileName(uint32_t mapId)
     return name;
 }
 
-bool SceneBaker::SourceIdentity(std::string const& dataDir, uint32_t mapId, uint64_t& hash, std::string& error)
+bool SceneBaker::SourceIdentity(std::string const& dataDir, uint32_t mapId, uint64_t& hash, std::string& error,
+    std::vector<SceneBox> const& boxes)
 {
     Source source;
-    if (!OpenSource(dataDir, mapId, false, source, error))
+    if (!OpenSource(dataDir, mapId, false, source, error, boxes))
         return false;
     hash = source.Hash;
     return true;
 }
 
 bool SceneBaker::SourceDigest(std::string const& dataDir, uint32_t mapId, std::string const& modelNames,
-    uint64_t& digest, std::string& error)
+    uint64_t& digest, std::string& error, std::vector<SceneBox> const& boxes)
 {
     Fs::path const root(dataDir);
     std::vector<FileStat> stats;
@@ -769,7 +825,7 @@ bool SceneBaker::SourceDigest(std::string const& dataDir, uint32_t mapId, std::s
         for (uint32_t y = 0; y < 64; ++y)
         {
             std::string const name = VMAP::StaticMapTree::getTileFileName(mapId, x, y);
-            if (Fs::exists(root / "vmaps" / name, ec))
+            if (TileReaches(int32_t(x), int32_t(y), boxes) && Fs::exists(root / "vmaps" / name, ec))
                 stats.push_back(StatFile(root, "vmaps/" + name));
         }
     for (std::size_t at = 0; at < modelNames.size();)
@@ -782,9 +838,18 @@ bool SceneBaker::SourceDigest(std::string const& dataDir, uint32_t mapId, std::s
         for (int32_t y = 0; y < 64; ++y)
         {
             std::string const name = TileMapName(mapId, x, y);
-            if (Fs::exists(root / "maps" / name, ec))
+            if (TileReaches(x, y, boxes) && Fs::exists(root / "maps" / name, ec))
                 stats.push_back(StatFile(root, "maps/" + name));
         }
+    // The boxes, as a stat no file has: a changed box never matches.
+    if (!boxes.empty())
+    {
+        std::vector<uint8_t> const bytes = BoxBytes(boxes);
+        FileStat box;
+        box.Name = "scene boxes";
+        box.Size = Sc::Fnv1a(bytes.data(), bytes.size(), 0xcbf29ce484222325ull);
+        stats.push_back(box);
+    }
     // A source file that cannot be stat'ed is never a match: the content hash then reports it.
     for (FileStat const& stat : stats)
         if (stat.Size == ~0ull)
@@ -818,13 +883,13 @@ bool SceneBaker::RefreshDigest(std::string const& scenePath, uint64_t digest, st
 }
 
 bool SceneBaker::BakeMap(std::string const& dataDir, uint32_t mapId, std::string const& outPath, BakeReport& report,
-    std::string& error)
+    std::string& error, std::vector<SceneBox> const& boxes)
 {
     auto const start = std::chrono::steady_clock::now();
     report = BakeReport();
 
     Source source;
-    if (!OpenSource(dataDir, mapId, true, source, error))
+    if (!OpenSource(dataDir, mapId, true, source, error, boxes))
         return false;
     report.SourceHash = source.Hash;
     VMAP::ModelInstance* const models = source.Models;
@@ -839,7 +904,7 @@ bool SceneBaker::BakeMap(std::string const& dataDir, uint32_t mapId, std::string
     {
         VMAP::ModelInstance& instance = models[i];
         VMAP::WorldModel* model = instance.getWorldModel();
-        if (!model)
+        if (!model || !source.Keep[i])
             continue;
         ++report.Spawns;
         bool const m2 = (instance.flags & VMAP::MOD_M2) != 0;

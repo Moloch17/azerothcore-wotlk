@@ -270,6 +270,10 @@ namespace Animus::Curriculum
         bool Revisit = false;
         bool SightOnly = false;
         bool LabelsOnly = false;
+        /// A lookout tower on a continent (nav3, 2026-10-20): its trips run up the tower and back down -- the pair
+        /// pool's climbs, the second leg the way back to where the first began (PointNavEncounter's TwoLeg) -- its bake
+        /// boxed round the tower and seeded from SpawnPoints[0].
+        bool Tower = false;
 
         [[nodiscard]] uint32 SeatCount() const;
     };

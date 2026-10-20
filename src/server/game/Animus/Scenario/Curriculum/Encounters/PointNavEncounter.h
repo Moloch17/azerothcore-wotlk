@@ -271,6 +271,11 @@ namespace Animus::Curriculum
             /// The pair drawn from the pool (PairKind stages; its measures are the route_* columns), when one was.
             NavPair Pair;
             bool PairValid = false;
+            /// A tower's trip (ArenaDefinition::Tower): up, then back down to the start -- the leg it is on, and the
+            /// way back's route yards (in CStart from the draw, so the clock and SPL are the whole trip's).
+            bool TwoLeg = false;
+            uint32 Leg = 0;
+            float BackYards = 0.0f;
             Position Start;
             Position Goal;
             bool GoalAtBed = false;
@@ -322,7 +327,7 @@ namespace Animus::Curriculum
             PairPool& pool) const;
         /// How far `pair` misses being a trip of the stage's PairKind at rung `rung` (StageDefinition::PairKind), 0
         /// when it fits: the draw takes a fit, else the nearest miss.
-        [[nodiscard]] float PairMiss(NavPair const& pair, uint32 kind, uint32 rung) const;
+        [[nodiscard]] float PairMiss(NavPair const& pair, uint32 kind, uint32 rung, bool tower) const;
         /// The pair draw from the pool: the stage's kind at the rung, uniform over the fits that this body can stand at
         /// (swim depth), else the nearest miss. False when the pool is empty.
         bool DrawFromPool(Env& env, PairPool const& pool, Player const* bot, EnvNav& nav);
