@@ -1136,9 +1136,14 @@ float Animus::Curriculum::PointNavEncounter::PairMiss(NavPair const& pair, uint3
     constexpr float TURNING[RUNGS] = { 90.0f, 180.0f, 360.0f, 100000.0f };
     constexpr float FAR_CORNERS[RUNGS] = { 5.0f, 8.0f, 12.0f, 1000.0f };
     constexpr float FAR_TURNING[RUNGS] = { 360.0f, 540.0f, 900.0f, 100000.0f };
+    // The vertical stage's winding a rung looser (stairs spiral, ramps switch back; nav2 leaves a policy at home with
+    // three corners): its dial is the height, not the turns.
+    constexpr float STAIR_CORNERS[RUNGS] = { 3.0f, 5.0f, 8.0f, 1000.0f };
+    constexpr float STAIR_TURNING[RUNGS] = { 180.0f, 360.0f, 540.0f, 100000.0f };
     bool const far = kind == 4;
-    range(float(pair.Corners), 0.0f, far ? FAR_CORNERS[rung] : CORNERS[rung]);
-    range(float(pair.TurnDegrees), 0.0f, far ? FAR_TURNING[rung] : TURNING[rung]);
+    bool const stairs = kind == 3;
+    range(float(pair.Corners), 0.0f, far ? FAR_CORNERS[rung] : stairs ? STAIR_CORNERS[rung] : CORNERS[rung]);
+    range(float(pair.TurnDegrees), 0.0f, far ? FAR_TURNING[rung] : stairs ? STAIR_TURNING[rung] : TURNING[rung]);
     float const detour = pair.Route / std::max(0.5f, pair.Straight);
     switch (kind)
     {
