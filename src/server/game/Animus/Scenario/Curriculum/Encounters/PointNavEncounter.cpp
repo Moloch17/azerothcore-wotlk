@@ -781,8 +781,11 @@ bool Animus::Curriculum::PointNavEncounter::RouteNear(EnvNav const& nav, float x
                 bool const walkable = what == Vision::TravClass::Free || what == Vision::TravClass::StepUp
                     || what == Vision::TravClass::Jump || what == Vision::TravClass::DropSafe
                     || what == Vision::TravClass::DropHurt || what == Vision::TravClass::Water;
-                if (walkable && std::fabs(grid.StandingZ(node) - z) <= STRANDED_RISE
-                    && nav.Cost[node] < Vision::TRAV_UNREACHABLE)
+                // A water cell is near from its bed to its surface: a swimmer under it is not on dead ground.
+                bool const height = what == Vision::TravClass::Water
+                    ? z >= grid.Ground[node] - STRANDED_RISE && z <= grid.Liquid[node] + STRANDED_RISE
+                    : std::fabs(grid.StandingZ(node) - z) <= STRANDED_RISE;
+                if (walkable && height && nav.Cost[node] < Vision::TRAV_UNREACHABLE)
                     return true;
             }
         }
@@ -1860,7 +1863,9 @@ void Animus::Curriculum::PointNavEncounter::Reward(Env& env, uint32 seatIndex, P
     }
     if (seat.LandedChecks && !seat.Stranded && bot->IsAlive())
     {
-        bool const grounded = !state.Mover.Started() || state.Mover.Body.Kind == Movement::Mode::Ground;
+        // In water is never on the ground (nav5: swimmers at depth were judged stranded, 22 % of its trips).
+        bool const grounded = (!state.Mover.Started() || state.Mover.Body.Kind == Movement::Mode::Ground)
+            && !bot->IsInWater();
         if (!grounded)
             seat.LandedChecks = STRANDED_DECISIONS;
         else if (--seat.LandedChecks == 0 && !RouteNear(nav, bodyX, bodyY, bodyZ))
