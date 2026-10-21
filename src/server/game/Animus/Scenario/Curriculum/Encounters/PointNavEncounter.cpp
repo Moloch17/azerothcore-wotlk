@@ -930,10 +930,11 @@ void Animus::Curriculum::PointNavEncounter::BuildPairs(Env const& env, Map* map,
     std::vector<uint8> trapSeen(grid.Nodes(), 0);
     std::vector<uint32> trapTouched;
     // The water stage's goals: every other one on a water cell (a goal at the surface or on the bed), else a few
-    // ponds among thousands of floor cells leave the pool next to no water goal.
+    // ponds among thousands of floor cells leave the pool next to no water goal. Reachable is the dry floor alone, so
+    // the water cells come from the whole bake (one the entrance cannot reach has no start, and no pair).
     std::vector<uint32> water;
     if (_scenario.Stage().PairKind == 5)
-        for (uint32 node : grid.Reachable)
+        for (uint32 node = 0; node < uint32(grid.Classes.size()); ++node)
             if (grid.ClassOf(node) == Vi::TravClass::Water)
                 water.push_back(node);
     uint32 const goals = std::min<uint32>(PAIR_GOALS, uint32(grid.Reachable.size()));
@@ -1173,7 +1174,8 @@ float Animus::Curriculum::PointNavEncounter::PairMiss(NavPair const& pair, uint3
         return miss;
     }
     bool const far = kind == 4;
-    bool const stairs = kind == 3;
+    // The water stage winds as the vertical one does: its dial is the swim, not the turns.
+    bool const stairs = kind == 3 || kind == 5;
     range(float(pair.Corners), 0.0f, far ? FAR_CORNERS[rung] : stairs ? STAIR_CORNERS[rung] : CORNERS[rung]);
     range(float(pair.TurnDegrees), 0.0f, far ? FAR_TURNING[rung] : stairs ? STAIR_TURNING[rung] : TURNING[rung]);
     float const detour = pair.Route / std::max(0.5f, pair.Straight);
