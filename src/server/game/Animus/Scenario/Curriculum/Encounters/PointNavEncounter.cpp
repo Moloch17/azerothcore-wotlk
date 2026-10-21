@@ -929,17 +929,26 @@ void Animus::Curriculum::PointNavEncounter::BuildPairs(Env const& env, Map* map,
     std::vector<float> corners(3 * 512);
     std::vector<uint8> trapSeen(grid.Nodes(), 0);
     std::vector<uint32> trapTouched;
+    // The water stage's goals: every other one on a water cell (a goal at the surface or on the bed), else a few
+    // ponds among thousands of floor cells leave the pool next to no water goal.
+    std::vector<uint32> water;
+    if (_scenario.Stage().PairKind == 5)
+        for (uint32 node : grid.Reachable)
+            if (grid.ClassOf(node) == Vi::TravClass::Water)
+                water.push_back(node);
     uint32 const goals = std::min<uint32>(PAIR_GOALS, uint32(grid.Reachable.size()));
     for (uint32 g = 0; g < goals; ++g)
     {
-        uint32 const goal = grid.Reachable[rng() % grid.Reachable.size()];
+        uint32 const goal = !water.empty() && g % 2 ? water[rng() % water.size()]
+            : grid.Reachable[rng() % grid.Reachable.size()];
+        bool const wetGoal = grid.ClassOf(goal) == Vi::TravClass::Water;
         Vi::CostToGo(grid, goal, tuning.DropHurtYards, cost, !WalksOnly());
         Position const goalPoint = CellPoint(grid, goal, false);
         dtPolyRef goalRef = 0;
         float goalAt[3];
         bool const goalOnMesh = snap(goalPoint.GetPositionX(), goalPoint.GetPositionY(), goalPoint.GetPositionZ(),
             goalRef, goalAt);
-        if (query && !goalOnMesh)
+        if (query && !goalOnMesh && !wetGoal)
             continue;       // the bake's floor and the navmesh's disagree here: no goal
         // The starts, evenly over the route's length bands (a uniform start is hundreds of yards off in a big
         // dungeon: the Deadmines' median pair was 365 yd and 13 corners, 52 of 5,803 within rung 0's 40 yd).
@@ -1033,8 +1042,9 @@ void Animus::Curriculum::PointNavEncounter::BuildPairs(Env const& env, Map* map,
                 int32 count = 0;
                 dtStatus const status = query->findPath(startRef, goalRef, startAt, goalAt, &filter, polys.data(),
                     &count, int32(polys.size()));
-                pair.NavWalks = count > 0 && !(status & DT_PARTIAL_RESULT) && polys[std::size_t(count - 1)] == goalRef;
-                if (pair.NavWalks && !pair.Drops)
+                pair.NavWalks = goalRef && count > 0 && !(status & DT_PARTIAL_RESULT)
+                    && polys[std::size_t(count - 1)] == goalRef;
+                if (pair.NavWalks && !pair.Drops && pair.SwimYards <= 0.0f)
                 {
                     int32 points = 0;
                     query->findStraightPath(startAt, goalAt, polys.data(), count, corners.data(), nullptr, nullptr,
@@ -1044,10 +1054,10 @@ void Animus::Curriculum::PointNavEncounter::BuildPairs(Env const& env, Map* map,
                         taut.push_back({ corners[3 * std::size_t(i) + 2], corners[3 * std::size_t(i)] });
                     PolylineTurns(taut, 0.0f, bends, turning);
                 }
-                else if (!pair.Drops)
+                else if (!pair.Drops && pair.SwimYards <= 0.0f)
                     continue;
             }
-            if (!query || pair.Drops)
+            if (!query || pair.Drops || pair.SwimYards > 0.0f)
                 PolylineTurns(line, 1.5f, bends, turning);
             pair.Corners = uint8(std::min<uint32>(255, bends));
             pair.TurnDegrees = uint16(std::min(65535.0f, turning * 57.29578f));
@@ -1232,11 +1242,15 @@ float Animus::Curriculum::PointNavEncounter::PairMiss(NavPair const& pair, uint3
             range(pair.Route, LOW[rung], HIGH[rung]);
             break;
         }
-        case 5:     // water: a swim, longer at each rung
-        {
+        case 5:     // water: a swim, longer at each rung, on trips the 180 s clock fits; no damaging drop before
+        {           // the third rung
             constexpr float LOW[RUNGS] = { 2.0f, 15.0f, 5.0f, 2.0f };
             constexpr float HIGH[RUNGS] = { 15.0f, 40.0f, 400.0f, 400.0f };
+            constexpr float ROUTE_HIGH[RUNGS] = { 60.0f, 120.0f, 250.0f, 400.0f };
             range(pair.SwimYards, LOW[rung], HIGH[rung]);
+            range(pair.Route, 5.0f, ROUTE_HIGH[rung]);
+            if (rung < 2)
+                require(pair.HurtDrops == 0);
             break;
         }
         default:
@@ -1251,9 +1265,11 @@ bool Animus::Curriculum::PointNavEncounter::DrawFromPool(Env& env, PairPool cons
     Vision::TravGrid const& grid = *nav.Grid;
     uint32 const kind = _scenario.Stage().PairKind;
     bool const tower = _scenario.Arena(env).Tower;
-    // The pairs this body stands at: neither end in liquid it would swim (as the bin draw has it).
+    // The pairs this body stands at: neither end in liquid it would swim (as the bin draw has it), but for the water
+    // stage's goal, which is at the surface or on the bed (GoalAtBed).
     float const swimDepth = Movement::SWIM_ENTER * Movement::ShapeOf(bot).Height;
     auto const dry = [&](uint32 node) { return grid.Liquid[node] - grid.Ground[node] < swimDepth; };
+    bool const wetGoals = kind == 5;
     std::vector<uint32> fits;
     std::vector<uint32> traps;
     uint32 nearest = UINT32_MAX;
@@ -1261,7 +1277,7 @@ bool Animus::Curriculum::PointNavEncounter::DrawFromPool(Env& env, PairPool cons
     for (uint32 index = 0; index < pool.Pairs.size(); ++index)
     {
         NavPair const& pair = pool.Pairs[index];
-        if (!dry(pair.Start) || !dry(pair.Goal))
+        if (!dry(pair.Start) || (!wetGoals && !dry(pair.Goal)))
             continue;
         float const miss = PairMiss(pair, kind, nav.Rung, tower);
         if (miss <= 0.0f)
