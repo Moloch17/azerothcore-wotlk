@@ -83,6 +83,33 @@ def compute_potential_map(c_map_body: np.ndarray, c_map_prev: np.ndarray, dones:
     return out
 
 
+def cap_potential(potential: np.ndarray, c_body: np.ndarray, c_valid: np.ndarray, c_map_body: np.ndarray,
+                  dones: np.ndarray, yards_scale: float, clip: float, budget: np.ndarray,
+                  banked: np.ndarray) -> None:
+    """Holds an episode's net potential [T, E, A] (in place) to its route: yards_scale x the larger of the true and
+    the map route cost-to-go at its first labelled step. The map term is no potential difference (the map changes
+    under it), and a swimmer under nav5's pools netted up to 49 on an 8-yard trip (2026-10-21) by going round where
+    the steps' differences do not cancel; a walker that closes its route is paid all of it. A step's gain is paid
+    only up to what the episode has left (a step away nets back what it costs, so the room comes back with it).
+    `budget` and `banked` [E, A] carry the episode across rollouts and are reset on its done row."""
+    cap = np.float32(clip * 100.0)
+    scale = np.float32(yards_scale)
+    for t in range(potential.shape[0]):
+        unset = np.isnan(budget)
+        true_c = np.where(c_valid[t], np.minimum(c_body[t], cap), 0.0)
+        map_c = np.where(c_map_body[t] < LABEL_UNREACHABLE, np.minimum(c_map_body[t], cap), 0.0)
+        start = np.maximum(true_c, map_c) * scale
+        known = c_valid[t] | (c_map_body[t] < LABEL_UNREACHABLE)
+        budget[:] = np.where(unset & known, start, budget)
+        room = np.where(np.isnan(budget), 0.0, np.maximum(budget - banked, 0.0))
+        term = np.where(potential[t] > 0.0, np.minimum(potential[t], room), potential[t]).astype(np.float32)
+        potential[t] = term
+        banked += term
+        ended = dones[t][:, None]
+        budget[:] = np.where(ended, np.nan, budget)
+        banked[:] = np.where(ended, 0.0, banked)
+
+
 def compute_gae(
     rewards: np.ndarray,
     values: np.ndarray,
@@ -273,6 +300,10 @@ class RolloutBuffer:
         # ... and where the map term could not be paid and the true route's term stood in (potential.map_fallback;
         # reward_potential_fallback_share).
         self.potential_fallback = np.zeros(shape, dtype=bool)
+        # The potential an episode may net (cap_potential): yards_scale x its route at its first labelled step, and
+        # what it has netted so far, kept across rollouts until the episode ends (NaN: not set yet).
+        self.potential_budget = np.full((envs, agents), np.nan, dtype=np.float32)
+        self.potential_banked = np.zeros((envs, agents), dtype=np.float32)
         # The plan each decision acted on (MappoTrainer._replan's cache: the planner's readouts and the pointer's
         # bonus), so the update replays the decision on the same plan rather than planning again.
         self.planner_readout = np.zeros((*shape, self.planner_widths[0]), dtype=np.float32)
@@ -470,6 +501,8 @@ class RolloutBuffer:
         elif potential_source not in POTENTIAL_SOURCES:
             raise ValueError(f"potential.source: expected one of {list(POTENTIAL_SOURCES)}, got {potential_source!r}")
         if potential is not None and self.label_bytes:
+            cap_potential(self.potential, self.c_body, self.c_valid, self.c_map_body, self.dones, potential[0],
+                          potential[1], self.potential_budget, self.potential_banked)
             self.rewards += self.potential
         self.advantages, self.returns = compute_gae(
             self.rewards,
