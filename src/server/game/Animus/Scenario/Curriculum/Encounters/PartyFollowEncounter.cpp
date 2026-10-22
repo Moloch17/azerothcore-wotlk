@@ -628,6 +628,30 @@ Animus::Curriculum::PartyFollowEncounter::Way const* Animus::Curriculum::PartyFo
     auto const known = _ways.find(map->GetId());
     if (known != _ways.end())
         return &known->second;
+    // The navmesh tiles under the whole way first (on the base map: every instance shares its navmesh): the stock
+    // PathGenerator paths only over tiles a loaded grid brought in, so a first episode at the door found no path to
+    // the far bosses of a spread-out dungeon and the way kept straight cuts (Wailing Caverns 2026-10-22: 6 legs, 24
+    // corners, 5 cuts; Gnomeregan 5 corners in 1,580 yd).
+    if (Map* base = sMapMgr->CreateBaseMap(map->GetId()))
+    {
+        constexpr float MARGIN = 100.0f;
+        float minX = door.GetPositionX();
+        float maxX = minX;
+        float minY = door.GetPositionY();
+        float maxY = minY;
+        for (Position const& stop : stops)
+        {
+            minX = std::min(minX, stop.GetPositionX());
+            maxX = std::max(maxX, stop.GetPositionX());
+            minY = std::min(minY, stop.GetPositionY());
+            maxY = std::max(maxY, stop.GetPositionY());
+        }
+        GridCoord const low = Acore::ComputeGridCoord(maxX + MARGIN, maxY + MARGIN);
+        GridCoord const high = Acore::ComputeGridCoord(minX - MARGIN, minY - MARGIN);
+        for (uint32 x = std::min(low.x_coord, high.x_coord); x <= std::max(low.x_coord, high.x_coord); ++x)
+            for (uint32 y = std::min(low.y_coord, high.y_coord); y <= std::max(low.y_coord, high.y_coord); ++y)
+                base->EnsureGridCreated(GridCoord(x, y));
+    }
     std::vector<std::vector<Position>> legs;
     Position cursor(door);
     for (Position const& stop : stops)
