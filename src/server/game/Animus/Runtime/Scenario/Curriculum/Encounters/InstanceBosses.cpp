@@ -37,11 +37,46 @@ namespace
         { .MapId = 36, .Entry = 643, .Level = 20, .Difficulty = DUNGEON_NORMAL, .Name = "Sneed" },
         { .MapId = 36, .Entry = 1763, .Level = 20, .Difficulty = DUNGEON_NORMAL, .Name = "Gilnid" },
         { .MapId = 36, .Entry = 639, .Level = 20, .Difficulty = DUNGEON_NORMAL, .Name = "Edwin VanCleef" },
-        // Wailing Caverns, the follow stage's held-out map (decision 0033: never trained on, evaluated every time).
+        // Shadowfang Keep, the Stockades, Razorfen Kraul, Gnomeregan and Blackfathom Deeps (nav6, 2026-10-22): two
+        // dungeons' fixed ways taught their routes and not following (Wailing Caverns held out kept 11 % against 62 %).
+        // Each in the dungeon's own order from its door, as a party runs it (spawn rows checked in the world DB).
+        { .MapId = 33, .Entry = 3914, .Level = 20, .Difficulty = DUNGEON_NORMAL, .Name = "Rethilgore" },
+        { .MapId = 33, .Entry = 3886, .Level = 20, .Difficulty = DUNGEON_NORMAL, .Name = "Razorclaw the Butcher" },
+        { .MapId = 33, .Entry = 3887, .Level = 20, .Difficulty = DUNGEON_NORMAL, .Name = "Baron Silverlaine" },
+        { .MapId = 33, .Entry = 4278, .Level = 20, .Difficulty = DUNGEON_NORMAL, .Name = "Commander Springvale" },
+        { .MapId = 33, .Entry = 4279, .Level = 21, .Difficulty = DUNGEON_NORMAL, .Name = "Odo the Blindwatcher" },
+        { .MapId = 33, .Entry = 4274, .Level = 21, .Difficulty = DUNGEON_NORMAL, .Name = "Fenrus the Devourer" },
+        { .MapId = 33, .Entry = 3927, .Level = 21, .Difficulty = DUNGEON_NORMAL, .Name = "Wolf Master Nandos" },
+        { .MapId = 33, .Entry = 4275, .Level = 21, .Difficulty = DUNGEON_NORMAL, .Name = "Archmage Arugal" },
+        { .MapId = 34, .Entry = 1696, .Level = 24, .Difficulty = DUNGEON_NORMAL, .Name = "Targorr the Dread" },
+        { .MapId = 34, .Entry = 1666, .Level = 25, .Difficulty = DUNGEON_NORMAL, .Name = "Kam Deepfury" },
+        { .MapId = 34, .Entry = 1717, .Level = 25, .Difficulty = DUNGEON_NORMAL, .Name = "Hamhock" },
+        { .MapId = 34, .Entry = 1716, .Level = 25, .Difficulty = DUNGEON_NORMAL, .Name = "Bazil Thredd" },
+        { .MapId = 34, .Entry = 1663, .Level = 25, .Difficulty = DUNGEON_NORMAL, .Name = "Dextren Ward" },
+        { .MapId = 47, .Entry = 4424, .Level = 27, .Difficulty = DUNGEON_NORMAL, .Name = "Aggem Thorncurse" },
+        { .MapId = 47, .Entry = 4428, .Level = 27, .Difficulty = DUNGEON_NORMAL, .Name = "Death Speaker Jargba" },
+        { .MapId = 47, .Entry = 6168, .Level = 26, .Difficulty = DUNGEON_NORMAL, .Name = "Roogug" },
+        { .MapId = 47, .Entry = 4420, .Level = 27, .Difficulty = DUNGEON_NORMAL, .Name = "Overlord Ramtusk" },
+        { .MapId = 47, .Entry = 4422, .Level = 27, .Difficulty = DUNGEON_NORMAL, .Name = "Agathelos the Raging" },
+        { .MapId = 47, .Entry = 4421, .Level = 27, .Difficulty = DUNGEON_NORMAL, .Name = "Charlga Razorflank" },
+        // Grubbis is summoned by Blastmaster Shortfuse's event and has no spawn row to stand at.
+        { .MapId = 90, .Entry = 7079, .Level = 28, .Difficulty = DUNGEON_NORMAL, .Name = "Viscous Fallout" },
+        { .MapId = 90, .Entry = 6235, .Level = 28, .Difficulty = DUNGEON_NORMAL, .Name = "Electrocutioner 6000" },
+        { .MapId = 90, .Entry = 6229, .Level = 28, .Difficulty = DUNGEON_NORMAL, .Name = "Crowd Pummeler 9-60" },
+        { .MapId = 90, .Entry = 7800, .Level = 28, .Difficulty = DUNGEON_NORMAL, .Name = "Mekgineer Thermaplugg" },
+        { .MapId = 48, .Entry = 4887, .Level = 23, .Difficulty = DUNGEON_NORMAL, .Name = "Ghamoo-ra" },
+        { .MapId = 48, .Entry = 4831, .Level = 23, .Difficulty = DUNGEON_NORMAL, .Name = "Lady Sarevess" },
+        { .MapId = 48, .Entry = 6243, .Level = 24, .Difficulty = DUNGEON_NORMAL, .Name = "Gelihast" },
+        { .MapId = 48, .Entry = 4832, .Level = 24, .Difficulty = DUNGEON_NORMAL, .Name = "Twilight Lord Kelris" },
+        { .MapId = 48, .Entry = 4830, .Level = 24, .Difficulty = DUNGEON_NORMAL, .Name = "Old Serra'kis" },
+        { .MapId = 48, .Entry = 4829, .Level = 24, .Difficulty = DUNGEON_NORMAL, .Name = "Aku'mai" },
+        // Wailing Caverns, the follow stage's held-out map (decision 0033: never trained on, evaluated every time), in
+        // the run's order: the table had it zig-zag (Anacondra, Pythas in the south, Cobrahn back north), a 2,608-yard
+        // way with five cuts the leader never crossed, which no follower could keep with.
         // Mutanus is left out: he is summoned by the Disciple's event and has no spawn row to stand at.
         { .MapId = 43, .Entry = 3671, .Level = 20, .Difficulty = DUNGEON_NORMAL, .Name = "Lady Anacondra" },
-        { .MapId = 43, .Entry = 3670, .Level = 20, .Difficulty = DUNGEON_NORMAL, .Name = "Lord Pythas" },
         { .MapId = 43, .Entry = 3669, .Level = 20, .Difficulty = DUNGEON_NORMAL, .Name = "Lord Cobrahn" },
+        { .MapId = 43, .Entry = 3670, .Level = 20, .Difficulty = DUNGEON_NORMAL, .Name = "Lord Pythas" },
         { .MapId = 43, .Entry = 3674, .Level = 20, .Difficulty = DUNGEON_NORMAL, .Name = "Skum" },
         { .MapId = 43, .Entry = 3673, .Level = 20, .Difficulty = DUNGEON_NORMAL, .Name = "Lord Serpentis" },
         { .MapId = 43, .Entry = 5775, .Level = 20, .Difficulty = DUNGEON_NORMAL, .Name = "Verdan the Everliving" },

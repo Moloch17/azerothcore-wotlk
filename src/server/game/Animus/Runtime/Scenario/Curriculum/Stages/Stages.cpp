@@ -684,6 +684,26 @@ namespace
         return { Core, Move, Vision, Map, MemoryEntities, Goal };
     }
 
+    /// A dungeon nav6's party follows through (PartyFollowEncounter's way over InstanceBosses.cpp's FOLLOW rows),
+    /// PointNav its labeller, a 300 s episode, a death rising at the entrance; Shadowfang Keep's bake boxed as its
+    /// nav arena's (ShadowfangNav).
+    ArenaDefinition FollowArena(char const* name, uint32 mapId)
+    {
+        ArenaDefinition arena{ .Name = name, .Weight = 1, .Seats = SeatPlan::Party,
+            .Against = Opposition::PartyFollow, .PartySize = GROUP_MEMBERS, .EpisodeSeconds = 300, .MapId = mapId,
+            .RespawnAtEntrance = true, .LabelsOnly = true };
+        if (mapId == MAP_SHADOWFANG_KEEP)
+        {
+            ArenaDefinition const boxed = ShadowfangNav(300);
+            arena.HasBox = true;
+            arena.BoxMinX = boxed.BoxMinX;
+            arena.BoxMinY = boxed.BoxMinY;
+            arena.BoxMaxX = boxed.BoxMaxX;
+            arena.BoxMaxY = boxed.BoxMaxY;
+        }
+        return arena;
+    }
+
     /// Wailing Caverns (map 43), held out of every nav stage: never drawn in training nor in an ordinary evaluation
     /// (EvalOnly), played only by the learner's eval.heldout, so a policy that learned a dungeon's routes is told from
     /// one that learned to find routes. The learner's yamls name it `wailing`.
@@ -1140,6 +1160,13 @@ namespace
                 { .Name = "deadmines", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::PartyFollow,
                     .PartySize = GROUP_MEMBERS, .EpisodeSeconds = 300, .MapId = MAP_DEADMINES,
                     .RespawnAtEntrance = true, .LabelsOnly = true },
+                // Five more dungeons' ways (2026-10-22): with two, the followers learned those routes and not
+                // following (InstanceBosses.cpp's FOLLOW rows); the names are their bakes'.
+                FollowArena("shadowfang", MAP_SHADOWFANG_KEEP),
+                FollowArena("stockades", MAP_STORMWIND_STOCKADE),
+                FollowArena("razorfen", MAP_RAZORFEN_KRAUL),
+                FollowArena("gnomeregan", MAP_GNOMEREGAN),
+                FollowArena("blackfathom", MAP_BLACKFATHOM_DEEPS),
                 { .Name = "wailing", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::PartyFollow,
                     .EvalOnly = true, .PartySize = GROUP_MEMBERS, .EpisodeSeconds = 300,
                     .MapId = MAP_WAILING_CAVERNS, .RespawnAtEntrance = true, .LabelsOnly = true },
