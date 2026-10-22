@@ -1166,7 +1166,10 @@ namespace
                 // not pathed), Blackfathom's only start was its last waypoint.
                 FollowArena("shadowfang", MAP_SHADOWFANG_KEEP),
                 FollowArena("stockades", MAP_STORMWIND_STOCKADE),
-                FollowArena("razorfen", MAP_RAZORFEN_KRAUL),
+                // Razorfen Kraul held out (eval.heldout razorfen): Wailing Caverns' way still comes out cut (6 legs,
+                // 24 corners, 5 cuts, its legs unpathed even with the grids loaded), so its kept share reads nothing.
+                [] { ArenaDefinition arena = FollowArena("razorfen", MAP_RAZORFEN_KRAUL); arena.EvalOnly = true;
+                    return arena; }(),
                 { .Name = "wailing", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::PartyFollow,
                     .EvalOnly = true, .PartySize = GROUP_MEMBERS, .EpisodeSeconds = 300,
                     .MapId = MAP_WAILING_CAVERNS, .RespawnAtEntrance = true, .LabelsOnly = true },

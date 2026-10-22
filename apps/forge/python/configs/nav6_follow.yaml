@@ -15,6 +15,8 @@ eval:
   # The wandering leader makes an episode's reading noisier: 48 held-out episodes as move4_follow's.
   heldout:
     wailing: 48
+    # Wailing Caverns' way is still cut (2026-10-22): Razorfen Kraul, a way the leader walks whole, is the reading.
+    razorfen: 48
   report: [follow_kept_share, follow_distance_mean, settled_share, regroup_share, regroup_seconds, lost_seconds,
            blocking_seconds, deaths, rises, rejoins, rejoin_seconds, rejoined, dead_seconds, leader_route_share,
            leader_hops, leader_out_of_sight_seconds, leader_report_age_ms, difficulty, at_top_rung, nav_rung,
@@ -32,7 +34,8 @@ status:
              rejoin_seconds, rejoined, leader_route_share, leader_out_of_sight_seconds, falls, died, drowned,
              wall_seconds, stuck_seconds, waypoint_regret_yards, nav_rung, at_top_rung,
              costmap_iou, planner_mae_yards, planner_mae_known, reward_potential, reward_potential_train,
-             follow_kept_share_heldout_wailing, follow_kept_share_no_camera, follow_kept_share_no_map,
+             follow_kept_share_heldout_wailing, follow_kept_share_heldout_razorfen, follow_kept_share_no_camera,
+             follow_kept_share_no_map,
              follow_kept_share_no_planner, follow_kept_share_no_memory]
   targets:
     # The nav targets are not this stage's measures (null drops an inherited key; a target must be in the headline).
