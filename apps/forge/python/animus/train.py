@@ -1692,7 +1692,7 @@ class TrainingRun:
             # Into progress.json (general search sec 7): eval_<metric>_heldout_<arena> for the headline's
             # <metric>_heldout_<arena>, and eval_found_heldout_map from the arenas on a map the stage never trains on.
             self.progress.heldout_evaluated(name, summary)
-            self.progress.write("training", self.update, self.env_steps)
+            self.progress.write("evaluating", self.update, self.env_steps)
             shown = ", ".join(f"{column} {summary[column]:.3g}" for column in self.report
                               if isinstance(summary.get(column), (int, float)))
             print(f"Held out {name}: score {result.score:.4g} +/- {result.stderr:.2g} over {result.episodes} "
@@ -1812,7 +1812,7 @@ class TrainingRun:
             summary = result.summary(columns)
             self.eval_log.write(self.update, self.env_steps, result, summary, self.tracker)
             self.progress.arm_evaluated(arm, summary)
-            self.progress.write("training", self.update, self.env_steps)
+            self.progress.write("evaluating", self.update, self.env_steps)
             shown = ", ".join(
                 f"{column} {summary[column]:.3g}"
                 + (f" (all bots {plain[column]:.3g})" if isinstance((plain or {}).get(column), (int, float)) else "")
