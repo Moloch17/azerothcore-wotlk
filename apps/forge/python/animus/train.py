@@ -1479,7 +1479,6 @@ class TrainingRun:
             self.progress.evaluated(self.env_steps, result.score,
                                     baseline_summary["score"] if baseline_summary else None, tracker, controller,
                                     summary=summary)
-            self.progress.write("training", self.update, self.env_steps)
 
             against = f", baseline {baseline_summary['score']:.4g}" if baseline_summary else ""
             played = summary.get("return")
@@ -1545,6 +1544,11 @@ class TrainingRun:
         self.arms_current, self.last_eval_summary = arms, summary
         if arms:
             self.evaluate_arms(summary)
+        # Back to training only now: the sampled, held-out and arm passes above are the evaluation too, and nav6's
+        # start one ran half an hour under "training" -- forgectl's watch read the plan stale after 5 minutes,
+        # cancelled it to resume, and with no latest.pt yet the stage stood idle (2026-10-22).
+        if leader:
+            self.progress.write("training", self.update, self.env_steps)
 
         self.apply_holds()
         if leader:
