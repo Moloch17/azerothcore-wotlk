@@ -1160,13 +1160,13 @@ namespace
                 { .Name = "deadmines", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::PartyFollow,
                     .PartySize = GROUP_MEMBERS, .EpisodeSeconds = 300, .MapId = MAP_DEADMINES,
                     .RespawnAtEntrance = true, .LabelsOnly = true },
-                // Five more dungeons' ways (2026-10-22): with two, the followers learned those routes and not
-                // following (InstanceBosses.cpp's FOLLOW rows); the names are their bakes'.
+                // More dungeons' ways (2026-10-22): with two, the followers learned those routes and not following
+                // (InstanceBosses.cpp's FOLLOW rows); the names are their bakes'. Gnomeregan and Blackfathom Deeps
+                // have rows but no arena yet: Gnomeregan's way came out 1,580 yd with 5 corners and 4 cuts (its legs
+                // not pathed), Blackfathom's only start was its last waypoint.
                 FollowArena("shadowfang", MAP_SHADOWFANG_KEEP),
                 FollowArena("stockades", MAP_STORMWIND_STOCKADE),
                 FollowArena("razorfen", MAP_RAZORFEN_KRAUL),
-                FollowArena("gnomeregan", MAP_GNOMEREGAN),
-                FollowArena("blackfathom", MAP_BLACKFATHOM_DEEPS),
                 { .Name = "wailing", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::PartyFollow,
                     .EvalOnly = true, .PartySize = GROUP_MEMBERS, .EpisodeSeconds = 300,
                     .MapId = MAP_WAILING_CAVERNS, .RespawnAtEntrance = true, .LabelsOnly = true },
