@@ -524,6 +524,10 @@ class PotentialConfig:
     # it paid C x yards_scale x (1 - gamma) every step for standing C yards away: about 2 an episode at 23 yd,
     # which nav1 (2026-10-13) learned to keep by not approaching.
     discount: float = 1.0
+    # Each episode's net term held to its route (mappo.buffer.cap_potential, 2026-10-21): the map term is no
+    # potential difference, and nav5's swimmers farmed it round its pools. False for a goal that moves (nav6's
+    # leader), whose follower honestly closes far more than the first distance over an episode.
+    episode_cap: bool = True
 
     def __post_init__(self) -> None:
         if not self.yards_scale >= 0.0:

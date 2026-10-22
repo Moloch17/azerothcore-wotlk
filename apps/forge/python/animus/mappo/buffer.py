@@ -444,7 +444,7 @@ class RolloutBuffer:
                potential: tuple[float, float] | None = None, last_c_body: np.ndarray | None = None,
                potential_source: str = "true", potential_blend: float = 0.0,
                last_c_map: tuple[np.ndarray, np.ndarray] | None = None,
-               potential_map_fallback: bool = False) -> None:
+               potential_map_fallback: bool = False, potential_episode_cap: bool = True) -> None:
         """`potential` (yards_scale, clip[, discount]) with `last_c_body` [E, A] (the cost-to-go of the observation
         after the last step; c_body_of(step.labels)) pays the potential term into the rewards before the advantages
         are taken, where the stage sends labels. `potential_source` (POTENTIAL_SOURCES) says what it is paid on:
@@ -500,7 +500,7 @@ class RolloutBuffer:
                 self.potential = (self.potential_map + true_term * (np.float32(1.0) - weight)).astype(np.float32)
         elif potential_source not in POTENTIAL_SOURCES:
             raise ValueError(f"potential.source: expected one of {list(POTENTIAL_SOURCES)}, got {potential_source!r}")
-        if potential is not None and self.label_bytes:
+        if potential is not None and self.label_bytes and potential_episode_cap:
             cap_potential(self.potential, self.c_body, self.c_valid, self.c_map_body, self.dones, potential[0],
                           potential[1], self.potential_budget, self.potential_banked)
             self.rewards += self.potential

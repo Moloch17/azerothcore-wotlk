@@ -68,3 +68,8 @@ fade:
 
 layout_sampling:
   metric: follow_kept_share
+
+potential:
+  # The goal is the leader, and it moves: a follower that keeps with it closes far more than the first distance over
+  # an episode, which the per-episode cap (nav5's) would refuse to pay.
+  episode_cap: false

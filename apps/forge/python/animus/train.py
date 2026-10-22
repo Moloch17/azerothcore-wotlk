@@ -2181,7 +2181,8 @@ class TrainingRun:
             return {"potential": None}
         out: dict = {"potential": (float(potential.yards_scale), float(potential.clip), float(potential.discount)),
                      "potential_source": potential.source, "potential_blend": float(potential.blend),
-                     "potential_map_fallback": bool(potential.map_fallback), "last_c_body": None, "last_c_map": None}
+                     "potential_map_fallback": bool(potential.map_fallback),
+                     "potential_episode_cap": bool(potential.episode_cap), "last_c_body": None, "last_c_map": None}
         if labels is not None:
             out["last_c_body"] = protocol.c_body_of(labels)
             if potential.source != "true":

@@ -76,6 +76,12 @@ namespace Animus::Curriculum
         /// The furthest a body moves between two decisions' labels on its own feet: further is a teleport, and the
         /// own-map route at the last position is not read (a decision at run speed moves under 4 yd).
         static constexpr float LABEL_STEP_MAX = 12.0f;
+        /// A goal in water is priced by depth too (DepthCost): the height off it past ArriveRise, added to every route
+        /// cost the labels carry, in full within DEPTH_FULL yards of it across and fading to nothing at DEPTH_REACH.
+        /// The bake prices a water cell the same from its bed to its surface, so the potential paid nothing for the
+        /// last few yards down or up (nav5 2026-10-21: 40 % of the failed trips over the goal at the wrong depth).
+        static constexpr float DEPTH_FULL = 2.0f;
+        static constexpr float DEPTH_REACH = 10.0f;
         /// The failure pool's and the draw's bins are the tuning's lists; the ladder is the fade's four rungs.
         static constexpr uint32 RUNGS = 4;
 
@@ -240,6 +246,7 @@ namespace Animus::Curriculum
             bool HasLabelPos = false;
             float LabelX = 0.0f;
             float LabelY = 0.0f;
+            float LabelZ = 0.0f;
             float MapRouteStart = Vision::TRAV_UNREACHABLE;
             float MapRouteLast = Vision::TRAV_UNREACHABLE;
             // The route's source over the labelled decisions (CropPose::RouteGlobal: the global route, else the

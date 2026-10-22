@@ -2046,7 +2046,19 @@ void Animus::Curriculum::PointNavEncounter::WriteLabels(Env const& env, uint32 s
         out + Vi::TRAV_LABEL_COARSE_CLASSES, coarseCost);
     if (!haveGoal)
         return;
-    scalars[Vi::TRAV_LABEL_C_BODY] = CostAt(nav, x, y, z);
+    // A goal in water: the depth still to go, near it (DEPTH_FULL, DEPTH_REACH), on every route cost below.
+    bool const wetGoal = nav.Grid->ClassOf(nav.GoalCell) == Vi::TravClass::Water;
+    float const arriveRise = _scenario.Tuning().PointNav.ArriveRise;
+    auto const depthCost = [&](float px, float py, float pz)
+    {
+        if (!wetGoal)
+            return 0.0f;
+        float const across = std::hypot(px - nav.Goal.GetPositionX(), py - nav.Goal.GetPositionY());
+        float const weight = std::clamp((DEPTH_REACH - across) / (DEPTH_REACH - DEPTH_FULL), 0.0f, 1.0f);
+        return weight * std::max(0.0f, std::fabs(pz - nav.Goal.GetPositionZ()) - arriveRise);
+    };
+    float const bodyCost = CostAt(nav, x, y, z);
+    scalars[Vi::TRAV_LABEL_C_BODY] = bodyCost < Vi::TRAV_UNREACHABLE ? bodyCost + depthCost(x, y, z) : bodyCost;
     scalars[Vi::TRAV_LABEL_C_START] = nav.CStart;
     // The goal in the body frame: forward along the facing, right along (sin yaw, -cos yaw): a label, no observation.
     float const cosYaw = std::cos(yaw);
@@ -2076,10 +2088,13 @@ void Animus::Curriculum::PointNavEncounter::WriteLabels(Env const& env, uint32 s
             float const ly = seat.LabelY - y;
             lastNear = lx * lx + ly * ly <= LABEL_STEP_MAX * LABEL_STEP_MAX;
         }
-        float const atBody = pose.RouteBody;
+        float const atBody = pose.RouteBody < Vi::TRAV_UNREACHABLE ? pose.RouteBody + depthCost(x, y, z)
+            : pose.RouteBody;
+        float const atLast = pose.RouteLast < Vi::TRAV_UNREACHABLE
+            ? pose.RouteLast + depthCost(seat.LabelX, seat.LabelY, seat.LabelZ) : pose.RouteLast;
         scalars[Vi::TRAV_LABEL_MAP_C_BODY] = atBody;
         scalars[Vi::TRAV_LABEL_MAP_C_LAST] = !seat.HasLabelPos ? atBody
-            : lastNear ? pose.RouteLast : Vi::TRAV_UNREACHABLE;
+            : lastNear ? atLast : Vi::TRAV_UNREACHABLE;
         if (!seat.HasLabelPos)
             seat.MapRouteStart = atBody;
         seat.MapRouteLast = atBody;
@@ -2092,4 +2107,5 @@ void Animus::Curriculum::PointNavEncounter::WriteLabels(Env const& env, uint32 s
     seat.HasLabelPos = true;
     seat.LabelX = x;
     seat.LabelY = y;
+    seat.LabelZ = z;
 }

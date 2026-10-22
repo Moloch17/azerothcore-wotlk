@@ -1130,7 +1130,9 @@ namespace
             .Extends = "nav5_water",
             .Summary = "an empty Ragefire Chasm or Deadmines: four followers keep with their group's leader running "
                 "the dungeon's way, the leader's believed position the planner's goal; Wailing Caverns held out",
-            .Blocks = { Core, Move, Vision, Map, PartyFrames, Goal },
+            // The nav stages' blocks and the party frames: the remembered entities carry from nav1-nav5 (seeded by
+            // name) and list the party it follows among what it sees.
+            .Blocks = { Core, Move, Vision, Map, MemoryEntities, PartyFrames, Goal },
             .Arenas = {
                 { .Name = "ragefire", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::PartyFollow,
                     .PartySize = GROUP_MEMBERS, .EpisodeSeconds = 300, .MapId = MAP_RAGEFIRE_CHASM,
