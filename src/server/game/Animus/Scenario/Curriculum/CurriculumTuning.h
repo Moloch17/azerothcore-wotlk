@@ -419,6 +419,10 @@ namespace Animus::Curriculum
             float RegroupWindow = 20.0f;
             uint32 RegroupMinStopMs = 2000;
             float Blocking = 0.05f;
+            /// Per second of any wall contact, sliding along it too (nav6 2026-10-22): the ground course's Wall is
+            /// paid only for the blocked share of a push, so grinding along a corridor wall at speed was free and the
+            /// followers' wall time doubled to 65 s an episode in 10M steps. Half Kept's rate.
+            float WallContact = 0.01f;
             float BlockYards = 2.5f;
             float BlockHalfAngle = 45.0f;
             float Death = 3.0f;
@@ -1148,6 +1152,7 @@ namespace Animus::Curriculum
             f("PartyFollow.RegroupWindow", tuning.PartyFollow.RegroupWindow);
             f("PartyFollow.RegroupMinStopMs", tuning.PartyFollow.RegroupMinStopMs);
             f("PartyFollow.Blocking", tuning.PartyFollow.Blocking);
+            f("PartyFollow.WallContact", tuning.PartyFollow.WallContact);
             f("PartyFollow.BlockYards", tuning.PartyFollow.BlockYards);
             f("PartyFollow.BlockHalfAngle", tuning.PartyFollow.BlockHalfAngle);
             f("PartyFollow.Death", tuning.PartyFollow.Death);

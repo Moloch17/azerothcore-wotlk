@@ -1189,6 +1189,9 @@ void Animus::Curriculum::PartyFollowEncounter::Reward(Env& env, uint32 seatIndex
     }
     else
         follow.WallRunMs = 0;
+    // Contact itself, sliding or not (PartyFollow.WallContact): a follower keeps up off the walls.
+    if (wallMs && tuning.WallContact > 0.0f)
+        ledger.AddFixed(RewardTerm::Wall, -tuning.WallContact * float(wallMs) / 1000.0f);
     Player* leader = Leader(env);
     if (!leader || !leader->IsInWorld() || !leader->IsAlive() || leader->GetMapId() != bot->GetMapId())
     {
