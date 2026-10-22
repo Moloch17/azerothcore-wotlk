@@ -64,7 +64,8 @@ def send_desktop(event: Event, settings: dict) -> str:
     program = shutil.which("notify-send")
     if not program:
         return "notify-send is not installed"
-    urgency = {"info": "low", "warn": "normal", "critical": "critical"}[event.severity]
+    # Never "critical": mako keeps those on screen until clicked.
+    urgency = {"info": "low", "warn": "normal", "critical": "normal"}[event.severity]
     env = dict(os.environ)
     # A watcher started detached (setsid, ssh, systemd) has no session bus address; the login's bus is the usual one.
     bus = Path(f"/run/user/{os.getuid()}/bus")
