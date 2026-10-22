@@ -42,7 +42,7 @@ user = "sarah"
 address = "192.168.0.68"
 role = "worker"        # the host until 2026-10-10
 path = "~/animus-forge"
-in_cluster = true
+in_cluster = false
 
 [[machine]]
 name = "spencer"
