@@ -1513,8 +1513,11 @@ namespace
             return "a nav arena is on a dungeon's own map (or a tower's) and its dead rise at the start";
         if (pointNav && stage.MapTiers != 2)
             return "a nav arena's planner reads both tiers of the mental map (MapTiers 2)";
-        if ((arena.SightOnly || arena.Revisit || arena.HasBox) && !pointNav)
-            return "a sight-only draw, a revisit price and a bake box are a nav arena's";
+        // A bake box is the bake's, and a labels-only arena's PointNav (nav6's labeller) bakes the dungeon too.
+        if ((arena.SightOnly || arena.Revisit) && !pointNav)
+            return "a sight-only draw and a revisit price are a nav arena's";
+        if (arena.HasBox && !pointNav && !arena.LabelsOnly)
+            return "a bake box is a nav arena's or a labels-only arena's (PointNav bakes both)";
         if (arena.HasBox && (arena.BoxMinX >= arena.BoxMaxX || arena.BoxMinY >= arena.BoxMaxY))
             return "a bake box is its min and max x and y, in order";
         // PointNav as a labeller beside the party follow (nav6): the leader's believed position is the point the
