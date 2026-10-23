@@ -81,6 +81,8 @@ namespace Animus::Curriculum
         /// The seat that leads the party this episode (StageDefinition::LeaderAnyRole: drawn from the whole party;
         /// else seat 0), and its bot.
         [[nodiscard]] uint32 LeaderSeat(Env const& env) const { return _envs[env.Index].Leader; }
+        /// The leader's role this episode (DungeonRole: 1 tank, 2 healer, 3 damage; 0 unknown).
+        [[nodiscard]] uint32 LeaderRole(Env const& env) const;
         /// The others keep with the leader (StageDefinition::LeaderAnyRole): a seat's goal is the living leader; the
         /// leader's own is the next encounter's (the pack it takes the party to, the next site of the clear way).
         [[nodiscard]] bool RouteGoal(Env const& env, uint32 seat, Position& goal) const override;

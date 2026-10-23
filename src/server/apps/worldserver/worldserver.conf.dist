@@ -6141,6 +6141,13 @@ AnimusForge.Curriculum.Party.TankLoseTeammate = 0.02
 #   the enemies are the tank's to take, and the seat that draws them is charged for it
 AnimusForge.Curriculum.Party.PulledThreat = 0.004
 AnimusForge.Curriculum.Party.TeammateDeath = 3.0
+#   the leader and the tank (dm4-dm6, a leader of any role): a pull out of turn -- by anyone but the tank, or by the
+#   tank more than LeaderPullYards from the leader -- costs its puller; every second a seat is more than
+#   LeaderAwayYards from the leader while nothing fights costs LeaderAway
+AnimusForge.Curriculum.Party.OutOfTurnPull = 1.0
+AnimusForge.Curriculum.Party.LeaderPullYards = 40.0
+AnimusForge.Curriculum.Party.LeaderAway = 0.01
+AnimusForge.Curriculum.Party.LeaderAwayYards = 30.0
 
 #
 #    AnimusForge.Curriculum.Raid.*

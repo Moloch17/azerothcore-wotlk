@@ -40,6 +40,7 @@
 #include "PointNavEncounter.h"
 #include "StageScenario.h"
 #include "Supplies.h"
+#include "StringFormat.h"
 #include "MentalMap.h"
 #include "EntityMemory.h"
 
@@ -210,6 +211,28 @@ void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
         EnvInstance const& fight = _envs[env.Index];
         return Succeeded(fight) && fight.Wipes <= 1 ? 1.0f : 0.0f;
     });
+    // ... and by the leader's role (StageDefinition::LeaderAnyRole: over leader_<role>, PER_EVENT): the bar, the
+    // clear and the share cleared for a tank, a healer and a damage dealer leading.
+    if (_scenario.Stage().LeaderAnyRole)
+        for (auto const& [suffix, role] : { std::pair{ "tank", DUNGEON_TANK }, std::pair{ "healer", DUNGEON_HEALER },
+            std::pair{ "damage", DUNGEON_DAMAGE } })
+        {
+            uint32 const want = uint32(role);
+            auto const led = [this, want](Env const& env)
+            {
+                PartyEncounter const* party = _scenario.Party();
+                return party && party->LeaderRole(env) == want;
+            };
+            table.Add(Acore::StringFormat("bar_clear_leader_{}", suffix), [this, led](Env const& env, uint32)
+            {
+                EnvInstance const& fight = _envs[env.Index];
+                return led(env) && Succeeded(fight) && fight.Wipes <= 1 ? 1.0f : 0.0f;
+            });
+            table.Add(Acore::StringFormat("cleared_share_leader_{}", suffix), [this, led](Env const& env, uint32)
+            {
+                return led(env) ? ClearedShare(_envs[env.Index]) : 0.0f;
+            });
+        }
     table.Add("ready_pulls", [this](Env const& env, uint32)
     {
         EnvInstance const& fight = _envs[env.Index];

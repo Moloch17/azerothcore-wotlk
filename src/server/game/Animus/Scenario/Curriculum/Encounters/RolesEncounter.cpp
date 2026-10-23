@@ -22,6 +22,7 @@
 #include "CombatEncounter.h"
 #include "Creature.h"
 #include "CreatureAI.h"
+#include "Encounters.h"
 #include "Env.h"
 #include "EnvPool.h"
 #include "EpisodeInfoTable.h"
@@ -84,6 +85,19 @@ void Animus::Curriculum::RolesEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
     {
         return Draw::Won(_envs[env.Index].Tally, _scenario.Tuning().Roles) ? 1.0f : 0.0f;
     });
+    // ... and by the leader's role (StageDefinition::LeaderAnyRole: over leader_<role>, PER_EVENT).
+    if (_scenario.Stage().LeaderAnyRole)
+        for (auto const& [name, role] : { std::pair{ "won_leader_tank", DUNGEON_TANK },
+            std::pair{ "won_leader_healer", DUNGEON_HEALER }, std::pair{ "won_leader_damage", DUNGEON_DAMAGE } })
+        {
+            uint32 const want = uint32(role);
+            table.Add(name, [this, want](Env const& env, uint32)
+            {
+                PartyEncounter const* party = _scenario.Party();
+                return party && party->LeaderRole(env) == want
+                    && Draw::Won(_envs[env.Index].Tally, _scenario.Tuning().Roles) ? 1.0f : 0.0f;
+            });
+        }
     table.Add("drill_hold", drilled(RolesDrill::Hold));
     table.Add("drill_keep", drilled(RolesDrill::Keep));
     table.Add("drill_focus", drilled(RolesDrill::Focus));

@@ -178,6 +178,8 @@ namespace Animus::Curriculum
         /// The stage's PointNav (a nav arena's, or the labeller beside a fight or a party: its bake and its clear way),
         /// or null.
         [[nodiscard]] PointNavEncounter* PointNav() const { return _pointNav; }
+        /// The stage's party (a party group's arenas: the core group and its leader), or null.
+        [[nodiscard]] PartyEncounter* Party() const { return _party; }
         /// The shaping scale the learner's fade has reached (1 at the start, 0 when faded): the seek stage's room ladder
         /// is read off it (SeekEncounter).
         [[nodiscard]] float ShapingScale() const { return _shapingScale.load(std::memory_order_relaxed); }

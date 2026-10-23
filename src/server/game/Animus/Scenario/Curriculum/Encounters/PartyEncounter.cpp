@@ -27,6 +27,7 @@
 #include "StageScenario.h"
 #include "Creature.h"
 #include "SeatView.h"
+#include "StringFormat.h"
 #include <algorithm>
 #include <limits>
 
@@ -132,11 +133,31 @@ void Animus::Curriculum::PartyEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
     {
         return _envs[env.Index].Leader == seat ? 1.0f : 0.0f;
     });
-    table.Add("leader_role", [this](Env const& env, uint32)
+    table.Add("leader_role", [this](Env const& env, uint32) { return float(LeaderRole(env)); });
+    // ... and by the leader's role (the evaluation per leader role, the user's rule): 1 when the episode's leader is a
+    // tank, a healer, a damage dealer -- the weights the per-leader measures are read over (episode_means.PER_EVENT),
+    // here the kept-with-leader share and the out-of-turn pulls.
+    for (auto const& [suffix, role] : { std::pair{ "tank", DUNGEON_TANK }, std::pair{ "healer", DUNGEON_HEALER },
+        std::pair{ "damage", DUNGEON_DAMAGE } })
     {
-        uint32 const leader = _envs[env.Index].Leader;
-        return leader < MAX_SEATS ? float(_scenario.Data(env).Seats[leader].DungeonRole) : 0.0f;
-    });
+        uint32 const want = uint32(role);
+        table.Add(Acore::StringFormat("leader_{}", suffix), [this, want](Env const& env, uint32)
+        {
+            return LeaderRole(env) == want ? 1.0f : 0.0f;
+        });
+        table.Add(Acore::StringFormat("kept_with_leader_{}", suffix), [this, want](Env const& env, uint32 seat)
+        {
+            SeatParty const& party = _envs[env.Index].Seats[seat];
+            if (LeaderRole(env) != want)
+                return 0.0f;
+            return _envs[env.Index].Leader == seat || !party.QuietMs ? 1.0f
+                : float(party.KeptMs) / float(party.QuietMs);
+        });
+        table.Add(Acore::StringFormat("out_of_turn_leader_{}", suffix), [this, want](Env const& env, uint32 seat)
+        {
+            return LeaderRole(env) == want ? float(_envs[env.Index].Seats[seat].OutOfTurn) : 0.0f;
+        });
+    }
     table.Add("pulls_started", [this](Env const& env, uint32 seat)
     {
         return float(_envs[env.Index].Seats[seat].Pulls);
@@ -317,6 +338,12 @@ void Animus::Curriculum::PartyEncounter::View(Env const& env, uint32 seatIndex, 
     view.Tank = Tank(env);
 }
 
+uint32 Animus::Curriculum::PartyEncounter::LeaderRole(Env const& env) const
+{
+    uint32 const leader = _envs[env.Index].Leader;
+    return leader < MAX_SEATS ? uint32(_scenario.Data(env).Seats[leader].DungeonRole) : 0;
+}
+
 bool Animus::Curriculum::PartyEncounter::RouteGoal(Env const& env, uint32 seat, Position& goal) const
 {
     EnvParty const& party = _envs[env.Index];
@@ -367,7 +394,10 @@ void Animus::Curriculum::PartyEncounter::JudgePulls(Env& env)
                 first = creature;
                 break;
             }
+        // A pet's pull is its owner's (a hunter's or warlock's pet sent in, or walking ahead).
         Unit const* victim = first->GetVictim();
+        if (victim)
+            victim = victim->GetCharmerOrOwnerPlayerOrPlayerItself();
         Player const* tank = Tank(env);
         Player const* leader = _scenario.SeatBotInWorld(env, party.Leader);
         for (uint32 seat = 0; seat < data.ActiveSeats && seat < MAX_SEATS; ++seat)

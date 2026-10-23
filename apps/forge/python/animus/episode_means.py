@@ -126,6 +126,23 @@ PER_EVENT = {
     "deaths_tank": "role_tank",
     "deaths_healer": "role_healer",
     "deaths_damage": "role_damage",
+    # The leader and the tank (dm4-dm6, StageDefinition::LeaderAnyRole): each measure by the leader's role, over the
+    # episodes a tank, a healer or a damage dealer led (the user's rule: evaluated per leader role).
+    "won_leader_tank": "leader_tank",
+    "won_leader_healer": "leader_healer",
+    "won_leader_damage": "leader_damage",
+    "bar_clear_leader_tank": "leader_tank",
+    "bar_clear_leader_healer": "leader_healer",
+    "bar_clear_leader_damage": "leader_damage",
+    "cleared_share_leader_tank": "leader_tank",
+    "cleared_share_leader_healer": "leader_healer",
+    "cleared_share_leader_damage": "leader_damage",
+    "kept_with_leader_tank": "leader_tank",
+    "kept_with_leader_healer": "leader_healer",
+    "kept_with_leader_damage": "leader_damage",
+    "out_of_turn_leader_tank": "leader_tank",
+    "out_of_turn_leader_healer": "leader_healer",
+    "out_of_turn_leader_damage": "leader_damage",
 }
 
 
