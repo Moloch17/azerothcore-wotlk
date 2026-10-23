@@ -284,6 +284,14 @@ namespace Animus::Curriculum
         bool HasRunGate = false;
         Position RunGate{};
         float RunGateSeconds = 0.0f;
+        /// **The clear way** (dm1, 2026-10-23): the run passes every place the dungeon's creatures spawn, as a full
+        /// clear does, not the shortest way to its goal -- the map's creature spawns grouped into sites within
+        /// RunSiteYards of one another, ordered by their route distance from the entrance, the gate among them and
+        /// RunGoal last; each site is a checkpoint reached within RunCheckpointYards, and the trip's goal is always the
+        /// next one.
+        bool RunClear = false;
+        float RunSiteYards = 12.0f;
+        float RunCheckpointYards = 10.0f;
         /// **The dungeon's own objects live** (dm1): PointNav does not clear them (ObjectPool::ClearOwn); every reset
         /// puts its doors, buttons and levers back as a fresh instance has them, opens LiveOpen's doors (those a
         /// dead boss opens: the dungeon is empty), keeps LiveShut's shut, and puts LiveItems in the bags (the Defias

@@ -119,7 +119,8 @@ eval:
     no_shared_memory: 64
     no_object_memory: 64
     no_global: 64
-  report: [arrived, spl, time_ratio, arrived_base_limit, time_limit_seconds, door_opened, door_opened_seconds,
+  report: [arrived, spl, checkpoints_reached, checkpoints_total, time_ratio, arrived_base_limit, time_limit_seconds,
+           door_opened, door_opened_seconds,
            route_switches, route_source_global_share, global_replans, global_replans_contradiction, optimal_yards,
            straight_yards, detour_factor, travelled_yards, stop_error_yards, falls, fall_damage_share, drowned, died,
            timed_out, stuck_seconds, wall_seconds, lost_seconds, jumps, swim_seconds, nav_rung, replayed,
@@ -130,7 +131,7 @@ eval:
            reward_cell_goal, reward_cell_lost]
 
 status:
-  headline: [arrived, spl, door_opened, door_opened_seconds, arrived_base_limit, time_ratio, route_switches, falls,
+  headline: [arrived, spl, checkpoints_reached, checkpoints_total, door_opened, door_opened_seconds, arrived_base_limit, time_ratio, route_switches, falls,
              died, drowned, timed_out, lost_seconds, wall_seconds, stuck_seconds, nav_rung, at_top_rung, costmap_iou,
              planner_mae_yards, planner_mae_known, reward_potential, reward_potential_train, spl_no_map,
              spl_no_planner, spl_no_memory, spl_no_shared_memory]

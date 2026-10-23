@@ -201,6 +201,9 @@ void Animus::Curriculum::PointNavEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     {
         return _scenario.Data(env).Seats[std::min<uint32>(seat, MAX_SEATS - 1)].Drowned ? 1.0f : 0.0f;
     });
+    // The clear way (ArenaDefinition::RunClear): its checkpoints reached this trip, of those it asked.
+    add("checkpoints_reached", [nav](Env const& env, uint32) { return float(nav(env).CheckpointsReached); });
+    add("checkpoints_total", [nav](Env const& env, uint32) { return float(nav(env).CheckpointsTotal); });
     // A live arena's shut door (ArenaDefinition::LiveShut): opened this episode, and when.
     add("door_opened", [nav](Env const& env, uint32) { return nav(env).DoorOpened ? 1.0f : 0.0f; });
     add("door_opened_seconds", [nav](Env const& env, uint32)
@@ -1361,6 +1364,132 @@ bool Animus::Curriculum::PointNavEncounter::DrawFromPool(Env& env, PairPool cons
     return true;
 }
 
+Animus::Curriculum::PointNavEncounter::ClearWay const& Animus::Curriculum::PointNavEncounter::EnsureClearWay(
+    Env const& env, Vision::TravGrid const& grid)
+{
+    std::lock_guard<std::mutex> lock(_poolLock);
+    ClearWay& way = _clearWays[_scenario.Data(env).Arena];
+    if (way.Built)
+        return way;
+    way.Built = true;
+    ArenaDefinition const& arena = _scenario.Arena(env);
+    CurriculumTuning::PointNavTuning const& tuning = _scenario.Tuning().PointNav;
+    uint32 const mapId = arena.MapId;
+    AreaTriggerTeleport const* entrance = sObjectMgr->GetMapEntranceTrigger(mapId);
+    if (!entrance || !arena.HasRunGoal)
+        return way;
+    uint32 const door = grid.NodeOf(entrance->target_X, entrance->target_Y, entrance->target_Z);
+    if (door == Vision::TRAV_NO_CELL)
+        return way;
+    std::vector<float> fromDoor;
+    Vision::CostToGo(grid, door, tuning.DropHurtYards, fromDoor, !WalksOnly());
+
+    // The sites: the map's creature spawns, each joined to the first site whose centre is within RunSiteYards
+    // (by spawn id, so the grouping is the same in every process).
+    std::vector<std::pair<uint32, Position>> spawns;
+    for (auto const& [spawnId, data] : sObjectMgr->GetAllCreatureData())
+        if (data.mapid == mapId)
+            spawns.push_back({ spawnId, Position(data.posX, data.posY, data.posZ, 0.0f) });
+    std::sort(spawns.begin(), spawns.end(), [](auto const& a, auto const& b) { return a.first < b.first; });
+    struct Site
+    {
+        float X = 0.0f;
+        float Y = 0.0f;
+        float Z = 0.0f;
+        uint32 Count = 0;
+    };
+    std::vector<Site> sites;
+    for (auto const& [spawnId, at] : spawns)
+    {
+        Site* joined = nullptr;
+        for (Site& site : sites)
+            if (std::hypot(site.X - at.GetPositionX(), site.Y - at.GetPositionY()) <= arena.RunSiteYards
+                && std::fabs(site.Z - at.GetPositionZ()) <= arena.RunSiteYards)
+            {
+                joined = &site;
+                break;
+            }
+        if (!joined)
+        {
+            sites.push_back(Site());
+            joined = &sites.back();
+        }
+        float const n = float(joined->Count);
+        joined->X = (joined->X * n + at.GetPositionX()) / (n + 1.0f);
+        joined->Y = (joined->Y * n + at.GetPositionY()) / (n + 1.0f);
+        joined->Z = (joined->Z * n + at.GetPositionZ()) / (n + 1.0f);
+        ++joined->Count;
+    }
+    // Each site's bake node (the floor nearest its centre's height), ordered by the route from the entrance; the
+    // gate among them, the goal last. A site the entrance does not reach is left out.
+    std::vector<std::pair<float, Position>> ordered;
+    uint32 unreachable = 0;
+    for (Site const& site : sites)
+    {
+        uint32 const node = grid.NodeOf(site.X, site.Y, site.Z);
+        if (node == Vision::TRAV_NO_CELL || fromDoor[node] >= Vision::TRAV_UNREACHABLE)
+        {
+            ++unreachable;
+            continue;
+        }
+        ordered.push_back({ fromDoor[node], Position(site.X, site.Y, site.Z, 0.0f) });
+    }
+    if (arena.HasRunGate)
+    {
+        uint32 const node = grid.NodeOf(arena.RunGate.GetPositionX(), arena.RunGate.GetPositionY(),
+            arena.RunGate.GetPositionZ());
+        if (node != Vision::TRAV_NO_CELL && fromDoor[node] < Vision::TRAV_UNREACHABLE)
+            ordered.push_back({ fromDoor[node] - 0.01f, arena.RunGate });
+    }
+    std::stable_sort(ordered.begin(), ordered.end(), [](auto const& a, auto const& b) { return a.first < b.first; });
+    std::vector<Position> points;
+    for (auto const& [cost, at] : ordered)
+        points.push_back(at);
+    points.push_back(arena.RunGoal);
+
+    // The legs: each checkpoint's route yards from the one before; one the one before cannot reach is dropped and
+    // the next leg is measured from the one before it.
+    std::vector<float> cost;
+    std::vector<uint32> nodes;
+    std::vector<float> legs;
+    std::vector<Position> kept;
+    for (Position const& at : points)
+    {
+        uint32 const node = grid.NodeOf(at.GetPositionX(), at.GetPositionY(), at.GetPositionZ());
+        if (node == Vision::TRAV_NO_CELL)
+            continue;
+        float leg = 0.0f;
+        if (!nodes.empty())
+        {
+            Vision::CostToGo(grid, node, tuning.DropHurtYards, cost, !WalksOnly());
+            leg = cost[nodes.back()];
+            if (leg >= Vision::TRAV_UNREACHABLE)
+            {
+                ++unreachable;
+                continue;
+            }
+        }
+        nodes.push_back(node);
+        legs.push_back(leg);
+        kept.push_back(at);
+    }
+    way.Points = std::move(kept);
+    way.Nodes = std::move(nodes);
+    way.Leg = std::move(legs);
+    way.After.assign(way.Leg.size(), 0.0f);
+    for (int32 k = int32(way.Leg.size()) - 2; k >= 0; --k)
+        way.After[std::size_t(k)] = way.After[std::size_t(k) + 1] + way.Leg[std::size_t(k) + 1];
+    if (arena.HasRunGate)
+        for (std::size_t k = 0; k < way.Points.size(); ++k)
+            if (way.Points[k].GetExactDist(&arena.RunGate) < 0.5f)
+                way.Gate = uint32(k);
+    float const total = way.After.empty() ? 0.0f : way.After.front();
+    LOG_INFO("module.animus", "{}: arena {} clear way: {} checkpoints from {} spawns in {} sites ({} left out), "
+        "{:.0f} yd from the first, the gate at #{}", _scenario.Name(), arena.Name, way.Points.size(), spawns.size(),
+        sites.size(), unreachable, total, way.Gate == UINT32_MAX ? -1 : int32(way.Gate));
+    return way;
+}
+
 bool Animus::Curriculum::PointNavEncounter::DrawRun(Env& env, Player* bot, EnvNav& nav)
 {
     ArenaDefinition const& arena = _scenario.Arena(env);
@@ -1368,6 +1497,57 @@ bool Animus::Curriculum::PointNavEncounter::DrawRun(Env& env, Player* bot, EnvNa
     if (!arena.HasRunGoal)
         return false;
     CurriculumTuning::PointNavTuning const& tuning = _scenario.Tuning().PointNav;
+    // The clear way: the goal the next checkpoint, the start the one before it (the entrance at the last rung),
+    // the rungs back along the way as the run's -- the last few, past the gate, in front of it, the whole way.
+    if (arena.RunClear)
+    {
+        ClearWay const& way = EnsureClearWay(env, grid);
+        uint32 const count = uint32(way.Points.size());
+        if (count < 2)
+            return false;
+        uint32 const last = count - 1;
+        uint32 const gate = way.Gate == UINT32_MAX ? last : way.Gate;
+        uint32 const rung = std::min<uint32>(nav.Rung, RUNGS - 1);
+        uint32 checkpoint = 0;
+        uint32 start = Vision::TRAV_NO_CELL;
+        if (rung + 1 >= RUNGS)
+        {
+            if (AreaTriggerTeleport const* entrance = sObjectMgr->GetMapEntranceTrigger(arena.MapId))
+                start = grid.NodeOf(entrance->target_X, entrance->target_Y, entrance->target_Z);
+        }
+        else
+        {
+            uint32 first = 1;
+            uint32 end = last;
+            if (rung == 0)
+                first = last >= RUN_NEAR_SITES ? last - RUN_NEAR_SITES + 1 : 1;
+            else if (rung == 1)
+                first = std::min(gate + 2, last);
+            else
+            {
+                first = gate >= 2 ? gate - 1 : 1;
+                end = std::max(first, std::min(gate, last));
+            }
+            checkpoint = first + std::min(end - first, uint32(Uniform(env) * float(end - first + 1)));
+            start = way.Nodes[checkpoint - 1];
+        }
+        if (start == Vision::TRAV_NO_CELL)
+            return false;
+        nav.Clearing = true;
+        nav.Checkpoint = checkpoint;
+        nav.CheckpointsTotal = count - checkpoint;
+        nav.CheckpointsReached = 0;
+        nav.RemainingAfter = way.After[checkpoint];
+        nav.GoalCell = way.Nodes[checkpoint];
+        Vision::CostToGo(grid, nav.GoalCell, tuning.DropHurtYards, nav.Cost, !WalksOnly());
+        if (nav.Cost[start] >= Vision::TRAV_UNREACHABLE)
+            return false;
+        nav.StartCell = start;
+        nav.Start = CellPoint(grid, nav.StartCell, false);
+        nav.GoalAtBed = false;
+        nav.GateSeconds = way.Gate != UINT32_MAX && checkpoint <= way.Gate ? arena.RunGateSeconds : 0.0f;
+        return true;
+    }
     Position const& goal = arena.RunGoal;
     nav.GoalCell = grid.NodeOf(goal.GetPositionX(), goal.GetPositionY(), goal.GetPositionZ());
     if (nav.GoalCell == Vision::TRAV_NO_CELL)
@@ -1512,7 +1692,7 @@ bool Animus::Curriculum::PointNavEncounter::DrawPair(Env& env, Map* map, Player*
         if (!DrawRun(env, bot, nav))
             return false;
         nav.Goal = CellPoint(grid, nav.GoalCell, false);
-        nav.CStart = nav.Cost[nav.StartCell];
+        nav.CStart = nav.Cost[nav.StartCell] + nav.RemainingAfter;
         nav.Straight = nav.Start.GetExactDist(&nav.Goal);
         return nav.CStart < Vision::TRAV_UNREACHABLE;
     }
@@ -2090,6 +2270,8 @@ void Animus::Curriculum::PointNavEncounter::Reward(Env& env, uint32 seatIndex, P
     // lost too); Revisit on stepping onto a bake cell stood on before, in the arenas that ask -- a step, not a
     // dwell: standing still on one's own cell costs nothing (the plan's standing-still-pays-0).
     seat.CBody = CostAt(nav, bodyX, bodyY, bodyZ);
+    if (seat.CBody < Vision::TRAV_UNREACHABLE)
+        seat.CBody += nav.RemainingAfter;
     if (seat.CBody > nav.CStart + tuning.LostYards)
     {
         seat.LostMs += stepMs;
@@ -2112,6 +2294,26 @@ void Animus::Curriculum::PointNavEncounter::Reward(Env& env, uint32 seatIndex, P
     // rest and is no stop.
     // A dungeon run's goal is its exit trigger: anywhere within the trigger's radius (ArenaDefinition::RunGoal).
     ArenaDefinition const& arena = _scenario.Arena(env);
+    // The clear way: a checkpoint before the last is passed through (no stop), and the goal moves on to the next.
+    if (nav.Clearing && seatIndex == 0)
+    {
+        ClearWay const& way = EnsureClearWay(env, *nav.Grid);
+        if (nav.Checkpoint + 1 < way.Points.size())
+        {
+            Position const& at = way.Points[nav.Checkpoint];
+            if (std::hypot(bodyX - at.GetPositionX(), bodyY - at.GetPositionY()) <= arena.RunCheckpointYards
+                && std::fabs(bodyZ - at.GetPositionZ()) <= arena.RunCheckpointYards)
+            {
+                ++nav.Checkpoint;
+                ++nav.CheckpointsReached;
+                nav.RemainingAfter = way.After[nav.Checkpoint];
+                nav.GoalCell = way.Nodes[nav.Checkpoint];
+                Vision::CostToGo(*nav.Grid, nav.GoalCell, tuning.DropHurtYards, nav.Cost, !WalksOnly());
+                nav.Goal = CellPoint(*nav.Grid, nav.GoalCell, false);
+            }
+            return;
+        }
+    }
     float const arriveYards = arena.HasRunGoal ? std::max(tuning.ArriveYards, arena.RunGoalRadius) : tuning.ArriveYards;
     float const arriveRise = arena.HasRunGoal ? std::max(tuning.ArriveRise, arena.RunGoalRadius) : tuning.ArriveRise;
     float const distance = std::hypot(bodyX - nav.Goal.GetPositionX(), bodyY - nav.Goal.GetPositionY());
@@ -2230,8 +2432,10 @@ void Animus::Curriculum::PointNavEncounter::WriteLabels(Env const& env, uint32 s
         float const weight = std::clamp((DEPTH_REACH - across) / (DEPTH_REACH - DEPTH_FULL), 0.0f, 1.0f);
         return weight * std::max(0.0f, std::fabs(pz - nav.Goal.GetPositionZ()) - arriveRise);
     };
+    // ... and the clear way's route after the goal checkpoint (RemainingAfter): the potential is the whole trip's.
     float const bodyCost = CostAt(nav, x, y, z);
-    scalars[Vi::TRAV_LABEL_C_BODY] = bodyCost < Vi::TRAV_UNREACHABLE ? bodyCost + depthCost(x, y, z) : bodyCost;
+    scalars[Vi::TRAV_LABEL_C_BODY] = bodyCost < Vi::TRAV_UNREACHABLE
+        ? bodyCost + depthCost(x, y, z) + nav.RemainingAfter : bodyCost;
     scalars[Vi::TRAV_LABEL_C_START] = nav.CStart;
     // The goal in the body frame: forward along the facing, right along (sin yaw, -cos yaw): a label, no observation.
     float const cosYaw = std::cos(yaw);
@@ -2261,10 +2465,11 @@ void Animus::Curriculum::PointNavEncounter::WriteLabels(Env const& env, uint32 s
             float const ly = seat.LabelY - y;
             lastNear = lx * lx + ly * ly <= LABEL_STEP_MAX * LABEL_STEP_MAX;
         }
-        float const atBody = pose.RouteBody < Vi::TRAV_UNREACHABLE ? pose.RouteBody + depthCost(x, y, z)
-            : pose.RouteBody;
+        float const atBody = pose.RouteBody < Vi::TRAV_UNREACHABLE
+            ? pose.RouteBody + depthCost(x, y, z) + nav.RemainingAfter : pose.RouteBody;
         float const atLast = pose.RouteLast < Vi::TRAV_UNREACHABLE
-            ? pose.RouteLast + depthCost(seat.LabelX, seat.LabelY, seat.LabelZ) : pose.RouteLast;
+            ? pose.RouteLast + depthCost(seat.LabelX, seat.LabelY, seat.LabelZ) + nav.RemainingAfter
+            : pose.RouteLast;
         scalars[Vi::TRAV_LABEL_MAP_C_BODY] = atBody;
         scalars[Vi::TRAV_LABEL_MAP_C_LAST] = !seat.HasLabelPos ? atBody
             : lastNear ? atLast : Vi::TRAV_UNREACHABLE;

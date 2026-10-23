@@ -81,6 +81,8 @@ namespace Animus::Curriculum
         /// within RUN_GATE_BAND of the gate on its near side; summons swept from a shut door this long after it opened,
         /// within RUN_SWEEP_YARDS of it.
         static constexpr float RUN_NEAR = 120.0f;
+        /// A clear way's rung 0: its starts within this many checkpoints of the goal.
+        static constexpr uint32 RUN_NEAR_SITES = 4;
         static constexpr float RUN_GATE_BAND = 60.0f;
         static constexpr uint32 RUN_SWEEP_MS = 15000;
         static constexpr float RUN_SWEEP_YARDS = 150.0f;
@@ -313,6 +315,14 @@ namespace Animus::Curriculum
             bool DoorOpened = false;
             uint32 DoorOpenedMs = 0;
             uint32 SweepUntilMs = 0;
+            /// The clear way (ArenaDefinition::RunClear): the checkpoint the goal is now (an index into the arena's
+            /// way), the route yards of the way after it (added to every route cost, so the potential and the clock
+            /// are the whole trip's), and the checkpoints reached and asked this trip.
+            bool Clearing = false;
+            uint32 Checkpoint = 0;
+            float RemainingAfter = 0.0f;
+            uint32 CheckpointsReached = 0;
+            uint32 CheckpointsTotal = 0;
             std::array<SeatNav, GROUP_SEATS> Seats{};
         };
 
@@ -393,6 +403,19 @@ namespace Animus::Curriculum
         std::vector<EnvNav> _envs;
         mutable std::vector<std::mt19937> _rngs;
         PartyFollowEncounter const* _follow = nullptr;
+        /// An arena's clear way (ArenaDefinition::RunClear): the checkpoints in order (their bake nodes and places),
+        /// each leg's route yards from the one before (Leg[0]: 0), the yards after each (After), and the gate's index.
+        struct ClearWay
+        {
+            bool Built = false;
+            std::vector<Position> Points;
+            std::vector<uint32> Nodes;
+            std::vector<float> Leg;
+            std::vector<float> After;
+            uint32 Gate = UINT32_MAX;
+        };
+        ClearWay const& EnsureClearWay(Env const& env, Vision::TravGrid const& grid);
+        std::map<uint32, ClearWay> _clearWays;  // per arena index, under _poolLock
         std::mutex _poolLock;
         std::map<uint32, FailurePool> _pools;   // per arena index
         std::map<uint32, PairPool> _pairPools;  // per arena index, under _poolLock
