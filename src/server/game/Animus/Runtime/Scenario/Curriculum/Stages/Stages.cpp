@@ -74,7 +74,7 @@ namespace
     ArenaDefinition DeadminesRun()
     {
         ArenaDefinition arena{ .Name = "deadmines", .Weight = 1, .Against = Opposition::PointNav,
-            .EpisodeSeconds = 300, .MapId = MAP_DEADMINES, .RespawnAtEntrance = true };
+            .EpisodeSeconds = 600, .MapId = MAP_DEADMINES, .RespawnAtEntrance = true };
         arena.HasRunGoal = true;
         arena.RunGoal = { -110.76f, -1009.19f, 34.80f, 0.0f };
         arena.RunGoalRadius = 5.0f;

@@ -1420,31 +1420,77 @@ Animus::Curriculum::PointNavEncounter::ClearWay const& Animus::Curriculum::Point
         joined->Z = (joined->Z * n + at.GetPositionZ()) / (n + 1.0f);
         ++joined->Count;
     }
-    // Each site's bake node (the floor nearest its centre's height), ordered by the route from the entrance; the
-    // gate among them, the goal last. A site the entrance does not reach is left out.
-    std::vector<std::pair<float, Position>> ordered;
-    uint32 unreachable = 0;
-    for (Site const& site : sites)
+    // The main way, the entrance to the goal down the goal's route cost; a site's place along it is where its own
+    // route to the goal joins it (a side room hangs off the main way where its branch leaves), then how far out from
+    // there -- the order a full clear walks: side rooms as it passes them, a branch outwards and back. A site the
+    // entrance does not reach is left out.
+    uint32 const goalNode = grid.NodeOf(arena.RunGoal.GetPositionX(), arena.RunGoal.GetPositionY(),
+        arena.RunGoal.GetPositionZ());
+    if (goalNode == Vision::TRAV_NO_CELL)
+        return way;
+    std::vector<float> toGoal;
+    Vision::CostToGo(grid, goalNode, tuning.DropHurtYards, toGoal, !WalksOnly());
+    auto const down = [&](uint32 node)
     {
-        uint32 const node = grid.NodeOf(site.X, site.Y, site.Z);
-        if (node == Vision::TRAV_NO_CELL || fromDoor[node] >= Vision::TRAV_UNREACHABLE)
+        uint32 best = Vision::TRAV_NO_CELL;
+        for (int32 dir = 0; dir < Vision::TRAV_DIRS; ++dir)
+        {
+            uint32 const next = grid.EdgeTarget(node, dir);
+            if (next != Vision::TRAV_NO_CELL && toGoal[next] < (best == Vision::TRAV_NO_CELL ? toGoal[node]
+                : toGoal[best]))
+                best = next;
+        }
+        return best;
+    };
+    std::vector<int32> along(grid.Nodes(), -1);
+    {
+        uint32 node = door;
+        for (int32 step = 0; node != Vision::TRAV_NO_CELL && step < 100000; ++step)
+        {
+            along[node] = step;
+            if (node == goalNode)
+                break;
+            node = down(node);
+        }
+    }
+    struct Placed
+    {
+        int32 Join = 0;
+        float Out = 0.0f;
+        Position At;
+    };
+    std::vector<Placed> ordered;
+    uint32 unreachable = 0;
+    auto const place = [&](Position const& at, uint32 node)
+    {
+        if (node == Vision::TRAV_NO_CELL || fromDoor[node] >= Vision::TRAV_UNREACHABLE
+            || toGoal[node] >= Vision::TRAV_UNREACHABLE)
         {
             ++unreachable;
-            continue;
+            return;
         }
-        ordered.push_back({ fromDoor[node], Position(site.X, site.Y, site.Z, 0.0f) });
-    }
+        uint32 join = node;
+        for (int32 step = 0; join != Vision::TRAV_NO_CELL && along[join] < 0 && step < 100000; ++step)
+            join = down(join);
+        if (join == Vision::TRAV_NO_CELL || along[join] < 0)
+        {
+            ++unreachable;
+            return;
+        }
+        ordered.push_back({ along[join], toGoal[node] - toGoal[join], at });
+    };
+    for (Site const& site : sites)
+        place(Position(site.X, site.Y, site.Z, 0.0f), grid.NodeOf(site.X, site.Y, site.Z));
     if (arena.HasRunGate)
+        place(arena.RunGate, grid.NodeOf(arena.RunGate.GetPositionX(), arena.RunGate.GetPositionY(),
+            arena.RunGate.GetPositionZ()));
+    std::stable_sort(ordered.begin(), ordered.end(), [](Placed const& a, Placed const& b)
     {
-        uint32 const node = grid.NodeOf(arena.RunGate.GetPositionX(), arena.RunGate.GetPositionY(),
-            arena.RunGate.GetPositionZ());
-        if (node != Vision::TRAV_NO_CELL && fromDoor[node] < Vision::TRAV_UNREACHABLE)
-            ordered.push_back({ fromDoor[node] - 0.01f, arena.RunGate });
-    }
-    std::stable_sort(ordered.begin(), ordered.end(), [](auto const& a, auto const& b) { return a.first < b.first; });
+        return a.Join != b.Join ? a.Join < b.Join : a.Out < b.Out;
+    });
     std::vector<Position> points;
-    for (auto const& [cost, at] : ordered)
-        points.push_back(at);
+    for (Placed const& placed : ordered)
+        points.push_back(placed.At);
     points.push_back(arena.RunGoal);
 
     // The legs: each checkpoint's route yards from the one before; one the one before cannot reach is dropped and
