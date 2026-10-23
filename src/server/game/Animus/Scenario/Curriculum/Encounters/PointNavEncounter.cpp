@@ -2165,6 +2165,9 @@ void Animus::Curriculum::PointNavEncounter::Update(Env& env)
         if (!bot || !bot->IsInWorld())
             continue;
         SeatNav& seat = nav.Seats[seatIndex];
+        // A failed trip (PointNav.DeathEnds) ends with the episode: nothing rises.
+        if (seat.Failed)
+            continue;
         // A stranded seat (dead ground, STRANDED_*) is down as a dead one is, and rises the same way.
         RespawnClock::Step const step = seat.Clock.Note(env.EpisodeElapsedMs, bot->IsAlive() && !seat.Stranded,
             -1.0f, respawn.DelayMs, respawn.RejoinYards);
@@ -2349,20 +2352,36 @@ void Animus::Curriculum::PointNavEncounter::Reward(Env& env, uint32 seatIndex, P
     // The clock, and a death (paid each time; the seat rises at the start, Update). Drowning is the death under
     // water the scenario noted (SeatState::Drowned), paid once.
     CombatTally& tally = state.Combat;
+    // A death that ends the trip (PointNav.DeathEnds): Death and the clock's remaining step costs, once.
+    uint32 const failStepMs = std::max<uint32>(1, stepMs);
+    auto const fail = [&]()
+    {
+        seat.Failed = true;
+        uint32 const leftMs = env.EpisodeLengthMs > env.EpisodeElapsedMs
+            ? env.EpisodeLengthMs - env.EpisodeElapsedMs : 0;
+        ledger.Add(RewardTerm::Death, -(tuning.Death + tuning.StepCost * float(leftMs / failStepMs)));
+        NoteFailure(env, nav, bot->GetPosition());
+    };
     if (!tally.DeathCounted && !bot->IsAlive())
     {
         tally.DeathCounted = true;
         tally.Died = true;
         tally.DeathMs = env.EpisodeElapsedMs;
         ++tally.Deaths;
-        ledger.Add(RewardTerm::Death, -tuning.Death);
+        if (tuning.DeathEnds && !seat.Failed)
+            fail();
+        else
+            ledger.Add(RewardTerm::Death, -tuning.Death);
     }
     if (state.Drowned && !seat.DrownedPaid)
     {
         seat.DrownedPaid = true;
-        ledger.Add(RewardTerm::Drowned, -tuning.Drowned);
+        if (!tuning.DeathEnds)
+            ledger.Add(RewardTerm::Drowned, -tuning.Drowned);
         NoteFailure(env, nav, bot->GetPosition());
     }
+    if (seat.Failed)
+        return;
     // Falls: what the server's own HandleFall took since the last reward, as a share of maximum health
     // (PlayerLink's tally, summed into SeatState::FallDamage by TrackController).
     float const fallDelta = std::max(0.0f, state.FallDamage - seat.LastFallDamage);
@@ -2434,7 +2453,10 @@ void Animus::Curriculum::PointNavEncounter::Reward(Env& env, uint32 seatIndex, P
         {
             seat.Stranded = true;
             ++seat.Strandings;
-            ledger.Add(RewardTerm::Death, -tuning.Death);
+            if (tuning.DeathEnds)
+                fail();
+            else
+                ledger.Add(RewardTerm::Death, -tuning.Death);
         }
     }
 
@@ -2568,10 +2590,15 @@ bool Animus::Curriculum::PointNavEncounter::IsTerminal(Env const& env) const
     if (nav.LabelsOnly || !nav.Placed)
         return false;
     uint32 const seats = std::min<uint32>(_scenario.Data(env).ActiveSeats, uint32(nav.Seats.size()));
+    // Every seat arrived or failed (PointNav.DeathEnds: a death ends the trip).
+    bool anyFailed = false;
     for (uint32 seat = 0; seat < seats; ++seat)
-        if (!nav.Seats[seat].Reached)
+    {
+        if (!nav.Seats[seat].Reached && !nav.Seats[seat].Failed)
             return false;
-    return seats > 0;
+        anyFailed = anyFailed || nav.Seats[seat].Failed;
+    }
+    return seats > 0 || anyFailed;
 }
 
 void Animus::Curriculum::PointNavEncounter::WriteState(Env const& env, float* state) const

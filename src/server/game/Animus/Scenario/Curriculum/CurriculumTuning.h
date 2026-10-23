@@ -505,6 +505,12 @@ namespace Animus::Curriculum
             float Death = 3.0f;
             float FallHurt = 2.0f;
             float Drowned = 3.0f;
+            /// **A death is a failure** (the user, 2026-10-23: dm1's seats drowned in 52 % of their trips, a death
+            /// costing less than the swim saved): on, a death -- drowned, fallen, or stranded on dead ground -- ends
+            /// the trip there, unarrived, and costs Death plus the StepCost of every decision the clock had left, so
+            /// dying never saves what running the clock out would cost; Drowned is not paid on top. Off, the seat
+            /// rises at the start and the trip goes on (the nav stages').
+            bool DeathEnds = true;
             float Lost = 0.02f;
             float LostYards = 40.0f;
             float Revisit = 0.002f;
@@ -1433,6 +1439,7 @@ namespace Animus::Curriculum
             f("PointNav.Death", tuning.PointNav.Death);
             f("PointNav.FallHurt", tuning.PointNav.FallHurt);
             f("PointNav.Drowned", tuning.PointNav.Drowned);
+            f("PointNav.DeathEnds", tuning.PointNav.DeathEnds);
             f("PointNav.Lost", tuning.PointNav.Lost);
             f("PointNav.LostYards", tuning.PointNav.LostYards);
             f("PointNav.Revisit", tuning.PointNav.Revisit);

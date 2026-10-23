@@ -255,6 +255,8 @@ namespace Animus::Curriculum
             uint32 LastDrops = 0;
             uint32 LandedChecks = 0;
             bool Stranded = false;
+            /// The trip ended in a death (PointNav.DeathEnds): failed, no rise; the episode ends (IsTerminal).
+            bool Failed = false;
             uint32 Strandings = 0;
             bool HasLastPos = false;
             uint32 Decisions = 0;
