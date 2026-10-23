@@ -42,7 +42,7 @@ user = "sarah"
 address = "192.168.0.68"
 role = "worker"        # the host until 2026-10-10
 path = "~/animus-forge"
-in_cluster = false
+in_cluster = true
 
 [[machine]]
 name = "spencer"
@@ -74,7 +74,7 @@ user = "eli"
 address = "192.168.0.65"
 role = "worker"
 path = "~/animus-forge"
-in_cluster = false     # out since the move4-follow rework (2026-10-13): ~250 sps on 4 cores cost the host more than it added
+in_cluster = true
 
 [doctor]                # thresholds for `forgectl doctor` (a key left out takes the default shown)
 disk_min_gb = 30                 # free space under a checkout below this is a FAIL (the deploy gate's number)
