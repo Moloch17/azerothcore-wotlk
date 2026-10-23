@@ -44,7 +44,10 @@ class CastActor:
         self.home = device  # where it acts; `device` is where its weights are now (offload, CastPool's cap)
         self.deterministic = deterministic
         self.look_heads = int(getattr(spec, "look_heads", 0) or 0)
-        if self.teacher.camera_bytes and not getattr(spec, "image_bytes", 0):
+        # The teacher's row is the leading bytes of the stage's (its image then its crop; the crop alone with the
+        # camera off), so it is the stage's whole row that has to be there (distill.check_camera checks the rest).
+        stage_row = int(getattr(spec, "image_bytes", 0) or 0) + int(getattr(spec, "map_bytes", 0) or 0)
+        if self.teacher.camera_bytes and not stage_row:
             raise ValueError(f"{self.path}: the checkpoint has a camera and the sim sends no image")
         if self.teacher.look_heads and len(self.teacher.look_heads) != self.look_heads:
             raise ValueError(f"{self.path}: the checkpoint's free look has {len(self.teacher.look_heads)} heads, the "

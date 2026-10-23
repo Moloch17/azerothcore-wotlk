@@ -41,8 +41,8 @@ from .partners import PARTNERS_DIR, Partners, partner_snapshot, with_partners_ch
 from .config import TrainConfig
 from .distill import Distiller, auto_teachers, build_teacher
 from .env import ClusterEnv, ForgeEnv
-from .evaluation import (ABLATION_BLOCKS, ABLATIONS, GLOBAL_ARM, GLOBAL_COLUMN, OBJECT_MEMORY_ARM, OBJECT_MEMORY_BLOCK,
-                         SHARED_MEMORY_ARM,
+from .evaluation import (ABLATION_BLOCKS, ABLATIONS, CAMERA_ARMS, GLOBAL_ARM, GLOBAL_COLUMN, OBJECT_MEMORY_ARM,
+                         OBJECT_MEMORY_BLOCK, SHARED_MEMORY_ARM,
                          SHARED_MEMORY_COLUMN, ConvergenceTracker, EvalResult, ablation_chooser, action_mask_table,
                          casting_weights, compass_spans, format_summary, run_evaluation, trace_columns, write_trace)
 from .mappo.buffer import RolloutBuffer
@@ -616,7 +616,8 @@ def choose_vision_chunk_rows(config: TrainConfig, spec, vision, device,
     rollout_rows = config.rollout_length * spec.num_envs * spec.agents_per_env
     batch_rows = max(1, rollout_rows // max(1, min(cfg.minibatches, spec.num_envs)))
     held = rollout_rows * (4 * (spec.obs_dim + spec.state_dim) + spec.image_bytes + spec.map_bytes)
-    per_row = VisionEncoder.update_bytes_per_row(image, bool(cfg.camera_splat)) * VISION_CHUNK_PEAK
+    # At least a byte: a camera switched off over no map block keeps next to nothing a row.
+    per_row = max(1.0, VisionEncoder.update_bytes_per_row(image, bool(cfg.camera_splat)) * VISION_CHUNK_PEAK)
     room = VISION_CHUNK_BUDGET * (free_bytes - held - VISION_CHUNK_RESERVE)
     fits = int(room // per_row) if room > 0 else 0
     if fits >= batch_rows:
@@ -787,9 +788,15 @@ class TrainingRun:
             sizes = ", ".join(f"{w}x{h}" for w, h in image["render_sizes"]) or "the canonical size"
             look = (f"free look {list(image['look'])} ({', '.join(image['look_names'])})" if image["look"]
                     else "no free look")
-            print(f"Vision: a {image['width']} x {image['height']} camera (rendered at {sizes}; patch "
-                  f"{image['patch']}) in {sum(e is not None for e in vision)} of {len(names)} layouts, one encoder "
-                  f"per network; {look}", flush=True)
+            if image.get("camera", True):
+                print(f"Vision: a {image['width']} x {image['height']} camera (rendered at {sizes}; patch "
+                      f"{image['patch']}) in {sum(e is not None for e in vision)} of {len(names)} layouts, one "
+                      f"encoder per network; {look}", flush=True)
+            else:
+                # image.camera false (2026-10-22): the view cone's scalars, look and lists, no pixels.
+                print(f"Vision: the camera is off (no pixels; its scalars, entity lists and map only) in "
+                      f"{sum(e is not None for e in vision)} of {len(names)} layouts, one encoder per network; "
+                      f"{look}", flush=True)
             if image.get("map") is not None:
                 crop = image["map"]
                 tiers = ", ".join(f"{cell:g}" for cell in crop.get("tier_cells", (crop["cell"],)))
@@ -1734,6 +1741,10 @@ class TrainingRun:
                 # seeds, the sim untouched, so the plain evaluation's episode columns read the arm's own result. An
                 # arm that zeroes a block no layout of the stage has (no_compass on the nav stages, which carry no
                 # compass block since 2026-10-17) is skipped with a line, never a refusal.
+                if arm in CAMERA_ARMS and not self.spec.image_bytes:
+                    # The camera switched off (image.camera false): no pixels to blank or unflag.
+                    print(f"Arm {arm}: the stage's camera casts no pixels (camera off); skipped", flush=True)
+                    continue
                 block = ABLATION_BLOCKS.get(arm)
                 if block and not any(count for _, count in compass_spans(self.spec, self.stage, block)):
                     print(f"Arm {arm}: no layout of the stage has a {block} block to zero; skipped", flush=True)

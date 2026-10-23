@@ -19,12 +19,19 @@
 #include "PointNavEncounter.h"
 #include "BotFactory.h"
 #include "Camera.h"
+#include "Cell.h"
 #include "CellGrid.h"
+#include "CellImpl.h"
+#include "Creature.h"
 #include "EncoderSupport.h"
 #include "Env.h"
 #include "EnvPool.h"
 #include "EpisodeInfoTable.h"
+#include "GameObject.h"
 #include "GoalBlock.h"
+#include "GridNotifiers.h"
+#include "GridNotifiersImpl.h"
+#include "InteractEncounter.h"
 #include "Log.h"
 #include "Map.h"
 #include "MapPlanner.h"
@@ -82,7 +89,7 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::PointNavEncounte
 {
     return { RewardTerm::Arrive, RewardTerm::StepCost, RewardTerm::Death, RewardTerm::FallHurt, RewardTerm::Drowned,
         RewardTerm::Lost, RewardTerm::Revisit, RewardTerm::Stuck, RewardTerm::Wall, RewardTerm::Turning,
-        RewardTerm::Explore };
+        RewardTerm::Explore, RewardTerm::DoorOpened };
 }
 
 std::vector<float> Animus::Curriculum::PointNavEncounter::ParseList(std::string const& list)
@@ -193,6 +200,12 @@ void Animus::Curriculum::PointNavEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     add("drowned", [this](Env const& env, uint32 seat)
     {
         return _scenario.Data(env).Seats[std::min<uint32>(seat, MAX_SEATS - 1)].Drowned ? 1.0f : 0.0f;
+    });
+    // A live arena's shut door (ArenaDefinition::LiveShut): opened this episode, and when.
+    add("door_opened", [nav](Env const& env, uint32) { return nav(env).DoorOpened ? 1.0f : 0.0f; });
+    add("door_opened_seconds", [nav](Env const& env, uint32)
+    {
+        return nav(env).DoorOpened ? float(nav(env).DoorOpenedMs) / 1000.0f : 0.0f;
     });
     // The trip's pair (StageDefinition::PairKind): what its true route asks, as the pool measured it.
     add("route_corners", [nav](Env const& env, uint32)
@@ -1348,6 +1361,141 @@ bool Animus::Curriculum::PointNavEncounter::DrawFromPool(Env& env, PairPool cons
     return true;
 }
 
+bool Animus::Curriculum::PointNavEncounter::DrawRun(Env& env, Player* bot, EnvNav& nav)
+{
+    ArenaDefinition const& arena = _scenario.Arena(env);
+    Vision::TravGrid const& grid = *nav.Grid;
+    if (!arena.HasRunGoal)
+        return false;
+    CurriculumTuning::PointNavTuning const& tuning = _scenario.Tuning().PointNav;
+    Position const& goal = arena.RunGoal;
+    nav.GoalCell = grid.NodeOf(goal.GetPositionX(), goal.GetPositionY(), goal.GetPositionZ());
+    if (nav.GoalCell == Vision::TRAV_NO_CELL)
+        return false;
+    Vision::CostToGo(grid, nav.GoalCell, tuning.DropHurtYards, nav.Cost, !WalksOnly());
+    // The gate's route distance from the goal (a start costing more is before it: the door to open on the way).
+    float gate = Vision::TRAV_UNREACHABLE;
+    if (arena.HasRunGate)
+    {
+        Position const& at = arena.RunGate;
+        uint32 const node = grid.NodeOf(at.GetPositionX(), at.GetPositionY(), at.GetPositionZ());
+        if (node != Vision::TRAV_NO_CELL)
+            gate = nav.Cost[node];
+    }
+    // The body's dry floor (as the pool's draw has it): a start in water the seat would swim is no start.
+    float const swimDepth = Movement::SWIM_ENTER * Movement::ShapeOf(bot).Height;
+    auto const dry = [&](uint32 node) { return grid.Liquid[node] - grid.Ground[node] < swimDepth; };
+
+    uint32 const rung = std::min<uint32>(nav.Rung, RUNGS - 1);
+    nav.StartCell = Vision::TRAV_NO_CELL;
+    if (rung + 1 >= RUNGS)
+    {
+        // The last rung: the dungeon's door, as a party enters (where its entrance trigger puts a player).
+        if (AreaTriggerTeleport const* entrance = sObjectMgr->GetMapEntranceTrigger(arena.MapId))
+            nav.StartCell = grid.NodeOf(entrance->target_X, entrance->target_Y, entrance->target_Z);
+    }
+    else
+    {
+        std::vector<uint32> starts;
+        for (uint32 node : grid.Reachable)
+        {
+            float const cost = nav.Cost[node];
+            if (cost >= Vision::TRAV_UNREACHABLE || cost < 5.0f || !dry(node))
+                continue;
+            bool const pastGate = gate >= Vision::TRAV_UNREACHABLE || cost < gate;
+            bool fits = false;
+            if (rung == 0)
+                fits = pastGate && cost <= RUN_NEAR;
+            else if (rung == 1)
+                fits = pastGate;
+            else
+                fits = !pastGate && cost <= gate + RUN_GATE_BAND;
+            if (fits)
+                starts.push_back(node);
+        }
+        if (!starts.empty())
+            nav.StartCell = starts[std::min(starts.size() - 1, std::size_t(Uniform(env) * float(starts.size())))];
+    }
+    if (nav.StartCell == Vision::TRAV_NO_CELL || nav.Cost[nav.StartCell] >= Vision::TRAV_UNREACHABLE)
+        return false;
+    nav.Start = CellPoint(grid, nav.StartCell, false);
+    nav.GoalAtBed = false;
+    nav.GateSeconds = gate < Vision::TRAV_UNREACHABLE && nav.Cost[nav.StartCell] >= gate ? arena.RunGateSeconds : 0.0f;
+    return true;
+}
+
+void Animus::Curriculum::PointNavEncounter::ResetLive(Env& env, Map* map, Player* bot, EnvNav& nav)
+{
+    ArenaDefinition const& arena = _scenario.Arena(env);
+    auto const listed = [](std::vector<uint32> const& entries, uint32 entry)
+    {
+        return std::find(entries.begin(), entries.end(), entry) != entries.end();
+    };
+    // Every door, button and lever as a fresh instance has it, and the scripted openers (the cannon) ready; then
+    // the doors a dead boss would have opened, open.
+    nav.ShutDoors.clear();
+    nav.ShutOpen.clear();
+    for (auto const& [spawnId, object] : map->GetGameObjectBySpawnIdStore())
+    {
+        if (!object || !object->IsInWorld())
+            continue;
+        auto const type = object->GetGoType();
+        if (type != GAMEOBJECT_TYPE_DOOR && type != GAMEOBJECT_TYPE_BUTTON && type != GAMEOBJECT_TYPE_GOOBER)
+            continue;
+        InteractEncounter::ResetObject(object);
+        if (listed(arena.LiveOpen, object->GetEntry()))
+            object->SetGoState(GO_STATE_ACTIVE);
+        else if (listed(arena.LiveShut, object->GetEntry()))
+        {
+            nav.ShutDoors.push_back(object->GetGUID());
+            nav.ShutOpen.push_back(0);
+        }
+    }
+    // The key items, one each, whatever the episode before left.
+    for (uint32 item : arena.LiveItems)
+    {
+        bot->DestroyItemCount(item, 9999, true);
+        bot->AddItem(item, 1);
+    }
+}
+
+void Animus::Curriculum::PointNavEncounter::WatchLive(Env& env, Map* map, EnvNav& nav, RewardLedger& ledger)
+{
+    for (std::size_t i = 0; i < nav.ShutDoors.size(); ++i)
+    {
+        GameObject* door = map->GetGameObject(nav.ShutDoors[i]);
+        bool const open = door && door->GetGoState() != GO_STATE_READY;
+        if (open && !nav.ShutOpen[i] && !nav.DoorOpened)
+        {
+            // The first opening this episode: the seat's own doing (the instance is empty), paid once.
+            nav.DoorOpened = true;
+            nav.DoorOpenedMs = env.EpisodeElapsedMs;
+            nav.SweepUntilMs = env.EpisodeElapsedMs + RUN_SWEEP_MS;
+            ledger.Add(RewardTerm::DoorOpened, _scenario.Tuning().Interact.DoorOpened);
+        }
+        nav.ShutOpen[i] = open ? 1 : 0;
+    }
+    // What the door's script summoned (the cannon's two pirates in the cove) sent away: the dungeon is empty.
+    if (env.EpisodeElapsedMs > nav.SweepUntilMs)
+        return;
+    for (ObjectGuid const& guid : nav.ShutDoors)
+    {
+        GameObject* door = map->GetGameObject(guid);
+        if (!door)
+            continue;
+        std::vector<Creature*> summoned;
+        auto const worker = [&summoned](WorldObject* object)
+        {
+            if (Creature* creature = object->ToCreature(); creature && creature->IsInWorld() && creature->IsSummon())
+                summoned.push_back(creature);
+        };
+        Acore::WorldObjectWorker<decltype(worker)> searcher(door, worker, GRID_MAP_TYPE_MASK_CREATURE);
+        Cell::VisitObjects(door, searcher, RUN_SWEEP_YARDS);
+        for (Creature* creature : summoned)
+            creature->DespawnOrUnsummon();
+    }
+}
+
 bool Animus::Curriculum::PointNavEncounter::DrawPair(Env& env, Map* map, Player* bot, EnvNav& nav)
 {
     CurriculumTuning::PointNavTuning const& tuning = _scenario.Tuning().PointNav;
@@ -1356,6 +1504,18 @@ bool Animus::Curriculum::PointNavEncounter::DrawPair(Env& env, Map* map, Player*
     if (grid.Reachable.size() < 2)
         return false;
     auto const pick = [&](std::size_t count) { return std::min(count - 1, std::size_t(Uniform(env) * float(count))); };
+
+    // A dungeon run (PairKind 6): the arena's fixed goal, the start back along the route by rung; no failure replay
+    // (the goal is always the same, the rung's draw its own replay).
+    if (_scenario.Stage().PairKind == 6)
+    {
+        if (!DrawRun(env, bot, nav))
+            return false;
+        nav.Goal = CellPoint(grid, nav.GoalCell, false);
+        nav.CStart = nav.Cost[nav.StartCell];
+        nav.Straight = nav.Start.GetExactDist(&nav.Goal);
+        return nav.CStart < Vision::TRAV_UNREACHABLE;
+    }
 
     // The rung's bins: the detour and length edges the tuning lists, and how many of each the rung opens.
     std::vector<float> detours = ParseList(tuning.DetourBins);
@@ -1526,11 +1686,16 @@ bool Animus::Curriculum::PointNavEncounter::Build(Env& env, Map* map, uint8 /*le
     nav.LabelsOnly = labelsOnly;
     nav.MapId = map->GetId();
     nav.Rung = std::min<uint32>(SightDraw::Rung(_scenario.ShapingScale()), RUNGS - 1);
-    // The dungeon's own doors and levers out of the way: the bake knows the static walls alone.
-    ObjectPool::ClearOwn(map);
+    // The dungeon's own doors and levers out of the way: the bake knows the static walls alone. A live arena keeps
+    // them and puts them back as a fresh instance has them (ResetLive), its shut doors the seat's to open.
+    ArenaDefinition const& arena = _scenario.Arena(env);
+    if (!arena.LiveObjects)
+        ObjectPool::ClearOwn(map);
     nav.Grid = EnsureGrid(env, map, bot);
     if (!nav.Grid)
         return false;
+    if (arena.LiveObjects)
+        ResetLive(env, map, bot, nav);
     if (nav.LabelsOnly)
     {
         // Nothing placed: the leader's position is the goal (Update), the party's start the follow's.
@@ -1558,7 +1723,8 @@ bool Animus::Curriculum::PointNavEncounter::Build(Env& env, Map* map, uint8 /*le
         {
             float const capSeconds = float(arenaMs) / 1000.0f * std::max(1.0f, tuning.TimeCap);
             float const bestSeconds = nav.CStart / RUN_YARDS_PER_SECOND;
-            float const seconds = std::clamp(tuning.TimeFactor * bestSeconds + tuning.TimeSlackSeconds,
+            float const seconds = std::clamp(tuning.TimeFactor * bestSeconds + tuning.TimeSlackSeconds
+                + nav.GateSeconds,
                 std::min(std::max(tuning.TimeMinSeconds, float(arenaMs) / 1000.0f), capSeconds), capSeconds);
             env.EpisodeLengthMs = std::max<uint32>(1000, uint32(seconds * 1000.0f));
         }
@@ -1763,6 +1929,10 @@ void Animus::Curriculum::PointNavEncounter::Reward(Env& env, uint32 seatIndex, P
     SeatNav& seat = nav.Seats[seatIndex];
     SeatState& state = _scenario.Data(env).Seats[seatIndex];
     uint32 const stepMs = _scenario.StepMs(env);
+    // A live arena's doors, once a decision (the first seat's look).
+    if (seatIndex == 0 && !nav.ShutDoors.empty())
+        if (Map* map = bot->GetMap())
+            WatchLive(env, map, nav, ledger);
     float const seconds = float(stepMs) / 1000.0f;
     ++seat.Decisions;
 
@@ -1940,9 +2110,12 @@ void Animus::Curriculum::PointNavEncounter::Reward(Env& env, uint32 seatIndex, P
 
     // Arriving: stopped within ArriveYards of the goal (2D) and ArriveRise of its height. The first look is at
     // rest and is no stop.
+    // A dungeon run's goal is its exit trigger: anywhere within the trigger's radius (ArenaDefinition::RunGoal).
+    ArenaDefinition const& arena = _scenario.Arena(env);
+    float const arriveYards = arena.HasRunGoal ? std::max(tuning.ArriveYards, arena.RunGoalRadius) : tuning.ArriveYards;
+    float const arriveRise = arena.HasRunGoal ? std::max(tuning.ArriveRise, arena.RunGoalRadius) : tuning.ArriveRise;
     float const distance = std::hypot(bodyX - nav.Goal.GetPositionX(), bodyY - nav.Goal.GetPositionY());
-    bool const inside = distance <= tuning.ArriveYards
-        && std::fabs(bodyZ - nav.Goal.GetPositionZ()) <= tuning.ArriveRise;
+    bool const inside = distance <= arriveYards && std::fabs(bodyZ - nav.Goal.GetPositionZ()) <= arriveRise;
     bool const stopped = Standing::Stopped(bot->GetUnitMovementFlags(), moved, tuning.StopMoved);
     if (firstLook || !(stopped && inside))
         return;

@@ -274,6 +274,24 @@ namespace Animus::Curriculum
         /// pool's climbs, the second leg the way back to where the first began (PointNavEncounter's TwoLeg) -- its bake
         /// boxed round the tower and seeded from SpawnPoints[0].
         bool Tower = false;
+        /// **A dungeon run** (PairKind 6, dm1 2026-10-22): the trip's goal is fixed (RunGoal: the Deadmines' exit
+        /// trigger), reached within RunGoalRadius; its starts are drawn back along the route from it by rung (the
+        /// reverse curriculum), RunGate the place on the route a closed door stands (the Iron Clad Door: a start
+        /// before it needs the door opened, and its clock RunGateSeconds more).
+        bool HasRunGoal = false;
+        Position RunGoal{};
+        float RunGoalRadius = 0.0f;
+        bool HasRunGate = false;
+        Position RunGate{};
+        float RunGateSeconds = 0.0f;
+        /// **The dungeon's own objects live** (dm1): PointNav does not clear them (ObjectPool::ClearOwn); every reset
+        /// puts its doors, buttons and levers back as a fresh instance has them, opens LiveOpen's doors (those a
+        /// dead boss opens: the dungeon is empty), keeps LiveShut's shut, and puts LiveItems in the bags (the Defias
+        /// Gunpowder the cannon takes). DoorOpened is paid once, on a LiveShut door's first opening.
+        bool LiveObjects = false;
+        std::vector<uint32> LiveOpen{};
+        std::vector<uint32> LiveShut{};
+        std::vector<uint32> LiveItems{};
 
         /// Whether the arena names its own map: MapId 0 is "the stage's" -- except for a tower, whose 0 is the Eastern
         /// Kingdoms.
@@ -355,6 +373,11 @@ namespace Animus::Curriculum
         /// (2026-10-18): nav1's look head held a pitch rate until the camera sat at its -80 degree limit, the median
         /// seat looking at its feet, so the camera showed nothing ahead to map and blanking it changed nothing.
         bool LevelCamera = false;
+        /// **Whether the camera renders** (2026-10-22): off, the vision block keeps its view cone (the free look and
+        /// the line-of-sight entity sensor, EntitySensor::InFrame against the rig) but casts no pixel rays and sends
+        /// no image (ScenarioSpec::ImageBytes 0, the manifest's image "camera": false). The static world is then the
+        /// memorised one (SharedMemory's known tiles from the bake), not what the camera saw. The camera code stays.
+        bool Camera = true;
         /// **What a nav stage's trips are** (PointNavEncounter's pair pool, 2026-10-19): the kind of (start, goal) pair
         /// its rungs draw -- 1 sight (nav1), 2 detour (nav2), 3 vertical (nav3), 4 beyond (nav4), 5 water (nav5); 0
         /// draws by the old length and detour bins alone. Each rung of a kind caps the route's corners and turning

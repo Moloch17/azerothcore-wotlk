@@ -512,6 +512,9 @@ def standard_error(values: np.ndarray, groups: np.ndarray | None = None) -> floa
 #: plain evaluation's shared_memory split is two different draws of trips). `no_memory` is the GRU reset, not this.
 ABLATIONS = ("no_flag", "no_camera", "no_compass", "no_map", "no_memory", "no_goal", "random_goal", "random_cell",
              "no_plan", "no_searched", "no_coverage", "no_party", "no_recall", "no_planner", "no_school")
+#: The ablations that edit the camera's pixels: nothing to edit in a stage with the camera off (image.camera false,
+#: Spec.image_bytes 0; 2026-10-22), so Run.evaluate_arms skips them there with a line and ablation_chooser refuses.
+CAMERA_ARMS = ("no_flag", "no_camera")
 #: The ablations that are a flag on the trainer's goal draw (Run.evaluate_arms sets them), not an edit of the input.
 GOAL_DRAW_ARMS = ("random_goal", "random_cell", "no_plan")
 #: ... and the ones that are a flag on the networks (Run.evaluate_arms likewise): the chooser edits nothing.
@@ -687,6 +690,8 @@ def ablation_chooser(choose: Callable, arm: str, spec, stage: dict | None) -> Ca
     if arm == "no_recall" and not any(recall):
         raise ValueError("eval.arms.no_recall: the stage has no party frames block with recall columns (party frames "
                          "revision 3) to zero")
+    if arm in CAMERA_ARMS and not int(getattr(spec, "image_bytes", 0) or 0):
+        raise ValueError(f"eval.arms.{arm}: the stage's camera casts no pixels (camera off, or no vision block)")
     if arm == "no_memory":
         acting = getattr(choose, "acting", None)
         if acting is None or all(getattr(acting, name) is None for name in ("memory", "goal", "slow_memory", "queue")):
@@ -832,7 +837,8 @@ class TraceCollector:
             return
         mask = np.asarray(host(step.mask)).astype(bool)
         image = getattr(step, "image", None)
-        pixels = np.asarray(host(image)) if image is not None and self.image_bytes else None
+        # The whole row: image and crop, or the crop alone with the camera off.
+        pixels = np.asarray(host(image)) if image is not None else None
         for env in starting:
             crc = np.zeros(self.agents, dtype=np.uint32)
             if pixels is not None:

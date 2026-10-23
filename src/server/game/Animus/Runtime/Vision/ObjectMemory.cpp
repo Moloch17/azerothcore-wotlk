@@ -401,7 +401,8 @@ void Animus::Vision::ObjectMemory::Put(RememberedObject const& entry)
     _entries.push_back(entry);
 }
 
-void Animus::Vision::ObjectMemory::Write(SeenList const& seen, ObjectLook const& look, FrameHits const* hits)
+void Animus::Vision::ObjectMemory::Write(SeenList const& seen, ObjectLook const& look, FrameHits const* hits,
+    LineClear const& clear)
 {
     ++_writes;
     float listedFar = std::numeric_limits<float>::infinity();
@@ -464,7 +465,10 @@ void Animus::Vision::ObjectMemory::Write(SeenList const& seen, ObjectLook const&
     if (seen.Count >= ENTITY_SLOTS && count)
         listedFar = Length(seen.Info[count - 1].Centre - look.Camera);
 
-    if (!hits || hits->Rays.empty())
+    // The looks: a frame's rays where it rendered, else a clear line of sight to the remembered place (a stage with
+    // no camera); neither, nothing is judged.
+    bool const rays = hits && !hits->Rays.empty();
+    if (!rays && !clear)
         return;
     float const reach = std::min(look.Range, LOOK_REACH);
     for (RememberedObject& entry : _entries)
@@ -481,9 +485,19 @@ void Animus::Vision::ObjectMemory::Write(SeenList const& seen, ObjectLook const&
         if (std::fabs(yawRight) > look.FovH / 2.0f || std::fabs(pitchUp) > look.FovV / 2.0f)
             continue;
         Vec3 const dir = offset * (1.0f / distance);
-        RayHit const& ray = hits->Rays[NearestRay(*hits, look, yawRight, pitchUp, dir)];
-        if (ray.What != Class::Sky && ray.Distance + LOOK_SLACK + std::max(entry.Radius, 0.0f) < distance)
-            continue;
+        if (rays)
+        {
+            RayHit const& ray = hits->Rays[NearestRay(*hits, look, yawRight, pitchUp, dir)];
+            if (ray.What != Class::Sky && ray.Distance + LOOK_SLACK + std::max(entry.Radius, 0.0f) < distance)
+                continue;
+        }
+        else
+        {
+            // Up to the thing's near side: its own collision (a door that is there) is no look past it.
+            float const near = std::max(0.0f, distance - LOOK_SLACK - std::max(entry.Radius, 0.0f));
+            if (!clear(look.Camera, look.Camera + dir * near))
+                continue;
+        }
         entry.LastLook = _clock;
         if (entry.Missed < 255)
             ++entry.Missed;

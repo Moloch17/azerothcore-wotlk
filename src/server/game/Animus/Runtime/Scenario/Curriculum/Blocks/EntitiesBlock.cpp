@@ -18,8 +18,11 @@
 
 #include "EntitiesBlock.h"
 #include "Layout.h"
+#include "MapVisionWorld.h"
 #include "ObjectMemory.h"
+#include "Player.h"
 #include "SeatView.h"
+#include "VisionCaster.h"
 #include <algorithm>
 #include <boost/json/array.hpp>
 #include <boost/json/object.hpp>
@@ -77,7 +80,16 @@ void Animus::Curriculum::EntitiesBlock::Observe(SeatView const& view, float* obs
     if (Vi::ObjectMemory* objects = view.Objects; objects && !view.ObjectsHidden)
     {
         objects->Advance(double(view.DecisionMs) / 1000.0);
-        objects->Write(*view.Seen, Vi::LookOf(*view.Seen, Vi::Current()), view.Hits);
+        // No frame rays (a stage that renders nothing): the looks are lines of sight against the seat's world.
+        Map* map = view.Bot && view.Bot->IsInWorld() ? view.Bot->GetMap() : nullptr;
+        if ((!view.Hits || view.Hits->Rays.empty()) && map)
+        {
+            Vi::MapVisionWorld const world(map, view.Bot->GetPhaseMask());
+            objects->Write(*view.Seen, Vi::LookOf(*view.Seen, Vi::Current()), view.Hits,
+                [&world](Vi::Vec3 const& from, Vi::Vec3 const& to) { return !Vi::SegmentBlocked(world, from, to); });
+        }
+        else
+            objects->Write(*view.Seen, Vi::LookOf(*view.Seen, Vi::Current()), view.Hits);
     }
     Write(*view.Seen, obs, view.Recall);
 }

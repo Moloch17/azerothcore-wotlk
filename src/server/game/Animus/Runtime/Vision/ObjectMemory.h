@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -201,7 +202,10 @@ namespace Animus::Vision
         /// The memory's clock moves on; the decay runs every DECAY_EVERY_SECONDS.
         void Advance(double seconds);
         /// Records a frame's list (see the file comment); `hits` the frame's rays (null or empty: no look is judged).
-        void Write(SeenList const& seen, ObjectLook const& look, FrameHits const* hits);
+        /// Whether the line from a camera to a point is clear of the world (VisionCaster's SegmentBlocked): the
+        /// looks' judge where there are no frame rays (a stage that renders nothing, StageDefinition::Camera).
+        using LineClear = std::function<bool(Vec3 const& from, Vec3 const& to)>;
+        void Write(SeenList const& seen, ObjectLook const& look, FrameHits const* hits, LineClear const& clear = {});
 
         [[nodiscard]] RememberedObject const* Find(ObjectKey const& key) const;
         /// Listed by the last Write.

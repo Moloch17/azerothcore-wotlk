@@ -258,7 +258,7 @@ class Spec:
     @property
     def camera_bytes(self) -> int:
         """The bytes of an agent's camera row as the learner keeps it (Step.image after decode_step): its image, then
-        its map crop where the stage has a map block."""
+        its map crop where the stage has a map block; the crop alone with the camera off (image_bytes 0)."""
         return self.image_bytes + self.map_bytes
 
     @property
@@ -339,7 +339,8 @@ class Step:
     # [E, A, I] uint8 camera images (protocol 21, Spec.image_bytes), and [E, A, I] the ended episodes' last ones, valid
     # where done; None in a stage without a camera. Decoded in a stage with a map block (protocol 24), each row is the
     # camera's whole row, [E, A, Spec.camera_bytes]: the image, then the map crop (as `map` holds it) -- what the
-    # buffer keeps and the encoder reads. encode_step takes either width.
+    # buffer keeps and the encoder reads. encode_step takes either width. With the camera off (Spec.image_bytes 0 and
+    # a map block) the row is the map crop alone, the same array as `map`.
     image: np.ndarray | None = None
     final_image: np.ndarray | None = None
     # [E, A, M] uint8 mental map crops (protocol 24, Spec.map_bytes), and the ended episodes' last ones; None without a
@@ -586,10 +587,13 @@ def decode_step(spec: Spec, payload: bytes | bytearray | memoryview, device=None
     raw = arrays["present"]
     arrays["present"] = raw > 0
     arrays["stand_in"] = raw == PRESENT_STAND_IN
-    if spec.map_bytes:
+    if spec.map_bytes and spec.image_bytes:
         # The camera's rows as the learner keeps them: each image with its map crop after it (Step.image).
         arrays["image"] = _with_map(arrays["image"], arrays["map"])
         arrays["final_image"] = _with_map(arrays["final_image"], arrays["final_map"])
+    elif spec.map_bytes:
+        # The camera switched off (StageDefinition::Camera, 2026-10-22: no image section): the row is the crop alone.
+        arrays["image"], arrays["final_image"] = arrays["map"], arrays["final_map"]
     return Step(decision=decision, env_begin=env_begin, **arrays)
 
 

@@ -1525,7 +1525,13 @@ def vision_of(stage: dict | None, layout_names: Sequence[str]) -> list[dict | No
     bytes a pixel again, of the static world alone, and `"pixel_classes"`, the classes a pixel can carry (the
     encoder's one-hot planes, in that order). Refused: a vision block without its image, or from before revision 6
     (no pixel classes, five bytes a pixel), layouts whose images differ (one encoder reads them all), and a block
-    whose width is not its scalars."""
+    whose width is not its scalars.
+
+    **The camera switched off** (StageDefinition::Camera, 2026-10-22): the image object carries `"camera": false`
+    (true or absent: rendered as before). The sim casts no pixels, so the STEP has no image section (Spec.image_bytes
+    0) and the camera's row is the map crop alone; the block's scalars, its look (the view cone still turns), the
+    entity list, map, sight and remembered entities are all as before. Recorded as "camera": False with "image_bytes"
+    0; the image's keys are still read and checked (they are still written), only nothing is cut from them."""
     if stage is None:
         return None
     layouts = stage.get("layouts") or {}
@@ -1554,6 +1560,8 @@ def vision_of(stage: dict | None, layout_names: Sequence[str]) -> list[dict | No
         described["patch"] = int(image.get("patch", DEFAULT_PATCH))
         described["class_limit"] = int(image.get("class_limit", CLASS_LIMIT))
         described["pixel_classes"] = tuple(int(value) for value in image["pixel_classes"])
+        # Rendering on (true, or a manifest from before the switch) or off (no pixels on the wire; 2026-10-22).
+        described["camera"] = image.get("camera", True) is not False
         if not described["pixel_classes"] or len(set(described["pixel_classes"])) != len(described["pixel_classes"]) \
                 or any(not 0 <= value < described["class_limit"] for value in described["pixel_classes"]):
             raise ValueError(f"{name}: the vision block's pixel classes {list(described['pixel_classes'])} are not "
@@ -1597,7 +1605,9 @@ def vision_of(stage: dict | None, layout_names: Sequence[str]) -> list[dict | No
         obs_dim = entry.get("obs_dim")
         if obs_dim is not None and first + count > int(obs_dim):
             raise ValueError(f"{name}: the vision block ends at {first + count}, past the layout's {obs_dim} columns")
-        image_bytes = described["height"] * described["width"] * described["bytes_per_pixel"]
+        # No pixels travel with the camera off: the row is the map crop alone (Spec.image_bytes 0).
+        image_bytes = (described["height"] * described["width"] * described["bytes_per_pixel"]
+                       if described["camera"] else 0)
         crop = _map_of(entry, name)
         listed = _entities_of(entry, name)
         described_layout = {"first": first, **described, "image_bytes": image_bytes, "entities": listed, "map": crop,
@@ -1629,6 +1639,12 @@ def vision_image_bytes(vision: list[dict | None] | None) -> int:
     return next((entry.get("camera_bytes", entry["image_bytes"]) for entry in vision or () if entry is not None), 0)
 
 
+def vision_renders(vision: list[dict | None] | None) -> bool:
+    """Whether stage.json's camera casts pixels: False without a vision block, or with its camera switched off
+    (image.camera false, 2026-10-22: the block's scalars, look, entities and map without an image)."""
+    return next((bool(entry.get("camera", True)) for entry in vision or () if entry is not None), False)
+
+
 def vision_look_heads(vision: list[dict | None] | None) -> tuple[int, ...]:
     """The free look's heads stage.json's camera has (revision 4: (7, 5, 5)), () without a camera or a look."""
     return next((tuple(entry.get("look", ())) for entry in vision or () if entry is not None), ())
@@ -1657,7 +1673,8 @@ def heading_of(stage: dict | None, layout_names: Sequence[str]) -> list[bool] | 
 def check_image_bytes(vision: list[dict | None] | None, spec_image_bytes: int, spec_map_bytes: int = 0) -> None:
     """Refuse a sim and a stage.json that disagree about the camera: SPEC's image bytes per agent against stage.json's
     height x width x bytes a pixel, or one side with a camera and the other without; and about the mental map's crop
-    (protocol 24): SPEC's map bytes against the map block's."""
+    (protocol 24): SPEC's map bytes against the map block's. A vision block with the camera off (image.camera false)
+    expects no image bytes at all."""
     crop = next((entry.get("map") for entry in vision or () if entry is not None), None)
     expected_map = crop["map_bytes"] if crop else 0
     if expected_map != int(spec_map_bytes):
@@ -1666,6 +1683,9 @@ def check_image_bytes(vision: list[dict | None] | None, spec_image_bytes: int, s
     expected = next((entry["image_bytes"] for entry in vision or () if entry is not None), 0)
     if expected == int(spec_image_bytes):
         return
+    if any(entry is not None and not entry.get("camera", True) for entry in vision or ()):
+        raise ValueError(f"the sim sends {spec_image_bytes} image bytes an agent, but stage.json's vision block has "
+                         f"the camera off (image.camera false: no pixels)")
     if not expected:
         raise ValueError(f"the sim sends {spec_image_bytes} image bytes an agent, but stage.json has no camera (no "
                          f"vision block with an image)")
@@ -3393,6 +3413,12 @@ class VisionEncoder(nn.Module):
     is not one of its modules, so neither its parameters, its optimiser nor its state dict has a second copy. Both
     losses' gradients reach it, summed, and its own optimiser steps it once per minibatch (MappoTrainer.vision_opt).
 
+    **The camera switched off** (image.camera false, StageDefinition::Camera; 2026-10-22): no pixels arrive, so there
+    is no patch stem, no spatial softmax and no camera splat; the embedding is Linear(scalars -> 256) of the block's
+    scalars (the view cone's pose: the look still turns it), plus the entity list, the map, the coverage grid, the
+    sight list and the remembered entities as before -- the same 256 wide, so every VisionJoin reads it unchanged.
+    Each row's bytes (Step.image) are then its map crop alone, or nothing (None) without a map block.
+
     No normalisation: the channels are 0-1 or -1-1 already, and the list's columns are scaled by the sim. Every
     shape is fixed and nothing is read back, so a rollout graph captures it."""
 
@@ -3410,10 +3436,13 @@ class VisionEncoder(nn.Module):
         The pixel class is a one-hot (no embedding output kept), so a row of the 128 x 64 camera is 1.0 MB against the
         embedded design's 1.15 MB (0.98 MB measured then, 5.6 GiB over 6,144 rows, move1_controls.yaml); not
         re-measured. The map adds 0.45 MB; the camera splat (`splat`, mappo.camera_splat) its samples' features, its
-        geometry and its planes a tier, about 0.3 MB more."""
+        geometry and its planes a tier, about 0.3 MB more. With the camera off (image.camera false) there are no pixels
+        and no splat: the map's part alone."""
         channels = int(image["channels"])
         planes = channels - 1 + len(image["pixel_classes"])
-        pixels = int(image["height"]) * int(image["width"])
+        renders = bool(image.get("camera", True))
+        pixels = int(image["height"]) * int(image["width"]) if renders else 0
+        splat = splat and renders
         total = 4 * pixels * (channels + (channels - 1) + 2 * planes)
         crop = image.get("map")
         if crop is not None:
@@ -3466,20 +3495,28 @@ class VisionEncoder(nn.Module):
         self.class_limit = int(image.get("class_limit", CLASS_LIMIT))
         self.pixel_classes = tuple(image["pixel_classes"])
         self.PATCH = int(image.get("patch", DEFAULT_PATCH))
-        if self.height % self.PATCH or self.width % self.PATCH:
+        # Whether pixels arrive at all (vision_of's "camera"; image.camera false switches the rendering off).
+        self.camera = bool(image.get("camera", True))
+        if self.camera and (self.height % self.PATCH or self.width % self.PATCH):
             raise ValueError(f"the camera's image is {self.width} x {self.height}; the vision encoder cuts it into "
                              f"{self.PATCH} x {self.PATCH} patches, so both must be multiples of {self.PATCH} "
                              f"(AnimusForge.Vision.Width, Height)")
-        self.image_bytes = image["image_bytes"]
+        self.image_bytes = image["image_bytes"] if self.camera else 0
         self.span = self.scalars
         self.class_embed = nn.Embedding(self.class_limit, self.CLASS_EMBED)
         self.planes_per_pixel = self.channels - 1 + len(self.pixel_classes)
-        self.grid = (self.height // self.PATCH, self.width // self.PATCH)
-        features = self.PATCH * self.PATCH * self.planes_per_pixel
-        self.patch = nn.Linear(features, self.WIDTHS[0])
-        self.mix = nn.Linear(self.WIDTHS[0], self.WIDTHS[1])
-        self.embed = nn.Linear(2 * self.WIDTHS[1] + self.scalars, self.EMBED)
-        self.feature_shape = (self.WIDTHS[1], *self.grid)
+        # The patch stem and its spatial softmax, with the camera on; with it off the scalars alone make the
+        # embedding's own part (no patch, no mix: nothing in the state dict for pixels that never come).
+        self.patch = self.mix = None
+        self.grid = (0, 0)
+        self.feature_shape = None
+        if self.camera:
+            self.grid = (self.height // self.PATCH, self.width // self.PATCH)
+            features = self.PATCH * self.PATCH * self.planes_per_pixel
+            self.patch = nn.Linear(features, self.WIDTHS[0])
+            self.mix = nn.Linear(self.WIDTHS[0], self.WIDTHS[1])
+            self.feature_shape = (self.WIDTHS[1], *self.grid)
+        self.embed = nn.Linear((2 * self.WIDTHS[1] if self.camera else 0) + self.scalars, self.EMBED)
         # Derived from stage.json, not learned: kept out of the state dict.
         self.register_buffer("start", torch.tensor([entry["first"] if entry is not None else -1
                                                     for entry in descriptors], dtype=torch.long), persistent=False)
@@ -3517,7 +3554,8 @@ class VisionEncoder(nn.Module):
                 self.map = MapEncoder(crop, self.class_embed, self.EMBED,
                                       [c["first"] if c is not None else -1 for c in crops],
                                       [entry.get("compass") if entry is not None else None for entry in descriptors],
-                                      planner_k, image if splat else None, self.WIDTHS[1], waypoint,
+                                      # The splat projects the camera's pixels: none with the camera off.
+                                      planner_k, image if splat and self.camera else None, self.WIDTHS[1], waypoint,
                                       planner_k_fine, hierarchical, waypoint_source, waypoint_costs,
                                       school_checkpoint)
         # The coarse coverage grid (general search sec 5), where the layouts have the block: its columns are read raw
@@ -3568,19 +3606,23 @@ class VisionEncoder(nn.Module):
             self.blind[index] = columns
 
     def gather(self, obs: torch.Tensor, layout: torch.Tensor,
-               image: torch.Tensor | None) -> tuple[torch.Tensor, torch.Tensor]:
+               image: torch.Tensor | None) -> tuple[torch.Tensor | None, torch.Tensor]:
         """Each row's camera: (its image decoded, [N, H, W, C], and its own layout's scalar columns, [N, S], raw).
-        Rows of a layout without the camera read whatever is at column 0 on (their output is zeroed by the join)."""
-        if image is None:
+        Rows of a layout without the camera read whatever is at column 0 on (their output is zeroed by the join).
+        With the camera off the image is None: there are no pixels to decode."""
+        if image is None and self.camera:
             raise ValueError("this network has a camera: its image bytes have to come with the observation")
         layout = layout.reshape(-1).long()
         columns = (self.start[layout].clamp(min=0)[:, None] + self.offsets[None, :]).clamp(max=obs.shape[-1] - 1)
         scalars = obs.gather(1, columns).to(self.embed.weight.dtype)
+        if not self.camera:
+            return None, scalars
         decoded = decode_image(self.pixels(image), self.height, self.width)
         return decoded.to(self.embed.weight.dtype), scalars
 
     def pixels(self, image: torch.Tensor) -> torch.Tensor:
-        """The image's bytes of each row [N, I]: the row's first image_bytes (its map crop follows, protocol 24)."""
+        """The image's bytes of each row [N, I]: the row's first image_bytes (its map crop follows, protocol 24);
+        [N, 0] with the camera off."""
         rows = image.reshape(-1, self.image_bytes + self.map_bytes)
         return rows[:, :self.image_bytes] if self.map_bytes else rows
 
@@ -3620,11 +3662,19 @@ class VisionEncoder(nn.Module):
         without the camera's rows are zeroed by the join). `plan_out` and `grad`: the planner's parts, left in the dict
         (MapEncoder.plan), and whether the planner keeps a graph (the trainer's aux pass); `planner`: the rows' cached
         plan read instead of running it (MapEncoder.forward); `label_goal`: the labels' goal the plan is made from
-        (MapEncoder.plan; the aux pass, where the observation carries no compass)."""
+        (MapEncoder.plan; the aux pass, where the observation carries no compass). With the camera off `image` is
+        the rows' map crops [N, M] (None without a map block) and the scalars alone go through embed."""
         decoded, scalars = self.gather(obs, layout, image)
-        features = self.features(self.patches(self.planes(decoded)))
-        out = self.embed(torch.cat([self.keypoints(features), scalars], dim=-1))
+        features = None
+        if self.camera:
+            features = self.features(self.patches(self.planes(decoded)))
+            out = self.embed(torch.cat([self.keypoints(features), scalars], dim=-1))
+        else:
+            out = self.embed(scalars)
         if self.map is not None:
+            if image is None:
+                raise ValueError("this network reads the mental map: its crop bytes (Step.image) have to come with "
+                                 "the observation")
             crops = image.reshape(-1, self.image_bytes + self.map_bytes)[:, self.image_bytes:]
             # The camera splat's inputs (mappo.camera_splat): the patch features, the image's bytes (its depth) and
             # the scalars (the camera's pose), raw.

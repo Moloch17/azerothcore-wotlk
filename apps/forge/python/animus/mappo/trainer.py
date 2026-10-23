@@ -24,8 +24,8 @@ from .networks import (CLASSICAL_COSTS, CLASSICAL_ITERATIONS, CLASSICAL_OPEN_CEI
                        SharedInputDense, _carry_sequence, _per_layout, classical_cost_to_go, classical_factor,
                        classical_tables, load_actor_state, neighbour_stack, neighbours_within_45,
                        per_layout, per_layout_host, sample_logits, skip_distribution_checks, goal_pair, split_goal_pair,
-                       to_device, update_norms, vision_image_bytes, vision_look_heads, vision_term,
-                       look_hold_indices)
+                       to_device, update_norms, vision_image_bytes, vision_look_heads, vision_renders,
+                       vision_term, look_hold_indices)
 from .valuenorm import ValueNorm
 
 
@@ -690,7 +690,9 @@ class _RolloutGraph:
         if actor.vision is not None:
             cached = ({"readout": inputs["planner_readout"].reshape(rows, -1),
                        "pool": inputs["planner_pool"].reshape(rows, -1)} if "planner_readout" in inputs else None)
-            seen = actor.vision(obs_t, layout_t, inputs["image"].reshape(rows, -1), plan_out=plan, planner=cached)
+            # No "image" input with the camera off and no map block (nothing travels): the encoder reads the scalars.
+            seen = actor.vision(obs_t, layout_t, inputs["image"].reshape(rows, -1) if trainer.image_bytes else None,
+                                plan_out=plan, planner=cached)
             actor_own = actor_own + vision_term(actor, obs_t, layout_t, seen).to(actor_own.dtype)
             critic_own = critic_own + vision_term(critic, obs_t, layout_t, seen).to(critic_own.dtype)
         features = actor.features_from(actor.trunk(actor_own), memory)
@@ -893,8 +895,13 @@ class MappoTrainer:
         # Per layout its camera image (networks.vision_of, stage.json's vision block), or None: no camera anywhere.
         # On whenever the stage has one, with no switch of its own; the networks then carry a VisionEncoder each.
         self.vision = vision
-        # The camera's bytes per agent each decision carries beside its observation (protocol 21), 0 without one.
+        # The camera's bytes per agent each decision carries beside its observation (protocol 21), 0 without one: its
+        # row, the image then the map crop -- the crop alone with the camera off (image.camera false, 2026-10-22), and
+        # 0 with neither, when the encoder reads the block's scalars and lists with no bytes at all.
         self.image_bytes = vision_image_bytes(vision)
+        if config.camera_splat and vision is not None and not vision_renders(vision):
+            print("mappo.camera_splat: the stage's camera is off (no pixels to project); the costmap head reads the "
+                  "map crop alone", flush=True)
         # The free look's heads (protocol 22, vision_look_heads): () without them, and no look head.
         self.look_heads = vision_look_heads(vision)
         # Data-parallel learners (animus.parallel.Ranks): gradients and statistics reduced across them; alone, none.
@@ -2147,7 +2154,7 @@ class MappoTrainer:
             return 0
         return max(length for length in range(1, wanted + 1) if steps % length == 0)
 
-    def _encode_vision(self, obs: torch.Tensor, layout: torch.Tensor, image: torch.Tensor,
+    def _encode_vision(self, obs: torch.Tensor, layout: torch.Tensor, image: torch.Tensor | None,
                        plan_out: dict | None = None, planner: dict | None = None) -> torch.Tensor:
         """The shared camera's embedding of a minibatch's rows, for the update. With mappo.vision_chunk_rows and more
         rows than that, it is encoded a chunk at a time without keeping the graph, and _backward_vision encodes each
@@ -2163,7 +2170,8 @@ class MappoTrainer:
             for i in range(0, obs.shape[0], rows):
                 plan = {} if plan_out is not None else None
                 part = ({key: value[i:i + rows] for key, value in planner.items()} if planner is not None else None)
-                seen.append(self.actor.vision(obs[i:i + rows], layout[i:i + rows], image[i:i + rows], plan_out=plan,
+                seen.append(self.actor.vision(obs[i:i + rows], layout[i:i + rows],
+                                              None if image is None else image[i:i + rows], plan_out=plan,
                                               planner=part))
                 if plan and "pool" in plan:
                     pools.append(plan["pool"])
@@ -2172,7 +2180,7 @@ class MappoTrainer:
             return torch.cat(seen)
 
     def _backward_vision(self, seen: torch.Tensor, grad: torch.Tensor, obs: torch.Tensor, layout: torch.Tensor,
-                         image: torch.Tensor, planner: dict | None = None) -> None:
+                         image: torch.Tensor | None, planner: dict | None = None) -> None:
         """The camera embedding's gradient `grad` back through the encoder: through `seen`'s graph, or chunk by chunk
         again where _encode_vision kept none -- on the same recorded plan (`planner`) the forward read, so the
         re-encoded embedding is the one the losses were taken on."""
@@ -2184,7 +2192,7 @@ class MappoTrainer:
             return      # an encoder with nothing to train (its graph was never kept)
         for i in range(0, obs.shape[0], rows):
             part = {key: value[i:i + rows] for key, value in planner.items()} if planner is not None else None
-            self.actor.vision(obs[i:i + rows], layout[i:i + rows], image[i:i + rows],
+            self.actor.vision(obs[i:i + rows], layout[i:i + rows], None if image is None else image[i:i + rows],
                               planner=part).backward(grad[i:i + rows])
 
     #: The aux pass's statistics (AuxConfig), as metrics.csv names them.
@@ -2598,7 +2606,8 @@ class MappoTrainer:
                 labels_all = data["labels"][:, chunk].reshape(-1, data["labels"].shape[-1]) \
                     if "labels" in data else None
                 if self.vision_opt is not None:
-                    image_all = data["image"][:, chunk].reshape(-1, self.image_bytes)
+                    # None with no camera row at all (camera off, no map block): the encoder reads the scalars.
+                    image_all = data["image"][:, chunk].reshape(-1, self.image_bytes) if self.image_bytes else None
                     # The plan each decision acted on (the buffer's), not planned again.
                     planner_all = ({"readout": data["planner_readout"][:, chunk].reshape(rows_here * steps, -1),
                                     "pool": data["planner_pool"][:, chunk].reshape(rows_here * steps, -1)}

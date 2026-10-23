@@ -20,6 +20,7 @@
 
 #include "MentalMap.h"
 #include "ObjectMemory.h"
+#include "Define.h"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -76,8 +77,12 @@
 /// things seats' cameras listed, by spawn id), adopted and absorbed by the same seats at the same draw, saved beside
 /// the tiles in `<Dir>/<mapId>.aobj` (its own versioned format, OBJECT_MEMORY_VERSION, so the terrain's stays) on the
 /// same cadence, and loaded with them.
+class Map;
+
 namespace Animus::Vision
 {
+    struct TravGrid;
+
     /// Where the memories live and their caps; set once at startup (SharedMemories::Configure).
     struct SharedMemorySettings
     {
@@ -164,6 +169,12 @@ namespace Animus::Vision
         [[nodiscard]] std::size_t Tiles() const;
         [[nodiscard]] std::size_t FarTiles() const;
 
+        /// **The memorised map** (2026-10-22, a stage with no camera: StageDefinition::Camera): what a surveyor sees of
+        /// `map`'s static world -- no game object's collision, a door's state being the seat's own to see -- from every
+        /// SURVEY_STRIDE-th bake cell of `grid`'s reachable floor, SURVEY_HEADINGS first-person frames each, written
+        /// through the mental map's own frame writer into a blank anchored map and merged into this memory, so every
+        /// seat that adopts it knows the dungeon as a player who has walked it does. Returns the frames cast.
+        uint32_t Survey(Map* map, uint32 phaseMask, TravGrid const& grid, double now);
         /// The map's shared object memory (its own lock): a seat adopts or anchors on it beside the tiles.
         [[nodiscard]] SharedObjects& Objects() { return _objects; }
 

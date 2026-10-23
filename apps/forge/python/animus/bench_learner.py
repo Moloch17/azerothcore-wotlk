@@ -99,8 +99,8 @@ def fake_sim(path: str, spec: p.Spec, sim_ms: float, decisions: int) -> None:
             final_obs=obs[rows], final_state=np.zeros_like(state[rows]),
             episode_info=np.zeros((count, agents, spec.episode_info_dim), np.float32),
             episode_seed=np.full(count, p.NO_EPISODE_SEED, np.uint32),
-            image=images[decision % len(images)][rows] if spec.image_bytes else None,
-            final_image=images[0][rows] if spec.image_bytes else None)
+            image=images[decision % len(images)][rows] if spec.camera_bytes else None,
+            final_image=images[0][rows] if spec.camera_bytes else None)
         payload = p.encode_step(spec, step)
         return p.encode_header(p.MsgType.STEP, len(payload)) + payload
 

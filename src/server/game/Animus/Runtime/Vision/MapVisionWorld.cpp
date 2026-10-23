@@ -37,8 +37,9 @@
 #include <mutex>
 #include <set>
 
-Animus::Vision::MapVisionWorld::MapVisionWorld(Map* map, uint32 phaseMask) : _map(map), _phaseMask(phaseMask),
-    _query(map, phaseMask, false), _scene(SceneRegistry::Instance().Get(map->GetId()))
+Animus::Vision::MapVisionWorld::MapVisionWorld(Map* map, uint32 phaseMask, bool dynamic) : _map(map),
+    _phaseMask(phaseMask), _query(map, phaseMask, false), _scene(SceneRegistry::Instance().Get(map->GetId())),
+    _dynamic(dynamic)
 {
     if (_scene)
         return;
@@ -59,6 +60,8 @@ Animus::Vision::SurfaceHit Animus::Vision::MapVisionWorld::StaticHit(Vec3 from, 
 Animus::Vision::SurfaceHit Animus::Vision::MapVisionWorld::DynamicHit(Vec3 from, Vec3 to) const
 {
     SurfaceHit hit;
+    if (!_dynamic)
+        return hit;
 #ifdef ANIMUS_STOCK_CORE
     // A stock core (the realm's mod-animus): its dynamic tree gives the distance to the first hit and no more, so a
     // door or other game object is drawn as a wall facing the eye (no normal, no object to class it by). The forge
@@ -97,6 +100,8 @@ bool Animus::Vision::MapVisionWorld::StaticAnyHit(Vec3 from, Vec3 to) const
 
 bool Animus::Vision::MapVisionWorld::DynamicAnyHit(Vec3 from, Vec3 to) const
 {
+    if (!_dynamic)
+        return false;
 #ifdef ANIMUS_STOCK_CORE
     return !_map->GetDynamicMapTree().isInLineOfSight(from.X, from.Y, from.Z, to.X, to.Y, to.Z, _phaseMask,
         VMAP::ModelIgnoreFlags::Nothing);

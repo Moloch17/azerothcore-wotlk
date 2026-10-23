@@ -1,0 +1,196 @@
+# DM1 -- navigate the empty Deadmines (the user, 2026-10-22; the curriculum before it is the git tag curriculum-nav-v1):
+# from the dungeon's door to its exit trigger, opening the Iron Clad Door with the gunpowder and the cannon on the way.
+# No camera (StageDefinition::Camera false): the dungeon is memorised (the shared memory surveyed from the bake), what
+# is in it now is what is in line of sight in the view cone the look head turns, and what was seen is remembered. The
+# trip's start is drawn back along the route from the exit by rung (PairKind 6): rung 0 near the exit, rung 1 anywhere
+# past the Iron Clad Door, rung 2 in front of it (the cannon needed), rung 3 the door of the dungeon. Fresh networks:
+# nothing to seed from. The settings are nav1_sight's and nav2_detour's (the potential on the bot's own map), less the
+# camera's.
+run_name: dm1_navigate
+socket: /tmp/animus-forge.sock
+seed: 1
+init_from: auto
+seed_from: latest
+# A ceiling, not a target: convergence ends the stage.
+total_env_steps: 200000000
+rollout_length: 128
+overlap_updates: true
+torch_threads: 4
+log_every: 1
+checkpoint_every: 100
+keep_checkpoints: 5
+train_device: auto
+rollout_device: auto
+
+mappo:
+  hidden: [256, 512, 512]
+  gamma: 0.997
+  gae_lambda: 0.985
+  reference_decision_ms: 100
+  foresight_coef: 0.25
+  foresight_horizons_seconds: [5.0, 30.0]
+  foresight_time_scale_seconds: 60.0
+  recurrent_size: 128
+  chunk_length: 32
+  goal_count: 10
+  goal_slots: 4
+  hindsight_coef: 0.1
+  goal_targets: 23
+  goal_every_decisions: 8
+  slow_goal_size: 128
+  slow_goal_gamma: 0.993
+  slow_goal_lambda: 0.95
+  slow_goal_lr: 0.0003
+  goal_cell_hindsight_lookback: 8
+  goal_cell_hindsight_coef: 0.15
+  planner_k: 20
+  planner_every: 8
+  planner_waypoint: true
+  planner_hierarchical: true
+  planner_k_fine: 32
+  planner_waypoint_source: sim
+  planner_waypoint_costs: map
+  foresight_obs_targets: true
+  foresight_feedback: true
+  goal_lookahead: true
+  lookahead_coef: 0.5
+  goal_entropy_scale: 1.0
+  goal_entropy_final_fraction: 0.05
+  goal_slot_entropy_weight: 0.1
+  clip: 0.2
+  value_clip: 0.2
+  entropy_coef: 0.01
+  look_entropy_coef: 0.004
+  heading_entropy_coef: 0.003
+  heading_entropy_final_fraction: 0.1
+  value_coef: 1.0
+  actor_lr: 0.00015
+  critic_lr: 0.00015
+  lr_final_fraction: 0.1
+  entropy_final_fraction: 0.1
+  epochs: 2
+  minibatches: 4
+  max_grad_norm: 0.5
+  use_value_norm: true
+  value_norm_beta: 0.99
+  per_layout_advantages: true
+  min_layout_rows: 32
+  target_kl: 0.02
+  vision_chunk_rows: auto
+  shared_blocks: [move, goal]
+  shared_init_layouts: [rogue]
+  greedy_env_fraction: 0.12
+
+# The potential on the route cost-to-go on the bot's own map (nav2's), held to the trip's route (episode_cap).
+potential:
+  enabled: true
+  yards_scale: 0.05
+  clip: 50
+  source: map
+  map_fallback: true
+
+aux:
+  costmap_coef: 0.5
+  planner_coef: 0.5
+  rows: 256
+  every: 2
+  unseen_weight: 0.25
+  planner_dir_coef: 0.02
+  planner_dir_temp: 1.0
+
+eval:
+  every_env_steps: 10000000
+  at_start: true
+  episodes: 256
+  seed: 1000
+  deterministic: true
+  sampled_every: 1
+  sampled_episodes: 128
+  trace_episodes: 32
+  # Every evaluation's trace kept: the dashboard's run list and its routes over the map.
+  trace_all: true
+  # One dungeon: nothing held out yet (more dungeons bring a held-out one).
+  arms_every: 2
+  arms_at_start: true
+  arms:
+    no_map: 64
+    no_planner: 64
+    no_memory: 64
+    no_shared_memory: 64
+    no_object_memory: 64
+    no_global: 64
+  report: [arrived, spl, time_ratio, arrived_base_limit, time_limit_seconds, door_opened, door_opened_seconds,
+           route_switches, route_source_global_share, global_replans, global_replans_contradiction, optimal_yards,
+           straight_yards, detour_factor, travelled_yards, stop_error_yards, falls, fall_damage_share, drowned, died,
+           timed_out, stuck_seconds, wall_seconds, lost_seconds, jumps, swim_seconds, nav_rung, replayed,
+           waypoint_regret_yards, waypoints_chosen, at_top_rung, difficulty, course_kinks, control_changes_per_minute,
+           reward_arrive, reward_door_opened, reward_step_cost, reward_stuck, reward_wall, reward_fall_hurt,
+           reward_death, reward_drowned, reward_lost, reward_potential, reward_jitter, reward_effort, reward_repeat,
+           goals_cell_chosen, goals_cell_reached, goals_cell_lost, goals_cell_invalid, cell_goal_seconds,
+           reward_cell_goal, reward_cell_lost]
+
+status:
+  headline: [arrived, spl, door_opened, door_opened_seconds, arrived_base_limit, time_ratio, route_switches, falls,
+             died, drowned, timed_out, lost_seconds, wall_seconds, stuck_seconds, nav_rung, at_top_rung, costmap_iou,
+             planner_mae_yards, planner_mae_known, reward_potential, reward_potential_train, spl_no_map,
+             spl_no_planner, spl_no_memory, spl_no_shared_memory]
+  targets:
+    arrived: ">= 0.95"
+    spl: ">= 0.8"
+    timed_out: "<= 0.05"
+    died: "<= 0.01"
+
+convergence:
+  measure: spl
+  top_gate_evals: 2
+  top_plateau_evals: 6
+  top_anneal_env_steps: 20000000
+  patience: 3
+  window: 4
+  z: 2.0
+  min_improvement: 0.02
+  min_improvement_abs: 0.01
+  kl: 0.003
+  entropy_slope: 0.01
+  hold_share: 0.02
+  lr_hold_until_plateau: true
+
+# The reverse curriculum's rungs step on arrival and SPL; rung 2 (in front of the Iron Clad Door, the cannon to use) and
+# rung 3 (the whole dungeon) ask a little less of SPL: the door's opening is time off the route.
+fade:
+  enabled: true
+  rungs: [1.0, 0.5, 0.25, 0.0]
+  window: 3
+  regress_z: 2.0
+  give_up: 2
+  gate_metric: spl
+  gate_metrics:
+    arrived: [0.85, 0.85, 0.75, 0.75]
+    spl: [0.7, 0.7, 0.55, 0.55]
+  require_plateau: false
+  wait_for_costs: false
+  rung_metric: nav_rung
+
+costs:
+  enabled: true
+  rungs: [0.0, 0.25, 0.5, 1.0]
+  gate_metric: arrived
+  gate_value: 0.8
+
+school:
+  record: false
+
+entropy_floor:
+  fraction: 0.3
+  max_boost: 4.0
+  rate: 0.05
+
+layout_sampling:
+  enabled: false
+  strength: 0.0
+  max_ratio: 1.0
+  metric: spl
+  replay_fraction: 0.0
+
+style:
+  enabled: false

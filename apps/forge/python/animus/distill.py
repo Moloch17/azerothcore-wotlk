@@ -145,6 +145,12 @@ def check_camera(t_stage: dict | None, stage: dict | None, name: str, t_camera: 
     where = f"teacher layout {name}"
     if camera is None:
         raise ValueError(f"{where}: the teacher has a camera and the stage's layout has none")
+    # Rendering on or off (image.camera, 2026-10-22): a teacher that reads pixels cannot be fed by a stage that casts
+    # none, and one trained without them has no patch stem to read the stage's.
+    t_renders, renders = bool(t_camera.get("camera", True)), bool(camera.get("camera", True))
+    if t_renders != renders:
+        raise ValueError(f"{where}: the teacher's camera {'renders' if t_renders else 'is off'}, the stage's "
+                         f"{'renders' if renders else 'is off'} (vision image.camera)")
     for key in IMAGE_KEYS:
         # The class table only grows at its end (Vision::Class: a value never changes meaning, new ones append, and
         # the embedding has class_limit rows), so a teacher trained on fewer classes reads the stage's frames as it

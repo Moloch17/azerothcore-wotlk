@@ -47,7 +47,9 @@ namespace Animus::Vision
     class MapVisionWorld final : public VisionWorld
     {
     public:
-        MapVisionWorld(Map* map, uint32 phaseMask);
+        /// `dynamic` false: the static world alone, no game object's collision (KnownMap's survey: a door's state is
+        /// the seat's to see, not the memorised map's).
+        MapVisionWorld(Map* map, uint32 phaseMask, bool dynamic = true);
 
         /// Whether the map has a baked scene (every map a stage runs on does: the forge bakes or loads them at
         /// startup and refuses to start without).
@@ -71,6 +73,7 @@ namespace Animus::Vision
         uint32 _phaseMask;
         Movement::MapWorldQuery _query;
         BakedWorld const* _scene;      // the map's, from SceneRegistry: immutable, shared by every env and thread
+        bool _dynamic = true;
     };
 
     /// **Who a seat's camera might see round it** (entity-sensing): the sensor's candidates, and the core object

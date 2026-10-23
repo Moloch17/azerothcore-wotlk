@@ -85,6 +85,9 @@ void Animus::Curriculum::VisionBlock::DescribeManifest(Layout const& layout, boo
     for (std::size_t i = 0; i < settings.RenderSizes.size(); ++i)
         weights.push_back(double(Vi::RenderWeight(settings, i, even)));
     image["render_weights"] = std::move(weights);
+    // Whether frames are rendered at all (StageDefinition::Camera): false, no image travels (ImageBytes 0) and the
+    // learner builds no camera stem; the block is the view cone, its scalars and the entities it senses.
+    image["camera"] = !layout.Stage || layout.Stage->Camera;
     block["image"] = std::move(image);
 
     // The look head (free look): three categoricals, in ACT's order. Every choice is always allowed: no mask. In a

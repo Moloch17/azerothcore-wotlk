@@ -18,7 +18,10 @@
 #include "SharedMemory.h"
 #include "BakedScene.h"
 #include "Log.h"
+#include "MapVisionWorld.h"
 #include "SceneRegistry.h"
+#include "TravBake.h"
+#include "VisionCaster.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -501,4 +504,62 @@ void Animus::Vision::SharedMemories::SaveAll(double now)
         LOG_INFO("module.animus", "Shared memory of map {}: {} tiles and {} far tiles kept in {}, {} objects in {}",
             memory->MapId(), memory->Tiles(), memory->FarTiles(), PathOf(memory->MapId()), memory->Objects().Count(),
             ObjectPathOf(memory->MapId()));
+}
+
+namespace
+{
+    /// The survey's lattice: every SURVEY_STRIDE-th bake cell each way (TRAV_CELL 2 yd: one look every 8 yd), four
+    /// headings of the camera's 120-degree view (overlapping), level-ish, first person (no boom), a player's eyes.
+    constexpr int32_t SURVEY_STRIDE = 4;
+    constexpr int32_t SURVEY_HEADINGS = 4;
+    constexpr float SURVEY_PITCH_DEGREES = -10.0f;
+    constexpr float SURVEY_BODY = 2.0f;
+    /// A dungeon's 1-yd tiles kept while it is surveyed (the Deadmines' box is about 600 tiles).
+    constexpr uint32_t SURVEY_TILES = 16384;
+}
+
+uint32_t Animus::Vision::SharedMemory::Survey(Map* map, uint32 phaseMask, TravGrid const& grid, double now)
+{
+    MapVisionWorld const world(map, phaseMask, false);
+    if (!world.HasScene() || grid.Columns <= 0)
+        return 0;
+    Settings const& settings = Current();
+    std::vector<uint8_t> image(ImageBytes(settings));
+    std::vector<float> scalars(SCALARS);
+    MentalMap scratch;
+    MapSettings caps = MapCurrent().Caps;
+    caps.MaxTiles = std::max(caps.MaxTiles, SURVEY_TILES);
+    scratch.Configure(caps);
+    Anchor(scratch, now);
+    scratch.BeginEpisode();
+    FrameHits hits;
+    uint32_t frames = 0;
+    for (uint32_t node : grid.Reachable)
+    {
+        uint32_t const cell = TravGrid::CellOfNode(node);
+        int32_t const col = int32_t(cell % uint32_t(grid.Columns));
+        int32_t const row = int32_t(cell / uint32_t(grid.Columns));
+        if (col % SURVEY_STRIDE || row % SURVEY_STRIDE)
+            continue;
+        Pose pose;
+        pose.X = grid.CentreX(cell);
+        pose.Y = grid.CentreY(cell);
+        pose.Z = grid.StandingZ(node);
+        pose.BodyHeight = SURVEY_BODY;
+        for (int32_t heading = 0; heading < SURVEY_HEADINGS; ++heading)
+        {
+            pose.Yaw = float(heading) * 2.0f * PI / float(SURVEY_HEADINGS);
+            CameraState camera;
+            camera.Pitch = SURVEY_PITCH_DEGREES * DEGREES;
+            camera.Zoom = 0.0f;
+            Rig const rig = PlaceCamera(pose, camera, world);
+            hits.Rays.clear();
+            Render(settings, rig, pose, camera, world, Sight(), nullptr, image.data(), scalars.data(), nullptr,
+                OBJECTIVE_RADIUS, &hits);
+            scratch.WriteFrame(hits, pose.Z, pose.BodyHeight);
+            ++frames;
+        }
+    }
+    Absorb(scratch, now);
+    return frames;
 }

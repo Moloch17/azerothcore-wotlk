@@ -288,7 +288,7 @@ bool AnimusForge::Forge::ValidScenario(std::string const& scenario, LineSink con
 
     if (names.empty())
         out(Acore::StringFormat("Unknown scenario '{}': no stages defined (the curriculum is empty; the last one is "
-            "archived on the git tag curriculum-v1).", scenario));
+            "archived on the git tag curriculum-nav-v1).", scenario));
     else
         out(Acore::StringFormat("Unknown scenario '{}'. Available: {}", scenario, Join(names)));
     return false;
@@ -421,7 +421,8 @@ void AnimusForge::Forge::CommandScenarios(LineSink const& out)
 
     out(Acore::StringFormat("Scenarios (runs in {}):", _config.RunsDir().string()));
     if (Animus::ScenarioNames().empty())
-        out("  No stages defined: the curriculum is empty (the last one is archived on the git tag curriculum-v1).");
+        out("  No stages defined: the curriculum is empty (the last one is archived on the git tag "
+            "curriculum-nav-v1).");
     else
         table.Write(out, "  ");
 
@@ -452,7 +453,7 @@ bool AnimusForge::Forge::CommandStart(std::vector<std::string> scenarios, LineSi
     if (fromQueue && DefaultQueue().empty())
     {
         out("Nothing to start: no stages defined (AnimusForge.Queue is empty and so is the curriculum; the last one "
-            "is archived on the git tag curriculum-v1).");
+            "is archived on the git tag curriculum-nav-v1).");
         return false;
     }
 

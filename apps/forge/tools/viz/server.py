@@ -284,6 +284,18 @@ def _searched_to_cells(run):
     return _cached("searched_scale", stage, build) if stage.exists() else (lambda v: v)
 
 
+def _finite(value):
+    """`value` with every NaN or infinity as None: Python's json writes them bare, which the browser's JSON.parse
+    refuses (a stage without a camera has a NaN camera column; an episode row may carry one)."""
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {k: _finite(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_finite(v) for v in value]
+    return value
+
+
 def trace_payload(run, steps, policy):
     starts, c, meta = trace(run, steps, policy)
     to_cells = _searched_to_cells(run)
@@ -693,7 +705,7 @@ class Handler(SimpleHTTPRequestHandler):
         super().end_headers()
 
     def _json(self, value, status=HTTPStatus.OK):
-        body = json.dumps(value, separators=(",", ":")).encode()
+        body = json.dumps(_finite(value), separators=(",", ":")).encode()
         gz = "gzip" in (self.headers.get("Accept-Encoding") or "") and len(body) > 2048
         if gz:
             body = gzip.compress(body, 5)

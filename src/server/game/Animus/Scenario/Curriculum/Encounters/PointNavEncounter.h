@@ -22,6 +22,7 @@
 #include "Block.h"
 #include "Encounter.h"
 #include "EntranceRespawn.h"
+#include "ObjectGuid.h"
 #include "Position.h"
 #include "TravBake.h"
 #include <array>
@@ -76,6 +77,13 @@ namespace Animus::Curriculum
         /// The furthest a body moves between two decisions' labels on its own feet: further is a teleport, and the
         /// own-map route at the last position is not read (a decision at run speed moves under 4 yd).
         static constexpr float LABEL_STEP_MAX = 12.0f;
+        /// A dungeon run's rungs (DrawRun): rung 0's starts within RUN_NEAR yards of route from the goal, rung 2's
+        /// within RUN_GATE_BAND of the gate on its near side; summons swept from a shut door this long after it opened,
+        /// within RUN_SWEEP_YARDS of it.
+        static constexpr float RUN_NEAR = 120.0f;
+        static constexpr float RUN_GATE_BAND = 60.0f;
+        static constexpr uint32 RUN_SWEEP_MS = 15000;
+        static constexpr float RUN_SWEEP_YARDS = 150.0f;
         /// A goal in water is priced by depth too (DepthCost): the height off it past ArriveRise, added to every route
         /// cost the labels carry, in full within DEPTH_FULL yards of it across and fading to nothing at DEPTH_REACH.
         /// The bake prices a water cell the same from its bed to its surface, so the potential paid nothing for the
@@ -295,6 +303,16 @@ namespace Animus::Curriculum
             bool BinCounted = false;        // the trip's outcome goes to its bin's arrival rate (DrawPair)
             bool Replayed = false;
             bool TimedOutNoted = false;
+            /// A dungeon run's (ArenaDefinition::HasRunGate): the door allowance on the trip's clock when the start is
+            /// before the gate.
+            float GateSeconds = 0.0f;
+            /// The live arena's shut doors this episode (ArenaDefinition::LiveShut) and how each stood at the last
+            /// look; whether one has opened (door_opened) and when; summons swept from the doors till SweepUntilMs.
+            std::vector<ObjectGuid> ShutDoors;
+            std::vector<uint8> ShutOpen;
+            bool DoorOpened = false;
+            uint32 DoorOpenedMs = 0;
+            uint32 SweepUntilMs = 0;
             std::array<SeatNav, GROUP_SEATS> Seats{};
         };
 
@@ -322,6 +340,15 @@ namespace Animus::Curriculum
         [[nodiscard]] Vision::TravGrid const* EnsureGrid(Env const& env, Map* map, Player const* bot) const;
         /// The pair draw (sec 2): the goal, its cost map and the start, into `nav`. False when the bake has no pair.
         bool DrawPair(Env& env, Map* map, Player* bot, EnvNav& nav);
+        /// A dungeon run's trip (PairKind 6): the goal the arena's RunGoal, the start drawn back along the route from
+        /// it by rung -- rung 0 near the goal, rung 1 anywhere past the gate, rung 2 within RUN_GATE_BAND of the gate
+        /// on the near side, rung 3 the dungeon's entrance.
+        bool DrawRun(Env& env, Player* bot, EnvNav& nav);
+        /// The live arena's objects back as a fresh instance has them, LiveOpen's opened, LiveItems in the bags.
+        void ResetLive(Env& env, Map* map, Player* bot, EnvNav& nav);
+        /// The live arena's shut doors watched (DoorOpened once, on the first opening) and what their scripts summon
+        /// swept away (the dungeon is empty).
+        void WatchLive(Env& env, Map* map, EnvNav& nav, RewardLedger& ledger);
         /// A walking stage (PairKind sight or detour): its pairs and its true route take no drop -- ramps and stairs
         /// are walking, drops are the vertical stage's (the cheapest route through the Deadmines dropped in 4,621 of
         /// 6,200 pairs).

@@ -65,6 +65,9 @@
 #include "SeatEncoder.h"
 #include "GameTime.h"
 #include "SharedMemory.h"
+#include <chrono>
+#include <mutex>
+#include "TravBake.h"
 #include "CombatReward.h"
 #include "SpawnArea.h"
 #include "Spell.h"
@@ -380,7 +383,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     _spec.StateDim = STATE_GLOBAL_COUNT + MAX_SEATS * STATE_SEAT_FEATURES + PACK_SLOTS * STATE_ENEMY_FEATURES;
     // The camera's image travels as bytes beside the rows (camera-vision.BYTES.md): every agent has a row of them
     // when the stage has a vision block, and none is sent when it has not.
-    _spec.ImageBytes = _stage.Has(BlockId::Vision) ? Vision::ImageBytes(Vision::Current()) : 0;
+    _spec.ImageBytes = _stage.Has(BlockId::Vision) && _stage.Camera ? Vision::ImageBytes(Vision::Current()) : 0;
     // ... and its look head's choices come back with the actions (free look, protocol 22).
     _spec.LookHeads = _stage.Has(BlockId::Vision) ? Vision::FreeLook::HEADS : 0;
     // ... and the heading, a float an agent after them, where the stage moves its seats with the player controller
@@ -2139,7 +2142,7 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     // world thread's random numbers as the rest of the reset does, by the sizes' weights (every size alike in a stage
     // with EvenRenderSizes); one size draws nothing, and a stage without a camera draws nothing at all, so its random
     // numbers are what they were.
-    if (_stage.Has(BlockId::Vision))
+    if (_stage.Has(BlockId::Vision) && _stage.Camera)
         for (SeatState& seat : data.Seats)
             seat.Look.Render = Vision::DrawRenderSize(Vision::Current(), _stage.EvenRenderSizes, [](float total)
             {
@@ -4053,13 +4056,47 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
         Encoding::StartCallBeastCooldown(bot);
 }
 
+namespace
+{
+    std::mutex g_knownLock;
+    std::set<uint32> g_knownMaps;
+
+    /// **The memorised map** of a stage with no camera (StageDefinition::Camera): the first seat on a map whose memory
+    /// is empty has it surveyed from the arena's bake (SharedMemory::Survey) before it adopts it; every seat after
+    /// adopts the same. A memory loaded from its file (current: the same scene) is already memorised. The bake is
+    /// the arena's, made at the encounter's Build before the seat's first look.
+    void KnownMap(Player* bot, std::string const& arena, Animus::Vision::SharedMemory& memory, double now)
+    {
+        uint32 const mapId = bot->GetMapId();
+        std::lock_guard<std::mutex> guard(g_knownLock);
+        if (g_knownMaps.count(mapId))
+            return;
+        if (memory.Tiles() == 0)
+        {
+            Animus::Vision::TravGrid const* grid = Animus::Vision::TravRegistry::Instance().Get(mapId, arena);
+            if (!grid)
+            {
+                LOG_ERROR("module.animus", "Map {} ({}): no bake to memorise the map from; the seats start blank",
+                    mapId, arena);
+                return;
+            }
+            auto const start = std::chrono::steady_clock::now();
+            uint32 const frames = memory.Survey(bot->GetMap(), bot->GetPhaseMask(), *grid, now);
+            LOG_INFO("module.animus", "Map {} ({}) memorised from its bake: {} survey frames, {} tiles ({:.1f} s)",
+                mapId, arena, frames, memory.Tiles(),
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
+        }
+        g_knownMaps.insert(mapId);
+    }
+}
+
 void Animus::Curriculum::StageScenario::Observe(Env& env, float* obs, float* state, uint8* mask, uint8* image,
     uint8* map)
 {
     // An agent's image row, or none for a stage without a camera; its map row, or none without a map.
     auto const imageRow = [this, image](uint32 agent)
     {
-        return image ? image + std::size_t(agent) * _spec.ImageBytes : nullptr;
+        return image && _spec.ImageBytes ? image + std::size_t(agent) * _spec.ImageBytes : nullptr;
     };
     auto const mapRow = [this, map](uint32 agent)
     {
@@ -4241,9 +4278,13 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
             memories.Get(seat.MapMapId, now)->Objects().Absorb(seat.Objects, now);
         // An evaluation reads the memory by its seeded draw but never writes it: its scores would drift as it filled,
         // and a held-out map only evaluations visit would get a memory built from them.
-        seat.MapAbsorb = !env.Evaluating;
+        // A stage with no camera never writes it either: its memory is the memorised map (KnownMap below), which
+        // nothing a seat does without frames could correct -- a bump on a shut door would stay a wall for good.
+        seat.MapAbsorb = !env.Evaluating && _stage.Camera;
         seat.Map.Configure(Vision::MapCurrent().Caps);
         Vision::SharedMemory* memory = memories.Get(bot->GetMapId(), now);
+        if (!_stage.Camera)
+            KnownMap(bot, Arena(env).Name, *memory, now);
         if (seat.MapShared)
             memory->Adopt(seat.Map, now);
         else
