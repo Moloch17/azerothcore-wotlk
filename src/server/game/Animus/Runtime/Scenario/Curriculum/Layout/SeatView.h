@@ -459,6 +459,9 @@ namespace Animus::Curriculum
             ObjectGuid Guid;                        // the member, for a press on its frame
         };
         std::array<PartyFrame, GROUP_MEMBERS> Frames{};
+        /// The seat itself leads its group (a 3.3.5 client crowns the player's own frame too): the party frames'
+        /// self_leader column (revision 4).
+        bool SelfLeads = false;
         float MinimapYards = 60.0f;
         /// **The seat's memory of its party** (SeatState::Party; the party frames block, revision 3): each member's
         /// last seen place and pace. Null for a view without one (then the frames' recall columns stay 0).

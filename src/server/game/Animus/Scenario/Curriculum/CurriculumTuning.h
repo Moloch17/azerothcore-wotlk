@@ -97,6 +97,14 @@ namespace Animus::Curriculum
             /// full run's party stage (2026-09-28). Owner.PulledThreat is the same charge beside a tank owner.
             float PulledThreat = 0.004f;
             float TeammateDeath = 3.0f;
+            /// The leader and the tank (dm4-dm6, StageDefinition::LeaderAnyRole): a pack pulled out of turn -- by anyone
+            /// but the tank, or by the tank more than LeaderPullYards from where the leader stands -- costs its puller
+            /// OutOfTurnPull; every second a seat other than the leader is more than LeaderAwayYards from the leader
+            /// while nothing fights costs LeaderAway.
+            float OutOfTurnPull = 1.0f;
+            float LeaderPullYards = 40.0f;
+            float LeaderAway = 0.01f;           // per second
+            float LeaderAwayYards = 30.0f;
         } Party;
 
         /// Raids (a raid's seat plan): the synthetic pulls sized to the raid, and each role paid for its own part
@@ -890,10 +898,12 @@ namespace Animus::Curriculum
             float ExtraPull = 1.0f;
             float Clock = 0.01f;                // per second
             float Damage = 0.3f;                // shaping, per creature health
-            uint32 MaxTier = 5;
-            int32 LevelBase = -2;
+            // The Deadmines' level dial (dm2, 2026-10-23): six levels under the seat at the first rung, even at the
+            // last; its elites (most of the dungeon's trash) from rung 3.
+            uint32 MaxTier = 6;
+            int32 LevelBase = -6;
             uint32 LevelsPerTier = 1;
-            uint32 EliteTier = 4;
+            uint32 EliteTier = 3;
             uint32 CasterTier = 1;
             uint32 LinkedTier = 2;
             int32 HazardChance = 33;
@@ -1029,6 +1039,10 @@ namespace Animus::Curriculum
             f("Party.TankDamageShare", tuning.Party.TankDamageShare);
             f("Party.TankLoseTeammate", tuning.Party.TankLoseTeammate);
             f("Party.PulledThreat", tuning.Party.PulledThreat);
+            f("Party.OutOfTurnPull", tuning.Party.OutOfTurnPull);
+            f("Party.LeaderPullYards", tuning.Party.LeaderPullYards);
+            f("Party.LeaderAway", tuning.Party.LeaderAway);
+            f("Party.LeaderAwayYards", tuning.Party.LeaderAwayYards);
             f("Party.TeammateDeath", tuning.Party.TeammateDeath);
             f("Raid.TankHold", tuning.Raid.TankHold);
             f("Raid.TankLoose", tuning.Raid.TankLoose);

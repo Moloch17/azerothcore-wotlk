@@ -78,6 +78,9 @@ namespace Animus::Curriculum
         void UpdateEnemies(Env& env) override;
         void Update(Env& env) override;
         void View(Env const& env, uint32 seat, SeatView& view) const override;
+        /// Where the party goes next: the pack in front's nearest living creature, else where it stands (the
+        /// leader's; the others' is the leader, PartyEncounter's, asked first).
+        [[nodiscard]] bool RouteGoal(Env const& env, uint32 seat, Position& goal) const override;
         void BeforeRewards(Env& env) override;
         void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
         void WriteState(Env const& env, float* state) const override;
@@ -114,6 +117,9 @@ namespace Animus::Curriculum
             uint8 Level = 1;
             bool Recorded = false;
             int32 Corridor = -1;
+            /// The dungeon's own creatures (ArenaDefinition::DungeonCreatures): the clear way's checkpoint the last
+            /// pack was stood at (each pack at the next site on).
+            int32 Site = -1;
             std::vector<Pack> Packs;            // the pack in front first, then the ones standing further on
             std::array<SeatRoles, GROUP_SEATS> Seats{};
             bool AllDown = false;               // the whole party dead at the last decision

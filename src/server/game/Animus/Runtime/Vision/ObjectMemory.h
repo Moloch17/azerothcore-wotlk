@@ -190,6 +190,21 @@ namespace Animus::Vision
 
     class SharedObjects;
 
+    /// A thing known before it is seen (ObjectMemory::Seed): a dungeon's creature spawns, memorised as a player who
+    /// has run the dungeon knows where its packs stand (the user, 2026-10-23); what stands there now is still sight's.
+    struct SeedObject
+    {
+        ObjectKey Key;
+        uint32_t Entry = 0;
+        Class What = Class::HostileCreature;
+        ObjectKind Kind = ObjectKind::Creature;
+        float Level = 0.0f;
+        Vec3 Position;
+        float Facing = 0.0f;
+        float Radius = 0.0f;
+        float Height = 0.0f;
+    };
+
     class ObjectMemory
     {
     public:
@@ -206,6 +221,11 @@ namespace Animus::Vision
         /// looks' judge where there are no frame rays (a stage that renders nothing, StageDefinition::Camera).
         using LineClear = std::function<bool(Vec3 const& from, Vec3 const& to)>;
         void Write(SeenList const& seen, ObjectLook const& look, FrameHits const* hits, LineClear const& clear = {});
+
+        /// Seeds `objects` the memory does not hold yet, as last seen `age` seconds ago and never sighted
+        /// (Sightings 0): a sighting updates one in place, and missed looks mark one Absent, as for any other entry.
+        /// The cap holds (a seed past it is dropped). How many were added.
+        uint32_t Seed(std::vector<SeedObject> const& objects, double age);
 
         [[nodiscard]] RememberedObject const* Find(ObjectKey const& key) const;
         /// Listed by the last Write.

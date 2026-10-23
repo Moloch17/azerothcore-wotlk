@@ -195,6 +195,12 @@ namespace Animus::Curriculum
         /// the policy's heading (move block revision 8) -- a player does not spin (2026-10-14: nav1's seats held a
         /// turn 88-99% of the time).
         Turning,
+        /// The leader and the tank (dm4-dm6, the user, 2026-10-23: a party leader of any role sets the pace, the tank
+        /// pulls): a pack pulled by anyone but the tank, or by the tank where the leader has not taken the party
+        /// (Party.OutOfTurnPull, Cost, the puller's); and every second off from the leader while nothing fights
+        /// (Party.LeaderAway, Cost, every seat but the leader). Appended.
+        OutOfTurnPull,
+        LeaderAway,
         Count
     };
 
@@ -304,6 +310,8 @@ namespace Animus::Curriculum
             case RewardTerm::FallHurt:
             case RewardTerm::Drowned:
             case RewardTerm::Turning:
+            case RewardTerm::OutOfTurnPull:
+            case RewardTerm::LeaderAway:
                 return RewardCategory::Cost;
             // The seek stage's room goals: a teaching aid on the progress-linear aid scale.
             case RewardTerm::RoomGoal:

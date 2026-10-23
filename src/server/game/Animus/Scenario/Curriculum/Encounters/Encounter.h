@@ -20,6 +20,7 @@
 #define ANIMUS_LIB_CURRICULUM_ENCOUNTER_H
 
 #include "Define.h"
+#include "Position.h"
 #include "RewardLedger.h"
 
 #include <vector>
@@ -88,6 +89,14 @@ namespace Animus::Curriculum
         /// A goal this encounter saw the seat achieve at its last reward, whatever the seat pursued (the goal block's
         /// hindsight columns; NO_GOAL for none). Asked at the observation, after View, for the encounters of the
         /// episode in order; the first that answers is taken when nothing else was achieved.
+        /// **Where a seat is going** (a labels-only PointNav's goal, ArenaDefinition::LabelsOnly): the point the
+        /// map block plans the seat's route to and the labels' cost-to-go is measured to -- the fight it is going to,
+        /// the next site of the clear way, the party leader. False when this encounter names none for the seat.
+        [[nodiscard]] virtual bool RouteGoal(Env const& /*env*/, uint32 /*seat*/, Position& /*goal*/) const
+        {
+            return false;
+        }
+
         [[nodiscard]] virtual int32 AchievedGoal(Env const& /*env*/, uint32 /*seat*/) const { return -1; }
 
         /// Each decision: before the seats are rewarded, each seat's reward terms, after every seat was rewarded.

@@ -78,6 +78,8 @@ namespace Animus::Curriculum
         void Update(Env& env) override;
         void OnSeatAction(Env& env, uint32 seat, SeatActionResult const& result) override;
         void View(Env const& env, uint32 seat, SeatView& view) const override;
+        /// The fight it is going to: the pull in front's nearest living creature, else where the pull stands.
+        [[nodiscard]] bool RouteGoal(Env const& env, uint32 seat, Position& goal) const override;
         void BeforeRewards(Env& env) override;
         void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
         void WriteState(Env const& env, float* state) const override;
@@ -117,6 +119,9 @@ namespace Animus::Curriculum
             uint8 Level = 1;
             int32 Corridor = -1;
             float StartWalk = 0.0f;
+            /// The dungeon's own creatures (ArenaDefinition::DungeonCreatures): the clear way's checkpoint the last
+            /// pull was stood at (each pull at the next site on).
+            int32 Site = -1;
 
             std::vector<Pack> Packs;            // the pull in front, then (C2, C3) the next one
             uint32 NextFightMs = 0;             // C1: the next creature comes at this episode time; 0 none waiting

@@ -157,6 +157,28 @@ namespace Animus::Curriculum
         /// the forge as each evaluation's videos start (their directory's audit/).
         static void SetAuditDir(std::string dir);
 
+        /// An arena's clear way (ArenaDefinition::RunClear): the checkpoints in order (their bake nodes and places),
+        /// each leg's route yards from the one before (Leg[0]: 0), the yards after each (After), the gate's index, and
+        /// each checkpoint's creature spawn ids (a site's; none for the gate and the goal).
+        struct ClearWay
+        {
+            bool Built = false;
+            std::vector<Position> Points;
+            std::vector<uint32> Nodes;
+            std::vector<float> Leg;
+            std::vector<float> After;
+            std::vector<std::vector<uint32>> Spawns;
+            uint32 Gate = UINT32_MAX;
+        };
+        /// The env's arena's clear way, its bake ensured first (the encounters that place a fight or a party along it
+        /// build before this one does); null without RunClear or a bake.
+        [[nodiscard]] ClearWay const* WayOf(Env const& env, Map* map, Player const* bot);
+        /// Where checkpoint `k`'s first creature spawned (a site's own ground); false for the gate, the goal and past
+        /// the end.
+        [[nodiscard]] static bool SiteSpawn(ClearWay const& way, uint32 k, Position& at);
+        /// The first checkpoint after `after` (-1: from the first) that is a site, wrapping round once; -1 for none.
+        [[nodiscard]] static int32 NextSite(ClearWay const& way, int32 after);
+
         /// The leader whose reported position is nav6's goal (set by the scenario after construction).
         void FollowLeader(PartyFollowEncounter const* follow) { _follow = follow; }
 
@@ -326,7 +348,24 @@ namespace Animus::Curriculum
             uint32 CheckpointsReached = 0;
             uint32 CheckpointsTotal = 0;
             std::array<SeatNav, GROUP_SEATS> Seats{};
+            /// A labels-only arena's goals, seat by seat (Encounter::RouteGoal, or nav6's leader for every seat): the
+            /// point and its bake cell; and the cost-to-go of each goal cell in use (Costs, by cell). Seat 0's is also
+            /// the env's Goal, GoalCell and Cost (the critic's slot).
+            struct SeatGoal
+            {
+                bool Has = false;
+                Position At;
+                uint32 Cell = Vision::TRAV_NO_CELL;
+            };
+            std::array<SeatGoal, GROUP_SEATS> Goals{};
+            std::vector<std::pair<uint32, std::vector<float>>> Costs;
         };
+
+        /// A labels-only seat's goal and its cost-to-go (null: none yet); any other seat's is the env's.
+        [[nodiscard]] static std::vector<float> const* SeatCost(EnvNav const& nav, uint32 seat, Position& goal);
+        /// The labels-only goals asked of the episode's encounters (or the leader nav6 follows), their cost maps
+        /// worked out when a goal cell is new and dropped when no seat's goal is on it any more.
+        void UpdateGoals(Env& env, EnvNav& nav);
 
         /// Where a seat of an arena failed, for the replay draw: its position and the goal it had.
         struct Failure
@@ -389,6 +428,8 @@ namespace Animus::Curriculum
         /// The route distance at a world point, on the floor a body with its feet at z stands on there
         /// (TravGrid::NodeOf): TRAV_UNREACHABLE off the bake.
         [[nodiscard]] static float CostAt(EnvNav const& nav, float x, float y, float z);
+        [[nodiscard]] static float CostAt(Vision::TravGrid const& grid, std::vector<float> const& cost, float x,
+            float y, float z);
         /// The waypoint regret of a cell goal the seat just chose: C(its block) less the least C over the choosable
         /// blocks of the crop it was chosen from; nothing when it cannot be read.
         void NoteWaypoint(Env const& env, uint32 seatIndex, EnvNav& nav, SeatNav& seat) const;
@@ -405,17 +446,6 @@ namespace Animus::Curriculum
         std::vector<EnvNav> _envs;
         mutable std::vector<std::mt19937> _rngs;
         PartyFollowEncounter const* _follow = nullptr;
-        /// An arena's clear way (ArenaDefinition::RunClear): the checkpoints in order (their bake nodes and places),
-        /// each leg's route yards from the one before (Leg[0]: 0), the yards after each (After), and the gate's index.
-        struct ClearWay
-        {
-            bool Built = false;
-            std::vector<Position> Points;
-            std::vector<uint32> Nodes;
-            std::vector<float> Leg;
-            std::vector<float> After;
-            uint32 Gate = UINT32_MAX;
-        };
         ClearWay const& EnsureClearWay(Env const& env, Vision::TravGrid const& grid);
         std::map<uint32, ClearWay> _clearWays;  // per arena index, under _poolLock
         std::mutex _poolLock;

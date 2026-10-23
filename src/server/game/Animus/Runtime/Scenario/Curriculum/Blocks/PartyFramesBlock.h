@@ -65,10 +65,15 @@ namespace Animus::Curriculum
     /// the last sighting carried on by the last pace, PartyRecall::PREDICT_SECONDS at most), the seconds since it was
     /// seen (over RECALL_AGE_SECONDS) and its pace then. Appended after revision 2's columns, named: a revision 2
     /// checkpoint seeds every column it had, the recall ones start fresh.
+    ///
+    /// **Revision 4** (dm4, 2026-10-23: a party leader of any role): one column after the members', self_leader --
+    /// the seat itself leads its group (SeatView::SelfLeads). A revision 3 checkpoint seeds every column it had.
     class PartyFramesBlock final : public Block
     {
     public:
-        static constexpr uint32 REVISION = 3;
+        static constexpr uint32 REVISION = 4;
+        /// The columns after the members' (revision 4): the seat's own.
+        static constexpr uint32 SELF_FEATURES = 1;
         /// The recall's place is read over this many yards (clamped): a dungeon's corridors, a little past the minimap.
         static constexpr float RECALL_YARDS = 120.0f;
         /// ... and its age over this many seconds (clamped).

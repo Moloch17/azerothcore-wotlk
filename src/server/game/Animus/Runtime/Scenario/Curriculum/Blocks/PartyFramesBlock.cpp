@@ -226,8 +226,10 @@ void Animus::Curriculum::PartyFramesBlock::FillFromGroup(SeatView& view)
     if (!bot || !bot->IsInWorld())
         return;
     Group* group = bot->GetGroup();
+    view.SelfLeads = false;
     if (!group)
         return;
+    view.SelfLeads = group->GetLeaderGUID() == bot->GetGUID();
 
     // The others in the group's order (in a raid, the seat's own subgroup: a 3.3.5 party frame shows only those),
     // then the leader rotated to the front when it is one of them.
@@ -256,7 +258,7 @@ void Animus::Curriculum::PartyFramesBlock::FillFromGroup(SeatView& view)
 
 Animus::Curriculum::BlockSize Animus::Curriculum::PartyFramesBlock::Size(Layout const& /*layout*/) const
 {
-    return BlockSize{ GROUP_MEMBERS * FRAME_FEATURES, ACTION_COUNT };
+    return BlockSize{ GROUP_MEMBERS * FRAME_FEATURES + SELF_FEATURES, ACTION_COUNT };
 }
 
 void Animus::Curriculum::PartyFramesBlock::DescribeManifest(Layout const& /*layout*/,
@@ -264,6 +266,7 @@ void Animus::Curriculum::PartyFramesBlock::DescribeManifest(Layout const& /*layo
 {
     block["members"] = GROUP_MEMBERS;
     block["member_features"] = uint32(FRAME_FEATURES);
+    block["self_features"] = SELF_FEATURES;
 }
 
 char const* Animus::Curriculum::PartyFramesBlock::FeatureName(uint32 feature)
@@ -308,11 +311,13 @@ void Animus::Curriculum::PartyFramesBlock::DescribeColumns(Layout const& /*layou
     for (uint32 member = 0; member < GROUP_MEMBERS; ++member)
         for (uint32 feature = 0; feature < FRAME_FEATURES; ++feature)
             names.emplace_back(Acore::StringFormat("member{}_{}", member, FeatureName(feature)));
+    names.emplace_back("self_leader");
 }
 
 void Animus::Curriculum::PartyFramesBlock::Observe(SeatView const& view, float* obs, uint8* mask) const
 {
-    std::fill(obs, obs + GROUP_MEMBERS * FRAME_FEATURES, 0.0f);
+    std::fill(obs, obs + GROUP_MEMBERS * FRAME_FEATURES + SELF_FEATURES, 0.0f);
+    obs[GROUP_MEMBERS * FRAME_FEATURES] = view.SelfLeads ? 1.0f : 0.0f;
     if (mask)
         std::fill(mask, mask + ACTION_COUNT, uint8(0));
     float const radius = std::max(1.0f, view.MinimapYards);

@@ -2560,10 +2560,14 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     bool const partyFollow = Arena(env).Against == Opposition::PartyFollow;
     bool const seek = Arena(env).Against == Opposition::Seek;
     bool const pointNav = Arena(env).Against == Opposition::PointNav;
+    // The dm stages' fights on the dungeon's own creatures (ArenaDefinition::DungeonCreatures): the whole dungeon,
+    // on every new instance, as the nav stages.
+    bool const ownCreatures = Arena(env).DungeonCreatures;
     bool const newInstance = env.MapId != map->GetId() || env.InstanceId != map->GetInstanceId();
-    if ((firstBuild || ((partyFollow || seek || pointNav) && newInstance)) && map->Instanceable())
+    if ((firstBuild || ((partyFollow || seek || pointNav || ownCreatures) && newInstance)) && map->Instanceable())
     {
-        bool const wholeDungeon = partyFollow || pointNav || (seek && map->GetId() != MAP_STORMWIND_STOCKADE);
+        bool const wholeDungeon = partyFollow || pointNav || ownCreatures
+            || (seek && map->GetId() != MAP_STORMWIND_STOCKADE);
         if (seek || Arena(env).Against == Opposition::Sight || Arena(env).Against == Opposition::Combat
             || Arena(env).Against == Opposition::Roles || partyFollow || pointNav)
             SpawnArea::ClearMap(lead, wholeDungeon ? DUNGEON_CLEAR_RADIUS : INSTANCE_CLEAR_RADIUS);
@@ -4090,6 +4094,48 @@ namespace
     }
 }
 
+namespace
+{
+    std::mutex g_spawnSeedLock;
+    std::map<uint32, std::vector<Animus::Vision::SeedObject>> g_spawnSeeds;
+
+    /// **The dungeon's spawns memorised** (StageDefinition::MemoriseSpawns): the creatures the map spawns -- not its
+    /// critters, nor anything a player cannot fight -- as `bot`'s memory would hold them had it seen each one long ago
+    /// at its spawn point (a creature's middle, as a sighting stores it). Worked out once per map.
+    std::vector<Animus::Vision::SeedObject> const& SpawnSeeds(uint32 mapId)
+    {
+        constexpr float SEED_RADIUS = 0.8f;
+        constexpr float SEED_HEIGHT = 2.0f;
+        std::lock_guard<std::mutex> guard(g_spawnSeedLock);
+        auto const known = g_spawnSeeds.find(mapId);
+        if (known != g_spawnSeeds.end())
+            return known->second;
+        std::vector<Animus::Vision::SeedObject>& seeds = g_spawnSeeds[mapId];
+        for (auto const& [spawnId, data] : sObjectMgr->GetAllCreatureData())
+        {
+            if (data.mapid != mapId)
+                continue;
+            CreatureTemplate const* info = sObjectMgr->GetCreatureTemplate(data.id);
+            if (!info || info->type == CREATURE_TYPE_CRITTER || info->npcflag
+                || (info->unit_flags & (UNIT_FLAG_NON_ATTACKABLE | UNIT_FLAG_NOT_SELECTABLE)))
+                continue;
+            Animus::Vision::SeedObject seed;
+            seed.Key = { Animus::Vision::ObjectSource::CreatureSpawn, uint64(spawnId) };
+            seed.Entry = data.id;
+            seed.Level = float(info->maxlevel);
+            seed.Position = { data.posX, data.posY, data.posZ + SEED_HEIGHT * 0.5f };
+            seed.Facing = data.orientation;
+            seed.Radius = SEED_RADIUS;
+            seed.Height = SEED_HEIGHT;
+            seeds.push_back(seed);
+        }
+        std::sort(seeds.begin(), seeds.end(), [](auto const& a, auto const& b) { return a.Key < b.Key; });
+        LOG_INFO("module.animus", "Map {}: {} creature spawns memorised for the seats' object memory", mapId,
+            seeds.size());
+        return seeds;
+    }
+}
+
 void Animus::Curriculum::StageScenario::Observe(Env& env, float* obs, float* state, uint8* mask, uint8* image,
     uint8* map)
 {
@@ -4295,6 +4341,13 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
             memory->Objects().Adopt(seat.Objects, now);
         else
             memory->Objects().Anchor(seat.Objects, now);
+        // The dungeon's spawns, known as a player who has run it knows them (never under the no_object_memory arm):
+        // seen long ago, so a look that finds nothing there marks one absent as for anything remembered.
+        if (_stage.MemoriseSpawns && !seat.ObjectsHidden)
+        {
+            constexpr double SEED_AGE_SECONDS = 3600.0;
+            seat.Objects.Seed(SpawnSeeds(bot->GetMapId()), SEED_AGE_SECONDS);
+        }
         seat.MapKept = seat.MapShared && seat.Map.Tiles() > 0;
         seat.Map.TrackWallSources(true);
         seat.Map.BeginEpisode();

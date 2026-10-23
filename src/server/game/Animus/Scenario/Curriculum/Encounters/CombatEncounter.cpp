@@ -30,6 +30,7 @@
 #include "ObjectMgr.h"
 #include "Opponents.h"
 #include "PathGenerator.h"
+#include "PointNavEncounter.h"
 #include "Player.h"
 #include "Random.h"
 #include "SeatView.h"
@@ -38,6 +39,7 @@
 #include "Supplies.h"
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace
 {
@@ -204,10 +206,31 @@ bool Animus::Curriculum::CombatEncounter::Build(Env& env, Map* map, uint8 /*leve
     combat.Counts = pick.Counts;
     combat.Level = seat.Level;
 
-    // Where it starts: one of the dungeon's corridor points, from the entrance it stands at now.
+    // Where it starts: on the dungeon's own creatures (dm2, dm3), a site of the clear way, its pulls at the sites on
+    // from it; else one of the dungeon's corridor points, from the entrance it stands at now.
+    ArenaDefinition const& arena = _scenario.Arena(env);
+    PointNavEncounter* nav = _scenario.PointNav();
+    PointNavEncounter::ClearWay const* way = arena.DungeonCreatures && nav ? nav->WayOf(env, map, bot) : nullptr;
     std::vector<Draw::Point> const& corridors = Corridors(bot, map);
     Position const& entrance = _scenario.SpawnPointFor(env);
-    if (!corridors.empty())
+    if (way)
+    {
+        bool const seeded = env.EpisodeSeedIndex != NO_EPISODE_SEED;
+        uint32 const draw = seeded ? env.EpisodeSeedIndex : urand(0, std::numeric_limits<int32>::max());
+        int32 const site = PointNavEncounter::NextSite(*way, int32(draw % uint32(way->Spawns.size())) - 1);
+        Position at;
+        if (site >= 0 && PointNavEncounter::SiteSpawn(*way, uint32(site), at))
+        {
+            combat.Site = site;
+            combat.Corridor = site;
+            combat.StartWalk = std::sqrt((at.GetPositionX() - entrance.GetPositionX())
+                * (at.GetPositionX() - entrance.GetPositionX()) + (at.GetPositionY() - entrance.GetPositionY())
+                * (at.GetPositionY() - entrance.GetPositionY()));
+            BotFactory::TeleportWithinMap(bot, Position(at.GetPositionX(), at.GetPositionY(), at.GetPositionZ(),
+                frand(0.0f, TWO_PI)));
+        }
+    }
+    else if (!corridors.empty())
     {
         bool const seeded = env.EpisodeSeedIndex != NO_EPISODE_SEED;
         uint32 const at = seeded ? env.EpisodeSeedIndex % uint32(corridors.size())
@@ -251,10 +274,21 @@ bool Animus::Curriculum::CombatEncounter::SpawnPull(Env& env, Map* map, Player* 
     Draw::Pull const plan = Draw::PlanPull(drill, combat.Tier, tuning, fire, caster);
     uint8 const level = Draw::CreatureLevel(combat.Level, plan);
 
-    // Who is in it: an elite, a caster and a fire-caster first where the rung asks, the rest from the pack pool.
+    // Who is in it: an elite, a caster and a fire-caster first where the rung asks, the rest from the pack pool; on
+    // the dungeon's own creatures (dm2, dm3), its own entries -- an elite where the rung asks, a caster where it
+    // asks one, the rest its normal ones (most of a Deadmines pack is elite: the rung's elites come in a pack of them).
     Opponents::OpponentPool const& pool = Opponents::OpponentPool::Instance();
     std::vector<uint32> entries;
-    if (plan.Elite)
+    PointNavEncounter* nav = _scenario.PointNav();
+    PointNavEncounter::ClearWay const* way = arena.DungeonCreatures && nav ? nav->WayOf(env, map, bot) : nullptr;
+    if (way)
+    {
+        Opponents::DungeonPool const& own = Opponents::DungeonPool::Of(map->GetId());
+        for (uint32 member = 0; member < plan.Size; ++member)
+            if (uint32 const entry = own.Random(plan.Elite, plan.Caster && member == 0))
+                entries.push_back(entry);
+    }
+    else if (plan.Elite)
         if (uint32 const elite = pool.RandomElite(level))
             entries.push_back(elite);
     if (plan.Hazard && entries.size() < plan.Size)
@@ -263,7 +297,7 @@ bool Animus::Curriculum::CombatEncounter::SpawnPull(Env& env, Map* map, Player* 
     if (plan.Caster && entries.size() < plan.Size)
         if (uint32 const casting = pool.RandomCaster(level))
             entries.push_back(casting);
-    while (entries.size() < plan.Size)
+    while (!way && entries.size() < plan.Size)
     {
         uint32 const entry = drill == CombatDrill::Fight ? pool.Random(level) : pool.RandomPackMember(level);
         if (!entry)
@@ -284,6 +318,16 @@ bool Animus::Curriculum::CombatEncounter::SpawnPull(Env& env, Map* map, Player* 
             tuning.NextFurthest);
     }
     spot = onward ? *onward : Opponents::FindSpawnPoint(bot, map, tuning.FightNearest, tuning.FightFurthest);
+    // The dungeon's own: at the next site of the clear way from the last pull's, where the dungeon spawns its own.
+    if (way)
+    {
+        int32 const site = PointNavEncounter::NextSite(*way, combat.Site);
+        Position at;
+        if (site < 0 || !PointNavEncounter::SiteSpawn(*way, uint32(site), at))
+            return false;
+        combat.Site = site;
+        spot = at;
+    }
     std::vector<Creature*> members = Opponents::SpawnPack(bot, map, entries, level, spot);
     if (members.empty())
         return false;
@@ -463,6 +507,15 @@ void Animus::Curriculum::CombatEncounter::View(Env const& env, uint32 /*seat*/, 
         view.ElitePull = front.Elite;
         view.PullTime = std::min(1.0f, float(env.EpisodeElapsedMs - front.EngageMs) / 60000.0f);
     }
+}
+
+bool Animus::Curriculum::CombatEncounter::RouteGoal(Env const& env, uint32 /*seat*/, Position& goal) const
+{
+    Player* bot = _scenario.SeatBotInWorld(env, 0);
+    if (!bot || _envs[env.Index].Packs.empty())
+        return false;
+    goal = FightPoint(env, bot);
+    return true;
 }
 
 Position Animus::Curriculum::CombatEncounter::FightPoint(Env const& env, Player const* bot) const

@@ -390,6 +390,36 @@ Animus::Vision::RememberedObject* Animus::Vision::ObjectMemory::Make(ObjectKey c
     return &_entries.back();
 }
 
+uint32_t Animus::Vision::ObjectMemory::Seed(std::vector<SeedObject> const& objects, double age)
+{
+    uint32_t added = 0;
+    for (SeedObject const& seed : objects)
+    {
+        if (seed.Key.Source == ObjectSource::None || Slot(seed.Key) || _entries.size() >= _cap)
+            continue;
+        RememberedObject entry;
+        entry.Key = seed.Key;
+        entry.Entry = seed.Entry;
+        entry.What = seed.What;
+        entry.Kind = seed.Kind;
+        entry.GameObject = seed.Kind == ObjectKind::Fixed;
+        entry.Reaction = seed.What == Class::HostileCreature ? -1 : 0;
+        entry.Level = seed.Level;
+        entry.Position = seed.Position;
+        entry.Facing = seed.Facing;
+        entry.Radius = seed.Radius;
+        entry.Height = seed.Height;
+        entry.FirstSeen = _clock - age;
+        entry.LastSeen = entry.FirstSeen;
+        entry.LastLook = entry.FirstSeen;
+        entry.Trace[0] = seed.Position;
+        entry.TraceCount = 1;
+        Put(entry);
+        ++added;
+    }
+    return added;
+}
+
 void Animus::Vision::ObjectMemory::Put(RememberedObject const& entry)
 {
     if (RememberedObject* existing = Slot(entry.Key))

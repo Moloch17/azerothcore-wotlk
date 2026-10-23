@@ -17,6 +17,7 @@
  */
 
 #include "RolesEncounter.h"
+#include "PointNavEncounter.h"
 #include "BotFactory.h"
 #include "CombatEncounter.h"
 #include "Creature.h"
@@ -34,6 +35,7 @@
 #include "StageState.h"
 #include "Supplies.h"
 #include <algorithm>
+#include <limits>
 #include <cmath>
 #include <optional>
 #include <utility>
@@ -212,8 +214,26 @@ bool Animus::Curriculum::RolesEncounter::Build(Env& env, Map* map, uint8 /*level
 
     // Where the party starts: seat 0 at one of the dungeon's corridor points, from the entrance it stands at now; the
     // others round it, in its sight.
+    // On the dungeon's own creatures (dm4): at a site of the clear way, its packs at the sites on from it.
+    PointNavEncounter* nav = _scenario.PointNav();
+    PointNavEncounter::ClearWay const* way = _scenario.Arena(env).DungeonCreatures && nav
+        ? nav->WayOf(env, map, lead) : nullptr;
     std::vector<CombatDraw::Point> const& corridors = Corridors(lead, map);
-    if (!corridors.empty())
+    if (way)
+    {
+        bool const seeded = env.EpisodeSeedIndex != NO_EPISODE_SEED;
+        uint32 const draw = seeded ? env.EpisodeSeedIndex : urand(0, std::numeric_limits<int32>::max());
+        int32 const site = PointNavEncounter::NextSite(*way, int32(draw % uint32(way->Spawns.size())) - 1);
+        Position at;
+        if (site >= 0 && PointNavEncounter::SiteSpawn(*way, uint32(site), at))
+        {
+            roles.Site = site;
+            roles.Corridor = site;
+            BotFactory::TeleportWithinMap(lead, Position(at.GetPositionX(), at.GetPositionY(), at.GetPositionZ(),
+                frand(0.0f, TWO_PI)));
+        }
+    }
+    else if (!corridors.empty())
     {
         bool const seeded = env.EpisodeSeedIndex != NO_EPISODE_SEED;
         uint32 const at = seeded ? env.EpisodeSeedIndex % uint32(corridors.size())
@@ -260,16 +280,27 @@ bool Animus::Curriculum::RolesEncounter::SpawnPack(Env& env, Map* map, Player* l
     pull.LevelOffset = plan.LevelOffset;
     uint8 const level = CombatDraw::CreatureLevel(roles.Level, pull);
 
-    // Who is in it: an elite and a caster first where the rung asks, the rest from the pack pool.
+    // Who is in it: an elite and a caster first where the rung asks, the rest from the pack pool; on the dungeon's own
+    // creatures (dm4), its own entries -- elites where the rung asks, a caster first where it asks one.
     Opponents::OpponentPool const& pool = Opponents::OpponentPool::Instance();
     std::vector<uint32> entries;
-    if (plan.Elite)
+    PointNavEncounter* nav = _scenario.PointNav();
+    PointNavEncounter::ClearWay const* way = _scenario.Arena(env).DungeonCreatures && nav
+        ? nav->WayOf(env, map, lead) : nullptr;
+    if (way)
+    {
+        Opponents::DungeonPool const& own = Opponents::DungeonPool::Of(map->GetId());
+        for (uint32 member = 0; member < plan.Size; ++member)
+            if (uint32 const entry = own.Random(plan.Elite, plan.Caster && member == 0))
+                entries.push_back(entry);
+    }
+    else if (plan.Elite)
         if (uint32 const elite = pool.RandomElite(level))
             entries.push_back(elite);
     if (plan.Caster && entries.size() < plan.Size)
         if (uint32 const casting = pool.RandomCaster(level))
             entries.push_back(casting);
-    while (entries.size() < plan.Size)
+    while (!way && entries.size() < plan.Size)
     {
         uint32 const entry = pool.RandomPackMember(level);
         if (!entry)
@@ -281,7 +312,17 @@ bool Animus::Curriculum::RolesEncounter::SpawnPack(Env& env, Map* map, Player* l
 
     // Where: in seat 0's sight, or the spacing on from the pack before, away from seat 0.
     std::optional<Position> onward;
-    if (from)
+    if (way)
+    {
+        // At the next site of the clear way from the last pack's, where the dungeon spawns its own.
+        int32 const site = PointNavEncounter::NextSite(*way, roles.Site);
+        Position at;
+        if (site < 0 || !PointNavEncounter::SiteSpawn(*way, uint32(site), at))
+            return false;
+        roles.Site = site;
+        onward = at;
+    }
+    else if (from)
     {
         float const spacing = Draw::PackSpacing(roles.Drill, roles.Tier, tuning.MaxTier, tuning,
             all.Combat.NextNearest);
@@ -444,6 +485,15 @@ bool Animus::Curriculum::RolesEncounter::PartyMiddle(Env const& env, uint32 seat
     if (!count)
         return false;
     middle.Relocate(x / float(count), y / float(count), z / float(count));
+    return true;
+}
+
+bool Animus::Curriculum::RolesEncounter::RouteGoal(Env const& env, uint32 seat, Position& goal) const
+{
+    Player* bot = _scenario.SeatBotInWorld(env, seat);
+    if (!bot || _envs[env.Index].Packs.empty())
+        return false;
+    goal = FightPoint(env, bot);
     return true;
 }
 

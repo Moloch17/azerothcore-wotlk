@@ -300,6 +300,17 @@ namespace Animus::Curriculum
         std::vector<uint32> LiveOpen{};
         std::vector<uint32> LiveShut{};
         std::vector<uint32> LiveItems{};
+        /// **The dungeon's own creatures** (dm2-dm4, 2026-10-23): Opposition::Combat and Roles draw their pulls from
+        /// the creatures the arena's map itself spawns (elites among them: most Deadmines trash is), not the open
+        /// world's pool, and stand them at the map's own spawn sites near the seat (the clear way's sites); the whole
+        /// dungeon is cleared first.
+        bool DungeonCreatures = false;
+        /// **A whole wing run backwards** (dm5, 2026-10-23; InstanceLadder::Wing): the party starts part way along the
+        /// clear way (PointNav's, ArenaDefinition::RunClear: a labels-only PointNav rides with the run), the wing
+        /// ladder's rung choosing how far back -- the first rung just before the last boss, the last the entrance --
+        /// and everything spawned before its start site killed first (its bosses' doors opened as their deaths open
+        /// them); the levels are the arena's band with no lift.
+        bool WingReverse = false;
 
         /// Whether the arena names its own map: MapId 0 is "the stage's" -- except for a tower, whose 0 is the Eastern
         /// Kingdoms.
@@ -391,6 +402,17 @@ namespace Animus::Curriculum
         /// draws by the old length and detour bins alone. Each rung of a kind caps the route's corners and turning
         /// on the server's navmesh and asks the kind's own feature (PointNavEncounter::PairFits).
         uint8 PairKind = 0;
+        /// **The dungeon's spawns memorised** (the user, 2026-10-23: a player who has run it knows where its packs
+        /// stand): every seat's object memory is seeded at its first look of an episode with the map's creature
+        /// spawns, as seen long ago (ObjectMemory::Seed); whether a creature stands there now, alive or dead, is still
+        /// sight's.
+        bool MemoriseSpawns = false;
+        /// **A party leader of any role** (the user, 2026-10-23: "a party leader that sets the pace of the dungeon but
+        /// the tank will still do pulls"): each episode the group's leader is a seat drawn uniformly from the party,
+        /// whatever its role (the leader marker in the party frames, the self_leader column); the leader's way is the
+        /// route the others' goal follows (their objective is the leader), and a pull by anyone but the tank is out of
+        /// turn (RolesEncounter, InstanceEncounter: OutOfTurnPull).
+        bool LeaderAnyRole = false;
 
         [[nodiscard]] bool Has(BlockId block) const;
         /// Seats per env: the largest arena's.

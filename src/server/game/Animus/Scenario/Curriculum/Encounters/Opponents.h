@@ -77,6 +77,29 @@ namespace Animus::Curriculum::Opponents
         std::array<std::vector<uint32>, 81> _hazardCastersByLevel;
     };
 
+    /// **A dungeon's own creatures** (ArenaDefinition::DungeonCreatures, dm2-dm4): the entries the map spawns at
+    /// least twice (its trash: a boss, and a rare like Miner Johnson, spawns once), fightable -- no critter, nothing
+    /// with an NPC service or that a player cannot attack, no C++ script -- whatever their rank (most Deadmines trash is
+    /// elite) or their SmartAI; the casters among them (a SmartAI cast with a cast time, which an interrupt stops).
+    /// Worked out once per map. A pull is summoned at the rung's level, not the entry's own.
+    class DungeonPool
+    {
+    public:
+        [[nodiscard]] static DungeonPool const& Of(uint32 mapId);
+
+        /// A random entry: an elite one when `elite` (a normal one when the map has none, and the other way round),
+        /// a caster when `caster` and the map has one. 0 when the map spawns nothing fightable.
+        [[nodiscard]] uint32 Random(bool elite, bool caster) const;
+        [[nodiscard]] bool Empty() const { return _normal.empty() && _elite.empty(); }
+
+    private:
+        explicit DungeonPool(uint32 mapId);
+
+        std::vector<uint32> _normal;
+        std::vector<uint32> _elite;
+        std::vector<uint32> _casters;
+    };
+
     /// A random spot `minDistance` to `maxDistance` yards from the bot, in line of sight on roughly level ground the
     /// bot can walk to (so a creature there has a path to it), with a random facing.
     [[nodiscard]] Position FindSpawnPoint(Player* bot, Map* map, float minDistance, float maxDistance);

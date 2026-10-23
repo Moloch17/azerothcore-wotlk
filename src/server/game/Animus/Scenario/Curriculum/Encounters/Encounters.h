@@ -78,6 +78,12 @@ namespace Animus::Curriculum
 
         /// The party's living tank seat, or null.
         [[nodiscard]] Player* Tank(Env const& env) const;
+        /// The seat that leads the party this episode (StageDefinition::LeaderAnyRole: drawn from the whole party;
+        /// else seat 0), and its bot.
+        [[nodiscard]] uint32 LeaderSeat(Env const& env) const { return _envs[env.Index].Leader; }
+        /// The others keep with the leader (StageDefinition::LeaderAnyRole): a seat's goal is the living leader; the
+        /// leader's own is the next encounter's (the pack it takes the party to, the next site of the clear way).
+        [[nodiscard]] bool RouteGoal(Env const& env, uint32 seat, Position& goal) const override;
 
         [[nodiscard]] std::vector<RewardTerm> RewardTerms() const override;
         void AddEpisodeInfo(EpisodeInfoTable& table) override;
@@ -85,6 +91,7 @@ namespace Animus::Curriculum
         void BeforeRebuild(Env& env) override;
         bool Build(Env& env, Map* map, uint8 level) override;
         void View(Env const& env, uint32 seat, SeatView& view) const override;
+        void BeforeRewards(Env& env) override;
         void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
         void Teardown(Env& env) override;
 
@@ -112,13 +119,29 @@ namespace Animus::Curriculum
             uint32 GroupKeptMs = 0;
             uint32 TankFightMs = 0;             // the tank alive and in a fight ...
             uint32 TankModeMs = 0;              // ... and of that, in its tanking stance, form or aura
+            // The leader and the tank (StageDefinition::LeaderAnyRole): the pulls this seat started, those out of
+            // turn (and this decision's, to pay), and its quiet time alive beside the leader against all of it.
+            uint32 Pulls = 0;
+            uint32 OutOfTurn = 0;
+            uint32 NewOutOfTurn = 0;
+            uint32 QuietMs = 0;
+            uint32 KeptMs = 0;
         };
 
         struct EnvParty
         {
             Group* PartyGroup = nullptr;
             std::array<SeatParty, MAX_SEATS> Seats;
+            /// The leader's seat, drawn at Build; the creatures in the fight now, and whether one was the last
+            /// decision (a pull is a fight starting from none: what joins one under way is not judged here).
+            uint32 Leader = 0;
+            std::vector<ObjectGuid> Engaged;
+            bool Fighting = false;
         };
+
+        /// The leader's rules this decision (BeforeRewards): a pull starting judged in or out of turn, and the fight's
+        /// creatures followed.
+        void JudgePulls(Env& env);
 
         /// The seat index of teammate slot `slot` (0..PARTY_MEMBERS-1) of `seat`: the other seats in order.
         /// The first seat of the group `seat` is in: a party is one group.

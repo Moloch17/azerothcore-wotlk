@@ -36,6 +36,8 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
@@ -220,6 +222,66 @@ Animus::Curriculum::Opponents::OpponentPool::OpponentPool()
 
     LOG_INFO("module.animus", "Opponent pool: {} opponent creatures, {} pack creatures ({} casting, {} with cast-time "
         "spells), {} elites", opponents, packMembers, castOnlySmart.size(), casters, elites);
+}
+
+Animus::Curriculum::Opponents::DungeonPool const& Animus::Curriculum::Opponents::DungeonPool::Of(uint32 mapId)
+{
+    static std::mutex lock;
+    static std::map<uint32, std::unique_ptr<DungeonPool>> pools;
+    std::lock_guard<std::mutex> guard(lock);
+    std::unique_ptr<DungeonPool>& pool = pools[mapId];
+    if (!pool)
+        pool.reset(new DungeonPool(mapId));
+    return *pool;
+}
+
+Animus::Curriculum::Opponents::DungeonPool::DungeonPool(uint32 mapId)
+{
+    std::map<uint32, uint32> spawns;
+    for (auto const& [spawnId, data] : sObjectMgr->GetAllCreatureData())
+        if (data.mapid == mapId)
+            ++spawns[data.id];
+
+    // The casters: a SmartAI cast of a spell with a cast time.
+    std::unordered_set<uint32> casters;
+    if (QueryResult result = WorldDatabase.Query("SELECT entryorguid, action_param1 FROM smart_scripts "
+        "WHERE source_type = 0 AND entryorguid > 0 AND action_type = 11"))
+    {
+        do
+        {
+            Field* fields = result->Fetch();
+            uint32 const entry = uint32(fields[0].Get<int32>());
+            SpellInfo const* spell = sSpellMgr->GetSpellInfo(fields[1].Get<uint32>());
+            if (spawns.contains(entry) && spell && spell->CastTimeEntry && spell->CastTimeEntry->CastTime > 0)
+                casters.insert(entry);
+        } while (result->NextRow());
+    }
+
+    for (auto const& [entry, count] : spawns)
+    {
+        CreatureTemplate const* info = sObjectMgr->GetCreatureTemplate(entry);
+        if (!info || count < 2 || !IsFairOpponentType(info->type) || info->npcflag || info->VehicleId
+            || info->ScriptID || (info->unit_flags & (UNIT_FLAG_NON_ATTACKABLE | UNIT_FLAG_NOT_SELECTABLE))
+            || (info->flags_extra & UNUSABLE_EXTRA_FLAGS) || info->rank > CREATURE_ELITE_ELITE)
+            continue;
+        (info->rank == CREATURE_ELITE_ELITE ? _elite : _normal).push_back(entry);
+        if (casters.contains(entry))
+            _casters.push_back(entry);
+    }
+    LOG_INFO("module.animus", "Dungeon pool of map {}: {} normal, {} elite, {} casting creature entries", mapId,
+        _normal.size(), _elite.size(), _casters.size());
+}
+
+uint32 Animus::Curriculum::Opponents::DungeonPool::Random(bool elite, bool caster) const
+{
+    auto const pick = [](std::vector<uint32> const& entries)
+    {
+        return entries.empty() ? 0u : entries[urand(0, uint32(entries.size()) - 1)];
+    };
+    if (caster && !_casters.empty())
+        return pick(_casters);
+    std::vector<uint32> const& first = elite ? _elite : _normal;
+    return pick(first.empty() ? (elite ? _normal : _elite) : first);
 }
 
 uint32 Animus::Curriculum::Opponents::OpponentPool::PickNear(std::array<std::vector<uint32>, 81> const& byLevel,

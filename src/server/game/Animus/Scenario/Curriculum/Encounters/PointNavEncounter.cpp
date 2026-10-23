@@ -817,10 +817,107 @@ Position Animus::Curriculum::PointNavEncounter::CellPoint(Vision::TravGrid const
 
 float Animus::Curriculum::PointNavEncounter::CostAt(EnvNav const& nav, float x, float y, float z)
 {
-    if (!nav.Grid || nav.Cost.size() != nav.Grid->Nodes())
+    if (!nav.Grid)
         return Vision::TRAV_UNREACHABLE;
-    uint32 const node = nav.Grid->NodeOf(x, y, z);
-    return node == Vision::TRAV_NO_CELL ? Vision::TRAV_UNREACHABLE : nav.Cost[node];
+    return CostAt(*nav.Grid, nav.Cost, x, y, z);
+}
+
+float Animus::Curriculum::PointNavEncounter::CostAt(Vision::TravGrid const& grid, std::vector<float> const& cost,
+    float x, float y, float z)
+{
+    if (cost.size() != grid.Nodes())
+        return Vision::TRAV_UNREACHABLE;
+    uint32 const node = grid.NodeOf(x, y, z);
+    return node == Vision::TRAV_NO_CELL ? Vision::TRAV_UNREACHABLE : cost[node];
+}
+
+std::vector<float> const* Animus::Curriculum::PointNavEncounter::SeatCost(EnvNav const& nav, uint32 seat,
+    Position& goal)
+{
+    if (!nav.LabelsOnly || seat >= GROUP_SEATS)
+    {
+        goal = nav.Goal;
+        return nav.GoalCell != Vision::TRAV_NO_CELL ? &nav.Cost : nullptr;
+    }
+    EnvNav::SeatGoal const& mine = nav.Goals[seat];
+    goal = mine.At;
+    if (!mine.Has || mine.Cell == Vision::TRAV_NO_CELL)
+        return nullptr;
+    for (auto const& [cell, cost] : nav.Costs)
+        if (cell == mine.Cell)
+            return &cost;
+    return nullptr;
+}
+
+void Animus::Curriculum::PointNavEncounter::UpdateGoals(Env& env, EnvNav& nav)
+{
+    // nav6's leader as the server last had it, for every seat; else what the episode's encounters name, seat by
+    // seat (a seat no encounter names a goal for keeps its last).
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+    bool const leader = _follow && _follow->LeaderReported(env, x, y, z);
+    uint32 const seats = std::min<uint32>(_scenario.Data(env).ActiveSeats, GROUP_SEATS);
+    for (uint32 seat = 0; seat < seats; ++seat)
+    {
+        Position goal;
+        bool named = false;
+        if (leader)
+        {
+            goal.Relocate(x, y, z, 0.0f);
+            named = true;
+        }
+        else
+            for (Encounter* encounter : _scenario.ActiveEncounters(env))
+                if (encounter != this && encounter->RouteGoal(env, seat, goal))
+                {
+                    named = true;
+                    break;
+                }
+        if (!named)
+            continue;
+        EnvNav::SeatGoal& mine = nav.Goals[seat];
+        mine.Has = true;
+        mine.At = goal;
+        uint32 const cell = nav.Grid->NodeOf(goal.GetPositionX(), goal.GetPositionY(), goal.GetPositionZ());
+        if (cell != Vision::TRAV_NO_CELL)
+            mine.Cell = cell;
+    }
+
+    // The cost maps: one per goal cell in use, on this map thread, kept while a seat's goal is on it.
+    auto const inUse = [&nav, seats](uint32 cell)
+    {
+        for (uint32 seat = 0; seat < seats; ++seat)
+            if (nav.Goals[seat].Has && nav.Goals[seat].Cell == cell)
+                return true;
+        return false;
+    };
+    std::erase_if(nav.Costs, [&inUse](auto const& entry) { return !inUse(entry.first); });
+    for (uint32 seat = 0; seat < seats; ++seat)
+    {
+        EnvNav::SeatGoal const& mine = nav.Goals[seat];
+        if (!mine.Has || mine.Cell == Vision::TRAV_NO_CELL || std::any_of(nav.Costs.begin(), nav.Costs.end(),
+            [&mine](auto const& entry) { return entry.first == mine.Cell; }))
+            continue;
+        nav.Costs.emplace_back(mine.Cell, std::vector<float>());
+        Vision::CostToGo(*nav.Grid, mine.Cell, _scenario.Tuning().PointNav.DropHurtYards, nav.Costs.back().second,
+            !WalksOnly());
+    }
+
+    // Seat 0's goal is the env's (the critic's slot and the route columns).
+    EnvNav::SeatGoal const& first = nav.Goals[0];
+    if (!first.Has)
+        return;
+    nav.Goal = first.At;
+    if (first.Cell != nav.GoalCell)
+    {
+        nav.GoalCell = first.Cell;
+        Position unused;
+        std::vector<float> const* cost = SeatCost(nav, 0, unused);
+        nav.Cost = cost ? *cost : std::vector<float>();
+        nav.CStart = nav.StartCell == Vision::TRAV_NO_CELL || nav.Cost.empty() ? Vision::TRAV_UNREACHABLE
+            : nav.Cost[nav.StartCell];
+    }
 }
 
 std::mt19937& Animus::Curriculum::PointNavEncounter::Rng(Env const& env) const
@@ -1397,6 +1494,7 @@ Animus::Curriculum::PointNavEncounter::ClearWay const& Animus::Curriculum::Point
         float Y = 0.0f;
         float Z = 0.0f;
         uint32 Count = 0;
+        std::vector<uint32> SpawnIds;
     };
     std::vector<Site> sites;
     for (auto const& [spawnId, at] : spawns)
@@ -1419,6 +1517,7 @@ Animus::Curriculum::PointNavEncounter::ClearWay const& Animus::Curriculum::Point
         joined->Y = (joined->Y * n + at.GetPositionY()) / (n + 1.0f);
         joined->Z = (joined->Z * n + at.GetPositionZ()) / (n + 1.0f);
         ++joined->Count;
+        joined->SpawnIds.push_back(spawnId);
     }
     // The main way, the entrance to the goal down the goal's route cost; a site's place along it is where its own
     // route to the goal joins it (a side room hangs off the main way where its branch leaves), then how far out from
@@ -1458,10 +1557,11 @@ Animus::Curriculum::PointNavEncounter::ClearWay const& Animus::Curriculum::Point
         int32 Join = 0;
         float Out = 0.0f;
         Position At;
+        int32 Site = -1;
     };
     std::vector<Placed> ordered;
     uint32 unreachable = 0;
-    auto const place = [&](Position const& at, uint32 node)
+    auto const place = [&](Position const& at, uint32 node, int32 site)
     {
         if (node == Vision::TRAV_NO_CELL || fromDoor[node] >= Vision::TRAV_UNREACHABLE
             || toGoal[node] >= Vision::TRAV_UNREACHABLE)
@@ -1477,21 +1577,29 @@ Animus::Curriculum::PointNavEncounter::ClearWay const& Animus::Curriculum::Point
             ++unreachable;
             return;
         }
-        ordered.push_back({ along[join], toGoal[node] - toGoal[join], at });
+        ordered.push_back({ along[join], toGoal[node] - toGoal[join], at, site });
     };
-    for (Site const& site : sites)
-        place(Position(site.X, site.Y, site.Z, 0.0f), grid.NodeOf(site.X, site.Y, site.Z));
+    for (std::size_t index = 0; index < sites.size(); ++index)
+    {
+        Site const& site = sites[index];
+        place(Position(site.X, site.Y, site.Z, 0.0f), grid.NodeOf(site.X, site.Y, site.Z), int32(index));
+    }
     if (arena.HasRunGate)
         place(arena.RunGate, grid.NodeOf(arena.RunGate.GetPositionX(), arena.RunGate.GetPositionY(),
-            arena.RunGate.GetPositionZ()));
+            arena.RunGate.GetPositionZ()), -1);
     std::stable_sort(ordered.begin(), ordered.end(), [](Placed const& a, Placed const& b)
     {
         return a.Join != b.Join ? a.Join < b.Join : a.Out < b.Out;
     });
     std::vector<Position> points;
+    std::vector<int32> pointSites;
     for (Placed const& placed : ordered)
+    {
         points.push_back(placed.At);
+        pointSites.push_back(placed.Site);
+    }
     points.push_back(arena.RunGoal);
+    pointSites.push_back(-1);
 
     // The legs: each checkpoint's route yards from the one before; one the one before cannot reach is dropped and
     // the next leg is measured from the one before it.
@@ -1499,8 +1607,10 @@ Animus::Curriculum::PointNavEncounter::ClearWay const& Animus::Curriculum::Point
     std::vector<uint32> nodes;
     std::vector<float> legs;
     std::vector<Position> kept;
-    for (Position const& at : points)
+    std::vector<std::vector<uint32>> keptSpawns;
+    for (std::size_t index = 0; index < points.size(); ++index)
     {
+        Position const& at = points[index];
         uint32 const node = grid.NodeOf(at.GetPositionX(), at.GetPositionY(), at.GetPositionZ());
         if (node == Vision::TRAV_NO_CELL)
             continue;
@@ -1518,8 +1628,11 @@ Animus::Curriculum::PointNavEncounter::ClearWay const& Animus::Curriculum::Point
         nodes.push_back(node);
         legs.push_back(leg);
         kept.push_back(at);
+        keptSpawns.push_back(pointSites[index] >= 0 ? sites[std::size_t(pointSites[index])].SpawnIds
+            : std::vector<uint32>());
     }
     way.Points = std::move(kept);
+    way.Spawns = std::move(keptSpawns);
     way.Nodes = std::move(nodes);
     way.Leg = std::move(legs);
     way.After.assign(way.Leg.size(), 0.0f);
@@ -1547,6 +1660,41 @@ Animus::Curriculum::PointNavEncounter::ClearWay const& Animus::Curriculum::Point
         "{:.0f} yd from the first, the gate at #{}", _scenario.Name(), arena.Name, way.Points.size(), spawns.size(),
         sites.size(), unreachable, total, way.Gate == UINT32_MAX ? -1 : int32(way.Gate));
     return way;
+}
+
+Animus::Curriculum::PointNavEncounter::ClearWay const* Animus::Curriculum::PointNavEncounter::WayOf(Env const& env,
+    Map* map, Player const* bot)
+{
+    if (!_scenario.Arena(env).RunClear || !map)
+        return nullptr;
+    Vision::TravGrid const* grid = EnsureGrid(env, map, bot);
+    if (!grid)
+        return nullptr;
+    ClearWay const& way = EnsureClearWay(env, *grid);
+    return way.Points.empty() ? nullptr : &way;
+}
+
+bool Animus::Curriculum::PointNavEncounter::SiteSpawn(ClearWay const& way, uint32 k, Position& at)
+{
+    if (k >= way.Spawns.size() || way.Spawns[k].empty())
+        return false;
+    CreatureData const* data = sObjectMgr->GetCreatureData(way.Spawns[k].front());
+    if (!data)
+        return false;
+    at.Relocate(data->posX, data->posY, data->posZ, data->orientation);
+    return true;
+}
+
+int32 Animus::Curriculum::PointNavEncounter::NextSite(ClearWay const& way, int32 after)
+{
+    int32 const count = int32(way.Spawns.size());
+    for (int32 step = 1; step <= count; ++step)
+    {
+        int32 const k = ((after + step) % count + count) % count;
+        if (!way.Spawns[std::size_t(k)].empty())
+            return k;
+    }
+    return -1;
 }
 
 bool Animus::Curriculum::PointNavEncounter::DrawRun(Env& env, Player* bot, EnvNav& nav)
@@ -1690,11 +1838,17 @@ void Animus::Curriculum::PointNavEncounter::ResetLive(Env& env, Map* map, Player
             nav.ShutOpen.push_back(0);
         }
     }
-    // The key items, one each, whatever the episode before left.
-    for (uint32 item : arena.LiveItems)
+    // The key items, one each for every seat, whatever the episode before left.
+    for (uint32 seat = 0; seat < _scenario.Data(env).ActiveSeats; ++seat)
     {
-        bot->DestroyItemCount(item, 9999, true);
-        bot->AddItem(item, 1);
+        Player* carrier = seat == 0 ? bot : _scenario.SeatBot(env, seat);
+        if (!carrier)
+            continue;
+        for (uint32 item : arena.LiveItems)
+        {
+            carrier->DestroyItemCount(item, 9999, true);
+            carrier->AddItem(item, 1);
+        }
     }
 }
 
@@ -1993,21 +2147,10 @@ void Animus::Curriculum::PointNavEncounter::Update(Env& env)
     EnvState& data = _scenario.Data(env);
     if (nav.LabelsOnly)
     {
-        // The goal is the leader as the server last had it (PartyFollowEncounter::LeaderReported); its cost map is
-        // worked out again only when its cell moves, on this map thread, once for every follower.
-        float x = 0.0f;
-        float y = 0.0f;
-        float z = 0.0f;
-        if (!_follow || !_follow->LeaderReported(env, x, y, z))
-            return;
-        uint32 const cell = nav.Grid->NodeOf(x, y, z);
-        nav.Goal.Relocate(x, y, z, 0.0f);
-        if (cell != Vision::TRAV_NO_CELL && cell != nav.GoalCell)
-        {
-            nav.GoalCell = cell;
-            Vision::CostToGo(*nav.Grid, cell, _scenario.Tuning().PointNav.DropHurtYards, nav.Cost, !WalksOnly());
-            nav.CStart = nav.StartCell == Vision::TRAV_NO_CELL ? Vision::TRAV_UNREACHABLE : nav.Cost[nav.StartCell];
-        }
+        // The goals: the leader as the server last had it (nav6, PartyFollowEncounter::LeaderReported), else each
+        // seat's from the episode's encounters (RouteGoal); a cost map is worked out again only when a goal's cell
+        // moves.
+        UpdateGoals(env, nav);
         return;
     }
     if (!nav.Placed)
@@ -2044,16 +2187,24 @@ bool Animus::Curriculum::PointNavEncounter::SelectTarget(Env const& env, uint32 
     return true;
 }
 
-void Animus::Curriculum::PointNavEncounter::View(Env const& env, uint32 /*seat*/, SeatView& view) const
+void Animus::Curriculum::PointNavEncounter::View(Env const& env, uint32 seat, SeatView& view) const
 {
     EnvNav const& nav = _envs[env.Index];
     // The point: the sim's knowledge of the goal, which the map block plans the route to on the seat's own map
     // (the route scalars are the policy's only word of it: no compass in a nav stage, map block revision 7); never
     // withheld; the camera flags nothing (there is no object). A labeller (nav6) names the leader's position as the
     // server last had it, once Update has one: the party follow's own View (run before this one) names no objective.
-    if (nav.LabelsOnly && nav.GoalCell == Vision::TRAV_NO_CELL)
+    if (nav.LabelsOnly)
+    {
+        if (seat >= GROUP_SEATS || !nav.Goals[seat].Has)
+            return;
+        view.HasObjective = true;
+        view.Objective = nav.Goals[seat].At;
+        view.ObjectiveRadius = 0.0f;
+        view.CompassWithheld = false;
         return;
-    view.HasObjective = nav.LabelsOnly || nav.Placed;
+    }
+    view.HasObjective = nav.Placed;
     view.Objective = nav.Goal;
     view.ObjectiveRadius = 0.0f;
     view.CompassWithheld = false;
@@ -2429,6 +2580,9 @@ void Animus::Curriculum::PointNavEncounter::WriteState(Env const& env, float* st
     EnvNav const& nav = _envs[env.Index];
     if (!nav.Grid || (!nav.Placed && !nav.LabelsOnly) || nav.GoalCell == Vision::TRAV_NO_CELL)
         return;
+    // A labeller beside a fight (dm2 on): the enemy slots are the fight's.
+    if (nav.LabelsOnly && _scenario.Stage().Has(BlockId::Duel))
+        return;
     Position const& origin = _scenario.SpawnPointFor(env);
     float* slot = state + StageScenario::STATE_GLOBAL_COUNT + MAX_SEATS * StageScenario::STATE_SEAT_FEATURES;
     slot[StageScenario::STATE_ENEMY_PRESENT] = 1.0f;
@@ -2472,35 +2626,40 @@ void Animus::Curriculum::PointNavEncounter::WriteLabels(Env const& env, uint32 s
     float const y = pose.Valid ? pose.Y : bot->GetPositionY();
     float const z = pose.Valid ? pose.Z : bot->GetPositionZ();
     float const yaw = pose.Valid ? pose.Yaw : bot->GetOrientation();
-    bool const haveGoal = nav.GoalCell != Vi::TRAV_NO_CELL && nav.Cost.size() == nav.Grid->Nodes();
+    // A labels-only seat's own goal (UpdateGoals), else the env's.
+    Position goal;
+    std::vector<float> const* seatCost = SeatCost(nav, seatIndex, goal);
+    bool const haveGoal = seatCost && seatCost->size() == nav.Grid->Nodes();
     static std::vector<float> const noCost;
-    std::vector<float> const& cost = haveGoal ? nav.Cost : noCost;
+    std::vector<float> const& cost = haveGoal ? *seatCost : noCost;
     Vi::SampleLabels(*nav.Grid, cost, x, y, z, yaw, Vi::TRAV_CELL, out + Vi::TRAV_LABEL_FINE_CLASSES, fineCost);
     Vi::SampleLabels(*nav.Grid, cost, x, y, z, yaw, Vi::TRAV_LABEL_COARSE_CELL,
         out + Vi::TRAV_LABEL_COARSE_CLASSES, coarseCost);
     if (!haveGoal)
         return;
     // A goal in water: the depth still to go, near it (DEPTH_FULL, DEPTH_REACH), on every route cost below.
-    bool const wetGoal = nav.Grid->ClassOf(nav.GoalCell) == Vi::TravClass::Water;
+    uint32 const goalCell = nav.Grid->NodeOf(goal.GetPositionX(), goal.GetPositionY(), goal.GetPositionZ());
+    bool const wetGoal = goalCell != Vi::TRAV_NO_CELL && nav.Grid->ClassOf(goalCell) == Vi::TravClass::Water;
     float const arriveRise = _scenario.Tuning().PointNav.ArriveRise;
     auto const depthCost = [&](float px, float py, float pz)
     {
         if (!wetGoal)
             return 0.0f;
-        float const across = std::hypot(px - nav.Goal.GetPositionX(), py - nav.Goal.GetPositionY());
+        float const across = std::hypot(px - goal.GetPositionX(), py - goal.GetPositionY());
         float const weight = std::clamp((DEPTH_REACH - across) / (DEPTH_REACH - DEPTH_FULL), 0.0f, 1.0f);
-        return weight * std::max(0.0f, std::fabs(pz - nav.Goal.GetPositionZ()) - arriveRise);
+        return weight * std::max(0.0f, std::fabs(pz - goal.GetPositionZ()) - arriveRise);
     };
     // ... and the clear way's route after the goal checkpoint (RemainingAfter): the potential is the whole trip's.
-    float const bodyCost = CostAt(nav, x, y, z);
+    float const bodyCost = CostAt(*nav.Grid, cost, x, y, z);
     scalars[Vi::TRAV_LABEL_C_BODY] = bodyCost < Vi::TRAV_UNREACHABLE
         ? bodyCost + depthCost(x, y, z) + nav.RemainingAfter : bodyCost;
-    scalars[Vi::TRAV_LABEL_C_START] = nav.CStart;
+    scalars[Vi::TRAV_LABEL_C_START] = !nav.LabelsOnly ? nav.CStart
+        : nav.StartCell == Vi::TRAV_NO_CELL ? Vi::TRAV_UNREACHABLE : cost[nav.StartCell];
     // The goal in the body frame: forward along the facing, right along (sin yaw, -cos yaw): a label, no observation.
     float const cosYaw = std::cos(yaw);
     float const sinYaw = std::sin(yaw);
-    float const dx = nav.Goal.GetPositionX() - x;
-    float const dy = nav.Goal.GetPositionY() - y;
+    float const dx = goal.GetPositionX() - x;
+    float const dy = goal.GetPositionY() - y;
     float const goalForward = dx * cosYaw + dy * sinYaw;
     float const goalRight = dx * sinYaw - dy * cosYaw;
     scalars[Vi::TRAV_LABEL_GOAL_FORWARD] = goalForward;

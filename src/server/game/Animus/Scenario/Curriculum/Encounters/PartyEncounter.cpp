@@ -18,10 +18,14 @@
 
 #include "Encounters.h"
 #include "Env.h"
+#include "EnvPool.h"
 #include "Group.h"
 #include "GroupMgr.h"
 #include "Log.h"
 #include "Player.h"
+#include "StageDefinition.h"
+#include "StageScenario.h"
+#include "Creature.h"
 #include "SeatView.h"
 #include <algorithm>
 #include <limits>
@@ -33,9 +37,15 @@ Animus::Curriculum::PartyEncounter::PartyEncounter(StageScenario& scenario, uint
 
 std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::PartyEncounter::RewardTerms() const
 {
-    return { RewardTerm::TeammateDamageTaken, RewardTerm::TeammateHealing, RewardTerm::TeammateThreat,
-        RewardTerm::TeammateDeath, RewardTerm::Threat, RewardTerm::Revive, RewardTerm::DamageDealt,
-        RewardTerm::Stall, RewardTerm::EarlyPull };
+    std::vector<RewardTerm> terms = { RewardTerm::TeammateDamageTaken, RewardTerm::TeammateHealing,
+        RewardTerm::TeammateThreat, RewardTerm::TeammateDeath, RewardTerm::Threat, RewardTerm::Revive,
+        RewardTerm::DamageDealt, RewardTerm::Stall, RewardTerm::EarlyPull };
+    if (_scenario.Stage().LeaderAnyRole)
+    {
+        terms.push_back(RewardTerm::OutOfTurnPull);
+        terms.push_back(RewardTerm::LeaderAway);
+    }
+    return terms;
 }
 
 void Animus::Curriculum::PartyEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
@@ -112,11 +122,43 @@ void Animus::Curriculum::PartyEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
     {
         return float(_envs[env.Index].Seats[seat].PulledOffMs) / 1000.0f;
     });
+
+    // The leader and the tank (StageDefinition::LeaderAnyRole): whether the seat led, the leader's role (1 tank, 2
+    // healer, 3 damage: the evaluation per leader role), the pulls it started and those out of turn, and its share of
+    // the quiet time spent beside the leader (1 for the leader itself).
+    if (!_scenario.Stage().LeaderAnyRole)
+        return;
+    table.Add("is_leader", [this](Env const& env, uint32 seat)
+    {
+        return _envs[env.Index].Leader == seat ? 1.0f : 0.0f;
+    });
+    table.Add("leader_role", [this](Env const& env, uint32)
+    {
+        uint32 const leader = _envs[env.Index].Leader;
+        return leader < MAX_SEATS ? float(_scenario.Data(env).Seats[leader].DungeonRole) : 0.0f;
+    });
+    table.Add("pulls_started", [this](Env const& env, uint32 seat)
+    {
+        return float(_envs[env.Index].Seats[seat].Pulls);
+    });
+    table.Add("out_of_turn_pulls", [this](Env const& env, uint32 seat)
+    {
+        return float(_envs[env.Index].Seats[seat].OutOfTurn);
+    });
+    table.Add("kept_with_leader_share", [this](Env const& env, uint32 seat)
+    {
+        SeatParty const& party = _envs[env.Index].Seats[seat];
+        return _envs[env.Index].Leader == seat || !party.QuietMs ? 1.0f
+            : float(party.KeptMs) / float(party.QuietMs);
+    });
 }
 
 void Animus::Curriculum::PartyEncounter::ResetEpisode(Env& env)
 {
-    _envs[env.Index].Seats.fill(SeatParty());
+    EnvParty& party = _envs[env.Index];
+    party.Seats.fill(SeatParty());
+    party.Engaged.clear();
+    party.Fighting = false;
 }
 
 namespace
@@ -191,12 +233,26 @@ bool Animus::Curriculum::PartyEncounter::Build(Env& env, Map* /*map*/, uint8 /*l
     for (uint32 seat = 1; seat < data.ActiveSeats; ++seat)
         _scenario.SeatBot(env, seat)->SetFaction(lead->GetFaction());
 
-    // The party is five learned seats: the first one leads.
-    Player* leader = lead;
-
+    // The party is five learned seats: the first one leads, or (StageDefinition::LeaderAnyRole) one drawn from all of
+    // them whatever its role, an evaluation's by its seed.
     EnvParty& party = _envs[env.Index];
+    party.Leader = 0;
+    if (_scenario.Stage().LeaderAnyRole && data.ActiveSeats > 1)
+        party.Leader = env.EpisodeSeedIndex != NO_EPISODE_SEED ? uint32(env.EpisodeSeedIndex) % data.ActiveSeats
+            : urand(0, data.ActiveSeats - 1);
+    Player* leader = _scenario.SeatBot(env, party.Leader);
+    if (!leader)
+    {
+        party.Leader = 0;
+        leader = lead;
+    }
+
     if (party.PartyGroup)
+    {
+        if (party.PartyGroup->GetLeaderGUID() != leader->GetGUID() && party.PartyGroup->IsMember(leader->GetGUID()))
+            party.PartyGroup->ChangeLeader(leader->GetGUID());
         return true;
+    }
 
     Group* group = new Group();
     group->SetSimGroup(true);
@@ -261,8 +317,105 @@ void Animus::Curriculum::PartyEncounter::View(Env const& env, uint32 seatIndex, 
     view.Tank = Tank(env);
 }
 
+bool Animus::Curriculum::PartyEncounter::RouteGoal(Env const& env, uint32 seat, Position& goal) const
+{
+    EnvParty const& party = _envs[env.Index];
+    if (!_scenario.Stage().LeaderAnyRole || seat == party.Leader)
+        return false;
+    Player* leader = _scenario.SeatBotInWorld(env, party.Leader);
+    if (!leader || !leader->IsAlive())
+        return false;
+    goal = Position(*leader);
+    return true;
+}
+
+void Animus::Curriculum::PartyEncounter::BeforeRewards(Env& env)
+{
+    if (_scenario.Stage().LeaderAnyRole)
+        JudgePulls(env);
+}
+
+void Animus::Curriculum::PartyEncounter::JudgePulls(Env& env)
+{
+    EnvParty& party = _envs[env.Index];
+    EnvState const& data = _scenario.Data(env);
+    CurriculumTuning::PartyTuning const& tuning = _scenario.Tuning().Party;
+    for (uint32 seat = 0; seat < data.ActiveSeats && seat < MAX_SEATS; ++seat)
+        party.Seats[seat].NewOutOfTurn = 0;
+
+    // What fights the party now: the attackers of its living seats.
+    std::vector<Creature*> fighting;
+    for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
+    {
+        Player* bot = _scenario.SeatBotInWorld(env, seat);
+        if (!bot || !bot->IsAlive())
+            continue;
+        for (Unit* attacker : bot->getAttackers())
+            if (Creature* creature = attacker ? attacker->ToCreature() : nullptr; creature && creature->IsAlive()
+                && std::find(fighting.begin(), fighting.end(), creature) == fighting.end())
+                fighting.push_back(creature);
+    }
+
+    // A pull: a fight starting from none. Its puller is the first creature's victim (the seat that hit it or walked
+    // into it); out of turn when that is not the tank, or the tank went in where the leader had not taken the party.
+    if (!party.Fighting && !fighting.empty())
+    {
+        Creature const* first = fighting.front();
+        for (Creature* creature : fighting)
+            if (std::find(party.Engaged.begin(), party.Engaged.end(), creature->GetGUID()) == party.Engaged.end())
+            {
+                first = creature;
+                break;
+            }
+        Unit const* victim = first->GetVictim();
+        Player const* tank = Tank(env);
+        Player const* leader = _scenario.SeatBotInWorld(env, party.Leader);
+        for (uint32 seat = 0; seat < data.ActiveSeats && seat < MAX_SEATS; ++seat)
+        {
+            Player const* bot = _scenario.SeatBotInWorld(env, seat);
+            if (!bot || bot != victim)
+                continue;
+            SeatParty& puller = party.Seats[seat];
+            ++puller.Pulls;
+            bool const notTank = tank && bot != tank;
+            bool const ahead = bot == tank && leader && leader != tank && leader->IsAlive()
+                && leader->GetExactDist(first) > tuning.LeaderPullYards;
+            if (notTank || ahead)
+            {
+                ++puller.OutOfTurn;
+                ++puller.NewOutOfTurn;
+            }
+        }
+    }
+    party.Fighting = !fighting.empty();
+    party.Engaged.clear();
+    for (Creature* creature : fighting)
+        party.Engaged.push_back(creature->GetGUID());
+}
+
 void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Player* bot, RewardLedger& ledger)
 {
+    // The leader's rules (StageDefinition::LeaderAnyRole): a pull out of turn costs its puller; away from the leader
+    // while nothing fights costs every other seat by the second.
+    if (_scenario.Stage().LeaderAnyRole && seatIndex < MAX_SEATS)
+    {
+        EnvParty& party = _envs[env.Index];
+        SeatParty& seat = party.Seats[seatIndex];
+        CurriculumTuning::PartyTuning const& tuning = _scenario.Tuning().Party;
+        if (seat.NewOutOfTurn)
+            ledger.Add(RewardTerm::OutOfTurnPull, -tuning.OutOfTurnPull * float(seat.NewOutOfTurn));
+        Player* leader = _scenario.SeatBotInWorld(env, party.Leader);
+        if (seatIndex != party.Leader && bot && bot->IsAlive() && !party.Fighting && leader && leader->IsAlive())
+        {
+            uint32 const stepMs = _scenario.StepMs(env);
+            seat.QuietMs += stepMs;
+            if (bot->GetExactDist(leader) <= tuning.LeaderAwayYards)
+                seat.KeptMs += stepMs;
+            else
+                ledger.Add(RewardTerm::LeaderAway, -tuning.LeaderAway * float(stepMs) / 1000.0f);
+        }
+    }
+
     // A dead teammate the seat resurrected stood up: paid here.
     SeatState& reviver = _scenario.Data(env).Seats[seatIndex];
     if (reviver.StepRevivedAlly)
