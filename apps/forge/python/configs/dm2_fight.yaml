@@ -1,0 +1,74 @@
+# DM2 -- fight (the user, 2026-10-23: combat first, then the dungeon; .agents/plans/dungeon-clear/): the Deadmines' own
+# creatures one at a time, alone, at their spawn sites along the clear way -- the seat at one site, each creature at the
+# next site on, the next two seconds after a kill, for 150 s -- at the bar's levels, 17-20. The level dial is the combat
+# ladder's, per class and build: six levels under the seat at the first rung to even at the last, the dungeon's elites
+# (most of its trash) from rung 3. The map and the spawn places are memorised (dm1's survey; MemoriseSpawns), what stands
+# there now is line of sight in the view cone and memory; the seat's way to its fight is the route its own map plans
+# (a labels-only PointNav). A death rises at the entrance and walks back.
+#
+# Outcome (tier-scaled): Kill per creature, Survived with no death. Cost: Death, Hurt, the kill clock. Shaping (faded):
+# DamageDealt. Seeded from dm1_navigate by block name (the movement, the map, the sight list); the duel, pet and combat
+# blocks start fresh.
+extends: dm1_navigate.yaml
+run_name: dm2_fight
+
+total_env_steps: 300000000
+
+mappo:
+  # A 150 s episode whose kills come every 20-40 s.
+  gamma: 0.998
+
+# The potential on the route to the fight: the goal moves (the next creature, the creature itself), so it is not held
+# to a trip's route.
+potential:
+  episode_cap: false
+
+eval:
+  episodes: 240
+  report: [won, survived, kills, kill_seconds, hurt_share, deaths, rejoins, rejoin_seconds, difficulty, at_top_rung,
+           target_in_view, selected_share, pulls, caster_pulls, start_walk, died,
+           reward_kill, reward_survived, reward_hurt, reward_death, reward_step_cost, reward_damage_dealt,
+           reward_potential, reward_repeat, reward_effort, reward_jitter]
+
+status:
+  headline: [won, survived, kills, kill_seconds, hurt_share, deaths, rejoin_seconds, difficulty, at_top_rung,
+             target_in_view, selected_share, won_no_map, won_no_memory, won_no_object_memory]
+  targets:
+    arrived: null
+    spl: null
+    timed_out: null
+    died: null
+    won: ">= 0.9"
+    survived: ">= 0.9"
+    kills: ">= 3"
+    kill_seconds: "<= 25"
+    target_in_view: ">= 0.8"
+  excluded:
+    death_knight: "the Deadmines' band is 17-20 and a death knight starts at 55"
+
+convergence:
+  measure: won
+
+# The shaping fade (DamageDealt) on the evaluation's won rate, at once on its gate; the per-class combat ladder steps on
+# its own window (moving_classes).
+fade:
+  enabled: true
+  rungs: [1.0, 0.5, 0.25, 0.0]
+  gate_metric: won
+  gate_value: 0.7
+  gate_metrics: null
+  rung_metric: null
+  require_plateau: false
+  moving_classes: 1000
+
+costs:
+  enabled: false
+  gate_metric: won
+  gate_value: 0.7
+
+layout_sampling:
+  enabled: true
+  strength: 1.0
+  max_ratio: 4.0
+  metric: won
+  replay_fraction: 0.0

@@ -1,0 +1,32 @@
+# DM3 -- packs (dungeon-clear plan): the Deadmines' own packs of two to four, alone, at their spawn sites along the
+# clear way, the next pack at the site after (pulling it early is an extra pull): focus, interrupts, line of sight, one
+# pack at a time; `survive`'s packs can kill, pull after pull, with food and drink stocked (the gauntlet block's rest),
+# a death back at the entrance to walk back. Outcome: Clear per pack, InterruptLanded, Survived; Cost: ExtraPull, Hurt,
+# Death, Away. Seeded from dm2_fight; the gauntlet block starts fresh.
+extends: dm2_fight.yaml
+run_name: dm3_packs
+
+total_env_steps: 300000000
+
+mappo:
+  # A pack's fight and the pull that made it winnable take 30-60 s.
+  gamma: 0.999
+
+eval:
+  report: [won, survived, packs_cleared, extra_pulls, interrupts, hurt_share, deaths, rejoin_seconds, difficulty,
+           at_top_rung, target_in_view, selected_share, pulls, linked_pulls, caster_pulls, interrupt_earnings,
+           rest_seconds, food_used, drink_used, engage_health, engage_mana, died,
+           reward_clear, reward_survived, reward_interrupt_landed, reward_pull_extra, reward_hurt, reward_death,
+           reward_away, reward_step_cost, reward_damage_dealt, reward_potential, reward_repeat, reward_effort,
+           reward_jitter]
+
+status:
+  headline: [won, survived, packs_cleared, extra_pulls, interrupts, hurt_share, deaths, rejoin_seconds, rest_seconds,
+             difficulty, target_in_view]
+  targets:
+    kills: null
+    kill_seconds: null
+    won: ">= 0.85"
+    survived: ">= 0.85"
+    packs_cleared: ">= 3"
+    extra_pulls: "<= 0.1"

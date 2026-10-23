@@ -1,0 +1,60 @@
+# DM4 -- roles (dungeon-clear plan): a proper party of five on the Deadmines' own packs at their spawn sites, one role
+# drilled an episode (tank_hold, heal_keep, damage_discipline, pull) and **a leader of any role** (the user,
+# 2026-10-23: "a party leader that sets the pace of the dungeon but the tank will still do pulls"): drawn from the whole
+# party, the leader's way the route to the next pack, everyone else's the leader; a pull by anyone but the tank, or by
+# the tank where the leader has not taken the party, is out of turn (OutOfTurnPull, the puller's Cost); straying from
+# the leader while nothing fights costs by the second (LeaderAway). Measured per leader role (leader_role). Partners:
+# frozen checkpoints of this stage and of dm3 in some seats (never the drilled one), so a follower meets leaders that
+# do not play like itself. Seeded from dm3_packs; the party frames start fresh.
+extends: dm3_packs.yaml
+run_name: dm4_roles
+
+total_env_steps: 400000000
+
+eval:
+  episodes: 384
+  report: [won, won_hold, won_keep, won_focus, won_pull, drill_hold, drill_keep, drill_focus, drill_pull,
+           hold_share, kept_share, low_mana_seconds, focus_share, pulled_seconds, clean_share, packs_cleared,
+           clean_pulls, extra_pulls, pulls, party_deaths, wipes, rises, rejoins, rejoin_seconds, rejoined,
+           is_leader, leader_role, pulls_started, out_of_turn_pulls, kept_with_leader_share,
+           roles_rung, difficulty, at_top_rung, tank_hold_share, group_kept_share, tank_target_share, teammates_died,
+           died, reward_clear, reward_drill_hold, reward_drill_keep, reward_drill_focus, reward_pull_clean,
+           reward_pull_extra, reward_out_of_turn_pull, reward_leader_away, reward_survived, reward_death, reward_away,
+           reward_step_cost, reward_damage_dealt, reward_teammate_death, reward_potential, reward_repeat,
+           reward_effort, reward_jitter]
+  arms:
+    with_partners: 64
+
+status:
+  headline: [won, won_hold, won_keep, won_focus, won_pull, hold_share, kept_share, focus_share, clean_share,
+             out_of_turn_pulls, kept_with_leader_share, extra_pulls, party_deaths, wipes, rejoined, roles_rung]
+  targets:
+    survived: null
+    packs_cleared: null
+    hurt_share: null
+    target_in_view: null
+    won: ">= 0.7"
+    hold_share: ">= 0.8"
+    kept_share: ">= 0.8"
+    clean_share: ">= 0.9"
+    out_of_turn_pulls: "<= 0.05"
+    kept_with_leader_share: ">= 0.9"
+    wipes: "<= 0.05"
+
+fade:
+  gate_value: 0.6
+
+costs:
+  gate_value: 0.6
+
+cast:
+  partners:
+    stages: [dm3_packs]
+    snapshot_every_env_steps: 20000000
+    newest_share: 0.3
+    share: 0.3
+    max_partners: 2
+    pool_size: 6
+    keep_newest: 2
+    score: won
+    eval_partners: [dm3_packs]

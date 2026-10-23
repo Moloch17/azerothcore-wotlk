@@ -1,0 +1,40 @@
+# DM6 -- the full clear (dungeon-clear plan): the Deadmines from the entrance to VanCleef at 17-20, every pull and side
+# boss, the doors by their bosses and the Iron Clad Door by the cannon and the gunpowder carried from the door; the wing
+# ladder's level lift and spare wipes stepping down to none. **The bar: 70% or more of the evaluation's runs cleared
+# with at most one wipe** (bar_clear), read per leader role (leader_role). Seeded from dm5_wings.
+extends: dm5_wings.yaml
+run_name: dm6_clear
+
+total_env_steps: 2000000000
+
+status:
+  headline: [bar_clear, cleared, full_clear, wing_wipes, boss_rhahkzor, boss_sneed, boss_gilnid, boss_smite,
+             boss_greenskin, boss_cookie, boss_vancleef, out_of_turn_pulls, kept_with_leader_share, deaths_tank,
+             deaths_healer, deaths_damage, wing_rung]
+  targets:
+    wing_cleared_share: null
+    bar_clear: ">= 0.7"
+    cleared: ">= 0.7"
+    full_clear: ">= 0.7"
+    wing_wipes: "<= 1"
+    boss_vancleef: ">= 0.7"
+
+convergence:
+  measure: bar_clear
+
+fade:
+  gate_metric: bar_clear
+  gate_value: 0.5
+
+costs:
+  gate_metric: bar_clear
+  gate_value: 0.5
+
+layout_sampling:
+  metric: bar_clear
+
+cast:
+  partners:
+    stages: [dm5_wings]
+    score: bar_clear
+    eval_partners: [dm5_wings]
