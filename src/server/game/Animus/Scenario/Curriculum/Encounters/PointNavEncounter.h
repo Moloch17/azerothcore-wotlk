@@ -338,6 +338,8 @@ namespace Animus::Curriculum
             /// look; whether one has opened (door_opened) and when; summons swept from the doors till SweepUntilMs.
             std::vector<ObjectGuid> ShutDoors;
             std::vector<uint8> ShutOpen;
+            std::vector<uint8> ShutPaid;    // each shut door's first opening paid (DoorOpened, once a door)
+            uint32 DoorsOpened = 0;
             bool DoorOpened = false;
             uint32 DoorOpenedMs = 0;
             uint32 SweepUntilMs = 0;

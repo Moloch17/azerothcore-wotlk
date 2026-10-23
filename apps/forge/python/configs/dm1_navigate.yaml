@@ -120,7 +120,7 @@ eval:
     no_object_memory: 64
     no_global: 64
   report: [arrived, spl, checkpoints_reached, checkpoints_total, time_ratio, arrived_base_limit, time_limit_seconds,
-           door_opened, door_opened_seconds,
+           door_opened, doors_opened, door_opened_seconds,
            route_switches, route_source_global_share, global_replans, global_replans_contradiction, optimal_yards,
            straight_yards, detour_factor, travelled_yards, stop_error_yards, falls, fall_damage_share, drowned, died,
            timed_out, stuck_seconds, wall_seconds, lost_seconds, jumps, swim_seconds, nav_rung, replayed,

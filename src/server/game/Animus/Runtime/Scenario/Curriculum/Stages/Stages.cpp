@@ -89,7 +89,9 @@ namespace
         arena.RunFromEntrance = true;
         arena.LiveObjects = true;
         arena.LiveOpen = { 13965, 16400, 16399 };   // the Factory, Mast Room and Foundry doors
-        arena.LiveShut = { 16397 };                 // the Iron Clad Door
+        // The Iron Clad Door (the cannon's), and the Heavy Doors (a plain click opens them: lock 86, quick open) --
+        // the clear way runs through the first between its sites 8 and 9 (2026-10-23: every trip stopped there).
+        arena.LiveShut = { 16397, 17153, 17154 };
         arena.LiveItems = { 5397 };                 // the Defias Gunpowder
         return arena;
     }
@@ -116,7 +118,7 @@ namespace
         arena.Weight = weight;
         arena.EpisodeSeconds = seconds;
         arena.DungeonCreatures = true;
-        arena.LiveOpen = { 13965, 16400, 16399, 16397 };
+        arena.LiveOpen = { 13965, 16400, 16399, 16397, 17153, 17154 };
         arena.LiveShut = {};
         return arena;
     }

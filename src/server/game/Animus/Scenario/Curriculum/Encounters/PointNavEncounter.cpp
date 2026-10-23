@@ -206,6 +206,7 @@ void Animus::Curriculum::PointNavEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     add("checkpoints_total", [nav](Env const& env, uint32) { return float(nav(env).CheckpointsTotal); });
     // A live arena's shut door (ArenaDefinition::LiveShut): opened this episode, and when.
     add("door_opened", [nav](Env const& env, uint32) { return nav(env).DoorOpened ? 1.0f : 0.0f; });
+    add("doors_opened", [nav](Env const& env, uint32) { return float(nav(env).DoorsOpened); });
     add("door_opened_seconds", [nav](Env const& env, uint32)
     {
         return nav(env).DoorOpened ? float(nav(env).DoorOpenedMs) / 1000.0f : 0.0f;
@@ -1822,6 +1823,8 @@ void Animus::Curriculum::PointNavEncounter::ResetLive(Env& env, Map* map, Player
     // the doors a dead boss would have opened, open.
     nav.ShutDoors.clear();
     nav.ShutOpen.clear();
+    nav.ShutPaid.clear();
+    nav.DoorsOpened = 0;
     for (auto const& [spawnId, object] : map->GetGameObjectBySpawnIdStore())
     {
         if (!object || !object->IsInWorld())
@@ -1836,6 +1839,7 @@ void Animus::Curriculum::PointNavEncounter::ResetLive(Env& env, Map* map, Player
         {
             nav.ShutDoors.push_back(object->GetGUID());
             nav.ShutOpen.push_back(0);
+            nav.ShutPaid.push_back(0);
         }
     }
     // The key items, one each for every seat, whatever the episode before left.
@@ -1858,11 +1862,17 @@ void Animus::Curriculum::PointNavEncounter::WatchLive(Env& env, Map* map, EnvNav
     {
         GameObject* door = map->GetGameObject(nav.ShutDoors[i]);
         bool const open = door && door->GetGoState() != GO_STATE_READY;
-        if (open && !nav.ShutOpen[i] && !nav.DoorOpened)
+        if (open && !nav.ShutOpen[i] && !nav.ShutPaid[i])
         {
-            // The first opening this episode: the seat's own doing (the instance is empty), paid once.
-            nav.DoorOpened = true;
-            nav.DoorOpenedMs = env.EpisodeElapsedMs;
+            // A shut door's first opening this episode: the seat's own doing (the instance is empty), paid once a
+            // door (the Heavy Doors on the clear way and the Iron Clad Door each); door_opened the first of them.
+            nav.ShutPaid[i] = 1;
+            ++nav.DoorsOpened;
+            if (!nav.DoorOpened)
+            {
+                nav.DoorOpened = true;
+                nav.DoorOpenedMs = env.EpisodeElapsedMs;
+            }
             nav.SweepUntilMs = env.EpisodeElapsedMs + RUN_SWEEP_MS;
             ledger.Add(RewardTerm::DoorOpened, _scenario.Tuning().Interact.DoorOpened);
         }
