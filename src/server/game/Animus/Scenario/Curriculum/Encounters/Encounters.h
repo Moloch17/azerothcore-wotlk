@@ -182,6 +182,10 @@ namespace Animus::Curriculum
         void UpdateEnemies(Env& env) override;
         void Update(Env& env) override;
         void View(Env const& env, uint32 seat, SeatView& view) const override;
+        /// Where the party goes next (a run with the clear way, ArenaDefinition::RunClear): the first site of it on
+        /// from the run's start with a living creature of the dungeon, at that creature; past the last, the clear
+        /// way's end. The leader's (the others' is the leader, PartyEncounter's, asked first).
+        [[nodiscard]] bool RouteGoal(Env const& env, uint32 seat, Position& goal) const override;
         void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
         void WriteState(Env const& env, float* state) const override;
         [[nodiscard]] bool IsTerminal(Env const& env) const override;
@@ -297,7 +301,23 @@ namespace Animus::Curriculum
             /// BossDead.
             std::vector<uint32> BossesKilled;
             std::array<SeatInstance, MAX_SEATS> Seats;
+            /// The clear way (a RunClear arena's, PointNav's): the checkpoint the run started at (WingReverse: the
+            /// rung's, everything spawned before it killed first, and how many that was), and the next one with a
+            /// living creature, the party's goal (GoalAt) while HasGoal.
+            PointNavEncounter::ClearWay const* Way = nullptr;
+            int32 StartSite = 0;
+            uint32 Killed = 0;
+            int32 GoalSite = 0;
+            bool HasGoal = false;
+            Position GoalAt;
         };
+
+        /// A backwards wing run's start (ArenaDefinition::WingReverse): the rung's checkpoint of the clear way,
+        /// everything the dungeon spawns before it killed (its bosses' scripts open their doors), the arena's shut
+        /// doors opened when the start is past the gate, and the party stood at the last site before it.
+        void StartReverse(Env& env, EnvInstance& fight, Map* map, Player* seat);
+        /// The party's goal on (GoalSite, GoalAt): the first checkpoint from GoalSite with a living creature.
+        void AdvanceGoal(Env& env, EnvInstance& fight, Map* map, Player const* seat);
 
         /// A creature a full clear kills: alive, hostile to the party, not a critter, a
         /// civilian, a totem, a pet or a summon, and attackable.

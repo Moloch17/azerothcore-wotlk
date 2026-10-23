@@ -750,7 +750,7 @@ Animus::Vision::TravGrid const* Animus::Curriculum::PointNavEncounter::EnsureGri
     Vision::TravBakeRequest request;
     request.World = map;
     request.PhaseMask = bot ? bot->GetPhaseMask() : 1;
-    request.Arena = arena.Name;
+    request.Arena = arena.BakeKey();
     request.HasBox = arena.HasBox;
     request.Box = { arena.BoxMinX, arena.BoxMinY, arena.BoxMaxX, arena.BoxMaxY };
     // The flood starts at the dungeon's door: where the entrance's trigger puts a player; a tower's at its place.
@@ -2081,8 +2081,10 @@ bool Animus::Curriculum::PointNavEncounter::Build(Env& env, Map* map, uint8 /*le
     nav.Rung = std::min<uint32>(SightDraw::Rung(_scenario.ShapingScale()), RUNGS - 1);
     // The dungeon's own doors and levers out of the way: the bake knows the static walls alone. A live arena keeps
     // them and puts them back as a fresh instance has them (ResetLive), its shut doors the seat's to open.
+    // A labeller beside a real dungeon run (an instance arena, dm5 and dm6) leaves the dungeon as it is: its doors and
+    // levers are the run's, its boss scripts' to open.
     ArenaDefinition const& arena = _scenario.Arena(env);
-    if (!arena.LiveObjects)
+    if (!arena.LiveObjects && arena.Against != Opposition::Instance)
         ObjectPool::ClearOwn(map);
     nav.Grid = EnsureGrid(env, map, bot);
     if (!nav.Grid)

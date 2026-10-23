@@ -4330,7 +4330,7 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
         seat.Map.Configure(Vision::MapCurrent().Caps);
         Vision::SharedMemory* memory = memories.Get(bot->GetMapId(), now);
         if (!_stage.Camera)
-            KnownMap(bot, Arena(env).Name, *memory, now);
+            KnownMap(bot, Arena(env).BakeKey(), *memory, now);
         if (seat.MapShared)
             memory->Adopt(seat.Map, now);
         else

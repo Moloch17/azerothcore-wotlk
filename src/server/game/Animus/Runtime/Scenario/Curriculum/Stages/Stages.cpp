@@ -91,6 +91,76 @@ namespace
         return arena;
     }
 
+    /// **The Deadmines with its creatures** (dm2-dm6, 2026-10-23): what every later dm arena shares with dm1's -- the
+    /// one bake (`deadmines`), the exit and the Iron Clad Door's gate, the clear way through every spawn site -- and a
+    /// labels-only PointNav beside the fight (Encounter::RouteGoal: the seat's way to its next fight, or to its
+    /// leader, on its own map; the learner's potential on it). `name` the arena's own; its encounter the caller's.
+    ArenaDefinition DeadminesGround(std::string name)
+    {
+        ArenaDefinition arena = DeadminesRun();
+        arena.Name = std::move(name);
+        arena.BakeName = "deadmines";
+        arena.LabelsOnly = true;
+        arena.LiveItems = {};
+        return arena;
+    }
+
+    /// The fights on the dungeon's own creatures (dm2-dm4): the dungeon cleared and its doors all open (the Iron Clad
+    /// Door with them: the cannon is dm1's lesson and dm5's), the pulls of its own trash at its own spawn sites.
+    ArenaDefinition DeadminesFight(std::string name, uint32 weight, uint32 seconds)
+    {
+        ArenaDefinition arena = DeadminesGround(std::move(name));
+        arena.Weight = weight;
+        arena.EpisodeSeconds = seconds;
+        arena.DungeonCreatures = true;
+        arena.LiveOpen = { 13965, 16400, 16399, 16397 };
+        arena.LiveShut = {};
+        return arena;
+    }
+
+    ArenaDefinition DeadminesCombat(std::string name, uint32 weight, uint32 seconds, CombatDrill drill)
+    {
+        ArenaDefinition arena = DeadminesFight(std::move(name), weight, seconds);
+        arena.Against = Opposition::Combat;
+        arena.Combat = drill;
+        return arena;
+    }
+
+    ArenaDefinition DeadminesRoles(std::string name, uint32 seconds, RolesDrill drill)
+    {
+        ArenaDefinition arena = DeadminesFight(std::move(name), 1, seconds);
+        arena.Seats = SeatPlan::Party;
+        arena.Against = Opposition::Roles;
+        arena.PartyGroup = true;
+        arena.ProperParty = true;
+        arena.Roles = drill;
+        arena.DrillRole = DrilledRole(drill);
+        arena.StandInShare = 0;
+        return arena;
+    }
+
+    /// The whole Deadmines, live (dm5, dm6): a fresh instance every run, its trash and bosses where the world
+    /// database stands them, its doors its bosses' scripts' and the Iron Clad Door the cannon's; the party at the
+    /// bar's levels (17-20). No stand-in (the user, 2026-10-07).
+    ArenaDefinition DeadminesWing(uint32 seconds, bool reverse)
+    {
+        ArenaDefinition arena = DeadminesGround("deadmines");
+        arena.Seats = SeatPlan::Party;
+        arena.Against = Opposition::Instance;
+        arena.PartyGroup = true;
+        arena.Instance = InstanceLadder::Wing;
+        arena.InstanceRow = 1;
+        arena.EpisodeSeconds = seconds;
+        arena.StandInShare = 0;
+        arena.LevelFirst = 17;
+        arena.LevelLast = 20;
+        arena.LiveObjects = false;
+        arena.LiveOpen = {};
+        arena.WingReverse = reverse;
+        arena.RespawnAtEntrance = false;
+        return arena;
+    }
+
     std::vector<StageDefinition> Definitions()
     {
         using enum BlockId;
@@ -119,6 +189,143 @@ namespace
             .NoSpells = true,
             .Camera = false,
             .PairKind = 6,
+        });
+
+        // **Combat, then the dungeon** (the user, 2026-10-23; .agents/plans/dungeon-clear/): every stage in the
+        // Deadmines, each seeding the next, the map memorised and its spawns too (MemoriseSpawns: a player who has run
+        // it knows where its packs stand; what stands there now is sight's). Every seat goes by the route its own map
+        // plans to its goal (a labels-only PointNav: the fight it is going to, the next site of the clear way, or its
+        // leader), as dm1 went to the exit. The level band is the bar's, 17-20.
+        //
+        // DM2 -- fight: one Deadmines creature at a time, alone, on the clear way -- the seat at one of its sites, each
+        // creature at the next site on, the next two seconds after a kill; the level dial (Combat.LevelBase, the
+        // combat ladder per class and build) from six levels under the seat to even, its elites (most of the
+        // dungeon's trash) from rung 3. A death rises at the entrance and walks back.
+        stages.push_back({
+            .Name = "dm2_fight",
+            .Suffix = "_fight",
+            .Extends = "dm1_navigate",
+            .Summary = "the Deadmines' own creatures one at a time, alone, at their spawn sites along the clear way: "
+                "the level advantage fading to even, elites from the middle rung",
+            .Blocks = { Core, Move, Duel, Pet, Vision, Map, MemoryEntities, Sight, Combat, Goal },
+            .Arenas = { DeadminesCombat("deadmines", 1, 150, CombatDrill::Fight) },
+            .MapId = MAP_DEADMINES,
+            .SpawnPoints = { Position(-16.4f, -383.07f, 61.78f, 1.86f) },
+            .FocusLevelFirst = 17,
+            .FocusLevelLast = 20,
+            .FocusChance = 100,
+            .MapTiers = 2,
+            .SharedMemoryShare = 1.0f,
+            .NoBackpedal = true,
+            .Camera = false,
+            .MemoriseSpawns = true,
+        });
+
+        // DM3 -- packs: the dungeon's own packs of two to four, alone, at the sites on, the next standing at the site
+        // after (pulling it early is an extra pull); `survive` packs that can kill, pull after pull, with food and
+        // drink stocked (the gauntlet block: rest between pulls), a death back at the entrance to walk back.
+        stages.push_back({
+            .Name = "dm3_packs",
+            .Suffix = "_packs",
+            .Extends = "dm2_fight",
+            .Summary = "the Deadmines' own packs, alone: one pack at a time at their spawn sites, casters to interrupt, "
+                "packs that can kill with rest between them",
+            .Blocks = { Core, Move, Duel, Pet, Gauntlet, Vision, Map, MemoryEntities, Sight, Combat, Goal },
+            .Arenas = {
+                DeadminesCombat("packs", 2, 240, CombatDrill::Packs),
+                DeadminesCombat("survive", 1, 360, CombatDrill::Survive),
+            },
+            .MapId = MAP_DEADMINES,
+            .SpawnPoints = { Position(-16.4f, -383.07f, 61.78f, 1.86f) },
+            .FocusLevelFirst = 17,
+            .FocusLevelLast = 20,
+            .FocusChance = 100,
+            .MapTiers = 2,
+            .SharedMemoryShare = 1.0f,
+            .NoBackpedal = true,
+            .Camera = false,
+            .MemoriseSpawns = true,
+        });
+
+        // DM4 -- roles: a proper party of five (always five) on the dungeon's own packs at their sites, one role
+        // drilled an episode (the tank holds every enemy, the healer keeps everyone up within its mana, a damage
+        // dealer kills the tank's target without pulling it, the tank pulls one pack at a time), and **a leader of
+        // any role** (LeaderAnyRole, the user, 2026-10-23): drawn from the whole party, its way the route to the next
+        // pack, the others' the leader; the tank still pulls -- a pull by anyone else, or by the tank where the leader
+        // has not taken the party, is out of turn (Party.OutOfTurnPull); straying from the leader while nothing fights
+        // costs by the second (Party.LeaderAway).
+        stages.push_back({
+            .Name = "dm4_roles",
+            .Suffix = "_roles",
+            .Extends = "dm3_packs",
+            .Summary = "a party of five on the Deadmines' own packs drilling one role an episode, led by a leader of "
+                "any role, the tank pulling where the leader takes the party",
+            .Blocks = { Core, Move, Duel, Pet, Gauntlet, Vision, Map, MemoryEntities, Sight, PartyFrames, Combat,
+                Goal },
+            .Arenas = {
+                DeadminesRoles("tank_hold", 240, RolesDrill::Hold),
+                DeadminesRoles("heal_keep", 300, RolesDrill::Keep),
+                DeadminesRoles("damage_discipline", 240, RolesDrill::Focus),
+                DeadminesRoles("pull", 360, RolesDrill::Pull),
+            },
+            .MapId = MAP_DEADMINES,
+            .SpawnPoints = { Position(-16.4f, -383.07f, 61.78f, 1.86f) },
+            .FocusLevelFirst = 17,
+            .FocusLevelLast = 20,
+            .FocusChance = 100,
+            .MapTiers = 2,
+            .SharedMemoryShare = 1.0f,
+            .NoBackpedal = true,
+            .Camera = false,
+            .MemoriseSpawns = true,
+            .LeaderAnyRole = true,
+        });
+
+        // DM5 -- wings: the live Deadmines run backwards (WingReverse): the wing ladder's first rung starts the party
+        // at the last ninth of the clear way, before VanCleef, each rung a ninth earlier, the last the entrance;
+        // everything spawned before the start killed (its bosses' doors open as their deaths open them), the Iron
+        // Clad Door open once the start is past it. No level lift: the bar's 17-20. The leader's way the next site
+        // with a living creature on it. Deaths rise at the entrance and walk back; the wipes the rung spares.
+        stages.push_back({
+            .Name = "dm5_wings",
+            .Suffix = "_wings",
+            .Extends = "dm4_roles",
+            .Summary = "the live Deadmines backwards: the party starts before VanCleef, then a wing earlier each rung, "
+                "to the entrance; leader and tank rules on",
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Vision, Map, MemoryEntities, Sight, PartyFrames,
+                Combat, Goal },
+            .Arenas = { DeadminesWing(7200, true) },
+            .MapId = MAP_DEADMINES,
+            .SpawnPoints = { Position(-16.4f, -383.07f, 61.78f, 1.86f) },
+            .MapTiers = 2,
+            .SharedMemoryShare = 1.0f,
+            .NoBackpedal = true,
+            .Camera = false,
+            .MemoriseSpawns = true,
+            .LeaderAnyRole = true,
+        });
+
+        // DM6 -- the full clear: the entrance to VanCleef at 17-20, every pull and side boss, the doors by their
+        // bosses and the Iron Clad Door by the cannon and the gunpowder carried from the door; the wing ladder's level
+        // lift and spare wipes stepping down to none. **The bar: 70% or more of the evaluation's runs cleared with at
+        // most one wipe**, measured per leader role (leader_role).
+        stages.push_back({
+            .Name = "dm6_clear",
+            .Suffix = "_clear",
+            .Extends = "dm5_wings",
+            .Summary = "the Deadmines from the door to VanCleef at 17-20, a full clear; the bar is 70% clears with at "
+                "most one wipe, for every leader role",
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Vision, Map, MemoryEntities, Sight, PartyFrames,
+                Combat, Goal },
+            .Arenas = { DeadminesWing(14400, false) },
+            .MapId = MAP_DEADMINES,
+            .SpawnPoints = { Position(-16.4f, -383.07f, 61.78f, 1.86f) },
+            .MapTiers = 2,
+            .SharedMemoryShare = 1.0f,
+            .NoBackpedal = true,
+            .Camera = false,
+            .MemoriseSpawns = true,
+            .LeaderAnyRole = true,
         });
 
         return stages;
@@ -254,8 +461,9 @@ namespace
         // their keys and doors are pressed through the sight block.
         if (pointNav && stage.PairKind == 6 && (!arena.HasRunGoal || arena.RunGoalRadius <= 0.0f))
             return "a dungeon run (PairKind 6) names its goal and the goal's radius";
-        if (arena.LiveObjects && (!pointNav || stage.PairKind != 6 || !stage.Has(BlockId::Sight)))
-            return "live objects are a dungeon run's (PairKind 6), opened through the sight block";
+        if (arena.LiveObjects && (!((pointNav && stage.PairKind == 6) || arena.LabelsOnly)
+            || !stage.Has(BlockId::Sight)))
+            return "live objects are a dungeon run's (PairKind 6) or a labelled fight's, opened through the sight block";
         // A bake box is the bake's, and a labels-only arena's PointNav (nav6's labeller) bakes the dungeon too.
         if ((arena.SightOnly || arena.Revisit) && !pointNav)
             return "a sight-only draw and a revisit price are a nav arena's";
@@ -266,8 +474,20 @@ namespace
         // PointNav as a labeller beside the party follow (nav6): the leader's believed position is the point the
         // map block's route is planned to, so the two-tier map is needed as in a nav arena, and nothing else of
         // PointNav's.
-        if (arena.LabelsOnly && (!partyFollow || !stage.Has(BlockId::Map) || stage.MapTiers != 2))
-            return "labels-only PointNav rides on a party follow, with both tiers of the mental map";
+        // ... and beside the dm stages' fights (2026-10-23): the goal the encounters name (Encounter::RouteGoal).
+        bool const labelled = partyFollow || arena.Against == Opposition::Combat
+            || arena.Against == Opposition::Roles || instance;
+        if (arena.LabelsOnly && (!labelled || !arena.OwnMap() || !stage.Has(BlockId::Map) || stage.MapTiers != 2))
+            return "labels-only PointNav rides on a party follow, a fight or a dungeon run on a dungeon's own map, with "
+                "both tiers of the mental map";
+        // The clear way is the bake's and PointNav's: a nav arena's or a labelled one's, with its goal at the end.
+        if (arena.RunClear && (!(pointNav || arena.LabelsOnly) || !arena.HasRunGoal))
+            return "the clear way is a nav arena's or a labelled arena's, and ends at its run goal";
+        // The dungeon's own creatures stand at the clear way's sites; a backwards wing run starts along it.
+        if (arena.DungeonCreatures && (!(arena.Against == Opposition::Combat || roles) || !arena.RunClear))
+            return "the dungeon's own creatures are a combat or roles arena's, at the clear way's sites";
+        if (arena.WingReverse && (arena.Instance != InstanceLadder::Wing || !arena.RunClear))
+            return "a backwards wing run is a whole wing's, along the clear way";
 
         // The combat stages: one seat on a dungeon's own ground, seeing what it fights (the sight block and the combat
         // block's columns on it) and coming back at the entrance after a death.
@@ -405,6 +625,13 @@ namespace
         });
         if (fights && !stage.Has(BlockId::Duel))
             return "a stage that fights something needs the duel block";
+
+        // The spawns are seeded into the object memory at the seat's first look from the shared memory.
+        if (stage.MemoriseSpawns && (!stage.Has(BlockId::MemoryEntities) || stage.SharedMemoryShare <= 0.0f))
+            return "memorised spawns are seeded into the object memory: the memory entities block and a shared memory";
+        // A leader of any role leads a party group.
+        if (stage.LeaderAnyRole && !stage.AnyArena([](ArenaDefinition const& arena) { return arena.PartyGroup; }))
+            return "a leader of any role leads a party group";
 
         if (stage.Arenas.empty() || stage.Arenas.size() > MAX_ARENAS)
             return "it needs 1 to " + std::to_string(MAX_ARENAS) + " arenas";

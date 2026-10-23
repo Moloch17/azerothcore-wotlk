@@ -311,6 +311,10 @@ namespace Animus::Curriculum
         /// and everything spawned before its start site killed first (its bosses' doors opened as their deaths open
         /// them); the levels are the arena's band with no lift.
         bool WingReverse = false;
+        /// The traversability bake (and the memorised map surveyed from it) this arena shares, by name: empty for its
+        /// own name. The dm stages' arenas all stand on the Deadmines' one bake, `deadmines` (36-deadmines.trav).
+        std::string BakeName;
+        [[nodiscard]] std::string const& BakeKey() const { return BakeName.empty() ? Name : BakeName; }
 
         /// Whether the arena names its own map: MapId 0 is "the stage's" -- except for a tower, whose 0 is the Eastern
         /// Kingdoms.
