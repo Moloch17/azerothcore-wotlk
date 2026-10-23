@@ -1404,7 +1404,7 @@ Animus::Curriculum::PointNavEncounter::ClearWay const& Animus::Curriculum::Point
         Site* joined = nullptr;
         for (Site& site : sites)
             if (std::hypot(site.X - at.GetPositionX(), site.Y - at.GetPositionY()) <= arena.RunSiteYards
-                && std::fabs(site.Z - at.GetPositionZ()) <= arena.RunSiteYards)
+                && std::fabs(site.Z - at.GetPositionZ()) <= RUN_SITE_RISE)
             {
                 joined = &site;
                 break;
@@ -1530,6 +1530,19 @@ Animus::Curriculum::PointNavEncounter::ClearWay const& Animus::Curriculum::Point
             if (way.Points[k].GetExactDist(&arena.RunGate) < 0.5f)
                 way.Gate = uint32(k);
     float const total = way.After.empty() ? 0.0f : way.After.front();
+    // The way beside the bake, for reading it off-line: <trav>/<map>-<arena>.<stage>.clearway.csv.
+    {
+        std::filesystem::path const path = std::filesystem::path(_scenario.DataDir()) / "trav"
+            / Acore::StringFormat("{}.{}.clearway.csv", grid.Name, _scenario.Name());
+        std::ofstream out(path);
+        if (out)
+        {
+            out << "index,x,y,z,leg,after\n";
+            for (std::size_t k = 0; k < way.Points.size(); ++k)
+                out << k << ',' << way.Points[k].GetPositionX() << ',' << way.Points[k].GetPositionY() << ','
+                    << way.Points[k].GetPositionZ() << ',' << way.Leg[k] << ',' << way.After[k] << '\n';
+        }
+    }
     LOG_INFO("module.animus", "{}: arena {} clear way: {} checkpoints from {} spawns in {} sites ({} left out), "
         "{:.0f} yd from the first, the gate at #{}", _scenario.Name(), arena.Name, way.Points.size(), spawns.size(),
         sites.size(), unreachable, total, way.Gate == UINT32_MAX ? -1 : int32(way.Gate));
@@ -2348,7 +2361,7 @@ void Animus::Curriculum::PointNavEncounter::Reward(Env& env, uint32 seatIndex, P
         {
             Position const& at = way.Points[nav.Checkpoint];
             if (std::hypot(bodyX - at.GetPositionX(), bodyY - at.GetPositionY()) <= arena.RunCheckpointYards
-                && std::fabs(bodyZ - at.GetPositionZ()) <= arena.RunCheckpointYards)
+                && std::fabs(bodyZ - at.GetPositionZ()) <= RUN_SITE_RISE)
             {
                 ++nav.Checkpoint;
                 ++nav.CheckpointsReached;

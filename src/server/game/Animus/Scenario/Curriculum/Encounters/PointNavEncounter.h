@@ -83,6 +83,8 @@ namespace Animus::Curriculum
         static constexpr float RUN_NEAR = 120.0f;
         /// A clear way's rung 0: its starts within this many checkpoints of the goal.
         static constexpr uint32 RUN_NEAR_SITES = 4;
+        /// A clear way's sites: spawns further apart in height than this are on different floors (another site).
+        static constexpr float RUN_SITE_RISE = 8.0f;
         static constexpr float RUN_GATE_BAND = 60.0f;
         static constexpr uint32 RUN_SWEEP_MS = 15000;
         static constexpr float RUN_SWEEP_YARDS = 150.0f;
