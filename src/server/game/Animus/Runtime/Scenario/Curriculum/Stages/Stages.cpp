@@ -84,6 +84,9 @@ namespace
         // The way a full clear walks (the user, 2026-10-23: the shortest way to the exit skipped the ship): every
         // site the dungeon's creatures spawn at, in order, then the exit.
         arena.RunClear = true;
+        // Every trip the whole way, from the entrance, node to node; the Iron Clad Door left to the seat's own
+        // gunpowder and cannon (the user, 2026-10-23).
+        arena.RunFromEntrance = true;
         arena.LiveObjects = true;
         arena.LiveOpen = { 13965, 16400, 16399 };   // the Factory, Mast Room and Foundry doors
         arena.LiveShut = { 16397 };                 // the Iron Clad Door

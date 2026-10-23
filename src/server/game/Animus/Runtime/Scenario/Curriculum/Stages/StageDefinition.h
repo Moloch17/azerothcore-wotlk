@@ -292,6 +292,9 @@ namespace Animus::Curriculum
         bool RunClear = false;
         float RunSiteYards = 30.0f;     // across; RUN_SITE_RISE apart in height is another floor's site
         float RunCheckpointYards = 15.0f;
+        /// Every trip from the dungeon's entrance through the whole clear way (the user, 2026-10-23: "have the runs
+        /// start at the instance entrance and go through the entire thing node to node"): no reverse-curriculum rungs.
+        bool RunFromEntrance = false;
         /// **The dungeon's own objects live** (dm1): PointNav does not clear them (ObjectPool::ClearOwn); every reset
         /// puts its doors, buttons and levers back as a fresh instance has them, opens LiveOpen's doors (those a
         /// dead boss opens: the dungeon is empty), keeps LiveShut's shut, and puts LiveItems in the bags (the Defias

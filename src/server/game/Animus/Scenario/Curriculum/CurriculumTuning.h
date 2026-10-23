@@ -511,6 +511,8 @@ namespace Animus::Curriculum
             /// dying never saves what running the clock out would cost; Drowned is not paid on top. Off, the seat
             /// rises at the start and the trip goes on (the nav stages').
             bool DeathEnds = true;
+            /// Each checkpoint of the clear way reached in its order (ArenaDefinition::RunClear): Outcome.
+            float Checkpoint = 0.5f;
             float Lost = 0.02f;
             float LostYards = 40.0f;
             float Revisit = 0.002f;
@@ -1440,6 +1442,7 @@ namespace Animus::Curriculum
             f("PointNav.FallHurt", tuning.PointNav.FallHurt);
             f("PointNav.Drowned", tuning.PointNav.Drowned);
             f("PointNav.DeathEnds", tuning.PointNav.DeathEnds);
+            f("PointNav.Checkpoint", tuning.PointNav.Checkpoint);
             f("PointNav.Lost", tuning.PointNav.Lost);
             f("PointNav.LostYards", tuning.PointNav.LostYards);
             f("PointNav.Revisit", tuning.PointNav.Revisit);

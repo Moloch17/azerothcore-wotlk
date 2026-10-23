@@ -125,7 +125,7 @@ eval:
            straight_yards, detour_factor, travelled_yards, stop_error_yards, falls, fall_damage_share, drowned, died,
            timed_out, stuck_seconds, wall_seconds, lost_seconds, jumps, swim_seconds, nav_rung, replayed,
            waypoint_regret_yards, waypoints_chosen, at_top_rung, difficulty, course_kinks, control_changes_per_minute,
-           reward_arrive, reward_door_opened, reward_step_cost, reward_stuck, reward_wall, reward_fall_hurt,
+           reward_arrive, reward_checkpoint, reward_door_opened, reward_step_cost, reward_stuck, reward_wall, reward_fall_hurt,
            reward_death, reward_drowned, reward_lost, reward_potential, reward_jitter, reward_effort, reward_repeat,
            goals_cell_chosen, goals_cell_reached, goals_cell_lost, goals_cell_invalid, cell_goal_seconds,
            reward_cell_goal, reward_cell_lost]

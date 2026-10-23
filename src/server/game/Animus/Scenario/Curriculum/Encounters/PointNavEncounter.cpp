@@ -87,9 +87,9 @@ Animus::Curriculum::PointNavEncounter::PointNavEncounter(StageScenario& scenario
 
 std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::PointNavEncounter::RewardTerms() const
 {
-    return { RewardTerm::Arrive, RewardTerm::StepCost, RewardTerm::Death, RewardTerm::FallHurt, RewardTerm::Drowned,
-        RewardTerm::Lost, RewardTerm::Revisit, RewardTerm::Stuck, RewardTerm::Wall, RewardTerm::Turning,
-        RewardTerm::Explore, RewardTerm::DoorOpened };
+    return { RewardTerm::Arrive, RewardTerm::Checkpoint, RewardTerm::StepCost, RewardTerm::Death,
+        RewardTerm::FallHurt, RewardTerm::Drowned, RewardTerm::Lost, RewardTerm::Revisit, RewardTerm::Stuck,
+        RewardTerm::Wall, RewardTerm::Turning, RewardTerm::Explore, RewardTerm::DoorOpened };
 }
 
 std::vector<float> Animus::Curriculum::PointNavEncounter::ParseList(std::string const& list)
@@ -1717,7 +1717,7 @@ bool Animus::Curriculum::PointNavEncounter::DrawRun(Env& env, Player* bot, EnvNa
         uint32 const rung = std::min<uint32>(nav.Rung, RUNGS - 1);
         uint32 checkpoint = 0;
         uint32 start = Vision::TRAV_NO_CELL;
-        if (rung + 1 >= RUNGS)
+        if (rung + 1 >= RUNGS || arena.RunFromEntrance)
         {
             if (AreaTriggerTeleport const* entrance = sObjectMgr->GetMapEntranceTrigger(arena.MapId))
                 start = grid.NodeOf(entrance->target_X, entrance->target_Y, entrance->target_Z);
@@ -2540,6 +2540,7 @@ void Animus::Curriculum::PointNavEncounter::Reward(Env& env, uint32 seatIndex, P
             {
                 ++nav.Checkpoint;
                 ++nav.CheckpointsReached;
+                ledger.Add(RewardTerm::Checkpoint, tuning.Checkpoint);
                 nav.RemainingAfter = way.After[nav.Checkpoint];
                 nav.GoalCell = way.Nodes[nav.Checkpoint];
                 Vision::CostToGo(*nav.Grid, nav.GoalCell, tuning.DropHurtYards, nav.Cost, !WalksOnly());

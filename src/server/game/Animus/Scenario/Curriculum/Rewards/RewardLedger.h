@@ -201,6 +201,9 @@ namespace Animus::Curriculum
         /// (Party.LeaderAway, Cost, every seat but the leader). Appended.
         OutOfTurnPull,
         LeaderAway,
+        /// The clear way (dm1, the user, 2026-10-23: "rewarded by going to the next path node in sequence"): each
+        /// checkpoint reached in its order (PointNav.Checkpoint, Outcome). Appended.
+        Checkpoint,
         Count
     };
 
@@ -252,6 +255,7 @@ namespace Animus::Curriculum
             // The follow stage's band kept (2026-10-05).
             case RewardTerm::FollowKept:
             // The interact stage's door opened by its lever (M3).
+            case RewardTerm::Checkpoint:
             case RewardTerm::DoorOpened:
             // The party follow's regroup at the leader's stops (2026-10-06), and its wait beside a still leader
             // (decision 0033).
