@@ -224,6 +224,15 @@ void Animus::Curriculum::PointNavEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     {
         return nav(env).FullTrip ? float(nav(env).CheckpointsReached) : 0.0f;
     });
+    // One score across both rungs (the stage's convergence measure): a leg 1 when reached; the whole way 1 and its
+    // share of the way's checkpoints -- so the whole way's trips, which come at rung 1, read above every leg.
+    add("course_score", [nav, seatOf](Env const& env, uint32 seat)
+    {
+        EnvNav const& n = nav(env);
+        if (n.FullTrip)
+            return 1.0f + float(n.CheckpointsReached) / float(std::max<uint32>(1, n.CheckpointsTotal));
+        return n.LegTrip && seatOf(env, seat).Reached ? 1.0f : 0.0f;
+    });
     add("door_opened_seconds", [nav](Env const& env, uint32)
     {
         return nav(env).DoorOpened ? float(nav(env).DoorOpenedMs) / 1000.0f : 0.0f;
@@ -1746,7 +1755,13 @@ bool Animus::Curriculum::PointNavEncounter::DrawRun(Env& env, Player* bot, EnvNa
             bool const learned = LegsLearned(arenaIndex, count, &learnedShare);
             nav.Rung = learned ? 1 : 0;
             bool const seeded = env.Evaluating && env.EpisodeSeedIndex != Animus::NO_EPISODE_SEED;
-            if (seeded)
+            // The evaluation is gated as training is: only legs until every leg is learned, then half and half.
+            if (seeded && !learned)
+            {
+                legTrip = true;
+                leg = int32(env.EpisodeSeedIndex % count);
+            }
+            else if (seeded)
             {
                 legTrip = env.EpisodeSeedIndex % 2 == 0;
                 leg = int32((env.EpisodeSeedIndex / 2) % count);

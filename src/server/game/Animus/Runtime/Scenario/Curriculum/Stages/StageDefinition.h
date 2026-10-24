@@ -298,8 +298,8 @@ namespace Animus::Curriculum
         /// **Legs, then the whole way** (the user, 2026-10-24): rung 0 trains one leg of the clear way a trip -- from
         /// checkpoint k-1 (the entrance for the first) to checkpoint k, the trip over on reaching it -- the leg drawn
         /// by its recent failure rate (a learned leg less often, never never); once every leg is learned the trips are
-        /// mostly the whole way from the entrance (rung 1), legs still mixed in. An evaluation plays both: even seeds
-        /// a leg each, odd seeds the whole way.
+        /// mostly the whole way from the entrance (rung 1), legs still mixed in. An evaluation plays legs alone until
+        /// then, and from rung 1 both (even seeds a leg each, odd seeds the whole way).
         bool RunLegs = false;
         /// **The dungeon's own objects live** (dm1): PointNav does not clear them (ObjectPool::ClearOwn); every reset
         /// puts its doors, buttons and levers back as a fresh instance has them, opens LiveOpen's doors (those a

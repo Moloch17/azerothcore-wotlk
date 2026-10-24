@@ -4,7 +4,7 @@
 # is in it now is what is in line of sight in the view cone the look head turns, and what was seen is remembered. The
 # trips are legs, then the whole way (ArenaDefinition::RunLegs, the user 2026-10-24): rung 0 one leg of the clear way a
 # trip (checkpoint to next checkpoint), drawn by its failure rate; once every leg is learned, mostly the whole way from
-# the entrance. The evaluation plays both: even seeds a leg each, odd seeds the whole way. Fresh networks:
+# the entrance. The evaluation plays only legs until then, after it half legs, half the whole way. Fresh networks:
 # nothing to seed from. The settings are nav1_sight's and nav2_detour's (the potential on the bot's own map), less the
 # camera's.
 run_name: dm1_navigate
@@ -120,7 +120,7 @@ eval:
     no_shared_memory: 64
     no_object_memory: 64
     no_global: 64
-  report: [leg_arrived, full_arrived, full_checkpoints, is_leg, is_full, run_leg, arrived, spl, checkpoints_reached,
+  report: [course_score, leg_arrived, full_arrived, full_checkpoints, is_leg, is_full, run_leg, arrived, spl, checkpoints_reached,
            checkpoints_total, time_ratio, arrived_base_limit, time_limit_seconds,
            door_opened, doors_opened, door_opened_seconds,
            route_switches, route_source_global_share, global_replans, global_replans_contradiction, optimal_yards,
@@ -133,7 +133,7 @@ eval:
            reward_cell_goal, reward_cell_lost]
 
 status:
-  headline: [leg_arrived, full_arrived, full_checkpoints, doors_opened, arrived, spl, checkpoints_reached,
+  headline: [course_score, leg_arrived, full_arrived, full_checkpoints, doors_opened, arrived, spl, checkpoints_reached,
              checkpoints_total, door_opened, door_opened_seconds, arrived_base_limit, time_ratio, route_switches, falls,
              died, drowned, timed_out, lost_seconds, wall_seconds, stuck_seconds, nav_rung, at_top_rung, costmap_iou,
              planner_mae_yards, planner_mae_known, reward_potential, reward_potential_train, spl_no_map,
@@ -147,9 +147,9 @@ status:
     died: "<= 0.01"
 
 convergence:
-  # The whole way from the entrance (its checkpoints, over the evaluation's whole-way trips); legs are rung 0's means
-  # to it.
-  measure: full_checkpoints
+  # One score over both rungs (course_score): a leg 1 when reached, the whole way 1 + its share of the checkpoints;
+  # the evaluation plays only legs until every leg is learned.
+  measure: course_score
   top_gate_evals: 2
   top_plateau_evals: 6
   top_anneal_env_steps: 20000000
