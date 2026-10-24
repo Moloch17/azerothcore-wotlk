@@ -12,7 +12,7 @@ seed: 1
 init_from: auto
 seed_from: latest
 # A ceiling, not a target: convergence ends the stage.
-total_env_steps: 200000000
+total_env_steps: 400000000
 rollout_length: 128
 overlap_updates: true
 torch_threads: 4

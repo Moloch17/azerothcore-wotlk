@@ -20,6 +20,7 @@
 #include "Bag.h"
 #include "CastWatch.h"
 #include "Creature.h"
+#include "DBCStores.h"
 #include "GameObject.h"
 #include "Item.h"
 #include "Map.h"
@@ -198,6 +199,33 @@ bool Animus::Curriculum::EntityActions::OpensLoot(uint32 goType)
 {
     return goType == GAMEOBJECT_TYPE_CHEST || goType == GAMEOBJECT_TYPE_FISHINGNODE
         || goType == GAMEOBJECT_TYPE_FISHINGHOLE;
+}
+
+SpellInfo const* Animus::Curriculum::EntityActions::OpeningSpellFor(Player const* bot, GameObject const* object)
+{
+    if (!bot || !object || object->HasGameObjectFlag(GO_FLAG_LOCKED))
+        return nullptr;
+    LockEntry const* lock = sLockStore.LookupEntry(object->GetGOInfo()->GetLockId());
+    if (!lock)
+        return nullptr;
+    for (uint32 entry = 0; entry < MAX_LOCK_CASE; ++entry)
+    {
+        if (lock->Type[entry] != LOCK_KEY_SKILL || lock->Skill[entry] != 0)
+            continue;
+        uint32 const lockType = lock->Index[entry];
+        for (auto const& [spellId, spell] : bot->GetSpellMap())
+        {
+            if (!spell || spell->State == PLAYERSPELL_REMOVED || !spell->Active)
+                continue;
+            SpellInfo const* info = sSpellMgr->GetSpellInfo(spellId);
+            if (!info)
+                continue;
+            for (SpellEffectInfo const& effect : info->GetEffects())
+                if (effect.Effect == SPELL_EFFECT_OPEN_LOCK && uint32(effect.MiscValue) == lockType)
+                    return info;
+        }
+    }
+    return nullptr;
 }
 
 bool Animus::Curriculum::EntityActions::LockedToHand(uint32 goType, uint32 lockId)
@@ -399,6 +427,21 @@ Animus::Curriculum::EntityActions::Refusal Animus::Curriculum::EntityActions::Ap
                 facts.Reach = go->GetInteractionDistance();
                 facts.Distance = go->IsWithinDistInMap(bot) ? 0.0f : facts.Reach + 1.0f;
                 facts.Locked = LockedToHand(go->GetGoType(), go->GetGOInfo()->GetLockId());
+                // A lock an empty hand opens (a quick-open door): the client casts its Opening spell at the object.
+                if (facts.Locked)
+                    if (SpellInfo const* opening = OpeningSpellFor(bot, go))
+                    {
+                        facts.Locked = false;
+                        if (Refusal const refusal = JudgeObjectUse(facts); refusal != Refusal::None)
+                            return refuse(refusal);
+                        SpellCastTargets targets;
+                        targets.SetGOTarget(go);
+                        CastOutcome const cast = CastThroughClient(bot, opening, targets, port);
+                        if (cast.Failed)
+                            return refuse(CastRefusal(cast.Failed));
+                        ++result.Interactions;
+                        return Refusal::None;
+                    }
                 if (Refusal const refusal = JudgeObjectUse(facts); refusal != Refusal::None)
                     return refuse(refusal);
                 WorldPacket packet = GameObjectUse(go->GetGUID());

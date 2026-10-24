@@ -23,6 +23,7 @@
 #include "WorldPacket.h"
 #include <functional>
 
+class GameObject;
 class Item;
 class Player;
 class SpellCastTargets;
@@ -153,6 +154,12 @@ namespace Animus::Curriculum::EntityActions
         bool Queued = false;        // ... queued (the client's spell queue)
         uint32 Failed = 0;          // a refusal's SpellCastResult + 1; 0 none
     };
+    /// **The Opening spell a lock takes from an empty hand** (2026-10-24: the Deadmines' Heavy Doors, lock 86, "quick
+    /// open"): a 3.3.5 client clicking an object whose lock has a key-skill entry needing no skill casts the spell of
+    /// that lock type it knows (SPELL_EFFECT_OPEN_LOCK, the type as its misc value: every character learns them) at
+    /// the object, rather than sending CMSG_GAMEOBJ_USE. Null when the lock has no such entry, the object is flagged
+    /// locked (GO_FLAG_LOCKED: the Iron Clad Door, which only its cannon opens), or the seat knows no such spell.
+    [[nodiscard]] SpellInfo const* OpeningSpellFor(Player const* bot, GameObject const* object);
     /// CMSG_CAST_SPELL for `info` at `targets` through the seat's session's handler, its refusal read back.
     CastOutcome CastThroughClient(Player* bot, SpellInfo const* info, SpellCastTargets& targets,
         ClientPort& port = SessionPort());
