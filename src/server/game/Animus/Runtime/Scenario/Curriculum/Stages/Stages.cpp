@@ -86,7 +86,7 @@ namespace
         arena.RunClear = true;
         // Every trip the whole way, from the entrance, node to node; the Iron Clad Door left to the seat's own
         // gunpowder and cannon (the user, 2026-10-23).
-        arena.RunFromEntrance = true;
+        arena.RunLegs = true;
         arena.LiveObjects = true;
         arena.LiveOpen = { 13965, 16400, 16399 };   // the Factory, Mast Room and Foundry doors
         // The Iron Clad Door (the cannon's), and the Heavy Doors (a plain click opens them: lock 86, quick open) --

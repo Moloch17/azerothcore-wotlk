@@ -295,6 +295,12 @@ namespace Animus::Curriculum
         /// Every trip from the dungeon's entrance through the whole clear way (the user, 2026-10-23: "have the runs
         /// start at the instance entrance and go through the entire thing node to node"): no reverse-curriculum rungs.
         bool RunFromEntrance = false;
+        /// **Legs, then the whole way** (the user, 2026-10-24): rung 0 trains one leg of the clear way a trip -- from
+        /// checkpoint k-1 (the entrance for the first) to checkpoint k, the trip over on reaching it -- the leg drawn
+        /// by its recent failure rate (a learned leg less often, never never); once every leg is learned the trips are
+        /// mostly the whole way from the entrance (rung 1), legs still mixed in. An evaluation plays both: even seeds
+        /// a leg each, odd seeds the whole way.
+        bool RunLegs = false;
         /// **The dungeon's own objects live** (dm1): PointNav does not clear them (ObjectPool::ClearOwn); every reset
         /// puts its doors, buttons and levers back as a fresh instance has them, opens LiveOpen's doors (those a
         /// dead boss opens: the dungeon is empty), keeps LiveShut's shut, and puts LiveItems in the bags (the Defias

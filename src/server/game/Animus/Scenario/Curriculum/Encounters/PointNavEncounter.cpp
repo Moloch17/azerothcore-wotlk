@@ -207,6 +207,23 @@ void Animus::Curriculum::PointNavEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     // A live arena's shut door (ArenaDefinition::LiveShut): opened this episode, and when.
     add("door_opened", [nav](Env const& env, uint32) { return nav(env).DoorOpened ? 1.0f : 0.0f; });
     add("doors_opened", [nav](Env const& env, uint32) { return float(nav(env).DoorsOpened); });
+    // Legs, then the whole way (RunLegs): the trip's kind and leg, and each kind's measures over its own trips
+    // (episode_means.PER_EVENT on is_leg, is_full).
+    add("is_leg", [nav](Env const& env, uint32) { return nav(env).LegTrip ? 1.0f : 0.0f; });
+    add("run_leg", [nav](Env const& env, uint32) { return float(nav(env).RunLeg); });
+    add("is_full", [nav](Env const& env, uint32) { return nav(env).FullTrip ? 1.0f : 0.0f; });
+    add("leg_arrived", [nav, seatOf](Env const& env, uint32 seat)
+    {
+        return nav(env).LegTrip && seatOf(env, seat).Reached ? 1.0f : 0.0f;
+    });
+    add("full_arrived", [nav, seatOf](Env const& env, uint32 seat)
+    {
+        return nav(env).FullTrip && seatOf(env, seat).Reached ? 1.0f : 0.0f;
+    });
+    add("full_checkpoints", [nav](Env const& env, uint32)
+    {
+        return nav(env).FullTrip ? float(nav(env).CheckpointsReached) : 0.0f;
+    });
     add("door_opened_seconds", [nav](Env const& env, uint32)
     {
         return nav(env).DoorOpened ? float(nav(env).DoorOpenedMs) / 1000.0f : 0.0f;
@@ -1718,12 +1735,41 @@ bool Animus::Curriculum::PointNavEncounter::DrawRun(Env& env, Player* bot, EnvNa
         uint32 const rung = std::min<uint32>(nav.Rung, RUNGS - 1);
         uint32 checkpoint = 0;
         uint32 start = Vision::TRAV_NO_CELL;
-        if (rung + 1 >= RUNGS || arena.RunFromEntrance)
+        // Legs, then the whole way (RunLegs): a leg to checkpoint `leg` from the one before it (the entrance for the
+        // first), or the whole way from the entrance; an evaluation's even seeds a leg each, its odd ones the way.
+        bool legTrip = false;
+        int32 leg = -1;
+        if (arena.RunLegs)
+        {
+            uint32 const arenaIndex = _scenario.Data(env).Arena;
+            float learnedShare = 0.0f;
+            bool const learned = LegsLearned(arenaIndex, count, &learnedShare);
+            nav.Rung = learned ? 1 : 0;
+            bool const seeded = env.Evaluating && env.EpisodeSeedIndex != Animus::NO_EPISODE_SEED;
+            if (seeded)
+            {
+                legTrip = env.EpisodeSeedIndex % 2 == 0;
+                leg = int32((env.EpisodeSeedIndex / 2) % count);
+            }
+            else
+            {
+                legTrip = !(learned && Uniform(env) < LEG_FULL_SHARE);
+                leg = int32(DrawLeg(env, count));
+            }
+            if (legTrip && leg > 0)
+            {
+                checkpoint = uint32(leg);
+                start = way.Nodes[checkpoint - 1];
+            }
+        }
+        // A legs arena's whole way, and its first leg, start at the entrance.
+        bool const midway = arena.RunLegs && legTrip && leg > 0;
+        if (!midway && (rung + 1 >= RUNGS || arena.RunFromEntrance || arena.RunLegs))
         {
             if (AreaTriggerTeleport const* entrance = sObjectMgr->GetMapEntranceTrigger(arena.MapId))
                 start = grid.NodeOf(entrance->target_X, entrance->target_Y, entrance->target_Z);
         }
-        else
+        else if (!midway)
         {
             uint32 first = 1;
             uint32 end = last;
@@ -1742,10 +1788,14 @@ bool Animus::Curriculum::PointNavEncounter::DrawRun(Env& env, Player* bot, EnvNa
         if (start == Vision::TRAV_NO_CELL)
             return false;
         nav.Clearing = true;
+        nav.LegTrip = legTrip;
+        nav.RunLeg = legTrip ? leg : -1;
+        nav.LegCounted = legTrip && !env.Evaluating;
+        nav.FullTrip = arena.RunLegs && !legTrip;
         nav.Checkpoint = checkpoint;
-        nav.CheckpointsTotal = count - checkpoint;
+        nav.CheckpointsTotal = legTrip ? 1 : count - checkpoint;
         nav.CheckpointsReached = 0;
-        nav.RemainingAfter = way.After[checkpoint];
+        nav.RemainingAfter = legTrip ? 0.0f : way.After[checkpoint];
         nav.GoalCell = way.Nodes[checkpoint];
         Vision::CostToGo(grid, nav.GoalCell, tuning.DropHurtYards, nav.Cost, !WalksOnly());
         if (nav.Cost[start] >= Vision::TRAV_UNREACHABLE)
@@ -1753,7 +1803,8 @@ bool Animus::Curriculum::PointNavEncounter::DrawRun(Env& env, Player* bot, EnvNa
         nav.StartCell = start;
         nav.Start = CellPoint(grid, nav.StartCell, false);
         nav.GoalAtBed = false;
-        nav.GateSeconds = way.Gate != UINT32_MAX && checkpoint <= way.Gate ? arena.RunGateSeconds : 0.0f;
+        nav.GateSeconds = legTrip ? (way.Gate != UINT32_MAX && checkpoint == way.Gate + 1 ? arena.RunGateSeconds : 0.0f)
+            : way.Gate != UINT32_MAX && checkpoint <= way.Gate ? arena.RunGateSeconds : 0.0f;
         return true;
     }
     Position const& goal = arena.RunGoal;
@@ -2128,9 +2179,13 @@ bool Animus::Curriculum::PointNavEncounter::Build(Env& env, Map* map, uint8 /*le
         {
             float const capSeconds = float(arenaMs) / 1000.0f * std::max(1.0f, tuning.TimeCap);
             float const bestSeconds = nav.CStart / RUN_YARDS_PER_SECOND;
+            // A leg's own clock (RunLegs): no arena floor (a 60-yd leg is not given ten minutes), a door's
+            // allowance on every leg.
+            float const floorSeconds = nav.LegTrip ? tuning.TimeMinSeconds
+                : std::max(tuning.TimeMinSeconds, float(arenaMs) / 1000.0f);
             float const seconds = std::clamp(tuning.TimeFactor * bestSeconds + tuning.TimeSlackSeconds
-                + nav.GateSeconds,
-                std::min(std::max(tuning.TimeMinSeconds, float(arenaMs) / 1000.0f), capSeconds), capSeconds);
+                + nav.GateSeconds + (nav.LegTrip ? LEG_DOOR_SECONDS : 0.0f),
+                std::min(floorSeconds, capSeconds), capSeconds);
             env.EpisodeLengthMs = std::max<uint32>(1000, uint32(seconds * 1000.0f));
         }
     }
@@ -2278,6 +2333,62 @@ void Animus::Curriculum::PointNavEncounter::DrawBin(Env const& env, uint32 detou
         }
 }
 
+bool Animus::Curriculum::PointNavEncounter::LegsLearned(uint32 arena, uint32 legs, float* share)
+{
+    std::lock_guard lock(_poolLock);
+    std::vector<float>& rates = _legRates[arena];
+    std::vector<uint32>& tries = _legTries[arena];
+    rates.resize(legs, 0.0f);
+    tries.resize(legs, 0);
+    uint32 learned = 0;
+    for (uint32 leg = 0; leg < legs; ++leg)
+        learned += tries[leg] >= LEG_MIN_TRIES && rates[leg] >= LEG_LEARNED ? 1 : 0;
+    if (share)
+        *share = legs ? float(learned) / float(legs) : 0.0f;
+    return legs && learned == legs;
+}
+
+uint32 Animus::Curriculum::PointNavEncounter::DrawLeg(Env const& env, uint32 legs)
+{
+    std::vector<float> weights(legs, 1.0f);
+    {
+        std::lock_guard lock(_poolLock);
+        std::vector<float> const& rates = _legRates[_scenario.Data(env).Arena];
+        std::vector<uint32> const& tries = _legTries[_scenario.Data(env).Arena];
+        for (uint32 leg = 0; leg < legs && leg < rates.size() && leg < tries.size(); ++leg)
+            weights[leg] = tries[leg] < LEG_MIN_TRIES ? 1.0f : std::max(LEG_FLOOR, 1.0f - rates[leg]);
+    }
+    float total = 0.0f;
+    for (float weight : weights)
+        total += weight;
+    float pick = Uniform(env) * total;
+    for (uint32 leg = 0; leg < legs; ++leg)
+    {
+        pick -= weights[leg];
+        if (pick <= 0.0f)
+            return leg;
+    }
+    return legs ? legs - 1 : 0;
+}
+
+void Animus::Curriculum::PointNavEncounter::NoteLegOutcome(Env const& env, EnvNav& nav, bool arrived)
+{
+    if (!nav.LegTrip || !nav.LegCounted || nav.RunLeg < 0 || env.Evaluating)
+        return;
+    nav.LegCounted = false;
+    std::lock_guard lock(_poolLock);
+    std::vector<float>& rates = _legRates[_scenario.Data(env).Arena];
+    std::vector<uint32>& tries = _legTries[_scenario.Data(env).Arena];
+    std::size_t const leg = std::size_t(nav.RunLeg);
+    if (rates.size() <= leg)
+    {
+        rates.resize(leg + 1, 0.0f);
+        tries.resize(leg + 1, 0);
+    }
+    rates[leg] += (1.0f / float(LEG_WINDOW)) * ((arrived ? 1.0f : 0.0f) - rates[leg]);
+    ++tries[leg];
+}
+
 void Animus::Curriculum::PointNavEncounter::NoteBinOutcome(Env const& env, EnvNav& nav, bool arrived)
 {
     if (!nav.BinCounted || nav.Replayed || env.Evaluating || !nav.LengthBins)
@@ -2367,6 +2478,7 @@ void Animus::Curriculum::PointNavEncounter::Reward(Env& env, uint32 seatIndex, P
     auto const fail = [&]()
     {
         seat.Failed = true;
+        NoteLegOutcome(env, nav, false);
         uint32 const leftMs = env.EpisodeLengthMs > env.EpisodeElapsedMs
             ? env.EpisodeLengthMs - env.EpisodeElapsedMs : 0;
         ledger.Add(RewardTerm::Death, -(tuning.Death + tuning.StepCost * float(leftMs / failStepMs)));
@@ -2411,6 +2523,7 @@ void Animus::Curriculum::PointNavEncounter::Reward(Env& env, uint32 seatIndex, P
             nav.TimedOutNoted = true;
             NoteFailure(env, nav, bot->GetPosition());
             NoteBinOutcome(env, nav, false);
+            NoteLegOutcome(env, nav, false);
         }
     }
     if (seat.Reached)
@@ -2548,9 +2661,21 @@ void Animus::Curriculum::PointNavEncounter::Reward(Env& env, uint32 seatIndex, P
             if (std::hypot(bodyX - at.GetPositionX(), bodyY - at.GetPositionY()) <= arena.RunCheckpointYards
                 && std::fabs(bodyZ - at.GetPositionZ()) <= RUN_SITE_RISE)
             {
-                ++nav.Checkpoint;
                 ++nav.CheckpointsReached;
                 ledger.Add(RewardTerm::Checkpoint, tuning.Checkpoint);
+                // A leg trip is over at its checkpoint: arrived, paid as an arrival on the leg's own clock.
+                if (nav.LegTrip)
+                {
+                    seat.Reached = true;
+                    seat.ArriveMs = env.EpisodeElapsedMs;
+                    NoteLegOutcome(env, nav, true);
+                    float const share = nav.CStart < Vision::TRAV_UNREACHABLE ? std::min(1.0f,
+                        std::max(0.25f, nav.CStart / RUN_YARDS_PER_SECOND)
+                        / std::max(0.25f, float(seat.ArriveMs) / 1000.0f)) : 1.0f;
+                    ledger.Add(RewardTerm::Arrive, tuning.Arrive * share);
+                    return;
+                }
+                ++nav.Checkpoint;
                 nav.RemainingAfter = way.After[nav.Checkpoint];
                 nav.GoalCell = way.Nodes[nav.Checkpoint];
                 Vision::CostToGo(*nav.Grid, nav.GoalCell, tuning.DropHurtYards, nav.Cost, !WalksOnly());
@@ -2584,6 +2709,7 @@ void Animus::Curriculum::PointNavEncounter::Reward(Env& env, uint32 seatIndex, P
     seat.ArriveMs = env.EpisodeElapsedMs;
     seat.StopError = distance;
     NoteBinOutcome(env, nav, true);
+    NoteLegOutcome(env, nav, true);
     // Paid by PointNav.ArriveWeight: 1 the route over the yards walked (the spl column); 2 the route at run speed over
     // the seconds taken (1 over the time_ratio column, at most 1).
     float share = 1.0f;

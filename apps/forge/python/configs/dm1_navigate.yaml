@@ -2,8 +2,9 @@
 # from the dungeon's door to its exit trigger, opening the Iron Clad Door with the gunpowder and the cannon on the way.
 # No camera (StageDefinition::Camera false): the dungeon is memorised (the shared memory surveyed from the bake), what
 # is in it now is what is in line of sight in the view cone the look head turns, and what was seen is remembered. The
-# trip's start is drawn back along the route from the exit by rung (PairKind 6): rung 0 near the exit, rung 1 anywhere
-# past the Iron Clad Door, rung 2 in front of it (the cannon needed), rung 3 the door of the dungeon. Fresh networks:
+# trips are legs, then the whole way (ArenaDefinition::RunLegs, the user 2026-10-24): rung 0 one leg of the clear way a
+# trip (checkpoint to next checkpoint), drawn by its failure rate; once every leg is learned, mostly the whole way from
+# the entrance. The evaluation plays both: even seeds a leg each, odd seeds the whole way. Fresh networks:
 # nothing to seed from. The settings are nav1_sight's and nav2_detour's (the potential on the bot's own map), less the
 # camera's.
 run_name: dm1_navigate
@@ -119,7 +120,8 @@ eval:
     no_shared_memory: 64
     no_object_memory: 64
     no_global: 64
-  report: [arrived, spl, checkpoints_reached, checkpoints_total, time_ratio, arrived_base_limit, time_limit_seconds,
+  report: [leg_arrived, full_arrived, full_checkpoints, is_leg, is_full, run_leg, arrived, spl, checkpoints_reached,
+           checkpoints_total, time_ratio, arrived_base_limit, time_limit_seconds,
            door_opened, doors_opened, door_opened_seconds,
            route_switches, route_source_global_share, global_replans, global_replans_contradiction, optimal_yards,
            straight_yards, detour_factor, travelled_yards, stop_error_yards, falls, fall_damage_share, drowned, died,
@@ -131,22 +133,27 @@ eval:
            reward_cell_goal, reward_cell_lost]
 
 status:
-  headline: [arrived, spl, checkpoints_reached, checkpoints_total, door_opened, door_opened_seconds, arrived_base_limit, time_ratio, route_switches, falls,
+  headline: [leg_arrived, full_arrived, full_checkpoints, doors_opened, arrived, spl, checkpoints_reached,
+             checkpoints_total, door_opened, door_opened_seconds, arrived_base_limit, time_ratio, route_switches, falls,
              died, drowned, timed_out, lost_seconds, wall_seconds, stuck_seconds, nav_rung, at_top_rung, costmap_iou,
              planner_mae_yards, planner_mae_known, reward_potential, reward_potential_train, spl_no_map,
              spl_no_planner, spl_no_memory, spl_no_shared_memory]
   targets:
+    leg_arrived: ">= 0.85"
+    full_arrived: ">= 0.9"
     arrived: ">= 0.95"
     spl: ">= 0.8"
     timed_out: "<= 0.05"
     died: "<= 0.01"
 
 convergence:
-  measure: spl
+  # The whole way from the entrance (its checkpoints, over the evaluation's whole-way trips); legs are rung 0's means
+  # to it.
+  measure: full_checkpoints
   top_gate_evals: 2
   top_plateau_evals: 6
   top_anneal_env_steps: 20000000
-  patience: 3
+  patience: 6
   window: 4
   z: 2.0
   min_improvement: 0.02
@@ -156,26 +163,22 @@ convergence:
   hold_share: 0.02
   lr_hold_until_plateau: true
 
-# The reverse curriculum's rungs step on arrival and SPL; rung 2 (in front of the Iron Clad Door, the cannon to use) and
-# rung 3 (the whole dungeon) ask a little less of SPL: the door's opening is time off the route.
 fade:
+  # The shaping fade steps on the legs (rung 0's lesson): their arrival over the leg trips.
   enabled: true
   rungs: [1.0, 0.5, 0.25, 0.0]
   window: 3
   regress_z: 2.0
   give_up: 2
-  gate_metric: spl
-  gate_metrics:
-    arrived: [0.85, 0.85, 0.75, 0.75]
-    spl: [0.7, 0.7, 0.55, 0.55]
+  gate_metric: leg_arrived
+  gate_value: 0.85
   require_plateau: false
   wait_for_costs: false
-  rung_metric: nav_rung
 
 costs:
   enabled: true
   rungs: [0.0, 0.25, 0.5, 1.0]
-  gate_metric: arrived
+  gate_metric: leg_arrived
   gate_value: 0.8
 
 school:

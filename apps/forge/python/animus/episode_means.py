@@ -128,6 +128,11 @@ PER_EVENT = {
     "deaths_damage": "role_damage",
     # The leader and the tank (dm4-dm6, StageDefinition::LeaderAnyRole): each measure by the leader's role, over the
     # episodes a tank, a healer or a damage dealer led (the user's rule: evaluated per leader role).
+    # dm1's legs, then the whole way (ArenaDefinition::RunLegs): a leg's arrival over the leg trips, the whole way's
+    # arrival and checkpoints over the whole-way trips.
+    "leg_arrived": "is_leg",
+    "full_arrived": "is_full",
+    "full_checkpoints": "is_full",
     "won_leader_tank": "leader_tank",
     "won_leader_healer": "leader_healer",
     "won_leader_damage": "leader_damage",

@@ -88,6 +88,16 @@ namespace Animus::Curriculum
         static constexpr float RUN_GATE_BAND = 60.0f;
         static constexpr uint32 RUN_SWEEP_MS = 15000;
         static constexpr float RUN_SWEEP_YARDS = 150.0f;
+        /// Legs, then the whole way (ArenaDefinition::RunLegs): a leg's success rate is a running mean over about
+        /// LEG_WINDOW of its training trips; it is learned at LEG_LEARNED (after LEG_MIN_TRIES), drawn by its failure
+        /// rate with LEG_FLOOR the least weight; once every leg is learned LEG_FULL_SHARE of the trips are the whole
+        /// way. A leg's clock is the trip clock without the arena's floor, and LEG_DOOR_SECONDS more for a door.
+        static constexpr uint32 LEG_WINDOW = 20;
+        static constexpr float LEG_LEARNED = 0.85f;
+        static constexpr uint32 LEG_MIN_TRIES = 10;
+        static constexpr float LEG_FLOOR = 0.1f;
+        static constexpr float LEG_FULL_SHARE = 0.8f;
+        static constexpr float LEG_DOOR_SECONDS = 30.0f;
         /// A goal in water is priced by depth too (DepthCost): the height off it past ArriveRise, added to every route
         /// cost the labels carry, in full within DEPTH_FULL yards of it across and fading to nothing at DEPTH_REACH.
         /// The bake prices a water cell the same from its bed to its surface, so the potential paid nothing for the
@@ -347,6 +357,12 @@ namespace Animus::Curriculum
             /// way), the route yards of the way after it (added to every route cost, so the potential and the clock
             /// are the whole trip's), and the checkpoints reached and asked this trip.
             bool Clearing = false;
+            /// A leg trip (ArenaDefinition::RunLegs): its leg (the checkpoint it goes to), whether its outcome is
+            /// still to be counted, and a whole-way trip of a legs arena.
+            bool LegTrip = false;
+            int32 RunLeg = -1;
+            bool LegCounted = false;
+            bool FullTrip = false;
             uint32 Checkpoint = 0;
             float RemainingAfter = 0.0f;
             uint32 CheckpointsReached = 0;
@@ -452,6 +468,15 @@ namespace Animus::Curriculum
         PartyFollowEncounter const* _follow = nullptr;
         ClearWay const& EnsureClearWay(Env const& env, Vision::TravGrid const& grid);
         std::map<uint32, ClearWay> _clearWays;  // per arena index, under _poolLock
+        /// Per arena index, each leg's running success rate and its training trips counted (RunLegs), under _poolLock.
+        std::map<uint32, std::vector<float>> _legRates;
+        std::map<uint32, std::vector<uint32>> _legTries;
+        /// Every leg of the arena's `legs` learned (LEG_LEARNED after LEG_MIN_TRIES); the share of them learned.
+        [[nodiscard]] bool LegsLearned(uint32 arena, uint32 legs, float* share = nullptr);
+        /// A training trip's leg, by failure rate (LEG_FLOOR the least weight).
+        uint32 DrawLeg(Env const& env, uint32 legs);
+        /// A leg trip's outcome into its leg's rate, once (training only).
+        void NoteLegOutcome(Env const& env, EnvNav& nav, bool arrived);
         std::mutex _poolLock;
         std::map<uint32, FailurePool> _pools;   // per arena index
         std::map<uint32, PairPool> _pairPools;  // per arena index, under _poolLock
