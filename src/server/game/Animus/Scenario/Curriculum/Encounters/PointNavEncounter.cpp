@@ -1612,7 +1612,6 @@ Animus::Curriculum::PointNavEncounter::ClearWay const& Animus::Curriculum::Point
             int32 Site = -1;
         };
         std::vector<Placed> ordered;
-        uint32 unreachable = 0;
         auto const place = [&](Position const& at, uint32 node, int32 site)
         {
             if (node == Vision::TRAV_NO_CELL || fromDoor[node] >= Vision::TRAV_UNREACHABLE
