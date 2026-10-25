@@ -513,6 +513,12 @@ namespace Animus::Curriculum
             bool DeathEnds = true;
             /// Each checkpoint of the clear way reached in its order (ArenaDefinition::RunClear): Outcome.
             float Checkpoint = 0.5f;
+            /// **A recorded clear way** (the user, 2026-10-25: "train the bots using the real dungeon", the route a
+            /// person ran): a CSV `index,kind,x,y,z,spawn_ids` written by `python -m animus.human dungeon-run` off a
+            /// mod-animus recording, under `<DataDir>/clearways/` (or an absolute path) -- its sites, gates and goal
+            /// become the way's checkpoints in the recorded order, each site's creature spawn ids kept. Empty: the way
+            /// is generated from the map's spawn table as before.
+            std::string ClearWayFile;
             float Lost = 0.02f;
             float LostYards = 40.0f;
             float Revisit = 0.002f;
@@ -1443,6 +1449,7 @@ namespace Animus::Curriculum
             f("PointNav.Drowned", tuning.PointNav.Drowned);
             f("PointNav.DeathEnds", tuning.PointNav.DeathEnds);
             f("PointNav.Checkpoint", tuning.PointNav.Checkpoint);
+            f("PointNav.ClearWayFile", tuning.PointNav.ClearWayFile);
             f("PointNav.Lost", tuning.PointNav.Lost);
             f("PointNav.LostYards", tuning.PointNav.LostYards);
             f("PointNav.Revisit", tuning.PointNav.Revisit);

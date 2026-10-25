@@ -48,8 +48,10 @@
 #include "StageDefinition.h"
 #include "StageScenario.h"
 #include "StageState.h"
+#include "StringConvert.h"
 #include "StringFormat.h"
 #include "Standing.h"
+#include "Tokenize.h"
 #include "UnitBody.h"
 #include "UnitDefines.h"
 #include <algorithm>
@@ -1505,128 +1507,154 @@ Animus::Curriculum::PointNavEncounter::ClearWay const& Animus::Curriculum::Point
     uint32 const door = grid.NodeOf(entrance->target_X, entrance->target_Y, entrance->target_Z);
     if (door == Vision::TRAV_NO_CELL)
         return way;
-    std::vector<float> fromDoor;
-    Vision::CostToGo(grid, door, tuning.DropHurtYards, fromDoor, !WalksOnly());
 
-    // The sites: the map's creature spawns, each joined to the first site whose centre is within RunSiteYards
-    // (by spawn id, so the grouping is the same in every process).
-    std::vector<std::pair<uint32, Position>> spawns;
-    for (auto const& [spawnId, data] : sObjectMgr->GetAllCreatureData())
-        if (data.mapid == mapId)
-            spawns.push_back({ spawnId, Position(data.posX, data.posY, data.posZ, 0.0f) });
-    std::sort(spawns.begin(), spawns.end(), [](auto const& a, auto const& b) { return a.first < b.first; });
-    struct Site
-    {
-        float X = 0.0f;
-        float Y = 0.0f;
-        float Z = 0.0f;
-        uint32 Count = 0;
-        std::vector<uint32> SpawnIds;
-    };
-    std::vector<Site> sites;
-    for (auto const& [spawnId, at] : spawns)
-    {
-        Site* joined = nullptr;
-        for (Site& site : sites)
-            if (std::hypot(site.X - at.GetPositionX(), site.Y - at.GetPositionY()) <= arena.RunSiteYards
-                && std::fabs(site.Z - at.GetPositionZ()) <= RUN_SITE_RISE)
-            {
-                joined = &site;
-                break;
-            }
-        if (!joined)
-        {
-            sites.push_back(Site());
-            joined = &sites.back();
-        }
-        float const n = float(joined->Count);
-        joined->X = (joined->X * n + at.GetPositionX()) / (n + 1.0f);
-        joined->Y = (joined->Y * n + at.GetPositionY()) / (n + 1.0f);
-        joined->Z = (joined->Z * n + at.GetPositionZ()) / (n + 1.0f);
-        ++joined->Count;
-        joined->SpawnIds.push_back(spawnId);
-    }
-    // The main way, the entrance to the goal down the goal's route cost; a site's place along it is where its own
-    // route to the goal joins it (a side room hangs off the main way where its branch leaves), then how far out from
-    // there -- the order a full clear walks: side rooms as it passes them, a branch outwards and back. A site the
-    // entrance does not reach is left out.
-    uint32 const goalNode = grid.NodeOf(arena.RunGoal.GetPositionX(), arena.RunGoal.GetPositionY(),
-        arena.RunGoal.GetPositionZ());
-    if (goalNode == Vision::TRAV_NO_CELL)
-        return way;
-    std::vector<float> toGoal;
-    Vision::CostToGo(grid, goalNode, tuning.DropHurtYards, toGoal, !WalksOnly());
-    auto const down = [&](uint32 node)
-    {
-        uint32 best = Vision::TRAV_NO_CELL;
-        for (int32 dir = 0; dir < Vision::TRAV_DIRS; ++dir)
-        {
-            uint32 const next = grid.EdgeTarget(node, dir);
-            if (next != Vision::TRAV_NO_CELL && toGoal[next] < (best == Vision::TRAV_NO_CELL ? toGoal[node]
-                : toGoal[best]))
-                best = next;
-        }
-        return best;
-    };
-    std::vector<int32> along(grid.Nodes(), -1);
-    {
-        uint32 node = door;
-        for (int32 step = 0; node != Vision::TRAV_NO_CELL && step < 100000; ++step)
-        {
-            along[node] = step;
-            if (node == goalNode)
-                break;
-            node = down(node);
-        }
-    }
-    struct Placed
-    {
-        int32 Join = 0;
-        float Out = 0.0f;
-        Position At;
-        int32 Site = -1;
-    };
-    std::vector<Placed> ordered;
-    uint32 unreachable = 0;
-    auto const place = [&](Position const& at, uint32 node, int32 site)
-    {
-        if (node == Vision::TRAV_NO_CELL || fromDoor[node] >= Vision::TRAV_UNREACHABLE
-            || toGoal[node] >= Vision::TRAV_UNREACHABLE)
-        {
-            ++unreachable;
-            return;
-        }
-        uint32 join = node;
-        for (int32 step = 0; join != Vision::TRAV_NO_CELL && along[join] < 0 && step < 100000; ++step)
-            join = down(join);
-        if (join == Vision::TRAV_NO_CELL || along[join] < 0)
-        {
-            ++unreachable;
-            return;
-        }
-        ordered.push_back({ along[join], toGoal[node] - toGoal[join], at, site });
-    };
-    for (std::size_t index = 0; index < sites.size(); ++index)
-    {
-        Site const& site = sites[index];
-        place(Position(site.X, site.Y, site.Z, 0.0f), grid.NodeOf(site.X, site.Y, site.Z), int32(index));
-    }
-    if (arena.HasRunGate)
-        place(arena.RunGate, grid.NodeOf(arena.RunGate.GetPositionX(), arena.RunGate.GetPositionY(),
-            arena.RunGate.GetPositionZ()), -1);
-    std::stable_sort(ordered.begin(), ordered.end(), [](Placed const& a, Placed const& b)
-    {
-        return a.Join != b.Join ? a.Join < b.Join : a.Out < b.Out;
-    });
+    // The checkpoints before the legs are measured: recorded (PointNav.ClearWayFile) or generated.
     std::vector<Position> points;
-    std::vector<int32> pointSites;
-    for (Placed const& placed : ordered)
+    std::vector<std::vector<uint32>> pointSpawns;
+    std::vector<bool> pointGate;
+    uint32 unreachable = 0;
+    std::size_t spawnCount = 0;
+    std::size_t siteCount = 0;
+    std::string source = "generated";
+    if (!tuning.ClearWayFile.empty())
     {
-        points.push_back(placed.At);
-        pointSites.push_back(placed.Site);
+        std::filesystem::path path(tuning.ClearWayFile);
+        if (path.is_relative())
+            path = std::filesystem::path(_scenario.DataDir()) / "clearways" / path;
+        if (!LoadRecordedWay(path, arena, points, pointSpawns, pointGate))
+            LOG_ERROR("module.animus", "{}: arena {}: recorded clear way {} unreadable or empty; the way is generated",
+                _scenario.Name(), arena.Name, path.string());
+        else
+            source = Acore::StringFormat("recorded from {}", path.filename().string());
     }
-    points.push_back(arena.RunGoal);
-    pointSites.push_back(-1);
+    if (points.empty())
+    {
+        std::vector<float> fromDoor;
+        Vision::CostToGo(grid, door, tuning.DropHurtYards, fromDoor, !WalksOnly());
+        if (door == Vision::TRAV_NO_CELL)
+            return way;
+        // The sites: the map's creature spawns, each joined to the first site whose centre is within RunSiteYards
+        // (by spawn id, so the grouping is the same in every process).
+        std::vector<std::pair<uint32, Position>> spawns;
+        for (auto const& [spawnId, data] : sObjectMgr->GetAllCreatureData())
+            if (data.mapid == mapId)
+                spawns.push_back({ spawnId, Position(data.posX, data.posY, data.posZ, 0.0f) });
+        std::sort(spawns.begin(), spawns.end(), [](auto const& a, auto const& b) { return a.first < b.first; });
+        struct Site
+        {
+            float X = 0.0f;
+            float Y = 0.0f;
+            float Z = 0.0f;
+            uint32 Count = 0;
+            std::vector<uint32> SpawnIds;
+        };
+        std::vector<Site> sites;
+        for (auto const& [spawnId, at] : spawns)
+        {
+            Site* joined = nullptr;
+            for (Site& site : sites)
+                if (std::hypot(site.X - at.GetPositionX(), site.Y - at.GetPositionY()) <= arena.RunSiteYards
+                    && std::fabs(site.Z - at.GetPositionZ()) <= RUN_SITE_RISE)
+                {
+                    joined = &site;
+                    break;
+                }
+            if (!joined)
+            {
+                sites.push_back(Site());
+                joined = &sites.back();
+            }
+            float const n = float(joined->Count);
+            joined->X = (joined->X * n + at.GetPositionX()) / (n + 1.0f);
+            joined->Y = (joined->Y * n + at.GetPositionY()) / (n + 1.0f);
+            joined->Z = (joined->Z * n + at.GetPositionZ()) / (n + 1.0f);
+            ++joined->Count;
+            joined->SpawnIds.push_back(spawnId);
+        }
+        // The main way, the entrance to the goal down the goal's route cost; a site's place along it is where its own
+        // route to the goal joins it (a side room hangs off the main way where its branch leaves), then how far out from
+        // there -- the order a full clear walks: side rooms as it passes them, a branch outwards and back. A site the
+        // entrance does not reach is left out.
+        uint32 const goalNode = grid.NodeOf(arena.RunGoal.GetPositionX(), arena.RunGoal.GetPositionY(),
+            arena.RunGoal.GetPositionZ());
+        if (goalNode == Vision::TRAV_NO_CELL)
+            return way;
+        std::vector<float> toGoal;
+        Vision::CostToGo(grid, goalNode, tuning.DropHurtYards, toGoal, !WalksOnly());
+        auto const down = [&](uint32 node)
+        {
+            uint32 best = Vision::TRAV_NO_CELL;
+            for (int32 dir = 0; dir < Vision::TRAV_DIRS; ++dir)
+            {
+                uint32 const next = grid.EdgeTarget(node, dir);
+                if (next != Vision::TRAV_NO_CELL && toGoal[next] < (best == Vision::TRAV_NO_CELL ? toGoal[node]
+                    : toGoal[best]))
+                    best = next;
+            }
+            return best;
+        };
+        std::vector<int32> along(grid.Nodes(), -1);
+        {
+            uint32 node = door;
+            for (int32 step = 0; node != Vision::TRAV_NO_CELL && step < 100000; ++step)
+            {
+                along[node] = step;
+                if (node == goalNode)
+                    break;
+                node = down(node);
+            }
+        }
+        struct Placed
+        {
+            int32 Join = 0;
+            float Out = 0.0f;
+            Position At;
+            int32 Site = -1;
+        };
+        std::vector<Placed> ordered;
+        uint32 unreachable = 0;
+        auto const place = [&](Position const& at, uint32 node, int32 site)
+        {
+            if (node == Vision::TRAV_NO_CELL || fromDoor[node] >= Vision::TRAV_UNREACHABLE
+                || toGoal[node] >= Vision::TRAV_UNREACHABLE)
+            {
+                ++unreachable;
+                return;
+            }
+            uint32 join = node;
+            for (int32 step = 0; join != Vision::TRAV_NO_CELL && along[join] < 0 && step < 100000; ++step)
+                join = down(join);
+            if (join == Vision::TRAV_NO_CELL || along[join] < 0)
+            {
+                ++unreachable;
+                return;
+            }
+            ordered.push_back({ along[join], toGoal[node] - toGoal[join], at, site });
+        };
+        for (std::size_t index = 0; index < sites.size(); ++index)
+        {
+            Site const& site = sites[index];
+            place(Position(site.X, site.Y, site.Z, 0.0f), grid.NodeOf(site.X, site.Y, site.Z), int32(index));
+        }
+        if (arena.HasRunGate)
+            place(arena.RunGate, grid.NodeOf(arena.RunGate.GetPositionX(), arena.RunGate.GetPositionY(),
+                arena.RunGate.GetPositionZ()), -1);
+        std::stable_sort(ordered.begin(), ordered.end(), [](Placed const& a, Placed const& b)
+        {
+            return a.Join != b.Join ? a.Join < b.Join : a.Out < b.Out;
+        });
+        for (Placed const& placed : ordered)
+        {
+            points.push_back(placed.At);
+            pointSpawns.push_back(placed.Site >= 0 ? sites[std::size_t(placed.Site)].SpawnIds : std::vector<uint32>());
+            pointGate.push_back(placed.Site < 0 && arena.HasRunGate && placed.At.GetExactDist(&arena.RunGate) < 0.5f);
+        }
+        points.push_back(arena.RunGoal);
+        pointSpawns.emplace_back();
+        pointGate.push_back(false);
+        spawnCount = spawns.size();
+        siteCount = sites.size();
+    }
 
     // The legs: each checkpoint's route yards from the one before; one the one before cannot reach is dropped and
     // the next leg is measured from the one before it.
@@ -1635,6 +1663,7 @@ Animus::Curriculum::PointNavEncounter::ClearWay const& Animus::Curriculum::Point
     std::vector<float> legs;
     std::vector<Position> kept;
     std::vector<std::vector<uint32>> keptSpawns;
+    uint32 gateKept = UINT32_MAX;
     for (std::size_t index = 0; index < points.size(); ++index)
     {
         Position const& at = points[index];
@@ -1652,11 +1681,12 @@ Animus::Curriculum::PointNavEncounter::ClearWay const& Animus::Curriculum::Point
                 continue;
             }
         }
+        if (pointGate[index])
+            gateKept = uint32(kept.size());
         nodes.push_back(node);
         legs.push_back(leg);
         kept.push_back(at);
-        keptSpawns.push_back(pointSites[index] >= 0 ? sites[std::size_t(pointSites[index])].SpawnIds
-            : std::vector<uint32>());
+        keptSpawns.push_back(pointSpawns[index]);
     }
     way.Points = std::move(kept);
     way.Spawns = std::move(keptSpawns);
@@ -1665,10 +1695,7 @@ Animus::Curriculum::PointNavEncounter::ClearWay const& Animus::Curriculum::Point
     way.After.assign(way.Leg.size(), 0.0f);
     for (int32 k = int32(way.Leg.size()) - 2; k >= 0; --k)
         way.After[std::size_t(k)] = way.After[std::size_t(k) + 1] + way.Leg[std::size_t(k) + 1];
-    if (arena.HasRunGate)
-        for (std::size_t k = 0; k < way.Points.size(); ++k)
-            if (way.Points[k].GetExactDist(&arena.RunGate) < 0.5f)
-                way.Gate = uint32(k);
+    way.Gate = gateKept;
     float const total = way.After.empty() ? 0.0f : way.After.front();
     // The way beside the bake, for reading it off-line: <trav>/<map>-<arena>.<stage>.clearway.csv.
     {
@@ -1683,10 +1710,60 @@ Animus::Curriculum::PointNavEncounter::ClearWay const& Animus::Curriculum::Point
                     << way.Points[k].GetPositionZ() << ',' << way.Leg[k] << ',' << way.After[k] << '\n';
         }
     }
-    LOG_INFO("module.animus", "{}: arena {} clear way: {} checkpoints from {} spawns in {} sites ({} left out), "
-        "{:.0f} yd from the first, the gate at #{}", _scenario.Name(), arena.Name, way.Points.size(), spawns.size(),
-        sites.size(), unreachable, total, way.Gate == UINT32_MAX ? -1 : int32(way.Gate));
+    LOG_INFO("module.animus", "{}: arena {} clear way ({}): {} checkpoints from {} spawns in {} sites ({} left out), "
+        "{:.0f} yd from the first, the gate at #{}", _scenario.Name(), arena.Name, source, way.Points.size(),
+        spawnCount, siteCount, unreachable, total, way.Gate == UINT32_MAX ? -1 : int32(way.Gate));
     return way;
+}
+
+bool Animus::Curriculum::PointNavEncounter::LoadRecordedWay(std::filesystem::path const& path,
+    ArenaDefinition const& arena, std::vector<Position>& points, std::vector<std::vector<uint32>>& spawns,
+    std::vector<bool>& gates)
+{
+    std::ifstream in(path);
+    if (!in)
+        return false;
+    std::string line;
+    bool goal = false;
+    while (std::getline(in, line))
+    {
+        if (line.empty() || line.rfind("index", 0) == 0)
+            continue;
+        std::vector<std::string_view> const cells = Acore::Tokenize(line, ',', true);
+        if (cells.size() < 5)
+            continue;
+        Optional<float> const x = Acore::StringTo<float>(cells[2]);
+        Optional<float> const y = Acore::StringTo<float>(cells[3]);
+        Optional<float> const z = Acore::StringTo<float>(cells[4]);
+        if (!x || !y || !z)
+            continue;
+        std::string_view const kind = cells[1];
+        std::vector<uint32> ids;
+        if (cells.size() > 5)
+            for (std::string_view word : Acore::Tokenize(cells[5], ';', false))
+                if (Optional<uint32> id = Acore::StringTo<uint32>(word))
+                    ids.push_back(*id);
+        points.emplace_back(*x, *y, *z, 0.0f);
+        spawns.push_back(std::move(ids));
+        gates.push_back(kind == "gate");
+        goal = kind == "goal";
+    }
+    if (points.empty())
+        return false;
+    // The arena's own goal last when the recording's last place is not it (the recorder stopped elsewhere).
+    if (!goal || points.back().GetExactDist2d(&arena.RunGoal) > 5.0f)
+    {
+        if (goal)
+        {
+            points.pop_back();
+            spawns.pop_back();
+            gates.pop_back();
+        }
+        points.push_back(arena.RunGoal);
+        spawns.emplace_back();
+        gates.push_back(false);
+    }
+    return true;
 }
 
 Animus::Curriculum::PointNavEncounter::ClearWay const* Animus::Curriculum::PointNavEncounter::WayOf(Env const& env,

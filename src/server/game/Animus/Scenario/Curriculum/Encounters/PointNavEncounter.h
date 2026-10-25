@@ -26,6 +26,7 @@
 #include "Position.h"
 #include "TravBake.h"
 #include <array>
+#include <filesystem>
 #include <map>
 #include <mutex>
 #include <random>
@@ -34,6 +35,7 @@
 
 namespace Animus::Curriculum
 {
+    struct ArenaDefinition;
     class PartyFollowEncounter;
 
     /// **PointNav** (Opposition::PointNav; vision movement curriculum, decision 0036, CONTRACT.md secs 1-3): a point
@@ -467,6 +469,11 @@ namespace Animus::Curriculum
         mutable std::vector<std::mt19937> _rngs;
         PartyFollowEncounter const* _follow = nullptr;
         ClearWay const& EnsureClearWay(Env const& env, Vision::TravGrid const& grid);
+        /// A recorded clear way (PointNav.ClearWayFile: `index,kind,x,y,z,spawn_ids`, from
+        /// `python -m animus.human dungeon-run`) as checkpoints, each one's spawn ids and whether it is the gate; the
+        /// arena's RunGoal appended when the recording did not end there. False for no file or no rows.
+        static bool LoadRecordedWay(std::filesystem::path const& path, ArenaDefinition const& arena,
+            std::vector<Position>& points, std::vector<std::vector<uint32>>& spawns, std::vector<bool>& gates);
         std::map<uint32, ClearWay> _clearWays;  // per arena index, under _poolLock
         /// Per arena index, each leg's running success rate and its training trips counted (RunLegs), under _poolLock.
         std::map<uint32, std::vector<float>> _legRates;

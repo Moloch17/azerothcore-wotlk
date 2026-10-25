@@ -35,13 +35,14 @@ from typing import Iterator
 
 import numpy as np
 
-FORMAT_VERSION = 3
+FORMAT_VERSION = 4
 MAGIC = b"ANCAP\0\0\0"
 FRAME = struct.Struct("<HH")
 BLOCK_BYTES = 32 << 20          # decompressed bytes framed and parsed at once
 READ_BYTES = 1 << 20            # compressed bytes read from disk at once
 
-STREAMS = {1: "session", 2: "move", 3: "action", 4: "snapshot", 5: "outcome", 6: "companion"}
+STREAMS = {1: "session", 2: "move", 3: "action", 4: "snapshot", 5: "outcome", 6: "companion", 7: "note",
+           8: "packet"}
 
 
 class CaptureError(ValueError):
@@ -51,6 +52,7 @@ class CaptureError(ValueError):
 # Record types (FORMAT.md §2).
 FILE_HEADER = 0
 SESSION_START, SESSION_CONTEXT, SESSION_END, GROUP_STATE, KNOWN_SPELLS, LATENCY = 1, 2, 3, 4, 5, 6
+INVENTORY, ACTION_BUTTONS, TALENTS = 7, 8, 9                    # format 4, a recording's
 MOVE, SPEEDS, MOTION_EVENT, MOVER_STATE, MOVE_TALLY, MAP_UPDATE = 10, 11, 12, 13, 14, 15
 
 # Move `source` (FORMAT.md §2.3): a player's client packet; format 1's synthesised companion sample (never written by
@@ -58,8 +60,23 @@ MOVE, SPEEDS, MOTION_EVENT, MOVER_STATE, MOVE_TALLY, MAP_UPDATE = 10, 11, 12, 13
 SOURCE_CLIENT, SOURCE_COMPANION_SAMPLE, SOURCE_CONTROLLER = 0, 1, 2
 CAST_REQUEST, CAST_RESULT, CAST_END, SELECT, ITEM_USE, ATTACK, INTERACT = 20, 21, 22, 23, 24, 25, 26
 SNAPSHOT = 30
+UNIT_STATE, GAME_OBJECT_STATE, PLAYER_DETAIL, MAP_SPAWNS, INSTANCE_CREATURES = 31, 32, 33, 34, 35    # format 4
 DAMAGE, HEAL, KILL, DEATH, QUEST, ENCOUNTER, PVP, AREA = 40, 41, 42, 43, 44, 45, 46, 47
+COMBAT_EDGE = 48                                                # format 4
 COMPANION_DECISION, COMPANION_COMMAND, COMPANION_RATING = 50, 51, 52
+ANNOTATION, RECORDING_START, RECORDING_END, CHAT = 60, 61, 62, 63     # format 4, the note stream
+RAW_PACKET = 70                                                 # format 4, the packet stream
+
+# Interact `what` (FORMAT.md §2.4).
+IA_GOSSIP, IA_LOOT, IA_QUEST_ACCEPT, IA_QUEST_TURN_IN, IA_GAME_OBJECT_USE = 1, 2, 3, 4, 5
+# CombatEdge `event`, GameObjectState `event`, RecordingEnd `reason` and `verdict` (FORMAT.md §2.5, §2.6, §2.8).
+EDGE_ENTER, EDGE_EXIT, EDGE_EVADE = 0, 1, 2
+GO_SEEN, GO_CHANGED, GO_GONE = 0, 1, 2
+END_STOP, END_LOGOUT, END_DISCONNECT, END_SHUTDOWN, END_DISK, END_MAX_MINUTES = 0, 1, 2, 3, 4, 5
+VERDICT_NONE, VERDICT_KEEP, VERDICT_DISCARD = 0, 1, 2
+# UnitState `flags` and Annotation `state` bits.
+US_COMBAT, US_EVADING, US_PARTY, US_MY_PET, US_COMPANION, US_ENGAGED, US_TAPPED = 1, 2, 4, 8, 16, 32, 64
+AN_COMBAT, AN_DEAD, AN_MOUNTED, AN_CASTING, AN_SWIMMING, AN_FALLING, AN_GOD = 1, 2, 4, 8, 16, 32, 64
 
 # MotionEvent `event` (FORMAT.md §2.3).
 EV_MOUNT, EV_DISMOUNT, EV_TAXI_START, EV_TAXI_END, EV_TELEPORT, EV_DEATH, EV_RESURRECT = 1, 2, 3, 4, 5, 6, 7
@@ -112,14 +129,44 @@ PREFIX: dict[int, tuple[str, np.dtype]] = {
                            ("target", "<u8")]),
     ATTACK: ("Attack", [("ms", "<u8"), ("player", "<u8"), ("target", "<u8"), ("start", "u1")]),
     INTERACT: ("Interact", [("ms", "<u8"), ("player", "<u8"), ("what", "u1"), ("entry", "<u4"), ("target", "<u8"),
-                            ("arg", "<u4")]),
+                            ("arg", "<u4"), ("spawn_id", "<u4")]),
     SNAPSHOT: ("Snapshot", [("ms", "<u8"), ("player", "<u8")] + _SELF),
+    INVENTORY: ("Inventory", [("ms", "<u8"), ("player", "<u8"), ("count", "<u2")]),
+    ACTION_BUTTONS: ("ActionButtons", [("ms", "<u8"), ("player", "<u8"), ("count", "u1")]),
+    TALENTS: ("Talents", [("ms", "<u8"), ("player", "<u8"), ("active_spec", "u1"), ("count", "u1")]),
+    UNIT_STATE: ("UnitState", [("ms", "<u8"), ("player", "<u8"), ("unit", "<u8"), ("spawn_id", "<u4"),
+                               ("entry", "<u4"), ("unit_type", "u1"), ("kind", "u1"), ("x", "<f4"), ("y", "<f4"),
+                               ("z", "<f4"), ("o", "<f4"), ("vx", "<f4"), ("vy", "<f4"), ("vz", "<f4"),
+                               ("move_flags", "<u4"), ("health", "<u4"), ("max_health", "<u4"),
+                               ("power_type", "u1"), ("power", "<u4"), ("max_power", "<u4"), ("level", "u1"),
+                               ("reaction", "u1"), ("react_state", "u1"), ("rank", "u1"), ("boss", "u1"),
+                               ("unit_flags", "<u4"), ("npc_flags", "<u4"), ("dynamic_flags", "<u4"),
+                               ("unit_state", "<u4"), ("death_state", "u1"), ("target", "<u8"),
+                               ("victim", "<u8"), ("casting_spell", "<u4"), ("cast_left_ms", "<i4"),
+                               ("motion_type", "u1"), ("home_x", "<f4"), ("home_y", "<f4"), ("home_z", "<f4"),
+                               ("formation_leader_spawn", "<u4"), ("flags", "u1"), ("aura_count", "u1")]),
+    GAME_OBJECT_STATE: ("GameObjectState", [("ms", "<u8"), ("player", "<u8"), ("object", "<u8"),
+                                            ("spawn_id", "<u4"), ("entry", "<u4"), ("go_type", "u1"),
+                                            ("go_state", "u1"), ("loot_state", "u1"), ("flags", "<u4"),
+                                            ("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("o", "<f4"),
+                                            ("event", "u1")]),
+    PLAYER_DETAIL: ("PlayerDetail", [("ms", "<u8"), ("player", "<u8"), ("stats", "<u4", (5,)), ("armor", "<u4"),
+                                     ("resistances", "<u4", (6,)), ("attack_power", "<u4"),
+                                     ("ranged_attack_power", "<u4"), ("spell_power", "<u4"),
+                                     ("heal_power", "<u4"), ("ratings", "<f4", (11,)), ("expertise", "<f4"),
+                                     ("max_health", "<u4"), ("max_power", "<u4", (7,)), ("money", "<u4"),
+                                     ("xp", "<u4"), ("next_xp", "<u4"), ("combo_points", "u1"),
+                                     ("combo_target", "<u8"), ("cheat_flags", "<u4"), ("game_master", "u1")]),
+    MAP_SPAWNS: ("MapSpawns", [("ms", "<u8"), ("map", "<u4"), ("part", "<u2"), ("parts", "<u2"),
+                               ("count", "<u2")]),
+    INSTANCE_CREATURES: ("InstanceCreatures", [("ms", "<u8"), ("map", "<u4"), ("instance", "<u4"),
+                                               ("part", "<u2"), ("parts", "<u2"), ("count", "<u2")]),
     DAMAGE: ("Damage", [("ms", "<u8"), ("source", "<u8"), ("target", "<u8"), ("spell", "<u4"), ("amount", "<u4"),
                         ("absorbed", "<u4"), ("overkill", "<u4"), ("school", "u1"), ("flags", "u1")]),
     HEAL: ("Heal", [("ms", "<u8"), ("source", "<u8"), ("target", "<u8"), ("spell", "<u4"), ("amount", "<u4"),
                     ("overheal", "<u4"), ("flags", "u1")]),
     KILL: ("Kill", [("ms", "<u8"), ("killer", "<u8"), ("victim", "<u8"), ("victim_entry", "<u4"),
-                    ("victim_kind", "u1")]),
+                    ("victim_kind", "u1"), ("victim_spawn_id", "<u4")]),
     DEATH: ("Death", [("ms", "<u8"), ("player", "<u8"), ("killer", "<u8"), ("cause", "u1"), ("x", "<f4"),
                       ("y", "<f4"), ("z", "<f4"), ("map", "<u4")]),
     QUEST: ("Quest", [("ms", "<u8"), ("player", "<u8"), ("quest", "<u4"), ("event", "u1")]),
@@ -127,17 +174,44 @@ PREFIX: dict[int, tuple[str, np.dtype]] = {
                               ("boss_entry", "<u4"), ("event", "u1")]),
     PVP: ("PvP", [("ms", "<u8"), ("player", "<u8"), ("other", "<u8"), ("event", "u1")]),
     AREA: ("Area", [("ms", "<u8"), ("player", "<u8"), ("map", "<u4"), ("zone", "<u4"), ("area", "<u4")]),
+    COMBAT_EDGE: ("CombatEdge", [("ms", "<u8"), ("map", "<u4"), ("instance", "<u4"), ("unit", "<u8"),
+                                 ("spawn_id", "<u4"), ("entry", "<u4"), ("event", "u1"), ("evade_reason", "u1"),
+                                 ("other", "<u8"), ("other_spawn_id", "<u4"), ("x", "<f4"), ("y", "<f4"),
+                                 ("z", "<f4"), ("ox", "<f4"), ("oy", "<f4"), ("oz", "<f4")]),
     COMPANION_DECISION: ("CompanionDecision", [("ms", "<u8"), ("companion", "<u8"), ("owner", "<u8"),
                                                ("model", "S32"), ("obs_hash", "<u4"), ("n_actions", "<u2")]),
     COMPANION_COMMAND: ("CompanionCommand", [("ms", "<u8"), ("owner", "<u8"), ("companion", "<u8"),
                                              ("command", "u1"), ("arg", "<u4")]),
     COMPANION_RATING: ("CompanionRating", [("ms", "<u8"), ("owner", "<u8"), ("companion", "<u8"), ("rating", "i1"),
                                            ("reason", "u1")]),
+    ANNOTATION: ("Annotation", [("ms", "<u8"), ("player", "<u8"), ("seq", "<u4"), ("kind", "<u2"), ("map", "<u4"),
+                                ("instance", "<u4"), ("zone", "<u4"), ("area", "<u4"), ("x", "<f4"), ("y", "<f4"),
+                                ("z", "<f4"), ("o", "<f4"), ("target", "<u8"), ("target_spawn_id", "<u4"),
+                                ("target_entry", "<u4"), ("target_kind", "u1"), ("target_health_pct", "<f4"),
+                                ("target_distance", "<f4"), ("state", "u1"), ("health_pct", "<f4"),
+                                ("power_pct", "<f4"), ("power_type", "u1"), ("threat_on_me", "u1"),
+                                ("hostiles_near", "u1"), ("party_alive", "u1"), ("party_size", "u1"),
+                                ("client_ms", "<u4"), ("text_len", "<u2")]),
+    RECORDING_START: ("RecordingStart", [("ms", "<u8"), ("player", "<u8"), ("session", "<u8"), ("id", "S64"),
+                                         ("class_", "u1"), ("race", "u1"), ("gender", "u1"), ("level", "u1"),
+                                         ("map", "<u4"), ("instance", "<u4"), ("zone", "<u4"), ("area", "<u4"),
+                                         ("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("o", "<f4"),
+                                         ("snapshot_ms", "<u2"), ("unit_ms", "<u2"), ("streams", "<u4"),
+                                         ("flags", "u1"), ("text_len", "<u2")]),
+    RECORDING_END: ("RecordingEnd", [("ms", "<u8"), ("player", "<u8"), ("session", "<u8"), ("reason", "u1"),
+                                     ("verdict", "u1"), ("notes", "<u4"), ("seconds", "<u4"), ("text_len", "<u2")]),
+    CHAT: ("Chat", [("ms", "<u8"), ("player", "<u8"), ("direction", "u1"), ("chat_type", "u1"),
+                    ("language", "<u4"), ("sender", "<u8"), ("sender_kind", "u1"), ("sender_entry", "<u4"),
+                    ("receiver", "<u8"), ("redacted", "u1"), ("text_len", "<u2")]),
+    RAW_PACKET: ("RawPacket", [("ms", "<u8"), ("player", "<u8"), ("direction", "u1"), ("opcode", "<u2"),
+                               ("server_ms", "<u4"), ("total", "<u4"), ("offset", "<u4"), ("flags", "u1"),
+                               ("length", "<u2")]),
 }
 PREFIX = {rtype: (name, np.dtype(fields)) for rtype, (name, fields) in PREFIX.items()}
 # Fields a later format appended to a record, which an older file's record lacks: read as 0 there. The record's
 # shortest valid payload is its prefix without them.
-APPENDED: dict[int, tuple[str, ...]] = {MOVE: ("server_ms",)}       # format 3
+APPENDED: dict[int, tuple[str, ...]] = {MOVE: ("server_ms",),                                   # format 3
+                                        KILL: ("victim_spawn_id",), INTERACT: ("spawn_id",)}    # format 4
 MIN_LENGTH = {rtype: PREFIX[rtype][1].itemsize - sum(PREFIX[rtype][1].fields[name][0].itemsize for name in names)
               for rtype, names in APPENDED.items()}
 
@@ -151,6 +225,26 @@ SNAPSHOT_UNIT = np.dtype([("unit", "<u8"), ("entry", "<u4"), ("kind", "u1"), ("x
                           ("threat_on_player", "<f4")])
 SNAPSHOT_AURA = np.dtype([("spell", "<u4"), ("stacks", "u1"), ("remaining_ms", "<i4"), ("positive", "u1")])
 SNAPSHOT_COOLDOWN = np.dtype([("spell", "<u4"), ("remaining_ms", "<u4")])
+# Format 4 tails (FORMAT.md §2.2, §2.5): a recording's dumps and surroundings.
+INVENTORY_ITEM = np.dtype([("bag", "u1"), ("slot", "u1"), ("entry", "<u4"), ("count", "<u4"), ("perm_enchant", "<u4"),
+                           ("temp_enchant", "<u4"), ("random_property", "<i4"), ("durability", "<u4"),
+                           ("max_durability", "<u4")])
+ACTION_BUTTON = np.dtype([("button", "u1"), ("kind", "u1"), ("action", "<u4")])
+TALENT_RANK = np.dtype([("talent", "<u4"), ("rank", "u1")])
+UNIT_STATE_AURA = np.dtype([("spell", "<u4"), ("stacks", "u1"), ("remaining_ms", "<i4"), ("positive", "u1"),
+                            ("caster", "<u8")])
+UNIT_STATE_THREAT = np.dtype([("unit", "<u8"), ("threat", "<f4")])
+MAP_SPAWN = np.dtype([("spawn_id", "<u4"), ("entry", "<u4"), ("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("o", "<f4"),
+                      ("rank", "u1"), ("boss", "u1"), ("formation_leader_spawn", "<u4"), ("kind", "u1"),
+                      ("go_type", "u1")])
+INSTANCE_CREATURE = np.dtype([("spawn_id", "<u4"), ("alive", "u1")])
+# Types whose tail is a counted array of one dtype (the count is the prefix's last field).
+COUNTED_TAILS = {INVENTORY: INVENTORY_ITEM, ACTION_BUTTONS: ACTION_BUTTON, MAP_SPAWNS: MAP_SPAWN,
+                 INSTANCE_CREATURES: INSTANCE_CREATURE}
+# Types whose tail is text (or bytes) of the prefix's last field's length.
+TEXT_TAILS = {ANNOTATION, RECORDING_START, RECORDING_END, CHAT, RAW_PACKET}
+# Types whose tail is read on demand from the batch (the spans kept, nothing parsed up front).
+SPANNED = {SNAPSHOT, UNIT_STATE, TALENTS, *COUNTED_TAILS, *TEXT_TAILS}
 
 # Snapshot Self flags.
 SELF_COMBAT, SELF_SWIMMING, SELF_FLYING, SELF_MOUNTED, SELF_CASTING, SELF_DEAD, SELF_FALLING = 1, 2, 4, 8, 16, 32, 64
@@ -171,12 +265,87 @@ class Batch:
     unknown: dict[int, int] = field(default_factory=dict)     # record type -> count skipped
     malformed: int = 0
     _raw: bytes = b""
-    _snapshot_spans: np.ndarray | None = None                 # [N, 2] payload offset and length of each Snapshot
+    _spans: dict[int, np.ndarray] = field(default_factory=dict)   # SPANNED type -> [N, 2] payload offset, length
+
+    @property
+    def _snapshot_spans(self) -> np.ndarray | None:
+        return self._spans.get(SNAPSHOT)
 
     def get(self, rtype: int) -> np.ndarray:
         """The prefixes of one record type (an empty array of its dtype when the batch has none)."""
         found = self.records.get(rtype)
         return found if found is not None else np.zeros(0, dtype=PREFIX[rtype][1])
+
+    def _span(self, rtype: int, index: int) -> tuple[int, int] | None:
+        """(first tail byte, end) of the batch's `index`-th record of a SPANNED type."""
+        spans = self._spans.get(rtype)
+        if spans is None or index >= len(spans):
+            return None
+        start, length = (int(v) for v in spans[index])
+        return start + PREFIX[rtype][1].itemsize, start + length
+
+    def tail_bytes(self, rtype: int, index: int) -> bytes:
+        """The raw tail of a record (everything after its fixed prefix); empty when unknown."""
+        span = self._span(rtype, index)
+        return b"" if span is None else self._raw[span[0]:span[1]]
+
+    def tail_text(self, rtype: int, index: int) -> str:
+        """The text of a TEXT_TAILS record (an Annotation's note, a Chat line, a RecordingStart's name, a
+        RecordingEnd's title), cut to the length its prefix says."""
+        rows = self.records.get(rtype)
+        if rows is None or index >= len(rows):
+            return ""
+        field_name = rows.dtype.names[-1]
+        raw = self.tail_bytes(rtype, index)[:int(rows[index][field_name])]
+        return raw.decode("utf-8", "replace")
+
+    def tail_rows(self, rtype: int, index: int) -> np.ndarray:
+        """The counted array of a COUNTED_TAILS record (Inventory items, ActionButtons, a MapSpawns part, an
+        InstanceCreatures part), cut to what the record really holds."""
+        dtype = COUNTED_TAILS[rtype]
+        rows = self.records.get(rtype)
+        if rows is None or index >= len(rows):
+            return np.zeros(0, dtype)
+        raw = self.tail_bytes(rtype, index)
+        count = min(int(rows[index][rows.dtype.names[-1]]), len(raw) // dtype.itemsize)
+        return np.frombuffer(raw, dtype=dtype, count=count).copy()
+
+    def talents(self, index: int) -> tuple[np.ndarray, np.ndarray]:
+        """(ranks, glyph ids) of the batch's `index`-th Talents record."""
+        rows = self.records.get(TALENTS)
+        raw = self.tail_bytes(TALENTS, index)
+        if rows is None or index >= len(rows):
+            return np.zeros(0, TALENT_RANK), np.zeros(0, np.uint32)
+        count = min(int(rows[index]["count"]), len(raw) // TALENT_RANK.itemsize)
+        ranks = np.frombuffer(raw, dtype=TALENT_RANK, count=count).copy()
+        pos = count * TALENT_RANK.itemsize
+        if pos + 1 > len(raw):
+            return ranks, np.zeros(0, np.uint32)
+        glyphs = min(raw[pos], (len(raw) - pos - 1) // 4)
+        return ranks, np.frombuffer(raw, dtype="<u4", count=glyphs, offset=pos + 1).astype(np.uint32)
+
+    def unit_state_details(self, index: int) -> dict[str, np.ndarray]:
+        """The auras and the threat list of the batch's `index`-th UnitState (a malformed tail reads as empty)."""
+        empty = {"auras": np.zeros(0, UNIT_STATE_AURA), "threats": np.zeros(0, UNIT_STATE_THREAT)}
+        rows = self.records.get(UNIT_STATE)
+        if rows is None or index >= len(rows):
+            return empty
+        raw = self.tail_bytes(UNIT_STATE, index)
+        auras = int(rows[index]["aura_count"])
+        size = auras * UNIT_STATE_AURA.itemsize
+        if size + 1 > len(raw):
+            return empty
+        out = {"auras": np.frombuffer(raw, dtype=UNIT_STATE_AURA, count=auras).copy()}
+        threats = min(raw[size], (len(raw) - size - 1) // UNIT_STATE_THREAT.itemsize)
+        out["threats"] = np.frombuffer(raw, dtype=UNIT_STATE_THREAT, count=threats, offset=size + 1).copy()
+        return out
+
+    def packet_payload(self, index: int) -> bytes:
+        """The bytes of the batch's `index`-th RawPacket chunk (see iter_packets for whole packets)."""
+        rows = self.records.get(RAW_PACKET)
+        if rows is None or index >= len(rows):
+            return b""
+        return self.tail_bytes(RAW_PACKET, index)[:int(rows[index]["length"])]
 
     def snapshot_details(self, index: int) -> dict[str, np.ndarray]:
         """The units, auras and cooldowns of the batch's `index`-th Snapshot (a malformed tail reads as empty)."""
@@ -334,9 +503,9 @@ def parse(buf: bytes, runs: np.ndarray) -> Batch:
             batch.records[rtype] = _rows_with_appended(buf, data, rtype, dtype, mine, older)
         else:
             batch.records[rtype] = _prefix_rows(buf, data, dtype, mine)
-        if rtype == SNAPSHOT:
+        if rtype in SPANNED:
             offs, lens = _offsets(mine)
-            batch._snapshot_spans = np.stack([offs, lens], axis=1)
+            batch._spans[rtype] = np.stack([offs, lens], axis=1)
         elif rtype in (GROUP_STATE, KNOWN_SPELLS, COMPANION_DECISION):
             offs, lens = _offsets(mine)
             batch.tails[rtype] = [_tail(buf, rtype, int(o), int(n), dtype.itemsize) for o, n in zip(offs, lens)]
@@ -532,15 +701,174 @@ def stream_map(path: Path) -> tuple[str, str]:
     return stream, shard
 
 
-class CaptureDir:
-    """A capture directory, walked hour by hour within an optional [start, end] range (inclusive, UTC)."""
+RECORDINGS_DIR = "recordings"
 
-    def __init__(self, root: str | Path, start: str | None = None, end: str | None = None):
+
+@dataclass
+class RecordingDir(HourDir):
+    """One manual recording (FORMAT.md §1): `<Dir>/recordings/<id>/`, its `<stream>-<map>.bin.gz` files and its
+    manifest.json. `hour` is its start (from the manifest, else the directory's mtime), so it can stand among the
+    hours of a CaptureDir."""
+
+    @classmethod
+    def open(cls, path: str | Path) -> "RecordingDir":
+        path = Path(path)
+        manifest = None
+        try:
+            manifest = json.loads((path / "manifest.json").read_text())
+        except (OSError, json.JSONDecodeError):
+            pass
+        when = None
+        if manifest and manifest.get("start_utc"):
+            try:
+                when = dt.datetime.strptime(str(manifest["start_utc"])[:19], "%Y-%m-%dT%H:%M:%S")
+            except ValueError:
+                when = None
+        if when is None:
+            when = dt.datetime.utcfromtimestamp(path.stat().st_mtime)
+        out = cls(when, path)
+        out._manifest = manifest
+        return out
+
+    _manifest: dict | None = None
+
+    @property
+    def id(self) -> str:
+        return self.path.name
+
+    @property
+    def label(self) -> str:
+        return self.id
+
+    @property
+    def manifest(self) -> dict | None:
+        """The manifest, or None while the recording is still open (or its manifest is unreadable)."""
+        return self._manifest
+
+    @property
+    def status(self) -> str:
+        return str((self._manifest or {}).get("status") or "recording")
+
+    @property
+    def verdict(self) -> str | None:
+        return (self._manifest or {}).get("verdict")
+
+    @property
+    def title(self) -> str:
+        return str((self._manifest or {}).get("title") or "")
+
+    def index(self) -> dict | None:
+        return self._manifest
+
+    def read(self, stream: str, stats: list[FileStats] | None = None) -> Iterator[Batch]:
+        """Every batch of one of the recording's streams, file by file (map order by name)."""
+        for path in self.files(stream):
+            file_stats = FileStats(path)
+            yield from read_file(path, file_stats)
+            if stats is not None:
+                stats.append(file_stats)
+
+    def load(self, stream: str) -> Batch:
+        """One of the recording's streams as a single batch. Tails are lost in the merge: read batch by batch
+        (`read`) for a Snapshot's units, a UnitState's threat list, a note's text or a packet's bytes."""
+        return merge(list(self.read(stream)))
+
+
+def list_recordings(root: str | Path) -> list[RecordingDir]:
+    """Every recording under `<root>/recordings/`, oldest first."""
+    folder = Path(root) / RECORDINGS_DIR
+    if not folder.is_dir():
+        return []
+    out = [RecordingDir.open(path) for path in sorted(folder.iterdir()) if path.is_dir()]
+    out.sort(key=lambda rec: (rec.hour, rec.id))
+    return out
+
+
+def find_recording(root_or_path: str | Path, name: str | None = None) -> RecordingDir:
+    """A recording by its directory, or by `name` (its id, or a unique prefix or substring of one) under a capture
+    root."""
+    path = Path(root_or_path)
+    if name is None:
+        if (path / "manifest.json").is_file() or path.name and path.parent.name == RECORDINGS_DIR:
+            return RecordingDir.open(path)
+        raise FileNotFoundError(f"{path}: not a recording directory")
+    found = [rec for rec in list_recordings(path) if rec.id == name]
+    if not found:
+        found = [rec for rec in list_recordings(path) if name in rec.id]
+    if len(found) != 1:
+        raise FileNotFoundError(f"{name}: {'no' if not found else len(found)} recordings under {path}")
+    return found[0]
+
+
+SMSG_COMPRESSED_UPDATE_OBJECT = 0x1F6
+
+
+def iter_packets(rec: RecordingDir, inflate: bool = True) -> Iterator[dict]:
+    """The recording's packets (the packet stream) whole again, in file order: {ms, player, direction, opcode,
+    server_ms, total, truncated, payload}. Chunks of one packet (flag 2 on all but the last) are joined by their
+    (player, direction, opcode, server_ms, total); a compressed update object is inflated (`inflated` set) when
+    `inflate`."""
+    import zlib
+    partial: dict[tuple, bytearray] = {}
+    for batch in rec.read("packet"):
+        rows = batch.get(RAW_PACKET)
+        for i, row in enumerate(rows):
+            key = (int(row["player"]), int(row["direction"]), int(row["opcode"]), int(row["server_ms"]),
+                   int(row["total"]))
+            chunk = batch.packet_payload(i)
+            if int(row["flags"]) & 2 or key in partial:
+                buf = partial.setdefault(key, bytearray())
+                offset = int(row["offset"])
+                if len(buf) < offset:
+                    buf.extend(b"\0" * (offset - len(buf)))
+                buf[offset:offset + len(chunk)] = chunk
+                if int(row["flags"]) & 2:
+                    continue
+                payload = bytes(partial.pop(key))
+            else:
+                payload = chunk
+            out = {"ms": int(row["ms"]), "player": key[0], "direction": key[1], "opcode": key[2],
+                   "server_ms": key[3], "total": key[4], "truncated": bool(int(row["flags"]) & 1),
+                   "payload": payload, "inflated": False}
+            if inflate and key[2] == SMSG_COMPRESSED_UPDATE_OBJECT and key[1] == 1 and len(payload) > 4 \
+                    and not out["truncated"]:
+                try:
+                    out["payload"] = zlib.decompress(payload[4:])
+                    out["inflated"] = True
+                except zlib.error:
+                    pass
+            yield out
+
+
+class CaptureDir:
+    """A capture directory, walked hour by hour within an optional [start, end] range (inclusive, UTC). With
+    `include_recordings`, the manual recordings (FORMAT.md §1, `recordings/<id>/`) whose start falls in the range
+    stand among the hours, each as one RecordingDir."""
+
+    def __init__(self, root: str | Path, start: str | None = None, end: str | None = None,
+                 include_recordings: bool = False):
         self.root = Path(root)
         self.start = parse_hour(start)
         self.end = parse_hour(end, end=True)
+        self.include_recordings = include_recordings
+
+    def recordings(self) -> list[RecordingDir]:
+        """The manual recordings whose start falls in the range."""
+        out = []
+        for rec in list_recordings(self.root):
+            if (self.start and rec.hour < self.start) or (self.end and rec.hour > self.end + dt.timedelta(hours=1)):
+                continue
+            out.append(rec)
+        return out
 
     def hours(self) -> list[HourDir]:
+        out = self._hours()
+        if self.include_recordings:
+            out.extend(self.recordings())
+            out.sort(key=lambda h: h.hour)
+        return out
+
+    def _hours(self) -> list[HourDir]:
         out = []
         if not self.root.is_dir():
             return out
@@ -585,7 +913,8 @@ class CaptureDir:
                 open_hours.append(hour.label)
                 continue
             for stream, count in (index.get("dropped") or {}).items():
-                dropped[stream] = dropped.get(stream, 0) + int(count)
+                dropped[stream] = dropped.get(stream, 0) + int(count if not isinstance(count, dict)
+                                                                else sum(count.values()))
             for stream, flag in (index.get("paused") or {}).items():
                 if flag:
                     paused.setdefault(stream, []).append(hour.label)

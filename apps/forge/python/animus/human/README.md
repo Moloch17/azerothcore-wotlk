@@ -1,7 +1,7 @@
 # animus.human — offline tools over human play captures
 
-mod-animus records every player on the live realm (FORMAT.md is the contract); these tools read the files and
-produce what the forge trains and judges with. Plan: `.agents/plans/human-play-data/`. `motion.py` is the one
+mod-animus records every player on the live realm, and a player's own play on request (FORMAT.md is the contract);
+these tools read the files and produce what the forge trains and judges with. Plan: `.agents/plans/human-play-data/`. `motion.py` is the one
 definition of motion features: nothing here computes them any other way.
 
 ```
@@ -18,12 +18,19 @@ python -m animus.human <command> --capture <Animus.Capture.Dir> --out <dir> [--f
 | `prices` | `human_prices.json`, `human_prices.md` | proposed Jitter/Effort/Repeat/Fidget/JitterDecayMs/SettleGraceMs (`--budget`); never writes config |
 | `companions` | `human_companions.json` | per-model ratings, dismissals, overrides, deaths |
 | `realism` | `realism.json` | a run's `eval_motion.npz` (`--run <dir>` or `--bot <npz>`) against `human_reference.json` (`--reference`, default `<out>/`): EMD per context per histogram feature and the mean |
+| `recordings` | stdout | the manual recordings under `<capture>/recordings`: status, verdict, title, character, duration, notes, files (`--records` counts every record type) |
+| `notes` / `chat` | stdout | one recording's notes (with where the player stood, their target, the state of the moment) or chat lines; `--recording <dir or id>` (default: the latest under `--capture`) |
+| `dungeon-run` | `<out>.json`, `<out>.clearway.csv` | a dungeon run read off one recording: packs, pulls (first creature, pull_from, fight_spot, kills, deaths), rests, door interactions, bosses, skipped creatures, notes, and the clear way (`index,kind,x,y,z,spawn_ids`) a PointNav stage loads through `AnimusForge.Curriculum.PointNav.ClearWayFile` (`--site-yards`, `--map`) |
 
 ## Modules
 
 - `reader.py` — framing, record prefixes as numpy structured dtypes (vectorised per batch), gzip members read one
   at a time, the hourly layout and `index.json`. Unknown record types and longer records are skipped by length; a
   truncated final gzip member is dropped whole and counted; records may straddle members.
+- `recordings.py` — the manual recordings (`RecordingDir`, manifests), notes joined to the move stream, chat.
+- `dungeon_run.py` — a recorded dungeon run: packs (formations, co-engagement, proximity), pulls from CombatEdge and
+  threat lists, rests from standing still out of combat, interactions from Interact joined to object changes,
+  bosses, skipped creatures, the clear way CSV the core loads.
 - `tracks.py` — move packets to tracks on the 250 ms grid: mode from flags, mount, speed in force, combat; cuts at
   taxi, death, loading, vehicle, transport, teleport, map change; involuntary spans flagged; stands filled.
 - `segment.py` — clips (with context tags), trips with hindsight destinations, fights, deaths and corpse runs,
