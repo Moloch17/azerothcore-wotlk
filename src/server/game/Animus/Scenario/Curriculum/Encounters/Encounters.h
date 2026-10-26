@@ -330,6 +330,7 @@ namespace Animus::Curriculum
             uint32 LegCount = 0;
             bool LegDone = false;
             bool LegCounted = false;
+            bool LegMissLogged = false;         // the leg-missed line written (at its last decision)
             uint32 LegDoneMs = 0;               // the leg's clock when it was done
         };
 
@@ -384,6 +385,7 @@ namespace Animus::Curriculum
         [[nodiscard]] static bool TimeIsUp(Env const& env);
         /// Whether the episode is over: a wipe or the clock, else a leg's objective, else the last boss's death.
         [[nodiscard]] static bool Over(Env const& env, EnvInstance const& fight);
+        void LogLegMissed(Env const& env, EnvInstance const& fight, Map* map, Player const* seat) const;
 
         std::vector<EnvInstance> _envs;
         std::map<InstanceLadder, std::vector<BossRow const*>> _rows;   // per ladder, the rows the database fields

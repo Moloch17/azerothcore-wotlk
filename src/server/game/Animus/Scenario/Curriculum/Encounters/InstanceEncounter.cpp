@@ -394,65 +394,6 @@ void Animus::Curriculum::InstanceEncounter::ResetEpisode(Env& env)
             fight.Rises, fight.Rejoins, float(fight.LastMs - std::min(fight.LastMs, fight.ProgressMs)) / 1000.0f,
             fight.LegTrip ? (fight.LegDone ? "leg done" : fight.Wiped ? "wiped" : "leg out of time")
             : fight.BossDead ? "cleared" : fight.Wiped ? "wiped" : "out of time");
-    // A leg out of time: which of its conditions stood (2026-10-26, the legs at 0%): the pack's hostile creatures
-    // still alive and the nearest one's distance from the checkpoint, a fight still on, the gate shut, and the nearest
-    // living seat's distance and height from the checkpoint.
-    if (built && fight.LegTrip && !fight.LegDone && fight.Way && fight.Leg >= 0
-        && std::size_t(fight.Leg) < fight.Way->Points.size() && _scenario.Tuning().Instance.WingTrace)
-        if (Map* map = env.FindMap(); Player* seat = _scenario.SeatBot(env, 0))
-        {
-            PointNavEncounter::ClearWay const& way = *fight.Way;
-            uint32 const k = uint32(fight.Leg);
-            Position const& at = way.Points[k];
-            uint32 alive = 0;
-            uint32 combat = 0;
-            float nearest = -1.0f;
-            for (uint32 spawnId : way.Spawns[k])
-            {
-                auto const range = map->GetCreatureBySpawnIdStore().equal_range(spawnId);
-                for (auto it = range.first; it != range.second; ++it)
-                    if (Creature const* creature = it->second; creature && creature->IsInWorld()
-                        && Hostile(seat, creature))
-                    {
-                        ++alive;
-                        combat += creature->IsInCombat() ? 1 : 0;
-                        float const d = creature->GetExactDist(&at);
-                        if (nearest < 0.0f || d < nearest)
-                            nearest = d;
-                    }
-            }
-            bool shut = false;
-            if (k < way.GateSpawns.size() && way.GateSpawns[k])
-            {
-                auto const range = map->GetGameObjectBySpawnIdStore().equal_range(way.GateSpawns[k]);
-                for (auto it = range.first; it != range.second; ++it)
-                    if (GameObject const* object = it->second; object && object->IsInWorld()
-                        && object->GetGoType() == GAMEOBJECT_TYPE_DOOR && object->GetGoState() == GO_STATE_READY)
-                        shut = true;
-            }
-            float seatYards = -1.0f;
-            float seatHeight = 0.0f;
-            float walked = 0.0f;
-            for (uint32 index = 0; index < _scenario.Data(env).ActiveSeats; ++index)
-                walked = std::max(walked, fight.Seats[index].Travel);
-            for (uint32 index = 0; index < _scenario.Data(env).ActiveSeats; ++index)
-                if (Player const* bot = _scenario.SeatBot(env, index); bot && bot->IsAlive() && bot->IsInWorld()
-                    && bot->GetMapId() == map->GetId())
-                {
-                    float const d = bot->GetExactDist2d(&at);
-                    if (seatYards < 0.0f || d < seatYards)
-                    {
-                        seatYards = d;
-                        seatHeight = bot->GetPositionZ() - at.GetPositionZ();
-                    }
-                }
-            LOG_INFO("module.animus", "Leg missed: env {} {} leg {} after {:.0f}s | pack {} of {} alive ({} in "
-                "combat), nearest {:.0f} yd from the checkpoint | fight on {} ({} on the party) | gate {} | nearest "
-                "seat {:.0f} yd, {:+.0f} yd high | the furthest walker {:.0f} yd", env.Index,
-                fight.Evaluating ? "eval" : "train", k, float(env.EpisodeElapsedMs) / 1000.0f, alive,
-                way.Spawns[k].size(), combat, nearest, fight.Fighting ? "yes" : "no", fight.OnParty,
-                shut ? "shut" : "open", seatYards, seatHeight, walked);
-        }
     // A leg just ended counts toward its leg's rate at the rung (training only); a whole run just ended toward the
     // ladder's running share (the training runs only; the probes are the policy's own).
     if (built && !fight.Evaluating && fight.LegTrip && fight.LegCounted && fight.Leg >= 0)
@@ -818,6 +759,70 @@ void Animus::Curriculum::InstanceEncounter::PlanLeg(Env& env, EnvInstance& fight
         "before it", _scenario.Name(), env.Index, fight.Leg, legs, fight.Rung, share * 100.0f, fight.Killed);
 }
 
+void Animus::Curriculum::InstanceEncounter::LogLegMissed(Env const& env, EnvInstance const& fight, Map* map,
+    Player const* seat) const
+{
+    // A leg out of time, logged at its last decision (the reset comes after the env's clock and world are reset):
+    // which of its conditions stood (2026-10-26, the legs at 0%) -- the pack's hostile creatures still alive and the
+    // nearest one's distance from the checkpoint, a fight still on, the gate shut, and the nearest living seat's
+    // distance and height from the checkpoint.
+    if (!fight.LegTrip || fight.LegDone || !fight.Way || fight.Leg < 0
+        || std::size_t(fight.Leg) >= fight.Way->Points.size() || !_scenario.Tuning().Instance.WingTrace || !map
+        || !seat)
+        return;
+    PointNavEncounter::ClearWay const& way = *fight.Way;
+    uint32 const k = uint32(fight.Leg);
+    Position const& at = way.Points[k];
+    uint32 alive = 0;
+    uint32 combat = 0;
+    float nearest = -1.0f;
+    for (uint32 spawnId : way.Spawns[k])
+    {
+        auto const range = map->GetCreatureBySpawnIdStore().equal_range(spawnId);
+        for (auto it = range.first; it != range.second; ++it)
+            if (Creature const* creature = it->second; creature && creature->IsInWorld()
+                && Hostile(seat, creature))
+            {
+                ++alive;
+                combat += creature->IsInCombat() ? 1 : 0;
+                float const d = creature->GetExactDist(&at);
+                if (nearest < 0.0f || d < nearest)
+                    nearest = d;
+            }
+    }
+    bool shut = false;
+    if (k < way.GateSpawns.size() && way.GateSpawns[k])
+    {
+        auto const range = map->GetGameObjectBySpawnIdStore().equal_range(way.GateSpawns[k]);
+        for (auto it = range.first; it != range.second; ++it)
+            if (GameObject const* object = it->second; object && object->IsInWorld()
+                && object->GetGoType() == GAMEOBJECT_TYPE_DOOR && object->GetGoState() == GO_STATE_READY)
+                shut = true;
+    }
+    float seatYards = -1.0f;
+    float seatHeight = 0.0f;
+    float walked = 0.0f;
+    for (uint32 index = 0; index < _scenario.Data(env).ActiveSeats; ++index)
+        walked = std::max(walked, fight.Seats[index].Travel);
+    for (uint32 index = 0; index < _scenario.Data(env).ActiveSeats; ++index)
+        if (Player const* bot = _scenario.SeatBot(env, index); bot && bot->IsAlive() && bot->IsInWorld()
+            && bot->GetMapId() == map->GetId())
+        {
+            float const d = bot->GetExactDist2d(&at);
+            if (seatYards < 0.0f || d < seatYards)
+            {
+                seatYards = d;
+                seatHeight = bot->GetPositionZ() - at.GetPositionZ();
+            }
+        }
+    LOG_INFO("module.animus", "Leg missed: env {} {} leg {} after {:.0f}s | pack {} of {} alive ({} in "
+        "combat), nearest {:.0f} yd from the checkpoint | fight on {} ({} on the party) | gate {} | nearest "
+        "seat {:.0f} yd, {:+.0f} yd high | the furthest walker {:.0f} yd", env.Index,
+        fight.Evaluating ? "eval" : "train", k, float(env.EpisodeElapsedMs) / 1000.0f, alive,
+        way.Spawns[k].size(), combat, nearest, fight.Fighting ? "yes" : "no", fight.OnParty,
+        shut ? "shut" : "open", seatYards, seatHeight, walked);
+}
+
 bool Animus::Curriculum::InstanceEncounter::LegMet(Env const& env, EnvInstance const& fight, Map* map,
     Player const* seat) const
 {
@@ -953,6 +958,11 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
     {
         fight.LegDone = true;
         fight.LegDoneMs = env.EpisodeElapsedMs;
+    }
+    if (fight.LegTrip && !fight.LegDone && !fight.LegMissLogged && TimeIsUp(env))
+    {
+        fight.LegMissLogged = true;
+        LogLegMissed(env, fight, env.FindMap(), seat);
     }
     // **Against the recorded line** (the path_* measures; never a reward): each living seat's yards from the line the
     // player walked -- a leg's own, or on a whole run the leg the party is on and the one before -- and the yards
