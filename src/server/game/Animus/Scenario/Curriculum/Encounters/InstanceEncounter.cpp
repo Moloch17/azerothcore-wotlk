@@ -25,6 +25,7 @@
 #include "DBCStores.h"
 #include "EntranceRespawn.h"
 #include "Env.h"
+#include "EnvPool.h"
 #include "GameObject.h"
 #include "EpisodeInfoTable.h"
 #include "GridNotifiers.h"
@@ -653,8 +654,11 @@ void Animus::Curriculum::InstanceEncounter::PlanLeg(Env& env, EnvInstance& fight
     // The evaluation: legs alone until they are learned at this rung, then even seeds a leg each, odd seeds the whole
     // run. Training: legs until learned, then mostly the whole run (LEG_FULL_SHARE). The ladder's probes are whole
     // runs: none while the legs are being learned.
+    // An evaluation's spare env (every seed handed out: EpisodeSeedIndex NO_EPISODE_SEED, Evaluating still set) is
+    // drawn as a training episode is, and never counted.
+    bool const seeded = env.Evaluating && env.EpisodeSeedIndex != NO_EPISODE_SEED;
     bool leg;
-    if (env.Evaluating)
+    if (seeded)
         leg = !learned || env.EpisodeSeedIndex % 2 == 0;
     else
         leg = !(learned && frand(0.0f, 1.0f) < PointNavEncounter::LegFullShare());
@@ -665,8 +669,7 @@ void Animus::Curriculum::InstanceEncounter::PlanLeg(Env& env, EnvInstance& fight
         return;
     fight.LegTrip = true;
     fight.LegCounted = !env.Evaluating;
-    fight.Leg = env.Evaluating ? int32((env.EpisodeSeedIndex / 2) % legs)
-        : int32(nav->DrawLegAt(env, fight.Rung, legs));
+    fight.Leg = seeded ? int32((env.EpisodeSeedIndex / 2) % legs) : int32(nav->DrawLegAt(env, fight.Rung, legs));
     if (fight.Leg > 0)
         StartFrom(env, fight, map, seat, uint32(fight.Leg), uint32(fight.Leg) - 1);
     // The leg's own clock: a gate's leg a door's allowance more.
