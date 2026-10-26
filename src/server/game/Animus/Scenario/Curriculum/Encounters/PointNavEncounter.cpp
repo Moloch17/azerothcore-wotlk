@@ -1732,6 +1732,9 @@ bool Animus::Curriculum::PointNavEncounter::LoadRecordedWay(std::filesystem::pat
     bool goal = false;
     while (std::getline(in, line))
     {
+        // A file written with CRLF line ends: the CR would ride on the last field (a spawn id lost, 2026-10-26).
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
+            line.pop_back();
         if (line.empty() || line.rfind("index", 0) == 0)
             continue;
         std::vector<std::string_view> const cells = Acore::Tokenize(line, ',', true);
