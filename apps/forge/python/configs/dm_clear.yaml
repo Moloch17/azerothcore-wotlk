@@ -122,6 +122,8 @@ style:
   reference: /azerothcore/env/dist/etc/modules/animus/human/deadmines_reference.json
 eval:
   every_env_steps: 10000000
+  # Sampled, as training plays: the argmax policy froze (0% of legs at 10-30M while the sampled evaluation did 81%).
+  deterministic: false
   episodes: 64
   sampled_every: 3
   sampled_episodes: 16

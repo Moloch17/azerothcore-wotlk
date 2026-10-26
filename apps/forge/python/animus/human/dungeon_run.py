@@ -372,6 +372,28 @@ def pulls(run: Run, pack_of: dict[int, int]) -> list[dict]:
         pull["fight_spot"] = _median_spot(_between(run.moves, start, last_kill)) or pull["pull_from"]["pos"]
         deaths = _between(run.deaths, start, end) if run.deaths is not None and len(run.deaths) else []
         pull["deaths"] = len(deaths)
+
+    # The pull's creatures are those that died in it (2026-10-26: the engaged-flag and co-engagement lists named
+    # creatures killed elsewhere or never -- VanCleef in Greenskin's pull -- and a leg that needs them dead could not
+    # be done). Every kill belongs to the last pull started at or before it: a boss can die a moment past its pull's
+    # window (the party out of combat for a snapshot between its phases). What engaged without dying stays in
+    # `engaged`, for reading.
+    starts = [pull["ms"] for pull in out]
+    died: list[list[int]] = [[] for _ in out]
+    if run.kills is not None and len(run.kills) and out:
+        for row in run.kills:
+            sid = int(row["victim_spawn_id"])
+            if not sid or sid not in run.spawns or run.spawns[sid].kind != 0:
+                continue
+            i = int(np.searchsorted(starts, int(row["ms"]), side="right")) - 1
+            if i >= 0:
+                died[i].append(sid)
+    for i, pull in enumerate(out):
+        pull["engaged"] = list(pull["spawn_ids"])
+        pull["spawn_ids"] = list(dict.fromkeys(died[i]))
+        pull["kills"] = list(pull["spawn_ids"])
+        pull["entries"] = [run.spawns[sid].entry for sid in pull["spawn_ids"]]
+        pull["boss"] = any(run.spawns[sid].boss for sid in pull["spawn_ids"])
         del pull["ms"]
     return out
 

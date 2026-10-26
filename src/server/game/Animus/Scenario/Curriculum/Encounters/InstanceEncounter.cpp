@@ -671,19 +671,33 @@ void Animus::Curriculum::InstanceEncounter::StartFrom(Env& env, EnvInstance& fig
                     object->SetGoState(GO_STATE_ACTIVE);
         }
 
-    // The party at the checkpoint before, round its first spawn's place (a site), else round the checkpoint itself.
+    // The party at the checkpoint before. A recorded way's checkpoint is where the player stood -- ground a person
+    // walked on -- so the party stands there, at the recorded height, a ground correction kept only when it stays on
+    // that floor (2026-10-26: standing round a site's first spawn put the late legs' parties mid-dungeon, the spawn
+    // being a pack member elsewhere, and dropped seats into the void at (-281, -560) and (-176, -490): the correction
+    // found a floor below the world). A generated way keeps the site's first spawn.
+    bool const recorded = std::any_of(way.GateSpawns.begin(), way.GateSpawns.end(),
+        [](uint32 spawn) { return spawn != 0; });
     Position at;
-    if (!PointNavEncounter::SiteSpawn(way, standAt, at))
+    if (recorded || !PointNavEncounter::SiteSpawn(way, standAt, at))
         at = standAt < way.Points.size() ? way.Points[standAt] : way.Points.front();
+    constexpr float RECORDED_RING = 1.5f;
+    constexpr float SAME_FLOOR = 3.0f;
     EnvState const& data = _scenario.Data(env);
     for (uint32 index = 0; index < data.ActiveSeats; ++index)
         if (Player* bot = _scenario.SeatBot(env, index))
         {
+            float const ring = recorded ? RECORDED_RING : 2.0f;
             float const angle = float(index) * 2.0f * float(M_PI) / float(std::max<uint32>(1, data.ActiveSeats));
-            float const x = at.GetPositionX() + 2.0f * std::cos(angle);
-            float const y = at.GetPositionY() + 2.0f * std::sin(angle);
+            float const x = at.GetPositionX() + ring * std::cos(angle);
+            float const y = at.GetPositionY() + ring * std::sin(angle);
             float z = at.GetPositionZ();
-            seat->UpdateAllowedPositionZ(x, y, z);
+            float ground = z + 1.0f;
+            seat->UpdateAllowedPositionZ(x, y, ground);
+            if (!recorded || std::fabs(ground - at.GetPositionZ()) <= SAME_FLOOR)
+                z = ground;
+            else
+                z = at.GetPositionZ() + 0.5f;
             BotFactory::TeleportWithinMap(bot, Position(x, y, z, frand(0.0f, 2.0f * float(M_PI))));
         }
 }
@@ -736,6 +750,11 @@ bool Animus::Curriculum::InstanceEncounter::LegMet(Env const& env, EnvInstance c
         return false;
     // Never at the first decision: a leg is walked and fought, and an episode of no decisions is never one.
     if (env.EpisodeElapsedMs < 1000)
+        return false;
+    // Never with a fight still on (the user, 2026-10-26: "not just the arrival, the NPCs killed as well"): whatever
+    // the party pulled on the way -- the leg's pack or anything else -- is dead before the leg is done; walking to the
+    // checkpoint away from a fight does not count.
+    if (fight.Fighting || fight.OnParty)
         return false;
     PointNavEncounter::ClearWay const& way = *fight.Way;
     uint32 const k = uint32(fight.Leg);
