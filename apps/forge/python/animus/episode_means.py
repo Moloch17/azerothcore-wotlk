@@ -133,6 +133,15 @@ PER_EVENT = {
     "leg_arrived": "is_leg",
     "full_arrived": "is_full",
     "full_checkpoints": "is_full",
+    # dm_clear's legs then the run at every rung of its level ladder (ArenaDefinition::WingLegs): a leg's arrival over
+    # the leg episodes; the run's clear, full clear, bar, share and wipes over the whole-run episodes (a stage without
+    # legs has wing_is_full 1 on every episode, so nothing changes for it).
+    "wing_leg_arrived": "wing_is_leg",
+    "cleared": "wing_is_full",
+    "full_clear": "wing_is_full",
+    "bar_clear": "wing_is_full",
+    "wing_cleared_share": "wing_is_full",
+    "wing_wipes": "wing_is_full",
     "won_leader_tank": "leader_tank",
     "won_leader_healer": "leader_healer",
     "won_leader_damage": "leader_damage",

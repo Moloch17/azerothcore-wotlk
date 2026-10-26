@@ -46,6 +46,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <map>
 #include <mutex>
 #include <unordered_set>
@@ -177,7 +178,40 @@ void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     // and says nothing.
     table.Add("at_top_rung", [this](Env const& env, uint32)
     {
-        return _envs[env.Index].Rung + 1 >= StageScenario::WING_RUNGS.size() ? 1.0f : 0.0f;
+        return _envs[env.Index].Rung + 1 >= _scenario.WingRungs() ? 1.0f : 0.0f;
+    });
+    // **The level ladder and its legs** (dm_clear, ArenaDefinition::LevelLadder, WingLegs): the rung's level, whether
+    // the episode was a leg (wing_leg_arrived over the legs: PER_EVENT) or a whole run (cleared, full_clear and the
+    // bar over those), which leg, and the share of the rung's legs learned. `dk_guard` is 1 for a death knight in a
+    // party below 55: never (StageScenario::Rebuild checks twice); it is watched so that holds.
+    table.Add("ladder_level", [this](Env const& env, uint32) { return float(_envs[env.Index].Level); });
+    table.Add("wing_is_leg", [this](Env const& env, uint32) { return _envs[env.Index].LegTrip ? 1.0f : 0.0f; });
+    table.Add("wing_is_full", [this](Env const& env, uint32) { return _envs[env.Index].LegTrip ? 0.0f : 1.0f; });
+    table.Add("wing_leg", [this](Env const& env, uint32) { return float(_envs[env.Index].Leg); });
+    table.Add("wing_leg_arrived", [this](Env const& env, uint32)
+    {
+        EnvInstance const& fight = _envs[env.Index];
+        return fight.LegTrip && fight.LegDone ? 1.0f : 0.0f;
+    });
+    table.Add("wing_legs_learned", [this](Env const& env, uint32)
+    {
+        EnvInstance const& fight = _envs[env.Index];
+        PointNavEncounter* nav = _scenario.PointNav();
+        float share = 0.0f;
+        if (nav && fight.LegCount)
+            nav->LegsLearnedAt(_scenario.Data(env).Arena, fight.Rung, fight.LegCount, &share);
+        return share;
+    });
+    table.Add("dk_guard", [this](Env const& env, uint32)
+    {
+        EnvState const& data = _scenario.Data(env);
+        if (!data.EpisodeLevel || data.EpisodeLevel >= 55)
+            return 0.0f;
+        for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
+            if (data.Seats[seat].L && data.Seats[seat].L->Profile
+                && data.Seats[seat].L->Profile->Class == CLASS_DEATH_KNIGHT)
+                return 1.0f;
+        return 0.0f;
     });
     table.Add("boss_rung", [this](Env const& env, uint32) { return float(_envs[env.Index].Tier); });
     table.Add("instance_map", [this](Env const& env, uint32) { return float(_envs[env.Index].MapId); });
@@ -307,15 +341,20 @@ void Animus::Curriculum::InstanceEncounter::ResetEpisode(Env& env)
     // One line a finished run (Instance.WingTrace): how far it got, what it killed and how it ended.
     bool const built = !fight.Boss.IsEmpty();
     if (built && _scenario.Tuning().Instance.WingTrace)
-        LOG_INFO("module.animus", "Wing run: env {} {}{} rung {} level {} | {} of {} creatures killed, {} bosses, last "
+        LOG_INFO("module.animus", "Wing run: env {} {}{}{} rung {} level {} | {} of {} creatures killed, {} bosses, last "
             "boss {} | {} wipes, {} rises, {} rejoined | {:.0f}s with no progress at the end | {}",
-            env.Index, fight.Evaluating ? "eval" : "train", fight.Probe ? " probe" : "", fight.Rung, fight.Level,
+            env.Index, fight.Evaluating ? "eval" : "train", fight.Probe ? " probe" : "",
+            fight.LegTrip ? Acore::StringFormat(" leg {}", fight.Leg) : std::string(), fight.Rung, fight.Level,
             fight.TrashKills, fight.HostileTotal, fight.BossKills, fight.BossDead ? "killed" : "alive", fight.Wipes,
             fight.Rises, fight.Rejoins, float(fight.LastMs - std::min(fight.LastMs, fight.ProgressMs)) / 1000.0f,
-            fight.BossDead ? "cleared" : fight.Wiped ? "wiped" : "out of time");
-    // The run just ended counts toward the support's running share (the training runs of a whole dungeon only; the
-    // probes are the policy's own).
-    if (built && !fight.Evaluating)
+            fight.LegTrip ? (fight.LegDone ? "leg done" : fight.Wiped ? "wiped" : "leg out of time")
+            : fight.BossDead ? "cleared" : fight.Wiped ? "wiped" : "out of time");
+    // A leg just ended counts toward its leg's rate at the rung (training only); a whole run just ended toward the
+    // ladder's running share (the training runs only; the probes are the policy's own).
+    if (built && !fight.Evaluating && fight.LegTrip && fight.LegCounted && fight.Leg >= 0)
+        if (PointNavEncounter* nav = _scenario.PointNav())
+            nav->NoteLegAt(_scenario.Data(env).Arena, fight.Rung, uint32(fight.Leg), fight.LegDone);
+    if (built && !fight.Evaluating && !fight.LegTrip)
         _scenario.NoteWingRun(fight.Rung, fight.Probe, fight.BossDead ? 1.0f : ClearedShare(fight));
     fight = EnvInstance();
 }
@@ -351,12 +390,26 @@ void Animus::Curriculum::InstanceEncounter::BeforeLevel(Env& env)
     StageScenario::WingRung const& rung = StageScenario::WING_RUNGS[fight.Rung];
     fight.Probe = !env.Evaluating && frand(0.0f, 1.0f) < tuning.WingProbe;
     fight.WipesAllowed = tuning.WingWipes + rung.ExtraWipes;
-    // The arena's own band (the Deadmines' bar: 17-20) where it names one, else the dungeon finder's range.
-    auto const [low, high] = arena.LevelFirst ? std::pair<uint32, uint32>(arena.LevelFirst, arena.LevelLast)
-        : DungeonLevels(*fight.Row);
-    // A backwards run (WingReverse) climbs by where it starts, not by levels: no lift.
-    uint32 const lift = arena.WingReverse ? 0 : rung.Lift;
-    data.EpisodeLevel = uint8(std::min<uint32>(urand(low, high) + lift, DEFAULT_MAX_LEVEL));
+    if (!arena.LevelLadder.empty())
+    {
+        // **The level ladder** (dm_clear): the rung is a level, 60 first and the dungeon's own last, the evaluation
+        // at the ladder's current level too (the convergence rule waits for the last rung: at_top_rung). No band, no
+        // lift, the stock wipes. The first check against a death knight below 55: StageScenario::Rebuild draws every
+        // seat whose class cannot be this level again, seat 0 included (dungeonLevel).
+        fight.Rung = std::min<uint32>(_scenario.WingRungNow(), uint32(arena.LevelLadder.size()) - 1);
+        fight.WipesAllowed = tuning.WingWipes;
+        data.EpisodeLevel = arena.LevelLadder[fight.Rung];
+    }
+    else
+    {
+        // The arena's own band (the Deadmines' bar: 17-20) where it names one, else the dungeon finder's range.
+        auto const [low, high] = arena.LevelFirst ? std::pair<uint32, uint32>(arena.LevelFirst, arena.LevelLast)
+            : DungeonLevels(*fight.Row);
+        // A backwards run (WingReverse) climbs by where it starts, not by levels: no lift.
+        uint32 const lift = arena.WingReverse ? 0 : rung.Lift;
+        data.EpisodeLevel = uint8(std::min<uint32>(urand(low, high) + lift, DEFAULT_MAX_LEVEL));
+    }
+    fight.Level = uint32(data.EpisodeLevel);
 
     MapEntry const* mapEntry = sMapStore.LookupEntry(fight.Row->MapId);
     bool const raid = mapEntry && mapEntry->IsRaid();
@@ -463,8 +516,15 @@ bool Animus::Curriculum::InstanceEncounter::Build(Env& env, Map* map, uint8 /*le
     fight.Way = arena.RunClear && nav ? nav->WayOf(env, map, seat) : nullptr;
     fight.StartSite = 0;
     fight.Killed = 0;
+    fight.LegTrip = false;
+    fight.Leg = -1;
+    fight.LegDone = false;
+    fight.LegCounted = false;
+    fight.LegCount = 0;
     if (fight.Way && arena.WingReverse)
         StartReverse(env, fight, map, seat);
+    else if (fight.Way && arena.WingLegs && nav)
+        PlanLeg(env, fight, map, seat);
     fight.GoalSite = fight.StartSite;
     fight.HasGoal = false;
     // The party stays at the door with the trash alive (a backwards run: at its start, what lies behind it dead).
@@ -509,13 +569,25 @@ void Animus::Curriculum::InstanceEncounter::StartReverse(Env& env, EnvInstance& 
             sites.push_back(k);
     if (sites.empty())
         return;
-    uint32 const rungs = uint32(StageScenario::WING_RUNGS.size());
+    uint32 const rungs = _scenario.WingRungs();
     uint32 const toDo = std::clamp<uint32>(uint32(std::ceil(float(fight.Rung + 1) / float(rungs)
         * float(sites.size()))), 1, uint32(sites.size()));
     uint32 const first = uint32(sites.size()) - toDo;
     if (first == 0)
         return;
-    fight.StartSite = int32(sites[first]);
+    StartFrom(env, fight, map, seat, sites[first], sites[first - 1]);
+    LOG_DEBUG("module.animus", "{}: env {} wing run from checkpoint {} (rung {}): {} creatures killed before it",
+        _scenario.Name(), env.Index, fight.StartSite, fight.Rung, fight.Killed);
+}
+
+void Animus::Curriculum::InstanceEncounter::StartFrom(Env& env, EnvInstance& fight, Map* map, Player* seat,
+    uint32 start, uint32 standAt)
+{
+    PointNavEncounter::ClearWay const& way = *fight.Way;
+    ArenaDefinition const& arena = _scenario.Arena(env);
+    if (start == 0 || start >= way.Points.size())
+        return;
+    fight.StartSite = int32(start);
 
     // Everything spawned before the start, killed: a party that cleared up to here left it dead.
     std::unordered_set<uint32> before;
@@ -532,17 +604,28 @@ void Animus::Curriculum::InstanceEncounter::StartReverse(Env& env, EnvInstance& 
             ++fight.Killed;
         }
 
-    // Past the gate: its shut doors (the Iron Clad Door) open, as the cannon would have left them.
+    // Past the gate: its shut doors (the Iron Clad Door) open, as the cannon would have left them; and each recorded
+    // gate before the start -- a door clicked open, the barrel, the cannon's door -- as the party that got there left
+    // it (a door type object opened; anything else left to the party).
     if (way.Gate != UINT32_MAX && uint32(fight.StartSite) > way.Gate)
         for (auto const& [spawnId, object] : map->GetGameObjectBySpawnIdStore())
             if (object && object->IsInWorld() && std::find(arena.LiveShut.begin(), arena.LiveShut.end(),
                 object->GetEntry()) != arena.LiveShut.end())
                 object->SetGoState(GO_STATE_ACTIVE);
+    for (uint32 k = 0; k < uint32(fight.StartSite) && k < way.GateSpawns.size(); ++k)
+        if (uint32 const gateSpawn = way.GateSpawns[k])
+        {
+            auto const range = map->GetGameObjectBySpawnIdStore().equal_range(gateSpawn);
+            for (auto it = range.first; it != range.second; ++it)
+                if (GameObject* object = it->second; object && object->IsInWorld()
+                    && object->GetGoType() == GAMEOBJECT_TYPE_DOOR && object->GetGoState() == GO_STATE_READY)
+                    object->SetGoState(GO_STATE_ACTIVE);
+        }
 
-    // The party at the last site cleared, round its first spawn's place.
+    // The party at the checkpoint before, round its first spawn's place (a site), else round the checkpoint itself.
     Position at;
-    if (!PointNavEncounter::SiteSpawn(way, sites[first - 1], at))
-        return;
+    if (!PointNavEncounter::SiteSpawn(way, standAt, at))
+        at = standAt < way.Points.size() ? way.Points[standAt] : way.Points.front();
     EnvState const& data = _scenario.Data(env);
     for (uint32 index = 0; index < data.ActiveSeats; ++index)
         if (Player* bot = _scenario.SeatBot(env, index))
@@ -554,8 +637,81 @@ void Animus::Curriculum::InstanceEncounter::StartReverse(Env& env, EnvInstance& 
             seat->UpdateAllowedPositionZ(x, y, z);
             BotFactory::TeleportWithinMap(bot, Position(x, y, z, frand(0.0f, 2.0f * float(M_PI))));
         }
-    LOG_DEBUG("module.animus", "{}: env {} wing run from checkpoint {} (rung {}): {} creatures killed before it",
-        _scenario.Name(), env.Index, fight.StartSite, fight.Rung, fight.Killed);
+}
+
+void Animus::Curriculum::InstanceEncounter::PlanLeg(Env& env, EnvInstance& fight, Map* map, Player* seat)
+{
+    PointNavEncounter::ClearWay const& way = *fight.Way;
+    PointNavEncounter* nav = _scenario.PointNav();
+    ArenaDefinition const& arena = _scenario.Arena(env);
+    uint32 const legs = uint32(way.Points.size());     // leg k ends at checkpoint k; leg 0 starts at the entrance
+    if (!legs || !nav)
+        return;
+    uint32 const arenaIndex = _scenario.Data(env).Arena;
+    float share = 0.0f;
+    bool const learned = nav->LegsLearnedAt(arenaIndex, fight.Rung, legs, &share);
+    // The evaluation: legs alone until they are learned at this rung, then even seeds a leg each, odd seeds the whole
+    // run. Training: legs until learned, then mostly the whole run (LEG_FULL_SHARE). The ladder's probes are whole
+    // runs: none while the legs are being learned.
+    bool leg;
+    if (env.Evaluating)
+        leg = !learned || env.EpisodeSeedIndex % 2 == 0;
+    else
+        leg = !(learned && frand(0.0f, 1.0f) < PointNavEncounter::LegFullShare());
+    if (!learned)
+        fight.Probe = false;
+    fight.LegCount = legs;
+    if (!leg)
+        return;
+    fight.LegTrip = true;
+    fight.LegCounted = !env.Evaluating;
+    fight.Leg = env.Evaluating ? int32((env.EpisodeSeedIndex / 2) % legs)
+        : int32(nav->DrawLegAt(env, fight.Rung, legs));
+    if (fight.Leg > 0)
+        StartFrom(env, fight, map, seat, uint32(fight.Leg), uint32(fight.Leg) - 1);
+    // The leg's own clock: a gate's leg a door's allowance more.
+    float seconds = float(arena.LegSeconds);
+    if (way.IsGate(uint32(fight.Leg)))
+        seconds += PointNavEncounter::LegDoorSeconds();
+    env.EpisodeLengthMs = std::max<uint32>(1000, uint32(seconds * 1000.0f));
+    LOG_DEBUG("module.animus", "{}: env {} leg {} of {} at rung {} ({:.0f}% of the legs learned): {} creatures killed "
+        "before it", _scenario.Name(), env.Index, fight.Leg, legs, fight.Rung, share * 100.0f, fight.Killed);
+}
+
+bool Animus::Curriculum::InstanceEncounter::LegMet(Env const& env, EnvInstance const& fight, Map* map,
+    Player const* seat) const
+{
+    if (!fight.LegTrip || !fight.Way || !map || fight.Leg < 0 || std::size_t(fight.Leg) >= fight.Way->Points.size())
+        return false;
+    PointNavEncounter::ClearWay const& way = *fight.Way;
+    uint32 const k = uint32(fight.Leg);
+    // Its pack dead ...
+    for (uint32 spawnId : way.Spawns[k])
+    {
+        auto const range = map->GetCreatureBySpawnIdStore().equal_range(spawnId);
+        for (auto it = range.first; it != range.second; ++it)
+            if (Creature const* creature = it->second; creature && creature->IsInWorld() && Hostile(seat, creature))
+                return false;
+    }
+    // ... its gate's door open (a chest or the cannon are the party's to use; reaching them is the leg) ...
+    if (k < way.GateSpawns.size() && way.GateSpawns[k])
+    {
+        auto const range = map->GetGameObjectBySpawnIdStore().equal_range(way.GateSpawns[k]);
+        for (auto it = range.first; it != range.second; ++it)
+            if (GameObject const* object = it->second; object && object->IsInWorld()
+                && object->GetGoType() == GAMEOBJECT_TYPE_DOOR && object->GetGoState() == GO_STATE_READY)
+                return false;
+    }
+    // ... and a living seat at the checkpoint.
+    ArenaDefinition const& arena = _scenario.Arena(env);
+    Position const& at = way.Points[k];
+    EnvState const& data = _scenario.Data(env);
+    for (uint32 index = 0; index < data.ActiveSeats; ++index)
+        if (Player const* bot = _scenario.SeatBot(env, index); bot && bot->IsAlive() && bot->IsInWorld()
+            && bot->GetMapId() == map->GetId() && bot->GetExactDist2d(&at) <= arena.RunCheckpointYards
+            && std::fabs(bot->GetPositionZ() - at.GetPositionZ()) <= 10.0f)
+            return true;
+    return false;
 }
 
 void Animus::Curriculum::InstanceEncounter::AdvanceGoal(Env& /*env*/, EnvInstance& fight, Map* map,
@@ -580,6 +736,16 @@ void Animus::Curriculum::InstanceEncounter::AdvanceGoal(Env& /*env*/, EnvInstanc
         return false;
     };
     int32 const count = int32(way.Points.size());
+    // A leg: its checkpoint's living creature, else the checkpoint itself.
+    if (fight.LegTrip && fight.Leg >= 0 && fight.Leg < count)
+    {
+        Position where;
+        fight.GoalSite = fight.Leg;
+        fight.GoalAt = !way.Spawns[std::size_t(fight.Leg)].empty() && living(uint32(fight.Leg), where) ? where
+            : way.Points[std::size_t(fight.Leg)];
+        fight.HasGoal = true;
+        return;
+    }
     for (int32 k = std::max(fight.GoalSite, 0); k < count; ++k)
     {
         Position where;
@@ -618,9 +784,11 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
     Creature* boss = seat && !fight.Boss.IsEmpty() ? Encoding::CreatureThrough(*seat, fight.Boss) : nullptr;
     if (!boss)
         return;
-    // Where the party goes next along the clear way.
+    // Where the party goes next along the clear way; a leg ends when its objective is met.
     if (fight.Way)
         AdvanceGoal(env, fight, env.FindMap(), seat);
+    if (fight.LegTrip && !fight.LegDone && LegMet(env, fight, env.FindMap(), seat))
+        fight.LegDone = true;
 
     fight.HealthLeft = boss->IsAlive() ? float(boss->GetHealth()) / float(fight.BossHealth) : 0.0f;
     if (!fight.BossDead && !boss->IsAlive())
@@ -1443,10 +1611,19 @@ void Animus::Curriculum::InstanceEncounter::Reward(Env& env, uint32 seatIndex, P
         paid.WipesPaid = fight.Wipes;
     }
 
-    bool const over = fight.BossDead || fight.Wiped || TimeIsUp(env);
+    bool const over = fight.BossDead || fight.Wiped || TimeIsUp(env) || fight.LegDone;
     if (!over || paid.OutcomePaid)
         return;
     paid.OutcomePaid = true;
+    if (fight.LegTrip)
+    {
+        // A leg done (Instance.WingLeg), or its clock out (half the run's timeout: a leg is a fraction of the way).
+        if (fight.LegDone)
+            ledger.Add(RewardTerm::Clear, tuning.WingLeg, tierScale);
+        else if (TimeIsUp(env) && !fight.Boss.IsEmpty())
+            ledger.Add(RewardTerm::Timeout, -tuning.WingTimeout * 0.5f, 1.0f / tierScale);
+        return;
+    }
     if (fight.BossDead)
     {
         ledger.Add(RewardTerm::Kill, tuning.WingBoss, tierScale);
@@ -1486,6 +1663,7 @@ void Animus::Curriculum::InstanceEncounter::WriteState(Env const& env, float* st
 bool Animus::Curriculum::InstanceEncounter::IsTerminal(Env const& env) const
 {
     EnvInstance const& fight = _envs[env.Index];
-    // A wing goes on past an evade (the party can pull the boss again) and ends on the kill, the last wipe or time.
-    return fight.BossDead || fight.Wiped || TimeIsUp(env);
+    // A wing goes on past an evade (the party can pull the boss again) and ends on the kill, the last wipe or time;
+    // a leg on its objective too.
+    return fight.BossDead || fight.Wiped || TimeIsUp(env) || fight.LegDone;
 }

@@ -285,7 +285,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     _seatCount(stage.SeatCount()), _level(settings.Level),
     _decisionScale(float(settings.DecisionMs) / REWARD_TUNING_MS), _decisionMs(settings.DecisionMs),
     // The ladder is not saved with the policy: a run resumed from a checkpoint names the rung it had reached.
-    _wingLadder(uint32(WING_RUNGS.size()), _tuning.Instance.WingRungRuns, _tuning.Instance.WingRungTarget,
+    _wingLadder(WingRungCount(stage), _tuning.Instance.WingRungRuns, _tuning.Instance.WingRungTarget,
         _tuning.Instance.WingRungStart)
 {
     _eventsLog = settings.EventsLog;
@@ -1900,6 +1900,14 @@ Animus::Curriculum::StageScenario::Casting Animus::Curriculum::StageScenario::Dr
     return castings.back();
 }
 
+uint32 Animus::Curriculum::StageScenario::WingRungCount(StageDefinition const& stage)
+{
+    std::size_t levels = 0;
+    for (ArenaDefinition const& arena : stage.Arenas)
+        levels = std::max(levels, arena.LevelLadder.size());
+    return levels ? uint32(levels) : uint32(WING_RUNGS.size());
+}
+
 void Animus::Curriculum::StageScenario::NoteWingRun(uint32 rung, bool probe, float progress)
 {
     // The ladder moves only on what the policy does alone (2026-10-01: "taper off only based on the progress made by
@@ -2003,7 +2011,7 @@ void Animus::Curriculum::StageScenario::FollowClusterRung(uint32 rung)
 {
     std::lock_guard<std::mutex> guard(_wingLadderLock);
     _wingFollower = true;
-    uint32 const next = std::min<uint32>(rung, uint32(WING_RUNGS.size()) - 1);
+    uint32 const next = std::min<uint32>(rung, WingRungs() - 1);
     if (next != _wingLadder.Rung())
         LOG_INFO("module.animus", "{}: the host puts the dungeon ladder on rung {}", Name(), next);
     _wingLadder.Follow(next);
@@ -2388,6 +2396,37 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
                 ? (std::size_t(env.EpisodeSeedIndex) + seat) % fits.size() : urand(0, uint32(fits.size()) - 1);
             s.L = fits[pick].L;
             s.Spec = fits[pick].Spec;
+        }
+
+    // **No death knight below 55: the second, independent check** (the user, 2026-10-26: "make absolutely sure of
+    // it"). Whatever the draws above left, a seat whose class cannot be the episode's level is drawn again here among
+    // the castings that can be it -- its role kept where one fits, any class that can be the level otherwise -- so the
+    // level never has to rise to a class's minimum. Logged as an error: with the draws above right, this never runs.
+    if (data.EpisodeLevel)
+        for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
+        {
+            SeatState& s = data.Seats[seat];
+            if (!s.L || s.L->Assets->Kit->MinLevel() <= data.EpisodeLevel)
+                continue;
+            LOG_ERROR("module.animus", "{}: env {} seat {} was drawn a {} (its lowest level {}) for an episode at level "
+                "{}: drawn again among the classes that can be {}", Name(), env.Index, seat, s.L->ModelName(),
+                s.L->Assets->Kit->MinLevel(), data.EpisodeLevel, data.EpisodeLevel);
+            std::vector<Casting> fits;
+            std::vector<Casting> any;
+            for (Casting const& casting : Castings(AptitudeDemand::Anything()))
+                if (casting.L && casting.L->Assets->Kit->MinLevel() <= data.EpisodeLevel)
+                {
+                    any.push_back(casting);
+                    if (FitsDungeonRole(casting, s.DungeonRole))
+                        fits.push_back(casting);
+                }
+            std::vector<Casting> const& from = fits.empty() ? any : fits;
+            if (from.empty())
+                continue;
+            Casting const& pick = from[env.EpisodeSeedIndex != NO_EPISODE_SEED
+                ? (std::size_t(env.EpisodeSeedIndex) + seat) % from.size() : urand(0, uint32(from.size()) - 1)];
+            s.L = pick.L;
+            s.Spec = pick.Spec;
         }
 
     // One level every seat's class/role can be. A drawn tank's includes the level its tanking stance, form or aura

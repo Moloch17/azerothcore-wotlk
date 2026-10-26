@@ -224,6 +224,9 @@ namespace Animus::Curriculum
             /// counts and the last boss (Clear, times the tier scale: D2's and D3's full clear); every second of a run
             /// (StepCost: the clock, at its full price).
             float WingClear = 25.0f;
+            /// A leg of the clear way done (ArenaDefinition::WingLegs: its pack dead, its gate open, the party at its
+            /// checkpoint), to every seat, times the tier scale.
+            float WingLeg = 8.0f;
             float WingClock = 0.002f;
             /// The difficulty ladder (StageScenario::WING_RUNGS): each rung fixes the level lift and the wipes to
             /// spare. WingProbe of training runs are probes, and only they measure the policy: once WingRungRuns
@@ -1092,6 +1095,7 @@ namespace Animus::Curriculum
             f("Instance.WingStallGraceMs", tuning.Instance.WingStallGraceMs);
             f("Instance.WingTimeout", tuning.Instance.WingTimeout);
             f("Instance.WingClear", tuning.Instance.WingClear);
+            f("Instance.WingLeg", tuning.Instance.WingLeg);
             f("Instance.WingClock", tuning.Instance.WingClock);
             f("Instance.WingProbe", tuning.Instance.WingProbe);
             f("Instance.WingRungRuns", tuning.Instance.WingRungRuns);

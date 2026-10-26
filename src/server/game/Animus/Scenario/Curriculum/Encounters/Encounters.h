@@ -312,12 +312,31 @@ namespace Animus::Curriculum
             int32 GoalSite = 0;
             bool HasGoal = false;
             Position GoalAt;
+            /// A leg of the clear way (ArenaDefinition::WingLegs): the checkpoint it goes to, whether it is done (its
+            /// pack dead, its gate open, the party at the checkpoint), whether its outcome still counts toward its
+            /// rate, and how many legs the way has. A whole run has LegTrip false.
+            bool LegTrip = false;
+            int32 Leg = -1;
+            uint32 LegCount = 0;
+            bool LegDone = false;
+            bool LegCounted = false;
         };
 
         /// A backwards wing run's start (ArenaDefinition::WingReverse): the rung's checkpoint of the clear way,
         /// everything the dungeon spawns before it killed (its bosses' scripts open their doors), the arena's shut
         /// doors opened when the start is past the gate, and the party stood at the last site before it.
         void StartReverse(Env& env, EnvInstance& fight, Map* map, Player* seat);
+        /// The run started at checkpoint `start` of the clear way, the party stood round checkpoint `standAt`:
+        /// everything spawned before `start` killed, the gates before it opened (the arena's shut doors past the
+        /// way's gate, and every recorded gate's own object).
+        void StartFrom(Env& env, EnvInstance& fight, Map* map, Player* seat, uint32 start, uint32 standAt);
+        /// A leg of the clear way for this episode (ArenaDefinition::WingLegs), or a whole run: drawn against the
+        /// rung's leg rates (PointNavEncounter::LegsLearnedAt, DrawLegAt), started at the checkpoint before, its clock
+        /// the leg's.
+        void PlanLeg(Env& env, EnvInstance& fight, Map* map, Player* seat);
+        /// Whether a leg's objective is met: its checkpoint's pack dead, its gate's object open, a living seat at the
+        /// checkpoint.
+        [[nodiscard]] bool LegMet(Env const& env, EnvInstance const& fight, Map* map, Player const* seat) const;
         /// The party's goal on (GoalSite, GoalAt): the first checkpoint from GoalSite with a living creature.
         void AdvanceGoal(Env& env, EnvInstance& fight, Map* map, Player const* seat);
 

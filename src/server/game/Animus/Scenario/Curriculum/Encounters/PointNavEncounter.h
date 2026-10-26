@@ -181,6 +181,13 @@ namespace Animus::Curriculum
             std::vector<float> After;
             std::vector<std::vector<uint32>> Spawns;
             uint32 Gate = UINT32_MAX;
+            /// Per checkpoint, the game object a recorded gate stands for (its spawn id: a door, the gunpowder
+            /// barrel, the cannon's door), 0 for a site or the goal; a generated way has none.
+            std::vector<uint32> GateSpawns;
+            [[nodiscard]] bool IsGate(uint32 k) const
+            {
+                return k == Gate || (k < GateSpawns.size() && GateSpawns[k] != 0);
+            }
         };
         /// The env's arena's clear way, its bake ensured first (the encounters that place a fight or a party along it
         /// build before this one does); null without RunClear or a bake.
@@ -190,6 +197,16 @@ namespace Animus::Curriculum
         [[nodiscard]] static bool SiteSpawn(ClearWay const& way, uint32 k, Position& at);
         /// The first checkpoint after `after` (-1: from the first) that is a site, wrapping round once; -1 for none.
         [[nodiscard]] static int32 NextSite(ClearWay const& way, int32 after);
+
+        /// **The leg rates for another encounter's legs** (a dungeon wing's, ArenaDefinition::WingLegs), kept per
+        /// arena and `rung` (a level ladder's): whether every one of `legs` is learned (and the share learned), the
+        /// leg a training trip draws by failure rate, and a leg's outcome noted. The same rule as this encounter's
+        /// own legs (LEG_*). Thread-safe.
+        [[nodiscard]] bool LegsLearnedAt(uint32 arena, uint32 rung, uint32 legs, float* share = nullptr);
+        [[nodiscard]] uint32 DrawLegAt(Env const& env, uint32 rung, uint32 legs);
+        void NoteLegAt(uint32 arena, uint32 rung, uint32 leg, bool arrived);
+        static constexpr float LegFullShare() { return LEG_FULL_SHARE; }
+        static constexpr float LegDoorSeconds() { return LEG_DOOR_SECONDS; }
 
         /// The leader whose reported position is nav6's goal (set by the scenario after construction).
         void FollowLeader(PartyFollowEncounter const* follow) { _follow = follow; }
@@ -473,7 +490,11 @@ namespace Animus::Curriculum
         /// `python -m animus.human dungeon-run`) as checkpoints, each one's spawn ids and whether it is the gate; the
         /// arena's RunGoal appended when the recording did not end there. False for no file or no rows.
         static bool LoadRecordedWay(std::filesystem::path const& path, ArenaDefinition const& arena,
-            std::vector<Position>& points, std::vector<std::vector<uint32>>& spawns, std::vector<bool>& gates);
+            std::vector<Position>& points, std::vector<std::vector<uint32>>& spawns, std::vector<bool>& gates,
+            std::vector<uint32>& gateSpawns);
+        /// The key `_legRates`/`_legTries` are kept under: an arena's own legs under its index, another rung's a
+        /// thousand apart.
+        [[nodiscard]] static uint32 LegKey(uint32 arena, uint32 rung) { return arena + 1000 * rung; }
         std::map<uint32, ClearWay> _clearWays;  // per arena index, under _poolLock
         /// Per arena index, each leg's running success rate and its training trips counted (RunLegs), under _poolLock.
         std::map<uint32, std::vector<float>> _legRates;

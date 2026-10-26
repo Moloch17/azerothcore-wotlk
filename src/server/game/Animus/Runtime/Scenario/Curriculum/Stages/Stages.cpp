@@ -166,6 +166,32 @@ namespace
         return arena;
     }
 
+    /// **The Deadmines by level** (dm_clear, 2026-10-26): the live dungeon, a proper party of five, the recorded clear
+    /// way (PointNav.ClearWayFile: a person's run, with its pull sites, its doors, the barrel and the cannon), legs then
+    /// the run at every rung of a level ladder from 60 down to the dungeon's own 18.
+    ArenaDefinition DeadminesLadder()
+    {
+        ArenaDefinition arena = DeadminesGround("deadmines");
+        arena.Seats = SeatPlan::Party;
+        arena.Against = Opposition::Instance;
+        arena.PartyGroup = true;
+        arena.Instance = InstanceLadder::Wing;
+        arena.InstanceRow = 1;
+        arena.EpisodeSeconds = 5400;
+        arena.StandInShare = 0;
+        arena.LevelLadder = { 60, 50, 40, 32, 26, 22, 20, 18 };
+        arena.WingLegs = true;
+        arena.LegSeconds = 300;
+        arena.LiveObjects = false;
+        arena.LiveOpen = {};
+        // The doors a leg start past them opens as a party that got there would have: the Iron Clad Door (the cannon's)
+        // and the Heavy Doors (a click); the bosses' doors open with their deaths, which a leg start deals.
+        arena.LiveShut = { 16397, 17153, 17154 };
+        arena.WingReverse = false;
+        arena.RespawnAtEntrance = false;
+        return arena;
+    }
+
     std::vector<StageDefinition> Definitions()
     {
         using enum BlockId;
@@ -333,6 +359,30 @@ namespace
             .LeaderAnyRole = true,
         });
 
+        // DM_CLEAR -- the Deadmines by level (the user, 2026-10-26): the route is a person's recording, so there is no
+        // navigation stage; a proper party (a tank and a healer every rung, never a death knight below 55) learns the
+        // dungeon at 60, where the sequence -- the route, the pulls, the doors, the cannon -- is all there is to learn,
+        // and the ladder brings the level down a rung at a time as the legs and then the run are cleared, to 18, where
+        // the bar is dm6's: 70% of the evaluation's runs cleared with at most one wipe, for every leader role. Fresh
+        // networks; the blocks dm6's.
+        stages.push_back({
+            .Name = "dm_clear",
+            .Suffix = "_dmclear",
+            .Summary = "the live Deadmines on a recorded clear way, a proper party of five, legs then the run at each "
+                "rung of a level ladder from 60 down to 18; the bar at 18 is 70% clears with at most one wipe",
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Vision, Map, MemoryEntities, Sight, PartyFrames,
+                Combat, Goal },
+            .Arenas = { DeadminesLadder() },
+            .MapId = MAP_DEADMINES,
+            .SpawnPoints = { Position(-16.4f, -383.07f, 61.78f, 1.86f) },
+            .MapTiers = 2,
+            .SharedMemoryShare = 1.0f,
+            .NoBackpedal = true,
+            .Camera = false,
+            .MemoriseSpawns = true,
+            .LeaderAnyRole = true,
+        });
+
         return stages;
     }
 
@@ -379,6 +429,19 @@ namespace
             return "a level band is its first and last level, in order";
         if (arena.StandInShare > 100 || (arena.StandInShare > 0 && arena.Seats != SeatPlan::Party))
             return "the stand-in's share is a percentage of a party's training episodes";
+        // The level ladder (dm_clear): a wing's, in place of a band, stepping down.
+        if (!arena.LevelLadder.empty() && !wing)
+            return "a level ladder is a dungeon wing's (InstanceLadder::Wing)";
+        if (!arena.LevelLadder.empty() && (arena.LevelFirst || arena.LevelLast))
+            return "a level ladder and a level band are not both";
+        for (std::size_t i = 0; i < arena.LevelLadder.size(); ++i)
+            if (arena.LevelLadder[i] < 1 || arena.LevelLadder[i] > 80
+                || (i && arena.LevelLadder[i] >= arena.LevelLadder[i - 1]))
+                return "a level ladder steps down, each level 1 to 80 and below the one before";
+        if (arena.WingLegs && (!wing || !arena.RunClear || arena.WingReverse))
+            return "legs are a dungeon wing's with a clear way, run forwards";
+        if (arena.WingLegs && arena.LegSeconds < 30)
+            return "a leg needs at least 30 seconds";
         // The seek stage: one seat in a dungeon of rooms, an object to find in one of them, nothing to fight; it finds
         // the object by sight, so it carries the camera and not the compass.
         bool const seek = arena.Against == Opposition::Seek;

@@ -254,6 +254,10 @@ namespace Animus::Curriculum
         }};
         /// The rung this process's training runs are on now (Instance.WingProbe and the rest).
         [[nodiscard]] uint32 WingRungNow() const { return _wingLadder.Rung(); }
+        /// How many rungs the stage's dungeon ladder has: a level ladder's levels (ArenaDefinition::LevelLadder, the
+        /// longest among the stage's arenas), else WING_RUNGS.
+        [[nodiscard]] static uint32 WingRungCount(StageDefinition const& stage);
+        [[nodiscard]] uint32 WingRungs() const { return WingRungCount(_stage); }
         /// A finished training run of a whole dungeon on rung `rung`: whether it was a probe, and how far it got (the
         /// share of the dungeon cleared, 1 when the last boss died). Probes step the ladder.
         void NoteWingRun(uint32 rung, bool probe, float progress);

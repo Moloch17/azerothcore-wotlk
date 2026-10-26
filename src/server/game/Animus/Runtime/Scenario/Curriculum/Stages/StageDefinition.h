@@ -320,6 +320,21 @@ namespace Animus::Curriculum
         /// and everything spawned before its start site killed first (its bosses' doors opened as their deaths open
         /// them); the levels are the arena's band with no lift.
         bool WingReverse = false;
+        /// **The level ladder** (dm_clear, the user, 2026-10-26: "start with a high level group that learns the dungeon
+        /// and lower the level as they learn how to clear"): the dungeon ladder's rungs are these levels, the first rung
+        /// the first -- the party at 60, where a mistake costs nothing and the route, the pulls, the doors and the cannon
+        /// are learned first -- stepping down as each is learned, to the last, the dungeon's own level. Every rung's
+        /// party has a tank and a healer (a wing's proper party), and no class a rung's level cannot be: a death knight
+        /// is never drawn below 55 (StageScenario::Rebuild, twice over). A wing's; no band, no lift, the evaluation at
+        /// the ladder's current level (the convergence rule waits for the last rung).
+        std::vector<uint8> LevelLadder{};
+        /// **Legs, then the run, at every rung** (dm_clear): a training episode is one leg of the clear way -- the party
+        /// at the checkpoint before, everything before it dead and its doors open, the objective the next checkpoint's
+        /// pack (and its gate) and the checkpoint itself -- drawn by failure rate until every leg is learned at the
+        /// rung (PointNavEncounter's leg rates, kept per rung), then mostly the whole run from the entrance. The
+        /// evaluation plays legs until then, after it legs and runs alike; the ladder's probes are whole runs only.
+        bool WingLegs = false;
+        uint32 LegSeconds = 300;        // a leg's clock (a gate's leg LEG_DOOR_SECONDS more)
         /// The traversability bake (and the memorised map surveyed from it) this arena shares, by name: empty for its
         /// own name. The dm stages' arenas all stand on the Deadmines' one bake, `deadmines` (36-deadmines.trav).
         std::string BakeName;

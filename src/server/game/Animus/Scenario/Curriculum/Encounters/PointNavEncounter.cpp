@@ -1512,6 +1512,7 @@ Animus::Curriculum::PointNavEncounter::ClearWay const& Animus::Curriculum::Point
     std::vector<Position> points;
     std::vector<std::vector<uint32>> pointSpawns;
     std::vector<bool> pointGate;
+    std::vector<uint32> pointGateSpawns;
     uint32 unreachable = 0;
     std::size_t spawnCount = 0;
     std::size_t siteCount = 0;
@@ -1521,7 +1522,7 @@ Animus::Curriculum::PointNavEncounter::ClearWay const& Animus::Curriculum::Point
         std::filesystem::path path(tuning.ClearWayFile);
         if (path.is_relative())
             path = std::filesystem::path(_scenario.DataDir()) / "clearways" / path;
-        if (!LoadRecordedWay(path, arena, points, pointSpawns, pointGate))
+        if (!LoadRecordedWay(path, arena, points, pointSpawns, pointGate, pointGateSpawns))
             LOG_ERROR("module.animus", "{}: arena {}: recorded clear way {} unreadable or empty; the way is generated",
                 _scenario.Name(), arena.Name, path.string());
         else
@@ -1654,6 +1655,8 @@ Animus::Curriculum::PointNavEncounter::ClearWay const& Animus::Curriculum::Point
         spawnCount = spawns.size();
         siteCount = sites.size();
     }
+    if (pointGateSpawns.size() != points.size())
+        pointGateSpawns.assign(points.size(), 0);
 
     // The legs: each checkpoint's route yards from the one before; one the one before cannot reach is dropped and
     // the next leg is measured from the one before it.
@@ -1662,6 +1665,7 @@ Animus::Curriculum::PointNavEncounter::ClearWay const& Animus::Curriculum::Point
     std::vector<float> legs;
     std::vector<Position> kept;
     std::vector<std::vector<uint32>> keptSpawns;
+    std::vector<uint32> keptGateSpawns;
     uint32 gateKept = UINT32_MAX;
     for (std::size_t index = 0; index < points.size(); ++index)
     {
@@ -1680,15 +1684,17 @@ Animus::Curriculum::PointNavEncounter::ClearWay const& Animus::Curriculum::Point
                 continue;
             }
         }
-        if (pointGate[index])
+        if (pointGate[index] && gateKept == UINT32_MAX)
             gateKept = uint32(kept.size());
         nodes.push_back(node);
         legs.push_back(leg);
         kept.push_back(at);
         keptSpawns.push_back(pointSpawns[index]);
+        keptGateSpawns.push_back(pointGateSpawns[index]);
     }
     way.Points = std::move(kept);
     way.Spawns = std::move(keptSpawns);
+    way.GateSpawns = std::move(keptGateSpawns);
     way.Nodes = std::move(nodes);
     way.Leg = std::move(legs);
     way.After.assign(way.Leg.size(), 0.0f);
@@ -1717,7 +1723,7 @@ Animus::Curriculum::PointNavEncounter::ClearWay const& Animus::Curriculum::Point
 
 bool Animus::Curriculum::PointNavEncounter::LoadRecordedWay(std::filesystem::path const& path,
     ArenaDefinition const& arena, std::vector<Position>& points, std::vector<std::vector<uint32>>& spawns,
-    std::vector<bool>& gates)
+    std::vector<bool>& gates, std::vector<uint32>& gateSpawns)
 {
     std::ifstream in(path);
     if (!in)
@@ -1742,9 +1748,13 @@ bool Animus::Curriculum::PointNavEncounter::LoadRecordedWay(std::filesystem::pat
             for (std::string_view word : Acore::Tokenize(cells[5], ';', false))
                 if (Optional<uint32> id = Acore::StringTo<uint32>(word))
                     ids.push_back(*id);
+        // A gate's id is its game object's spawn (a door, the barrel, the cannon's door): never among the creature
+        // spawns a start kills.
+        bool const gate = kind == "gate";
         points.emplace_back(*x, *y, *z, 0.0f);
-        spawns.push_back(std::move(ids));
-        gates.push_back(kind == "gate");
+        spawns.push_back(gate ? std::vector<uint32>() : std::move(ids));
+        gates.push_back(gate);
+        gateSpawns.push_back(gate && !ids.empty() ? ids.front() : 0);
         goal = kind == "goal";
     }
     if (points.empty())
@@ -1757,10 +1767,12 @@ bool Animus::Curriculum::PointNavEncounter::LoadRecordedWay(std::filesystem::pat
             points.pop_back();
             spawns.pop_back();
             gates.pop_back();
+            gateSpawns.pop_back();
         }
         points.push_back(arena.RunGoal);
         spawns.emplace_back();
         gates.push_back(false);
+        gateSpawns.push_back(0);
     }
     return true;
 }
@@ -2426,9 +2438,14 @@ void Animus::Curriculum::PointNavEncounter::DrawBin(Env const& env, uint32 detou
 
 bool Animus::Curriculum::PointNavEncounter::LegsLearned(uint32 arena, uint32 legs, float* share)
 {
+    return LegsLearnedAt(arena, 0, legs, share);
+}
+
+bool Animus::Curriculum::PointNavEncounter::LegsLearnedAt(uint32 arena, uint32 rung, uint32 legs, float* share)
+{
     std::lock_guard lock(_poolLock);
-    std::vector<float>& rates = _legRates[arena];
-    std::vector<uint32>& tries = _legTries[arena];
+    std::vector<float>& rates = _legRates[LegKey(arena, rung)];
+    std::vector<uint32>& tries = _legTries[LegKey(arena, rung)];
     rates.resize(legs, 0.0f);
     tries.resize(legs, 0);
     uint32 learned = 0;
@@ -2441,11 +2458,16 @@ bool Animus::Curriculum::PointNavEncounter::LegsLearned(uint32 arena, uint32 leg
 
 uint32 Animus::Curriculum::PointNavEncounter::DrawLeg(Env const& env, uint32 legs)
 {
+    return DrawLegAt(env, 0, legs);
+}
+
+uint32 Animus::Curriculum::PointNavEncounter::DrawLegAt(Env const& env, uint32 rung, uint32 legs)
+{
     std::vector<float> weights(legs, 1.0f);
     {
         std::lock_guard lock(_poolLock);
-        std::vector<float> const& rates = _legRates[_scenario.Data(env).Arena];
-        std::vector<uint32> const& tries = _legTries[_scenario.Data(env).Arena];
+        std::vector<float> const& rates = _legRates[LegKey(_scenario.Data(env).Arena, rung)];
+        std::vector<uint32> const& tries = _legTries[LegKey(_scenario.Data(env).Arena, rung)];
         for (uint32 leg = 0; leg < legs && leg < rates.size() && leg < tries.size(); ++leg)
             weights[leg] = tries[leg] < LEG_MIN_TRIES ? 1.0f : std::max(LEG_FLOOR, 1.0f - rates[leg]);
     }
@@ -2467,10 +2489,14 @@ void Animus::Curriculum::PointNavEncounter::NoteLegOutcome(Env const& env, EnvNa
     if (!nav.LegTrip || !nav.LegCounted || nav.RunLeg < 0 || env.Evaluating)
         return;
     nav.LegCounted = false;
+    NoteLegAt(_scenario.Data(env).Arena, 0, uint32(nav.RunLeg), arrived);
+}
+
+void Animus::Curriculum::PointNavEncounter::NoteLegAt(uint32 arena, uint32 rung, uint32 leg, bool arrived)
+{
     std::lock_guard lock(_poolLock);
-    std::vector<float>& rates = _legRates[_scenario.Data(env).Arena];
-    std::vector<uint32>& tries = _legTries[_scenario.Data(env).Arena];
-    std::size_t const leg = std::size_t(nav.RunLeg);
+    std::vector<float>& rates = _legRates[LegKey(arena, rung)];
+    std::vector<uint32>& tries = _legTries[LegKey(arena, rung)];
     if (rates.size() <= leg)
     {
         rates.resize(leg + 1, 0.0f);
