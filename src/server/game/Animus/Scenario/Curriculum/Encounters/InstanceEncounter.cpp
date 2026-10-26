@@ -883,17 +883,18 @@ void Animus::Curriculum::InstanceEncounter::CheckDoors(Env& env, EnvInstance& fi
             object->GetName(), object->GetEntry(), object->GetSpawnId(), seat->GetExactDist(object),
             refusal == EntityActions::Refusal::None ? "sent" : EntityActions::RefusalName(refusal));
     };
-    // Where the recording's player stood to open it (its gate's checkpoint), else two yards before it; placed as a
-    // leg start places the party (a near teleport is the client's to finish, and a seat has no client).
+    // Beside it, on the party's side; placed as a leg start places the party (a near teleport is the client's to finish, and a seat has no client).
     auto standBy = [&](GameObject* object)
     {
         if (!object)
             return;
-        Position at(object->GetPositionX() + 2.0f * std::cos(object->GetOrientation()),
-            object->GetPositionY() + 2.0f * std::sin(object->GetOrientation()), object->GetPositionZ());
+        // Toward where the recording's player stood at its gate (that side of the door is the party's), 2.5 yd out.
+        float angle = object->GetOrientation();
         for (uint32 k = 0; k < way.GateSpawns.size() && k < way.Points.size(); ++k)
             if (way.GateSpawns[k] == object->GetSpawnId())
-                at = way.Points[k];
+                angle = object->GetAbsoluteAngle(&way.Points[k]);
+        Position at(object->GetPositionX() + 2.5f * std::cos(angle), object->GetPositionY() + 2.5f * std::sin(angle),
+            object->GetPositionZ());
         at.SetOrientation(at.GetAbsoluteAngle(object));
         BotFactory::TeleportWithinMap(seat, at);
     };
@@ -939,12 +940,27 @@ void Animus::Curriculum::InstanceEncounter::CheckDoors(Env& env, EnvInstance& fi
         case 5:     // the cannon, given the gunpowder the seats carry
             if (now < 10000)
                 return;
-            pressAt(byEntry(CANNON), EntityActions::Press::UseItem, "the gunpowder on");
+        {
+            // The gunpowder, used as the client uses it (CMSG_USE_ITEM), its spell's result named.
+            GameObject* cannon = byEntry(CANNON);
+            SpellInfo const* spell = nullptr;
+            Item* item = cannon ? EntityActions::KeyItemFor(seat, cannon, spell) : nullptr;
+            SpellCastTargets targets;
+            if (cannon)
+                targets.SetGOTarget(cannon);
+            EntityActions::CastOutcome const outcome = item && spell
+                ? EntityActions::UseItemThroughClient(seat, item, spell, targets) : EntityActions::CastOutcome();
+            LOG_INFO("module.animus", "Door check: the cannon {} from {:.1f} yd: item {} ({} carried), spell {}: {}{}",
+                cannon ? "found" : "MISSING", cannon ? seat->GetExactDist(cannon) : -1.0f,
+                item ? item->GetEntry() : 0, item ? item->GetCount() : 0, spell ? spell->Id : 0,
+                outcome.Sent ? "sent" : outcome.Failed ? "refused, SpellCastResult " : "not sent",
+                outcome.Failed ? std::to_string(outcome.Failed - 1) : std::string());
+        }
             fight.DoorCheck = 6;
             return;
         case 6:     // what stands: every gate of the way, and the Iron Clad Door
         {
-            if (now < 16000)
+            if (now < 20000)
                 return;
             uint32 gates = 0, open = 0;
             for (uint32 k = 0; k < way.GateSpawns.size(); ++k)
