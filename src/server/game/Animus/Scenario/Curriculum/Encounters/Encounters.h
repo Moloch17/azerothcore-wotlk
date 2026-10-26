@@ -331,6 +331,8 @@ namespace Animus::Curriculum
             bool LegDone = false;
             bool LegCounted = false;
             bool LegMissLogged = false;         // the leg-missed line written (at its last decision)
+            /// The door check's step (CheckDoors; 0: not this episode, DOOR_CHECK_DONE: it has ended).
+            uint32 DoorCheck = 0;
             uint32 LegDoneMs = 0;               // the leg's clock when it was done
         };
 
@@ -386,6 +388,13 @@ namespace Animus::Curriculum
         /// Whether the episode is over: a wipe or the clock, else a leg's objective, else the last boss's death.
         [[nodiscard]] static bool Over(Env const& env, EnvInstance const& fight);
         void LogLegMissed(Env const& env, EnvInstance const& fight, Map* map, Player const* seat) const;
+        /// **The door check** (the user, 2026-10-26: "make sure the door behavior will work before we start the
+        /// run"): the first whole run of env 0 on each machine, once a process, opens every gate of the recorded way
+        /// as the party would -- a seat's killing blow on the bosses whose deaths open doors, a seat's own press on the
+        /// doors and the cannon (EntityActions::Apply, the packets a client sends) -- and logs each gate open or shut.
+        /// That episode then ends, paid nothing and never counted.
+        void CheckDoors(Env& env, EnvInstance& fight, Map* map, Player* seat);
+        static constexpr uint32 DOOR_CHECK_DONE = 99;
 
         std::vector<EnvInstance> _envs;
         std::map<InstanceLadder, std::vector<BossRow const*>> _rows;   // per ladder, the rows the database fields
