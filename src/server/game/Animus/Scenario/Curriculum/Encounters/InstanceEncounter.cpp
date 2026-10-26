@@ -432,6 +432,9 @@ void Animus::Curriculum::InstanceEncounter::ResetEpisode(Env& env)
             }
             float seatYards = -1.0f;
             float seatHeight = 0.0f;
+            float walked = 0.0f;
+            for (uint32 index = 0; index < _scenario.Data(env).ActiveSeats; ++index)
+                walked = std::max(walked, fight.Seats[index].Travel);
             for (uint32 index = 0; index < _scenario.Data(env).ActiveSeats; ++index)
                 if (Player const* bot = _scenario.SeatBot(env, index); bot && bot->IsAlive() && bot->IsInWorld()
                     && bot->GetMapId() == map->GetId())
@@ -443,11 +446,12 @@ void Animus::Curriculum::InstanceEncounter::ResetEpisode(Env& env)
                         seatHeight = bot->GetPositionZ() - at.GetPositionZ();
                     }
                 }
-            LOG_INFO("module.animus", "Leg missed: env {} {} leg {} | pack {} of {} alive ({} in combat), nearest "
-                "{:.0f} yd from the checkpoint | fight on {} ({} on the party) | gate {} | nearest seat {:.0f} yd, "
-                "{:+.0f} yd high", env.Index, fight.Evaluating ? "eval" : "train", k, alive, way.Spawns[k].size(),
-                combat, nearest, fight.Fighting ? "yes" : "no", fight.OnParty, shut ? "shut" : "open", seatYards,
-                seatHeight);
+            LOG_INFO("module.animus", "Leg missed: env {} {} leg {} after {:.0f}s | pack {} of {} alive ({} in "
+                "combat), nearest {:.0f} yd from the checkpoint | fight on {} ({} on the party) | gate {} | nearest "
+                "seat {:.0f} yd, {:+.0f} yd high | the furthest walker {:.0f} yd", env.Index,
+                fight.Evaluating ? "eval" : "train", k, float(env.EpisodeElapsedMs) / 1000.0f, alive,
+                way.Spawns[k].size(), combat, nearest, fight.Fighting ? "yes" : "no", fight.OnParty,
+                shut ? "shut" : "open", seatYards, seatHeight, walked);
         }
     // A leg just ended counts toward its leg's rate at the rung (training only); a whole run just ended toward the
     // ladder's running share (the training runs only; the probes are the policy's own).
@@ -717,14 +721,29 @@ void Animus::Curriculum::InstanceEncounter::StartFrom(Env& env, EnvInstance& fig
             if (object && object->IsInWorld() && std::find(arena.LiveShut.begin(), arena.LiveShut.end(),
                 object->GetEntry()) != arena.LiveShut.end())
                 object->SetGoState(GO_STATE_ACTIVE);
-    for (uint32 k = 0; k < uint32(fight.StartSite) && k < way.GateSpawns.size(); ++k)
+    // The leg's own gate too when its door is a boss's (not LiveShut: the party opens the cannon's and the clicked
+    // doors): a boss's door opened the moment the boss fell, which was the leg before (the recording: Rhahk'Zor's
+    // Factory Door, Sneed's Mast Room Door, Gilnid's Foundry Door). 2026-10-26: legs 8, 17 and 24 missed with the
+    // door shut every time though the start had killed the boss -- a leg of standing at a shut door.
+    for (uint32 k = 0; k <= uint32(fight.StartSite) && k < way.GateSpawns.size(); ++k)
         if (uint32 const gateSpawn = way.GateSpawns[k])
         {
             auto const range = map->GetGameObjectBySpawnIdStore().equal_range(gateSpawn);
             for (auto it = range.first; it != range.second; ++it)
                 if (GameObject* object = it->second; object && object->IsInWorld()
                     && object->GetGoType() == GAMEOBJECT_TYPE_DOOR && object->GetGoState() == GO_STATE_READY)
+                {
+                    bool const own = k == uint32(fight.StartSite);
+                    if (own && std::find(arena.LiveShut.begin(), arena.LiveShut.end(), object->GetEntry())
+                        != arena.LiveShut.end())
+                        continue;
+                    if (own)
+                        LOG_DEBUG("module.animus", "{}: env {} leg {}: the boss's door {} (spawn {}) was shut at the "
+                            "start; opened", _scenario.Name(), env.Index, k, object->GetEntry(), gateSpawn);
                     object->SetGoState(GO_STATE_ACTIVE);
+                    // The levers would shut it again otherwise (instance_deadmines keeps the Factory Door so).
+                    object->SetLootState(GO_ACTIVATED);
+                }
         }
 
     // The party at the checkpoint before. A recorded way's checkpoint is where the player stood -- ground a person
