@@ -160,13 +160,68 @@ def _episode_rows(run, steps, policy):
 FOLLOW_KEPT = 0.75
 
 
+def _is_dungeon(r):
+    """A dungeon run's episode (dm_clear, 2026-10-26: InstanceEncounter's wing columns): a leg of the recorded clear way,
+    or the whole run."""
+    return r.get("wing_rung") is not None and r.get("instance_map") is not None
+
+
+def _conf_value(scenes_dir, key):
+    """A key of the forge conf beside the data folder (<etc>/modules/mod_animus_forge.conf; scenes are
+    <etc>/modules/animus/scenes), unquoted; None when absent."""
+    if scenes_dir is None:
+        return None
+    conf = Path(scenes_dir).resolve().parent.parent / "mod_animus_forge.conf"
+    try:
+        for line in conf.read_text(errors="replace").splitlines():
+            m = re.match(r"^\s*" + re.escape(key) + r"\s*=\s*(.*?)\s*$", line)
+            if m:
+                return m.group(1).strip('"')
+    except OSError:
+        return None
+    return None
+
+
+def clearway(scenes_dir):
+    """The recorded clear way the dungeon stages follow (AnimusForge.Curriculum.PointNav.ClearWayFile, under the data
+    folder's clearways/), with the player's line beside it (<name>.path.csv): {checkpoints: [{k, kind, x, y, z}],
+    legs: {k: [[x, y], ...]}}; empty without one."""
+    name = _conf_value(scenes_dir, "AnimusForge.Curriculum.PointNav.ClearWayFile")
+    if not name:
+        return {"checkpoints": [], "legs": {}}
+    path = Path(name) if Path(name).is_absolute() else Path(scenes_dir).resolve().parent / "clearways" / name
+    if not path.exists():
+        return {"checkpoints": [], "legs": {}}
+
+    def build():
+        out = {"file": path.name, "checkpoints": [], "legs": {}}
+        try:
+            for line in path.read_text().splitlines()[1:]:
+                cells = line.strip().split(",")
+                if len(cells) >= 5:
+                    out["checkpoints"].append({"k": int(cells[0]), "kind": cells[1], "x": float(cells[2]),
+                                               "y": float(cells[3]), "z": float(cells[4])})
+            line_path = path.with_name(path.name.replace(".clearway.csv", ".path.csv"))
+            if line_path.exists():
+                for line in line_path.read_text().splitlines()[1:]:
+                    cells = line.strip().split(",")
+                    if len(cells) >= 5:
+                        out["legs"].setdefault(int(cells[0]), []).append([float(cells[2]), float(cells[3])])
+        except (OSError, ValueError):
+            pass
+        return out
+    return _cached("clearway", path, build)
+
+
 def _is_nav(r):
     """A nav stage's episode (decision 0036: PointNavEncounter): a point goal, its route known to the sim."""
     return r.get("nav_rung") is not None and r.get("goal_x") is not None
 
 
 def _map_of(r):
-    """The episode's map: the seek stage's seek_map, the follow stage's follow_map, a nav stage's map."""
+    """The episode's map: the seek stage's seek_map, the follow stage's follow_map, a nav stage's map, a dungeon's."""
+    if _is_dungeon(r):
+        return int(_num(r.get("instance_map"), 0))
     if _is_nav(r) and r.get("follow_map") is None:
         return int(_num(r.get("map"), 0))
     return int(_num(r.get("seek_map"), _num(r.get("follow_map"), 0)))
@@ -187,9 +242,10 @@ def map_points(run, steps, policy, map_id):
     return a[:, 0], a[:, 1], a[:, 2]
 
 
-def episodes(run, steps, policy):
+def episodes(run, steps, policy, scenes_dir=None):
     """The evaluation's episodes, keyed by (seed, agent), with the fields the viewer shows."""
     rows = _episode_rows(run, steps, policy)
+    way = None
     cats = _categories(run)
     rooms, objects = cats.get("seek_room", []), cats.get("seek_object", [])
     out = []
@@ -198,8 +254,32 @@ def episodes(run, steps, policy):
         kept = _num(r.get("follow_kept_share"))
         follow = r.get("follow_map") is not None and r.get("seek_map") is None
         nav = _is_nav(r) and not follow
+        dungeon = _is_dungeon(r)
         summary = None
-        if nav:
+        checkpoint = None
+        if dungeon:
+            # A dungeon episode (dm_clear): "done" is the leg done (or, a whole run, the dungeon cleared), its object
+            # the leg's checkpoint, and its line the fight and the line against the recorded one.
+            if way is None:
+                way = {c["k"]: c for c in clearway(scenes_dir)["checkpoints"]}
+            leg = int(_num(r.get("wing_leg"), -1))
+            is_leg = bool(_num(r.get("wing_is_leg"), 0))
+            parts = [f"leg {leg}" + (f" ({way[leg]['kind']})" if leg in way else "") if is_leg else "whole run"]
+            parts.append(f"L{int(_num(r.get('ladder_level'), _num(r.get('level'), 0)))}")
+            parts.append(f"{int(_num(r.get('wing_trash_kills'), 0))} kills")
+            deaths = _num(r.get("seat_deaths"), 0)
+            if deaths:
+                parts.append(f"{int(deaths)} deaths")
+            dev = _num(r.get("path_dev_yards"))
+            if _num(r.get("path_scored"), 0) and dev is not None:
+                parts.append(f"{dev:.1f} yd off the line")
+            ratio = _num(r.get("path_time_ratio"))
+            if ratio:
+                parts.append(f"time x{ratio:.1f}")
+            summary = " · ".join(parts)
+            if is_leg and leg in way:
+                checkpoint = [way[leg]["x"], way[leg]["y"], way[leg]["z"]]
+        elif nav:
             # A nav episode: "found" is arrived, its object the goal point, and its line the route numbers.
             spl, optimal = _num(r.get("spl")), _num(r.get("optimal_yards"))
             detour, travelled = _num(r.get("detour_factor")), _num(r.get("travelled_yards"))
@@ -228,7 +308,10 @@ def episodes(run, steps, policy):
         out.append({
             "seed": int(r.get("seed", -1)), "agent": int(r.get("agent", 0) or 0),
             "map": _map_of(r),
-            "found": (bool(_num(r.get("arrived"), 0)) if nav else (kept or 0) >= FOLLOW_KEPT if follow
+            "kind": "dungeon" if dungeon else "nav" if nav else "follow" if follow else "seek",
+            "found": ((bool(_num(r.get("wing_leg_arrived"), 0)) if _num(r.get("wing_is_leg"), 0)
+                       else bool(_num(r.get("cleared"), 0))) if dungeon
+                      else bool(_num(r.get("arrived"), 0)) if nav else (kept or 0) >= FOLLOW_KEPT if follow
                       else bool(_num(r.get("found"), 0))),
             "timed_out": bool(_num(r.get("timed_out"), 0)),
             "find_seconds": _num(r.get("find_seconds")),
@@ -236,12 +319,14 @@ def episodes(run, steps, policy):
             "class": r.get("layout") or r.get("class") or "?", "race": RACES.get(int(_num(r.get("race"), 0)), r.get("race")), "level": _num(r.get("level")),
             "room": rooms[int(room_i)] if room_i is not None and 0 <= int(room_i) < len(rooms) else None,
             "object": objects[int(obj_i)] if obj_i is not None and 0 <= int(obj_i) < len(objects) else None,
-            "object_xyz": ([_num(r.get("goal_x")), _num(r.get("goal_y")), _num(r.get("goal_z"))] if nav else
+            "object_xyz": (checkpoint if dungeon else
+                           [_num(r.get("goal_x")), _num(r.get("goal_y")), _num(r.get("goal_z"))] if nav else
                            [_num(r.get("start_x")), _num(r.get("start_y")), _num(r.get("start_z"))] if follow else
                            [_num(r.get("object_x")), _num(r.get("object_y")), _num(r.get("object_z"))]),
             "end_xyz": [_num(r.get("end_x")), _num(r.get("end_y")), _num(r.get("end_z"))],
             "pin_events": _num(r.get("pin_events")), "wall_seconds": _num(r.get("wall_seconds")),
-            "return": _num(r.get("return")), "rung": _num(r.get("nav_rung") if nav else r.get("seek_rung")),
+            "return": _num(r.get("return")),
+            "rung": _num(r.get("wing_rung") if dungeon else r.get("nav_rung") if nav else r.get("seek_rung")),
             # Systematic search (decision 0030): the rung's rooms covered, the seconds to half of them, wasted travel.
             "checked_share": _num(r.get("checked_share")), "half_checked_s": _num(r.get("half_checked_s")),
             "searched_revisit_s": _num(r.get("searched_revisit_s")),
@@ -296,10 +381,10 @@ def _finite(value):
     return value
 
 
-def trace_payload(run, steps, policy):
+def trace_payload(run, steps, policy, scenes_dir=None):
     starts, c, meta = trace(run, steps, policy)
     to_cells = _searched_to_cells(run)
-    eps = {(e["seed"], e["agent"]): e for e in episodes(run, steps, policy)}
+    eps = {(e["seed"], e["agent"]): e for e in episodes(run, steps, policy, scenes_dir)}
     blocks = []
     get = lambda k, a, b, nd: [round(float(v), nd) for v in c[k][a:b]] if k in c else None
     for i in range(len(starts) - 1):
@@ -731,6 +816,8 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             if url.path == "/api/runs":
                 return self._json(runs_index(self.runs_dir))
+            if url.path == "/api/clearway":
+                return self._json(clearway(self.scenes_dir))
             if url.path == "/api/frame":
                 run = self._run(q)
                 # The video's folder: videos/<steps>/ (the learner's), or a held-out arena's <steps>-heldout<N>/.
@@ -750,9 +837,9 @@ class Handler(SimpleHTTPRequestHandler):
                 if not re.fullmatch(r"[A-Za-z0-9_]+", policy):
                     raise LookupError("bad policy")
                 if url.path == "/api/episodes":
-                    return self._json(episodes(run, steps, policy))
+                    return self._json(episodes(run, steps, policy, self.scenes_dir))
                 if url.path == "/api/trace":
-                    return self._json(trace_payload(run, steps, policy))
+                    return self._json(trace_payload(run, steps, policy, self.scenes_dir))
                 if url.path == "/api/media":
                     return self._json(media(run, steps, policy))
                 zlo = float(q["zlo"][0]) if "zlo" in q else None

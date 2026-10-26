@@ -7,7 +7,7 @@ const css = (name) => getComputedStyle(document.documentElement).getPropertyValu
 
 const state = {
   runs: [], run: null, steps: null, policy: null, map: null,
-  episodes: [], blocks: [], stepSeconds: 0.25,
+  episodes: [], blocks: [], stepSeconds: 0.25, way: null,
   bg: null, bgImg: null,
   view: { scale: 1, x: 0, y: 0 },          // screen = world_px * scale + offset
   outcome: 'all', colourBy: 'outcome', classesOff: new Set(), seed: '',
@@ -87,9 +87,13 @@ async function loadEvaluation(mapWanted, seedWanted) {
   stopPlay();
   state.selected = null;
   const q = `run=${encodeURIComponent(state.run)}&steps=${state.steps}&policy=${encodeURIComponent(state.policy)}`;
-  const [eps, tr, media] = await Promise.all([api('/api/episodes?' + q), api('/api/trace?' + q),
-    api('/api/media?' + q).catch(() => [])]);
+  const [eps, tr, media, way] = await Promise.all([api('/api/episodes?' + q), api('/api/trace?' + q),
+    api('/api/media?' + q).catch(() => []), api('/api/clearway').catch(() => null)]);
   state.episodes = eps;
+  // A dungeon stage (dm_clear): its recorded route as a layer, and "done" for "found".
+  state.dungeon = eps.some((e) => e.kind === 'dungeon');
+  state.way = state.dungeon && way && way.checkpoints && way.checkpoints.length ? way : null;
+  $('lWayRow').hidden = !state.way;
   state.stepSeconds = tr.step_seconds || 0.25;
   state.blocks = tr.blocks.filter((b) => b.episode && b.x && b.x.length);
   // The evaluation's videos are of these very episodes (the learner's evaluation, filmed by the sim): by seed and agent.
@@ -216,10 +220,10 @@ function renderSummary() {
     `<span><i class="cdot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${CLASS_COLOURS[k] || '#999'}"></i> ${k}</span><b>${f}/${n}</b>`).join('');
   $('summary').innerHTML = `
     <h2>${mapName(state.map)} <span class="muted">· ${fmtSteps(state.steps)} · ${state.policy}</span></h2>
-    <div class="big">${bs.length ? Math.round(100 * found.length / bs.length) : 0}% found</div>
+    <div class="big">${bs.length ? Math.round(100 * found.length / bs.length) : 0}% ${state.dungeon ? 'done' : 'found'}</div>
     <div class="stats">
-      <span>Episodes</span><b>${found.length} / ${bs.length}</b>
-      <span>Mean time to find</span><b>${mean != null ? mean.toFixed(0) + ' s' : '–'}</b>
+      <span>${state.dungeon ? 'Seats' : 'Episodes'}</span><b>${found.length} / ${bs.length}</b>
+      ${state.dungeon ? '' : `<span>Mean time to find</span><b>${mean != null ? mean.toFixed(0) + ' s' : '–'}</b>`}
       ${rows}
     </div>`;
 }
@@ -365,9 +369,36 @@ function draw() {
       ctx.strokeRect(px - r, py - r, 2 * r, 2 * r);
     });
   }
+  if (state.way && $('lWay').checked && state.map === 36) drawWay(ctx, v);
   if (state.hover && state.hover !== state.selected && bs.includes(state.hover)) drawHover(ctx, v, state.hover);
   if (state.selected) drawSelected(ctx, v);
   drawLegend();
+}
+
+// The recorded clear way (dm_clear): the player's line leg by leg, and each checkpoint numbered -- a site (pack) white,
+// a boss red, a gate (a door, the barrel, the cannon's door) violet, the goal gold.
+function drawWay(ctx, v) {
+  const w = state.way, s = 1 / v.scale;
+  ctx.save();
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  for (const pts of Object.values(w.legs || {})) {
+    if (pts.length < 2) continue;
+    const path = () => { ctx.beginPath(); pts.forEach(([x, y], k) => { const [px, py] = worldToPx(x, y); k ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }); };
+    ctx.globalAlpha = 0.85; ctx.strokeStyle = 'rgba(10,12,16,0.8)'; ctx.lineWidth = 4.5 * s; path(); ctx.stroke();
+    ctx.strokeStyle = '#4fd8ff'; ctx.lineWidth = 2.2 * s; ctx.setLineDash([6 * s, 4 * s]); path(); ctx.stroke(); ctx.setLineDash([]);
+  }
+  ctx.globalAlpha = 1;
+  const colour = { site: '#f2f2f2', boss: '#ff4d5e', gate: '#b07cff', goal: '#ffd34d' };
+  ctx.font = `${11 * s}px system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (const c of w.checkpoints) {
+    const [px, py] = worldToPx(c.x, c.y), r = (c.kind === 'site' ? 6.5 : 8) * s;
+    ctx.fillStyle = 'rgba(10,12,16,0.85)'; ctx.strokeStyle = colour[c.kind] || '#ccc'; ctx.lineWidth = 2 * s;
+    ctx.beginPath();
+    if (c.kind === 'gate') ctx.rect(px - r, py - r, 2 * r, 2 * r); else ctx.arc(px, py, r, 0, 7);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = colour[c.kind] || '#ccc'; ctx.fillText(String(c.k), px, py + 0.5 * s);
+  }
+  ctx.restore();
 }
 
 function drawHover(ctx, v, b) {
@@ -424,12 +455,17 @@ function drawSelected(ctx, v) {
 function drawLegend() {
   const items = [];
   if ($('lRoutes').checked) {
-    if (state.colourBy === 'outcome') items.push(['line', css('--found'), 'found'], ['line', css('--missed'), 'not found']);
+    if (state.colourBy === 'outcome') items.push(['line', css('--found'), state.dungeon ? 'leg done' : 'found'],
+      ['line', css('--missed'), state.dungeon ? 'not done' : 'not found']);
     else if (state.colourBy === 'class') items.push(['line', '#ccc', 'route, by class (see the chips)']);
     else items.push(['line', '#ccc', 'route, one colour per episode']);
   }
   if ($('lStarts').checked) items.push(['dot', css('--start'), 'start']);
-  if ($('lObjects').checked) items.push(['box', css('--obj-found'), 'object found'], ['box', css('--obj-missed'), 'object missed']);
+  if ($('lObjects').checked) items.push(['box', css('--obj-found'), state.dungeon ? 'checkpoint reached' : 'object found'],
+    ['box', css('--obj-missed'), state.dungeon ? 'checkpoint not reached' : 'object missed']);
+  if (state.way && $('lWay').checked && state.map === 36)
+    items.push(['line', '#4fd8ff', `recorded route (${state.way.file})`], ['dot', '#f2f2f2', 'pack'],
+      ['dot', '#ff4d5e', 'boss'], ['box', '#b07cff', 'gate'], ['dot', '#ffd34d', 'exit']);
   if ($('lEnds').checked) items.push(['x', '#f2f2f2', 'end']);
   if ($('lPins').checked) items.push(['dot', '#ff3b6b', 'wall contact (bright: stopped)']);
   if ($('lHeat').checked) items.push(['line', 'linear-gradient(90deg, rgb(88,15,109), rgb(243,120,25), rgb(252,255,164))', 'time spent (log scale)']);
@@ -704,7 +740,7 @@ function wire() {
   };
   $('colourBy').onchange = () => { state.colourBy = $('colourBy').value; draw(); };
   $('seedFilter').oninput = () => { state.seed = $('seedFilter').value; state.heat = null; renderSummary(); renderList(); draw(); };
-  for (const id of ['lRoutes', 'lStarts', 'lObjects', 'lEnds', 'lHeat', 'lPins']) $(id).onchange = draw;
+  for (const id of ['lRoutes', 'lStarts', 'lObjects', 'lEnds', 'lHeat', 'lPins', 'lWay']) $(id).onchange = draw;
   $('alpha').oninput = draw;
   $('bandApply').onclick = () => selectMap(state.map, true, [Number($('zlo').value), Number($('zhi').value)]);
   $('play').onclick = () => {

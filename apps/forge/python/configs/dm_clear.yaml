@@ -20,7 +20,7 @@ rollout_length: 128
 overlap_updates: true
 torch_threads: 4
 log_every: 1
-checkpoint_every: 100
+checkpoint_every: 25
 keep_checkpoints: 5
 train_device: auto
 rollout_device: auto
@@ -126,7 +126,7 @@ eval:
   sampled_every: 3
   sampled_episodes: 16
   trace_episodes: 8
-  trace_all: false
+  trace_all: true
   arms:
     no_map: 16
     no_memory: 16
