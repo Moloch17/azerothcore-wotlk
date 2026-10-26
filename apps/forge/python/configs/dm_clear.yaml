@@ -121,7 +121,7 @@ style:
   dataset: /azerothcore/env/dist/etc/modules/animus/human/deadmines_motion_windows.npz
   reference: /azerothcore/env/dist/etc/modules/animus/human/deadmines_reference.json
 eval:
-  every_env_steps: 20000000
+  every_env_steps: 10000000
   episodes: 64
   sampled_every: 3
   sampled_episodes: 16

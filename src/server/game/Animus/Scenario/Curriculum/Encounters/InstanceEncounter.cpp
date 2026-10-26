@@ -651,7 +651,12 @@ void Animus::Curriculum::InstanceEncounter::StartFrom(Env& env, EnvInstance& fig
     // Past the gate: its shut doors (the Iron Clad Door) open, as the cannon would have left them; and each recorded
     // gate before the start -- a door clicked open, the barrel, the cannon's door -- as the party that got there left
     // it (a door type object opened; anything else left to the party).
-    if (way.Gate != UINT32_MAX && uint32(fight.StartSite) > way.Gate)
+    // A recorded way names each gate's own object (GateSpawns): only those before the start open, below -- the Iron
+    // Clad Door stays shut until the start is past the cannon (2026-10-26: every leg past the first Heavy Door opened
+    // it, and the cannon's leg was a walk).
+    bool const recordedGates = std::any_of(way.GateSpawns.begin(), way.GateSpawns.end(),
+        [](uint32 spawn) { return spawn != 0; });
+    if (!recordedGates && way.Gate != UINT32_MAX && uint32(fight.StartSite) > way.Gate)
         for (auto const& [spawnId, object] : map->GetGameObjectBySpawnIdStore())
             if (object && object->IsInWorld() && std::find(arena.LiveShut.begin(), arena.LiveShut.end(),
                 object->GetEntry()) != arena.LiveShut.end())
