@@ -203,6 +203,49 @@ void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
             nav->LegsLearnedAt(_scenario.Data(env).Arena, fight.Rung, fight.LegCount, &share);
         return share;
     });
+    // **The seats' line against the recorded one** (the user, 2026-10-26: grade their movement by the recording;
+    // measures only): per seat, the mean yards off the leg's recorded line over its living decisions and the share of
+    // them 10 yd or more off (over path_scored, the rows that had a line); on a leg done, the yards it walked and the
+    // leg's time against the player's (over wing_leg_arrived; a leg the player walked less than 5 yd, or took under
+    // a second for, is left out).
+    table.Add("path_scored", [this](Env const& env, uint32 seat)
+    {
+        return seat < MAX_SEATS && _envs[env.Index].Seats[seat].PathSteps ? 1.0f : 0.0f;
+    });
+    table.Add("path_dev_yards", [this](Env const& env, uint32 seat)
+    {
+        if (seat >= MAX_SEATS)
+            return 0.0f;
+        SeatInstance const& line = _envs[env.Index].Seats[seat];
+        return line.PathSteps ? line.PathSum / float(line.PathSteps) : 0.0f;
+    });
+    table.Add("path_off_share", [this](Env const& env, uint32 seat)
+    {
+        if (seat >= MAX_SEATS)
+            return 0.0f;
+        SeatInstance const& line = _envs[env.Index].Seats[seat];
+        return line.PathSteps ? float(line.PathOff) / float(line.PathSteps) : 0.0f;
+    });
+    auto const legMeasured = [](EnvInstance const& fight)
+    {
+        return fight.LegTrip && fight.LegDone && fight.Way && fight.Leg >= 0
+            && std::size_t(fight.Leg) < fight.Way->LegYards.size() && fight.Way->LegYards[std::size_t(fight.Leg)] >= 5.0f
+            && fight.Way->LegSeconds[std::size_t(fight.Leg)] >= 1.0f;
+    };
+    table.Add("path_yards_ratio", [this, legMeasured](Env const& env, uint32 seat)
+    {
+        EnvInstance const& fight = _envs[env.Index];
+        if (seat >= MAX_SEATS || !legMeasured(fight))
+            return 0.0f;
+        return fight.Seats[seat].Travel / fight.Way->LegYards[std::size_t(fight.Leg)];
+    });
+    table.Add("path_time_ratio", [this, legMeasured](Env const& env, uint32)
+    {
+        EnvInstance const& fight = _envs[env.Index];
+        if (!legMeasured(fight))
+            return 0.0f;
+        return float(fight.LegDoneMs) / 1000.0f / fight.Way->LegSeconds[std::size_t(fight.Leg)];
+    });
     table.Add("dk_guard", [this](Env const& env, uint32)
     {
         EnvState const& data = _scenario.Data(env);
@@ -806,7 +849,50 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
     if (fight.Way)
         AdvanceGoal(env, fight, env.FindMap(), seat);
     if (fight.LegTrip && !fight.LegDone && LegMet(env, fight, env.FindMap(), seat))
+    {
         fight.LegDone = true;
+        fight.LegDoneMs = env.EpisodeElapsedMs;
+    }
+    // **Against the recorded line** (the path_* measures; never a reward): each living seat's yards from the line the
+    // player walked -- a leg's own, or on a whole run the leg the party is on and the one before -- and the yards
+    // it walked.
+    if (fight.Way && !fight.Way->LegPath.empty())
+    {
+        constexpr float PATH_OFF_YARDS = 10.0f;
+        constexpr float PATH_JUMP_YARDS = 30.0f;
+        uint32 const legs = uint32(fight.Way->LegPath.size());
+        int32 const now = fight.LegTrip ? fight.Leg : std::clamp<int32>(fight.GoalSite, 0, int32(legs) - 1);
+        EnvState const& state = _scenario.Data(env);
+        for (uint32 index = 0; index < state.ActiveSeats && now >= 0; ++index)
+        {
+            Player* bot = _scenario.SeatBot(env, index);
+            if (!bot || !bot->IsInWorld() || !bot->IsAlive() || bot->GetMapId() != fight.MapId)
+                continue;
+            SeatInstance& line = fight.Seats[index];
+            Position const at(*bot);
+            float off = fight.Way->PathDistance(uint32(now), at);
+            if (!fight.LegTrip && now > 0)
+            {
+                float const before = fight.Way->PathDistance(uint32(now - 1), at);
+                if (before >= 0.0f && (off < 0.0f || before < off))
+                    off = before;
+            }
+            if (off >= 0.0f)
+            {
+                line.PathSum += off;
+                ++line.PathSteps;
+                line.PathOff += off >= PATH_OFF_YARDS ? 1 : 0;
+            }
+            if (line.HasLast)
+            {
+                float const moved = line.Last.GetExactDist(&at);
+                if (moved < PATH_JUMP_YARDS)
+                    line.Travel += moved;
+            }
+            line.Last = at;
+            line.HasLast = true;
+        }
+    }
 
     fight.HealthLeft = boss->IsAlive() ? float(boss->GetHealth()) / float(fight.BossHealth) : 0.0f;
     if (!fight.BossDead && !boss->IsAlive())

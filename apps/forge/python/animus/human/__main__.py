@@ -118,7 +118,8 @@ def cmd_dungeon_run(args) -> dict:
 
 def cmd_build(args) -> dict:
     result = build_mod.build(args.capture, args.out, args.start, args.end, stride=args.stride,
-                             max_windows=args.max_windows, trips_per_map=args.trips_per_map, seed=args.seed)
+                             max_windows=args.max_windows, trips_per_map=args.trips_per_map, seed=args.seed,
+                             recordings=args.recording)
     return {"files": {k: str(v) for k, v in result.paths.items()}, "tracks": result.tracks, "clips": result.clips,
             "windows_seen": result.windows, "trips": result.trips, "units": result.units}
 
@@ -254,6 +255,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--max-windows", type=int, default=2_000_000)
     p.add_argument("--trips-per-map", type=int, default=5000)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--recording", action="append", default=None,
+                   help="build from this manual recording alone (an id under --capture, or its directory); "
+                        "repeatable")
     p.set_defaults(func=cmd_build)
 
     p = sub.add_parser("fit", help="the executor-fit study")

@@ -43,10 +43,30 @@ def shard_tracks(sessions: SessionTable, shard: Shard, include_companions: bool 
                         include_companions=include_companions)
 
 
+class RecordingsOnly:
+    """A capture source of manual recordings alone (FORMAT.md §1): each recording stands as one "hour" of the
+    hourly pipeline -- its files are named the same, `<stream>-<map>.bin.gz`."""
+
+    def __init__(self, recordings: list[r.RecordingDir]):
+        self._recordings = recordings
+
+    def hours(self) -> list[r.RecordingDir]:
+        return list(self._recordings)
+
+
 def build(capture: str | Path, out: str | Path, start: str | None = None, end: str | None = None,
-          stride: int = 1, max_windows: int = 2_000_000, trips_per_map: int = 5000, seed: int = 0) -> BuildResult:
-    cap = r.CaptureDir(capture, start, end)
-    source = source_of(capture, start, end)
+          stride: int = 1, max_windows: int = 2_000_000, trips_per_map: int = 5000, seed: int = 0,
+          recordings: list[str] | None = None) -> BuildResult:
+    """The four §5 files from a capture range -- or, with `recordings` (ids or directories under `capture`), from
+    those manual recordings alone (a dungeon run's movement as the human reference and the style reward's data)."""
+    if recordings:
+        recs = [r.RecordingDir.open(name) if Path(name).is_dir() else r.find_recording(capture, name)
+                for name in recordings]
+        cap = RecordingsOnly(recs)
+        source = {"capture_dir": str(capture), "recordings": [rec.id for rec in recs]}
+    else:
+        cap = r.CaptureDir(capture, start, end)
+        source = source_of(capture, start, end)
     data = DatasetBuilder(stride=stride, max_windows=max_windows, seed=seed)
     reference = ref.ReferenceBuilder()
     pool = TripPool(per_map=trips_per_map, seed=seed)

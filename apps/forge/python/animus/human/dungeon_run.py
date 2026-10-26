@@ -29,6 +29,7 @@ SITE_RISE = 6.0
 CO_ENGAGE_MS = 2000         # creatures entering combat within this of one another are one pull
 PULL_GAP_MS = 3000          # a creature engaging this long after the pull's last, with the player out of combat,
                             # starts a new pull
+PATH_STEP_MS = 500          # the recorded line's samples at most this often (a leg's path for the sim)
 REST_SPEED = 0.3            # yd/s: standing still
 REST_SECONDS = 5.0
 DOOR_JOIN_MS = 3000         # an Interact and the object's state change this close are one interaction
@@ -587,12 +588,39 @@ def analyse(rec: r.RecordingDir, site_yards: float = SITE_YARDS, map_id: int | N
     manifest = rec.manifest or {}
     duration_ms = (run.end_ms - run.start_ms) if run.end_ms else (int(run.moves[-1]["ms"]) - run.start_ms
                                                                    if run.moves is not None and len(run.moves) else 0)
+    # The recorded trajectory leg by leg (leg k: from checkpoint k-1's time, the start for leg 0, to checkpoint k's),
+    # the player's moves on the map at most PATH_STEP_MS apart: what the sim measures each seat's line against.
+    cps = checkpoints(run, pull_list, interaction_list, rest_list)
+    path_rows: list[list] = []
+    if run.moves is not None and len(run.moves):
+        ms = run.moves["ms"].astype(np.int64) - run.start_ms
+        bounds = [0] + [int(cp["t_ms"]) for cp in cps]
+        for k in range(len(cps)):
+            lo, hi = bounds[k], bounds[k + 1]
+            idx = np.flatnonzero((ms >= lo) & (ms <= hi))
+            # The last move at or before the leg's start too, so a leg's line begins where the player stood.
+            before = np.flatnonzero(ms < lo)
+            if len(before):
+                idx = np.concatenate([[before[-1]], idx])
+            last_t = None
+            for i in idx:
+                t = int(ms[i])
+                if last_t is not None and t - last_t < PATH_STEP_MS and i != idx[-1]:
+                    continue
+                last_t = t
+                row = run.moves[i]
+                path_rows.append([k, max(t, lo), round(float(row["x"]), 2), round(float(row["y"]), 2),
+                                  round(float(row["z"]), 2)])
+            if len(idx) == 0 or path_rows[-1][0] != k or path_rows[-1][1] < hi:
+                # The leg's end at its checkpoint and time (a leg with no moves: a stand-still pull).
+                path_rows.append([k, hi, cps[k]["x"], cps[k]["y"], cps[k]["z"]])
     return {
         "format": 1, "source": rec.id, "title": rec.title, "verdict": rec.verdict,
         "character": manifest.get("character"), "flags": manifest.get("flags"),
         "map": run.map, "instance": run.instance, "duration_s": round(duration_ms / 1000.0, 1),
         "entrance": [round(v, 2) for v in run.entrance] if run.entrance else None,
-        "checkpoints": checkpoints(run, pull_list, interaction_list, rest_list),
+        "checkpoints": cps,
+        "path": path_rows,
         "packs": pack_list, "pulls": pull_list, "rests": rest_list, "interactions": interaction_list,
         "bosses": boss_list, "skipped": skipped_list, "deaths": death_list, "notes": note_list,
         "counts": {"spawns": len(run.spawns), "creatures": sum(1 for s in run.spawns.values() if s.kind == 0),
@@ -616,4 +644,10 @@ def write(report: dict, out: str | Path) -> dict[str, str]:
         for cp in report["checkpoints"]:
             writer.writerow([cp["k"], cp["kind"], cp["x"], cp["y"], cp["z"],
                              ";".join(str(s) for s in cp["spawn_ids"])])
-    return {"report": str(out), "clearway": str(way)}
+    path = way.with_name(way.name.replace(".clearway.csv", ".path.csv"))
+    with path.open("w", newline="") as fh:
+        writer = csv.writer(fh, lineterminator="\n")
+        writer.writerow(["leg", "t_ms", "x", "y", "z"])
+        for row in report.get("path", []):
+            writer.writerow(row)
+    return {"report": str(out), "clearway": str(way), "path": str(path)}

@@ -60,6 +60,7 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <numeric>
 #include <fstream>
 #include <functional>
 #include <queue>
@@ -1701,6 +1702,29 @@ Animus::Curriculum::PointNavEncounter::ClearWay const& Animus::Curriculum::Point
     for (int32 k = int32(way.Leg.size()) - 2; k >= 0; --k)
         way.After[std::size_t(k)] = way.After[std::size_t(k) + 1] + way.Leg[std::size_t(k) + 1];
     way.Gate = gateKept;
+    // The recorded line beside a recorded way (the same name, .path.csv for .clearway.csv): the path_* measures.
+    if (source != "generated" && !tuning.ClearWayFile.empty())
+    {
+        std::filesystem::path wayPath(tuning.ClearWayFile);
+        if (wayPath.is_relative())
+            wayPath = std::filesystem::path(_scenario.DataDir()) / "clearways" / wayPath;
+        std::string name = wayPath.filename().string();
+        std::size_t const at = name.rfind(".clearway.csv");
+        name = at == std::string::npos ? name + ".path.csv" : name.substr(0, at) + ".path.csv";
+        std::filesystem::path const linePath = wayPath.parent_path() / name;
+        if (uint32(way.Points.size()) != uint32(points.size()))
+            LOG_WARN("module.animus", "{}: arena {}: {} of the recorded way's checkpoints were left out: its recorded "
+                "line is not used (its legs would not match)", _scenario.Name(), arena.Name,
+                points.size() - way.Points.size());
+        else if (LoadRecordedPath(linePath, uint32(way.Points.size()), way))
+            LOG_INFO("module.animus", "{}: arena {}: recorded line {} -- {} legs, {:.0f} yd in {:.0f} s", _scenario.Name(),
+                arena.Name, linePath.filename().string(), way.LegPath.size(),
+                std::accumulate(way.LegYards.begin(), way.LegYards.end(), 0.0f),
+                std::accumulate(way.LegSeconds.begin(), way.LegSeconds.end(), 0.0f));
+        else
+            LOG_INFO("module.animus", "{}: arena {}: no recorded line at {} (the path_* measures stay 0)",
+                _scenario.Name(), arena.Name, linePath.string());
+    }
     float const total = way.After.empty() ? 0.0f : way.After.front();
     // The way beside the bake, for reading it off-line: <trav>/<map>-<arena>.<stage>.clearway.csv.
     {
@@ -1719,6 +1743,82 @@ Animus::Curriculum::PointNavEncounter::ClearWay const& Animus::Curriculum::Point
         "{:.0f} yd from the first, the gate at #{}", _scenario.Name(), arena.Name, source, way.Points.size(),
         spawnCount, siteCount, unreachable, total, way.Gate == UINT32_MAX ? -1 : int32(way.Gate));
     return way;
+}
+
+bool Animus::Curriculum::PointNavEncounter::LoadRecordedPath(std::filesystem::path const& path, uint32 legs,
+    ClearWay& way)
+{
+    std::ifstream in(path);
+    if (!in || !legs)
+        return false;
+    std::vector<std::vector<Position>> lines(legs);
+    std::vector<uint32> firstMs(legs, UINT32_MAX);
+    std::vector<uint32> lastMs(legs, 0);
+    std::string line;
+    uint32 rows = 0;
+    while (std::getline(in, line))
+    {
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
+            line.pop_back();
+        if (line.empty() || line.rfind("leg", 0) == 0)
+            continue;
+        std::vector<std::string_view> const cells = Acore::Tokenize(line, ',', true);
+        if (cells.size() < 5)
+            continue;
+        Optional<uint32> const leg = Acore::StringTo<uint32>(cells[0]);
+        Optional<uint32> const ms = Acore::StringTo<uint32>(cells[1]);
+        Optional<float> const x = Acore::StringTo<float>(cells[2]);
+        Optional<float> const y = Acore::StringTo<float>(cells[3]);
+        Optional<float> const z = Acore::StringTo<float>(cells[4]);
+        if (!leg || !ms || !x || !y || !z || *leg >= legs)
+            continue;
+        lines[*leg].emplace_back(*x, *y, *z, 0.0f);
+        firstMs[*leg] = std::min(firstMs[*leg], *ms);
+        lastMs[*leg] = std::max(lastMs[*leg], *ms);
+        ++rows;
+    }
+    if (!rows)
+        return false;
+    way.LegPath = std::move(lines);
+    way.LegYards.assign(legs, 0.0f);
+    way.LegSeconds.assign(legs, 0.0f);
+    for (uint32 k = 0; k < legs; ++k)
+    {
+        std::vector<Position> const& points = way.LegPath[k];
+        for (std::size_t i = 1; i < points.size(); ++i)
+            way.LegYards[k] += points[i - 1].GetExactDist(&points[i]);
+        if (firstMs[k] != UINT32_MAX)
+            way.LegSeconds[k] = float(lastMs[k] - firstMs[k]) / 1000.0f;
+    }
+    return true;
+}
+
+float Animus::Curriculum::PointNavEncounter::ClearWay::PathDistance(uint32 k, Position const& at) const
+{
+    if (k >= LegPath.size() || LegPath[k].empty())
+        return -1.0f;
+    std::vector<Position> const& points = LegPath[k];
+    float best = at.GetExactDist(&points.front());
+    for (std::size_t i = 1; i < points.size(); ++i)
+    {
+        // The nearest point of segment i-1 .. i.
+        float const ax = points[i - 1].GetPositionX();
+        float const ay = points[i - 1].GetPositionY();
+        float const az = points[i - 1].GetPositionZ();
+        float const dx = points[i].GetPositionX() - ax;
+        float const dy = points[i].GetPositionY() - ay;
+        float const dz = points[i].GetPositionZ() - az;
+        float const length = dx * dx + dy * dy + dz * dz;
+        float t = 0.0f;
+        if (length > 1e-4f)
+            t = std::clamp(((at.GetPositionX() - ax) * dx + (at.GetPositionY() - ay) * dy
+                + (at.GetPositionZ() - az) * dz) / length, 0.0f, 1.0f);
+        float const px = ax + t * dx - at.GetPositionX();
+        float const py = ay + t * dy - at.GetPositionY();
+        float const pz = az + t * dz - at.GetPositionZ();
+        best = std::min(best, std::sqrt(px * px + py * py + pz * pz));
+    }
+    return best;
 }
 
 bool Animus::Curriculum::PointNavEncounter::LoadRecordedWay(std::filesystem::path const& path,

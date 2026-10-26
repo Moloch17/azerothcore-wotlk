@@ -188,6 +188,15 @@ namespace Animus::Curriculum
             {
                 return k == Gate || (k < GateSpawns.size() && GateSpawns[k] != 0);
             }
+            /// **The recorded line** (a recorded way's `<name>.path.csv` beside it, `python -m animus.human
+            /// dungeon-run`): per leg k (checkpoint k-1, or the start, to checkpoint k) the player's positions in
+            /// order, their length in yards and the seconds the player took. Empty without the file; the measures
+            /// only, never a reward (InstanceEncounter's path_* columns).
+            std::vector<std::vector<Position>> LegPath;
+            std::vector<float> LegYards;
+            std::vector<float> LegSeconds;
+            /// The yards from `at` to leg `k`'s recorded line (its nearest segment), or a negative number without one.
+            [[nodiscard]] float PathDistance(uint32 k, Position const& at) const;
         };
         /// The env's arena's clear way, its bake ensured first (the encounters that place a fight or a party along it
         /// build before this one does); null without RunClear or a bake.
@@ -492,6 +501,9 @@ namespace Animus::Curriculum
         static bool LoadRecordedWay(std::filesystem::path const& path, ArenaDefinition const& arena,
             std::vector<Position>& points, std::vector<std::vector<uint32>>& spawns, std::vector<bool>& gates,
             std::vector<uint32>& gateSpawns);
+        /// A recorded way's line (`path`: `leg,t_ms,x,y,z`) into `way`'s LegPath, LegYards and LegSeconds, for its
+        /// `legs` legs; false (and nothing set) for no file, no rows or another leg count.
+        static bool LoadRecordedPath(std::filesystem::path const& path, uint32 legs, ClearWay& way);
         /// The key `_legRates`/`_legTries` are kept under: an arena's own legs under its index, another rung's a
         /// thousand apart.
         [[nodiscard]] static uint32 LegKey(uint32 arena, uint32 rung) { return arena + 1000 * rung; }

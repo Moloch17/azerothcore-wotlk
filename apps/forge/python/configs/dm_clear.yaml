@@ -111,8 +111,15 @@ entropy_floor:
   rate: 0.05
 school:
   record: false
+# Movement graded against the recorded run (the user, 2026-10-26): the realism columns on every evaluation
+# (reference: the player's motion histograms) and the style reward (dataset: their motion windows), both built with
+# `python -m animus.human build --recording <id>` into the data folder beside the clear way. The reward is a kept
+# term, paid in full (the cost ladder is off): up to `coef` a decision for motion the discriminator cannot tell from
+# the player's.
 style:
-  enabled: false
+  enabled: true
+  dataset: /azerothcore/env/dist/etc/modules/animus/human/deadmines_motion_windows.npz
+  reference: /azerothcore/env/dist/etc/modules/animus/human/deadmines_reference.json
 eval:
   every_env_steps: 20000000
   episodes: 64
@@ -139,6 +146,11 @@ eval:
   - wing_leg_arrived
   - wing_legs_learned
   - dk_guard
+  - path_time_ratio
+  - path_yards_ratio
+  - path_off_share
+  - path_dev_yards
+  - path_scored
   - ready_pulls
   - wing_start_site
   - wing_killed_before
@@ -214,6 +226,9 @@ status:
   - full_clear
   - wing_wipes
   - boss_vancleef
+  - path_dev_yards
+  - path_off_share
+  - path_time_ratio
   - dk_guard
   - bar_clear_leader_tank
   - bar_clear_leader_healer

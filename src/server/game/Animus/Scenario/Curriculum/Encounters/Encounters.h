@@ -205,6 +205,15 @@ namespace Animus::Curriculum
             /// then alive at the entrance and walking back, rejoined within Respawn.RejoinYards of the party.
             RespawnClock Clock;
             uint32 EngagesPaid = 0;             // EnvInstance::ReadyEngages paid for (ReadyPull, every seat)
+            /// The seat's line against the recorded one (the path_* measures): yards off the leg's recorded line,
+            /// summed over its living decisions, those decisions, those PATH_OFF_YARDS or more off, and the yards it
+            /// walked (a jump past PATH_JUMP_YARDS -- a rise, a teleport -- not counted).
+            float PathSum = 0.0f;
+            uint32 PathSteps = 0;
+            uint32 PathOff = 0;
+            float Travel = 0.0f;
+            bool HasLast = false;
+            Position Last;
             /// The party stages' terms paid so far (2026-10-07): the full clear; and the seat's deaths this run (by
             /// role: deaths_tank, ...).
             bool FullClearPaid = false;
@@ -320,6 +329,7 @@ namespace Animus::Curriculum
             uint32 LegCount = 0;
             bool LegDone = false;
             bool LegCounted = false;
+            uint32 LegDoneMs = 0;               // the leg's clock when it was done
         };
 
         /// A backwards wing run's start (ArenaDefinition::WingReverse): the rung's checkpoint of the clear way,

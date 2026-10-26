@@ -142,6 +142,12 @@ PER_EVENT = {
     "bar_clear": "wing_is_full",
     "wing_cleared_share": "wing_is_full",
     "wing_wipes": "wing_is_full",
+    # The seats' line against the recorded one (dm_clear): the distance measures over the rows that had a line, the
+    # leg's yards and time over the legs done.
+    "path_dev_yards": "path_scored",
+    "path_off_share": "path_scored",
+    "path_yards_ratio": "wing_leg_arrived",
+    "path_time_ratio": "wing_leg_arrived",
     "won_leader_tank": "leader_tank",
     "won_leader_healer": "leader_healer",
     "won_leader_damage": "leader_damage",
