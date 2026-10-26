@@ -883,11 +883,19 @@ void Animus::Curriculum::InstanceEncounter::CheckDoors(Env& env, EnvInstance& fi
             object->GetName(), object->GetEntry(), object->GetSpawnId(), seat->GetExactDist(object),
             refusal == EntityActions::Refusal::None ? "sent" : EntityActions::RefusalName(refusal));
     };
+    // Where the recording's player stood to open it (its gate's checkpoint), else two yards before it; placed as a
+    // leg start places the party (a near teleport is the client's to finish, and a seat has no client).
     auto standBy = [&](GameObject* object)
     {
-        if (object)
-            seat->NearTeleportTo(object->GetPositionX(), object->GetPositionY(), object->GetPositionZ(),
-                seat->GetAngle(object));
+        if (!object)
+            return;
+        Position at(object->GetPositionX() + 2.0f * std::cos(object->GetOrientation()),
+            object->GetPositionY() + 2.0f * std::sin(object->GetOrientation()), object->GetPositionZ());
+        for (uint32 k = 0; k < way.GateSpawns.size() && k < way.Points.size(); ++k)
+            if (way.GateSpawns[k] == object->GetSpawnId())
+                at = way.Points[k];
+        at.SetOrientation(at.GetAbsoluteAngle(object));
+        BotFactory::TeleportWithinMap(seat, at);
     };
     uint32 const now = env.EpisodeElapsedMs;
     constexpr uint32 BOSS_DOOR_ENTRIES[] = { 13965, 16399, 16400 };    // the Factory, Foundry and Mast Room Doors
