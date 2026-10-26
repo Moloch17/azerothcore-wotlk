@@ -44,6 +44,12 @@ status:
              bar_clear_leader_damage, out_of_turn_pulls, kept_with_leader_share, deaths_tank, deaths_healer,
              deaths_damage]
   targets:
+    # dm1's leg and run targets, inherited down the chain and not this stage's columns.
+    leg_arrived: null
+    full_arrived: null
+    full_checkpoints: null
+    doors_opened: null
+    course_score: null
     dk_guard: "<= 0"
     wing_leg_arrived: ">= 0.85"
     bar_clear: ">= 0.7"
