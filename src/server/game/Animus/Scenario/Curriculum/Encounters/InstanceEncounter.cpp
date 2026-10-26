@@ -896,7 +896,16 @@ void Animus::Curriculum::InstanceEncounter::CheckDoors(Env& env, EnvInstance& fi
         Position at(object->GetPositionX() + 2.5f * std::cos(angle), object->GetPositionY() + 2.5f * std::sin(angle),
             object->GetPositionZ());
         at.SetOrientation(at.GetAbsoluteAngle(object));
-        BotFactory::TeleportWithinMap(seat, at);
+        seat->InterruptNonMeleeSpells(false);
+        bool const placed = BotFactory::TeleportWithinMap(seat, at);
+        LOG_INFO("module.animus", "Door check: the seat {} beside {} (spawn {}): now {:.1f} yd from it",
+            placed ? "placed" : "NOT placed", object->GetName(), object->GetSpawnId(), seat->GetExactDist(object));
+    };
+    // Nothing moving at the press: a cast is refused on the move (SPELL_FAILED_MOVING).
+    auto still = [&]()
+    {
+        seat->StopMoving();
+        seat->RemoveUnitMovementFlag(MOVEMENTFLAG_MASK_MOVING);
     };
     uint32 const now = env.EpisodeElapsedMs;
     constexpr uint32 BOSS_DOOR_ENTRIES[] = { 13965, 16399, 16400 };    // the Factory, Foundry and Mast Room Doors
@@ -913,34 +922,49 @@ void Animus::Curriculum::InstanceEncounter::CheckDoors(Env& env, EnvInstance& fi
                     kill(creature, "its death opens a door");
             fight.DoorCheck = 2;
             return;
-        case 2:     // Sneed, out of his Shredder
+        case 2:     // Sneed, out of his Shredder; then the seat held still (the policy steers it otherwise, and a
+                    // cast is refused on the move)
             if (now < 4000)
                 return;
             for (auto const& [spawnId, creature] : map->GetCreatureBySpawnIdStore())
                 if (creature && creature->GetEntry() == SHREDDER)
                     if (Creature* sneed = creature->FindNearestCreature(SNEED, 80.0f, true))
                         kill(sneed, "out of his Shredder; his death opens the Mast Room Door");
+            seat->SetControlled(true, UNIT_STATE_ROOT);
             standBy(byEntry(HEAVY_DOOR_1));
             fight.DoorCheck = 3;
             return;
         case 3:     // the first Heavy Door, pressed
-            if (now < 6000)
+            if (now < 7000)
                 return;
+            still();
             pressAt(byEntry(HEAVY_DOOR_1), EntityActions::Press::Interact, "the first");
-            standBy(byEntry(HEAVY_DOOR_2));
             fight.DoorCheck = 4;
             return;
-        case 4:     // the second Heavy Door, pressed
-            if (now < 8000)
+        case 4:
+            if (now < 12000)
                 return;
-            pressAt(byEntry(HEAVY_DOOR_2), EntityActions::Press::Interact, "the second");
-            standBy(byEntry(CANNON));
+            standBy(byEntry(HEAVY_DOOR_2));
             fight.DoorCheck = 5;
             return;
-        case 5:     // the cannon, given the gunpowder the seats carry
-            if (now < 10000)
+        case 5:     // the second Heavy Door, pressed
+            if (now < 15000)
                 return;
+            still();
+            pressAt(byEntry(HEAVY_DOOR_2), EntityActions::Press::Interact, "the second");
+            fight.DoorCheck = 51;
+            return;
+        case 51:
+            if (now < 20000)
+                return;
+            standBy(byEntry(CANNON));
+            fight.DoorCheck = 52;
+            return;
+        case 52:    // the cannon, given the gunpowder the seats carry
         {
+            if (now < 23000)
+                return;
+            still();
             // The gunpowder, used as the client uses it (CMSG_USE_ITEM), its spell's result named.
             GameObject* cannon = byEntry(CANNON);
             SpellInfo const* spell = nullptr;
@@ -955,13 +979,14 @@ void Animus::Curriculum::InstanceEncounter::CheckDoors(Env& env, EnvInstance& fi
                 item ? item->GetEntry() : 0, item ? item->GetCount() : 0, spell ? spell->Id : 0,
                 outcome.Sent ? "sent" : outcome.Failed ? "refused, SpellCastResult " : "not sent",
                 outcome.Failed ? std::to_string(outcome.Failed - 1) : std::string());
-        }
             fight.DoorCheck = 6;
             return;
+        }
         case 6:     // what stands: every gate of the way, and the Iron Clad Door
         {
-            if (now < 20000)
+            if (now < 35000)
                 return;
+            seat->SetControlled(false, UNIT_STATE_ROOT);
             uint32 gates = 0, open = 0;
             for (uint32 k = 0; k < way.GateSpawns.size(); ++k)
                 if (uint32 const spawn = way.GateSpawns[k])
