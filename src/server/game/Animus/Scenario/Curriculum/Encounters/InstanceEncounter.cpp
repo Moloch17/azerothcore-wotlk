@@ -683,15 +683,23 @@ bool Animus::Curriculum::InstanceEncounter::LegMet(Env const& env, EnvInstance c
 {
     if (!fight.LegTrip || !fight.Way || !map || fight.Leg < 0 || std::size_t(fight.Leg) >= fight.Way->Points.size())
         return false;
+    // Never at the first decision: a leg is walked and fought, and an episode of no decisions is never one.
+    if (env.EpisodeElapsedMs < 1000)
+        return false;
     PointNavEncounter::ClearWay const& way = *fight.Way;
     uint32 const k = uint32(fight.Leg);
     // Its pack dead ...
+    uint32 packFound = 0;
     for (uint32 spawnId : way.Spawns[k])
     {
         auto const range = map->GetCreatureBySpawnIdStore().equal_range(spawnId);
         for (auto it = range.first; it != range.second; ++it)
-            if (Creature const* creature = it->second; creature && creature->IsInWorld() && Hostile(seat, creature))
-                return false;
+            if (Creature const* creature = it->second; creature && creature->IsInWorld())
+            {
+                ++packFound;
+                if (Hostile(seat, creature))
+                    return false;
+            }
     }
     // ... its gate's door open (a chest or the cannon are the party's to use; reaching them is the leg) ...
     if (k < way.GateSpawns.size() && way.GateSpawns[k])
@@ -710,7 +718,14 @@ bool Animus::Curriculum::InstanceEncounter::LegMet(Env const& env, EnvInstance c
         if (Player const* bot = _scenario.SeatBot(env, index); bot && bot->IsAlive() && bot->IsInWorld()
             && bot->GetMapId() == map->GetId() && bot->GetExactDist2d(&at) <= arena.RunCheckpointYards
             && std::fabs(bot->GetPositionZ() - at.GetPositionZ()) <= 10.0f)
+        {
+            if (_scenario.Tuning().Instance.WingTrace)
+                LOG_INFO("module.animus", "Leg done: env {} {} leg {} at {:.0f}s: {} of its {} spawns in the instance "
+                    "(none hostile and alive), seat {} {:.1f} yd from the checkpoint, {} kills this leg", env.Index,
+                    env.Evaluating ? "eval" : "train", k, float(env.EpisodeElapsedMs) / 1000.0f, packFound,
+                    way.Spawns[k].size(), index, bot->GetExactDist2d(&at), fight.TrashKills);
             return true;
+        }
     return false;
 }
 
