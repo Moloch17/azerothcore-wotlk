@@ -33,7 +33,10 @@ REST_SPEED = 0.3            # yd/s: standing still
 REST_SECONDS = 5.0
 DOOR_JOIN_MS = 3000         # an Interact and the object's state change this close are one interaction
 PASSED_YARDS = 40.0         # a creature alive at the end that the player came this close to was skipped
-GO_DOOR, GO_BUTTON, GO_GOOBER = 0, 1, 10
+GO_DOOR, GO_BUTTON, GO_CHEST, GO_GOOBER = 0, 1, 3, 10
+GO_STATE_READY = 1              # a door shut, a chest unopened; 0 open/active, 2 the alternative (a cannon fired)
+OPENING_SPELLS = {3365, 6247, 6477, 6478, 21651, 22810}    # the client's Opening casts on a game object
+CANNON_ITEM, CANNON_SPELL = 5397, 6250                     # Defias Gunpowder fires the Defias Cannon
 
 
 @dataclass
@@ -68,6 +71,7 @@ class Run:
     interacts: np.ndarray | None = None
     go_changes: np.ndarray | None = None        # GameObjectState rows with event changed
     item_uses: np.ndarray | None = None
+    casts: np.ndarray | None = None
     alive_at_end: dict[int, bool] = field(default_factory=dict)
     threat_members: dict[int, set[int]] = field(default_factory=dict)   # creature spawn -> units ever on its list
     engaged_ms: dict[int, int] = field(default_factory=dict)            # creature spawn -> first UnitState engaged
@@ -186,6 +190,8 @@ def load(rec: r.RecordingDir, map_id: int | None = None) -> Run:
     run.interacts = _sorted(interacts[interacts["player"] == run.player]) if len(interacts) else interacts
     uses = action.get(r.ITEM_USE)
     run.item_uses = _sorted(uses[uses["player"] == run.player]) if len(uses) else uses
+    casts = action.get(r.CAST_REQUEST)
+    run.casts = _sorted(casts[casts["player"] == run.player]) if len(casts) else casts
 
     for (m, inst), parts in alive_parts.items():
         if m != map_id or (run.instance and inst != run.instance):
@@ -409,32 +415,56 @@ def rests(run: Run) -> list[dict]:
 
 
 def interactions(run: Run) -> list[dict]:
-    """Game object uses joined to the object's state change within DOOR_JOIN_MS: doors, buttons and levers, the
-    cannon."""
+    """The player's uses of game objects, joined to the object's state change within DOOR_JOIN_MS: Interact records
+    (gossip-less uses), the client's Opening casts on an object (a door, a chest, a barrel: how a right-click
+    reaches the server), and the cannon (Defias Gunpowder used, the door it opens)."""
     out = []
-    if run.interacts is None or not len(run.interacts):
-        return out
-    uses = run.interacts[run.interacts["what"] == r.IA_GAME_OBJECT_USE]
-    for row in uses:
-        ms = int(row["ms"])
-        sid = int(row["spawn_id"])
+    uses: list[tuple[int, int, int, str]] = []       # (ms, spawn id, entry, how)
+    if run.interacts is not None and len(run.interacts):
+        for row in run.interacts[run.interacts["what"] == r.IA_GAME_OBJECT_USE]:
+            uses.append((int(row["ms"]), int(row["spawn_id"]), int(row["entry"]), "use"))
+    if run.casts is not None and len(run.casts):
+        for row in run.casts[(run.casts["target_kind"] == 8) & np.isin(run.casts["spell"], list(OPENING_SPELLS))]:
+            uses.append((int(row["ms"]), 0, 0, "open"))
+    if run.item_uses is not None and len(run.item_uses):
+        for row in run.item_uses[(run.item_uses["item"] == CANNON_ITEM) | (run.item_uses["spell"] == CANNON_SPELL)]:
+            uses.append((int(row["ms"]), 0, 0, "cannon"))
+    uses.sort()
+    for ms, sid, entry, how in uses:
         changes = _between(run.go_changes, ms - 500, ms + DOOR_JOIN_MS)
         change = None
         for c in changes:
-            if not sid or int(c["spawn_id"]) == sid or int(c["entry"]) == int(row["entry"]):
+            if (not sid and not entry) or int(c["spawn_id"]) == sid or int(c["entry"]) == entry:
                 change = c
                 break
+        if change is None and how != "use":
+            continue            # an Opening cast that changed nothing (a refused click): not an interaction
+        if change is not None:
+            sid = sid or int(change["spawn_id"])
+            entry = entry or int(change["entry"])
         spawn = run.spawns.get(sid)
         go_type = spawn.go_type if spawn else (int(change["go_type"]) if change is not None else -1)
         move = _at(run.moves, ms)
-        out.append({"t_ms": ms - run.start_ms, "spawn_id": sid, "entry": int(row["entry"]),
-                    "kind": {GO_DOOR: "door", GO_BUTTON: "button", GO_GOOBER: "goober"}.get(go_type, str(go_type)),
+        out.append({"t_ms": ms - run.start_ms, "spawn_id": sid, "entry": entry,
+                    "kind": {GO_DOOR: "door", GO_BUTTON: "button", GO_CHEST: "chest", GO_GOOBER: "goober"}.get(
+                        go_type, str(go_type)),
                     "pos": [round(spawn.x, 2), round(spawn.y, 2), round(spawn.z, 2)] if spawn
                     else (_xyz(change) if change is not None else None),
                     "from": _xyz(move) if move is not None else None,
                     "changed": change is not None,
                     "go_state_after": int(change["go_state"]) if change is not None else None,
-                    "change_after_ms": int(change["ms"]) - ms if change is not None else None})
+                    "change_after_ms": int(change["ms"]) - ms if change is not None else None,
+                    "opened_by": how})
+    # A chest is loot, not a gate -- unless the cannon is fired later: then the last chest opened before it is the
+    # barrel its gunpowder came from (the Deadmines' Defias Gunpowder), a step of the route.
+    cannons = [i for i in out if i["opened_by"] == "cannon"]
+    for inter in out:
+        inter["gate"] = inter["kind"] != "chest"
+    for cannon in cannons:
+        before = [i for i in out if i["kind"] == "chest" and i["t_ms"] < cannon["t_ms"]]
+        if before:
+            before[-1]["gate"] = True
+            before[-1]["kind"] = "barrel"
     return out
 
 
@@ -444,7 +474,7 @@ def door_openings(run: Run) -> list[dict]:
     out = []
     seen: set[int] = set()
     for row in run.go_changes:
-        if int(row["go_type"]) != GO_DOOR or int(row["go_state"]) != 0:
+        if int(row["go_type"]) != GO_DOOR or int(row["go_state"]) == GO_STATE_READY:
             continue
         sid = int(row["spawn_id"])
         key = sid or int(row["object"])
@@ -455,7 +485,8 @@ def door_openings(run: Run) -> list[dict]:
         move = _at(run.moves, ms)
         out.append({"t_ms": ms - run.start_ms, "spawn_id": sid, "entry": int(row["entry"]), "kind": "door",
                     "pos": _xyz(row), "from": _xyz(move) if move is not None else None, "changed": True,
-                    "go_state_after": 0, "change_after_ms": 0, "opened_by": "script"})
+                    "go_state_after": int(row["go_state"]), "change_after_ms": 0, "opened_by": "script",
+                    "gate": True})
     return out
 
 
@@ -506,7 +537,7 @@ def checkpoints(run: Run, pull_list: list[dict], interaction_list: list[dict], r
                                       "end_t_ms": pull["end_ms"] - run.start_ms}))
     gates_seen: set[int] = set()
     for inter in interaction_list:
-        if inter["kind"] in ("door", "button", "goober") and inter["changed"] and inter["pos"]:
+        if inter.get("gate") and inter["changed"] and inter["pos"] and inter["spawn_id"]:
             if inter["spawn_id"] in gates_seen:
                 continue
             gates_seen.add(inter["spawn_id"])
