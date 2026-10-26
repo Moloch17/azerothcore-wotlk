@@ -611,7 +611,7 @@ def write(report: dict, out: str | Path) -> dict[str, str]:
     out.write_text(json.dumps(report, indent=1))
     way = out.with_suffix(".clearway.csv") if out.suffix == ".json" else Path(str(out) + ".clearway.csv")
     with way.open("w", newline="") as fh:
-        writer = csv.writer(fh)
+        writer = csv.writer(fh, lineterminator="\n")      # never CRLF: a CR on the last field loses a spawn id
         writer.writerow(["index", "kind", "x", "y", "z", "spawn_ids"])
         for cp in report["checkpoints"]:
             writer.writerow([cp["k"], cp["kind"], cp["x"], cp["y"], cp["z"],
