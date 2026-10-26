@@ -239,6 +239,10 @@ namespace Animus::Curriculum
             uint32 WingRungRuns = 40;
             float WingRungTarget = 0.6f;
             uint32 WingRungStart = 0;           // the rung a run starts on (a resumed run names the one it reached)
+            /// Whole runs only (dm_clear, the user, 2026-10-26: "start the rung that does full dungeon runs from the
+            /// beginning"): no leg trips in training or evaluation, every episode the run from the entrance. 0: legs
+            /// until they are learned at the rung, then mostly whole runs (PointNavEncounter::LEG_FULL_SHARE).
+            uint32 WingWholeRuns = 0;
             uint32 WingSupplies = 60;           // food and drink each seat brings into a whole dungeon
             /// Log a line for each wipe: where, what was fighting the party, and who died in what order.
             uint32 WingTrace = 1;
@@ -1105,6 +1109,7 @@ namespace Animus::Curriculum
             f("Instance.WingRungRuns", tuning.Instance.WingRungRuns);
             f("Instance.WingRungTarget", tuning.Instance.WingRungTarget);
             f("Instance.WingRungStart", tuning.Instance.WingRungStart);
+            f("Instance.WingWholeRuns", tuning.Instance.WingWholeRuns);
             f("Instance.WingSupplies", tuning.Instance.WingSupplies);
             f("Instance.WingTrace", tuning.Instance.WingTrace);
             f("Instance.WingCrowd", tuning.Instance.WingCrowd);

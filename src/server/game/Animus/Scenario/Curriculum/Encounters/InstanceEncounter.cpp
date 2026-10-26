@@ -726,6 +726,11 @@ void Animus::Curriculum::InstanceEncounter::PlanLeg(Env& env, EnvInstance& fight
     uint32 const legs = uint32(way.Points.size());     // leg k ends at checkpoint k; leg 0 starts at the entrance
     if (!legs || !nav)
         return;
+    fight.LegCount = legs;
+    // Whole runs only (Instance.WingWholeRuns): every episode the run from the entrance, the ladder's probes among
+    // them.
+    if (_scenario.Tuning().Instance.WingWholeRuns)
+        return;
     uint32 const arenaIndex = _scenario.Data(env).Arena;
     float share = 0.0f;
     bool const learned = nav->LegsLearnedAt(arenaIndex, fight.Rung, legs, &share);
