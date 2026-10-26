@@ -19,8 +19,8 @@ from dataclasses import dataclass
 import torch
 
 
-from .mappo.networks import (LayoutActor, MASKED_LOGIT, heading_of, load_actor_state, vision_image_bytes,
-                              vision_look_heads, vision_of)
+from .mappo.networks import (LayoutActor, MASKED_LOGIT, director_of, heading_of, load_actor_state,
+                              vision_image_bytes, vision_look_heads, vision_of)
 from .stages import Span, arena_names, arena_state_span, block_spans, revised_blocks
 
 #: The blocks the camera's encoder reads (VisionEncoder, its MapEncoder, the entity list, SightEntities and the
@@ -123,7 +123,8 @@ def frozen_actor(checkpoint: dict, device) -> LayoutActor:
                         planner_k=int(saved_k) if saved_k is not None else max(1, int(mappo.get("planner_k", 20))),
                         planner_k_fine=int(saved_k_fine) if saved_k_fine is not None else None,
                         planner_hierarchical="vision.map.hierarchy" in checkpoint["trainer"]["actor"],
-                        planner_waypoint_source=saved_source, planner_waypoint_costs=saved_costs)
+                        planner_waypoint_source=saved_source, planner_waypoint_costs=saved_costs,
+                        director=director_of(t_stage, t_names))
     load_actor_state(actor, checkpoint["trainer"]["actor"])
     actor.to(device).eval()
     for param in actor.parameters():

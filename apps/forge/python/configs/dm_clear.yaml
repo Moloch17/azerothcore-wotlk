@@ -217,6 +217,38 @@ eval:
   - reward_effort
   - reward_jitter
   - reward_off_line
+  - reward_order_done
+  - reward_order_failed
+  - reward_loot_unordered
+  - reward_gate_opened
+  - reward_order_churn
+  - reward_order_impossible
+  - wing_gates_opened
+  - director_turns
+  - director_calls
+  - director_orders
+  - director_orders_replaced
+  - director_orders_churned
+  - director_orders_impossible
+  - director_orders_done
+  - director_orders_failed
+  - director_posture_changes
+  - director_loot_unordered
+  - order_done_share
+  - order_focus_given
+  - order_focus_done
+  - order_pull_given
+  - order_pull_done
+  - order_heal_given
+  - order_heal_done
+  - order_follow_given
+  - order_follow_done
+  - order_loot_given
+  - order_loot_done
+  - order_use_given
+  - order_use_done
+  - order_rest_given
+  - order_rest_done
 status:
   headline:
   - ladder_level

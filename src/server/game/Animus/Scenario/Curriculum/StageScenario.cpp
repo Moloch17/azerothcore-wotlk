@@ -41,6 +41,7 @@
 #include "EncoderSupport.h"
 #include "GoalBlock.h"
 #include "Encounters.h"
+#include "DirectorLayout.h"
 #include "SeekEncounter.h"
 #include "SightEncounter.h"
 #include "InteractEncounter.h"
@@ -371,13 +372,22 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // The party follow's leader lives in the owner's slot (BuildOwnerSeat) but is no agent: a player walking the
     // stock path, seen by the server as a player is (move4-follow rework, A3), with no row for the learner to carry.
     _castOwner = false;
-    _spec.AgentsPerEnv = _seatCount + (_castOwner ? 1 : 0);
+    // The director's row (StageDefinition::Directed): after the seats and the owner's; its layout after the classes'.
+    _spec.AgentsPerEnv = _seatCount + (_castOwner ? 1 : 0) + (_stage.Directed ? 1 : 0);
     for (Layout const& layout : _layouts)
     {
         _spec.ObsDim = std::max(_spec.ObsDim, layout.ObsDim);
         _spec.NumActions = std::max(_spec.NumActions, layout.NumActions);
         _spec.Layouts.push_back(LayoutSpec{ layout.Profile->Name,
             layout.ObsDim, layout.NumActions });
+    }
+    if (_stage.Directed)
+    {
+        _directorLayout = uint32(_layouts.size());
+        _spec.ObsDim = std::max<uint32>(_spec.ObsDim, DirectorLayout::OBS_COUNT);
+        _spec.NumActions = std::max<uint32>(_spec.NumActions, DirectorLayout::ACTION_COUNT);
+        _spec.Layouts.push_back(LayoutSpec{ DirectorLayout::Name(), DirectorLayout::OBS_COUNT,
+            DirectorLayout::ACTION_COUNT });
     }
 
     _spec.StateDim = STATE_GLOBAL_COUNT + MAX_SEATS * STATE_SEAT_FEATURES + PACK_SLOTS * STATE_ENEMY_FEATURES;
@@ -428,7 +438,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         _party = add(std::make_unique<PartyEncounter>(*this, envs));
     // After the group: it moves it to the boss.
     if (_stage.AnyArena(hasInstance))
-        instance = add(std::make_unique<InstanceEncounter>(*this, envs));
+        _instance = instance = add(std::make_unique<InstanceEncounter>(*this, envs));
     // The party follow's leader: built in the owner's slot, nothing else to order against.
     if (_stage.AnyArena(hasPartyFollow))
         _partyFollow = add(std::make_unique<PartyFollowEncounter>(*this, envs));
@@ -461,10 +471,15 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         _spec.LabelBytes = PointNavEncounter::LABEL_BYTES;
     }
 
+    // Last: its orders are read from what every other encounter has already set up, and its reward from theirs
+    // (the director, restored 2026-10-26).
+    if (_stage.Directed)
+        _director = add(std::make_unique<DirectorEncounter>(*this, envs));
+
     // The order episode info columns and reward terms are listed in. An encounter left out of this list still
     // runs -- it is only the columns and the terms that are missed.
     for (Encounter* encounter : std::initializer_list<Encounter*>{ instance, _party, _partyFollow, seek, sight,
-        interact, combat, roles, _pointNav })
+        interact, combat, roles, _pointNav, _director })
         if (encounter)
             _rewardOrder.push_back(encounter);
 
@@ -479,7 +494,8 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
                 || (encounter == _partyFollow && hasPartyFollow(arena))
                 || (encounter == seek && hasSeek(arena)) || (encounter == sight && hasSight(arena))
                 || (encounter == interact && hasInteract(arena)) || (encounter == combat && hasCombat(arena))
-                || (encounter == roles && hasRoles(arena)) || (encounter == _pointNav && hasPointNav(arena));
+                || (encounter == roles && hasRoles(arena)) || (encounter == _pointNav && hasPointNav(arena))
+                || (encounter == _director && _director && arena.PartyGroup);
         };
 
         std::vector<Encounter*>& build = _arenaEncounters.emplace_back();
@@ -1468,6 +1484,16 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
     boost::json::object& models = stageFile["models"].emplace_object();
     for (Layout const& layout : _layouts)
         models[layoutName(layout)] = layout.ModelName();
+    // The director: an agent the stage adds rather than a class the run plays. Its row, its sets and per-slot actions
+    // (DirectorLayout::SetDescriptor) for the learner's set encoder, and a layout entry of one block for seeding by
+    // name. The learner never casts or exports its row.
+    boost::json::array& directorAgents = stageFile["director_agents"].emplace_array();
+    if (_director)
+    {
+        directorAgents.push_back(DirectorAgent());
+        stageFile["director"] = DirectorLayout::SetDescriptor();
+        models[DirectorLayout::Name()] = std::string(DirectorLayout::Name()) + _stage.Suffix;
+    }
 
     // Where each block sits in each layout: a later stage seeds its networks block by block from these.
     boost::json::object& layouts = stageFile["layouts"].emplace_object();
@@ -1568,6 +1594,28 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
             if (!rescaled.empty())
                 block["rescaled"] = std::move(rescaled);
         }
+    }
+
+    if (_director)
+    {
+        boost::json::object& entry = layouts[DirectorLayout::Name()].emplace_object();
+        entry["obs_dim"] = uint32(DirectorLayout::OBS_COUNT);
+        entry["num_actions"] = uint32(DirectorLayout::ACTION_COUNT);
+        boost::json::array& actionNames = entry["action_names"].emplace_array();
+        for (std::string const& name : DirectorLayout::ActionNames())
+            actionNames.push_back(boost::json::string(name));
+        entry["spec_names"].emplace_array();
+        entry["spec_roles"].emplace_array();
+        entry["sets"].emplace_array();
+        boost::json::array& spans = entry["blocks"].emplace_array();
+        boost::json::object& block = spans.emplace_back(boost::json::object()).get_object();
+        block["name"] = DirectorLayout::Name();
+        block["obs"] = Span(0, DirectorLayout::OBS_COUNT);
+        block["actions"] = Span(0, DirectorLayout::ACTION_COUNT);
+        boost::json::array names;
+        for (std::string const& name : DirectorLayout::ColumnNames())
+            names.push_back(boost::json::string(name));
+        block["obs_names"] = std::move(names);
     }
 
     boost::json::array& episodeInfo = stageFile["episode_info"].emplace_array();
@@ -2627,6 +2675,9 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     // The owner's slot: OwnerEncounter::Build fills it where the episode plays the owner through its row.
     if (_castOwner)
         env.Bots.push_back(ObjectGuid::Empty);
+    // The director's: it commands a party rather than playing a character.
+    if (_director)
+        env.Bots.push_back(ObjectGuid::Empty);
     env.Targets.clear();
 
     // A spawn point no objective can be found from used to take the whole run down with it: the plan stops when
@@ -3323,6 +3374,9 @@ bool Animus::Curriculum::StageScenario::GoalHeld(Env const& env, uint32 seatInde
 
 void Animus::Curriculum::StageScenario::ApplyActions(Env& env, int32 const* actions)
 {
+    // The director speaks first: a call made this decision is one the seats can already read when they act on it.
+    if (_director)
+        _director->Call(env, actions[DirectorAgent()]);
     // Env upkeep first (linked pulls, the owner, the next pull, the scripted opponent), so the targets below are
     // current.
     for (Encounter* encounter : ActiveEncounters(env))
@@ -4218,8 +4272,37 @@ void Animus::Curriculum::StageScenario::Observe(Env& env, float* obs, float* sta
             }
         }
     }
+    if (_director)
+    {
+        uint32 const agent = DirectorAgent();
+        ObserveDirector(env, obs + agent * _spec.ObsDim, mask ? mask + agent * _spec.NumActions : nullptr);
+        // A director has no camera, and no map.
+        if (uint8* row = imageRow(agent))
+            Vision::FillNoFrame(row, _spec.ImageBytes);
+        if (uint8* row = mapRow(agent))
+            std::fill(row, row + _spec.MapBytes, uint8(0));
+    }
 
     WriteState(env, state);
+}
+
+void Animus::Curriculum::StageScenario::ObserveDirector(Env& env, float* obs, uint8* mask)
+{
+    // The row is padded to the widest layout's, so clear all of it and let the director's own part fill the front.
+    std::fill(obs, obs + _spec.ObsDim, 0.0f);
+    if (mask)
+    {
+        std::fill(mask, mask + _spec.NumActions, uint8(0));
+        mask[DirectorLayout::ACTION_HOLD] = 1;
+    }
+    DirectorLayout::DirectorView view;
+    if (_director)
+    {
+        // Whether this decision is the director's turn to speak, before it sees that it is.
+        _director->PrepareTurn(env);
+        _director->ViewDirector(env, view);
+    }
+    DirectorLayout::Observe(view, obs, mask);
 }
 
 void Animus::Curriculum::StageScenario::AgentLayouts(Env const& env, uint16* layout) const
@@ -4230,6 +4313,8 @@ void Animus::Curriculum::StageScenario::AgentLayouts(Env const& env, uint16* lay
 
     if (_castOwner)
         layout[OwnerAgent()] = data.Seats[OwnerAgent()].L ? data.Seats[OwnerAgent()].L->Index : 0;
+    if (_director)
+        layout[DirectorAgent()] = uint16(_directorLayout);
 }
 
 void Animus::Curriculum::StageScenario::AgentPresence(Env const& env, uint8* present) const
@@ -4244,6 +4329,10 @@ void Animus::Curriculum::StageScenario::AgentPresence(Env const& env, uint8* pre
     // scripted leader: the learner neither runs the cast actor nor trains on the row).
     if (_castOwner)
         present[OwnerAgent()] = CastOwnerActive(env) ? 1 : 0;
+    // The director is an agent only in the episodes it commands (a party to command); elsewhere it has nothing to
+    // say and earns nothing, so the learner should not train on its row.
+    if (_director)
+        present[DirectorAgent()] = _director->Active(env) ? 1 : 0;
 }
 
 void Animus::Curriculum::StageScenario::AgentKinematics(Env const& env, float* kinematics) const
@@ -5631,6 +5720,10 @@ void Animus::Curriculum::StageScenario::Reward(Env& env, float* reward)
         if (CastOwnerActive(env))
             TrackSeatStep(env, OwnerAgent(), env.FindBot(OwnerAgent()));
     }
+    // The director is paid what its party is paid, averaged, less the order terms its orders earned the seats
+    // (DirectorEncounter::DirectorReward): a team-level action is only worth what it did for the team.
+    if (_director)
+        reward[DirectorAgent()] = _director->DirectorReward(env, reward);
 }
 
 Unit* Animus::Curriculum::StageScenario::TrackSeatStep(Env& env, uint32 seatIndex, Player* bot)
@@ -6129,6 +6222,13 @@ void Animus::Curriculum::StageScenario::EpisodeInfo(Env const& env, float* info)
     if (_castOwner)
     {
         float* row = info + OwnerAgent() * _spec.EpisodeInfoDim;
+        std::fill(row, row + _spec.EpisodeInfoDim, 0.0f);
+    }
+    // A director has no character, so none of the per-seat columns mean anything for it: its row is left zero, and
+    // `present` being one of those zeros keeps it out of the episode metrics; what it did is on its seats' rows.
+    if (_director)
+    {
+        float* row = info + DirectorAgent() * _spec.EpisodeInfoDim;
         std::fill(row, row + _spec.EpisodeInfoDim, 0.0f);
     }
 }

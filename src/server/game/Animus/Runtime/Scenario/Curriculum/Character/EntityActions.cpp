@@ -32,6 +32,11 @@
 #include "SpellInfo.h"
 #include "SpellMgr.h"
 #include "WorldSession.h"
+#include "LootMgr.h"
+#include "ObjectMgr.h"
+#include <algorithm>
+#include <map>
+#include <mutex>
 
 namespace
 {
@@ -56,6 +61,8 @@ namespace
                 case CMSG_USE_ITEM:      session->HandleUseItemOpcode(packet); break;
                 case CMSG_CAST_SPELL:    session->HandleCastSpellOpcode(packet); break;
                 case CMSG_PET_ACTION:    session->HandlePetAction(packet); break;
+                case CMSG_AUTOSTORE_LOOT_ITEM: session->HandleAutostoreLootItemOpcode(packet); break;
+                case CMSG_LOOT_RELEASE:  session->HandleLootReleaseOpcode(packet); break;
                 default:                 break;
             }
         }
@@ -195,6 +202,94 @@ WorldPacket Animus::Curriculum::EntityActions::CastSpell(uint32 spellId, uint8 c
     return packet;
 }
 
+std::vector<uint32> const& Animus::Curriculum::EntityActions::MapKeyItems(uint32 mapId)
+{
+    // Once per map: the key items (LOCK_KEY_ITEM) of the map's spawned game objects' locks -- the Deadmines' cannon
+    // takes the Defias Gunpowder.
+    static std::mutex lock;
+    static std::map<uint32, std::vector<uint32>> keys;
+    std::lock_guard<std::mutex> guard(lock);
+    auto const known = keys.find(mapId);
+    if (known != keys.end())
+        return known->second;
+    std::vector<uint32>& found = keys[mapId];
+    for (auto const& [spawnId, data] : sObjectMgr->GetAllGOData())
+    {
+        if (data.mapid != mapId)
+            continue;
+        GameObjectTemplate const* info = sObjectMgr->GetGameObjectTemplate(data.id);
+        LockEntry const* entry = info ? sLockStore.LookupEntry(info->GetLockId()) : nullptr;
+        for (uint32 i = 0; entry && i < MAX_LOCK_CASE; ++i)
+            if (entry->Type[i] == LOCK_KEY_ITEM && entry->Index[i] && sObjectMgr->GetItemTemplate(entry->Index[i])
+                && std::find(found.begin(), found.end(), entry->Index[i]) == found.end())
+                found.push_back(entry->Index[i]);
+    }
+    return found;
+}
+
+uint32 Animus::Curriculum::EntityActions::KeyChestItem(GameObject const* object)
+{
+    if (!object || object->GetGoType() != GAMEOBJECT_TYPE_CHEST)
+        return 0;
+    // Once per (map, entry): whether the chest's loot holds a key item of its map.
+    static std::mutex lock;
+    static std::map<std::pair<uint32, uint32>, uint32> chests;
+    std::pair<uint32, uint32> const key(object->GetMapId(), object->GetEntry());
+    std::lock_guard<std::mutex> guard(lock);
+    auto const known = chests.find(key);
+    if (known != chests.end())
+        return known->second;
+    uint32 item = 0;
+    uint32 const lootId = object->GetGOInfo()->GetLootId();
+    if (lootId)
+        for (uint32 candidate : MapKeyItems(object->GetMapId()))
+            if (LootTemplates_Gameobject.HasItemIn(lootId, candidate))
+            {
+                item = candidate;
+                break;
+            }
+    chests[key] = item;
+    return item;
+}
+
+bool Animus::Curriculum::EntityActions::KeyChest(GameObject const* object)
+{
+    return KeyChestItem(object) != 0;
+}
+
+bool Animus::Curriculum::EntityActions::CarriesKey(Player const* bot, uint32 mapId)
+{
+    if (!bot)
+        return false;
+    for (uint32 key : MapKeyItems(mapId))
+        if (bot->HasItemCount(key, 1))
+            return true;
+    return false;
+}
+
+uint32 Animus::Curriculum::EntityActions::AutoLoot(Player* bot, ClientPort& port)
+{
+    if (!bot || !bot->GetSession() || !bot->GetMap())
+        return 0;
+    ObjectGuid const lootGuid = bot->GetLootGUID();
+    if (!lootGuid.IsGameObject())
+        return 0;
+    GameObject* object = bot->GetMap()->GetGameObject(lootGuid);
+    if (!object)
+        return 0;
+    uint32 const slots = uint32(object->loot.items.size() + object->loot.quest_items.size());
+    for (uint32 slot = 0; slot < slots && slot < 255; ++slot)
+    {
+        WorldPacket take(CMSG_AUTOSTORE_LOOT_ITEM, 1);
+        take << uint8(slot);
+        port.Send(bot, take);
+    }
+    WorldPacket release(CMSG_LOOT_RELEASE, 8);
+    release << lootGuid;
+    port.Send(bot, release);
+    return slots;
+}
+
 bool Animus::Curriculum::EntityActions::OpensLoot(uint32 goType)
 {
     return goType == GAMEOBJECT_TYPE_CHEST || goType == GAMEOBJECT_TYPE_FISHINGNODE
@@ -236,7 +331,8 @@ bool Animus::Curriculum::EntityActions::LockedToHand(uint32 goType, uint32 lockI
 
 Animus::Curriculum::EntityActions::Refusal Animus::Curriculum::EntityActions::JudgeObjectUse(ObjectFacts const& facts)
 {
-    if (OpensLoot(facts.Type))
+    // A chest, a node, a corpse: never opened -- but for a key chest, the one the party loots on the way.
+    if (OpensLoot(facts.Type) && !facts.KeyChest)
         return Refusal::Loot;
     if (!facts.Selectable)
         return Refusal::Kind;
@@ -423,10 +519,14 @@ Animus::Curriculum::EntityActions::Refusal Animus::Curriculum::EntityActions::Ap
             {
                 ObjectFacts facts;
                 facts.Type = go->GetGoType();
+                facts.KeyChest = KeyChest(go);
                 facts.Selectable = !go->HasGameObjectFlag(GO_FLAG_NOT_SELECTABLE);
                 facts.Reach = go->GetInteractionDistance();
                 facts.Distance = go->IsWithinDistInMap(bot) ? 0.0f : facts.Reach + 1.0f;
-                facts.Locked = LockedToHand(go->GetGoType(), go->GetGOInfo()->GetLockId());
+                // A key chest is opened as a chest is: the client casts its lock's Opening spell (the barrel's lock
+                // 57 wants an Open or Treasure skill of 0), whose open-lock effect sends the loot (Spell::EffectOpenLock).
+                facts.Locked = LockedToHand(go->GetGoType(), go->GetGOInfo()->GetLockId())
+                    || (facts.KeyChest && go->GetGOInfo()->GetLockId());
                 // A lock an empty hand opens (a quick-open door): the client casts its Opening spell at the object.
                 if (facts.Locked)
                     if (SpellInfo const* opening = OpeningSpellFor(bot, go))

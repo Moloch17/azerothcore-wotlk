@@ -1115,7 +1115,7 @@ def clear_blind_columns(network: nn.Module) -> None:
     elsewhere)."""
     with torch.no_grad():
         for index in range(len(network.adapters)):
-            for tag in ("vision",):
+            for tag in ("vision", "director"):
                 keep = getattr(network, f"{tag}_keep_{index}", None)
                 if keep is not None:
                     network.adapters[index].weight.mul_(keep)
@@ -3976,6 +3976,125 @@ def share_vision(network: nn.Module, encoder: "VisionEncoder") -> None:
     network.__dict__["vision"] = encoder
 
 
+#: The director layout's name (Curriculum::DirectorLayout::Name) and stage.json's key for its sets.
+DIRECTOR_LAYOUT = "director"
+
+
+class DirectorSets(nn.Module):
+    """**The director's party, enemies and objects as sets** (the director, restored 2026-10-26). Each slot of a set
+    goes through one encoder shared across the set's slots; the encodings of the slots present are pooled (mean and
+    max), so the director reads its party whatever slot a member landed in. The raw slot columns are kept out of the
+    layout's own adapter (attach_blind_columns), so nothing learns a slot's position. The actions that name a slot --
+    address this member, heal or follow this member, fight or pull this enemy, loot or use this object -- are scored
+    from that slot's encoding against a query from the features (pointer logits), so they move with the thing rather
+    than with the slot. `descriptor` is stage.json's "director" (DirectorLayout::SetDescriptor).
+
+    No row picks on the host: the pooled term is computed for every row and multiplied by the layout mask, and the
+    pointer scores are written through torch.where, so a captured rollout graph stays valid."""
+
+    SETS = ("seats", "enemies", "objects")
+
+    def __init__(self, descriptor: dict, obs_dim: int, width: int, head_width: int = 0, embed: int = 64):
+        super().__init__()
+        self.sets = {}
+        columns = torch.zeros(obs_dim, dtype=torch.bool)
+        for name in self.SETS:
+            spec = descriptor[name]
+            first, slots, per = int(spec["first"]), int(spec["slots"]), int(spec["width"])
+            self.sets[name] = (first, slots, per, int(spec.get("present", 0)))
+            columns[first : first + slots * per] = True
+            setattr(self, f"{name}_encoder", nn.Sequential(_linear(per, embed, math.sqrt(2)), nn.Tanh(),
+                                                           _linear(embed, embed, math.sqrt(2)), nn.Tanh()))
+        self.register_buffer("column_mask", columns, persistent=False)
+        self.obs_dim = obs_dim
+        self.pool = _linear(2 * embed * len(self.SETS), width, 1.0)
+        self.pointers = ([(int(p["first"]), str(p["over"]), int(p.get("count", self.sets[str(p["over"])][1])))
+                          for p in descriptor.get("pointers", ())] if head_width else [])
+        self.queries = nn.ModuleList(_linear(head_width, embed, 0.01) for _ in self.pointers)
+
+    def blind_columns(self) -> list[int]:
+        return torch.nonzero(self.column_mask).reshape(-1).tolist()
+
+    def encode_set(self, obs: torch.Tensor, name: str) -> tuple[torch.Tensor, torch.Tensor]:
+        """[rows, slots, embed] encodings and [rows, slots] which are present."""
+        first, slots, per, present = self.sets[name]
+        raw = obs[:, first : first + slots * per].reshape(obs.shape[0], slots, per)
+        dtype = self.pool.weight.dtype
+        return getattr(self, f"{name}_encoder")(raw.to(dtype)), raw[..., present] > 0.5
+
+    def pooled(self, obs: torch.Tensor) -> torch.Tensor:
+        """What the sets add to the adapter's output: [rows, width]."""
+        parts = []
+        for name in self.SETS:
+            encoded, present = self.encode_set(obs, name)
+            weight = present.to(encoded.dtype)[..., None]
+            count = weight.sum(dim=1).clamp(min=1.0)
+            parts.append((encoded * weight).sum(dim=1) / count)
+            peak = torch.where(present[..., None], encoded, torch.full_like(encoded, -1.0)).amax(dim=1)
+            parts.append(torch.where(present.any(dim=1, keepdim=True), peak, torch.zeros_like(peak)))
+        return self.pool(torch.cat(parts, dim=-1))
+
+    def pointer_logits(self, features: torch.Tensor, obs: torch.Tensor) -> list[tuple[int, torch.Tensor]]:
+        """Per pointer action group: (its first action, [rows, count] logits) from each slot's encoding."""
+        encoded = {name: self.encode_set(obs, name)[0] for name in self.SETS}
+        out = []
+        for (first, over, count), query in zip(self.pointers, self.queries):
+            scores = torch.einsum("rse,re->rs", encoded[over], query(features).to(encoded[over].dtype))
+            out.append((first, scores[:, :count]))
+        return out
+
+
+def attach_director(network: nn.Module, director, head_width: int = 0) -> None:
+    """Give an actor or critic the director's set encoder (DirectorSets), and keep the director layout's own adapter
+    blind to the slot columns (attach_blind_columns, tag "director"). `director` is (its layout index, stage.json's
+    "director"); None for a run without one."""
+    network.director_index = -1
+    network.director_sets = None
+    if director is None:
+        return
+    index, descriptor = director
+    network.director_index = int(index)
+    network.director_sets = DirectorSets(descriptor, network.obs_dims[index], network.adapters[index].out_features,
+                                         head_width)
+    attach_blind_columns(network, {int(index): network.director_sets.blind_columns()}, "director")
+
+
+def director_term(network: nn.Module, obs: torch.Tensor, layout: torch.Tensor) -> torch.Tensor | None:
+    """What the director rows' sets add to the adapter's output [rows, width] (zero on the other rows; None without a
+    director). Computed for every row and masked rather than gathered: no host branch, so the rollout graph stays."""
+    sets = getattr(network, "director_sets", None)
+    if sets is None:
+        return None
+    rows = (layout.reshape(-1) == network.director_index).to(sets.pool.weight.dtype)[:, None]
+    return sets.pooled(obs[:, : sets.obs_dim]) * rows
+
+
+def with_director_pointers(network: nn.Module, logits: torch.Tensor, features: torch.Tensor, layout: torch.Tensor,
+                           obs: torch.Tensor | None) -> torch.Tensor:
+    """The director rows' per-slot actions, scored by their slots' encodings (DirectorSets.pointer_logits); the
+    other rows' logits as they were. The layout head's own logits there would give each slot a score for its
+    position, which is what a set must not have."""
+    sets = getattr(network, "director_sets", None)
+    if sets is None or obs is None:
+        return logits
+    flat = obs.reshape(-1, obs.shape[-1])[:, : sets.obs_dim]
+    rows = (layout.reshape(-1) == network.director_index)[:, None]
+    for first, scores in sets.pointer_logits(features, flat):
+        count = scores.shape[1]
+        kept = logits[:, first : first + count]
+        logits = torch.cat([logits[:, :first], torch.where(rows, scores.to(logits.dtype), kept),
+                            logits[:, first + count:]], dim=1)
+    return logits
+
+
+def director_of(stage: dict | None, layout_names: Sequence[str]):
+    """(the director layout's index, stage.json's "director") when the stage has one and the run fields it, else
+    None."""
+    if not stage or "director" not in stage or DIRECTOR_LAYOUT not in layout_names:
+        return None
+    return list(layout_names).index(DIRECTOR_LAYOUT), stage["director"]
+
+
 def vision_term(network: nn.Module, obs: torch.Tensor, layout: torch.Tensor,
                 embedding: torch.Tensor | None = None, image: torch.Tensor | None = None) -> torch.Tensor:
     """What the camera adds to `network`'s adapter output: its join over the encoder's embedding of the rows' images
@@ -4428,8 +4547,10 @@ class LayoutActor(nn.Module):
                  heading: Sequence[bool] | None = None, camera_splat: bool = False, planner_waypoint: bool = False,
                  planner_k_fine: int | None = None, planner_hierarchical: bool = False,
                  planner_waypoint_source: str = "learned", planner_waypoint_costs: str = "head",
-                 school_checkpoint: str = ""):
+                 school_checkpoint: str = "", director=None):
         """layouts: (obs dim, action count) per layout; hidden: widths, the first being the adapters' output.
+        `director`: (the director layout's index, stage.json's "director") -- its party, enemies and objects are read
+        as sets and its per-slot actions scored by them (DirectorSets); None without one.
 
         `foresight_outputs` adds a head on the trunk that predicts what happens after this decision (mappo.trainer's
         foresight_*): one output per extra discount horizon and one for how much of the episode is left. Nothing reads
@@ -4508,6 +4629,8 @@ class LayoutActor(nn.Module):
         # The sight list's pointer heads (SightPointers), where the layouts have a sight block: the actor's own.
         sight = self.vision.sight if self.vision is not None else None
         self.sight_pointers = SightPointers(sight.presses, head_width) if sight is not None else None
+        # The director's sets, with pointer heads (DirectorSets).
+        attach_director(self, director, head_width)
         # Its free look (LookHead), where the vision block has look heads (revision 4): the actor's own, not shared.
         look_heads = vision_look_heads(vision)
         self.look_head = LookHead(head_width, look_heads, self.vision.has_vision) if look_heads else None
@@ -4678,6 +4801,8 @@ class LayoutActor(nn.Module):
         camera's embedding of these rows when the caller has it (the update encodes once for the actor and the
         critic); else it is computed here, from the rows' camera bytes `image` [N, I]."""
         extra = _vision_extra(self, obs, layout, vision_embedding, image)
+        if director := director_term(self, obs, layout):
+            extra = director if extra is None else extra + director.to(extra.dtype)
         if self.dense_adapters is not None:
             hidden = self.dense_adapters(obs, layout)
             return self.trunk(hidden if extra is None else hidden + extra.to(hidden.dtype))
@@ -4783,7 +4908,8 @@ class LayoutActor(nn.Module):
             own = torch.where(dense.valid[layout.long()], dense(features, layout), MASKED_LOGIT)
             logits = own if own.shape[-1] == mask.shape[-1] else nn.functional.pad(
                 own, (0, mask.shape[-1] - own.shape[-1]), value=MASKED_LOGIT)
-            return masked_logits(self._with_sight_pointers(logits, features, layout, obs), mask)
+            return masked_logits(with_director_pointers(self, self._with_sight_pointers(logits, features, layout, obs),
+                                                        features, layout, obs), mask)
 
         groups = groups if groups is not None else _per_layout(layout, len(self.adapters))
         logits = features.new_full((features.shape[0], mask.shape[-1]), MASKED_LOGIT)
@@ -4793,7 +4919,8 @@ class LayoutActor(nn.Module):
             # The shared actions' logits over the layouts' own at each row's slots (_attach_sharing).
             slots = self.shared_slots[layout.reshape(-1).long()]
             logits = logits.scatter(1, slots, self.shared_head(features).to(logits.dtype))
-        return masked_logits(self._with_sight_pointers(logits, features, layout, obs), mask)
+        return masked_logits(with_director_pointers(self, self._with_sight_pointers(logits, features, layout, obs),
+                                                    features, layout, obs), mask)
 
     def _with_sight_pointers(self, logits: torch.Tensor, features: torch.Tensor, layout: torch.Tensor,
                              obs: torch.Tensor | None) -> torch.Tensor:
@@ -4917,7 +5044,7 @@ class LayoutCritic(nn.Module):
 
     def __init__(self, state_dim: int, layouts: Sequence[tuple[int, int]], hidden: Sequence[int],
                  goal_count: int = 0, recurrent_size: int = 0, goal_targets: int = 1,
-                 goal_slots: int = 1, vision=None,
+                 goal_slots: int = 1, vision=None, director=None,
                  vision_encoder: "VisionEncoder | None" = None):
         super().__init__()
         if not hidden:
@@ -4941,6 +5068,8 @@ class LayoutCritic(nn.Module):
         # The camera: the actor's encoder when given one (`vision_encoder`, MappoTrainer: one encoder, both losses'
         # gradients), else its own; the join onto its adapters' output is always its own.
         _attach_vision(self, vision, vision_encoder)
+        # The director's sets (DirectorSets): the critic reads them as the actor does, with no pointer heads.
+        attach_director(self, director)
 
     def encode(self, state: torch.Tensor, obs: torch.Tensor, layout: torch.Tensor,
                goal: torch.Tensor | None = None, groups=None,
@@ -4966,6 +5095,8 @@ class LayoutCritic(nn.Module):
                     own.dtype)
         if self.vision is not None:
             own = own + vision_term(self, obs, layout, vision_embedding, image).to(own.dtype)
+        if director := director_term(self, obs, layout):
+            own = own + director.to(own.dtype)
         return hidden, own
 
     def encode_goal(self, hidden: torch.Tensor, own: torch.Tensor, goal: torch.Tensor | None = None) -> torch.Tensor:

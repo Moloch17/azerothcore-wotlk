@@ -879,8 +879,11 @@ class MappoTrainer:
         aux: "AuxConfig | None" = None,
         sharing=None,
         heading=None,
+        director=None,
     ):
-        """layouts: (obs dim, action count) per agent layout, in the sim's layout order. `aux`: the nav stages'
+        """layouts: (obs dim, action count) per agent layout, in the sim's layout order. `director`: (the director
+        layout's index, stage.json's "director") -- its party, enemies and objects are read as sets and its per-slot
+        actions scored by them (networks.DirectorSets); None without one. `aux`: the nav stages'
         auxiliary losses (AuxConfig; the defaults without one). `sharing`: the actor's shared movement
         (networks.sharing_of from the stage and mappo.shared_blocks), None for none. `heading`: per layout whether it
         steers by a continuous heading (networks.heading_of from the stage), None for no heading head."""
@@ -895,6 +898,7 @@ class MappoTrainer:
         # Per layout its camera image (networks.vision_of, stage.json's vision block), or None: no camera anywhere.
         # On whenever the stage has one, with no switch of its own; the networks then carry a VisionEncoder each.
         self.vision = vision
+        self.director = director
         # The camera's bytes per agent each decision carries beside its observation (protocol 21), 0 without one: its
         # row, the image then the map crop -- the crop alone with the camera off (image.camera false, 2026-10-22), and
         # 0 with neither, when the encoder reads the block's scalars and lists with no bytes at all.
@@ -963,7 +967,8 @@ class MappoTrainer:
                                  planner_hierarchical=bool(config.planner_hierarchical),
                                  planner_waypoint_source=str(config.planner_waypoint_source),
                                  planner_waypoint_costs=str(config.planner_waypoint_costs),
-                                 school_checkpoint=str(config.school_checkpoint)).to(self.train_device)
+                                 school_checkpoint=str(config.school_checkpoint),
+                                 director=director).to(self.train_device)
         # Whether the actor steers by a continuous heading (protocol 32's ACT section; HeadingHead).
         self.heading = self.actor.heading_head is not None
         # (readout width, pool width) of the cached plan a row (VisionEncoder.planner_widths), (0, 0) without one.
@@ -974,7 +979,7 @@ class MappoTrainer:
         # One camera encoder for both networks: the actor's, which the critic reads by reference (VisionEncoder).
         self.critic = LayoutCritic(state_dim, self.layouts, hidden, self.goal_kinds,
                                    self.recurrent_size, self.goal_targets,
-                                   self.goal_slots, self.vision, self.actor.vision).to(self.train_device)
+                                   self.goal_slots, self.vision, director, self.actor.vision).to(self.train_device)
         self.value_norm = (ValueNorm(beta=config.value_norm_beta).to(self.train_device)
                            if config.use_value_norm else None)
 
@@ -1166,7 +1171,7 @@ class MappoTrainer:
         """Whether no layout's adapter reads its camera's columns (the resume guard: resume_check.py calls it too)."""
         for network in (self.actor, self.critic):
             for index in range(len(network.adapters)):
-                for tag in ("vision",):
+                for tag in ("vision", "director"):
                     keep = getattr(network, f"{tag}_keep_{index}", None)
                     if keep is not None and bool((network.adapters[index].weight * (1.0 - keep) != 0).any()):
                         return False

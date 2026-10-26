@@ -73,6 +73,37 @@ std::string_view Animus::Curriculum::GoalName(SeatGoal goal)
     return "unknown";
 }
 
+std::string_view Animus::Curriculum::PostureName(TeamPosture posture)
+{
+    switch (posture)
+    {
+        case TeamPosture::Advance:  return "advance";
+        case TeamPosture::Hold:     return "hold";
+        case TeamPosture::Recover:  return "recover";
+        case TeamPosture::Count:    break;
+    }
+
+    return "unknown";
+}
+
+std::string_view Animus::Curriculum::OrderKindName(OrderKind kind)
+{
+    switch (kind)
+    {
+        case OrderKind::None:    return "none";
+        case OrderKind::Focus:   return "focus";
+        case OrderKind::Pull:    return "pull";
+        case OrderKind::Heal:    return "heal";
+        case OrderKind::Follow:  return "follow";
+        case OrderKind::Loot:    return "loot";
+        case OrderKind::Use:     return "use";
+        case OrderKind::Rest:    return "rest";
+        case OrderKind::Count:   break;
+    }
+
+    return "unknown";
+}
+
 bool Animus::Curriculum::GoalAccepts(SeatGoal kind, uint32 target)
 {
     bool const none = target == GOAL_TARGET_NONE;
@@ -116,6 +147,7 @@ std::string_view Animus::Curriculum::BlockName(BlockId id)
         case BlockId::Goal:      return "goal";
         case BlockId::Coverage:  return "coverage";
         case BlockId::MemoryEntities: return "memory_entities";
+        case BlockId::Order:     return "order";
         case BlockId::Count:     break;
     }
 

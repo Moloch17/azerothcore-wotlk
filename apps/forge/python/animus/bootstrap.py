@@ -973,7 +973,9 @@ def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, ove
     # Every layout this run has must be in the checkpoint it is seeding from. A missing one is not a thing to work
     # around quietly: the alternative is starting that class from scratch in the middle of a curriculum, which looks
     # exactly like a class that has simply not learned anything yet.
-    missing = [layout.name for layout in spec.layouts if layout.name not in old_names]
+    # The director is the exception, and the only one: it is an agent the stage adds rather than a class the run
+    # plays, so the first directed stage in a chain necessarily seeds from one without it (its weights start fresh).
+    missing = [layout.name for layout in spec.layouts if layout.name not in old_names and layout.name != "director"]
     if missing and not overlay:
         raise ValueError(
             f"the checkpoint has no {', '.join(missing)}: it was trained on "

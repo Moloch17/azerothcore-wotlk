@@ -208,6 +208,20 @@ namespace Animus::Curriculum
         /// living seat is further than Instance.WingOffLineYards from the line the recording's player walked on the
         /// leg, scaling to full at twice that, while nothing fights the party (Instance.WingOffLine, Cost). Appended.
         OffLine,
+        /// **The director's terms** (restored 2026-10-26). A seat's: an order it was given carried out (OrderDone,
+        /// Outcome: the gunpowder looted, the cannon fired, the named one fought, the member kept up ...), one it let
+        /// lapse (OrderFailed, Cost: replaced or timed out with nothing done), and a key chest looted without the
+        /// order to (LootUnordered, Cost: "the correct bot needs to loot it"). The party's: a gate of the way opened
+        /// by its own hand -- a door clicked, the cannon fired (GateOpened, Outcome, every living seat). The
+        /// director's own: an order replaced young (OrderChurn, Cost) and one it could have known was impossible
+        /// (OrderImpossible, Cost: Use to a seat without the item, Loot of a chest already looted, Focus on a dead
+        /// one). Appended.
+        OrderDone,
+        OrderFailed,
+        LootUnordered,
+        GateOpened,
+        OrderChurn,
+        OrderImpossible,
         Count
     };
 
@@ -270,6 +284,9 @@ namespace Animus::Curriculum
             case RewardTerm::InterruptLanded:
             // The party stages' rest discipline: a pull started with the party ready (2026-10-07).
             case RewardTerm::ReadyPull:
+            // The director's: an order carried out, a gate of the way opened by the party's own hand (2026-10-26).
+            case RewardTerm::OrderDone:
+            case RewardTerm::GateOpened:
                 return RewardCategory::Outcome;
             // What the outcome costs: deaths (the seat's, a teammate's, the owner's; a wipe is paid as deaths), the
             // flag lost, the clock run out, the step cost a stage charges for time, the corpse run.
@@ -321,6 +338,12 @@ namespace Animus::Curriculum
             case RewardTerm::OutOfTurnPull:
             case RewardTerm::LeaderAway:
             case RewardTerm::OffLine:
+            // The director's prices (2026-10-26): an order let lapse, the gunpowder looted unbidden, orders churned
+            // or impossible.
+            case RewardTerm::OrderFailed:
+            case RewardTerm::LootUnordered:
+            case RewardTerm::OrderChurn:
+            case RewardTerm::OrderImpossible:
                 return RewardCategory::Cost;
             // The seek stage's room goals: a teaching aid on the progress-linear aid scale.
             case RewardTerm::RoomGoal:

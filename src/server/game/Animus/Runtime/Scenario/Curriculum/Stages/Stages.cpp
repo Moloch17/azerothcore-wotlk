@@ -371,7 +371,7 @@ namespace
             .Summary = "the live Deadmines on a recorded clear way, a proper party of five, legs then the run at each "
                 "rung of a level ladder from 60 down to 18; the bar at 18 is 70% clears with at most one wipe",
             .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Vision, Map, MemoryEntities, Sight, PartyFrames,
-                Combat, Goal },
+                Combat, Order, Goal },
             .Arenas = { DeadminesLadder() },
             .MapId = MAP_DEADMINES,
             .SpawnPoints = { Position(-16.4f, -383.07f, 61.78f, 1.86f) },
@@ -381,6 +381,10 @@ namespace
             .Camera = false,
             .MemoriseSpawns = true,
             .LeaderAnyRole = true,
+            // The director (restored 2026-10-26): one learned agent over the party, for the gunpowder and the
+            // cannon -- "the director needs to tell a bot to loot that object and then the correct bot needs to
+            // loot it and then the same bot needs to use the object on the cannon" -- and the group's coordination.
+            .Directed = true,
         });
 
         return stages;
@@ -405,6 +409,13 @@ namespace
         // Its members are read through the party frames.
         if (arena.PartyGroup && !stage.Has(BlockId::PartyFrames))
             return "a party group needs the party frames block";
+        // A director commands a party group, and its seats read their orders through the order block.
+        if (stage.Directed && !arena.PartyGroup)
+            return "a director commands a party group";
+        if (stage.Directed && !stage.Has(BlockId::Order))
+            return "a directed stage needs the order block";
+        if (!stage.Directed && stage.Has(BlockId::Order))
+            return "the order block is a directed stage's";
         // A group running a dungeon: five learned seats.
         bool const dungeonGroup = arena.Against == Opposition::Instance && arena.Seats == SeatPlan::Party;
         // And a proper party drilling on a dungeon's ground (the roles stage, G1: Opposition::Roles).

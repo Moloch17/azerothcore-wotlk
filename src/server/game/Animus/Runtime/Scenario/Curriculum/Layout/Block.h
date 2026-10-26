@@ -85,7 +85,12 @@ namespace Animus::Curriculum
         /// object memory (Vision::ObjectMemory) not in this frame's list, each in the entity list's columns and the
         /// memory's own; no actions. After the entities block, whose write fills the memory; no live stage has it.
         MemoryEntities = 28,
-        Count = 29
+        /// What the party's director asked of this seat (the director, restored 2026-10-26): the posture the party
+        /// holds and the seat's own order -- its kind, its target's whereabouts and state, whether the seat carries
+        /// what the order needs, its age; no actions. An order is advice: the seat reads it and chooses for itself,
+        /// and is paid for carrying it out (DirectorEncounter). Before the goal block, which stays last.
+        Order = 29,
+        Count = 30
     };
 
     /// **The ids are explicit and never reused.** A manifest, a checkpoint and the learner's seeding by name know a block
@@ -182,6 +187,39 @@ namespace Animus::Curriculum
     constexpr int32 NO_GOAL = -1;
 
     [[nodiscard]] std::string_view GoalName(SeatGoal goal);
+
+    /// **What a director asks of its party** (the director, restored 2026-10-26 for the Deadmines' gunpowder and the
+    /// group's coordination). The posture is the whole party's: press on along the way, hold where it stands (no
+    /// pull), or recover (rest, regroup) first. An order goes to one member and names a target: an enemy slot for
+    /// Focus and Pull (fight this one; start the fight on this one -- the tank's to carry out, as the party's pull
+    /// discipline has it), a member for Heal and Follow (keep this one up; stay with this one), an object for Loot and
+    /// Use (loot this chest -- the gunpowder's barrel; use this door, lever or cannon, with the key item it takes when
+    /// the seat carries one), nothing for Rest (eat and drink until ready).
+    enum class TeamPosture : uint8
+    {
+        Advance,
+        Hold,
+        Recover,
+        Count
+    };
+    constexpr uint32 TEAM_POSTURE_COUNT = uint32(TeamPosture::Count);
+
+    enum class OrderKind : uint8
+    {
+        None,
+        Focus,
+        Pull,
+        Heal,
+        Follow,
+        Loot,
+        Use,
+        Rest,
+        Count
+    };
+    constexpr uint32 ORDER_KIND_COUNT = uint32(OrderKind::Count);
+
+    [[nodiscard]] std::string_view PostureName(TeamPosture posture);
+    [[nodiscard]] std::string_view OrderKindName(OrderKind kind);
 
     /// **What a goal is about** (Component C): a goal is a kind and a target, sent as one number, kind *
     /// GOAL_TARGETS + target. The targets are one space for every kind -- nothing, an enemy slot, a friend slot, a

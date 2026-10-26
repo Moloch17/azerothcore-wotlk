@@ -441,6 +441,10 @@ namespace Animus::Curriculum
         /// route the others' goal follows (their objective is the leader), and a pull by anyone but the tank is out of
         /// turn (RolesEncounter, InstanceEncounter: OutOfTurnPull).
         bool LeaderAnyRole = false;
+        /// **A learned director over the party** (restored 2026-10-26): one agent a party, after the seats, that
+        /// observes the party, the enemies and the objects near it as sets and edits a standing order on its turns
+        /// (DirectorLayout, DirectorEncounter); every seat layout carries the order block. Needs a party group.
+        bool Directed = false;
 
         [[nodiscard]] bool Has(BlockId block) const;
         /// Seats per env: the largest arena's.

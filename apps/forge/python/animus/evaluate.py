@@ -27,7 +27,7 @@ import torch
 from .config import REPORT_COLUMNS, TrainConfig
 from .env import ForgeEnv
 from .evaluation import action_mask_table, format_summary, run_evaluation
-from .mappo.networks import check_image_bytes, check_look_heads, heading_of, vision_of
+from .mappo.networks import check_image_bytes, check_look_heads, director_of, heading_of, vision_of
 from .protocol import check_continuous
 from .mappo.trainer import MappoConfig, MappoTrainer
 from .runs import resume_mismatch
@@ -93,7 +93,8 @@ def main() -> None:
         check_continuous(stage, spec.continuous_count)
     except ValueError as error:
         raise SystemExit(f"vision: {error}") from None
-    trainer = MappoTrainer(layouts, spec.state_dim, mappo, vision=vision, heading=heading_of(stage, names))
+    trainer = MappoTrainer(layouts, spec.state_dim, mappo, vision=vision, heading=heading_of(stage, names),
+                           director=director_of(stage, names))
     trainer.load_state_dict(checkpoint["trainer"], load_optimizers=False)
 
     acting = trainer.acting_state(spec.num_envs, spec.agents_per_env)

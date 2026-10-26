@@ -41,6 +41,8 @@ namespace Animus::Curriculum
 {
     class PartyFollowEncounter;
     class PartyEncounter;
+    class DirectorEncounter;
+    class InstanceEncounter;
     class PointNavEncounter;
 
     /// One curriculum stage (see StageDefinition) for every class of StageSettings::Classes, as layouts of one
@@ -180,6 +182,12 @@ namespace Animus::Curriculum
         [[nodiscard]] PointNavEncounter* PointNav() const { return _pointNav; }
         /// The stage's party (a party group's arenas: the core group and its leader), or null.
         [[nodiscard]] PartyEncounter* Party() const { return _party; }
+        /// The stage's instance (a dungeon's arenas: its objects, gates and keys), or null.
+        [[nodiscard]] InstanceEncounter* Instance() const { return _instance; }
+        /// **The director** (StageDefinition::Directed, restored 2026-10-26): the learned agent over the party, its
+        /// row after the seats (and the owner's), its layout after the class layouts. Null in a stage without one.
+        [[nodiscard]] DirectorEncounter* Director() const { return _director; }
+        [[nodiscard]] uint32 DirectorAgent() const { return _seatCount + (_castOwner ? 1 : 0); }
         /// The shaping scale the learner's fade has reached (1 at the start, 0 when faded): the seek stage's room ladder
         /// is read off it (SeekEncounter).
         [[nodiscard]] float ShapingScale() const { return _shapingScale.load(std::memory_order_relaxed); }
@@ -444,6 +452,8 @@ namespace Animus::Curriculum
         /// aimless presses, effort and fidgeting.
         void SettleIntent(Env& env, SeatState& seat, Player* bot, Unit* target);
         void ObserveSeat(Env& env, uint32 seat, float* obs, uint8* mask, uint8* image, uint8* map);
+        /// The director's row: its turn decided, then its view written (DirectorLayout::Observe).
+        void ObserveDirector(Env& env, float* obs, uint8* mask);
         /// The episode's stand-in, once its seats are built (StandInSeat.cpp): whether there is one (a party or raid
         /// arena: its share of training episodes while the learner has a frozen partner to play it, every episode of a
         /// stand-in evaluation), which seat, and its style -- leading (seat 0, the group's leader) or following, in a
@@ -557,6 +567,11 @@ namespace Animus::Curriculum
         PartyEncounter* _party = nullptr;
         /// The nav stages' point goal and labeller (PointNavEncounter, decision 0036): the STEP's labels are its.
         PointNavEncounter* _pointNav = nullptr;
+        InstanceEncounter* _instance = nullptr;
+        /// The director (StageDefinition::Directed) and its layout's index among the run's (after the class layouts;
+        /// not in _layouts, which are the castings').
+        DirectorEncounter* _director = nullptr;
+        uint32 _directorLayout = 0;
     };
 }
 

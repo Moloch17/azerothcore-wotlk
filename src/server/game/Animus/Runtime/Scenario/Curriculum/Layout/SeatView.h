@@ -476,6 +476,29 @@ namespace Animus::Curriculum
         uint32 NamedEntry = 0;
         bool NamedObject = false;
 
+        /// **What the party's director asked of this seat** (the order block; the director, restored 2026-10-26).
+        /// Advice, not a lever: the seat reads it and still chooses its own actions, and is paid for carrying it
+        /// out. The posture is the party's; the order the seat's own. Its target's whereabouts are given only when
+        /// the seat sees or remembers it (TargetKnown): otherwise it is told only that it was told (perception-true,
+        /// as the old order block's unseen focus was). Inactive in a stage with no director: every column 0.
+        struct TeamOrder
+        {
+            bool Active = false;
+            TeamPosture Posture = TeamPosture::Advance;
+            OrderKind Kind = OrderKind::None;
+            bool HasTarget = false;                 // the order names something (Rest names nothing)
+            bool TargetKnown = false;               // ... and the seat sees or remembers it (Where is good)
+            Position Where;
+            float TargetHealth = 0.0f;              // what is left of the enemy or member named
+            bool TargetOpen = false;                // the object named is open, used or looted already
+            bool TargetIsSelection = false;         // the seat's own selection is the one named
+            bool TargetNear = false;                // within reach of the thing named
+            bool NeedsKey = false;                  // the object named takes a key item ...
+            bool CarriesKey = false;                // ... and the seat carries it
+            float AgeSeconds = 0.0f;
+            bool DoneNow = false;                   // carried out this decision
+        } Order;
+
         // Travel: where the seat is going, and whether it may ride there.
         bool HasObjective = false;
         /// How near a camera ray has to pass the Objective to flag it (Vision::ObjectiveFlag): Vision::OBJECTIVE_RADIUS,

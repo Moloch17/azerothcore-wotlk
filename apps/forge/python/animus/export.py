@@ -1371,6 +1371,9 @@ def export_layouts(
     for index, layout in enumerate(layouts):
         if only is not None and layout["name"] not in only:
             continue
+        # The director's row is the forge's: it commands a party of learned seats, and the live module has none.
+        if layout["name"] == "director":
+            continue
         name = model_name(spec["scenario"], layout["name"], len(layouts), models)
         layers = with_agent_column(layout_layers(actor_state, index))
         memory = memory_weights(actor_state)

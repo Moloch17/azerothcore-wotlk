@@ -110,6 +110,16 @@ public:
     void CheckLootRefs(LootStore const& lootstore, uint32 Id, LootIdSet* ref_set) const;
     LootStoreItemList* GetExplicitlyChancedItemList() { return &ExplicitlyChanced; }
     LootStoreItemList* GetEqualChancedItemList() { return &EqualChanced; }
+    [[nodiscard]] bool HasItem(uint32 itemId) const
+    {
+        for (LootStoreItem const* item : ExplicitlyChanced)
+            if (item && item->itemid == itemId)
+                return true;
+        for (LootStoreItem const* item : EqualChanced)
+            if (item && item->itemid == itemId)
+                return true;
+        return false;
+    }
     void CopyConditions(ConditionList conditions);
 private:
     LootStoreItemList ExplicitlyChanced;                // Entries with chances defined in DB
@@ -1547,6 +1557,33 @@ void LootTemplate::AddEntry(LootStoreItem* item)
     }
     else                                            // Non-grouped entries
         Entries.push_back(item);
+}
+
+bool LootTemplate::HasItem(uint32 itemId, LootTemplateMap const& store) const
+{
+    for (LootStoreItem const* item : Entries)
+    {
+        if (!item)
+            continue;
+        if (item->reference > 0)
+        {
+            auto const referenced = store.find(uint32(item->reference));
+            if (referenced != store.end() && referenced->second && referenced->second->HasItem(itemId, store))
+                return true;
+        }
+        else if (item->itemid == itemId)
+            return true;
+    }
+    for (LootGroup const* group : Groups)
+        if (group && group->HasItem(itemId))
+            return true;
+    return false;
+}
+
+bool LootStore::HasItemIn(uint32 loot_id, uint32 itemId) const
+{
+    LootTemplate const* tpl = GetLootFor(loot_id);
+    return tpl && tpl->HasItem(itemId, m_LootTemplates);
 }
 
 void LootTemplate::CopyConditions(ConditionList conditions)

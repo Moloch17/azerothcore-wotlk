@@ -33,6 +33,8 @@
 #include "SeenPlaces.h"
 // The nav stages' encounter (decision 0036) lives in its own header, as the sight and seek encounters do.
 #include "PointNavEncounter.h"
+#include "DirectorLayout.h"
+#include "DirectorOrders.h"
 #include <unordered_set>
 #include <mutex>
 #include <array>
@@ -199,6 +201,7 @@ namespace Animus::Curriculum
             // A wing's terms paid so far (kills, wipes), and whether its death has been.
             uint32 KillsPaid = 0;
             uint32 BossKillsPaid = 0;
+            uint32 GatesPaid = 0;               // gates of the way opened by the party's hand, paid (GateOpened)
             uint32 WipesPaid = 0;
             bool DeathPaid = false;
             /// Death and the rise at the entrance (dungeon-curriculum I4, EntranceRespawn): out for Respawn.DelayMs,
@@ -293,6 +296,13 @@ namespace Animus::Curriculum
             std::vector<ObjectGuid> Overflow;
             std::vector<ObjectGuid> Objects;    // what the party can use near it (CrowdBlock::ACTION_USE_OBJECT)
             mutable std::vector<ObjectGuid> Used;   // what a seat has used this run: each thing once
+            /// **The party's own hand on the way's gates** (the director, 2026-10-26): each object a seat pressed
+            /// this run and when, and per gate of the way whether its opening was paid (GateOpened). A gate counts
+            /// as the party's when it opens within GATE_PRESS_MS of a seat's press (the cannon's press opens the
+            /// Iron Clad Door; a boss's door opens on no press).
+            std::vector<std::pair<ObjectGuid, uint32>> Pressed;
+            std::vector<uint8> GatePaid;
+            uint32 GatesOpened = 0;             // paid to every seat (SeatInstance::GatesPaid)
             ObjectGuid Approached;              // the thing the tank has been near, unused, since ApproachedMs
             uint32 ApproachedMs = 0;
             bool EndLogged = false;             // the "Wing time" line is written once, when the clock runs out
@@ -357,6 +367,22 @@ namespace Animus::Curriculum
         [[nodiscard]] static bool Hostile(Player const* seat, Creature const* creature);
         /// A lever, a button, a goober (the Deadmines' cannon) or a closed door, spawned, ready and not locked.
         [[nodiscard]] static bool Usable(GameObject const* object);
+    public:
+        /// **The party's objects and keys** (the director, 2026-10-26): what the party can use near it this decision
+        /// (a door, a lever, the cannon, a key chest), the way's next gate's object (empty when none, past the last,
+        /// or not in the instance), the key item an object's lock takes (0 none), and whether a seat carries a key
+        /// item of the map.
+        [[nodiscard]] std::vector<ObjectGuid> const& PartyObjects(Env const& env) const
+        {
+            return _envs[env.Index].Objects;
+        }
+        [[nodiscard]] ObjectGuid NextGate(Env const& env) const;
+        [[nodiscard]] static uint32 KeyOfLock(GameObject const* object);
+        [[nodiscard]] static bool CarriesKey(Player const* bot, uint32 mapId);
+        /// A seat's press on an object, noted with the decision's clock (GateOpened; the director's Use orders).
+        void OnSeatAction(Env& env, uint32 seat, SeatActionResult const& result) override;
+        static constexpr uint32 GATE_PRESS_MS = 10000;
+    private:
         /// The items the locks of a map's game objects take (LOCK_KEY_ITEM): each seat carries them from the door.
         [[nodiscard]] static std::vector<uint32> const& KeyItems(uint32 mapId);
         /// The dungeon's enemies and what the party can use, once per decision (UpdateEnemies calls it).
@@ -389,6 +415,65 @@ namespace Animus::Curriculum
 
         std::vector<EnvInstance> _envs;
         std::map<InstanceLadder, std::vector<BossRow const*>> _rows;   // per ladder, the rows the database fields
+    };
+
+    /// **The director** (restored 2026-10-26: "we do want a director for long term planning and group coordination"):
+    /// one learned agent a party, after the seats, that observes the party, the enemies and the objects near it as
+    /// sets (DirectorLayout) and edits a standing order on its turns (DirectorOrders). Each seat reads its own order
+    /// through the order block and is paid for carrying it out: OrderDone when it is, OrderFailed when it lapses,
+    /// LootUnordered for a key chest looted unbidden. The director is paid what following achieved -- the party's
+    /// mean reward less those terms -- less its own churn and the orders it could see were impossible.
+    class DirectorEncounter final : public Encounter
+    {
+    public:
+        DirectorEncounter(StageScenario& scenario, uint32 envs);
+
+        [[nodiscard]] std::vector<RewardTerm> RewardTerms() const override;
+        void AddEpisodeInfo(EpisodeInfoTable& table) override;
+        void ResetEpisode(Env& env) override;
+        void Update(Env& env) override;
+        void OnSeatAction(Env& env, uint32 seat, SeatActionResult const& result) override;
+        void View(Env const& env, uint32 seat, SeatView& view) const override;
+        void BeforeRewards(Env& env) override;
+        void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
+
+        /// Whether the director commands this episode: the arena is a party group's, with a seat to command.
+        [[nodiscard]] bool Active(Env const& env) const;
+        /// Whether this decision is the director's turn to speak, decided before it sees that it is (ObserveDirector).
+        void PrepareTurn(Env& env);
+        void ViewDirector(Env& env, DirectorLayout::DirectorView& view);
+        /// One call, this decision's action of the director's row (ApplyActions, before the seats act on it).
+        void Call(Env& env, int32 action);
+        /// The director's row's reward, from the seats' (StageScenario::Reward): their mean less the order terms
+        /// paid them this decision, less the director's own churn and impossible orders.
+        [[nodiscard]] float DirectorReward(Env& env, float const* seatRewards);
+
+    private:
+        struct EnvDirector
+        {
+            DirectorOrders Orders;
+            uint32 Step = 0;                    // decisions this episode
+            /// What each seat was paid in order terms this decision (taken off the director's reward), and what the
+            /// seat owes: a key chest looted unbidden.
+            std::array<float, MAX_SEATS> CompliancePaid{};
+            std::array<uint8, MAX_SEATS> LootUnorderedDue{};
+            std::array<uint8, MAX_SEATS> DoneFlash{};       // the order carried out, for the next observation
+            uint32 ChurnDue = 0;
+            uint32 ImpossibleDue = 0;
+            /// The slots the director's last view named, so a call's slot resolves to what it saw.
+            std::array<ObjectGuid, DirectorLayout::DIRECTOR_ENEMIES> EnemySlots{};
+            std::array<ObjectGuid, DirectorLayout::DIRECTOR_OBJECTS> ObjectSlots{};
+            /// Each order's bookkeeping at issue: whether the seat carried a key then, the object's state then.
+            std::array<uint8, MAX_SEATS> HadKey{};
+            std::array<uint32, MAX_SEATS> ObjectStateAtIssue{};
+            std::array<uint8, MAX_SEATS> Pressed{};         // the seat pressed its order's object since the order
+            RewardLedger Rewards;               // the director's own terms, for its columns
+        };
+        [[nodiscard]] static uint32 ObjectState(GameObject const* object);
+        [[nodiscard]] bool Ready(Player const* bot) const;
+        void Judge(Env& env, uint32 seat, Player* bot);
+        void Finish(Env& env, uint32 seat, bool done);
+        std::vector<EnvDirector> _envs;
     };
 }
 

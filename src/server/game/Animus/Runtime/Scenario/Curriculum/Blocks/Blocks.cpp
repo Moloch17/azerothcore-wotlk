@@ -28,6 +28,7 @@
 #include "DuelBlock.h"
 #include "EntitiesBlock.h"
 #include "MoveBlock.h"
+#include "OrderBlock.h"
 #include "GoalBlock.h"
 #include "GauntletBlock.h"
 #include "Layout.h"
@@ -95,6 +96,7 @@ Animus::Curriculum::Block const& Animus::Curriculum::GetBlock(BlockId id)
     static GoalBlock const goal;
     static CoverageBlock const coverage;
     static MemoryEntitiesBlock const memoryEntities;
+    static OrderBlock const order;
 
     // Keyed by id: the ids have gaps (the deleted blocks' numbers are not reused).
     static std::array<Block const*, BLOCK_COUNT> const blocks = [&]
@@ -116,6 +118,7 @@ Animus::Curriculum::Block const& Animus::Curriculum::GetBlock(BlockId id)
         table[std::size_t(BlockId::Goal)] = &goal;
         table[std::size_t(BlockId::Coverage)] = &coverage;
         table[std::size_t(BlockId::MemoryEntities)] = &memoryEntities;
+        table[std::size_t(BlockId::Order)] = &order;
         return table;
     }();
 

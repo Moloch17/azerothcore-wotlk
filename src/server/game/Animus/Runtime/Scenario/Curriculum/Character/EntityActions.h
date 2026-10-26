@@ -22,6 +22,7 @@
 #include "ObjectGuid.h"
 #include "WorldPacket.h"
 #include <functional>
+#include <vector>
 
 class GameObject;
 class Item;
@@ -121,6 +122,9 @@ namespace Animus::Curriculum::EntityActions
     struct ObjectFacts
     {
         uint32 Type = 0;
+        /// A chest that holds a key item a lock on its map takes (KeyChest: the Deadmines' gunpowder barrel): the
+        /// one kind of chest a seat opens (the party loots it on the way; the user, 2026-10-26).
+        bool KeyChest = false;
         bool Selectable = true;     // no GO_FLAG_NOT_SELECTABLE
         float Distance = 0.0f;      // from the seat, as IsWithinDistInMap measures it
         float Reach = 0.0f;         // GameObject::GetInteractionDistance
@@ -179,6 +183,18 @@ namespace Animus::Curriculum::EntityActions
     /// Call Pet through the seat's session's handler (CastThroughClient): the server's own checks and its own summon
     /// from the pet stable (in memory: the sealed pool's pet load, Pet::LoadPetFromDB). Its refusal read back.
     CastOutcome CallPetThroughClient(Player* bot, ClientPort& port = SessionPort());
+
+    /// **Key chests and keys** (the director, 2026-10-26). The key items a map's spawned objects' locks take
+    /// (LOCK_KEY_ITEM: the Deadmines' cannon takes the Defias Gunpowder), once per map; whether a chest's loot holds one
+    /// of its map's (a key chest: the gunpowder's barrel), and which; whether a seat carries one of its map's.
+    [[nodiscard]] std::vector<uint32> const& MapKeyItems(uint32 mapId);
+    [[nodiscard]] bool KeyChest(GameObject const* object);
+    [[nodiscard]] uint32 KeyChestItem(GameObject const* object);
+    [[nodiscard]] bool CarriesKey(Player const* bot, uint32 mapId);
+    /// **Auto-loot** (the client's auto-loot option): a loot window the seat has open on a game object is emptied as
+    /// the client does it -- CMSG_AUTOSTORE_LOOT_ITEM for each slot, then CMSG_LOOT_RELEASE -- through the session's
+    /// handlers. Returns the slots taken; 0 with no window open.
+    uint32 AutoLoot(Player* bot, ClientPort& port = SessionPort());
 
     /// **A press** on the entity `guid` (raw): judged as above, then sent. `focus` is the seat's client focus (Focus
     /// sets it). Result: Interactions, Selections and ItemUses for what was sent, ActRefused for a refusal; ActedOn

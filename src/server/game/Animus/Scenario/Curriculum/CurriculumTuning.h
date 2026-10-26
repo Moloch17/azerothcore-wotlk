@@ -1035,6 +1035,43 @@ namespace Animus::Curriculum
             float Clock = 0.03f;
         } Output;
 
+        /// **The director** (restored 2026-10-26: "we do want a director for long term planning and group
+        /// coordination"): one learned agent a party, speaking on its turns -- its clock and the fight's events -- up
+        /// to Calls calls a turn, each one edit of the standing order (DirectorLayout). The seats are paid to follow
+        /// (OrderDone, OrderFailed), the director what following achieved: the party's mean reward less those terms,
+        /// less its own churn and impossible orders.
+        struct DirectorTuning
+        {
+            uint32 ClockDecisions = 20;         // a turn on the clock every so many decisions (2 s at 100 ms)
+            uint32 Calls = 4;                   // calls a turn
+            /// An order replaced within HoldDecisions of being given is churn (OrderChurn a replacement): a seat
+            /// cannot carry out an order that moves under it.
+            uint32 HoldDecisions = 30;
+            float OrderChurn = 0.1f;
+            /// An order the director could see was impossible when it gave it (OrderImpossible each).
+            float OrderImpossible = 0.2f;
+            /// An order carried out pays the seat (OrderDone, an Outcome); one that lapses -- replaced or timed out
+            /// (OrderTimeoutMs) undone -- costs it (OrderFailed, small: a bad early order must not teach silence).
+            float OrderDone = 1.0f;
+            float OrderFailed = 0.15f;
+            uint32 OrderTimeoutMs = 90000;
+            /// A key chest looted by a seat not ordered to (LootUnordered).
+            float LootUnordered = 0.5f;
+            /// A gate of the way opened by the party's own hand -- a door clicked, the cannon fired -- paid every
+            /// living seat (GateOpened).
+            float GateOpened = 2.0f;
+            /// Below this share of health a member counts as hurt: the event that opens a turn, and what a Heal
+            /// order is about.
+            float LowHealth = 0.4f;
+            /// A Follow order is carried out after FollowMs within FollowYards of the member; a Rest order once the
+            /// seat is at Instance.WingReadyShare of its health and mana.
+            uint32 FollowMs = 20000;
+            float FollowYards = 15.0f;
+            /// A Focus order is carried out when the named enemy dies with the seat having damaged it; a Pull order
+            /// when the named enemy is in combat with the party within PullMs of the order.
+            uint32 PullMs = 30000;
+        } Director;
+
         /// The "human" stand-in seat of the party stages (StandIn.h: a frozen learned partner in one seat, its style
         /// leading or following, in the role it wants). Off unless StandIn.Share (or an arena's own share) is set.
         StandIn::Tuning StandIn;
@@ -1118,6 +1155,20 @@ namespace Animus::Curriculum
             f("Instance.WingAway", tuning.Instance.WingAway);
             f("Instance.WingStrayYards", tuning.Instance.WingStrayYards);
             f("Instance.WingOffLine", tuning.Instance.WingOffLine);
+            f("Director.ClockDecisions", tuning.Director.ClockDecisions);
+            f("Director.Calls", tuning.Director.Calls);
+            f("Director.HoldDecisions", tuning.Director.HoldDecisions);
+            f("Director.OrderChurn", tuning.Director.OrderChurn);
+            f("Director.OrderImpossible", tuning.Director.OrderImpossible);
+            f("Director.OrderDone", tuning.Director.OrderDone);
+            f("Director.OrderFailed", tuning.Director.OrderFailed);
+            f("Director.OrderTimeoutMs", tuning.Director.OrderTimeoutMs);
+            f("Director.LootUnordered", tuning.Director.LootUnordered);
+            f("Director.GateOpened", tuning.Director.GateOpened);
+            f("Director.LowHealth", tuning.Director.LowHealth);
+            f("Director.FollowMs", tuning.Director.FollowMs);
+            f("Director.FollowYards", tuning.Director.FollowYards);
+            f("Director.PullMs", tuning.Director.PullMs);
             f("Instance.WingOffLineYards", tuning.Instance.WingOffLineYards);
 
             f("Actions.RepeatMs", tuning.Actions.RepeatMs);

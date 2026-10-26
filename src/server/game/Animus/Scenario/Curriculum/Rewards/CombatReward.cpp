@@ -72,6 +72,12 @@ std::string_view Animus::Curriculum::RewardTermName(RewardTerm term)
         case RewardTerm::LeaderAway:            return "leader_away";
         case RewardTerm::Checkpoint:            return "checkpoint";
         case RewardTerm::OffLine:               return "off_line";
+        case RewardTerm::OrderDone:             return "order_done";
+        case RewardTerm::OrderFailed:           return "order_failed";
+        case RewardTerm::LootUnordered:         return "loot_unordered";
+        case RewardTerm::GateOpened:            return "gate_opened";
+        case RewardTerm::OrderChurn:            return "order_churn";
+        case RewardTerm::OrderImpossible:       return "order_impossible";
         case RewardTerm::WrongObject:           return "wrong_object";
         case RewardTerm::Regroup:               return "regroup";
         case RewardTerm::Blocking:              return "blocking";

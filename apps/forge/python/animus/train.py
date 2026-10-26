@@ -48,8 +48,8 @@ from .evaluation import (ABLATION_BLOCKS, ABLATIONS, CAMERA_ARMS, GLOBAL_ARM, GL
 from .mappo.buffer import RolloutBuffer
 from .mappo.trainer import (LOOK_COMMANDS, VISION_CHUNK_AUTO, VISION_CHUNK_FALLBACK, MappoTrainer, horizon_seconds,
                             per_decision, schedule)
-from .mappo.networks import (VisionEncoder, check_image_bytes, check_look_heads, heading_of, sharing_of,
-                             vision_of)
+from .mappo.networks import (DIRECTOR_LAYOUT, VisionEncoder, check_image_bytes, check_look_heads, director_of,
+                             heading_of, sharing_of, vision_of)
 from .progress import ProgressWriter
 from . import blas, episode_means, protocol
 from .async_sync import Hub, Link, fetch_shared, shared_listing
@@ -550,6 +550,8 @@ class TrainerInputs:
     sharing: dict | None = None
     # Per layout whether it steers by a continuous heading (networks.heading_of; protocol 32), None for none.
     heading: list | None = None
+    # The director's layout index and its sets (stage.json "director"; networks.director_of), None without one.
+    director: tuple | None = None
 
 
 def trainer_inputs(config: TrainConfig, spec, stage: dict | None) -> TrainerInputs:
@@ -574,7 +576,7 @@ def trainer_inputs(config: TrainConfig, spec, stage: dict | None) -> TrainerInpu
         protocol.check_continuous(stage, getattr(spec, "continuous_count", 0))
     except ValueError as error:
         raise SystemExit(f"continuous: {error}") from None
-    return TrainerInputs(vision, sharing, heading_of(stage, names))
+    return TrainerInputs(vision, sharing, heading_of(stage, names), director_of(stage, names))
 
 
 #: choose_vision_chunk_rows: the share of free device memory the camera's update may plan on (the rest is the
@@ -650,6 +652,7 @@ def make_trainer(config: TrainConfig, spec, inputs: TrainerInputs, ranks=None, d
         aux=config.aux,
         sharing=inputs.sharing,
         heading=inputs.heading,
+        director=inputs.director,
     )
 
 

@@ -227,6 +227,9 @@ public:
 
     [[nodiscard]] LootTemplate const* GetLootFor(uint32 loot_id) const;
     [[nodiscard]] LootTemplate* GetLootForConditionFill(uint32 loot_id) const;
+    /// Whether `itemId` can drop from the template `loot_id` (its entries, groups and references): the forge asks
+    /// which chests hold a key item (Animus::Curriculum::EntityActions::KeyChest).
+    [[nodiscard]] bool HasItemIn(uint32 loot_id, uint32 itemId) const;
 
     [[nodiscard]] char const* GetName() const { return m_name; }
     [[nodiscard]] char const* GetEntryName() const { return m_entryName; }
@@ -259,6 +262,8 @@ public:
 
     // True if template includes at least 1 quest drop entry
     [[nodiscard]] bool HasQuestDrop(LootTemplateMap const& store) const;
+    // True if the item can drop from this template, its groups or the templates it references
+    [[nodiscard]] bool HasItem(uint32 itemId, LootTemplateMap const& store) const;
     // True if template includes at least 1 quest drop for an active quest of the player
     bool HasQuestDropForPlayer(LootTemplateMap const& store, Player const* player) const;
 
