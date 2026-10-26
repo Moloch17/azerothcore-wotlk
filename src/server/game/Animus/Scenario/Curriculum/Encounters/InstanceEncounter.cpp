@@ -44,9 +44,11 @@
 #include "StringFormat.h"
 #include "MentalMap.h"
 #include "EntityMemory.h"
+#include "EntityActions.h"
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <map>
 #include <mutex>
@@ -160,7 +162,7 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::InstanceEncounte
 {
     return { RewardTerm::StepCost, RewardTerm::Kill, RewardTerm::Death, RewardTerm::Timeout, RewardTerm::Threat,
         RewardTerm::Clear, RewardTerm::ReadyPull, RewardTerm::Idle, RewardTerm::Lost, RewardTerm::Away,
-        RewardTerm::OffLine };
+        RewardTerm::OffLine, RewardTerm::GateOpened };
 }
 
 void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
@@ -190,6 +192,7 @@ void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     table.Add("wing_is_leg", [this](Env const& env, uint32) { return _envs[env.Index].LegTrip ? 1.0f : 0.0f; });
     table.Add("wing_is_full", [this](Env const& env, uint32) { return _envs[env.Index].LegTrip ? 0.0f : 1.0f; });
     table.Add("wing_leg", [this](Env const& env, uint32) { return float(_envs[env.Index].Leg); });
+    table.Add("wing_gates_opened", [this](Env const& env, uint32) { return float(_envs[env.Index].GatesOpened); });
     table.Add("wing_leg_arrived", [this](Env const& env, uint32)
     {
         EnvInstance const& fight = _envs[env.Index];
@@ -969,6 +972,45 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
         fight.LegMissLogged = true;
         LogLegMissed(env, fight, env.FindMap(), seat);
     }
+    // **The way's gates opened by the party's own hand** (GateOpened, the director, 2026-10-26): a gate of the way
+    // whose object has opened (a door active, a chest looted, a goober used) within GATE_PRESS_MS of a seat's press
+    // on anything (the press on the cannon opens the Iron Clad Door) is paid to every living seat, once each gate.
+    // A boss's door opens on no press and is the kill's. And a loot window a seat has open is emptied as the
+    // client's auto-loot does (EntityActions::AutoLoot).
+    if (fight.Way && !fight.Way->GateSpawns.empty())
+    {
+        if (fight.GatePaid.size() != fight.Way->GateSpawns.size())
+            fight.GatePaid.assign(fight.Way->GateSpawns.size(), 0);
+        uint32 lastPress = 0;
+        for (auto const& [guid, ms] : fight.Pressed)
+            lastPress = std::max(lastPress, ms);
+        bool const pressed = !fight.Pressed.empty() && env.EpisodeElapsedMs <= lastPress + GATE_PRESS_MS;
+        if (Map* map = env.FindMap(); pressed && map)
+            for (uint32 k = uint32(std::max(fight.StartSite, 0)); k < fight.Way->GateSpawns.size(); ++k)
+            {
+                if (!fight.Way->GateSpawns[k] || fight.GatePaid[k])
+                    continue;
+                auto const range = map->GetGameObjectBySpawnIdStore().equal_range(fight.Way->GateSpawns[k]);
+                for (auto it = range.first; it != range.second; ++it)
+                    if (GameObject const* object = it->second; object && object->IsInWorld())
+                    {
+                        bool const open = object->GetGoType() == GAMEOBJECT_TYPE_DOOR
+                            ? object->GetGoState() != GO_STATE_READY : object->getLootState() != GO_READY;
+                        if (!open)
+                            continue;
+                        fight.GatePaid[k] = 1;
+                        ++fight.GatesOpened;
+                        if (_scenario.Tuning().Instance.WingTrace)
+                            LOG_INFO("module.animus", "Gate opened: env {} {} gate {} {} (entry {}) by the party's "
+                                "hand at {:.0f}s", env.Index, env.Evaluating ? "eval" : "train", k,
+                                object->GetName(), object->GetEntry(), float(env.EpisodeElapsedMs) / 1000.0f);
+                    }
+            }
+    }
+    for (uint32 index = 0; index < _scenario.Data(env).ActiveSeats; ++index)
+        if (Player* bot = _scenario.SeatBot(env, index); bot && bot->IsInWorld() && bot->IsAlive())
+            EntityActions::AutoLoot(bot);
+
     // **Against the recorded line** (the path_* measures; never a reward): each living seat's yards from the line the
     // player walked -- a leg's own, or on a whole run the leg the party is on and the one before -- and the yards
     // it walked.
@@ -1425,34 +1467,69 @@ bool Animus::Curriculum::InstanceEncounter::Usable(GameObject const* object)
         case GAMEOBJECT_TYPE_DOOR:
             // A door with a lock is opened by what its lock names (a lever, the cannon), not by a hand on it.
             return !object->GetGOInfo()->GetLockId();
+        // A key chest (EntityActions::KeyChest: the gunpowder's barrel) is the one chest the party loots (the user,
+        // 2026-10-26: the director tells a seat to loot it, and that seat uses what it holds on the cannon).
+        case GAMEOBJECT_TYPE_CHEST:
+            return EntityActions::KeyChest(object);
         default:
             return false;
     }
 }
 
+uint32 Animus::Curriculum::InstanceEncounter::KeyOfLock(GameObject const* object)
+{
+    return object ? KeyOf(object) : 0;
+}
+
+bool Animus::Curriculum::InstanceEncounter::CarriesKey(Player const* bot, uint32 mapId)
+{
+    return EntityActions::CarriesKey(bot, mapId);
+}
+
+ObjectGuid Animus::Curriculum::InstanceEncounter::NextGate(Env const& env) const
+{
+    EnvInstance const& fight = _envs[env.Index];
+    Map* map = env.FindMap();
+    if (!fight.Way || !map)
+        return ObjectGuid::Empty;
+    PointNavEncounter::ClearWay const& way = *fight.Way;
+    for (uint32 k = uint32(std::max(fight.GoalSite, 0)); k < way.GateSpawns.size(); ++k)
+    {
+        if (!way.GateSpawns[k])
+            continue;
+        auto const range = map->GetGameObjectBySpawnIdStore().equal_range(way.GateSpawns[k]);
+        for (auto it = range.first; it != range.second; ++it)
+            if (GameObject const* object = it->second; object && object->IsInWorld())
+            {
+                // Open already (a door active, a chest looted): the next one.
+                bool const open = object->GetGoType() == GAMEOBJECT_TYPE_DOOR
+                    ? object->GetGoState() != GO_STATE_READY : object->getLootState() != GO_READY;
+                if (!open)
+                    return object->GetGUID();
+            }
+    }
+    return ObjectGuid::Empty;
+}
+
+void Animus::Curriculum::InstanceEncounter::OnSeatAction(Env& env, uint32 /*seat*/, SeatActionResult const& result)
+{
+    EnvInstance& fight = _envs[env.Index];
+    if (result.ActedOn.IsEmpty() || result.ActRefused || !result.ActedOn.IsGameObject())
+        return;
+    if (result.ActPress != uint8(EntityActions::Press::Interact) && result.ActPress != uint8(EntityActions::Press::UseItem))
+        return;
+    for (auto& [guid, ms] : fight.Pressed)
+        if (guid == result.ActedOn)
+        {
+            ms = env.EpisodeElapsedMs;
+            return;
+        }
+    fight.Pressed.emplace_back(result.ActedOn, env.EpisodeElapsedMs);
+}
+
 std::vector<uint32> const& Animus::Curriculum::InstanceEncounter::KeyItems(uint32 mapId)
 {
-    // Once per map: the key items (LOCK_KEY_ITEM) of the map's spawned game objects' locks -- the Deadmines' cannon
-    // takes the Defias Gunpowder.
-    static std::mutex lock;
-    static std::map<uint32, std::vector<uint32>> keys;
-    std::lock_guard<std::mutex> guard(lock);
-    auto const known = keys.find(mapId);
-    if (known != keys.end())
-        return known->second;
-    std::vector<uint32>& found = keys[mapId];
-    for (auto const& [spawnId, data] : sObjectMgr->GetAllGOData())
-    {
-        if (data.mapid != mapId)
-            continue;
-        GameObjectTemplate const* info = sObjectMgr->GetGameObjectTemplate(data.id);
-        LockEntry const* entry = info ? sLockStore.LookupEntry(info->GetLockId()) : nullptr;
-        for (uint32 i = 0; entry && i < MAX_LOCK_CASE; ++i)
-            if (entry->Type[i] == LOCK_KEY_ITEM && entry->Index[i] && sObjectMgr->GetItemTemplate(entry->Index[i])
-                && std::find(found.begin(), found.end(), entry->Index[i]) == found.end())
-                found.push_back(entry->Index[i]);
-    }
-    return found;
+    return EntityActions::MapKeyItems(mapId);
 }
 
 std::pair<uint32, uint32> Animus::Curriculum::InstanceEncounter::DungeonLevels(BossRow const& row)
@@ -1823,6 +1900,11 @@ void Animus::Curriculum::InstanceEncounter::Reward(Env& env, uint32 seatIndex, P
             ledger.Add(RewardTerm::OffLine, -tuning.WingOffLine * seconds
                 * std::min(1.0f, (off - tuning.WingOffLineYards) / tuning.WingOffLineYards));
     }
+    // A gate of the way opened by the party's own hand (GateOpened, the director, 2026-10-26): every living seat.
+    if (bot && bot->IsAlive() && fight.GatesOpened > paid.GatesPaid)
+        ledger.Add(RewardTerm::GateOpened, _scenario.Tuning().Director.GateOpened
+            * float(fight.GatesOpened - paid.GatesPaid), tierScale);
+    paid.GatesPaid = fight.GatesOpened;
     if (bot && bot->IsAlive())
     {
         ledger.Add(RewardTerm::Kill, tuning.WingTrashKill * float(fight.TrashKills - paid.KillsPaid), tierScale);
