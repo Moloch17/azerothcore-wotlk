@@ -44,12 +44,9 @@
 #include "StringFormat.h"
 #include "MentalMap.h"
 #include "EntityMemory.h"
-#include "EntityActions.h"
-#include "SeatView.h"
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <cmath>
 #include <map>
 #include <mutex>
@@ -402,7 +399,7 @@ void Animus::Curriculum::InstanceEncounter::ResetEpisode(Env& env)
     if (built && !fight.Evaluating && fight.LegTrip && fight.LegCounted && fight.Leg >= 0)
         if (PointNavEncounter* nav = _scenario.PointNav())
             nav->NoteLegAt(_scenario.Data(env).Arena, fight.Rung, uint32(fight.Leg), fight.LegDone);
-    if (built && !fight.Evaluating && !fight.LegTrip && !fight.DoorCheck)
+    if (built && !fight.Evaluating && !fight.LegTrip)
         _scenario.NoteWingRun(fight.Rung, fight.Probe, fight.BossDead ? 1.0f : ClearedShare(fight));
     fight = EnvInstance();
 }
@@ -596,11 +593,11 @@ bool Animus::Curriculum::InstanceEncounter::Build(Env& env, Map* map, uint8 /*le
             supplies.FoodItem = consumables.Food(seatState.Level);
             supplies.DrinkItem = bot->GetMaxPower(POWER_MANA) ? consumables.Drink(seatState.Level) : 0;
             StockConsumables(bot, supplies.FoodItem, supplies.DrinkItem, _scenario.Tuning().Instance.WingSupplies);
-            // What a lock on the way takes -- the Deadmines' cannon its gunpowder -- carried from the door: nothing
-            // is looted (the user, 2026-10-06), and the key is used on the lock with a real press (CMSG_USE_ITEM).
+            // What a lock on the way takes -- the Deadmines' cannon its gunpowder -- is never carried in: the party
+            // loots it on the way (the user, 2026-10-26: "do not give them the gunpowder"). Whatever an episode before
+            // left in a bag goes.
             for (uint32 key : KeyItems(fight.MapId))
-                if (!bot->HasItemCount(key, 1))
-                    bot->AddItem(key, 1);
+                bot->DestroyItemCount(key, 9999, true);
         }
     return true;
 }
@@ -831,188 +828,6 @@ void Animus::Curriculum::InstanceEncounter::LogLegMissed(Env const& env, EnvInst
         shut ? "shut" : "open", seatYards, seatHeight, walked);
 }
 
-void Animus::Curriculum::InstanceEncounter::CheckDoors(Env& env, EnvInstance& fight, Map* map, Player* seat)
-{
-    static std::atomic<bool> checked{false};
-    if (!map || !seat || !fight.Way || fight.LegTrip || env.Evaluating || fight.DoorCheck == DOOR_CHECK_DONE)
-        return;
-    PointNavEncounter::ClearWay const& way = *fight.Way;
-    if (!fight.DoorCheck)
-    {
-        if (env.Index != 0 || env.EpisodeElapsedMs < 1000
-            || std::none_of(way.GateSpawns.begin(), way.GateSpawns.end(), [](uint32 spawn) { return spawn != 0; })
-            || checked.exchange(true))
-            return;
-        fight.DoorCheck = 1;
-        LOG_INFO("module.animus", "Door check: {} env {}: opening every gate of the way as the party would",
-            _scenario.Name(), env.Index);
-    }
-    auto gameObject = [map](uint32 spawnId) -> GameObject*
-    {
-        auto const range = map->GetGameObjectBySpawnIdStore().equal_range(spawnId);
-        return range.first != range.second ? range.first->second : nullptr;
-    };
-    auto byEntry = [map](uint32 entry) -> GameObject*
-    {
-        for (auto const& [spawnId, object] : map->GetGameObjectBySpawnIdStore())
-            if (object && object->IsInWorld() && object->GetEntry() == entry)
-                return object;
-        return nullptr;
-    };
-    auto kill = [&](Creature* creature, char const* why)
-    {
-        if (!creature || !creature->IsAlive())
-            return;
-        LOG_INFO("module.animus", "Door check: {} (entry {}) killed by {} ({})", creature->GetName(),
-            creature->GetEntry(), seat->GetName(), why);
-        Unit::Kill(seat, creature, false);
-    };
-    // The press a seat sends, from beside the thing: the seat stands there first (a press is refused out of reach).
-    auto pressAt = [&](GameObject* object, EntityActions::Press press, char const* what)
-    {
-        if (!object)
-        {
-            LOG_INFO("module.animus", "Door check: {}: not in the instance", what);
-            return;
-        }
-        ObjectGuid focus;
-        SeatActionResult result;
-        EntityActions::Refusal const refusal = EntityActions::Apply(press, seat, object->GetGUID().GetRawValue(),
-            focus, result);
-        LOG_INFO("module.animus", "Door check: {} {} (entry {}, spawn {}) pressed from {:.1f} yd: {}", what,
-            object->GetName(), object->GetEntry(), object->GetSpawnId(), seat->GetExactDist(object),
-            refusal == EntityActions::Refusal::None ? "sent" : EntityActions::RefusalName(refusal));
-    };
-    // Beside it, on the party's side; placed as a leg start places the party (a near teleport is the client's to finish, and a seat has no client).
-    auto standBy = [&](GameObject* object)
-    {
-        if (!object)
-            return;
-        // Toward where the recording's player stood at its gate (that side of the door is the party's), 2.5 yd out.
-        float angle = object->GetOrientation();
-        for (uint32 k = 0; k < way.GateSpawns.size() && k < way.Points.size(); ++k)
-            if (way.GateSpawns[k] == object->GetSpawnId())
-                angle = object->GetAbsoluteAngle(&way.Points[k]);
-        Position at(object->GetPositionX() + 2.5f * std::cos(angle), object->GetPositionY() + 2.5f * std::sin(angle),
-            object->GetPositionZ());
-        at.SetOrientation(at.GetAbsoluteAngle(object));
-        seat->InterruptNonMeleeSpells(false);
-        bool const placed = BotFactory::TeleportWithinMap(seat, at);
-        LOG_INFO("module.animus", "Door check: the seat {} beside {} (spawn {}): now {:.1f} yd from it",
-            placed ? "placed" : "NOT placed", object->GetName(), object->GetSpawnId(), seat->GetExactDist(object));
-    };
-    // Nothing moving at the press: a cast is refused on the move (SPELL_FAILED_MOVING).
-    auto still = [&]()
-    {
-        seat->StopMoving();
-        seat->RemoveUnitMovementFlag(MOVEMENTFLAG_MASK_MOVING);
-    };
-    uint32 const now = env.EpisodeElapsedMs;
-    constexpr uint32 BOSS_DOOR_ENTRIES[] = { 13965, 16399, 16400 };    // the Factory, Foundry and Mast Room Doors
-    constexpr uint32 RHAHK_ZOR = 644, GILNID = 1763, SHREDDER = 642, SNEED = 643;
-    constexpr uint32 CANNON = 16398, IRON_CLAD_DOOR = 16397, HEAVY_DOOR_1 = 17153, HEAVY_DOOR_2 = 17154;
-    switch (fight.DoorCheck)
-    {
-        case 1:     // the bosses whose deaths open doors, a seat's killing blow
-            if (now < 2000)
-                return;
-            for (auto const& [spawnId, creature] : map->GetCreatureBySpawnIdStore())
-                if (creature && (creature->GetEntry() == RHAHK_ZOR || creature->GetEntry() == GILNID
-                    || creature->GetEntry() == SHREDDER))
-                    kill(creature, "its death opens a door");
-            fight.DoorCheck = 2;
-            return;
-        case 2:     // Sneed, out of his Shredder; then the seat held still (the policy steers it otherwise, and a
-                    // cast is refused on the move)
-            if (now < 4000)
-                return;
-            for (auto const& [spawnId, creature] : map->GetCreatureBySpawnIdStore())
-                if (creature && creature->GetEntry() == SHREDDER)
-                    if (Creature* sneed = creature->FindNearestCreature(SNEED, 80.0f, true))
-                        kill(sneed, "out of his Shredder; his death opens the Mast Room Door");
-            seat->SetControlled(true, UNIT_STATE_ROOT);
-            standBy(byEntry(HEAVY_DOOR_1));
-            fight.DoorCheck = 3;
-            return;
-        case 3:     // the first Heavy Door, pressed
-            if (now < 7000)
-                return;
-            still();
-            pressAt(byEntry(HEAVY_DOOR_1), EntityActions::Press::Interact, "the first");
-            fight.DoorCheck = 4;
-            return;
-        case 4:
-            if (now < 12000)
-                return;
-            standBy(byEntry(HEAVY_DOOR_2));
-            fight.DoorCheck = 5;
-            return;
-        case 5:     // the second Heavy Door, pressed
-            if (now < 15000)
-                return;
-            still();
-            pressAt(byEntry(HEAVY_DOOR_2), EntityActions::Press::Interact, "the second");
-            fight.DoorCheck = 51;
-            return;
-        case 51:
-            if (now < 20000)
-                return;
-            standBy(byEntry(CANNON));
-            fight.DoorCheck = 52;
-            return;
-        case 52:    // the cannon, given the gunpowder the seats carry
-        {
-            if (now < 23000)
-                return;
-            still();
-            // The gunpowder, used as the client uses it (CMSG_USE_ITEM), its spell's result named.
-            GameObject* cannon = byEntry(CANNON);
-            SpellInfo const* spell = nullptr;
-            Item* item = cannon ? EntityActions::KeyItemFor(seat, cannon, spell) : nullptr;
-            SpellCastTargets targets;
-            if (cannon)
-                targets.SetGOTarget(cannon);
-            EntityActions::CastOutcome const outcome = item && spell
-                ? EntityActions::UseItemThroughClient(seat, item, spell, targets) : EntityActions::CastOutcome();
-            LOG_INFO("module.animus", "Door check: the cannon {} from {:.1f} yd: item {} ({} carried), spell {}: {}{}",
-                cannon ? "found" : "MISSING", cannon ? seat->GetExactDist(cannon) : -1.0f,
-                item ? item->GetEntry() : 0, item ? item->GetCount() : 0, spell ? spell->Id : 0,
-                outcome.Sent ? "sent" : outcome.Failed ? "refused, SpellCastResult " : "not sent",
-                outcome.Failed ? std::to_string(outcome.Failed - 1) : std::string());
-            fight.DoorCheck = 6;
-            return;
-        }
-        case 6:     // what stands: every gate of the way, and the Iron Clad Door
-        {
-            if (now < 35000)
-                return;
-            seat->SetControlled(false, UNIT_STATE_ROOT);
-            uint32 gates = 0, open = 0;
-            for (uint32 k = 0; k < way.GateSpawns.size(); ++k)
-                if (uint32 const spawn = way.GateSpawns[k])
-                {
-                    GameObject* object = gameObject(spawn);
-                    bool const isOpen = object && object->GetGoState() != GO_STATE_READY;
-                    bool const boss = object && std::find(std::begin(BOSS_DOOR_ENTRIES), std::end(BOSS_DOOR_ENTRIES),
-                        object->GetEntry()) != std::end(BOSS_DOOR_ENTRIES);
-                    ++gates;
-                    open += isOpen ? 1 : 0;
-                    LOG_INFO("module.animus", "Door check: gate {} {} (entry {}, spawn {}{}): {}", k,
-                        object ? object->GetName() : std::string("(missing)"), object ? object->GetEntry() : 0,
-                        spawn, boss ? ", a boss's door" : "", !object ? "MISSING" : isOpen ? "open" : "SHUT");
-                }
-            GameObject* ironClad = byEntry(IRON_CLAD_DOOR);
-            LOG_INFO("module.animus", "Door check: done -- {} of {} gates open; the Iron Clad Door {}", open, gates,
-                !ironClad ? "gone (the cannon blew it away)" : ironClad->GetGoState() != GO_STATE_READY ? "open"
-                : "SHUT");
-            fight.DoorCheck = DOOR_CHECK_DONE;
-            return;
-        }
-        default:
-            return;
-    }
-}
-
 bool Animus::Curriculum::InstanceEncounter::LegMet(Env const& env, EnvInstance const& fight, Map* map,
     Player const* seat) const
 {
@@ -1149,7 +964,6 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
         fight.LegDone = true;
         fight.LegDoneMs = env.EpisodeElapsedMs;
     }
-    CheckDoors(env, fight, env.FindMap(), seat);
     if (fight.LegTrip && !fight.LegDone && !fight.LegMissLogged && TimeIsUp(env))
     {
         fight.LegMissLogged = true;
@@ -1947,9 +1761,6 @@ void Animus::Curriculum::InstanceEncounter::Reward(Env& env, uint32 seatIndex, P
     SeatInstance& paid = fight.Seats[seatIndex];
     CurriculumTuning::InstanceTuning const& tuning = _scenario.Tuning().Instance;
     float const tierScale = TierScale(env);
-    // The door check's episode is not the party's: nothing paid.
-    if (fight.DoorCheck)
-        return;
 
     // Standing still in a dungeon costs (Instance.WingStall): once WingStallGraceMs pass with nothing killed and
     // nothing fighting the party, every seat pays by the second. Without it a party at the door paid only the
@@ -2092,7 +1903,7 @@ bool Animus::Curriculum::InstanceEncounter::Over(Env const& env, EnvInstance con
     // A leg ends on its own objective, the last wipe or time, never on the last boss's death: a leg past the last
     // boss starts with it killed, and on the last boss's own leg its guards still stand when it falls (legs 38-41 of
     // the Deadmines ended at once or before the leg was done, 2026-10-26).
-    if (fight.Wiped || TimeIsUp(env) || fight.DoorCheck == DOOR_CHECK_DONE)
+    if (fight.Wiped || TimeIsUp(env))
         return true;
     return fight.LegTrip ? fight.LegDone : fight.BossDead;
 }
