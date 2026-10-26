@@ -204,6 +204,10 @@ namespace Animus::Curriculum
         /// The clear way (dm1, the user, 2026-10-23: "rewarded by going to the next path node in sequence"): each
         /// checkpoint reached in its order (PointNav.Checkpoint, Outcome). Appended.
         Checkpoint,
+        /// The recorded line (dm_clear, the user, 2026-10-26: "they are wandering all over the place"): every second a
+        /// living seat is further than Instance.WingOffLineYards from the line the recording's player walked on the
+        /// leg, scaling to full at twice that, while nothing fights the party (Instance.WingOffLine, Cost). Appended.
+        OffLine,
         Count
     };
 
@@ -316,6 +320,7 @@ namespace Animus::Curriculum
             case RewardTerm::Turning:
             case RewardTerm::OutOfTurnPull:
             case RewardTerm::LeaderAway:
+            case RewardTerm::OffLine:
                 return RewardCategory::Cost;
             // The seek stage's room goals: a teaching aid on the progress-linear aid scale.
             case RewardTerm::RoomGoal:

@@ -216,6 +216,7 @@ eval:
   - reward_repeat
   - reward_effort
   - reward_jitter
+  - reward_off_line
 status:
   headline:
   - ladder_level

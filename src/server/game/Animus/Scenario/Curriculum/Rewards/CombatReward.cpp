@@ -71,6 +71,7 @@ std::string_view Animus::Curriculum::RewardTermName(RewardTerm term)
         case RewardTerm::OutOfTurnPull:         return "out_of_turn_pull";
         case RewardTerm::LeaderAway:            return "leader_away";
         case RewardTerm::Checkpoint:            return "checkpoint";
+        case RewardTerm::OffLine:               return "off_line";
         case RewardTerm::WrongObject:           return "wrong_object";
         case RewardTerm::Regroup:               return "regroup";
         case RewardTerm::Blocking:              return "blocking";

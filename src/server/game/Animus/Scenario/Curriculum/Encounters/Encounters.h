@@ -211,6 +211,7 @@ namespace Animus::Curriculum
             float PathSum = 0.0f;
             uint32 PathSteps = 0;
             uint32 PathOff = 0;
+            float PathNow = -1.0f;      // yards from the recorded line at the last decision (-1: not measured)
             float Travel = 0.0f;
             bool HasLast = false;
             Position Last;

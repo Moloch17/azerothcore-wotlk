@@ -253,6 +253,10 @@ namespace Animus::Curriculum
             /// Combat.Away): the time a death costs the party. Lost is never charged on the same seconds.
             float WingAway = 0.02f;
             float WingStrayYards = 25.0f;
+            /// Per second a living seat is off the recorded line of its leg while nothing fights the party (OffLine, a
+            /// Cost): nothing within WingOffLineYards, rising linearly to the full price at twice that. 0 is off.
+            float WingOffLine = 0.03f;
+            float WingOffLineYards = 10.0f;
         } Instance;
 
         /// The learner's goals (SeatGoal), in every stage that its policy chooses them for.
@@ -1108,6 +1112,8 @@ namespace Animus::Curriculum
             f("Instance.WingStray", tuning.Instance.WingStray);
             f("Instance.WingAway", tuning.Instance.WingAway);
             f("Instance.WingStrayYards", tuning.Instance.WingStrayYards);
+            f("Instance.WingOffLine", tuning.Instance.WingOffLine);
+            f("Instance.WingOffLineYards", tuning.Instance.WingOffLineYards);
 
             f("Actions.RepeatMs", tuning.Actions.RepeatMs);
             f("Actions.MoveRepeatMs", tuning.Actions.MoveRepeatMs);
