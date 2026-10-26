@@ -96,11 +96,12 @@ def load(rec: r.RecordingDir, map_id: int | None = None) -> Run:
         if len(starts):
             run.player = int(starts[0]["player"])
 
-    # The dungeon: the last MapSpawns map (a recording writes one per map it enters), unless told.
+    # The dungeon: the last MapSpawns map (a recording writes one per map it enters), unless told. MapSpawns and
+    # InstanceCreatures are snapshot-stream records (types 34 and 35).
     maps_seen: list[int] = []
     spawn_parts: dict[int, list[np.ndarray]] = {}
     alive_parts: dict[tuple[int, int], dict[int, np.ndarray]] = {}
-    for batch in rec.read("session"):
+    for batch in rec.read("snapshot"):
         rows = batch.get(r.MAP_SPAWNS)
         for i, row in enumerate(rows):
             m = int(row["map"])
@@ -437,6 +438,27 @@ def interactions(run: Run) -> list[dict]:
     return out
 
 
+def door_openings(run: Run) -> list[dict]:
+    """Doors that opened on the run without a player's use -- a boss's death, a lever, a script -- each once, with
+    where the player stood when it did: the gates a dungeon's route passes (the Deadmines' doors all open this way)."""
+    out = []
+    seen: set[int] = set()
+    for row in run.go_changes:
+        if int(row["go_type"]) != GO_DOOR or int(row["go_state"]) != 0:
+            continue
+        sid = int(row["spawn_id"])
+        key = sid or int(row["object"])
+        if key in seen:
+            continue
+        seen.add(key)
+        ms = int(row["ms"])
+        move = _at(run.moves, ms)
+        out.append({"t_ms": ms - run.start_ms, "spawn_id": sid, "entry": int(row["entry"]), "kind": "door",
+                    "pos": _xyz(row), "from": _xyz(move) if move is not None else None, "changed": True,
+                    "go_state_after": 0, "change_after_ms": 0, "opened_by": "script"})
+    return out
+
+
 def bosses(run: Run) -> list[dict]:
     out = []
     if run.kills is None or not len(run.kills):
@@ -482,11 +504,16 @@ def checkpoints(run: Run, pull_list: list[dict], interaction_list: list[dict], r
                                       "spawn_ids": list(pull["spawn_ids"]), "pull": pull["k"],
                                       "fight_spot": pull["fight_spot"], "pull_from": pull["pull_from"],
                                       "end_t_ms": pull["end_ms"] - run.start_ms}))
+    gates_seen: set[int] = set()
     for inter in interaction_list:
         if inter["kind"] in ("door", "button", "goober") and inter["changed"] and inter["pos"]:
+            if inter["spawn_id"] in gates_seen:
+                continue
+            gates_seen.add(inter["spawn_id"])
             events.append((inter["t_ms"], {"kind": "gate", "pos": inter["from"] or inter["pos"],
                                            "spawn_ids": [inter["spawn_id"]] if inter["spawn_id"] else [],
-                                           "object_pos": inter["pos"], "entry": inter["entry"]}))
+                                           "object_pos": inter["pos"], "entry": inter["entry"],
+                                           "opened_by": inter.get("opened_by", "use")}))
     events.sort(key=lambda e: e[0])
     out = []
     for t_ms, event in events:
@@ -515,7 +542,8 @@ def analyse(rec: r.RecordingDir, site_yards: float = SITE_YARDS, map_id: int | N
     pack_of = {sid: i for i, pack in enumerate(pack_list) for sid in pack["spawn_ids"]}
     pull_list = pulls(run, pack_of)
     rest_list = rests(run)
-    interaction_list = interactions(run)
+    interaction_list = interactions(run) + door_openings(run)
+    interaction_list.sort(key=lambda i: i["t_ms"])
     boss_list = bosses(run)
     engaged = {sid for pull in pull_list for sid in pull["spawn_ids"]}
     skipped_list = skipped(run, engaged)
