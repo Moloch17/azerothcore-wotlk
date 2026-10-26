@@ -867,7 +867,9 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
     EnvInstance& fight = _envs[env.Index];
     Player* seat = _scenario.SeatBot(env, 0);
     Creature* boss = seat && !fight.Boss.IsEmpty() ? Encoding::CreatureThrough(*seat, fight.Boss) : nullptr;
-    if (!boss)
+    // A leg goes on without the last boss in the world: a leg past it starts with it killed, and its corpse can
+    // decay mid-leg.
+    if (!seat || fight.Boss.IsEmpty() || (!boss && !fight.LegTrip))
         return;
     // Where the party goes next along the clear way; a leg ends when its objective is met.
     if (fight.Way)
@@ -918,18 +920,21 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
         }
     }
 
-    fight.HealthLeft = boss->IsAlive() ? float(boss->GetHealth()) / float(fight.BossHealth) : 0.0f;
-    if (!fight.BossDead && !boss->IsAlive())
-        fight.BossDead = true;
-    if (!fight.Engaged && boss->IsInCombat())
+    if (boss)
     {
-        fight.Engaged = true;
-        fight.EngageMs = env.EpisodeElapsedMs;
+        fight.HealthLeft = boss->IsAlive() ? float(boss->GetHealth()) / float(fight.BossHealth) : 0.0f;
+        if (!fight.BossDead && !boss->IsAlive())
+            fight.BossDead = true;
+        if (!fight.Engaged && boss->IsInCombat())
+        {
+            fight.Engaged = true;
+            fight.EngageMs = env.EpisodeElapsedMs;
+        }
+        // Back at full health and out of combat after having been fought: the script evaded, and the fight is lost.
+        if (fight.Engaged && !fight.BossDead && !boss->IsInCombat() && boss->GetHealthPct() >= EVADED_HEALTH_PCT
+            && env.EpisodeElapsedMs > fight.EngageMs + _scenario.StepMs(env))
+            fight.Evaded = true;
     }
-    // Back at full health and out of combat after having been fought: the script evaded, and the fight is lost.
-    if (fight.Engaged && !fight.BossDead && !boss->IsInCombat() && boss->GetHealthPct() >= EVADED_HEALTH_PCT
-        && env.EpisodeElapsedMs > fight.EngageMs + _scenario.StepMs(env))
-        fight.Evaded = true;
 
     // A wipe: no seat left standing. Nobody stands up in an instance; the dead wait for the episode to end.
     EnvState const& data = _scenario.Data(env);
@@ -1739,7 +1744,7 @@ void Animus::Curriculum::InstanceEncounter::Reward(Env& env, uint32 seatIndex, P
         paid.WipesPaid = fight.Wipes;
     }
 
-    bool const over = fight.BossDead || fight.Wiped || TimeIsUp(env) || fight.LegDone;
+    bool const over = Over(env, fight);
     if (!over || paid.OutcomePaid)
         return;
     paid.OutcomePaid = true;
@@ -1791,7 +1796,16 @@ void Animus::Curriculum::InstanceEncounter::WriteState(Env const& env, float* st
 bool Animus::Curriculum::InstanceEncounter::IsTerminal(Env const& env) const
 {
     EnvInstance const& fight = _envs[env.Index];
-    // A wing goes on past an evade (the party can pull the boss again) and ends on the kill, the last wipe or time;
-    // a leg on its objective too.
-    return fight.BossDead || fight.Wiped || TimeIsUp(env) || fight.LegDone;
+    return Over(env, fight);
+}
+
+bool Animus::Curriculum::InstanceEncounter::Over(Env const& env, EnvInstance const& fight)
+{
+    // A wing goes on past an evade (the party can pull the boss again) and ends on the kill, the last wipe or time.
+    // A leg ends on its own objective, the last wipe or time, never on the last boss's death: a leg past the last
+    // boss starts with it killed, and on the last boss's own leg its guards still stand when it falls (legs 38-41 of
+    // the Deadmines ended at once or before the leg was done, 2026-10-26).
+    if (fight.Wiped || TimeIsUp(env))
+        return true;
+    return fight.LegTrip ? fight.LegDone : fight.BossDead;
 }

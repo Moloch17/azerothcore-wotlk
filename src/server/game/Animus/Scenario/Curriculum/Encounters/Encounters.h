@@ -381,6 +381,8 @@ namespace Animus::Curriculum
         [[nodiscard]] Creature* FindBoss(Map* map, BossRow const& row, WorldObject const* anchor) const;
         [[nodiscard]] float TierScale(Env const& env) const;
         [[nodiscard]] static bool TimeIsUp(Env const& env);
+        /// Whether the episode is over: a wipe or the clock, else a leg's objective, else the last boss's death.
+        [[nodiscard]] static bool Over(Env const& env, EnvInstance const& fight);
 
         std::vector<EnvInstance> _envs;
         std::map<InstanceLadder, std::vector<BossRow const*>> _rows;   // per ladder, the rows the database fields
