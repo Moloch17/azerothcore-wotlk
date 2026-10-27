@@ -128,7 +128,7 @@ eval:
   sampled_every: 3
   sampled_episodes: 16
   trace_episodes: 8
-  trace_all: true
+  trace_all: false   # 2026-10-26: the whole-run evaluation held every seat's trace of ~256 90-min runs in RAM; oomd killed the host
   arms:
     no_map: 16
     no_memory: 16
