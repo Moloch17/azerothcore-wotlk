@@ -23,6 +23,7 @@
 #include "GameObject.h"
 #include "GauntletBlock.h"
 #include "HintBlock.h"
+#include "MoveBlock.h"
 #include "ObjectAccessor.h"
 #include "PetBlock.h"
 #include "Player.h"
@@ -126,6 +127,7 @@ namespace
         };
         Wt::PressSpace space;
         space.Move = range(BlockId::Move);
+        space.MoveBack = MoveBlock::Backpedals(layout);
         space.Sight = range(BlockId::Sight);
         space.Duel = range(BlockId::Duel);
         space.Gauntlet = range(BlockId::Gauntlet);

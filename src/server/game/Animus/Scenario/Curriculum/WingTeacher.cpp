@@ -609,13 +609,23 @@ int32 Animus::Curriculum::WingTeacher::Press(Choice const& choice, PressSpace co
             return -1;
         return allowed(space.Sight, group * slots + uint32(slot));
     };
+    // A MoveControls key as the move block's local action (MoveBlock::ControlOf, the other way): a stage without
+    // move_back has every key after it one index lower (2026-10-27: read as MoveControls' own, the teacher's "stop"
+    // pressed strafe_left and its parties shuffled in place).
+    auto const key = [&](uint32 control) -> int32
+    {
+        if (!space.MoveBack && control == MoveControls::ACTION_MOVE_BACK)
+            return -1;
+        uint32 const local = !space.MoveBack && control > MoveControls::ACTION_MOVE_BACK ? control - 1 : control;
+        return allowed(space.Move, local);
+    };
     for (uint32 i = 0; i < choice.Count; ++i)
     {
         Option const& option = choice.Options[i];
         int32 action = -1;
         switch (option.What)
         {
-            case Do::Key:           action = allowed(space.Move, option.Key); break;
+            case Do::Key:           action = key(option.Key); break;
             case Do::Select:        action = press(0, option.Slot); break;
             case Do::Interact:      action = press(1, option.Slot); break;
             case Do::UseItem:       action = press(2, option.Slot); break;

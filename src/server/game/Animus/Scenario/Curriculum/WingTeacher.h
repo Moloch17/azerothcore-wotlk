@@ -254,7 +254,8 @@ namespace Animus::Curriculum::WingTeacher
             uint32 First = 0;
             uint32 Count = 0;
         };
-        Range Move;                 // MoveControls' actions
+        Range Move;                 // MoveControls' actions, as the move block lays them out:
+        bool MoveBack = true;       // ... false without move_back (NoBackpedal), every key after it one index lower
         Range Sight;                // five pointer groups (select, interact, use item, assist, focus), a slot
                                     // each, then clear focus
         Range Duel;
