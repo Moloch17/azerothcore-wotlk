@@ -616,8 +616,8 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
     ArenaDefinition const& arena = _scenario.Arena(env);
     // A roles arena's drilled seat (G1, Opposition::Roles) is paid its whole lesson by RolesEncounter -- as Outcome,
     // tier-scaled -- so its hold, focus and keep terms are not paid here as well: the readings below are still taken.
-    bool const rolesDrilled = seatIndex == 0 && arena.Against == Opposition::Roles && arena.DrillRole
-        && arena.DrillRole == state.DungeonRole;
+    bool const rolesDrilled = arena.Against == Opposition::Roles && ((seatIndex == 0 && arena.DrillRole
+        && arena.DrillRole == state.DungeonRole) || AllRoles(arena.Roles));
     // What this ledger pays the seat for its role: nothing for a roles arena's drilled seat (RolesEncounter does).
     float const rolePay = rolesDrilled ? 0.0f : 1.0f;
     // The tank in its tanking stance, form or aura while it fights: what a protection warrior, a bear or a paladin with

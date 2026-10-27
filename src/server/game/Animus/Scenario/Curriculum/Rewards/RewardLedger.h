@@ -224,6 +224,14 @@ namespace Animus::Curriculum
         OrderImpossible,
         /// Each order the director issued (OrderIssued, Cost: the asking priced, technique 4). Appended.
         OrderIssued,
+        /// The party combat curriculum (2026-10-27): a pack's caster killed first (KillOrder, Outcome, every seat), an
+        /// enemy held out of the fight by crowd control while its pack fights (Controlled, Outcome, every seat, per
+        /// enemy-decision), crowd control broken by the party's own damage (CCBroken, Cost, every seat), the whole
+        /// party down at once (PartyWipe, Cost, every seat). Appended.
+        KillOrder,
+        Controlled,
+        CCBroken,
+        PartyWipe,
         Count
     };
 
@@ -289,6 +297,9 @@ namespace Animus::Curriculum
             // The director's: an order carried out, a gate of the way opened by the party's own hand (2026-10-26).
             case RewardTerm::OrderDone:
             case RewardTerm::GateOpened:
+            // The party combat curriculum's (2026-10-27): kill order, crowd control held.
+            case RewardTerm::KillOrder:
+            case RewardTerm::Controlled:
                 return RewardCategory::Outcome;
             // What the outcome costs: deaths (the seat's, a teammate's, the owner's; a wipe is paid as deaths), the
             // flag lost, the clock run out, the step cost a stage charges for time, the corpse run.
@@ -347,6 +358,9 @@ namespace Animus::Curriculum
             case RewardTerm::OrderChurn:
             case RewardTerm::OrderImpossible:
             case RewardTerm::OrderIssued:
+            // ... and crowd control broken by the party, a wipe (2026-10-27).
+            case RewardTerm::CCBroken:
+            case RewardTerm::PartyWipe:
                 return RewardCategory::Cost;
             // The seek stage's room goals: a teaching aid on the progress-linear aid scale.
             case RewardTerm::RoomGoal:

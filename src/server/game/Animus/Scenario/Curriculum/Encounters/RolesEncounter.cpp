@@ -25,6 +25,7 @@
 #include "Encounters.h"
 #include "Env.h"
 #include "EnvPool.h"
+#include "EntityActions.h"
 #include "EpisodeInfoTable.h"
 #include "Log.h"
 #include "Map.h"
@@ -32,6 +33,8 @@
 #include "Player.h"
 #include "Random.h"
 #include "SeatView.h"
+#include "SpellAuraEffects.h"
+#include "SpellAuras.h"
 #include "StageScenario.h"
 #include "StageState.h"
 #include "Supplies.h"
@@ -52,6 +55,20 @@ namespace
     /// A healer under this share of its mana in a fight is running dry (the measure low_mana_seconds).
     constexpr float LOW_MANA = 0.1f;
 
+    /// An enemy held out of the fight by crowd control: confused (polymorph, hibernate), feared, transformed, or
+    /// stunned for longer than a melee stun (a sap, a shackle, a freezing trap).
+    constexpr int32 LONG_STUN_MS = 4000;
+    bool HeldOut(Creature const* creature)
+    {
+        if (creature->HasAuraType(SPELL_AURA_MOD_CONFUSE) || creature->HasAuraType(SPELL_AURA_MOD_FEAR)
+            || creature->HasAuraType(SPELL_AURA_TRANSFORM))
+            return true;
+        for (AuraEffect const* stun : creature->GetAuraEffectsByType(SPELL_AURA_MOD_STUN))
+            if (stun->GetBase() && stun->GetBase()->GetDuration() >= LONG_STUN_MS)
+                return true;
+        return false;
+    }
+
     static_assert(Draw::ROLE_TANK == Animus::Curriculum::DUNGEON_TANK
         && Draw::ROLE_HEALER == Animus::Curriculum::DUNGEON_HEALER
         && Draw::ROLE_DAMAGE == Animus::Curriculum::DUNGEON_DAMAGE, "the drills' roles are StageState's DungeonRole");
@@ -66,7 +83,8 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::RolesEncounter::
 {
     return { RewardTerm::Clear, RewardTerm::DrillHold, RewardTerm::DrillKeep, RewardTerm::DrillFocus,
         RewardTerm::PullClean, RewardTerm::PullExtra, RewardTerm::Survived, RewardTerm::Death, RewardTerm::Away,
-        RewardTerm::StepCost, RewardTerm::DamageDealt };
+        RewardTerm::StepCost, RewardTerm::DamageDealt, RewardTerm::InterruptLanded, RewardTerm::FireHurt,
+        RewardTerm::KillOrder, RewardTerm::Controlled, RewardTerm::CCBroken, RewardTerm::PartyWipe };
 }
 
 void Animus::Curriculum::RolesEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
@@ -102,6 +120,15 @@ void Animus::Curriculum::RolesEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
     table.Add("drill_keep", drilled(RolesDrill::Keep));
     table.Add("drill_focus", drilled(RolesDrill::Focus));
     table.Add("drill_pull", drilled(RolesDrill::Pull));
+    // The party combat curriculum (2026-10-27): its drills, and the party's readings over every episode.
+    table.Add("drill_party", drilled(RolesDrill::Party));
+    table.Add("drill_packs", drilled(RolesDrill::Packs));
+    table.Add("drill_camp", drilled(RolesDrill::Camp));
+    table.Add("interrupts", of([](EnvRoles const& r) { return r.Tally.Interrupts; }));
+    table.Add("kill_orders", of([](EnvRoles const& r) { return r.Tally.KillOrders; }));
+    table.Add("cc_broken", of([](EnvRoles const& r) { return r.Tally.CCBroken; }));
+    table.Add("controlled_seconds", of([](EnvRoles const& r) { return r.Tally.ControlledSeconds; }));
+    table.Add("fire_taken", of([](EnvRoles const& r) { return r.Tally.FireTaken; }));
     for (auto const& [name, drill] : { std::pair{ "won_hold", RolesDrill::Hold }, std::pair{ "won_keep",
         RolesDrill::Keep }, std::pair{ "won_focus", RolesDrill::Focus }, std::pair{ "won_pull", RolesDrill::Pull } })
         table.Add(name, [this, drill](Env const& env, uint32)
@@ -311,6 +338,17 @@ bool Animus::Curriculum::RolesEncounter::SpawnPack(Env& env, Map* map, Player* l
     else if (plan.Elite)
         if (uint32 const elite = pool.RandomElite(level))
             entries.push_back(elite);
+    // party_packs' fire-caster: ground fire to step out of.
+    if (plan.Hazard)
+    {
+        if (uint32 const burner = pool.RandomHazardCaster(level))
+        {
+            if (entries.size() >= plan.Size && !entries.empty())
+                entries.back() = burner;
+            else
+                entries.push_back(burner);
+        }
+    }
     if (plan.Caster && entries.size() < plan.Size)
         if (uint32 const casting = pool.RandomCaster(level))
             entries.push_back(casting);
@@ -368,6 +406,11 @@ bool Animus::Curriculum::RolesEncounter::SpawnPack(Env& env, Map* map, Player* l
     {
         pack.Members.push_back(member->GetGUID());
         pack.Counted.push_back(false);
+        pack.WasControlled.push_back(0);
+        pack.LastHealth.push_back(member->GetHealth());
+        // Its caster: the first of a casting class (a mage's, or a paladin's that heals), the one to kill first.
+        if (pack.Caster.IsEmpty() && (member->getClass() == CLASS_MAGE || member->getClass() == CLASS_PALADIN))
+            pack.Caster = member->GetGUID();
     }
     roles.Packs.push_back(std::move(pack));
     return true;
@@ -565,6 +608,10 @@ void Animus::Curriculum::RolesEncounter::BeforeRewards(Env& env)
     roles.NewClears = 0;
     roles.NewClean = 0;
     roles.NewExtra = 0;
+    roles.NewKillOrder = 0;
+    roles.NewControlled = 0;
+    roles.NewBroken = 0;
+    roles.NewWipe = false;
 
     // Packs drawn into a fight beside another: extra pulls, and none of them clean.
     roles.NewExtra = Draw::NoteFights(roles.Packs);
@@ -576,8 +623,46 @@ void Animus::Curriculum::RolesEncounter::BeforeRewards(Env& env)
         if (Player* bot = _scenario.SeatBot(env, seat); bot && bot->IsAlive())
             allDown = false;
     if (allDown && !roles.AllDown)
+    {
         ++roles.Tally.Wipes;
+        roles.NewWipe = true;
+    }
     roles.AllDown = allDown;
+
+    // Kill order and crowd control (the party curriculum's): a pack's first death its caster; an enemy held out of
+    // its fighting pack by crowd control; crowd control that ended with the enemy freshly hurt, the party's damage
+    // having broken it.
+    float const decision = float(_scenario.StepMs(env)) / 1000.0f;
+    for (Pack& pack : roles.Packs)
+        for (std::size_t i = 0; i < pack.Members.size(); ++i)
+        {
+            Creature* member = Member(env, pack.Members[i]);
+            bool const alive = member && member->IsAlive();
+            if (!alive && !pack.FirstDeathSeen)
+            {
+                pack.FirstDeathSeen = true;
+                if (!pack.Caster.IsEmpty() && pack.Members[i] == pack.Caster)
+                {
+                    ++roles.NewKillOrder;
+                    ++roles.Tally.KillOrders;
+                }
+            }
+            if (!alive)
+                continue;
+            bool const held = HeldOut(member);
+            if (held && pack.Fight.Fighting)
+            {
+                ++roles.NewControlled;
+                roles.Tally.ControlledSeconds += decision;
+            }
+            if (pack.WasControlled[i] && !held && member->GetHealth() < pack.LastHealth[i])
+            {
+                ++roles.NewBroken;
+                ++roles.Tally.CCBroken;
+            }
+            pack.WasControlled[i] = held ? 1 : 0;
+            pack.LastHealth[i] = member->GetHealth();
+        }
 
     // Packs cleared: each death counted once, a pack cleared when none of it is left; its place goes to the next.
     bool removed = false;
@@ -628,6 +713,13 @@ void Animus::Curriculum::RolesEncounter::Reward(Env& env, uint32 seatIndex, Play
     // The drilled seat: seat 0, playing the drill's role (a makeup that could not fit it pays no drill).
     bool const drilledSeat = seatIndex == Draw::DRILLED_SEAT && state.DungeonRole == Draw::DrilledRole(roles.Drill);
     bool const fighting = FrontFighting(env);
+    // The lesson this seat is paid: the drill's, for the drilled seat; in the party curriculum every seat its own
+    // role's (the tank's Hold, the healer's Keep, damage's Focus).
+    RolesDrill lesson = drilledSeat ? (roles.Drill == RolesDrill::Pull ? RolesDrill::Hold : roles.Drill)
+        : RolesDrill::None;
+    if (AllRoles(roles.Drill))
+        lesson = state.DungeonRole == DUNGEON_TANK ? RolesDrill::Hold : state.DungeonRole == DUNGEON_HEALER
+            ? RolesDrill::Keep : state.DungeonRole == DUNGEON_DAMAGE ? RolesDrill::Focus : RolesDrill::None;
 
     // Outcome: the party's packs cleared.
     if (roles.NewClears)
@@ -635,8 +727,11 @@ void Animus::Curriculum::RolesEncounter::Reward(Env& env, uint32 seatIndex, Play
 
     // The pull drill's lesson, the puller's in full and the others' at PullOthers; a second pack in a fight is every
     // drill's cost.
-    float const pullShare = roles.Drill == RolesDrill::Pull && drilledSeat ? 1.0f : tuning.PullOthers;
-    if (roles.Drill == RolesDrill::Pull && roles.NewClean)
+    bool const camp = roles.Drill == RolesDrill::Pull || roles.Drill == RolesDrill::Camp;
+    bool const puller = (roles.Drill == RolesDrill::Pull && drilledSeat)
+        || (roles.Drill == RolesDrill::Camp && state.DungeonRole == DUNGEON_TANK);
+    float const pullShare = puller ? 1.0f : tuning.PullOthers;
+    if (camp && roles.NewClean)
         ledger.Add(RewardTerm::PullClean, tuning.PullClean * pullShare * w * float(roles.NewClean));
     if (roles.NewExtra)
         ledger.Add(RewardTerm::PullExtra, -tuning.PullExtra * pullShare * float(roles.NewExtra) / w);
@@ -652,13 +747,12 @@ void Animus::Curriculum::RolesEncounter::Reward(Env& env, uint32 seatIndex, Play
             onOthers += victim && victim != bot && (victim->IsPlayer() || victim->IsPet()) ? 1 : 0;
         }
 
-    // The drilled seat's lesson, its own Outcome (losses its Cost), only while it stands.
-    if (drilledSeat && bot->IsAlive())
+    // The seat's lesson, its own Outcome (losses its Cost), only while it stands.
+    if (lesson != RolesDrill::None && bot->IsAlive())
     {
-        switch (roles.Drill)
+        switch (lesson)
         {
             case RolesDrill::Hold:
-            case RolesDrill::Pull:
             {
                 roles.Tally.Held += onSeat;
                 roles.Tally.OnParty += onSeat + onOthers;
@@ -716,6 +810,37 @@ void Animus::Curriculum::RolesEncounter::Reward(Env& env, uint32 seatIndex, Play
             default:
                 break;
         }
+    }
+
+    // The party curriculum's, every seat's: an interrupt that stopped its cast, ground fire taken, a pack's caster
+    // killed first, enemies held out by crowd control, crowd control broken, a wipe.
+    if (AllRoles(roles.Drill))
+    {
+        if (ObjectGuid& pending = roles.PendingInterrupt[seatIndex]; !pending.IsEmpty())
+        {
+            bool const stopped = std::any_of(env.StepInterruptedTargets.begin(), env.StepInterruptedTargets.end(),
+                [&pending](Env::InterruptedCast const& cast) { return cast.Caster == pending; });
+            if (stopped)
+            {
+                ++roles.Tally.Interrupts;
+                ledger.Add(RewardTerm::InterruptLanded, tuning.Interrupt * w);
+            }
+            pending.Clear();
+        }
+        float const fire = float(step.HazardDamage) / float(std::max<uint32>(1, bot->GetMaxHealth()));
+        if (fire > 0.0f)
+        {
+            roles.Tally.FireTaken += fire;
+            ledger.Add(RewardTerm::FireHurt, -tuning.FireHurt * fire / w);
+        }
+        if (roles.NewKillOrder)
+            ledger.Add(RewardTerm::KillOrder, tuning.KillOrder * w * float(roles.NewKillOrder));
+        if (roles.NewControlled)
+            ledger.Add(RewardTerm::Controlled, tuning.Controlled * scale * w * float(roles.NewControlled));
+        if (roles.NewBroken)
+            ledger.Add(RewardTerm::CCBroken, -tuning.CCBroken * float(roles.NewBroken) / w);
+        if (roles.NewWipe)
+            ledger.Add(RewardTerm::PartyWipe, -tuning.Wipe / w);
     }
 
     // Cost: the clock while a pack fights.
@@ -788,4 +913,10 @@ bool Animus::Curriculum::RolesEncounter::IsTerminal(Env const& env) const
 void Animus::Curriculum::RolesEncounter::Teardown(Env& env)
 {
     Despawn(env);
+}
+
+void Animus::Curriculum::RolesEncounter::OnSeatAction(Env& env, uint32 seat, SeatActionResult const& result)
+{
+    if (seat < GROUP_SEATS && !result.PendingInterrupt.IsEmpty())
+        _envs[env.Index].PendingInterrupt[seat] = result.PendingInterrupt;
 }

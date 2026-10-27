@@ -281,7 +281,8 @@ float Animus::Curriculum::InstanceEncounter::TeacherTau(Env const& env)
     EnvInstance const& fight = _envs[env.Index];
     CurriculumTuning::TeacherTuning const& teacher = _scenario.Tuning().Teacher;
     PointNavEncounter* nav = _scenario.PointNav();
-    if (!teacher.Enable || !_scenario.Stage().Has(BlockId::Hint) || env.Evaluating || fight.Evaluating
+    if (!teacher.Enable || !_scenario.Stage().Teacher || !_scenario.Stage().Has(BlockId::Hint) || env.Evaluating
+        || fight.Evaluating
         || fight.TeacherFree || !fight.Way || !nav || fight.Way->Points.empty())
         return 0.0f;
     uint32 const count = uint32(fight.Way->Points.size());

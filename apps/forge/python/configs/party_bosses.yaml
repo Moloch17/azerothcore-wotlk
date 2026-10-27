@@ -1,0 +1,45 @@
+# P4 party_bosses: the Deadmines' seven bosses in the live dungeon, each in its own room with its adds and script, the
+# creatures levelled to the party (15-30). The party combat curriculum (the user, 2026-10-27;
+# .agents/plans/party-combat/): every boss leg, the director on, no teacher (the hint columns unwritten). dm_clear's
+# report and columns (it is dm_clear's instance arena, its legs the bosses').
+extends: dm_clear.yaml
+run_name: party_bosses
+total_env_steps: 600000000
+
+mappo:
+  hint_coef: 0.0
+  heading_hint_coef: 0.0
+
+eval:
+  every_env_steps: 25000000
+  episodes: 64
+
+status:
+  headline: [wing_leg_arrived, boss_rhahkzor, boss_sneed_shredder, boss_sneed, boss_gilnid, boss_smite,
+             boss_greenskin, boss_cookie, boss_vancleef, wing_wipes, seat_deaths, deaths_tank, deaths_healer,
+             deaths_damage, wing_level]
+  targets:
+    dk_guard: null
+    bar_clear: null
+    bar_clear_leader_tank: null
+    bar_clear_leader_healer: null
+    bar_clear_leader_damage: null
+    cleared: null
+    full_clear: null
+    boss_vancleef: null
+    wing_leg_arrived: '>= 0.7'
+    wing_wipes: <= 0.05
+
+convergence:
+  measure: wing_leg_arrived
+
+fade:
+  gate_metric: wing_leg_arrived
+  gate_value: 0.5
+
+costs:
+  gate_metric: wing_leg_arrived
+  gate_value: 0.5
+
+layout_sampling:
+  metric: wing_leg_arrived

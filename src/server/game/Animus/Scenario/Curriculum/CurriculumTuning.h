@@ -1025,6 +1025,21 @@ namespace Animus::Curriculum
             float WinFocus = 0.6f;
             float WinPulledSeconds = 5.0f;
             int32 StandInShare = 20;            // percent of training episodes
+            /// **The party combat curriculum** (RolesDrill Party, Packs, Camp; 2026-10-27): party_packs' packs of
+            /// PacksSizeFirst growing to PacksSizeMax, a caster in every one and a fire-caster from HazardTier; the
+            /// party's prices, every seat's: Interrupt per enemy cast stopped by the seat, FireHurt per maximum health
+            /// ground fire took, KillOrder for a pack's caster killed first, Controlled per enemy-decision held out of
+            /// a fighting pack by crowd control, CCBroken per crowd control the party's damage broke, Wipe for the
+            /// whole party down at once.
+            uint32 PacksSizeFirst = 3;
+            uint32 PacksSizeMax = 5;
+            uint32 HazardTier = 1;
+            float Interrupt = 0.25f;
+            float FireHurt = 0.5f;
+            float KillOrder = 1.0f;
+            float Controlled = 0.004f;
+            float CCBroken = 0.5f;
+            float Wipe = 5.0f;
         } Roles;
 
         /// Resurrecting: a seat's own Soulstone or Reincarnation, and revives on allies (companion and party stages).
@@ -1548,6 +1563,15 @@ namespace Animus::Curriculum
             f("Roles.WinFocus", tuning.Roles.WinFocus);
             f("Roles.WinPulledSeconds", tuning.Roles.WinPulledSeconds);
             f("Roles.StandInShare", tuning.Roles.StandInShare);
+            f("Roles.PacksSizeFirst", tuning.Roles.PacksSizeFirst);
+            f("Roles.PacksSizeMax", tuning.Roles.PacksSizeMax);
+            f("Roles.HazardTier", tuning.Roles.HazardTier);
+            f("Roles.Interrupt", tuning.Roles.Interrupt);
+            f("Roles.FireHurt", tuning.Roles.FireHurt);
+            f("Roles.KillOrder", tuning.Roles.KillOrder);
+            f("Roles.Controlled", tuning.Roles.Controlled);
+            f("Roles.CCBroken", tuning.Roles.CCBroken);
+            f("Roles.Wipe", tuning.Roles.Wipe);
             f("Options.JitterDecayMs", tuning.Options.JitterDecayMs);
 
             f("Resurrection.GraceMs", tuning.Resurrection.GraceMs);

@@ -83,6 +83,8 @@ namespace Animus::Curriculum
         [[nodiscard]] bool RouteGoal(Env const& env, uint32 seat, Position& goal) const override;
         void BeforeRewards(Env& env) override;
         void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
+        /// An interrupt the seat sent: paid when the cast it was aimed at stops (the party curriculum's Interrupt).
+        void OnSeatAction(Env& env, uint32 seat, SeatActionResult const& result) override;
         void WriteState(Env const& env, float* state) const override;
         [[nodiscard]] bool IsTerminal(Env const& env) const override;
         void Teardown(Env& env) override;
@@ -93,6 +95,10 @@ namespace Animus::Curriculum
             std::vector<ObjectGuid> Members;
             std::vector<bool> Counted;          // its death already counted
             Position Spot;
+            ObjectGuid Caster;                  // its caster (a mage's or a paladin's class), killed first is KillOrder
+            bool FirstDeathSeen = false;
+            std::vector<uint8> WasControlled;   // each member held by crowd control at the last decision ...
+            std::vector<uint32> LastHealth;     // ... and its health then
             bool Linked = false;
             bool Engaged = false;               // a member has been in a fight
             uint32 EngageMs = 0;
@@ -128,6 +134,11 @@ namespace Animus::Curriculum
             uint32 NewClears = 0;
             uint32 NewClean = 0;
             uint32 NewExtra = 0;
+            uint32 NewKillOrder = 0;            // packs whose caster died first
+            uint32 NewControlled = 0;           // enemies held out of a fighting pack
+            uint32 NewBroken = 0;               // crowd control the party's damage broke
+            bool NewWipe = false;
+            std::array<ObjectGuid, GROUP_SEATS> PendingInterrupt{};
 
             // The episode.
             RolesDraw::Tally Tally;

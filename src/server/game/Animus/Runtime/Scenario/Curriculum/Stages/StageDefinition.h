@@ -87,7 +87,18 @@ namespace Animus::Curriculum
         Keep,           // heal_keep: the healer keeps everyone up through fights longer than its mana bar
         Focus,          // damage_discipline: a damage dealer kills the tank's target without taking an enemy off it
         Pull,           // pull: the tank pulls one pack of a camp at a time
+        /// **The party combat curriculum** (the user, 2026-10-27: "party focused not solo"): every seat's own role's
+        /// lesson at once -- the tank's Hold, the healer's Keep, damage's Focus -- not one drilled role an episode.
+        Party,          // party_fight (P1): one pack of 2-4 at a time, the three roles together
+        Packs,          // party_packs (P2): packs of 3-5 -- casters, ground fire, linked, more than the tank holds
+        Camp,           // party_pulls (P3): a camp of packs pulled one at a time, rest, resurrect, recover a wipe
     };
+
+    /// Whether a drill pays every seat its own role's lesson (the party curriculum's), not seat 0's alone.
+    [[nodiscard]] inline bool AllRoles(RolesDrill drill)
+    {
+        return drill == RolesDrill::Party || drill == RolesDrill::Packs || drill == RolesDrill::Camp;
+    }
 
     /// The roles a drill is about, as StageState's DungeonRole numbers them (1 tank, 2 healer, 3 damage).
     constexpr uint8 ROLE_TANK = 1;
@@ -335,6 +346,16 @@ namespace Animus::Curriculum
         /// evaluation plays legs until then, after it legs and runs alike; the ladder's probes are whole runs only.
         bool WingLegs = false;
         uint32 LegSeconds = 300;        // a leg's clock (a gate's leg LEG_DOOR_SECONDS more)
+        /// **Boss legs only** (party_bosses, P4): a training leg is drawn among the legs whose pack holds one of the
+        /// dungeon's bosses (InstanceEncounter::BossLeg), the party at the checkpoint before with everything earlier
+        /// dead; the evaluation's legs the same.
+        bool BossLegs = false;
+        /// **Creatures levelled to the party** (party_bosses): with RelevelFirst set, the party's level is drawn in
+        /// [RelevelFirst, RelevelLast] and every creature of the instance is put at the party's level plus its own
+        /// offset from the dungeon's (its native level less RelevelNative), so a boss stays a boss at any level.
+        uint8 RelevelFirst = 0;
+        uint8 RelevelLast = 0;
+        uint8 RelevelNative = 18;
         /// The traversability bake (and the memorised map surveyed from it) this arena shares, by name: empty for its
         /// own name. The dm stages' arenas all stand on the Deadmines' one bake, `deadmines` (36-deadmines.trav).
         std::string BakeName;
@@ -445,6 +466,10 @@ namespace Animus::Curriculum
         /// observes the party, the enemies and the objects near it as sets and edits a standing order on its turns
         /// (DirectorLayout, DirectorEncounter); every seat layout carries the order block. Needs a party group.
         bool Directed = false;
+        /// **The scripted teacher** (TeacherTuning, StageTeacher.cpp: hints and played segments withdrawing per leg):
+        /// dm_clear's alone. The combat curriculum has none (the user, 2026-10-27: "I don't want the teacher to force
+        /// abilities yet"); the hint block stays in its layouts for the seeding, unwritten.
+        bool Teacher = false;
 
         [[nodiscard]] bool Has(BlockId block) const;
         /// Seats per env: the largest arena's.

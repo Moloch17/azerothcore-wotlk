@@ -1,0 +1,65 @@
+# P1 party_fight: one pack of two to four at a time, the three roles together.
+# The party combat curriculum (the user, 2026-10-27; .agents/plans/party-combat/): a proper party of five at levels
+# 15-30, every seat paid its own role's lesson, the director on, no teacher (its hint columns stay in the layouts,
+# unwritten, so the imitation terms are off). Everything else as dm_clear's.
+extends: dm_clear.yaml
+run_name: party_fight
+total_env_steps: 400000000
+
+mappo:
+  hint_coef: 0.0
+  heading_hint_coef: 0.0
+
+eval:
+  every_env_steps: 20000000
+  episodes: 64
+  arms_every: 2
+  arms:
+    no_map: 8
+    no_memory: 8
+    no_object_memory: 8
+  report: [won, won_leader_tank, won_leader_healer, won_leader_damage, drill_party, drill_packs, drill_camp,
+           hold_share, kept_share, low_mana_seconds, focus_share, pulled_seconds, clean_share, packs_cleared,
+           clean_pulls, extra_pulls, pulls, party_deaths, wipes, interrupts, kill_orders, controlled_seconds,
+           cc_broken, fire_taken, rises, rejoins, rejoin_seconds, rejoined, roles_rung, difficulty, at_top_rung,
+           threat_on_teammates, is_leader, leader_role, pulls_started, out_of_turn_pulls, kept_with_leader_share,
+           level, died, reward_clear, reward_drill_hold, reward_drill_keep, reward_drill_focus, reward_pull_clean,
+           reward_pull_extra, reward_interrupt_landed, reward_fire_hurt, reward_kill_order, reward_controlled,
+           reward_cc_broken, reward_party_wipe, reward_survived, reward_death, reward_away, reward_step_cost,
+           reward_threat, reward_damage_dealt, reward_order_done, reward_order_failed, director_orders,
+           director_orders_done, order_done_share, order_focus_given, order_focus_done, order_pull_given,
+           order_pull_done, order_heal_given, order_heal_done]
+
+status:
+  headline: [won, won_leader_tank, won_leader_healer, won_leader_damage, hold_share, kept_share, focus_share, pulled_seconds, party_deaths, wipes,
+             threat_on_teammates, roles_rung, at_top_rung]
+  targets:
+    dk_guard: null
+    wing_leg_arrived: null
+    bar_clear: null
+    bar_clear_leader_tank: null
+    bar_clear_leader_healer: null
+    bar_clear_leader_damage: null
+    cleared: null
+    full_clear: null
+    wing_wipes: null
+    boss_vancleef: null
+    won: '>= 0.7'
+    hold_share: '>= 0.8'
+    kept_share: '>= 0.8'
+    focus_share: '>= 0.6'
+    wipes: '<= 0.05'
+
+convergence:
+  measure: won
+
+fade:
+  gate_metric: won
+  gate_value: 0.6
+
+costs:
+  gate_metric: won
+  gate_value: 0.6
+
+layout_sampling:
+  metric: won

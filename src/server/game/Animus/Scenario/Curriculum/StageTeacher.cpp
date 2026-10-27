@@ -166,7 +166,7 @@ namespace
 
 bool Animus::Curriculum::StageScenario::TeacherOn() const
 {
-    return _tuning.Teacher.Enable && _stage.Has(BlockId::Hint) && _instance;
+    return _tuning.Teacher.Enable && _stage.Teacher && _stage.Has(BlockId::Hint) && _instance;
 }
 
 void Animus::Curriculum::StageScenario::TeachSeat(Env& env, uint32 seatIndex, SeatView const& view, Player* bot,

@@ -42,6 +42,7 @@
 #include "StageScenario.h"
 #include "Supplies.h"
 #include "StringFormat.h"
+#include "SummonLevel.h"
 #include "MentalMap.h"
 #include "EntityMemory.h"
 #include "EntityActions.h"
@@ -406,7 +407,8 @@ void Animus::Curriculum::InstanceEncounter::ResetEpisode(Env& env)
     // ladder's running share (the training runs only; the probes are the policy's own).
     // With the teacher on, only a teacher-free trip is the policy's own and counts (it is what the legs' learning and
     // the teacher's share read).
-    bool const teacherOn = _scenario.Tuning().Teacher.Enable && _scenario.Stage().Has(BlockId::Hint);
+    bool const teacherOn = _scenario.Tuning().Teacher.Enable && _scenario.Stage().Teacher
+        && _scenario.Stage().Has(BlockId::Hint);
     if (built && !fight.Evaluating && fight.LegTrip && fight.LegCounted && fight.Leg >= 0
         && (!teacherOn || fight.TeacherFree))
         if (PointNavEncounter* nav = _scenario.PointNav())
@@ -462,6 +464,12 @@ void Animus::Curriculum::InstanceEncounter::BeforeLevel(Env& env)
         fight.Rung = std::min<uint32>(_scenario.WingRungNow(), uint32(arena.LevelLadder.size()) - 1);
         fight.WipesAllowed = tuning.WingWipes;
         data.EpisodeLevel = arena.LevelLadder[fight.Rung];
+    }
+    else if (arena.RelevelFirst)
+    {
+        // A wide band, the creatures levelled to it (party_bosses, the user 2026-10-27: "wide band with levelled
+        // creatures"): any level of it, no lift.
+        data.EpisodeLevel = uint8(urand(arena.RelevelFirst, std::max(arena.RelevelFirst, arena.RelevelLast)));
     }
     else
     {
@@ -577,6 +585,9 @@ bool Animus::Curriculum::InstanceEncounter::Build(Env& env, Map* map, uint8 /*le
     ArenaDefinition const& arena = _scenario.Arena(env);
     PointNavEncounter* nav = _scenario.PointNav();
     fight.Way = arena.RunClear && nav ? nav->WayOf(env, map, seat) : nullptr;
+    // Creatures levelled to the party (party_bosses), before anything is killed or pulled.
+    if (arena.RelevelFirst)
+        Relevel(env, fight, map);
     fight.StartSite = 0;
     fight.Killed = 0;
     fight.LegTrip = false;
@@ -731,7 +742,7 @@ void Animus::Curriculum::InstanceEncounter::PlanLeg(Env& env, EnvInstance& fight
     fight.LegCount = legs;
     // Whole runs only (Instance.WingWholeRuns): every episode the run from the entrance, the ladder's probes among
     // them.
-    if (_scenario.Tuning().Instance.WingWholeRuns)
+    if (_scenario.Tuning().Instance.WingWholeRuns && !arena.BossLegs)
     {
         PlanDrawnStart(env, fight, map, seat);
         return;
@@ -750,6 +761,10 @@ void Animus::Curriculum::InstanceEncounter::PlanLeg(Env& env, EnvInstance& fight
         leg = !learned || env.EpisodeSeedIndex % 2 == 0;
     else
         leg = !(learned && frand(0.0f, 1.0f) < PointNavEncounter::LegFullShare());
+    // party_bosses: always a boss's leg.
+    std::vector<uint32> const bosses = arena.BossLegs ? BossLegs(way, map) : std::vector<uint32>();
+    if (arena.BossLegs && !bosses.empty())
+        leg = true;
     if (!learned)
         fight.Probe = false;
     fight.LegCount = legs;
@@ -759,9 +774,12 @@ void Animus::Curriculum::InstanceEncounter::PlanLeg(Env& env, EnvInstance& fight
     fight.LegCounted = !env.Evaluating;
     // A teacher-free trip (Teacher.FreeShare): the policy alone, the one that measures the leg for the teacher's share.
     CurriculumTuning::TeacherTuning const& teacher = _scenario.Tuning().Teacher;
-    fight.TeacherFree = fight.LegCounted && teacher.Enable && _scenario.Stage().Has(BlockId::Hint)
+    fight.TeacherFree = fight.LegCounted && teacher.Enable && _scenario.Stage().Teacher
+        && _scenario.Stage().Has(BlockId::Hint)
         && frand(0.0f, 1.0f) < teacher.FreeShare;
     fight.Leg = seeded ? int32((env.EpisodeSeedIndex / 2) % legs) : int32(nav->DrawLegAt(env, fight.Rung, legs));
+    if (!bosses.empty())
+        fight.Leg = int32(bosses[seeded ? env.EpisodeSeedIndex % bosses.size() : urand(0, uint32(bosses.size()) - 1)]);
     if (fight.Leg > 0)
         StartFrom(env, fight, map, seat, uint32(fight.Leg), uint32(fight.Leg) - 1);
     // The leg's own clock: a gate's leg a door's allowance more.
@@ -885,6 +903,70 @@ std::vector<uint8> Animus::Curriculum::InstanceEncounter::StartsBlocked(PointNav
         previousGate = g;
     }
     return blocked;
+}
+
+std::vector<uint32> Animus::Curriculum::InstanceEncounter::BossLegs(PointNavEncounter::ClearWay const& way, Map* map)
+{
+    // The Deadmines' bosses: Rhahk'Zor, Sneed's Shredder (Sneed rides it), Gilnid, Mr. Smite, Captain Greenskin,
+    // Cookie, Edwin VanCleef.
+    static constexpr std::array<uint32, 7> BOSSES = { 644, 642, 1763, 646, 647, 645, 639 };
+    std::vector<uint32> legs;
+    if (!map)
+        return legs;
+    for (uint32 k = 0; k < way.Spawns.size(); ++k)
+    {
+        bool boss = false;
+        for (uint32 spawnId : way.Spawns[k])
+        {
+            auto const range = map->GetCreatureBySpawnIdStore().equal_range(spawnId);
+            for (auto it = range.first; it != range.second && !boss; ++it)
+                boss = it->second && std::find(BOSSES.begin(), BOSSES.end(), it->second->GetEntry()) != BOSSES.end();
+            if (boss)
+                break;
+        }
+        if (boss)
+            legs.push_back(k);
+    }
+    return legs;
+}
+
+void Animus::Curriculum::InstanceEncounter::Relevel(Env& env, EnvInstance& fight, Map* map)
+{
+    ArenaDefinition const& arena = _scenario.Arena(env);
+    uint8 const party = _scenario.Data(env).EpisodeLevel;
+    if (!map || !party)
+        return;
+    std::vector<Creature*> fresh;
+    for (auto const& [spawnId, creature] : map->GetCreatureBySpawnIdStore())
+        if (creature && creature->IsInWorld() && creature->IsAlive() && !creature->IsPet()
+            && !fight.Relevelled.contains(creature->GetGUID().GetCounter()))
+            fresh.push_back(creature);
+    // Summons are no spawns: the map's creatures near a living seat that no spawn id lists (a boss's adds).
+    if (Player* seat = _scenario.SeatBot(env, 0))
+    {
+        constexpr float SUMMON_YARDS = 120.0f;
+        std::list<Creature*> near;
+        auto const check = [](Creature* creature) { return creature->IsAlive(); };
+        Acore::CreatureListSearcher<decltype(check)> searcher(seat, near, check);
+        Cell::VisitObjects(seat->GetPositionX(), seat->GetPositionY(), map, searcher, SUMMON_YARDS);
+        for (Creature* creature : near)
+            if (creature && creature->IsAlive() && !creature->GetSpawnId() && !creature->IsPet()
+                && !creature->GetOwnerGUID().IsPlayer() && !fight.Relevelled.contains(creature->GetGUID().GetCounter()))
+                fresh.push_back(creature);
+    }
+    for (Creature* creature : fresh)
+    {
+        fight.Relevelled.insert(creature->GetGUID().GetCounter());
+        CreatureTemplate const* info = creature->GetCreatureTemplate();
+        int32 const offset = int32(info ? info->minlevel : creature->GetLevel()) - int32(arena.RelevelNative);
+        uint8 const level = uint8(std::clamp<int32>(int32(party) + offset, 1, DEFAULT_MAX_LEVEL));
+        if (level == creature->GetLevel())
+            continue;
+        Animus::PendingSummonLevel = level;
+        creature->SelectLevel(true);
+        Animus::PendingSummonLevel = 0;
+        creature->SetFullHealth();
+    }
 }
 
 bool Animus::Curriculum::InstanceEncounter::BossAliveBefore(PointNavEncounter::ClearWay const& way, uint32 k,
@@ -1091,6 +1173,14 @@ void Animus::Curriculum::InstanceEncounter::UpdateEnemies(Env& env)
 void Animus::Curriculum::InstanceEncounter::Update(Env& env)
 {
     EnvInstance& fight = _envs[env.Index];
+    // New creatures (a boss's summons) put at the party's level too, every two seconds.
+    constexpr uint32 RELEVEL_EVERY_DECISIONS = 8;
+    if (_scenario.Arena(env).RelevelFirst && ++fight.RelevelWait >= RELEVEL_EVERY_DECISIONS)
+    {
+        fight.RelevelWait = 0;
+        if (Map* map = env.FindMap())
+            Relevel(env, fight, map);
+    }
     Player* seat = _scenario.SeatBot(env, 0);
     Creature* boss = seat && !fight.Boss.IsEmpty() ? Encoding::CreatureThrough(*seat, fight.Boss) : nullptr;
     // A leg goes on without the last boss in the world: a leg past it starts with it killed, and its corpse can

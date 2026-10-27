@@ -48,6 +48,7 @@ namespace Animus::Curriculum::RolesDraw
         bool Caster = false;        // one of them casts (an interrupt can stop it)
         bool Linked = false;        // one engaged brings the rest
         bool Elite = false;
+        bool Hazard = false;        // one of them puts fire on the ground (party_packs)
         uint32 HealthPct = 100;     // of the creatures' own health
     };
 
@@ -64,6 +65,17 @@ namespace Animus::Curriculum::RolesDraw
         pack.Linked = tier >= tuning.LinkedTier;
         pack.Elite = tier >= tuning.EliteTier;
         pack.HealthPct = drill == RolesDrill::Keep ? std::max<uint32>(1, tuning.KeepHealthPct) : 100;
+        // party_packs: bigger from the start (more than one tank holds), a caster in every one, ground fire, linked
+        // and elites earlier.
+        if (drill == RolesDrill::Packs)
+        {
+            pack.Size = std::max<uint32>(1, std::min(tuning.PacksSizeMax, tuning.PacksSizeFirst
+                + tier / std::max<uint32>(1, tuning.PackGrowEvery)));
+            pack.Caster = true;
+            pack.Hazard = tier >= tuning.HazardTier;
+            pack.Linked = tier >= tuning.CasterTier;
+            pack.Elite = tier + 1 >= tuning.EliteTier;
+        }
         return pack;
     }
 
@@ -72,7 +84,7 @@ namespace Animus::Curriculum::RolesDraw
     [[nodiscard]] inline uint32 StandingPacks(RolesDrill drill, uint32 tier,
         CurriculumTuning::RolesTuning const& tuning)
     {
-        if (drill != RolesDrill::Pull)
+        if (drill != RolesDrill::Pull && drill != RolesDrill::Camp)
             return 2;
         return std::max<uint32>(2, std::min(tuning.CampPacksMax, tuning.CampPacksFirst + tier / 2));
     }
@@ -82,7 +94,7 @@ namespace Animus::Curriculum::RolesDraw
     [[nodiscard]] inline float PackSpacing(RolesDrill drill, uint32 tier, uint32 maxTier,
         CurriculumTuning::RolesTuning const& tuning, float nextNearest)
     {
-        if (drill != RolesDrill::Pull)
+        if (drill != RolesDrill::Pull && drill != RolesDrill::Camp)
             return nextNearest;
         float const t = maxTier ? std::min(1.0f, float(tier) / float(maxTier)) : 1.0f;
         return tuning.CampSpacingFirst + (tuning.CampSpacingLast - tuning.CampSpacingFirst) * t;
@@ -194,6 +206,12 @@ namespace Animus::Curriculum::RolesDraw
         float FocusDamage = 0.0f;       // the drilled damage dealer's damage on the tank's target ...
         float Damage = 0.0f;            // ... and all of it
         float PulledOffSeconds = 0.0f;  // ... and its seconds with an enemy on it
+        // The party combat curriculum's readings (every seat's, summed).
+        uint32 Interrupts = 0;
+        uint32 KillOrders = 0;
+        uint32 CCBroken = 0;
+        float ControlledSeconds = 0.0f;
+        float FireTaken = 0.0f;         // maximum healths ground fire took
     };
 
     [[nodiscard]] inline float HoldShare(Tally const& tally)
@@ -221,6 +239,10 @@ namespace Animus::Curriculum::RolesDraw
             case RolesDrill::Focus: return FocusShare(tally) >= tuning.WinFocus
                 && tally.PulledOffSeconds <= tuning.WinPulledSeconds;
             case RolesDrill::Pull:  return tally.ExtraPulls == 0;
+            // The party curriculum's: a pack cleared, no wipe, and -- P1, P2 -- nobody dead; P3 no second pack.
+            case RolesDrill::Party:
+            case RolesDrill::Packs: return tally.PartyDeaths == 0;
+            case RolesDrill::Camp:  return tally.ExtraPulls == 0;
             default:                return false;
         }
     }

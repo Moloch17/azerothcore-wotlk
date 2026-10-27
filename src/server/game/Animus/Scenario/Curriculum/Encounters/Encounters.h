@@ -385,6 +385,10 @@ namespace Animus::Curriculum
             uint32 TeacherStamp = UINT32_MAX;
             TeacherWay Teacher;
             ObjectGuid LootOpener;
+            /// The creatures put at the party's level (ArenaDefinition::RelevelFirst), and the decisions to the next
+            /// look for new ones (the ejected Sneed, the cannon's Defias).
+            std::unordered_set<ObjectGuid::LowType> Relevelled;
+            uint32 RelevelWait = 0;
             /// The teacher's presses on the way's objects and the seats' takes from a key chest, logged this episode
             /// (a few each: the gunpowder's chain, 2026-10-27, never got past the barrel).
             uint32 PressLogged = 0;
@@ -432,6 +436,11 @@ namespace Animus::Curriculum
         [[nodiscard]] static std::vector<uint8> StartsBlocked(PointNavEncounter::ClearWay const& way, Map* map);
         /// Whether a dungeon boss spawned at a checkpoint before `k` is alive.
         [[nodiscard]] static bool BossAliveBefore(PointNavEncounter::ClearWay const& way, uint32 k, Map* map);
+        /// The legs whose checkpoint's pack holds one of the Deadmines' bosses (ArenaDefinition::BossLegs).
+        [[nodiscard]] static std::vector<uint32> BossLegs(PointNavEncounter::ClearWay const& way, Map* map);
+        /// Every living creature of the instance not yet levelled to the party's level plus its own offset from the
+        /// dungeon's (ArenaDefinition::RelevelFirst): its stats and health as that level's.
+        void Relevel(Env& env, EnvInstance& fight, Map* map);
         /// Whether a leg's objective is met: its checkpoint's pack dead, its gate's object open, a living seat at the
         /// checkpoint.
         [[nodiscard]] bool LegMet(Env const& env, EnvInstance const& fight, Map* map, Player const* seat) const;
