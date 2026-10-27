@@ -117,9 +117,10 @@ void Animus::Curriculum::DirectorEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
         uint32 const given = orders(env).Done + orders(env).Failed;
         return given ? float(orders(env).Done) / float(given) : 0.0f;
     });
-    // The director's own terms, by its ledger (on every seat's row too).
+    // The director's own terms, by its own ledger (on every seat's row too): the reward_order_churn and
+    // reward_order_impossible columns read the seats' ledgers, which never hold them.
     for (RewardTerm term : { RewardTerm::OrderChurn, RewardTerm::OrderImpossible })
-        table.Add("reward_" + std::string(RewardTermName(term)), [this, term](Env const& env, uint32)
+        table.Add("director_reward_" + std::string(RewardTermName(term)), [this, term](Env const& env, uint32)
         {
             return _envs[env.Index].Rewards.Episode(term);
         });

@@ -221,8 +221,8 @@ eval:
   - reward_order_failed
   - reward_loot_unordered
   - reward_gate_opened
-  - reward_order_churn
-  - reward_order_impossible
+  - director_reward_order_churn
+  - director_reward_order_impossible
   - wing_gates_opened
   - director_turns
   - director_calls
