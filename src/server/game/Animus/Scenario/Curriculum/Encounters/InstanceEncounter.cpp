@@ -654,6 +654,24 @@ void Animus::Curriculum::InstanceEncounter::StartFrom(Env& env, EnvInstance& fig
     std::unordered_set<uint32> before;
     for (uint32 k = 0; k < uint32(fight.StartSite); ++k)
         before.insert(way.Spawns[k].begin(), way.Spawns[k].end());
+    // The instance's doors, buttons, goobers and chests through their first tick before anything is killed: a fresh
+    // instance's objects wait in GO_NOT_READY until the map first updates them, and a boss killed before then has its
+    // death script's door ignored (GameObject::UseDoorOrButton wants GO_READY; 2026-10-27: every leg past Sneed and
+    // Gilnid found their doors shut with them dead). A party that got here met them ticked; their first tick does
+    // nothing but this (GameObject::Update, GO_NOT_READY).
+    for (auto const& [spawnId, object] : map->GetGameObjectBySpawnIdStore())
+        if (object && object->IsInWorld() && object->getLootState() == GO_NOT_READY)
+            switch (object->GetGoType())
+            {
+                case GAMEOBJECT_TYPE_DOOR:
+                case GAMEOBJECT_TYPE_BUTTON:
+                case GAMEOBJECT_TYPE_GOOBER:
+                case GAMEOBJECT_TYPE_CHEST:
+                    object->SetLootState(GO_READY);
+                    break;
+                default:
+                    break;
+            }
     std::vector<Creature*> doomed;
     for (auto const& [spawnId, creature] : map->GetCreatureBySpawnIdStore())
         if (creature && creature->IsInWorld() && creature->IsAlive() && before.contains(uint32(spawnId)))
@@ -778,7 +796,7 @@ void Animus::Curriculum::InstanceEncounter::LogLegStart(Env const& /*env*/, EnvI
             if (GameObject const* object = it->second; object && object->IsInWorld())
             {
                 bool const door = object->GetGoType() == GAMEOBJECT_TYPE_DOOR;
-                bool const open = door ? object->GetGoState() != GO_STATE_READY : object->getLootState() != GO_READY;
+                bool const open = GateOpen(object);
                 gate = Acore::StringFormat("gate {} (entry {}, {}) {}", object->GetName(), object->GetEntry(),
                     door ? "door" : "object", open ? "open" : "shut");
             }
@@ -1122,8 +1140,7 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
                     if (GameObject const* object = it->second; object && object->IsInWorld())
                     {
                         bool const door = object->GetGoType() == GAMEOBJECT_TYPE_DOOR;
-                        bool const open = door ? object->GetGoState() != GO_STATE_READY
-                            : object->getLootState() != GO_READY;
+                        bool const open = GateOpen(object);
                         if (!open || !(pressedItself(object->GetGUID()) || (door && openerPressed)))
                             continue;
                         // The invariant (technique 2): a door gate paid with a boss spawned before it alive is a
@@ -1622,6 +1639,15 @@ bool Animus::Curriculum::InstanceEncounter::Usable(GameObject const* object)
     }
 }
 
+bool Animus::Curriculum::InstanceEncounter::GateOpen(GameObject const* object)
+{
+    if (!object || !object->IsInWorld())
+        return true;
+    if (object->GetGoType() == GAMEOBJECT_TYPE_DOOR)
+        return object->GetGoState() != GO_STATE_READY;
+    return object->getLootState() == GO_ACTIVATED || object->getLootState() == GO_JUST_DEACTIVATED;
+}
+
 uint32 Animus::Curriculum::InstanceEncounter::KeyOfLock(GameObject const* object)
 {
     return object ? KeyOf(object) : 0;
@@ -1648,8 +1674,7 @@ ObjectGuid Animus::Curriculum::InstanceEncounter::NextGate(Env const& env) const
             if (GameObject const* object = it->second; object && object->IsInWorld())
             {
                 // Open already (a door active, a chest looted): the next one.
-                bool const open = object->GetGoType() == GAMEOBJECT_TYPE_DOOR
-                    ? object->GetGoState() != GO_STATE_READY : object->getLootState() != GO_READY;
+                bool const open = GateOpen(object);
                 if (!open)
                     return object->GetGUID();
             }

@@ -67,7 +67,9 @@ namespace
     {
         if (object->GetGoType() == GAMEOBJECT_TYPE_DOOR)
             return object->GetGoState() != GO_STATE_READY;
-        return object->getLootState() != GO_READY || object->GetGoState() != GO_STATE_READY;
+        // Looted or used -- not one still waiting for its first tick (GO_NOT_READY).
+        return object->getLootState() == GO_ACTIVATED || object->getLootState() == GO_JUST_DEACTIVATED
+            || object->GetGoState() != GO_STATE_READY;
     }
 }
 

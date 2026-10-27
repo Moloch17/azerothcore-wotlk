@@ -44,10 +44,7 @@ namespace
 
     bool Open(GameObject const* object)
     {
-        if (!object || !object->IsInWorld())
-            return true;
-        return object->GetGoType() == GAMEOBJECT_TYPE_DOOR ? object->GetGoState() != GO_STATE_READY
-            : object->getLootState() != GO_READY;
+        return InstanceEncounter::GateOpen(object);
     }
 
     GameObject* GateObject(PointNavEncounter::ClearWay const& way, uint32 k, Map* map)

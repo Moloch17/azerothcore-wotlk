@@ -197,6 +197,9 @@ namespace Animus::Curriculum
             ObjectGuid Pull;            // the next pack's nearest member not in a fight, while no gate is before it
         };
         [[nodiscard]] TeacherWay const& Teacher(Env const& env, Map* map);
+        /// Whether a way's gate object is open: a door swung, a chest looted (activated or just deactivated) -- not
+        /// one still waiting for its first tick (GO_NOT_READY, 2026-10-27: read as looted at a leg's start).
+        [[nodiscard]] static bool GateOpen(GameObject const* object);
         /// The teacher's share this decision (per leg, PointNavEncounter::LegTau): 0 in an evaluation, a teacher-free
         /// trip, with the teacher off or no way.
         [[nodiscard]] float TeacherTau(Env const& env);
