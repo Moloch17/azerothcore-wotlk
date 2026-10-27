@@ -17,13 +17,9 @@
 !/var/ccache/.gitkeep
 /env/dist/*
 !/env/dist/.gitkeep
-# The forge's module conf under version control (technique 7, 2026-10-27): it drives every run and is conf-synced to
-# six machines; nothing else under env/dist/etc (worldserver.conf holds credentials).
-!/env/dist/etc/
-/env/dist/etc/*
-!/env/dist/etc/modules/
-/env/dist/etc/modules/*
-!/env/dist/etc/modules/mod_animus_forge.conf
+# The forge's module conf stays untracked (2026-10-27): it is per machine -- the cluster role and host, each machine's
+# env count and Learner.Args -- and a tracked copy pulled by cluster-pull overwrote every worker's with the host's.
+# forgectl conf-sync carries the shared keys; a diffable record is the host's copy in the session's commits.
 /env/user/*
 /.env*
 /apps/joiner
