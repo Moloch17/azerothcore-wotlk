@@ -192,6 +192,7 @@ namespace Animus::Curriculum
             uint32 Target = 0;          // the checkpoint the tank walks to
             bool AtGate = false;        // ... a gate still shut
             ObjectGuid Object;          // the way's next object to open (empty: none -- a boss's door, nothing shut)
+            uint32 ObjectGate = 0;      // ... the checkpoint it stands at (its gate's)
             WingTeacher::Opens ObjectOpens = WingTeacher::Opens::Click;
             ObjectGuid Opener;          // the seat that opens it
             ObjectGuid Pull;            // the next pack's nearest member not in a fight, while no gate is before it
@@ -214,6 +215,9 @@ namespace Animus::Curriculum
         /// the tank (TeacherWay::Lower .. Target). False without a line.
         [[nodiscard]] bool TeacherStep(Env const& env, Player const* bot, Player const* tank, bool isTank,
             Position& step);
+        /// The next step along the recorded line toward checkpoint `k` (an opener's way to its object: a barrel up a
+        /// ramp is no straight walk). False without a line.
+        [[nodiscard]] bool TeacherStepTo(Env const& env, Player const* bot, uint32 k, Position& step);
 
         [[nodiscard]] std::vector<RewardTerm> RewardTerms() const override;
         void AddEpisodeInfo(EpisodeInfoTable& table) override;

@@ -182,18 +182,20 @@ Animus::Curriculum::InstanceEncounter::TeacherWay const& Animus::Curriculum::Ins
             kept = best ? best->GetGUID() : ObjectGuid::Empty;
             return best;
         };
-        auto const loot = [&](GameObject* chest)
+        auto const loot = [&](GameObject* chest, uint32 k)
         {
             view.Object = chest->GetGUID();
+            view.ObjectGate = k;
             view.ObjectOpens = WingTeacher::Opens::Loot;
             if (Player* opener = nearest(chest, fight.LootOpener))
                 view.Opener = opener->GetGUID();
         };
         if (gate && gate->GetGoType() == GAMEOBJECT_TYPE_CHEST && EntityActions::KeyChest(gate))
-            loot(gate);
+            loot(gate, uint32(shut));
         else if (gate && gate->GetGoType() == GAMEOBJECT_TYPE_DOOR && Usable(gate))
         {
             view.Object = gate->GetGUID();
+            view.ObjectGate = uint32(shut);
             view.ObjectOpens = WingTeacher::Opens::Click;
             if (tank)
                 view.Opener = tank->GetGUID();
@@ -213,6 +215,7 @@ Animus::Curriculum::InstanceEncounter::TeacherWay const& Animus::Curriculum::Ins
                 if (Player* holder = carrier())
                 {
                     view.Object = cannon->GetGUID();
+                    view.ObjectGate = uint32(shut);
                     view.ObjectOpens = WingTeacher::Opens::UseKey;
                     view.Opener = holder->GetGUID();
                 }
@@ -223,7 +226,7 @@ Animus::Curriculum::InstanceEncounter::TeacherWay const& Animus::Curriculum::Ins
                             && chest->GetGoType() == GAMEOBJECT_TYPE_CHEST && EntityActions::KeyChest(chest)
                             && !Open(chest))
                         {
-                            loot(chest);
+                            loot(chest, k);
                             break;
                         }
             }
@@ -298,6 +301,35 @@ bool Animus::Curriculum::InstanceEncounter::TeacherStep(Env const& env, Player c
         return true;
     }
     // AHEAD_YARDS along the line, forward or back, not past the goal.
+    float const from = line.Along[at];
+    uint32 index = at;
+    if (goal > at)
+        while (index < goal && line.Along[index] - from < AHEAD_YARDS)
+            ++index;
+    else
+        while (index > goal && from - line.Along[index] < AHEAD_YARDS)
+            --index;
+    step = line.Points[index];
+    return true;
+}
+
+bool Animus::Curriculum::InstanceEncounter::TeacherStepTo(Env const& env, Player const* bot, uint32 k, Position& step)
+{
+    EnvInstance& fight = _envs[env.Index];
+    if (!fight.Way || !bot || !fight.Teacher.Valid)
+        return false;
+    TeacherLine const& line = LineOf(*fight.Way);
+    uint32 const legs = uint32(line.LegFirst.size());
+    if (line.Points.empty() || !legs)
+        return false;
+    TeacherWay const& view = fight.Teacher;
+    k = std::min(k, legs - 1);
+    uint32 const first = line.LegFirst[std::min({ view.Lower, k, legs - 1 })];
+    uint32 const end = line.LegEnd[std::min(std::max(view.Target, k), legs - 1)];
+    if (first >= end)
+        return false;
+    uint32 const at = Nearest(line.Points, first, end, *bot);
+    uint32 const goal = std::clamp(line.LegEnd[k] - 1, first, end - 1);
     float const from = line.Along[at];
     uint32 index = at;
     if (goal > at)

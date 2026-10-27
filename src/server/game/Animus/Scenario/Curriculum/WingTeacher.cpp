@@ -167,7 +167,13 @@ namespace
         {
             choice.Reason = Acore::StringFormat("{} ({:.0f} yd{})", what, facts.Object.Yards,
                 facts.Object.Slot < 0 ? ", not seen yet" : "");
-            // Faced first, as TurnToSee: within reach but behind the seat, the walk stops and the heading turns it.
+            // Far off, along the recorded line (a barrel up a ramp is no straight walk); near, straight to it, faced
+            // first as TurnToSee: within reach but behind the seat, the walk stops and the heading turns it.
+            if (facts.Object.Yards > Wt::OBJECT_DIRECT_YARDS && facts.ObjectStep.Present)
+            {
+                Wt::Steer(facts, choice, facts.ObjectStep.Bearing, facts.ObjectStep.Yards, 0.5f);
+                return true;
+            }
             Wt::Face(choice, facts.Object.Bearing);
             Wt::Steer(facts, choice, facts.Object.Bearing, facts.Object.Yards,
                 std::max(1.0f, facts.ObjectReach - 2.0f));

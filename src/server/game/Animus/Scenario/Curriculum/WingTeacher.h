@@ -137,6 +137,9 @@ namespace Animus::Curriculum::WingTeacher
         /// The way's next object, for the seat the adapter names its opener only: a Heavy Door, the barrel, the cannon.
         Place Object;
         Opens ObjectOpens = Opens::Click;
+        /// ... and the step along the recorded line toward it, while it is far (OBJECT_DIRECT_YARDS): a barrel up a
+        /// ramp is no straight walk.
+        Place ObjectStep;
         float ObjectReach = 5.0f;
         /// The party's time with no progress (the ready check's valve).
         float StillSeconds = 0.0f;
@@ -233,6 +236,7 @@ namespace Animus::Curriculum::WingTeacher
     constexpr float FACE_WITHIN = 0.6981317f;   // fighting: facing within this of the target is facing it
     constexpr float WALK_WITHIN = 1.5707963f;   // walking on: forward held while the way is within this of the facing
     constexpr float STOP_TO_TURN = 2.3561945f;  // ... and let go of beyond this, to turn on the spot
+    constexpr float OBJECT_DIRECT_YARDS = 8.0f; // an opener walks straight to its object from this near, else the line
 
     /// Steer to a place `yards` away at `bearing` and stop within `stopYards`: head for it, and hold forward while it
     /// is ahead enough; once there, let go. Adds the press it needs now, if any, and sets the heading.

@@ -304,6 +304,10 @@ void Animus::Curriculum::StageScenario::TeachSeat(Env& env, uint32 seatIndex, Se
             facts.Object = PlaceOf(bot, seat, object);
             facts.ObjectOpens = way.ObjectOpens;
             facts.ObjectReach = object->GetInteractionDistance();
+            Position along;
+            if (facts.Object.Yards > Wt::OBJECT_DIRECT_YARDS
+                && _instance->TeacherStepTo(env, bot, way.ObjectGate, along))
+                facts.ObjectStep = PlaceAt(bot, along.GetPositionX(), along.GetPositionY(), along.GetPositionZ());
         }
     facts.StillSeconds = _instance->NoProgressSeconds(env);
 
