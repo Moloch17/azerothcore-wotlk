@@ -385,6 +385,10 @@ namespace Animus::Curriculum
             uint32 TeacherStamp = UINT32_MAX;
             TeacherWay Teacher;
             ObjectGuid LootOpener;
+            /// The teacher's presses on the way's objects and the seats' takes from a key chest, logged this episode
+            /// (a few each: the gunpowder's chain, 2026-10-27, never got past the barrel).
+            uint32 PressLogged = 0;
+            uint32 LootLogged = 0;
             uint32 GatePaidBossAlive = 0;       // door gates paid with a boss spawned before them alive (invariant)
             uint32 Killed = 0;
             int32 GoalSite = 0;

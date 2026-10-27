@@ -995,13 +995,15 @@ bool Animus::Curriculum::InstanceEncounter::LegMet(Env const& env, EnvInstance c
                     return false;
             }
     }
-    // ... its gate's door open (a chest or the cannon are the party's to use; reaching them is the leg) ...
+    // ... its gate open: a door swung, a chest looted (2026-10-27: reaching the barrel was the leg, and nobody ever
+    // looted it -- the gunpowder's leg taught a walk) ...
     if (k < way.GateSpawns.size() && way.GateSpawns[k])
     {
         auto const range = map->GetGameObjectBySpawnIdStore().equal_range(way.GateSpawns[k]);
         for (auto it = range.first; it != range.second; ++it)
             if (GameObject const* object = it->second; object && object->IsInWorld()
-                && object->GetGoType() == GAMEOBJECT_TYPE_DOOR && object->GetGoState() == GO_STATE_READY)
+                && (object->GetGoType() == GAMEOBJECT_TYPE_DOOR || object->GetGoType() == GAMEOBJECT_TYPE_CHEST)
+                && !GateOpen(object))
                 return false;
     }
     // ... and a living seat at the checkpoint.
@@ -1158,7 +1160,17 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
     }
     for (uint32 index = 0; index < _scenario.Data(env).ActiveSeats; ++index)
         if (Player* bot = _scenario.SeatBot(env, index); bot && bot->IsInWorld() && bot->IsAlive())
-            EntityActions::AutoLoot(bot);
+        {
+            ObjectGuid const looting = bot->GetLootGUID();
+            uint32 const taken = EntityActions::AutoLoot(bot);
+            if (taken && fight.LootLogged < 4 && _scenario.Tuning().Instance.WingTrace)
+            {
+                ++fight.LootLogged;
+                LOG_INFO("module.animus", "Teacher loot: env {} seat {} took {} slot(s) from {}; holds the key: {}",
+                    env.Index, index, taken, looting.ToString(),
+                    EntityActions::CarriesKey(bot, bot->GetMapId()) ? "yes" : "no");
+            }
+        }
 
     // **Against the recorded line** (the path_* measures; never a reward): each living seat's yards from the line the
     // player walked -- a leg's own, or on a whole run the leg the party is on and the one before -- and the yards
@@ -1682,9 +1694,24 @@ ObjectGuid Animus::Curriculum::InstanceEncounter::NextGate(Env const& env) const
     return ObjectGuid::Empty;
 }
 
-void Animus::Curriculum::InstanceEncounter::OnSeatAction(Env& env, uint32 /*seat*/, SeatActionResult const& result)
+void Animus::Curriculum::InstanceEncounter::OnSeatAction(Env& env, uint32 seat, SeatActionResult const& result)
 {
     EnvInstance& fight = _envs[env.Index];
+    // The teacher's press on the way's object, as it went (a few an episode): what the gunpowder's chain does.
+    constexpr uint32 PRESS_LOGS = 4;
+    if (!result.ActedOn.IsEmpty() && result.ActedOn == fight.Teacher.Object && fight.PressLogged < PRESS_LOGS
+        && _scenario.Tuning().Instance.WingTrace)
+    {
+        ++fight.PressLogged;
+        Map* map = env.FindMap();
+        GameObject const* object = map ? map->GetGameObject(result.ActedOn) : nullptr;
+        LOG_INFO("module.animus", "Teacher press: env {} seat {} {} on {} (entry {}, loot state {}, go state {}): {}",
+            env.Index, seat, result.ActPress == uint8(EntityActions::Press::UseItem) ? "use item" : "interact",
+            object ? object->GetName() : std::string("gone"), object ? object->GetEntry() : 0,
+            object ? uint32(object->getLootState()) : 0, object ? uint32(object->GetGoState()) : 0,
+            result.ActRefused ? std::string("refused, ") + EntityActions::RefusalName(EntityActions::Refusal(
+                result.ActRefused)) : std::string("sent"));
+    }
     if (result.ActedOn.IsEmpty() || result.ActRefused || !result.ActedOn.IsGameObject())
         return;
     if (result.ActPress != uint8(EntityActions::Press::Interact) && result.ActPress != uint8(EntityActions::Press::UseItem))
