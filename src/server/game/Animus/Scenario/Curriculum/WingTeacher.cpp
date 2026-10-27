@@ -91,6 +91,9 @@ namespace
     /// toward it (too far, or round a corner, to be seen from here).
     void TurnToSee(Wt::Facts const& facts, Wt::Choice& choice, Wt::Place const& place)
     {
+        // Faced first: near enough that the walk stops, the heading still turns it into view (2026-10-07's teacher
+        // stood with its back to what it was meant to press).
+        Wt::Face(choice, place.Bearing);
         Wt::Steer(facts, choice, place.Bearing, place.Yards, Wt::MELEE_STOP_YARDS);
     }
 
@@ -164,6 +167,8 @@ namespace
         {
             choice.Reason = Acore::StringFormat("{} ({:.0f} yd{})", what, facts.Object.Yards,
                 facts.Object.Slot < 0 ? ", not seen yet" : "");
+            // Faced first, as TurnToSee: within reach but behind the seat, the walk stops and the heading turns it.
+            Wt::Face(choice, facts.Object.Bearing);
             Wt::Steer(facts, choice, facts.Object.Bearing, facts.Object.Yards,
                 std::max(1.0f, facts.ObjectReach - 2.0f));
             return true;
