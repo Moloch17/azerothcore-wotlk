@@ -164,6 +164,8 @@ namespace Animus::Curriculum::EntityActions
     /// that lock type it knows (SPELL_EFFECT_OPEN_LOCK, the type as its misc value: every character learns them) at
     /// the object, rather than sending CMSG_GAMEOBJ_USE. Null when the lock has no such entry, the object is flagged
     /// locked (GO_FLAG_LOCKED: the Iron Clad Door, which only its cannon opens), or the seat knows no such spell.
+    /// Whether the seat sees the near face of `object` (a click's line of sight; SeesObject's comment).
+    [[nodiscard]] bool SeesObject(Player const* bot, GameObject const* object);
     [[nodiscard]] SpellInfo const* OpeningSpellFor(Player const* bot, GameObject const* object);
     /// CMSG_CAST_SPELL for `info` at `targets` through the seat's session's handler, its refusal read back.
     CastOutcome CastThroughClient(Player* bot, SpellInfo const* info, SpellCastTargets& targets,

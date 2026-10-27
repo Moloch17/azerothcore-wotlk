@@ -296,6 +296,21 @@ bool Animus::Curriculum::EntityActions::OpensLoot(uint32 goType)
         || goType == GAMEOBJECT_TYPE_FISHINGHOLE;
 }
 
+bool Animus::Curriculum::EntityActions::SeesObject(Player const* bot, GameObject const* object)
+{
+    // A click lands on the object's near face, not its middle: the ray goes to a point SIGHT_FACE_YARDS in front of
+    // it, toward the seat, a yard up. Toward its middle, a shut door's own model blocked the ray to itself and the
+    // cannon's to the cannon (2026-10-27: every Heavy Door click and every gunpowder use refused for sight); a lever
+    // behind a shut door is still behind it from a point by the lever.
+    constexpr float SIGHT_FACE_YARDS = 1.5f;
+    float const dx = bot->GetPositionX() - object->GetPositionX();
+    float const dy = bot->GetPositionY() - object->GetPositionY();
+    float const flat = std::sqrt(dx * dx + dy * dy);
+    float const step = flat > 0.01f ? std::min(SIGHT_FACE_YARDS, flat * 0.5f) / flat : 0.0f;
+    return bot->IsWithinLOS(object->GetPositionX() + dx * step, object->GetPositionY() + dy * step,
+        object->GetPositionZ() + 1.0f);
+}
+
 SpellInfo const* Animus::Curriculum::EntityActions::OpeningSpellFor(Player const* bot, GameObject const* object)
 {
     if (!bot || !object || object->HasGameObjectFlag(GO_FLAG_LOCKED))
@@ -528,7 +543,7 @@ Animus::Curriculum::EntityActions::Refusal Animus::Curriculum::EntityActions::Ap
                 facts.Selectable = !go->HasGameObjectFlag(GO_FLAG_NOT_SELECTABLE);
                 facts.Reach = go->GetInteractionDistance();
                 facts.Distance = go->IsWithinDistInMap(bot) ? 0.0f : facts.Reach + 1.0f;
-                facts.Seen = bot->IsWithinLOSInMap(go);
+                facts.Seen = SeesObject(bot, go);
                 // A key chest is opened as a chest is: the client casts its lock's Opening spell (the barrel's lock
                 // 57 wants an Open or Treasure skill of 0), whose open-lock effect sends the loot (Spell::EffectOpenLock).
                 facts.Locked = LockedToHand(go->GetGoType(), go->GetGOInfo()->GetLockId())
@@ -581,7 +596,7 @@ Animus::Curriculum::EntityActions::Refusal Animus::Curriculum::EntityActions::Ap
             if (!item || !spell)
                 return refuse(Refusal::NoItem);
             // As a click: nothing behind a shut door is used on.
-            if (go && !bot->IsWithinLOSInMap(go))
+            if (go && !SeesObject(bot, go))
                 return refuse(Refusal::Sight);
             SpellCastTargets targets;
             if (go)
