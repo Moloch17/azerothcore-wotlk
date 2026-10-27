@@ -214,6 +214,11 @@ namespace Animus::Curriculum
         [[nodiscard]] bool LegsLearnedAt(uint32 arena, uint32 rung, uint32 legs, float* share = nullptr);
         [[nodiscard]] uint32 DrawLegAt(Env const& env, uint32 rung, uint32 legs);
         void NoteLegAt(uint32 arena, uint32 rung, uint32 leg, bool arrived);
+        /// A drawn start (Instance.WingStarts): a checkpoint in [1, legs) not `blocked`, by its failure rate as
+        /// DrawLegAt draws (untried first, LEG_FLOOR the least weight); 0 when none can be drawn. NoteStartAt counts
+        /// a start's outcome toward its rate at the rung.
+        [[nodiscard]] uint32 DrawStartAt(Env const& env, uint32 rung, uint32 legs, std::vector<uint8> const& blocked);
+        void NoteStartAt(uint32 arena, uint32 rung, uint32 start, bool progressed);
         static constexpr float LegFullShare() { return LEG_FULL_SHARE; }
         static constexpr float LegDoorSeconds() { return LEG_DOOR_SECONDS; }
 
@@ -511,6 +516,9 @@ namespace Animus::Curriculum
         /// Per arena index, each leg's running success rate and its training trips counted (RunLegs), under _poolLock.
         std::map<uint32, std::vector<float>> _legRates;
         std::map<uint32, std::vector<uint32>> _legTries;
+        /// The drawn starts' (DrawStartAt), keyed as the legs' are.
+        std::map<uint32, std::vector<float>> _startRates;
+        std::map<uint32, std::vector<uint32>> _startTries;
         /// Every leg of the arena's `legs` learned (LEG_LEARNED after LEG_MIN_TRIES); the share of them learned.
         [[nodiscard]] bool LegsLearned(uint32 arena, uint32 legs, float* share = nullptr);
         /// A training trip's leg, by failure rate (LEG_FLOOR the least weight).

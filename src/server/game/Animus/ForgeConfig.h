@@ -149,6 +149,7 @@ namespace AnimusForge
         std::string LearnerConfig;      // AnimusForge.Learner.Config; empty = configs/<scenario>.yaml
         std::string LearnerLogFile;     // resolved: never empty after Load
         std::vector<std::string> LearnerArgs;   // AnimusForge.Learner.Args, split on whitespace
+        std::vector<std::string> LearnerSets;   // KEY=VALUE pairs a start adds as --set (forge start --reset)
         /// AnimusForge.Learner.TorchThreads: CPU threads the learner's torch uses (0 = torch's own default). The
         /// learner runs beside the map update threads on the same cores, so `forge bench` sweeps both.
         uint32 LearnerTorchThreads = 0;

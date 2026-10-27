@@ -193,6 +193,11 @@ void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     table.Add("wing_is_full", [this](Env const& env, uint32) { return _envs[env.Index].LegTrip ? 0.0f : 1.0f; });
     table.Add("wing_leg", [this](Env const& env, uint32) { return float(_envs[env.Index].Leg); });
     table.Add("wing_gates_opened", [this](Env const& env, uint32) { return float(_envs[env.Index].GatesOpened); });
+    table.Add("wing_gate_paid_boss_alive", [this](Env const& env, uint32)
+    {
+        return float(_envs[env.Index].GatePaidBossAlive);
+    });
+    table.Add("wing_start_drawn", [this](Env const& env, uint32) { return _envs[env.Index].StartDrawn ? 1.0f : 0.0f; });
     table.Add("wing_leg_arrived", [this](Env const& env, uint32)
     {
         EnvInstance const& fight = _envs[env.Index];
@@ -399,11 +404,21 @@ void Animus::Curriculum::InstanceEncounter::ResetEpisode(Env& env)
             : fight.BossDead ? "cleared" : fight.Wiped ? "wiped" : "out of time");
     // A leg just ended counts toward its leg's rate at the rung (training only); a whole run just ended toward the
     // ladder's running share (the training runs only; the probes are the policy's own).
-    if (built && !fight.Evaluating && fight.LegTrip && fight.LegCounted && fight.Leg >= 0)
+    if (built && !fight.Evaluating && !fight.DoorCheck && fight.LegTrip && fight.LegCounted && fight.Leg >= 0)
         if (PointNavEncounter* nav = _scenario.PointNav())
             nav->NoteLegAt(_scenario.Data(env).Arena, fight.Rung, uint32(fight.Leg), fight.LegDone);
-    if (built && !fight.Evaluating && !fight.LegTrip)
+    // A drawn start just ended counts toward its start's rate; the ladder's running share takes whole runs only.
+    if (built && !fight.Evaluating && !fight.DoorCheck && fight.StartDrawn)
+        if (PointNavEncounter* nav = _scenario.PointNav())
+            nav->NoteStartAt(_scenario.Data(env).Arena, fight.Rung, uint32(std::max(fight.StartSite, 0)),
+                fight.BossDead || fight.GoalSite - fight.StartSite
+                    >= int32(_scenario.Tuning().Instance.WingStartGoalSites));
+    if (built && !fight.Evaluating && !fight.DoorCheck && !fight.LegTrip && !fight.StartDrawn)
         _scenario.NoteWingRun(fight.Rung, fight.Probe, fight.BossDead ? 1.0f : ClearedShare(fight));
+    if (fight.DoorCheck)
+        for (uint32 index = 0; index < _scenario.Data(env).ActiveSeats; ++index)
+            if (Player* bot = _scenario.SeatBot(env, index))
+                bot->SetGameMaster(false);
     fight = EnvInstance();
 }
 
@@ -575,6 +590,18 @@ bool Animus::Curriculum::InstanceEncounter::Build(Env& env, Map* map, uint8 /*le
         PlanLeg(env, fight, map, seat);
     fight.GoalSite = fight.StartSite;
     fight.HasGoal = false;
+    // The door check (`forge probe doors`): the next spare episode -- a training one, or an evaluation's unseeded
+    // env -- in game mode, so the creatures leave the party to its checks.
+    if (_doorCheckArmed && fight.Way && map && env.EpisodeSeedIndex == NO_EPISODE_SEED)
+    {
+        _doorCheckArmed = false;
+        fight.DoorCheck = true;
+        fight.StartDrawn = false;
+        for (uint32 index = 0; index < data.ActiveSeats; ++index)
+            if (Player* bot = _scenario.SeatBot(env, index))
+                bot->SetGameMaster(true);
+        LOG_INFO("module.animus", "Probe doors: env {} checks the doors this episode", env.Index);
+    }
     // The party stays at the door with the trash alive (a backwards run: at its start, what lies behind it dead).
     // The creatures a full clear kills: every hostile one the instance holds, bosses among them (an instance loads
     // all its grids when it is created).
@@ -701,7 +728,10 @@ void Animus::Curriculum::InstanceEncounter::PlanLeg(Env& env, EnvInstance& fight
     // Whole runs only (Instance.WingWholeRuns): every episode the run from the entrance, the ladder's probes among
     // them.
     if (_scenario.Tuning().Instance.WingWholeRuns)
+    {
+        PlanDrawnStart(env, fight, map, seat);
         return;
+    }
     uint32 const arenaIndex = _scenario.Data(env).Arena;
     float share = 0.0f;
     bool const learned = nav->LegsLearnedAt(arenaIndex, fight.Rung, legs, &share);
@@ -733,6 +763,288 @@ void Animus::Curriculum::InstanceEncounter::PlanLeg(Env& env, EnvInstance& fight
     env.EpisodeLengthMs = std::max<uint32>(1000, uint32(seconds * 1000.0f));
     LOG_DEBUG("module.animus", "{}: env {} leg {} of {} at rung {} ({:.0f}% of the legs learned): {} creatures killed "
         "before it", _scenario.Name(), env.Index, fight.Leg, legs, fight.Rung, share * 100.0f, fight.Killed);
+}
+
+void Animus::Curriculum::InstanceEncounter::PlanDrawnStart(Env& env, EnvInstance& fight, Map* map, Player* seat)
+{
+    CurriculumTuning::InstanceTuning const& tuning = _scenario.Tuning().Instance;
+    PointNavEncounter::ClearWay const& way = *fight.Way;
+    PointNavEncounter* nav = _scenario.PointNav();
+    uint32 const legs = uint32(way.Points.size());
+    if (!nav || !map || legs < 2 || env.Evaluating || fight.Probe || tuning.WingStarts <= 0.0f
+        || frand(0.0f, 1.0f) >= tuning.WingStarts)
+        return;
+    uint32 const start = nav->DrawStartAt(env, fight.Rung, legs, StartsBlocked(way, map));
+    if (!start)
+        return;
+    StartFrom(env, fight, map, seat, start, start - 1);
+    fight.StartDrawn = true;
+    // The clock: the whole run's by the share of the recorded time that remains (the checkpoints' share without a
+    // recorded line), at least WingStartMinSeconds.
+    float total = 0.0f;
+    float remaining = 0.0f;
+    for (uint32 k = 0; k < way.LegSeconds.size(); ++k)
+    {
+        total += way.LegSeconds[k];
+        if (k >= start)
+            remaining += way.LegSeconds[k];
+    }
+    float const share = total > 0.0f ? remaining / total : float(legs - start) / float(legs);
+    float const seconds = std::max(float(tuning.WingStartMinSeconds),
+        float(_scenario.Arena(env).EpisodeSeconds) * share);
+    env.EpisodeLengthMs = std::max<uint32>(1000, uint32(seconds * 1000.0f));
+    LOG_DEBUG("module.animus", "{}: env {} starts at checkpoint {} of {} at rung {} ({} creatures killed before it, "
+        "{:.0f} s on the clock)", _scenario.Name(), env.Index, start, legs, fight.Rung, fight.Killed, seconds);
+}
+
+std::vector<uint8> Animus::Curriculum::InstanceEncounter::StartsBlocked(PointNavEncounter::ClearWay const& way,
+    Map* map)
+{
+    uint32 const legs = uint32(way.Points.size());
+    std::vector<uint8> blocked(legs, 0);
+    if (!map)
+        return blocked;
+    auto const bossAt = [&way, map](uint32 k)
+    {
+        if (k >= way.Spawns.size())
+            return false;
+        for (uint32 spawnId : way.Spawns[k])
+        {
+            auto const range = map->GetCreatureBySpawnIdStore().equal_range(spawnId);
+            for (auto it = range.first; it != range.second; ++it)
+                if (it->second && it->second->IsDungeonBoss())
+                    return true;
+        }
+        return false;
+    };
+    auto const doorAt = [&way, map](uint32 g)
+    {
+        if (g >= way.GateSpawns.size() || !way.GateSpawns[g])
+            return false;
+        auto const range = map->GetGameObjectBySpawnIdStore().equal_range(way.GateSpawns[g]);
+        for (auto it = range.first; it != range.second; ++it)
+            if (it->second && it->second->GetGoType() == GAMEOBJECT_TYPE_DOOR)
+                return true;
+        return false;
+    };
+    // From the last boss site before a door gate (after the gate before it) to the checkpoint past the door: a start
+    // in between stands before a door only that boss's death opens.
+    uint32 previousGate = 0;
+    for (uint32 g = 0; g < legs; ++g)
+    {
+        if (!way.IsGate(g))
+            continue;
+        if (doorAt(g))
+            for (uint32 s = g; s-- > previousGate;)
+                if (bossAt(s))
+                {
+                    for (uint32 k = s + 1; k <= g + 1 && k < legs; ++k)
+                        blocked[k] = 1;
+                    break;
+                }
+        previousGate = g;
+    }
+    return blocked;
+}
+
+bool Animus::Curriculum::InstanceEncounter::BossAliveBefore(PointNavEncounter::ClearWay const& way, uint32 k,
+    Map* map)
+{
+    if (!map)
+        return false;
+    for (uint32 j = 0; j < k && j < way.Spawns.size(); ++j)
+        for (uint32 spawnId : way.Spawns[j])
+        {
+            auto const range = map->GetCreatureBySpawnIdStore().equal_range(spawnId);
+            for (auto it = range.first; it != range.second; ++it)
+                if (it->second && it->second->IsDungeonBoss() && it->second->IsAlive())
+                    return true;
+        }
+    return false;
+}
+
+bool Animus::Curriculum::InstanceEncounter::ArmDoorCheck(std::string& reply)
+{
+    _doorCheckArmed = true;
+    reply = "Probe doors armed: the next spare episode checks the Deadmines' doors; read the server log for "
+        "`Probe doors:` lines (a `forgectl probe doors` waits for them).";
+    return true;
+}
+
+void Animus::Curriculum::InstanceEncounter::RunDoorCheck(Env& env, EnvInstance& fight, Map* map)
+{
+    namespace Ea = EntityActions;
+    constexpr uint32 LEVER = 101831;            // the Door Lever past the Factory Door, wired to it
+    constexpr uint32 FACTORY_DOOR = 13965;
+    constexpr uint32 SNEED = 643;
+    constexpr uint32 MAST_ROOM_DOOR = 16400;
+    constexpr uint32 CANNON = 16398;
+    constexpr uint32 IRON_CLAD_DOOR = 16397;
+    constexpr uint32 GUNPOWDER = 5397;
+    constexpr uint32 SETTLE_DECISIONS = 2;      // after a teleport, for the client's view to catch up
+    constexpr uint32 DOOR_WAIT_DECISIONS = 12;  // 3 s for a script to swing a door
+    constexpr uint32 DONE = 1000;
+    if (fight.DoorStep == DONE)
+        return;
+    Player* seat = _scenario.SeatBot(env, 0);
+    if (!map || !seat || !seat->IsInWorld())
+    {
+        LOG_INFO("module.animus", "Probe doors: FAIL: no seat or map to check with; the episode ends");
+        fight.DoorStep = DONE;
+        env.EpisodeLengthMs = std::max<uint32>(1, env.EpisodeElapsedMs);
+        return;
+    }
+    auto const objectOf = [map](uint32 entry) -> GameObject*
+    {
+        for (auto const& [spawnId, object] : map->GetGameObjectBySpawnIdStore())
+            if (object && object->IsInWorld() && object->GetEntry() == entry)
+                return object;
+        return nullptr;
+    };
+    auto const creatureOf = [map](uint32 entry) -> Creature*
+    {
+        for (auto const& [spawnId, creature] : map->GetCreatureBySpawnIdStore())
+            if (creature && creature->IsInWorld() && creature->GetEntry() == entry)
+                return creature;
+        return nullptr;
+    };
+    auto const place = [this, &env](Position const& at)
+    {
+        EnvState const& data = _scenario.Data(env);
+        for (uint32 index = 0; index < data.ActiveSeats; ++index)
+            if (Player* bot = _scenario.SeatBot(env, index))
+            {
+                float const angle = float(index) * 2.0f * float(M_PI) / float(std::max<uint32>(1, data.ActiveSeats));
+                BotFactory::TeleportWithinMap(bot, Position(at.GetPositionX() + 0.7f * std::cos(angle),
+                    at.GetPositionY() + 0.7f * std::sin(angle), at.GetPositionZ(), at.GetOrientation()));
+            }
+    };
+    auto const press = [seat](Ea::Press kind, GameObject const* object)
+    {
+        ObjectGuid focus;
+        SeatActionResult result;
+        return object ? Ea::Apply(kind, seat, object->GetGUID().GetRawValue(), focus, result) : Ea::Refusal::Gone;
+    };
+    auto const open = [](GameObject const* door)
+    {
+        return !door || !door->IsInWorld() || door->GetGoState() != GO_STATE_READY;
+    };
+    auto const note = [&fight](bool ok, std::string const& what)
+    {
+        ++(ok ? fight.DoorOk : fight.DoorFail);
+        LOG_INFO("module.animus", "Probe doors: {}: {}", ok ? "OK" : "FAIL", what);
+    };
+    switch (fight.DoorStep)
+    {
+        case 0:
+            // The Factory Door's near side, the lever 4.7 yd off past the shut door.
+            place(Position(-190.0f, -455.8f, 54.4f, 4.7f));
+            fight.DoorWait = 0;
+            ++fight.DoorStep;
+            return;
+        case 1:
+        {
+            if (++fight.DoorWait < SETTLE_DECISIONS)
+                return;
+            Ea::Refusal const refusal = press(Ea::Press::Interact, objectOf(LEVER));
+            note(refusal == Ea::Refusal::Sight, Acore::StringFormat("the lever past the shut Factory Door: {}",
+                refusal == Ea::Refusal::Sight ? "refused for sight, as a click is"
+                : refusal == Ea::Refusal::None ? "PRESSED through the door"
+                : Acore::StringFormat("refused for {} (sight expected)", Ea::RefusalName(refusal))));
+            ++fight.DoorStep;
+            return;
+        }
+        case 2:
+            // The lever's own side.
+            place(Position(-189.0f, -461.5f, 54.5f, 1.6f));
+            fight.DoorWait = 0;
+            ++fight.DoorStep;
+            return;
+        case 3:
+        {
+            if (++fight.DoorWait < SETTLE_DECISIONS)
+                return;
+            Ea::Refusal const refusal = press(Ea::Press::Interact, objectOf(LEVER));
+            note(refusal == Ea::Refusal::None, Acore::StringFormat("the lever from its own side: {}",
+                refusal == Ea::Refusal::None ? "pressed" : Acore::StringFormat("refused for {}",
+                    Ea::RefusalName(refusal))));
+            fight.DoorWait = 0;
+            ++fight.DoorStep;
+            return;
+        }
+        case 4:
+            if (open(objectOf(FACTORY_DOOR)))
+            {
+                note(true, "the Factory Door swung by the lever");
+                ++fight.DoorStep;
+            }
+            else if (++fight.DoorWait >= DOOR_WAIT_DECISIONS)
+            {
+                note(false, "the Factory Door stayed shut 3 s after the lever");
+                ++fight.DoorStep;
+            }
+            return;
+        case 5:
+        {
+            Creature* sneed = creatureOf(SNEED);
+            if (sneed && sneed->IsAlive())
+                sneed->KillSelf(false);
+            note(sneed != nullptr, sneed ? "Sneed killed (his script opens the Mast Room Door)" : "Sneed not found");
+            fight.DoorWait = 0;
+            ++fight.DoorStep;
+            return;
+        }
+        case 6:
+            if (open(objectOf(MAST_ROOM_DOOR)))
+            {
+                note(true, "the Mast Room Door opened on Sneed's death");
+                ++fight.DoorStep;
+            }
+            else if (++fight.DoorWait >= DOOR_WAIT_DECISIONS)
+            {
+                note(false, "the Mast Room Door stayed shut 3 s after Sneed's death");
+                ++fight.DoorStep;
+            }
+            return;
+        case 7:
+            // The cannon, the gunpowder in seat 0's bags.
+            place(Position(-105.5f, -658.0f, 7.3f, 2.3f));
+            seat->AddItem(GUNPOWDER, 1);
+            fight.DoorWait = 0;
+            ++fight.DoorStep;
+            return;
+        case 8:
+        {
+            if (++fight.DoorWait < SETTLE_DECISIONS)
+                return;
+            Ea::Refusal const refusal = press(Ea::Press::UseItem, objectOf(CANNON));
+            note(refusal == Ea::Refusal::None, Acore::StringFormat("the gunpowder used on the cannon: {}",
+                refusal == Ea::Refusal::None ? "fired" : Acore::StringFormat("refused for {}",
+                    Ea::RefusalName(refusal))));
+            fight.DoorWait = 0;
+            ++fight.DoorStep;
+            return;
+        }
+        case 9:
+            if (open(objectOf(IRON_CLAD_DOOR)))
+            {
+                note(true, "the Iron Clad Door blown open by the cannon");
+                ++fight.DoorStep;
+            }
+            else if (++fight.DoorWait >= DOOR_WAIT_DECISIONS)
+            {
+                note(false, "the Iron Clad Door stayed shut 3 s after the cannon");
+                ++fight.DoorStep;
+            }
+            return;
+        default:
+            seat->DestroyItemCount(GUNPOWDER, 9999, true);
+            LOG_INFO("module.animus", "Probe doors: {} of {} checks passed; the episode ends", fight.DoorOk,
+                fight.DoorOk + fight.DoorFail);
+            fight.DoorStep = DONE;
+            env.EpisodeLengthMs = std::max<uint32>(1, env.EpisodeElapsedMs);
+            return;
+    }
 }
 
 void Animus::Curriculum::InstanceEncounter::LogLegMissed(Env const& env, EnvInstance const& fight, Map* map,
@@ -921,6 +1233,11 @@ void Animus::Curriculum::InstanceEncounter::UpdateEnemies(Env& env)
 void Animus::Curriculum::InstanceEncounter::Update(Env& env)
 {
     EnvInstance& fight = _envs[env.Index];
+    if (fight.DoorCheck)
+    {
+        RunDoorCheck(env, fight, env.FindMap());
+        return;
+    }
     Player* seat = _scenario.SeatBot(env, 0);
     Creature* boss = seat && !fight.Boss.IsEmpty() ? Encoding::CreatureThrough(*seat, fight.Boss) : nullptr;
     // A leg goes on without the last boss in the world: a leg past it starts with it killed, and its corpse can
@@ -976,6 +1293,10 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
                             : object->getLootState() != GO_READY;
                         if (!open || !(pressedItself(object->GetGUID()) || (door && openerPressed)))
                             continue;
+                        // The invariant (technique 2): a door gate paid with a boss spawned before it alive is a
+                        // door the party opened without the kill that should have -- a lever reached wrongly.
+                        if (door && BossAliveBefore(*fight.Way, k, map))
+                            ++fight.GatePaidBossAlive;
                         fight.GatePaid[k] = 1;
                         ++fight.GatesOpened;
                         if (_scenario.Tuning().Instance.WingTrace)

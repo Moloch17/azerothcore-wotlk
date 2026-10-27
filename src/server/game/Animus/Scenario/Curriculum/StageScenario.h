@@ -393,6 +393,7 @@ namespace Animus::Curriculum
         void SetShapingScale(float scale) override;
         void SetCostScale(float scale) override;
         bool PinEvaluationArena(uint32 pin) override;
+        bool Probe(std::string const& what, std::string& reply) override;
         void SetStandIn(bool standIn) override;
         void SetNoSharedMemory(bool off) override;
         void SetNoObjectMemory(bool off) override;

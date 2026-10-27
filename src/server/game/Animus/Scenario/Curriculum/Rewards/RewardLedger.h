@@ -222,6 +222,8 @@ namespace Animus::Curriculum
         GateOpened,
         OrderChurn,
         OrderImpossible,
+        /// Each order the director issued (OrderIssued, Cost: the asking priced, technique 4). Appended.
+        OrderIssued,
         Count
     };
 
@@ -344,6 +346,7 @@ namespace Animus::Curriculum
             case RewardTerm::LootUnordered:
             case RewardTerm::OrderChurn:
             case RewardTerm::OrderImpossible:
+            case RewardTerm::OrderIssued:
                 return RewardCategory::Cost;
             // The seek stage's room goals: a teaching aid on the progress-linear aid scale.
             case RewardTerm::RoomGoal:

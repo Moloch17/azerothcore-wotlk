@@ -811,6 +811,13 @@ bool AnimusForge::Forge::StartCurrent()
         // scenario carries on from one trial to the next).
         ForgeConfig learnerConfig = config;
         learnerConfig.LearnerRanks = PoolRanks(config.LearnerRanks);
+        if (!entry.Resume && !_plan.ResetLayouts.empty())
+        {
+            std::string list;
+            for (std::string const& layout : _plan.ResetLayouts)
+                list += (list.empty() ? "" : ",") + layout;
+            learnerConfig.LearnerSets.push_back("reset_layouts=[" + list + "]");
+        }
         if (_config.Cluster == ForgeConfig::ClusterRole::Host)
         {
             _cluster.Poll();

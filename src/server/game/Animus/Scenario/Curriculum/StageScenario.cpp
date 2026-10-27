@@ -573,6 +573,28 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         {
             return Data(env).Seats[seat].Rewards.Episode(term);
         });
+    // The largest term's share of a seat's episode reward, by magnitude, and which term (RewardTerm's index): a
+    // reward-hacking detector (technique 2, 2026-10-27) -- a run whose return is mostly one term is being farmed.
+    auto const top = [this](Env const& env, uint32 seat)
+    {
+        RewardLedger const& ledger = Data(env).Seats[seat].Rewards;
+        float total = 0.0f;
+        float best = 0.0f;
+        uint32 which = 0;
+        for (uint32 term = 0; term < uint32(RewardTerm::Count); ++term)
+        {
+            float const value = std::fabs(ledger.Episode(RewardTerm(term)));
+            total += value;
+            if (value > best)
+            {
+                best = value;
+                which = term;
+            }
+        }
+        return std::pair<float, uint32>(total > 0.0f ? best / total : 0.0f, which);
+    };
+    _info.Add("reward_top_share", [top](Env const& env, uint32 seat) { return top(env, seat).first; });
+    _info.Add("reward_top_term", [top](Env const& env, uint32 seat) { return float(top(env, seat).second); });
     // The width this episode's camera frames were cast at (AnimusForge.Vision.RenderSizes), before they were scaled
     // up to the canonical image: the learner can split its measures by render tier.
     if (_stage.Has(BlockId::Vision))
@@ -5616,6 +5638,21 @@ void Animus::Curriculum::StageScenario::SetNoSharedMemory(bool off)
         LOG_INFO("module.animus", "Animus forge: stage {}: {}", _stage.Name, off
             ? "the evaluation's seats start blank (no shared memory: the learner's no_shared_memory arm)"
             : "the evaluation's seats adopt the shared memory as the seed draws");
+}
+
+bool Animus::Curriculum::StageScenario::Probe(std::string const& what, std::string& reply)
+{
+    if (what != "doors")
+    {
+        reply = "no such probe: doors";
+        return false;
+    }
+    if (!_instance)
+    {
+        reply = "this stage has no dungeon to check doors in";
+        return false;
+    }
+    return _instance->ArmDoorCheck(reply);
 }
 
 void Animus::Curriculum::StageScenario::SetNoObjectMemory(bool off)

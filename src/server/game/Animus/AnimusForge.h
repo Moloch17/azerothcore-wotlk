@@ -89,6 +89,8 @@ namespace AnimusForge
         void CommandStatus(LineSink const& out);
         void CommandScenarios(LineSink const& out);
         bool CommandStart(std::vector<std::string> scenarios, LineSink const& out);
+        /// `forge probe <what>`: a mechanic probe in the running scenario's next spare episode (Scenario::Probe).
+        bool CommandProbe(std::string const& what, LineSink const& out);
         bool CommandFast(std::vector<std::string> scenarios, LineSink const& out);
         bool CommandResume(std::vector<std::string> scenarios, LineSink const& out);
         bool CommandPause(LineSink const& out);
@@ -199,6 +201,9 @@ namespace AnimusForge
             bool Fast = false;              // `forge fast`: trained with ForgeConfig::FastProfile
             /// Env steps each stage of a fast run trains for (`forge fast <steps>`); 0 = AnimusForge.Fast.Budget.
             uint64 Budget = 0;
+            /// `forge start <stage> --reset <layout>`: the layouts whose networks start fresh while the rest seed
+            /// from the stage's own last run (the learner's reset_layouts; technique 8).
+            std::vector<std::string> ResetLayouts;
 
             [[nodiscard]] bool Remote() const { return Policy == "remote"; }
         };

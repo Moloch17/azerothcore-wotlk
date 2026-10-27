@@ -78,7 +78,7 @@ Animus::Curriculum::DirectorEncounter::DirectorEncounter(StageScenario& scenario
 std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::DirectorEncounter::RewardTerms() const
 {
     return { RewardTerm::OrderDone, RewardTerm::OrderFailed, RewardTerm::LootUnordered, RewardTerm::OrderChurn,
-        RewardTerm::OrderImpossible };
+        RewardTerm::OrderImpossible, RewardTerm::OrderIssued };
 }
 
 void Animus::Curriculum::DirectorEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
@@ -119,11 +119,17 @@ void Animus::Curriculum::DirectorEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     });
     // The director's own terms, by its own ledger (on every seat's row too): the reward_order_churn and
     // reward_order_impossible columns read the seats' ledgers, which never hold them.
-    for (RewardTerm term : { RewardTerm::OrderChurn, RewardTerm::OrderImpossible })
+    for (RewardTerm term : { RewardTerm::OrderChurn, RewardTerm::OrderImpossible, RewardTerm::OrderIssued })
         table.Add("director_reward_" + std::string(RewardTermName(term)), [this, term](Env const& env, uint32)
         {
             return _envs[env.Index].Rewards.Episode(term);
         });
+    // The orders' pace (technique 2), and the orders carried out that the pay cap left unpaid (DonePerMinute).
+    table.Add("director_orders_per_minute", [orders](Env const& env, uint32)
+    {
+        return float(orders(env).Orders) / std::max(1.0f, float(env.EpisodeElapsedMs) / 60000.0f);
+    });
+    table.Add("order_done_unpaid", [this](Env const& env, uint32) { return float(_envs[env.Index].DoneUnpaid); });
 }
 
 void Animus::Curriculum::DirectorEncounter::ResetEpisode(Env& env)
@@ -131,6 +137,8 @@ void Animus::Curriculum::DirectorEncounter::ResetEpisode(Env& env)
     EnvDirector& director = _envs[env.Index];
     director = EnvDirector();
     director.Rewards.ResetEpisode();
+    // A full hand of OrderDone tokens to begin with (Director.DonePerMinute).
+    director.DoneTokens.fill(_scenario.Tuning().Director.DonePerMinute);
 }
 
 bool Animus::Curriculum::DirectorEncounter::Active(Env const& env) const
@@ -780,11 +788,24 @@ void Animus::Curriculum::DirectorEncounter::Reward(Env& env, uint32 seat, Player
     DirectorOrders& orders = director.Orders;
     DirectorOrders::MemberOrder& order = orders.Members[seat];
     float paid = 0.0f;
+    // The seat's tokens for OrderDone pay (Director.DonePerMinute): one each 60 / DonePerMinute seconds, DonePerMinute
+    // held.
+    float const cap = tuning.DonePerMinute;
+    if (cap > 0.0f)
+        director.DoneTokens[seat] = std::min(cap, director.DoneTokens[seat]
+            + cap * float(_scenario.StepMs(env)) / 60000.0f);
     if (order.Kind != OrderKind::None && (order.DoneNow || order.FailedNow))
     {
         if (order.DoneNow)
         {
-            paid += ledger.Add(RewardTerm::OrderDone, tuning.OrderDone);
+            if (cap <= 0.0f || director.DoneTokens[seat] >= 1.0f)
+            {
+                paid += ledger.Add(RewardTerm::OrderDone, tuning.OrderDone);
+                if (cap > 0.0f)
+                    director.DoneTokens[seat] -= 1.0f;
+            }
+            else
+                ++director.DoneUnpaid;
             ++orders.Done;
             ++orders.DoneOf[uint32(order.Kind)];
             director.DoneFlash[seat] = 1;
@@ -833,5 +854,10 @@ float Animus::Curriculum::DirectorEncounter::DirectorReward(Env& env, float cons
             -tuning.OrderImpossible * float(director.ImpossibleDue));
         director.ImpossibleDue = 0;
     }
+    // Each order issued since the last reward (Director.OrderIssued): the asking priced.
+    if (uint32 const issued = director.Orders.Orders - std::min(director.Orders.Orders, director.OrdersCharged);
+        issued && tuning.OrderIssued > 0.0f)
+        own += director.Rewards.Add(RewardTerm::OrderIssued, -tuning.OrderIssued * float(issued));
+    director.OrdersCharged = director.Orders.Orders;
     return (seats ? total / float(seats) : 0.0f) + own;
 }

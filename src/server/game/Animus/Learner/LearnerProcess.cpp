@@ -109,6 +109,8 @@ namespace
         // The learner's torch shares the machine with the map update threads; 0 leaves torch's own default.
         if (config.LearnerTorchThreads)
             set("torch_threads=" + std::to_string(config.LearnerTorchThreads));
+        for (std::string const& value : config.LearnerSets)
+            set(value);
 
         // A cluster host's learner trains on its workers' sims as well as this one (the learner's ClusterEnv).
         if (!config.ClusterSims.empty())

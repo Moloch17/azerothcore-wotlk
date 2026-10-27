@@ -2609,6 +2609,54 @@ void Animus::Curriculum::PointNavEncounter::NoteLegAt(uint32 arena, uint32 rung,
     ++tries[leg];
 }
 
+uint32 Animus::Curriculum::PointNavEncounter::DrawStartAt(Env const& env, uint32 rung, uint32 legs,
+    std::vector<uint8> const& blocked)
+{
+    std::vector<float> weights(legs, 0.0f);
+    {
+        std::lock_guard lock(_poolLock);
+        std::vector<float> const& rates = _startRates[LegKey(_scenario.Data(env).Arena, rung)];
+        std::vector<uint32> const& tries = _startTries[LegKey(_scenario.Data(env).Arena, rung)];
+        for (uint32 start = 1; start < legs; ++start)
+        {
+            if (start < blocked.size() && blocked[start])
+                continue;
+            bool const tried = start < rates.size() && start < tries.size() && tries[start] >= LEG_MIN_TRIES;
+            weights[start] = tried ? std::max(LEG_FLOOR, 1.0f - rates[start]) : 1.0f;
+        }
+    }
+    float total = 0.0f;
+    for (float weight : weights)
+        total += weight;
+    if (total <= 0.0f)
+        return 0;
+    float pick = Uniform(env) * total;
+    for (uint32 start = 1; start < legs; ++start)
+    {
+        pick -= weights[start];
+        if (weights[start] > 0.0f && pick <= 0.0f)
+            return start;
+    }
+    for (uint32 start = legs; start-- > 1;)
+        if (weights[start] > 0.0f)
+            return start;
+    return 0;
+}
+
+void Animus::Curriculum::PointNavEncounter::NoteStartAt(uint32 arena, uint32 rung, uint32 start, bool progressed)
+{
+    std::lock_guard lock(_poolLock);
+    std::vector<float>& rates = _startRates[LegKey(arena, rung)];
+    std::vector<uint32>& tries = _startTries[LegKey(arena, rung)];
+    if (rates.size() <= start)
+    {
+        rates.resize(start + 1, 0.0f);
+        tries.resize(start + 1, 0);
+    }
+    rates[start] += (1.0f / float(LEG_WINDOW)) * ((progressed ? 1.0f : 0.0f) - rates[start]);
+    ++tries[start];
+}
+
 void Animus::Curriculum::PointNavEncounter::NoteBinOutcome(Env const& env, EnvNav& nav, bool arrived)
 {
     if (!nav.BinCounted || nav.Replayed || env.Evaluating || !nav.LengthBins)

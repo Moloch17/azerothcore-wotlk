@@ -446,6 +446,18 @@ bool AnimusForge::Forge::CommandStart(std::vector<std::string> scenarios, LineSi
         return false;
     }
 
+    // `--reset <layout>` among the names (technique 8): the named stages restart from their own last run with that
+    // layout's networks fresh.
+    std::vector<std::string> resets;
+    for (std::size_t i = 0; i < scenarios.size();)
+        if (scenarios[i] == "--reset" && i + 1 < scenarios.size())
+        {
+            resets.push_back(scenarios[i + 1]);
+            scenarios.erase(scenarios.begin() + std::ptrdiff_t(i), scenarios.begin() + std::ptrdiff_t(i) + 2);
+        }
+        else
+            ++i;
+
     // Without names: AnimusForge.Queue (every curriculum stage when empty), leaving out the stages that already
     // advanced (AnimusForge.Queue.SkipFinished), so a restarted server carries on where training stopped. Named
     // scenarios always train.
@@ -480,6 +492,7 @@ bool AnimusForge::Forge::CommandStart(std::vector<std::string> scenarios, LineSi
     Plan plan;
     plan.Policy = _config.Policy;
     plan.LocalEpisodes = _config.QueueLocalEpisodes;
+    plan.ResetLayouts = resets;
     for (std::string const& scenario : scenarios)
     {
         if (!ValidScenario(scenario, out))
@@ -492,6 +505,9 @@ bool AnimusForge::Forge::CommandStart(std::vector<std::string> scenarios, LineSi
     _request = Request::Start;
 
     out(Acore::StringFormat("Starting {} with policy {}.", Join(scenarios), _config.Policy));
+    if (!resets.empty())
+        out(Acore::StringFormat("  {} start{} fresh; the rest seeds from each stage's own last run (--reset).",
+            Join(resets), resets.size() == 1 ? "s" : ""));
     WarnSeedOrder(_config, scenarios, out);
     if (_config.IsRemote())
         out("  Each scenario trains from scratch: an earlier run in runs/<scenario>/ is moved to archive/.");
@@ -1308,4 +1324,17 @@ void AnimusForge::Forge::CommandProgress(std::optional<uint32> seconds, LineSink
 
     out(_progressInterval ? Acore::StringFormat("Progress report every {} while a scenario runs.",
         Format::Duration(_progressInterval)) : "Periodic progress report off: `forge status` shows it on demand, and each stage's end prints it.");
+}
+
+bool AnimusForge::Forge::CommandProbe(std::string const& what, LineSink const& out)
+{
+    if (!_pool || _state == State::Idle)
+    {
+        out("Nothing is running: a probe takes a running stage (`forge start dm_clear`, then `forge probe doors`).");
+        return false;
+    }
+    std::string reply;
+    bool const armed = _pool->Probe(what, reply);
+    out(reply);
+    return armed;
 }

@@ -177,6 +177,11 @@ namespace Animus::Curriculum
         [[nodiscard]] static std::pair<uint32, uint32> DungeonLevels(BossRow const& row);
         /// The world database's spawn of a row's boss (the first on its map), or null.
         [[nodiscard]] static CreatureData const* FindSpawn(BossRow const& row);
+        /// `forge probe doors`: the next spare episode (a training one, or an evaluation's unseeded env) checks the
+        /// Deadmines' doors behave as they do for players -- a lever past a shut door refused for sight, the lever
+        /// from its own side swinging the Factory Door, Sneed's death opening the Mast Room Door, the gunpowder on
+        /// the cannon blowing the Iron Clad Door -- and logs `Probe doors:` lines.
+        bool ArmDoorCheck(std::string& reply);
 
         [[nodiscard]] std::vector<RewardTerm> RewardTerms() const override;
         void AddEpisodeInfo(EpisodeInfoTable& table) override;
@@ -337,6 +342,15 @@ namespace Animus::Curriculum
             /// living creature, the party's goal (GoalAt) while HasGoal.
             PointNavEncounter::ClearWay const* Way = nullptr;
             int32 StartSite = 0;
+            bool StartDrawn = false;            // a drawn start (Instance.WingStarts): not a whole run
+            /// The door check (`forge probe doors`, technique 3): the step it is on, decisions waited at it, and
+            /// its tally. An episode checking doors is counted toward nothing.
+            bool DoorCheck = false;
+            uint32 DoorStep = 0;
+            uint32 DoorWait = 0;
+            uint32 DoorOk = 0;
+            uint32 DoorFail = 0;
+            uint32 GatePaidBossAlive = 0;       // door gates paid with a boss spawned before them alive (invariant)
             uint32 Killed = 0;
             int32 GoalSite = 0;
             bool HasGoal = false;
@@ -365,6 +379,14 @@ namespace Animus::Curriculum
         /// rung's leg rates (PointNavEncounter::LegsLearnedAt, DrawLegAt), started at the checkpoint before, its clock
         /// the leg's.
         void PlanLeg(Env& env, EnvInstance& fight, Map* map, Player* seat);
+        /// A drawn start (Instance.WingStarts): the run from a checkpoint drawn by its failure rate, never between a
+        /// boss's site and its door (StartsBlocked), the clock the recorded time that remains.
+        void PlanDrawnStart(Env& env, EnvInstance& fight, Map* map, Player* seat);
+        /// Per checkpoint, whether a start there is blocked: after a dungeon boss's site up to the checkpoint past
+        /// its door (the door opens with the boss's death, which a start deals outside its script).
+        [[nodiscard]] static std::vector<uint8> StartsBlocked(PointNavEncounter::ClearWay const& way, Map* map);
+        /// Whether a dungeon boss spawned at a checkpoint before `k` is alive.
+        [[nodiscard]] static bool BossAliveBefore(PointNavEncounter::ClearWay const& way, uint32 k, Map* map);
         /// Whether a leg's objective is met: its checkpoint's pack dead, its gate's object open, a living seat at the
         /// checkpoint.
         [[nodiscard]] bool LegMet(Env const& env, EnvInstance const& fight, Map* map, Player const* seat) const;
@@ -423,6 +445,9 @@ namespace Animus::Curriculum
         void LogLegMissed(Env const& env, EnvInstance const& fight, Map* map, Player const* seat) const;
 
         std::vector<EnvInstance> _envs;
+        bool _doorCheckArmed = false;       // ArmDoorCheck: the next spare episode checks the doors
+        /// The door check's steps, one or more a decision (EnvInstance::DoorStep).
+        void RunDoorCheck(Env& env, EnvInstance& fight, Map* map);
         std::map<InstanceLadder, std::vector<BossRow const*>> _rows;   // per ladder, the rows the database fields
     };
 
@@ -476,6 +501,11 @@ namespace Animus::Curriculum
             std::array<uint8, MAX_SEATS> HadKey{};
             std::array<uint32, MAX_SEATS> ObjectStateAtIssue{};
             std::array<uint8, MAX_SEATS> Pressed{};         // the seat pressed its order's object since the order
+            /// Orders priced by their number (Director.OrderIssued, DonePerMinute): the orders charged so far, each
+            /// seat's tokens for OrderDone pay, and the orders carried out that no token paid.
+            uint32 OrdersCharged = 0;
+            std::array<float, MAX_SEATS> DoneTokens{};
+            uint32 DoneUnpaid = 0;
             RewardLedger Rewards;               // the director's own terms, for its columns
         };
         [[nodiscard]] static uint32 ObjectState(GameObject const* object);

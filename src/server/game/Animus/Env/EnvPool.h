@@ -130,6 +130,7 @@ namespace Animus
         void SetShapingScale(float scale) { _scenario.SetShapingScale(scale); }
         void SetCostScale(float scale) { _scenario.SetCostScale(scale); }
         bool PinEvaluationArena(uint32 pin) { return _scenario.PinEvaluationArena(pin); }
+        bool Probe(std::string const& what, std::string& reply) { return _scenario.Probe(what, reply); }
         void SetStandIn(bool standIn) { _scenario.SetStandIn(standIn); }
         void SetNoSharedMemory(bool off) { _scenario.SetNoSharedMemory(off); }
         void SetNoObjectMemory(bool off) { _scenario.SetNoObjectMemory(off); }

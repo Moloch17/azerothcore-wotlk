@@ -243,6 +243,16 @@ namespace Animus::Curriculum
             /// beginning"): no leg trips in training or evaluation, every episode the run from the entrance. 0: legs
             /// until they are learned at the rung, then mostly whole runs (PointNavEncounter::LEG_FULL_SHARE).
             uint32 WingWholeRuns = 0;
+            /// **Drawn starts** (the user, 2026-10-27, technique 1): under WingWholeRuns, this share of the training
+            /// episodes is the run from a checkpoint drawn along the recorded way (PointNavEncounter::DrawStartAt:
+            /// by the failure rate at each start, as the legs were drawn), everything before it dead as a party would
+            /// have left it, the clock the run's by the recorded time that remains (at least WingStartMinSeconds).
+            /// A start counts as progressed when the party cleared WingStartGoalSites sites past it or the run.
+            /// Never between a boss's site and its door: that door opens with the boss's death, which the start
+            /// deals outside its script. The evaluation stays whole runs from the entrance.
+            float WingStarts = 0.5f;
+            uint32 WingStartMinSeconds = 900;
+            uint32 WingStartGoalSites = 3;
             uint32 WingSupplies = 60;           // food and drink each seat brings into a whole dungeon
             /// Log a line for each wipe: where, what was fighting the party, and who died in what order.
             uint32 WingTrace = 1;
@@ -1075,6 +1085,13 @@ namespace Animus::Curriculum
             /// with the seat having damaged it, none was ever carried out -- the order was replaced first); a Pull
             /// order when the named enemy is in combat with the party within PullMs of the order.
             uint32 PullMs = 30000;
+            /// **Orders priced by their number** (the user, 2026-10-27, technique 4): each order issued costs the
+            /// director OrderIssued (4,300 orders a run with 1,700 churned, 2026-10-27: nothing priced the asking);
+            /// a seat's OrderDone pay is capped at DonePerMinute carried-out orders a minute (a token a seat each
+            /// 60 / DonePerMinute seconds, DonePerMinute held), the rest counted done but unpaid, so a spamming
+            /// director cannot farm compliance pay through its seats. 0 switches either off.
+            float OrderIssued = 0.005f;
+            float DonePerMinute = 4.0f;
         } Director;
 
         /// The "human" stand-in seat of the party stages (StandIn.h: a frozen learned partner in one seat, its style
@@ -1152,6 +1169,9 @@ namespace Animus::Curriculum
             f("Instance.WingRungTarget", tuning.Instance.WingRungTarget);
             f("Instance.WingRungStart", tuning.Instance.WingRungStart);
             f("Instance.WingWholeRuns", tuning.Instance.WingWholeRuns);
+            f("Instance.WingStarts", tuning.Instance.WingStarts);
+            f("Instance.WingStartMinSeconds", tuning.Instance.WingStartMinSeconds);
+            f("Instance.WingStartGoalSites", tuning.Instance.WingStartGoalSites);
             f("Instance.WingSupplies", tuning.Instance.WingSupplies);
             f("Instance.WingTrace", tuning.Instance.WingTrace);
             f("Instance.WingCrowd", tuning.Instance.WingCrowd);
@@ -1176,6 +1196,8 @@ namespace Animus::Curriculum
             f("Director.FollowMs", tuning.Director.FollowMs);
             f("Director.FollowYards", tuning.Director.FollowYards);
             f("Director.PullMs", tuning.Director.PullMs);
+            f("Director.OrderIssued", tuning.Director.OrderIssued);
+            f("Director.DonePerMinute", tuning.Director.DonePerMinute);
             f("Instance.WingOffLineYards", tuning.Instance.WingOffLineYards);
 
             f("Actions.RepeatMs", tuning.Actions.RepeatMs);

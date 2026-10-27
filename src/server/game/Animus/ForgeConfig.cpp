@@ -189,6 +189,15 @@ void AnimusForge::ForgeConfig::Load()
             continue;
         StageEnvs[rest.substr(0, dot)] = sConfigMgr->GetOption<uint32>(key, Envs);
     }
+    // What is in effect, and a value the parser cannot read as a number (technique 7, 2026-10-27: an inline comment
+    // after a stage's env count left the default 64 in effect, silently).
+    for (auto const& [stage, envs] : StageEnvs)
+        LOG_INFO("module.animus", "AnimusForge.Stage.{}.Envs = {} (in effect)", stage, envs);
+    for (std::string const& key : sConfigMgr->GetKeysByString("AnimusForge."))
+        if (sConfigMgr->GetOption<std::string>(key, "").find('#') != std::string::npos)
+            LOG_WARN("module.animus", "{}: its value holds a '#'. The config takes the rest of the line as the value, "
+                "so an inline comment leaves a number unreadable and its default in effect; put the comment on its "
+                "own line.", key);
     if (Envs > Animus::BotAccounts::MAX_ENVS)
     {
         LOG_ERROR("module.animus", "AnimusForge.Envs = {} is more than bot account ids allow; using {}", Envs,

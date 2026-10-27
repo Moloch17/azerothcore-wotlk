@@ -218,6 +218,14 @@ namespace Animus
         /// The arena the next evaluation plays (index + 1; 0 = the stage's own draw): a held-out arena only (MODE's
         /// arena, protocol 18). False, and nothing changes, for one the scenario does not hold out.
         virtual bool PinEvaluationArena(uint32 pin) { return pin == 0; }
+        /// A mechanic probe (`forge probe <what>`, technique 3): armed for the scenario's next spare episode, which
+        /// checks the mechanic and logs `Probe <what>:` lines; `reply` says what happened. False when the scenario
+        /// knows no such probe.
+        virtual bool Probe(std::string const& /*what*/, std::string& reply)
+        {
+            reply = "this scenario has no probes";
+            return false;
+        }
         /// Whether the learner plays the "human" stand-in's row with a frozen partner (MODE_FLAG_STAND_IN): an
         /// evaluation then has the stand-in in every episode that has a party (the learner's "with the human
         /// stand-in" arm), training in its share of them; without it every party is all the learner's. Scenarios
