@@ -24,6 +24,7 @@
 #include <array>
 #include <utility>
 #include <optional>
+#include <unordered_set>
 #include <vector>
 
 class Creature;
@@ -82,6 +83,10 @@ namespace Animus::Curriculum::Opponents
     /// with an NPC service or that a player cannot attack, no C++ script -- whatever their rank (most Deadmines trash is
     /// elite) or their SmartAI; the casters among them (a SmartAI cast with a cast time, which an interrupt stops).
     /// Worked out once per map. A pull is summoned at the rung's level, not the entry's own.
+    /// Every creature entry whose SmartAI casts a spell with a cast time. Read from the world database on the
+    /// first call, which WarmCaches makes before the database is sealed; DungeonPool, built lazily, reads it.
+    [[nodiscard]] std::unordered_set<uint32> const& CastTimeCasters();
+
     class DungeonPool
     {
     public:

@@ -224,6 +224,27 @@ Animus::Curriculum::Opponents::OpponentPool::OpponentPool()
         "spells), {} elites", opponents, packMembers, castOnlySmart.size(), casters, elites);
 }
 
+std::unordered_set<uint32> const& Animus::Curriculum::Opponents::CastTimeCasters()
+{
+    static std::unordered_set<uint32> const casters = []
+    {
+        std::unordered_set<uint32> entries;
+        if (QueryResult result = WorldDatabase.Query("SELECT entryorguid, action_param1 FROM smart_scripts "
+            "WHERE source_type = 0 AND entryorguid > 0 AND action_type = 11"))
+        {
+            do
+            {
+                Field* fields = result->Fetch();
+                SpellInfo const* spell = sSpellMgr->GetSpellInfo(fields[1].Get<uint32>());
+                if (spell && spell->CastTimeEntry && spell->CastTimeEntry->CastTime > 0)
+                    entries.insert(uint32(fields[0].Get<int32>()));
+            } while (result->NextRow());
+        }
+        return entries;
+    }();
+    return casters;
+}
+
 Animus::Curriculum::Opponents::DungeonPool const& Animus::Curriculum::Opponents::DungeonPool::Of(uint32 mapId)
 {
     static std::mutex lock;
@@ -244,18 +265,9 @@ Animus::Curriculum::Opponents::DungeonPool::DungeonPool(uint32 mapId)
 
     // The casters: a SmartAI cast of a spell with a cast time.
     std::unordered_set<uint32> casters;
-    if (QueryResult result = WorldDatabase.Query("SELECT entryorguid, action_param1 FROM smart_scripts "
-        "WHERE source_type = 0 AND entryorguid > 0 AND action_type = 11"))
-    {
-        do
-        {
-            Field* fields = result->Fetch();
-            uint32 const entry = uint32(fields[0].Get<int32>());
-            SpellInfo const* spell = sSpellMgr->GetSpellInfo(fields[1].Get<uint32>());
-            if (spawns.contains(entry) && spell && spell->CastTimeEntry && spell->CastTimeEntry->CastTime > 0)
-                casters.insert(entry);
-        } while (result->NextRow());
-    }
+    for (uint32 const entry : CastTimeCasters())
+        if (spawns.contains(entry))
+            casters.insert(entry);
 
     for (auto const& [entry, count] : spawns)
     {
