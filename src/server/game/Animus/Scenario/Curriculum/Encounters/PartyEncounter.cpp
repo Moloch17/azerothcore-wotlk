@@ -285,6 +285,10 @@ bool Animus::Curriculum::PartyEncounter::Build(Env& env, Map* /*map*/, uint8 /*l
     }
 
     sGroupMgr->AddGroup(group);
+    // Free for all, as a party sets it (2026-10-27): under the default group loot the barrel's gunpowder, a common
+    // item, went round-robin -- the seat that opened the barrel was seldom the one allowed to take it, and the
+    // party's gunpowder order was carried out 0.5% of the times it was given. The seat that loots it holds it.
+    group->SetLootMethod(FREE_FOR_ALL);
 
     for (uint32 seat = 0; seat < _scenario.SeatCount(); ++seat)
         if (Player* bot = _scenario.SeatBot(env, seat); bot && bot != leader && !group->AddMember(bot))
