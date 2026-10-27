@@ -23,7 +23,7 @@ from .ui import Failure, say
 SCHEMA = 1
 ACTIVE_PHASES = ("training", "evaluating")
 TRAINING_STALE_S = 300      # a training run rewrites progress.json every 5 to 15 s
-EVALUATING_STALE_S = 7200   # an evaluation can run for hours without a write
+EVALUATING_STALE_S = 14400  # an evaluation can run for hours without a write (dm_clear whole runs: ~3 h)
 RUN_NAME = re.compile(r"^[A-Za-z0-9_.-]+$")
 TARGET = re.compile(r"^\s*([A-Za-z0-9_]+)\s*(<=|>=|==|<|>|=)\s*([-+0-9.eE]+)\s*$")
 OPTIONAL_KEYS = ("wall_steps_per_sec", "update_bound", "rollout_seconds", "update_compute_seconds", "wait_seconds")
