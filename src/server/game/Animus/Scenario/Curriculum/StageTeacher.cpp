@@ -322,11 +322,15 @@ void Animus::Curriculum::StageScenario::TeachSeat(Env& env, uint32 seatIndex, Se
     seat.TeacherHeading = choice.HasHeading ? Wrap(choice.Heading) : 0.0f;
     seat.TeacherReason = choice.Reason;
     // Who plays the decision: a segment of SegmentDecisions decisions at a time, the teacher's with probability tau.
-    if (!seat.TeacherSegmentLeft)
+    // A seat the teacher played that is still casting stays the teacher's until the cast ends: handed back mid-cast,
+    // the policy's keys broke it (2026-10-27: the gunpowder's Fire Cannon, a cast, never once reached the cannon).
+    if (!seat.TeacherSegmentLeft && !(seat.TeacherSegmentPlays && facts.Casting))
     {
         seat.TeacherSegmentLeft = std::max<uint32>(1, _tuning.Teacher.SegmentDecisions);
         seat.TeacherSegmentPlays = frand(0.0f, 1.0f) < tau;
     }
+    if (!seat.TeacherSegmentLeft)
+        seat.TeacherSegmentLeft = 1;
     --seat.TeacherSegmentLeft;
     seat.TeacherPlays = seat.TeacherSegmentPlays && facts.Alive;
     ++seat.TeacherDecisions;

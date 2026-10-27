@@ -430,9 +430,11 @@ namespace
             Stop(facts, choice);
             return;
         }
-        if (Rest(facts, choice))
-            return;
+        // The way's object before a rest: an opener sitting to drink while the party waits on it holds the leg up
+        // (2026-10-27: the gunpowder's holder drank by the barrel while the cannon's leg ran out).
         if (Open(facts, choice))
+            return;
+        if (Rest(facts, choice))
             return;
         Summon(facts, choice);
         AddCast(choice, Wt::Spell::Buff);
@@ -443,9 +445,9 @@ namespace
     {
         if (!AnyFight(facts))
         {
-            if (Rest(facts, choice))
-                return;
             if (Open(facts, choice))
+                return;
+            if (Rest(facts, choice))
                 return;
             Summon(facts, choice);
             AddCast(choice, Wt::Spell::Buff);
