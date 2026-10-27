@@ -26,6 +26,7 @@
 #include "MoveBlock.h"
 #include "ObjectAccessor.h"
 #include "PetBlock.h"
+#include "PathGenerator.h"
 #include "Player.h"
 #include "SeatView.h"
 #include "SightBlock.h"
@@ -99,6 +100,29 @@ namespace
                 if (spell->GetSpellInfo() && (spell->GetSpellInfo()->InterruptFlags & SPELL_INTERRUPT_FLAG_INTERRUPT))
                     return true;
         return false;
+    }
+
+    /// The next point, a few yards on, of the navmesh's way from the seat to `to`: the teacher's way to what is off
+    /// the recorded line (a pack's straggler in another room, a tank gone after one). Its knowledge only -- the seat
+    /// still walks it with its own keys. False without a way.
+    bool PathStep(Player* bot, Position const& to, Position& step)
+    {
+        constexpr float PATH_STEP_YARDS = 3.0f;
+        PathGenerator path(bot);
+        if (!path.CalculatePath(to.GetPositionX(), to.GetPositionY(), to.GetPositionZ())
+            || (path.GetPathType() & PATHFIND_NOPATH))
+            return false;
+        Movement::PointsArray const& points = path.GetPath();
+        for (G3D::Vector3 const& point : points)
+            if (bot->GetExactDist2d(point.x, point.y) > PATH_STEP_YARDS)
+            {
+                step.Relocate(point.x, point.y, point.z);
+                return true;
+            }
+        if (points.empty())
+            return false;
+        step.Relocate(points.back().x, points.back().y, points.back().z);
+        return true;
     }
 
     SpecProfile const* SpecOf(SeatState const& seat)
@@ -287,6 +311,10 @@ void Animus::Curriculum::StageScenario::TeachSeat(Env& env, uint32 seatIndex, Se
     Position step;
     if (_instance->TeacherStep(env, bot, tank, bot == tank, step))
         facts.Step = PlaceAt(bot, step.GetPositionX(), step.GetPositionY(), step.GetPositionZ());
+    // A member far from its tank goes the navmesh's way to it: the tank may be off the line after a straggler.
+    constexpr float FOLLOW_PATH_YARDS = 15.0f;
+    if (bot != tank && tank && bot->GetExactDist(tank) > FOLLOW_PATH_YARDS && PathStep(bot, tank->GetPosition(), step))
+        facts.Step = PlaceAt(bot, step.GetPositionX(), step.GetPositionY(), step.GetPositionZ());
     if (bot == tank && !way.Pull.IsEmpty())
         if (Creature* pull = map ? map->GetCreature(way.Pull) : nullptr)
         {
@@ -294,9 +322,16 @@ void Animus::Curriculum::StageScenario::TeachSeat(Env& env, uint32 seatIndex, Se
             facts.PullSelected = pull->GetGUID() == selection;
             if (facts.PullSelected)
                 facts.HasRangedPull = TeacherSpellFor(Wt::Spell::RangedPull, *seat.L, spec, obs, mask).has_value();
-            // At the line's end with the pack further on (it stands off the line): toward the pack.
-            if (facts.Step.Present && facts.Step.Yards < 2.0f && facts.Pull.Yards > Wt::PULL_YARDS)
-                facts.Step = facts.Pull;
+            // At the line's end with the pack further on or out of sight (a straggler, a patrol, another room): the
+            // navmesh's way to it (2026-10-27: legs 2, 26 and 30 ended with the pack's last members 37-72 yd off).
+            if ((!facts.Step.Present || facts.Step.Yards < 2.0f)
+                && (facts.Pull.Yards > Wt::PULL_YARDS || facts.Pull.Slot < 0))
+            {
+                if (PathStep(bot, pull->GetPosition(), step))
+                    facts.Step = PlaceAt(bot, step.GetPositionX(), step.GetPositionY(), step.GetPositionZ());
+                else
+                    facts.Step = facts.Pull;
+            }
         }
     if (!way.Object.IsEmpty() && way.Opener == bot->GetGUID())
         if (GameObject* object = map ? map->GetGameObject(way.Object) : nullptr)
