@@ -4237,7 +4237,9 @@ def grow_goal_rows(state: dict, current: dict) -> tuple[dict, list[str]]:
 #: the shared blocks' columns, one output Linear over their actions. The index buffers say where each layout has them;
 #: they are always the network's own (the stage's), never a checkpoint's.
 SHARED_PARAMETER_KEYS = ("shared_adapter.weight", "shared_head.weight", "shared_head.bias")
-SHARED_INDEX_KEYS = ("shared_columns", "shared_slots")
+#: The sharing's per-layout flag (LayoutActor.shared_on): saved with the state, dropped with the index keys.
+SHARED_ON_KEY = "shared_on"
+SHARED_INDEX_KEYS = ("shared_columns", "shared_slots", "shared_on")
 
 
 def sharing_of(stage: dict | None, layout_names: Sequence[str], blocks: Sequence[str],
@@ -4267,12 +4269,20 @@ def sharing_of(stage: dict | None, layout_names: Sequence[str], blocks: Sequence
     unknown = [name for name in init_layouts if name not in names]
     if unknown:
         raise ValueError(f"mappo.shared_init_layouts: {unknown} are not layouts of this stage ({names})")
-    obs, actions, reference = [], [], {}
+    obs, actions, reference, on = [], [], {}, []
     for name in names:
         entry = stage["layouts"].get(name)
         if entry is None:
             raise ValueError(f"mappo.shared_blocks: stage.json has no layout {name}")
         by_name = {block["name"]: block for block in entry.get("blocks", ())}
+        # The director (DIRECTOR_LAYOUT) plays no character and has none of the blocks: left out of the sharing (its
+        # entries placeholders, "on" false), not refused.
+        if name == DIRECTOR_LAYOUT and not any(block in by_name for block in blocks):
+            obs.append(None)
+            actions.append(None)
+            on.append(False)
+            continue
+        on.append(True)
         action_names = list(entry.get("action_names") or ())
         columns, slots = [], []
         for block in blocks:
@@ -4291,9 +4301,16 @@ def sharing_of(stage: dict | None, layout_names: Sequence[str], blocks: Sequence
             slots += range(action_first, action_first + action_count)
         obs.append(columns)
         actions.append(slots)
-    return {"blocks": blocks, "obs": obs, "actions": actions,
+    if not any(on):
+        return None
+    width = next(len(columns) for columns in obs if columns is not None)
+    count = next(len(slots) for slots in actions if slots is not None)
+    obs = [columns if columns is not None else [0] * width for columns in obs]
+    actions = [slots if slots is not None else [0] * count for slots in actions]
+    return {"blocks": blocks, "obs": obs, "actions": actions, "on": on,
             "action_names": [action for block in blocks for action in reference[block][2]],
-            "init": [names.index(name) for name in init_layouts] or list(range(len(names)))}
+            "init": [names.index(name) for name in init_layouts]
+                    or [index for index, shared in enumerate(on) if shared]}
 
 
 def materialised_state(state: dict, drop: bool = False) -> dict:
@@ -4305,7 +4322,10 @@ def materialised_state(state: dict, drop: bool = False) -> dict:
         return state
     out = dict(state)
     columns, slots = state["shared_columns"].long(), state["shared_slots"].long()
+    on = state.get("shared_on")
     for index in range(columns.shape[0]):
+        if on is not None and not bool(on[index]):
+            continue
         if "shared_adapter.weight" in state and columns.shape[1]:
             weight = out[f"adapters.{index}.weight"].clone()
             weight[:, columns[index].to(weight.device)] = state["shared_adapter.weight"].to(weight.device, weight.dtype)
@@ -4651,6 +4671,7 @@ class LayoutActor(nn.Module):
         self.shared_init: list[int] = []
         # The rollout copy's: the shared weights written into the layouts' own (materialise_shared), not added again.
         self.shared_folded = False
+        self.shared_on_list: list[bool] = []
         if sharing is not None:
             self._attach_sharing(sharing, hidden[0], head_width)
 
@@ -4691,7 +4712,12 @@ class LayoutActor(nn.Module):
                                                             device=device).reshape(layouts, len(keep)))
         self.register_buffer("shared_slots", torch.tensor(actions, dtype=torch.long,
                                                           device=device).reshape(layouts, -1))
-        self.shared_init = [int(index) for index in sharing.get("init") or range(layouts)]
+        # Which layouts share (sharing_of's "on": every layout but the director); saved with the state, so a saved
+        # state's materialisation (materialised_state) leaves the others' weights alone.
+        on = [bool(flag) for flag in sharing.get("on") or [True] * layouts]
+        self.shared_on_list = on
+        self.register_buffer("shared_on", torch.tensor(on, dtype=torch.bool, device=device))
+        self.shared_init = [int(index) for index in sharing.get("init") or range(layouts) if on[int(index)]]
         if keep:
             self.shared_adapter = nn.Linear(len(keep), width, bias=False, device=device)
             nn.init.orthogonal_(self.shared_adapter.weight, gain=math.sqrt(2))
@@ -4705,6 +4731,8 @@ class LayoutActor(nn.Module):
         if self.shared_columns is None:
             return
         for index in range(len(self.adapters)):
+            if not self.shared_on_list[index]:
+                continue
             if self.shared_adapter is not None:
                 self.adapters[index].weight[:, self.shared_columns[index]] = 0.0
             if self.shared_head is not None:
@@ -4739,6 +4767,8 @@ class LayoutActor(nn.Module):
         if self.shared_columns is None:
             return
         for index in range(len(self.adapters)):
+            if not self.shared_on_list[index]:
+                continue
             if self.shared_adapter is not None:
                 self.adapters[index].weight[:, self.shared_columns[index]] = self.shared_adapter.weight
             if self.shared_head is not None:
@@ -4812,7 +4842,7 @@ class LayoutActor(nn.Module):
         shared = self.shared_adapter if self._sharing_live() else None
         for index, rows in groups:
             normalised = self.norms[index](obs[rows, : self.obs_dims[index]])
-            if shared is None:
+            if shared is None or not self.shared_on_list[index]:
                 own = self.adapters[index](normalised)
             else:
                 # The shared columns through the shared adapter, the rest through the layout's own (_attach_sharing).
@@ -4917,8 +4947,10 @@ class LayoutActor(nn.Module):
             logits[rows, : self.action_counts[index]] = self.heads[index](features[rows]).to(logits.dtype)
         if self.shared_head is not None and self._sharing_live():
             # The shared actions' logits over the layouts' own at each row's slots (_attach_sharing).
-            slots = self.shared_slots[layout.reshape(-1).long()]
-            logits = logits.scatter(1, slots, self.shared_head(features).to(logits.dtype))
+            flat = layout.reshape(-1).long()
+            slots = self.shared_slots[flat]
+            logits = torch.where(self.shared_on[flat][:, None],
+                                 logits.scatter(1, slots, self.shared_head(features).to(logits.dtype)), logits)
         return masked_logits(with_director_pointers(self, self._with_sight_pointers(logits, features, layout, obs),
                                                     features, layout, obs), mask)
 
