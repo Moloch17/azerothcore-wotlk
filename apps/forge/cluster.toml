@@ -50,7 +50,7 @@ user = "spencer"
 address = "192.168.0.66"
 role = "worker"
 path = "~/animus-forge"
-in_cluster = false   # out 2026-10-26 (owner: "stop training on Spencer for now")
+in_cluster = true    # back 2026-10-27 (owner); out 2026-10-26 evening
 
 [[machine]]
 name = "thomas"
