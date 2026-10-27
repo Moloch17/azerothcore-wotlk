@@ -76,7 +76,7 @@ mappo:
   lr_final_fraction: 0.1
   entropy_final_fraction: 0.1
   epochs: 2
-  minibatches: 4
+  minibatches: 8   # 2026-10-27: the update ran the host's 20 GB GPU out of memory at 48 envs x 6 agents (the director's row); 8 halves its peak
   max_grad_norm: 0.5
   use_value_norm: true
   value_norm_beta: 0.99
