@@ -42,6 +42,11 @@ mappo:
   goal_count: 10
   goal_slots: 4
   hindsight_coef: 0.1
+  # The teacher's hints (2026-10-27, the user: a teacher that slowly withdraws): the action head and the heading head
+  # imitate the teacher's press and heading on the bots' own states, weighted by the sim's per-leg weight (0 where the
+  # policy already succeeds alone, and in evaluation); rows the teacher played are out of the PPO terms.
+  hint_coef: 0.5
+  heading_hint_coef: 0.5
   goal_targets: 23
   goal_every_decisions: 8
   slow_goal_size: 128

@@ -940,6 +940,9 @@ class TrainingRun:
         # After the seed and any resume, which bring a parent's goal block positions with its weights: the goal
         # head is masked by this stage's own (stage.json "goals" and the layouts' blocks).
         self.trainer.set_goal_space(self.stage, [layout.name for layout in self.spec.layouts])
+        # The teacher's hint block (dm_clear, 2026-10-27): where each layout's is, its columns kept out of both networks
+        # -- seeded, resumed or fresh, before the blind-column check below reads them.
+        self.trainer.set_hint_space(self.stage, [layout.name for layout in self.spec.layouts])
         # A seed brings the parent's adapters whole: their camera columns are made blind. A resumed
         # run's must already be -- their gradient is masked -- and anything else is a checkpoint to stop on, not fix.
         if self.resume_path:
@@ -1018,6 +1021,9 @@ class TrainingRun:
             "partner_rows", "partner_fallback_rows", "partner_members", "partner_episodes", "stand_in_episodes",
             "stand_in_unfielded",
             "elapsed_seconds", "update_compute_seconds", "distill_coef", "distill_kl", "distill_rows",
+            # The teacher's hints (mappo.hint_coef, heading_hint_coef): the imitation losses, the greedy action's
+            # agreement with the hint, the sim's weight, hinted actions the mask refused, the rows the teacher played.
+            "hint_loss", "heading_hint_loss", "hint_match", "hint_weight", "hint_masked", "scripted_share",
             "wall_steps_per_sec", "rollout_seconds", "wait_seconds", "update_bound",
         ]
         if config.mappo.greedy_env_fraction > 0.0:

@@ -51,6 +51,11 @@ VISION_CHUNK_AUTO = "auto"
 VISION_CHUNK_FALLBACK = 2048
 
 
+#: The teacher's hint block's columns (the sim's HintBlock; a seat's has all five, the director's the first three).
+HINT_ACTION, HINT_WEIGHT, HINT_SCRIPTED, HINT_HEADING, HINT_HEADING_WEIGHT = range(5)
+HINT_COLUMNS = 5
+
+
 @dataclass
 class MappoConfig:
     hidden: tuple[int, ...] = (128, 128)
@@ -187,6 +192,17 @@ class MappoConfig:
     # relabelled goal was never the behaviour's, so the ratio would mean nothing). Needs goal_slots > 1 (the goal
     # block's achieved columns).
     hindsight_coef: float = 0.0
+    # **The teacher's hints** (dm_clear's scripted teacher, 2026-10-27; revived from before 641cf015c): where a layout
+    # has a hint block (stage.json blocks named "hint": the suggested action + 1, its weight, whether the teacher played
+    # the decision, its heading and the heading's weight), the action head is also trained to take the hinted action --
+    # hint_coef times the sim's weight times -log p -- and the heading head to take the hinted heading,
+    # heading_hint_coef times its weight times -log density. On the bots' own states, so they learn what to do where
+    # they actually go. The sim withdraws the teacher per leg (its weights fall to 0 where the policy succeeds alone; 0
+    # in evaluation). The hint columns are kept out of both networks (attach_blind_columns, tag "hint"): taught, never
+    # shown. A row the teacher played is out of every PPO policy term (the buffer's action there is the policy's draw,
+    # not what was done) but trains the value and the imitation.
+    hint_coef: float = 0.0
+    heading_hint_coef: float = 0.0
     # The goal head's share of the entropy bonus, as a factor on what it would get from entropy_coef, falling
     # linearly to goal_entropy_final_fraction of itself over total_env_steps. The action head's exploration and the
     # goal head's are different things: the first keeps the fight's options open, the second keeps the head from
@@ -951,6 +967,9 @@ class MappoTrainer:
         self.uniform_cells = False
         self.single_goal = False
         self.goal_slots = max(1, config.goal_slots) if self.goal_count else 1
+        # Each layout's hint block's first column (set_hint_space); None without one.
+        self.hint_at: torch.Tensor | None = None
+        self.hint_heading: torch.Tensor | None = None
         # The planner's clock (mappo.planner_every; 0 = the goal clock): _replan runs it every this many decisions of
         # a seat and the acting state carries the plan in between.
         self.planner_every = max(1, int(config.planner_every) or int(config.goal_every_decisions))
@@ -1172,11 +1191,61 @@ class MappoTrainer:
         if notes:
             print(f"Goal head: {notes[0]}", flush=True)
 
+    def set_hint_space(self, stage: dict | None, layout_names: list[str]) -> None:
+        """Where each layout's hint block is (stage.json layouts' blocks named "hint", -1 none) and whether it
+        carries a heading (five columns: a seat's; three: the director's), and its columns kept out of both
+        networks."""
+        from .networks import attach_blind_columns
+        at, width = [], []
+        for layout in layout_names:
+            blocks = (((stage or {}).get("layouts") or {}).get(layout) or {}).get("blocks") or []
+            hint = next((b for b in blocks if b.get("name") == "hint"), None)
+            at.append(int(hint["obs"][0]) if hint is not None else -1)
+            width.append(int(hint["obs"][1]) if hint is not None else 0)
+        if not any(a >= 0 for a in at):
+            self.hint_at = self.hint_heading = None
+            return
+        self.hint_at = torch.tensor(at, dtype=torch.long, device=self.train_device)
+        self.hint_heading = torch.tensor([w >= HINT_COLUMNS for w in width], dtype=torch.bool,
+                                         device=self.train_device)
+        columns = {index: list(range(a, a + w)) for index, (a, w) in enumerate(zip(at, width)) if a >= 0}
+        for network in (self.actor, self.critic):
+            if network is not None and hasattr(network, "adapters"):
+                attach_blind_columns(network, columns, "hint")
+        self._sync_rollout()
+        print(f"Hints: {sum(a >= 0 for a in at)} of {len(at)} layouts carry the teacher's hint block (hint_coef "
+              f"{self.config.hint_coef}, heading_hint_coef {self.config.heading_hint_coef}); kept out of both "
+              f"networks", flush=True)
+
+    def _hint_rows(self, obs: torch.Tensor, layout: torch.Tensor) -> dict | None:
+        """A minibatch's hint columns by row: the hinted action (-1 none), its weight, whether the teacher played the
+        row, the hinted heading and its weight (0 for a layout whose hint has none). None without a hint block."""
+        if self.hint_at is None:
+            return None
+        at = self.hint_at[layout.long()]
+        has = at >= 0
+        index = torch.arange(obs.shape[0], device=obs.device)
+        safe = at.clamp(min=0)
+        last = obs.shape[-1] - 1
+
+        zero = torch.zeros(at.shape, dtype=torch.float32, device=obs.device)
+
+        def column(offset: int) -> torch.Tensor:
+            return torch.where(has, obs[index, (safe + offset).clamp(max=last)].float(), zero)
+        heading = self.hint_heading[layout.long()] & has
+        return {
+            "action": torch.where(has, column(HINT_ACTION).round().long() - 1, torch.full_like(at, -1)),
+            "weight": column(HINT_WEIGHT),
+            "scripted": has & (column(HINT_SCRIPTED) > 0.5),
+            "heading": torch.where(heading, column(HINT_HEADING), zero),
+            "heading_weight": torch.where(heading, column(HINT_HEADING_WEIGHT), zero),
+        }
+
     def camera_columns_clear(self) -> bool:
         """Whether no layout's adapter reads its camera's columns (the resume guard: resume_check.py calls it too)."""
         for network in (self.actor, self.critic):
             for index in range(len(network.adapters)):
-                for tag in ("vision", "director"):
+                for tag in ("vision", "director", "hint"):
                     keep = getattr(network, f"{tag}_keep_{index}", None)
                     if keep is not None and bool((network.adapters[index].weight * (1.0 - keep) != 0).any()):
                         return False
@@ -1715,6 +1784,50 @@ class MappoTrainer:
             for choice, name in enumerate(LOOK_COMMANDS):
                 out[name] = ((command == choice) & seeing).sum().to(torch.float32) / count
         return _host_stats(out)
+
+    def _hint_loss(self, hints: dict, dist, mask: torch.Tensor, features: torch.Tensor, layout: torch.Tensor,
+                   goal: torch.Tensor | None, valid: torch.Tensor, stats: dict) -> torch.Tensor | None:
+        """The imitation terms for a minibatch's hinted rows: hint_coef x the sim's weight x -log p(hinted action),
+        over the weight, and heading_hint_coef x its weight x -log density(hinted heading), over that weight. A hinted
+        action the row's mask refuses is skipped and counted (hint_masked). None where both coefficients are 0.
+        Masked arithmetic on the GPU (no wait on the device for a count), as the hindsight term's."""
+        cfg = self.config
+        if cfg.hint_coef <= 0.0 and cfg.heading_hint_coef <= 0.0:
+            return None
+        action, weight = hints["action"], hints["weight"]
+        offered = valid & (action >= 0) & (weight > 0)
+        safe = action.clamp(min=0, max=mask.shape[-1] - 1)
+        allowed = mask.gather(1, safe[:, None])[:, 0] > 0
+        hinted = offered & allowed
+        heading_rows = valid & (hints["heading_weight"] > 0)
+        if not self._masked_stats and not bool(hinted.any()) and not bool(heading_rows.any()):
+            return None
+        loss = torch.zeros((), device=features.device)
+        with torch.no_grad():
+            stats["hint_rows"] = stats.get("hint_rows", 0.0) + hinted.sum()
+            stats["hint_masked_rows"] = stats.get("hint_masked_rows", 0.0) + (offered & ~allowed).sum()
+        if cfg.hint_coef > 0.0:
+            log_prob = dist.log_prob(torch.where(hinted, safe, torch.zeros_like(safe)))
+            w = weight * hinted.to(weight.dtype)
+            action_loss = -(log_prob * w).sum() / w.sum().clamp(min=1e-6)
+            loss = loss + cfg.hint_coef * action_loss
+            with torch.no_grad():
+                count = hinted.sum()
+                match = (dist.logits.argmax(-1) == action) & hinted
+                stats["hint_loss"] = stats.get("hint_loss", 0.0) + action_loss.detach()
+                stats["hint_match"] = stats.get("hint_match", 0.0) + match.sum() / count.clamp(min=1)
+                stats["hint_weight"] = stats.get("hint_weight", 0.0) + w.sum() / count.clamp(min=1)
+                stats["hint_n"] = stats.get("hint_n", 0.0) + (count > 0).float()
+        if cfg.heading_hint_coef > 0.0 and self.actor.heading_head is not None:
+            theta = hints["heading"].to(features.dtype)
+            heading_log_prob = self.actor.heading_terms(features, layout, theta, goal)[0]
+            hw = hints["heading_weight"] * heading_rows.to(hints["heading_weight"].dtype)
+            heading_loss = -(heading_log_prob * hw).sum() / hw.sum().clamp(min=1e-6)
+            loss = loss + cfg.heading_hint_coef * heading_loss
+            with torch.no_grad():
+                stats["heading_hint_loss"] = stats.get("heading_hint_loss", 0.0) + heading_loss.detach()
+                stats["heading_hint_n"] = stats.get("heading_hint_n", 0.0) + (heading_rows.sum() > 0).float()
+        return loss
 
     def _heading_stats(self, data: dict) -> dict[str, float]:
         """How far the policy steers: `heading_abs_theta_mean`, the mean |theta| in degrees over the rollout's samples
@@ -2644,6 +2757,22 @@ class MappoTrainer:
                     pg_weight = pg.sum().clamp(min=1.0)
                 else:
                     pg, pg_weight = counted, weight
+                # The rows the teacher played (the hint block's third column): the buffer's action, look and
+                # heading there are the policy's draws, not what was done, so they are out of every policy term --
+                # the ratio, the entropies, hindsight -- and its statistics; the value, the foresight and the
+                # imitation keep them.
+                hints = self._hint_rows(data["obs"][:, chunk].reshape(-1, data["obs"].shape[-1]),
+                                        data["layout"][:, chunk].reshape(-1))
+                acting, acting_weight = counted, weight
+                if hints is not None:
+                    played = hints["scripted"].reshape(counted.shape).to(torch.float32)
+                    acting = counted * (1.0 - played)
+                    acting_weight = acting.sum().clamp(min=1.0)
+                    pg = pg * (1.0 - played)
+                    pg_weight = pg.sum().clamp(min=1.0)
+                    auxiliary_stats["scripted_rows"] = (auxiliary_stats.get("scripted_rows", 0.0)
+                                                        + (played * counted).sum())
+                    auxiliary_stats["scripted_of"] = auxiliary_stats.get("scripted_of", 0.0) + counted.sum()
 
                 # The actor's half of the minibatch on one stream, the critic's on another: they share only these
                 # inputs, and each replays its GRU through every step, a chain of small kernels the GPU cannot
@@ -2735,16 +2864,21 @@ class MappoTrainer:
                 advantage = data["advantages"][:, chunk]
                 clipped_ratio = ratio.clamp(1 - cfg.clip, 1 + cfg.clip)
                 policy_loss = -(torch.min(ratio * advantage, clipped_ratio * advantage) * pg).sum() / pg_weight
-                entropy = (entropies * counted).sum() / weight
-                action_entropy = (action_entropies * counted).sum() / weight
+                entropy = (entropies * acting).sum() / acting_weight
+                action_entropy = (action_entropies * acting).sum() / acting_weight
 
                 actor_loss = policy_loss - self.entropy_coef * entropy
                 if look_entropies is not None:
-                    look_entropy = (look_entropies * counted).sum() / weight
+                    look_entropy = (look_entropies * acting).sum() / acting_weight
                     actor_loss = actor_loss - self.look_entropy_coef() * look_entropy
                 if heading_entropies is not None:
-                    heading_entropy = (heading_entropies * counted).sum() / weight
+                    heading_entropy = (heading_entropies * acting).sum() / acting_weight
                     actor_loss = actor_loss - self.heading_entropy_coef() * heading_entropy
+                if hints is not None:
+                    imitation = self._hint_loss(hints, dist, mask_all, features, layout_all, goal_all,
+                                                valid[:, chunk].reshape(-1), auxiliary_stats)
+                    if imitation is not None:
+                        actor_loss = actor_loss + imitation
                 if foresight:
                     targets = data["foresight_targets"][:, chunk]
                     known = data["foresight_valid"][:, chunk].to(torch.float32) * counted[..., None]
@@ -2781,6 +2915,8 @@ class MappoTrainer:
                     achieved = data["achieved"][:, chunk].reshape(-1)
                     primary = split_goal_pair(goal_all, self.goal_count)[0]
                     relabel = (achieved >= 0) & (achieved != primary) & valid[:, chunk].reshape(-1)
+                    if hints is not None:
+                        relabel = relabel & ~hints["scripted"]
                     relabelled_rows = relabel.sum()
                     actions_all = data["actions"][:, chunk].reshape(-1)
                     if self._masked_stats:
@@ -2880,23 +3016,23 @@ class MappoTrainer:
                 self._switch_stream(main, wait_for=self._update_streams)
                 with torch.no_grad():
                     log_ratio = log_probs - taken
-                    self._layout_totals(layout_totals, layout_all, action_entropies, (ratio - 1) - log_ratio, counted,
+                    self._layout_totals(layout_totals, layout_all, action_entropies, (ratio - 1) - log_ratio, acting,
                                         pg)
                     kl = (((ratio - 1) - log_ratio) * pg).sum() / pg_weight
                     totals["policy_loss"] += policy_loss.detach()
                     totals["value_loss"] += value_loss.detach()
                     totals["entropy"] += action_entropy.detach()
                     if goal_entropies is not None:
-                        chose = (data["goal_chosen"][:, chunk].to(torch.float32) * counted).sum().clamp(min=1.0)
-                        totals["goal_entropy"] += (goal_entropies * counted).sum().detach() / chose
+                        chose = (data["goal_chosen"][:, chunk].to(torch.float32) * acting).sum().clamp(min=1.0)
+                        totals["goal_entropy"] += (goal_entropies * acting).sum().detach() / chose
                     if look_entropies is not None:
                         # Over the rows that look (a layout without the camera has none to speak of).
-                        seeing = self.actor.look_head.has_vision[layout_all].reshape(lead).to(torch.float32) * counted
+                        seeing = self.actor.look_head.has_vision[layout_all].reshape(lead).to(torch.float32) * acting
                         totals["look_entropy"] += (look_entropies * seeing).sum().detach() / seeing.sum().clamp(min=1.0)
                     if heading_entropies is not None:
                         # Over the rows that steer (a layout without a move block has no heading).
                         steering = (self.actor.heading_head.has_heading[layout_all].reshape(lead).to(torch.float32)
-                                    * counted)
+                                    * acting)
                         steered = steering.sum().clamp(min=1.0)
                         totals["heading_entropy"] += (heading_entropies * steering).sum().detach() / steered
                         totals["heading_kappa_mean"] += (heading_kappas * steering).sum() / steered
@@ -2982,6 +3118,27 @@ class MappoTrainer:
             stats["reward_potential_map"] = buffer.mean_potential_map()
             # ... and the share of decisions the true route's term stood in for the map's (potential.map_fallback).
             stats["reward_potential_fallback_share"] = buffer.mean_potential_fallback_share()
+        # The teacher's hints: the imitation losses per minibatch that had a hinted row, how often the greedy
+        # action is the hint, the sim's mean weight, the share of hinted actions the row's mask refused, and the
+        # share of rows the teacher played.
+        if "hint_n" in auxiliary_stats:
+            count = auxiliary_stats.pop("hint_n")
+            for name in ("hint_loss", "hint_match", "hint_weight"):
+                value = auxiliary_stats.pop(name, 0.0)
+                if count > 0.0:
+                    stats[name] = value / count
+        if "heading_hint_n" in auxiliary_stats:
+            count = auxiliary_stats.pop("heading_hint_n")
+            value = auxiliary_stats.pop("heading_hint_loss", 0.0)
+            if count > 0.0:
+                stats["heading_hint_loss"] = value / count
+        if "hint_rows" in auxiliary_stats:
+            rows_hinted = auxiliary_stats.pop("hint_rows")
+            refused = auxiliary_stats.pop("hint_masked_rows", 0.0)
+            stats["hint_masked"] = refused / max(rows_hinted + refused, 1.0)
+        if "scripted_rows" in auxiliary_stats:
+            played_rows = auxiliary_stats.pop("scripted_rows")
+            stats["scripted_share"] = played_rows / max(auxiliary_stats.pop("scripted_of", 0.0), 1.0)
         # Hindsight: the relabelled loss per minibatch that had one, and the rows relabelled over the update.
         if "hindsight_loss" in auxiliary_stats:
             relabelled = auxiliary_stats.pop("hindsight_rows")

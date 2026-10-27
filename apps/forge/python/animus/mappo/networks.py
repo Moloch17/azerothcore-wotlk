@@ -1111,11 +1111,11 @@ def attach_blind_columns(network: nn.Module, columns: dict[int, list[int]], tag:
 
 
 def clear_blind_columns(network: nn.Module) -> None:
-    """Zero every seat layout's camera columns (VisionEncoder) again (after a seed or a load brought weights from
-    elsewhere)."""
+    """Zero every seat layout's camera columns (VisionEncoder), the director's set columns and the teacher's hint
+    columns again (after a seed or a load brought weights from elsewhere)."""
     with torch.no_grad():
         for index in range(len(network.adapters)):
-            for tag in ("vision", "director"):
+            for tag in ("vision", "director", "hint"):
                 keep = getattr(network, f"{tag}_keep_{index}", None)
                 if keep is not None:
                     network.adapters[index].weight.mul_(keep)
@@ -4188,8 +4188,9 @@ HEADING_PREFIX = "heading_head."
 
 
 #: The blind-column masks' buffer names (attach_blind_columns' tags): "blind_keep_" (a checkpoint from before the hint
-#: block went still carries it, and it is dropped on load), the camera's.
-BLIND_KEEP_PREFIXES = ("blind_keep_", "vision_keep_")
+#: block went still carries it, and it is dropped on load), the camera's, and the teacher's hint block's (2026-10-27:
+#: made again from the stage's layouts after loading, by MappoTrainer.set_hint_space).
+BLIND_KEEP_PREFIXES = ("blind_keep_", "vision_keep_", "hint_keep_")
 
 
 def without_blind_columns(state: dict) -> dict:
