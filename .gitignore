@@ -17,6 +17,13 @@
 !/var/ccache/.gitkeep
 /env/dist/*
 !/env/dist/.gitkeep
+# The forge's module conf under version control (technique 7, 2026-10-27): it drives every run and is conf-synced to
+# six machines; nothing else under env/dist/etc (worldserver.conf holds credentials).
+!/env/dist/etc/
+/env/dist/etc/*
+!/env/dist/etc/modules/
+/env/dist/etc/modules/*
+!/env/dist/etc/modules/mod_animus_forge.conf
 /env/user/*
 /.env*
 /apps/joiner
