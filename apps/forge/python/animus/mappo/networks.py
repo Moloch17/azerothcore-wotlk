@@ -4831,7 +4831,8 @@ class LayoutActor(nn.Module):
         camera's embedding of these rows when the caller has it (the update encodes once for the actor and the
         critic); else it is computed here, from the rows' camera bytes `image` [N, I]."""
         extra = _vision_extra(self, obs, layout, vision_embedding, image)
-        if director := director_term(self, obs, layout):
+        director = director_term(self, obs, layout)
+        if director is not None:
             extra = director if extra is None else extra + director.to(extra.dtype)
         if self.dense_adapters is not None:
             hidden = self.dense_adapters(obs, layout)
@@ -5127,7 +5128,8 @@ class LayoutCritic(nn.Module):
                     own.dtype)
         if self.vision is not None:
             own = own + vision_term(self, obs, layout, vision_embedding, image).to(own.dtype)
-        if director := director_term(self, obs, layout):
+        director = director_term(self, obs, layout)
+        if director is not None:
             own = own + director.to(own.dtype)
         return hidden, own
 
