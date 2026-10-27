@@ -1294,7 +1294,10 @@ class TrainingRun:
             checkpoint = load_parent(path)
             if auto:
                 names = {layout["name"] for layout in checkpoint["spec"].get("layouts", ())}
-                missing = [layout.name for layout in spec.layouts if layout.name not in names]
+                # The director is an agent the stage adds, not a class a restricted stage left out: a checkpoint
+                # without it still seeds the classes (its own weights start fresh, animus.bootstrap).
+                missing = [layout.name for layout in spec.layouts
+                           if layout.name not in names and layout.name != DIRECTOR_LAYOUT]
                 if missing:
                     print(f"Not seeding from {path}: it has no {', '.join(missing)} (a restricted stage's checkpoint); "
                           f"trying the next stage down the chain, and merging its layouts in after", flush=True)
