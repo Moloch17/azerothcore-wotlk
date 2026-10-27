@@ -652,43 +652,11 @@ void Animus::Curriculum::InstanceEncounter::StartFrom(Env& env, EnvInstance& fig
             ++fight.Killed;
         }
 
-    // Past the gate: its shut doors (the Iron Clad Door) open, as the cannon would have left them; and each recorded
-    // gate before the start -- a door clicked open, the barrel, the cannon's door -- as the party that got there left
-    // it (a door type object opened; anything else left to the party).
-    // A recorded way names each gate's own object (GateSpawns): only those before the start open, below -- the Iron
-    // Clad Door stays shut until the start is past the cannon (2026-10-26: every leg past the first Heavy Door opened
-    // it, and the cannon's leg was a walk).
-    bool const recordedGates = std::any_of(way.GateSpawns.begin(), way.GateSpawns.end(),
-        [](uint32 spawn) { return spawn != 0; });
-    if (!recordedGates && way.Gate != UINT32_MAX && uint32(fight.StartSite) > way.Gate)
-        for (auto const& [spawnId, object] : map->GetGameObjectBySpawnIdStore())
-            if (object && object->IsInWorld() && std::find(arena.LiveShut.begin(), arena.LiveShut.end(),
-                object->GetEntry()) != arena.LiveShut.end())
-                object->SetGoState(GO_STATE_ACTIVE);
-    // The leg's own gate too when its door is a boss's (not LiveShut: the party opens the cannon's and the clicked
-    // doors): a boss's door opened the moment the boss fell, which was the leg before (the recording: Rhahk'Zor's
-    // Factory Door, Sneed's Mast Room Door, Gilnid's Foundry Door). 2026-10-26: legs 8, 17 and 24 missed with the
-    // door shut every time though the start had killed the boss -- a leg of standing at a shut door.
-    for (uint32 k = 0; k <= uint32(fight.StartSite) && k < way.GateSpawns.size(); ++k)
-        if (uint32 const gateSpawn = way.GateSpawns[k])
-        {
-            auto const range = map->GetGameObjectBySpawnIdStore().equal_range(gateSpawn);
-            for (auto it = range.first; it != range.second; ++it)
-                if (GameObject* object = it->second; object && object->IsInWorld()
-                    && object->GetGoType() == GAMEOBJECT_TYPE_DOOR && object->GetGoState() == GO_STATE_READY)
-                {
-                    bool const own = k == uint32(fight.StartSite);
-                    if (own && std::find(arena.LiveShut.begin(), arena.LiveShut.end(), object->GetEntry())
-                        != arena.LiveShut.end())
-                        continue;
-                    if (own)
-                        LOG_DEBUG("module.animus", "{}: env {} leg {}: the boss's door {} (spawn {}) was shut at the "
-                            "start; opened", _scenario.Name(), env.Index, k, object->GetEntry(), gateSpawn);
-                    object->SetGoState(GO_STATE_ACTIVE);
-                    // The levers would shut it again otherwise (instance_deadmines keeps the Factory Door so).
-                    object->SetLootState(GO_ACTIVATED);
-                }
-        }
+    // The doors are the dungeon's own, as a player finds them (the user, 2026-10-27): a boss's door opens from the
+    // boss's death (its script -- the kill above fires it, KillSelf being a death like any), the Iron Clad Door from
+    // the cannon's blast, a Heavy Door from a hand on it, a lever swings what it is wired to. Nothing here opens
+    // one. (Until 2026-10-27 a leg start opened the Iron Clad Door past the cannon and the leg's own boss door
+    // itself; a leg beyond the cannon is now the party's gunpowder's, as a run is.)
 
     // The party at the checkpoint before. A recorded way's checkpoint is where the player stood -- ground a person
     // walked on -- so the party stands there, at the recorded height, a ground correction kept only when it stays on
@@ -974,18 +942,27 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
     }
     // **The way's gates opened by the party's own hand** (GateOpened, the director, 2026-10-26): a gate of the way
     // whose object has opened (a door active, a chest looted, a goober used) within GATE_PRESS_MS of a seat's press
-    // on anything (the press on the cannon opens the Iron Clad Door) is paid to every living seat, once each gate.
-    // A boss's door opens on no press and is the kill's. And a loot window a seat has open is emptied as the
-    // client's auto-loot does (EntityActions::AutoLoot).
+    // on the gate itself or, the gate a door, on an opener (a lever, the cannon: EnvInstance::Press::Opener) is
+    // paid to every living seat, once each gate. A boss's door that opened on its boss's death had no such press
+    // and is the kill's. And a loot window a seat has open is emptied as the client's auto-loot does
+    // (EntityActions::AutoLoot).
     if (fight.Way && !fight.Way->GateSpawns.empty())
     {
         if (fight.GatePaid.size() != fight.Way->GateSpawns.size())
             fight.GatePaid.assign(fight.Way->GateSpawns.size(), 0);
-        uint32 lastPress = 0;
-        for (auto const& [guid, ms] : fight.Pressed)
-            lastPress = std::max(lastPress, ms);
-        bool const pressed = !fight.Pressed.empty() && env.EpisodeElapsedMs <= lastPress + GATE_PRESS_MS;
-        if (Map* map = env.FindMap(); pressed && map)
+        uint32 lastOpener = 0;
+        for (EnvInstance::Press const& press : fight.Pressed)
+            if (press.Opener)
+                lastOpener = std::max(lastOpener, press.Ms);
+        bool const openerPressed = lastOpener && env.EpisodeElapsedMs <= lastOpener + GATE_PRESS_MS;
+        auto const pressedItself = [&fight, &env](ObjectGuid guid)
+        {
+            for (EnvInstance::Press const& press : fight.Pressed)
+                if (press.Guid == guid && env.EpisodeElapsedMs <= press.Ms + GATE_PRESS_MS)
+                    return true;
+            return false;
+        };
+        if (Map* map = env.FindMap(); !fight.Pressed.empty() && map)
             for (uint32 k = uint32(std::max(fight.StartSite, 0)); k < fight.Way->GateSpawns.size(); ++k)
             {
                 if (!fight.Way->GateSpawns[k] || fight.GatePaid[k])
@@ -994,9 +971,10 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
                 for (auto it = range.first; it != range.second; ++it)
                     if (GameObject const* object = it->second; object && object->IsInWorld())
                     {
-                        bool const open = object->GetGoType() == GAMEOBJECT_TYPE_DOOR
-                            ? object->GetGoState() != GO_STATE_READY : object->getLootState() != GO_READY;
-                        if (!open)
+                        bool const door = object->GetGoType() == GAMEOBJECT_TYPE_DOOR;
+                        bool const open = door ? object->GetGoState() != GO_STATE_READY
+                            : object->getLootState() != GO_READY;
+                        if (!open || !(pressedItself(object->GetGUID()) || (door && openerPressed)))
                             continue;
                         fight.GatePaid[k] = 1;
                         ++fight.GatesOpened;
@@ -1465,8 +1443,18 @@ bool Animus::Curriculum::InstanceEncounter::Usable(GameObject const* object)
             return true;
         }
         case GAMEOBJECT_TYPE_DOOR:
-            // A door with a lock is opened by what its lock names (a lever, the cannon), not by a hand on it.
-            return !object->GetGOInfo()->GetLockId();
+        {
+            // A door a player's click opens: no lock, or a lock with a case wanting no skill (lock 86, the Heavy
+            // Doors: the client's Opening spell, which every seat knows). One whose lock names nothing a hand can do
+            // (a boss's door, the Iron Clad Door) is its lever's, its cannon's or its boss's.
+            LockEntry const* lock = sLockStore.LookupEntry(object->GetGOInfo()->GetLockId());
+            if (!object->GetGOInfo()->GetLockId())
+                return true;
+            for (uint32 i = 0; lock && i < MAX_LOCK_CASE; ++i)
+                if (lock->Type[i] == LOCK_KEY_SKILL && !lock->Skill[i])
+                    return true;
+            return false;
+        }
         // A key chest (EntityActions::KeyChest: the gunpowder's barrel) is the one chest the party loots (the user,
         // 2026-10-26: the director tells a seat to loot it, and that seat uses what it holds on the cannon).
         case GAMEOBJECT_TYPE_CHEST:
@@ -1518,13 +1506,19 @@ void Animus::Curriculum::InstanceEncounter::OnSeatAction(Env& env, uint32 /*seat
         return;
     if (result.ActPress != uint8(EntityActions::Press::Interact) && result.ActPress != uint8(EntityActions::Press::UseItem))
         return;
-    for (auto& [guid, ms] : fight.Pressed)
-        if (guid == result.ActedOn)
+    // An opener: a button or a lever pressed, or an item used on an object (the gunpowder on the cannon).
+    bool opener = result.ActPress == uint8(EntityActions::Press::UseItem);
+    if (Map* map = env.FindMap(); !opener && map)
+        if (GameObject const* object = map->GetGameObject(result.ActedOn))
+            opener = object->GetGoType() == GAMEOBJECT_TYPE_BUTTON || object->GetGoType() == GAMEOBJECT_TYPE_GOOBER;
+    for (EnvInstance::Press& press : fight.Pressed)
+        if (press.Guid == result.ActedOn)
         {
-            ms = env.EpisodeElapsedMs;
+            press.Ms = env.EpisodeElapsedMs;
+            press.Opener = press.Opener || opener;
             return;
         }
-    fight.Pressed.emplace_back(result.ActedOn, env.EpisodeElapsedMs);
+    fight.Pressed.push_back({ result.ActedOn, env.EpisodeElapsedMs, opener });
 }
 
 std::vector<uint32> const& Animus::Curriculum::InstanceEncounter::KeyItems(uint32 mapId)

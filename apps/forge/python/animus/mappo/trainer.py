@@ -97,6 +97,9 @@ class MappoConfig:
     critic_lr: float = 5e-4
     epochs: int = 5
     minibatches: int = 4
+    #: The slow goal update's rows (every goal choice of the rollout) scored this many at a time, the gradient
+    #: accumulated over the chunks; 0 scores them all at once (2026-10-27: that ran a 20 GB device out of memory).
+    goal_chunk_rows: int = 2048
     max_grad_norm: float = 0.5
     use_value_norm: bool = True
     # How fast the value normaliser follows the returns, as the weight the running stats keep per update. The
@@ -1899,123 +1902,163 @@ class MappoTrainer:
         advantages = (advantages - normalised.mean()) / (normalised.std() + 1e-8) if normalised.numel() > 1 else advantages
         totals = {"slow_policy_loss": 0.0, "slow_value_loss": 0.0, "goal_entropy": 0.0, "slow_approx_kl": 0.0,
                   "lookahead_loss": 0.0}
-        for _ in range(cfg.epochs):
-            states = _carry_sequence(self.actor.slow_memory, self.slow_goal_size, inputs, first, dones_seq)
-            states = states.reshape(length * columns, -1)
-            if slots is not None:
-                _, log_prob, entropy_rows, _ = head.draw(states, obs, layout, False, slots, cells=cells, image=image,
-                                                         bonus=bonus)
-            else:
-                logits = head.logits(states, obs, layout)
-                dist = torch.distributions.Categorical(logits=logits)
-                log_prob = dist.log_prob(goal)
-                entropy_rows = dist.entropy()
-            log_ratio = (log_prob - old_log_prob) * counted
-            ratio = log_ratio.exp()
-            clipped = ratio.clamp(1 - cfg.clip, 1 + cfg.clip)
-            weight = counted.sum().clamp(min=1.0)
-            policy_loss = -(torch.min(ratio * advantages, clipped * advantages) * counted).sum() / weight
-            entropy = (entropy_rows * counted).sum() / weight
-            value = self.actor.slow_value(states).squeeze(-1)
-            value_loss = (((value - returns) ** 2) * counted).sum() / weight
-            loss = policy_loss - self.entropy_coef * self.goal_entropy_factor * entropy + cfg.value_coef * value_loss
-            if cell_on:
-                # The primary's cell distribution again: its entropy where the primary is a cell goal, whether the sim's
-                # offer of the cell goal agrees with the learner's choosable blocks, and the hindsight term.
-                is_cell = (slots[:, 0] == head.cell_joint) & (counted > 0)
+        # The rows a chunk at a time (mappo.goal_chunk_rows; 2026-10-27: every goal row of the rollout scored at once,
+        # tanh(hidden + query) over rows x blocks x CELL_HIDDEN kept for the backward, ran the host's 20 GB device out
+        # of memory at 48 envs x 6 agents). Every term is divided by the whole batch's denominator, so the chunks'
+        # losses add up to the one loss; each chunk's backward frees its graph, the slow GRU's (small) kept to the
+        # last chunk's.
+        rows_total = length * columns
+        chunk_rows = cfg.goal_chunk_rows if cfg.goal_chunk_rows > 0 else rows_total
+        chunks = [(start, min(start + chunk_rows, rows_total)) for start in range(0, rows_total, chunk_rows)]
+        weight = counted.sum().clamp(min=1.0)
+        # What the cell terms need of the whole batch before any chunk: which blocks each row's crop offers (a
+        # function of the image bytes alone, no network), hence which hindsight labels count and the terms'
+        # denominators.
+        is_cell = taken = labels = use = has = distinct = relabel = cell_rows = hindsight_n = None
+        if cell_on:
+            is_cell = (slots[:, 0] == head.cell_joint) & (counted > 0)
+            cell_rows = is_cell.sum().clamp(min=1)
+            with torch.no_grad():
+                cell_valid = torch.cat([head.cell_inputs(image[a:b])[1] for a, b in chunks])
+                top = cell_valid.shape[-1] - 1
                 taken = torch.where(is_cell, cells[:, 0], torch.zeros_like(cells[:, 0]))
                 if hindsight is not None:
                     taken = torch.where(is_cell & (known_t & (reached_t == 0) & hindsight[1]), hindsight[0], taken)
-                if window is None:
-                    cell_lp, cell_valid_at, cell_entropy, any_valid = head.cell_primary(states, image, taken, bonus)
-                else:
-                    # Lookback: the block at the next choice (the label above, when the window does not reach it) and
-                    # the window's, each scored against the one cell distribution of the choice's row.
-                    labels = torch.cat([hindsight[0][:, None], window[0]], dim=1)
-                    offered = torch.cat([hindsight[1][:, None], window[1]], dim=1)
-                    many_lp, many_valid, cell_entropy, any_valid = head.cell_primary_many(states, image, labels,
-                                                                                         bonus)
+                taken = taken.long().clamp(0, top)
                 if window is not None:
-                    use = offered & many_valid & (is_cell & known_t & (reached_t == 0))[:, None]
-                    # A block named twice by one choice counts once (the first naming): standing still in a block for
-                    # K decisions is one label, not K.
+                    # Lookback: the block at the next choice (the label above, when the window does not reach it) and
+                    # the window's, each scored against the one cell distribution of the choice's row. A block named
+                    # twice by one choice counts once (the first naming): standing still in a block for K decisions
+                    # is one label, not K.
+                    labels = torch.cat([hindsight[0][:, None], window[0]], dim=1).long().clamp(0, top)
+                    offered = torch.cat([hindsight[1][:, None], window[1]], dim=1)
+                    use = offered & cell_valid.gather(1, labels) & (is_cell & known_t & (reached_t == 0))[:, None]
                     span = labels.shape[1]
                     earlier = torch.tril(torch.ones(span, span, dtype=torch.bool, device=device), diagonal=-1)
                     same = (labels[:, :, None] == labels[:, None, :]) & use[:, None, :] & earlier[None]
                     use = use & ~same.any(dim=-1)
-                    # Each relabelled choice weighs one: the mean over its distinct blocks, then the mean over choices.
                     distinct = use.sum(dim=1)
                     has = distinct > 0
-                    per_choice = (many_lp * use).sum(dim=1) / distinct.clamp(min=1)
-                    hindsight_loss = -(per_choice * has).sum() / has.sum().clamp(min=1)
-                    loss = loss + cfg.goal_cell_hindsight_coef * hindsight_loss
-                    totals["goal_cell_hindsight_loss"] = totals.get("goal_cell_hindsight_loss", 0.0) + float(
-                        hindsight_loss.detach()) / cfg.epochs
+                    hindsight_n = has.sum().clamp(min=1)
                     totals["goal_cell_hindsight_rows"] = float(has.sum())
                     totals["goal_cell_hindsight_blocks"] = float(use.sum())
                 elif hindsight is not None:
-                    relabel = is_cell & known_t & (reached_t == 0) & hindsight[1] & cell_valid_at
-                    hindsight_loss = -(cell_lp * relabel).sum() / relabel.sum().clamp(min=1)
-                    loss = loss + cfg.goal_cell_hindsight_coef * hindsight_loss
-                    totals["goal_cell_hindsight_loss"] = totals.get("goal_cell_hindsight_loss", 0.0) + float(
-                        hindsight_loss.detach()) / cfg.epochs
+                    relabel = (is_cell & known_t & (reached_t == 0) & hindsight[1]
+                               & cell_valid.gather(1, taken[:, None])[:, 0])
+                    hindsight_n = relabel.sum().clamp(min=1)
                     totals["goal_cell_hindsight_rows"] = float(relabel.sum())
-                with torch.no_grad():
-                    cell_rows = is_cell.sum().clamp(min=1)
-                    totals["goal_cell_entropy"] = totals.get("goal_cell_entropy", 0.0) + float(
-                        (cell_entropy * is_cell).sum() / cell_rows) / cfg.epochs
-                    totals["goal_cell_share"] = float(is_cell.sum() / weight)
-                    # The sim offers the cell goal (the goal block's target-there bit for the cell target) on a decision
-                    # whose crop the learner finds no choosable block in: the two definitions have drifted apart.
-                    block_start = head.block_at[layout.long()]
-                    bit = obs.gather(1, (block_start.clamp(min=0) + head.kinds + head.cell_joint % head.targets)
-                                     .clamp(max=obs.shape[-1] - 1)[:, None])[:, 0] > 0.5
-                    offered = bit & (block_start >= 0) & (counted > 0)
-                    totals["goal_cell_mask_mismatch"] = float((offered & ~any_valid).sum()
-                                                              / offered.sum().clamp(min=1))
-            lookahead_loss = torch.zeros((), device=device)
-            if head.lookahead:
-                success, expected = head.predictions(states)
-                picked = goal[:, None]
-                success = success.gather(1, picked)[:, 0]
-                expected = expected.gather(1, picked)[:, 0]
-                mask = known_t.float()
-                lookahead_loss = ((nn.functional.binary_cross_entropy_with_logits(success, reached_t, reduction="none")
-                                   + (expected - duration_t) ** 2) * mask).sum() / mask.sum().clamp(min=1.0)
-                loss = loss + cfg.lookahead_coef * lookahead_loss
-                with torch.no_grad():
-                    # How good the goal-level predictions are, on the goals actually chosen: the Brier score of
-                    # "reached" against always predicting the rollout's own rate, and the duration's mean error.
-                    known_n = mask.sum().clamp(min=1.0)
-                    probability = torch.sigmoid(success)
-                    base_rate = (reached_t * mask).sum() / known_n
-                    # Averaged over the epochs, as the losses are (the last epoch alone was the one reported).
-                    totals["lookahead_brier"] = totals.get("lookahead_brier", 0.0) + float(
-                        (((probability - reached_t) ** 2) * mask).sum() / known_n) / cfg.epochs
-                    totals["lookahead_brier_base"] = totals.get("lookahead_brier_base", 0.0) + float(
-                        (((base_rate - reached_t) ** 2) * mask).sum() / known_n) / cfg.epochs
-                    totals["lookahead_duration_error"] = totals.get("lookahead_duration_error", 0.0) + float(
-                        ((expected - duration_t).abs() * mask).sum() / known_n) / cfg.epochs
-                    # Whether the goal chosen is the one the lookahead itself scores best (success and duration
-                    # weighed as the logits weigh them): a head that plans from its predictions picks it.
-                    all_success, all_duration = head.predictions(states)
-                    weight_la = head.lookahead_weight.to(all_success.dtype)
-                    planned = (weight_la[0] * all_success + weight_la[1] * all_duration).argmax(dim=-1)
-                    chosen_rows = counted > 0
-                    totals["goal_best_by_lookahead"] = totals.get("goal_best_by_lookahead", 0.0) + float(
-                        (planned == goal)[chosen_rows].float().mean() if bool(chosen_rows.any()) else 0.0) / cfg.epochs
+                # The sim offers the cell goal (the goal block's target-there bit for the cell target) on a decision
+                # whose crop the learner finds no choosable block in: the two definitions have drifted apart.
+                block_start = head.block_at[layout.long()]
+                bit = obs.gather(1, (block_start.clamp(min=0) + head.kinds + head.cell_joint % head.targets)
+                                 .clamp(max=obs.shape[-1] - 1)[:, None])[:, 0] > 0.5
+                offered_bit = bit & (block_start >= 0) & (counted > 0)
+                totals["goal_cell_share"] = float(is_cell.sum() / weight)
+                totals["goal_cell_mask_mismatch"] = float((offered_bit & ~cell_valid.any(dim=-1)).sum()
+                                                          / offered_bit.sum().clamp(min=1))
+        mask = known_t.float()
+        known_n = mask.sum().clamp(min=1.0)
+        chosen_rows = counted > 0
+        chosen_n = chosen_rows.sum().clamp(min=1)
+        base_rate = (reached_t * mask).sum() / known_n
+
+        def part(tensor, a: int, b: int):
+            return None if tensor is None else tensor[a:b]
+
+        for _ in range(cfg.epochs):
+            states = _carry_sequence(self.actor.slow_memory, self.slow_goal_size, inputs, first, dones_seq)
+            states = states.reshape(length * columns, -1)
             self.slow_opt.zero_grad(set_to_none=True)
-            loss.backward()
+            sums: dict[str, float] = {}     # this epoch's terms, each the sum of its chunks' shares
+
+            def add(key: str, value: torch.Tensor) -> None:
+                sums[key] = sums.get(key, 0.0) + float(value.detach())
+
+            for index, (a, b) in enumerate(chunks):
+                states_c = states[a:b]
+                counted_c = counted[a:b]
+                if slots is not None:
+                    _, log_prob, entropy_rows, _ = head.draw(states_c, obs[a:b], layout[a:b], False, slots[a:b],
+                                                             cells=part(cells, a, b), image=part(image, a, b),
+                                                             bonus=part(bonus, a, b))
+                else:
+                    logits = head.logits(states_c, obs[a:b], layout[a:b])
+                    dist = torch.distributions.Categorical(logits=logits)
+                    log_prob = dist.log_prob(goal[a:b])
+                    entropy_rows = dist.entropy()
+                log_ratio = (log_prob - old_log_prob[a:b]) * counted_c
+                ratio = log_ratio.exp()
+                clipped = ratio.clamp(1 - cfg.clip, 1 + cfg.clip)
+                advantages_c = advantages[a:b]
+                policy_loss = -(torch.min(ratio * advantages_c, clipped * advantages_c) * counted_c).sum() / weight
+                entropy = (entropy_rows * counted_c).sum() / weight
+                value = self.actor.slow_value(states_c).squeeze(-1)
+                value_loss = (((value - returns[a:b]) ** 2) * counted_c).sum() / weight
+                loss = (policy_loss - self.entropy_coef * self.goal_entropy_factor * entropy
+                        + cfg.value_coef * value_loss)
+                add("policy", policy_loss)
+                add("value", value_loss)
+                add("entropy", entropy)
+                add("kl", (((ratio - 1) - log_ratio) * counted_c).sum() / weight)
+                if cell_on:
+                    # The primary's cell distribution again: its entropy where the primary is a cell goal, and the
+                    # hindsight term.
+                    if window is None:
+                        cell_lp, _, cell_entropy, _ = head.cell_primary(states_c, image[a:b], taken[a:b],
+                                                                        part(bonus, a, b))
+                        if hindsight is not None:
+                            hindsight_loss = -(cell_lp * relabel[a:b]).sum() / hindsight_n
+                            loss = loss + cfg.goal_cell_hindsight_coef * hindsight_loss
+                            add("hindsight", hindsight_loss)
+                    else:
+                        many_lp, _, cell_entropy, _ = head.cell_primary_many(states_c, image[a:b], labels[a:b],
+                                                                             part(bonus, a, b))
+                        # Each relabelled choice weighs one: the mean over its distinct blocks, then the mean over
+                        # choices.
+                        per_choice = (many_lp * use[a:b]).sum(dim=1) / distinct[a:b].clamp(min=1)
+                        hindsight_loss = -(per_choice * has[a:b]).sum() / hindsight_n
+                        loss = loss + cfg.goal_cell_hindsight_coef * hindsight_loss
+                        add("hindsight", hindsight_loss)
+                    add("cell_entropy", (cell_entropy * is_cell[a:b]).sum() / cell_rows)
+                if head.lookahead:
+                    success, expected = head.predictions(states_c)
+                    picked = goal[a:b, None]
+                    success = success.gather(1, picked)[:, 0]
+                    expected = expected.gather(1, picked)[:, 0]
+                    mask_c = mask[a:b]
+                    reached_c = reached_t[a:b]
+                    duration_c = duration_t[a:b]
+                    lookahead_loss = ((nn.functional.binary_cross_entropy_with_logits(success, reached_c,
+                                                                                      reduction="none")
+                                       + (expected - duration_c) ** 2) * mask_c).sum() / known_n
+                    loss = loss + cfg.lookahead_coef * lookahead_loss
+                    add("lookahead", lookahead_loss)
+                    with torch.no_grad():
+                        # How good the goal-level predictions are, on the goals actually chosen: the Brier score of
+                        # "reached" against always predicting the rollout's own rate, and the duration's mean error.
+                        probability = torch.sigmoid(success)
+                        add("brier", (((probability - reached_c) ** 2) * mask_c).sum() / known_n)
+                        add("brier_base", (((base_rate - reached_c) ** 2) * mask_c).sum() / known_n)
+                        add("duration_error", ((expected - duration_c).abs() * mask_c).sum() / known_n)
+                        # Whether the goal chosen is the one the lookahead itself scores best (success and duration
+                        # weighed as the logits weigh them): a head that plans from its predictions picks it.
+                        all_success, all_duration = head.predictions(states_c)
+                        weight_la = head.lookahead_weight.to(all_success.dtype)
+                        planned = (weight_la[0] * all_success + weight_la[1] * all_duration).argmax(dim=-1)
+                        add("best", ((planned == goal[a:b]) & chosen_rows[a:b]).sum() / chosen_n)
+                loss.backward(retain_graph=index + 1 < len(chunks))
             if cfg.rank_sync == "gradients":
                 self.ranks.average_gradients(self.slow_parameters())
             nn.utils.clip_grad_norm_(self.slow_parameters(), cfg.max_grad_norm)
             self.slow_opt.step()
-            with torch.no_grad():
-                totals["slow_policy_loss"] += float(policy_loss) / cfg.epochs
-                totals["slow_value_loss"] += float(value_loss) / cfg.epochs
-                totals["goal_entropy"] += float(entropy) / cfg.epochs
-                totals["slow_approx_kl"] += float((((ratio - 1) - log_ratio) * counted).sum() / weight) / cfg.epochs
-                totals["lookahead_loss"] += float(lookahead_loss) / cfg.epochs
+            # Averaged over the epochs, as the losses are.
+            for key, name in (("policy", "slow_policy_loss"), ("value", "slow_value_loss"),
+                              ("entropy", "goal_entropy"), ("kl", "slow_approx_kl"), ("lookahead", "lookahead_loss"),
+                              ("cell_entropy", "goal_cell_entropy"), ("hindsight", "goal_cell_hindsight_loss"),
+                              ("brier", "lookahead_brier"), ("brier_base", "lookahead_brier_base"),
+                              ("duration_error", "lookahead_duration_error"), ("best", "goal_best_by_lookahead")):
+                if key in sums:
+                    totals[name] = totals.get(name, 0.0) + sums[key] / cfg.epochs
         totals["goal_reached_share"] = float(reached_t[known_t].mean()) if bool(known_t.any()) else 0.0
         return totals
 

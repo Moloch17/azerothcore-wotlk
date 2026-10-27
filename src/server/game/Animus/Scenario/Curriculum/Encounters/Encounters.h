@@ -297,10 +297,19 @@ namespace Animus::Curriculum
             std::vector<ObjectGuid> Objects;    // what the party can use near it (CrowdBlock::ACTION_USE_OBJECT)
             mutable std::vector<ObjectGuid> Used;   // what a seat has used this run: each thing once
             /// **The party's own hand on the way's gates** (the director, 2026-10-26): each object a seat pressed
-            /// this run and when, and per gate of the way whether its opening was paid (GateOpened). A gate counts
-            /// as the party's when it opens within GATE_PRESS_MS of a seat's press (the cannon's press opens the
-            /// Iron Clad Door; a boss's door opens on no press).
-            std::vector<std::pair<ObjectGuid, uint32>> Pressed;
+            /// this run, when, and whether it was an opener -- a button or a lever, the cannon (an item used on it)
+            /// -- and per gate of the way whether its opening was paid (GateOpened). A gate counts as the party's
+            /// when it opens within GATE_PRESS_MS of a press on the gate itself or, a door, of a press on an opener
+            /// (the cannon's blows the Iron Clad Door, a lever swings a boss's door). A boss's door that opened on
+            /// its boss's death is the kill's (2026-10-27: every Factory Door opening was paid as the party's, any
+            /// press within ten seconds counting).
+            struct Press
+            {
+                ObjectGuid Guid;
+                uint32 Ms = 0;
+                bool Opener = false;
+            };
+            std::vector<Press> Pressed;
             std::vector<uint8> GatePaid;
             uint32 GatesOpened = 0;             // paid to every seat (SeatInstance::GatesPaid)
             ObjectGuid Approached;              // the thing the tank has been near, unused, since ApproachedMs

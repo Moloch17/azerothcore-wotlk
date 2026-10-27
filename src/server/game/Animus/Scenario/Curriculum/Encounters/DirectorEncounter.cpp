@@ -462,7 +462,8 @@ void Animus::Curriculum::DirectorEncounter::Call(Env& env, int32 action)
         {
             Player const* other = call.Slot < count ? _scenario.SeatBot(env, call.Slot) : nullptr;
             target = other ? other->GetGUID() : ObjectGuid::Empty;
-            impossible = impossible || !other || !other->IsAlive() || call.Slot == member;
+            impossible = impossible || !other || !other->IsAlive() || call.Slot == member
+                || (call.Verb == OrderKind::Heal && other->GetHealthPct() / 100.0f >= tuning.HealTo);
             break;
         }
         case OrderKind::Loot:
@@ -505,7 +506,7 @@ void Animus::Curriculum::DirectorEncounter::Call(Env& env, int32 action)
     director.Pressed[member] = 0;
     if (call.Verb == OrderKind::Heal)
         if (Player const* other = call.Slot < count ? _scenario.SeatBot(env, call.Slot) : nullptr)
-            order.WasLow = other->IsAlive() && other->GetHealthPct() / 100.0f < tuning.LowHealth;
+            order.WasLow = other->IsAlive() && other->GetHealthPct() / 100.0f < tuning.HealFrom;
     if (_scenario.Tuning().Instance.WingTrace && env.Index == 0)
         LOG_DEBUG("module.animus", "{}: env {} director orders seat {}: {} slot {} ({}{})", _scenario.Name(),
             env.Index, member, OrderKindName(call.Verb), call.Slot, target.ToString(),
@@ -552,13 +553,19 @@ void Animus::Curriculum::DirectorEncounter::Judge(Env& env, uint32 seat, Player*
     {
         case OrderKind::Focus:
         {
+            // Carried out on the seat's first damage to the named enemy; one that dies untouched by the seat
+            // was not.
             Unit const* unit = ObjectAccessor::GetUnit(*bot, order.Target);
             if (unit && unit->IsAlive() && (bot->GetVictim() == unit || bot->GetTarget() == order.Target)
                 && env.StepStats[seat].Damage)
+            {
                 order.Damaged = true;
+                Finish(env, seat, true);
+                return;
+            }
             if (DeadUnit(unit))
             {
-                Finish(env, seat, order.Damaged);
+                Finish(env, seat, false);
                 return;
             }
             break;
@@ -593,10 +600,10 @@ void Animus::Curriculum::DirectorEncounter::Judge(Env& env, uint32 seat, Player*
                 return;
             }
             float const health = other->GetHealthPct() / 100.0f;
-            order.WasLow = order.WasLow || health < tuning.LowHealth;
+            order.WasLow = order.WasLow || health < tuning.HealFrom;
             if (env.StepStats[seat].AllyHealing)
                 order.Damaged = true;       // the seat healed somebody since the order
-            if (order.WasLow && order.Damaged && health >= 0.9f)
+            if (order.WasLow && order.Damaged && health >= tuning.HealTo)
             {
                 Finish(env, seat, true);
                 return;

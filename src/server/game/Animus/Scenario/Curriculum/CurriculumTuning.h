@@ -1060,15 +1060,20 @@ namespace Animus::Curriculum
             /// A gate of the way opened by the party's own hand -- a door clicked, the cannon fired -- paid every
             /// living seat (GateOpened).
             float GateOpened = 2.0f;
-            /// Below this share of health a member counts as hurt: the event that opens a turn, and what a Heal
-            /// order is about.
+            /// Below this share of health a member counts as hurt: the event that opens a turn.
             float LowHealth = 0.4f;
+            /// A Heal order is carried out when the seat has healed and the member, below HealFrom at the order or
+            /// since, is at HealTo; one for a member at HealTo already is impossible (2026-10-27: done only once the
+            /// member had been under LowHealth and was back at 90%, no Heal order was ever carried out).
+            float HealFrom = 0.8f;
+            float HealTo = 0.9f;
             /// A Follow order is carried out after FollowMs within FollowYards of the member; a Rest order once the
             /// seat is at Instance.WingReadyShare of its health and mana.
             uint32 FollowMs = 20000;
             float FollowYards = 15.0f;
-            /// A Focus order is carried out when the named enemy dies with the seat having damaged it; a Pull order
-            /// when the named enemy is in combat with the party within PullMs of the order.
+            /// A Focus order is carried out on the seat's first damage to the named enemy (2026-10-27: on its death
+            /// with the seat having damaged it, none was ever carried out -- the order was replaced first); a Pull
+            /// order when the named enemy is in combat with the party within PullMs of the order.
             uint32 PullMs = 30000;
         } Director;
 
@@ -1166,6 +1171,8 @@ namespace Animus::Curriculum
             f("Director.LootUnordered", tuning.Director.LootUnordered);
             f("Director.GateOpened", tuning.Director.GateOpened);
             f("Director.LowHealth", tuning.Director.LowHealth);
+            f("Director.HealFrom", tuning.Director.HealFrom);
+            f("Director.HealTo", tuning.Director.HealTo);
             f("Director.FollowMs", tuning.Director.FollowMs);
             f("Director.FollowYards", tuning.Director.FollowYards);
             f("Director.PullMs", tuning.Director.PullMs);

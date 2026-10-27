@@ -184,9 +184,9 @@ namespace
         arena.LegSeconds = 300;
         arena.LiveObjects = false;
         arena.LiveOpen = {};
-        // The doors a leg start past them opens as a party that got there would have: the Iron Clad Door (the cannon's)
-        // and the Heavy Doors (a click); the bosses' doors open with their deaths, which a leg start deals.
-        arena.LiveShut = { 16397, 17153, 17154 };
+        // Every door the dungeon's own (the user, 2026-10-27): a boss's opens with its death, the Iron Clad Door
+        // with the cannon, a Heavy Door with a click; a leg start opens none.
+        arena.LiveShut = {};
         arena.WingReverse = false;
         arena.RespawnAtEntrance = false;
         return arena;
