@@ -129,6 +129,7 @@ namespace Animus::Curriculum::EntityActions
         float Distance = 0.0f;      // from the seat, as IsWithinDistInMap measures it
         float Reach = 0.0f;         // GameObject::GetInteractionDistance
         bool Locked = false;        // a door, button or goober whose template names a lock (LockedToHand)
+        bool Seen = true;           // in the seat's line of sight: a click reaches nothing behind a shut door
     };
     /// Whether a game object of `goType` with lock `lockId` is shut to a hand on it: a door, a button or a goober
     /// with any lock. Its lever, or the item its lock takes, opens it; a chest's lock is the loot refusal's.

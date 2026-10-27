@@ -341,6 +341,11 @@ Animus::Curriculum::EntityActions::Refusal Animus::Curriculum::EntityActions::Ju
         return Refusal::Locked;
     if (facts.Distance > facts.Reach)
         return Refusal::Reach;
+    // The server's handler takes a use from behind a shut door (a distance, no sight); the client's click lands on
+    // the door (2026-10-27: a seat at the Factory Door pulled the lever past it, 3 yd off, and the lever opened the
+    // door).
+    if (!facts.Seen)
+        return Refusal::Sight;
     return Refusal::None;
 }
 
@@ -523,6 +528,7 @@ Animus::Curriculum::EntityActions::Refusal Animus::Curriculum::EntityActions::Ap
                 facts.Selectable = !go->HasGameObjectFlag(GO_FLAG_NOT_SELECTABLE);
                 facts.Reach = go->GetInteractionDistance();
                 facts.Distance = go->IsWithinDistInMap(bot) ? 0.0f : facts.Reach + 1.0f;
+                facts.Seen = bot->IsWithinLOSInMap(go);
                 // A key chest is opened as a chest is: the client casts its lock's Opening spell (the barrel's lock
                 // 57 wants an Open or Treasure skill of 0), whose open-lock effect sends the loot (Spell::EffectOpenLock).
                 facts.Locked = LockedToHand(go->GetGoType(), go->GetGOInfo()->GetLockId())
@@ -574,6 +580,9 @@ Animus::Curriculum::EntityActions::Refusal Animus::Curriculum::EntityActions::Ap
             Item* item = KeyItemFor(bot, object, spell);
             if (!item || !spell)
                 return refuse(Refusal::NoItem);
+            // As a click: nothing behind a shut door is used on.
+            if (go && !bot->IsWithinLOSInMap(go))
+                return refuse(Refusal::Sight);
             SpellCastTargets targets;
             if (go)
                 targets.SetGOTarget(go);
