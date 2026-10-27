@@ -20,6 +20,7 @@
 #include "Creature.h"
 #include "EntityActions.h"
 #include "Env.h"
+#include "HintBlock.h"
 #include "GameObject.h"
 #include "Identity.h"
 #include "Log.h"
@@ -130,6 +131,12 @@ void Animus::Curriculum::DirectorEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
         return float(orders(env).Orders) / std::max(1.0f, float(env.EpisodeElapsedMs) / 60000.0f);
     });
     table.Add("order_done_unpaid", [this](Env const& env, uint32) { return float(_envs[env.Index].DoneUnpaid); });
+    // The director's teacher (Teach): the share of the director's decisions it played.
+    table.Add("director_teacher_played_share", [this](Env const& env, uint32)
+    {
+        EnvDirector const& director = _envs[env.Index];
+        return director.TeacherDecisions ? float(director.TeacherPlayed) / float(director.TeacherDecisions) : 0.0f;
+    });
 }
 
 void Animus::Curriculum::DirectorEncounter::ResetEpisode(Env& env)
@@ -860,4 +867,142 @@ float Animus::Curriculum::DirectorEncounter::DirectorReward(Env& env, float cons
         own += director.Rewards.Add(RewardTerm::OrderIssued, -tuning.OrderIssued * float(issued));
     director.OrdersCharged = director.Orders.Orders;
     return (seats ? total / float(seats) : 0.0f) + own;
+}
+
+void Animus::Curriculum::DirectorEncounter::Teach(Env& env, float* obs, uint8 const* mask, float tau)
+{
+    using namespace DirectorLayout;
+    EnvDirector& director = _envs[env.Index];
+    director.TeacherAction = -1;
+    director.TeacherPlays = false;
+    CurriculumTuning const& tuning = _scenario.Tuning();
+    if (!Active(env) || !mask || tau <= 0.0f || !tuning.Teacher.Director || !_scenario.Instance())
+    {
+        director.TeacherSegmentLeft = 0;
+        return;
+    }
+    Map* map = env.FindMap();
+    InstanceEncounter::TeacherWay const& way = _scenario.Instance()->Teacher(env, map);
+    EnvState const& data = _scenario.Data(env);
+    DirectorOrders const& orders = director.Orders;
+    uint32 const count = std::min<uint32>(data.ActiveSeats, DIRECTOR_SEATS);
+    std::array<Player*, DIRECTOR_SEATS> seats{};
+    int32 tank = -1;
+    int32 healer = -1;
+    for (uint32 seat = 0; seat < count; ++seat)
+        if (Player* bot = _scenario.SeatBot(env, seat); bot && bot->IsInWorld() && bot->IsAlive())
+        {
+            seats[seat] = bot;
+            if (tank < 0 && data.Seats[seat].DungeonRole == DUNGEON_TANK)
+                tank = int32(seat);
+            if (healer < 0 && data.Seats[seat].DungeonRole == DUNGEON_HEALER)
+                healer = int32(seat);
+        }
+    auto const enemySlot = [&director](ObjectGuid guid) -> int32
+    {
+        for (uint32 slot = 0; slot < DIRECTOR_ENEMIES; ++slot)
+            if (!guid.IsEmpty() && director.EnemySlots[slot] == guid)
+                return int32(slot);
+        return -1;
+    };
+    auto const objectSlot = [&director](ObjectGuid guid) -> int32
+    {
+        for (uint32 slot = 0; slot < DIRECTOR_OBJECTS; ++slot)
+            if (!guid.IsEmpty() && director.ObjectSlots[slot] == guid)
+                return int32(slot);
+        return -1;
+    };
+    auto const seatOf = [&seats, count](ObjectGuid guid) -> int32
+    {
+        for (uint32 seat = 0; seat < count; ++seat)
+            if (seats[seat] && seats[seat]->GetGUID() == guid)
+                return int32(seat);
+        return -1;
+    };
+    // The orders the party should be under, most urgent first: (member, kind, its action, its target).
+    struct Want
+    {
+        uint32 Member;
+        OrderKind Kind;
+        uint32 Action;
+        ObjectGuid Target;
+    };
+    std::vector<Want> wants;
+    // In a fight: an enemy of the director's slots on a player.
+    Player const* anyone = nullptr;
+    for (uint32 seat = 0; seat < count && !anyone; ++seat)
+        anyone = seats[seat];
+    bool fight = false;
+    for (uint32 slot = 0; slot < DIRECTOR_ENEMIES && anyone && !fight; ++slot)
+        if (Unit const* enemy = director.EnemySlots[slot].IsEmpty() ? nullptr
+            : ObjectAccessor::GetUnit(*anyone, director.EnemySlots[slot]))
+            fight = enemy->IsAlive() && enemy->GetVictim() && enemy->GetVictim()->IsPlayer();
+    // A heal for the most hurt member below HealFrom.
+    if (healer >= 0)
+    {
+        int32 lowest = -1;
+        for (uint32 seat = 0; seat < count; ++seat)
+            if (seats[seat] && seats[seat]->GetHealthPct() / 100.0f < tuning.Director.HealFrom
+                && (lowest < 0 || seats[seat]->GetHealthPct() < seats[uint32(lowest)]->GetHealthPct()))
+                lowest = int32(seat);
+        if (lowest >= 0)
+            wants.push_back({ uint32(healer), OrderKind::Heal, ACTION_HEAL_FIRST + uint32(lowest),
+                seats[uint32(lowest)]->GetGUID() });
+    }
+    // The way's object: the gunpowder used, the barrel looted, by its opener.
+    if (!way.Object.IsEmpty() && way.ObjectOpens != WingTeacher::Opens::Click)
+        if (int32 const opener = seatOf(way.Opener), slot = objectSlot(way.Object); opener >= 0 && slot >= 0)
+        {
+            bool const use = way.ObjectOpens == WingTeacher::Opens::UseKey;
+            wants.push_back({ uint32(opener), use ? OrderKind::Use : OrderKind::Loot,
+                (use ? ACTION_USE_FIRST : ACTION_LOOT_FIRST) + uint32(slot), way.Object });
+        }
+    if (fight && tank >= 0)
+    {
+        // The tank's target, for every damage dealer.
+        ObjectGuid const target = seats[uint32(tank)]->GetTarget();
+        if (int32 const slot = enemySlot(target); slot >= 0)
+            for (uint32 seat = 0; seat < count; ++seat)
+                if (seats[seat] && int32(seat) != tank && int32(seat) != healer)
+                    wants.push_back({ seat, OrderKind::Focus, ACTION_FOCUS_FIRST + uint32(slot), target });
+    }
+    else if (tank >= 0)
+    {
+        // The next pack, the tank's to pull; then the stragglers back to the tank.
+        if (int32 const slot = enemySlot(way.Pull); slot >= 0)
+            wants.push_back({ uint32(tank), OrderKind::Pull, ACTION_PULL_FIRST + uint32(slot), way.Pull });
+        constexpr float STRAY_YARDS = 25.0f;
+        for (uint32 seat = 0; seat < count; ++seat)
+            if (seats[seat] && int32(seat) != tank && seats[seat]->GetExactDist(seats[uint32(tank)]) > STRAY_YARDS)
+                wants.push_back({ seat, OrderKind::Follow, ACTION_FOLLOW_FIRST + uint32(tank),
+                    seats[uint32(tank)]->GetGUID() });
+    }
+    // The first the party lacks: its member addressed, then the order; nothing lacking ends the turn.
+    int32 call = int32(ACTION_HOLD);
+    for (Want const& want : wants)
+    {
+        DirectorOrders::MemberOrder const& held = orders.Members[want.Member];
+        if (held.Kind == want.Kind && held.Target == want.Target)
+            continue;
+        call = int32(orders.Address == want.Member ? want.Action : ACTION_ADDRESS_FIRST + want.Member);
+        break;
+    }
+    if (call < 0 || call >= int32(ACTION_COUNT) || !mask[call])
+        call = -1;
+    director.TeacherAction = call;
+    if (!director.TeacherSegmentLeft)
+    {
+        director.TeacherSegmentLeft = std::max<uint32>(1, tuning.Teacher.SegmentDecisions);
+        director.TeacherSegmentPlays = frand(0.0f, 1.0f) < tau;
+    }
+    --director.TeacherSegmentLeft;
+    director.TeacherPlays = director.TeacherSegmentPlays;
+    ++director.TeacherDecisions;
+    director.TeacherPlayed += director.TeacherPlays ? 1 : 0;
+    // The hint columns after the director's row: a call (a hold is not one), its weight, and whether it played.
+    float* hint = obs + OBS_COUNT;
+    bool const hinted = call > int32(ACTION_HOLD);
+    hint[HintBlock::OBS_ACTION] = hinted ? float(call + 1) : 0.0f;
+    hint[HintBlock::OBS_WEIGHT] = hinted ? tau : 0.0f;
+    hint[HintBlock::OBS_SCRIPTED] = director.TeacherPlays ? 1.0f : 0.0f;
 }

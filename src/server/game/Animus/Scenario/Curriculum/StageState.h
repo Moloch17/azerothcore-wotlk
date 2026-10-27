@@ -41,6 +41,7 @@
 #include "TalentBuilder.h"
 #include <array>
 #include <vector>
+#include <string>
 
 /*
  * The state every curriculum stage has: the seats' characters and their episode totals. What only some stages have
@@ -457,6 +458,19 @@ namespace Animus::Curriculum
         /// A whole dungeon's party makeup (StageScenario::FitsDungeonRole): this seat's place in it.
         uint8 DungeonRole = 0;
         int32 Pressed = -1;                     // what the seat pressed this decision (the "Wing stuck" log line)
+        /// The teacher (TeacherTuning, StageScenario::TeachSeat): its press (-1 none) and heading for this decision,
+        /// whether it plays the decision, the segment it is in (decisions left, and whether the segment is played),
+        /// why it chose (the "Wing stuck" log line), and the episode's tallies.
+        int32 TeacherAction = -1;
+        float TeacherHeading = 0.0f;
+        bool TeacherHasHeading = false;
+        bool TeacherPlays = false;
+        uint32 TeacherSegmentLeft = 0;
+        bool TeacherSegmentPlays = false;
+        std::string TeacherReason;
+        uint32 TeacherDecisions = 0;
+        uint32 TeacherPlayed = 0;
+        uint32 TeacherHinted = 0;
         std::array<uint8, NAMED_ENEMY_SLOTS> EnemySeenAlive{};
         bool BelowRecover = false;
         uint32 StepPreparationMs = 0;           // buffs, summons and stealth started this decision (SeatGoal::Prepare)
@@ -592,6 +606,16 @@ namespace Animus::Curriculum
         void ResetEpisode()
         {
             DecisionTargetKnown = false;
+            TeacherAction = -1;
+            TeacherHeading = 0.0f;
+            TeacherHasHeading = false;
+            TeacherPlays = false;
+            TeacherSegmentLeft = 0;
+            TeacherSegmentPlays = false;
+            TeacherReason.clear();
+            TeacherDecisions = 0;
+            TeacherPlayed = 0;
+            TeacherHinted = 0;
             LastStepDamage = 0.0f;
             LastStepPowerDelta = 0.0f;
             LastStepDamageTaken = 0.0f;

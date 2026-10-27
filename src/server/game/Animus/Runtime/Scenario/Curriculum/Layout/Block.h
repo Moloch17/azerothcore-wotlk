@@ -90,7 +90,11 @@ namespace Animus::Curriculum
         /// what the order needs, its age; no actions. An order is advice: the seat reads it and chooses for itself,
         /// and is paid for carrying it out (DirectorEncounter). Before the goal block, which stays last.
         Order = 29,
-        Count = 30
+        /// The teacher's suggestion (dm_clear's teacher, 2026-10-27): the press and heading it would make and whether
+        /// it played the decision, for the learner's imitation terms only -- kept out of its networks; no actions.
+        /// Before the goal block, which stays last.
+        Hint = 30,
+        Count = 31
     };
 
     /// **The ids are explicit and never reused.** A manifest, a checkpoint and the learner's seeding by name know a block

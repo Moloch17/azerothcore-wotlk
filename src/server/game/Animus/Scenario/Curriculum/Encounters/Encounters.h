@@ -35,8 +35,11 @@
 #include "PointNavEncounter.h"
 #include "DirectorLayout.h"
 #include "DirectorOrders.h"
+#include "WingTeacher.h"
+#include <map>
 #include <unordered_set>
 #include <mutex>
+#include <set>
 #include <array>
 #include <functional>
 #include <map>
@@ -177,11 +180,37 @@ namespace Animus::Curriculum
         [[nodiscard]] static std::pair<uint32, uint32> DungeonLevels(BossRow const& row);
         /// The world database's spawn of a row's boss (the first on its map), or null.
         [[nodiscard]] static CreatureData const* FindSpawn(BossRow const& row);
-        /// `forge probe doors`: the next spare episode (a training one, or an evaluation's unseeded env) checks the
-        /// Deadmines' doors behave as they do for players -- a lever past a shut door refused for sight, the lever
-        /// from its own side swinging the Factory Door, Sneed's death opening the Mast Room Door, the gunpowder on
-        /// the cannon blowing the Iron Clad Door -- and logs `Probe doors:` lines.
-        bool ArmDoorCheck(std::string& reply);
+
+        /// **The teacher's view of the way** (TeacherTuning, StageScenario::TeachSeat), worked out once a decision an
+        /// env: the checkpoint the tank walks to -- the goal, or the first gate before it still shut -- the way's next
+        /// object to open and how, the seat that opens it (a Heavy Door: the tank; the barrel: the seat nearest it;
+        /// the cannon: the seat holding the gunpowder, else back to the barrel), and the next pack's member to pull.
+        struct TeacherWay
+        {
+            bool Valid = false;
+            uint32 Lower = 0;           // the first leg of the line the seats are looked for on
+            uint32 Target = 0;          // the checkpoint the tank walks to
+            bool AtGate = false;        // ... a gate still shut
+            ObjectGuid Object;          // the way's next object to open (empty: none -- a boss's door, nothing shut)
+            WingTeacher::Opens ObjectOpens = WingTeacher::Opens::Click;
+            ObjectGuid Opener;          // the seat that opens it
+            ObjectGuid Pull;            // the next pack's nearest member not in a fight, while no gate is before it
+        };
+        [[nodiscard]] TeacherWay const& Teacher(Env const& env, Map* map);
+        /// The teacher's share this decision (per leg, PointNavEncounter::LegTau): 0 in an evaluation, a teacher-free
+        /// trip, with the teacher off or no way.
+        [[nodiscard]] float TeacherTau(Env const& env);
+        [[nodiscard]] bool TeacherFree(Env const& env) const { return _envs[env.Index].TeacherFree; }
+        /// The party's time with no progress (a kill, a site cleared): the teacher's ready-check valve.
+        [[nodiscard]] float NoProgressSeconds(Env const& env) const
+        {
+            EnvInstance const& fight = _envs[env.Index];
+            return float(env.EpisodeElapsedMs - std::min(env.EpisodeElapsedMs, fight.ProgressMs)) / 1000.0f;
+        }
+        /// The next step along the recorded line for a seat: the tank's toward the way's target, another's toward
+        /// the tank (TeacherWay::Lower .. Target). False without a line.
+        [[nodiscard]] bool TeacherStep(Env const& env, Player const* bot, Player const* tank, bool isTank,
+            Position& step);
 
         [[nodiscard]] std::vector<RewardTerm> RewardTerms() const override;
         void AddEpisodeInfo(EpisodeInfoTable& table) override;
@@ -343,13 +372,12 @@ namespace Animus::Curriculum
             PointNavEncounter::ClearWay const* Way = nullptr;
             int32 StartSite = 0;
             bool StartDrawn = false;            // a drawn start (Instance.WingStarts): not a whole run
-            /// The door check (`forge probe doors`, technique 3): the step it is on, decisions waited at it, and
-            /// its tally. An episode checking doors is counted toward nothing.
-            bool DoorCheck = false;
-            uint32 DoorStep = 0;
-            uint32 DoorWait = 0;
-            uint32 DoorOk = 0;
-            uint32 DoorFail = 0;
+            /// The teacher (TeacherTuning): a teacher-free leg trip (it measures the policy alone), the decision the
+            /// way's teacher view was worked out for, that view, and the seat named to loot the barrel.
+            bool TeacherFree = false;
+            uint32 TeacherStamp = UINT32_MAX;
+            TeacherWay Teacher;
+            ObjectGuid LootOpener;
             uint32 GatePaidBossAlive = 0;       // door gates paid with a boss spawned before them alive (invariant)
             uint32 Killed = 0;
             int32 GoalSite = 0;
@@ -445,9 +473,24 @@ namespace Animus::Curriculum
         void LogLegMissed(Env const& env, EnvInstance const& fight, Map* map, Player const* seat) const;
 
         std::vector<EnvInstance> _envs;
-        bool _doorCheckArmed = false;       // ArmDoorCheck: the next spare episode checks the doors
-        /// The door check's steps, one or more a decision (EnvInstance::DoorStep).
-        void RunDoorCheck(Env& env, EnvInstance& fight, Map* map);
+        /// The recorded line flattened for the teacher (TeacherStep): its points in order, the yards along it, and
+        /// each leg's first and one-past-last point; per way, built once.
+        struct TeacherLine
+        {
+            std::vector<Position> Points;
+            std::vector<float> Along;
+            std::vector<uint32> LegFirst;
+            std::vector<uint32> LegEnd;
+        };
+        std::map<PointNavEncounter::ClearWay const*, TeacherLine> _teacherLines;
+        std::mutex _teacherLineLock;
+        [[nodiscard]] TeacherLine const& LineOf(PointNavEncounter::ClearWay const& way);
+        /// The legs whose start has been logged (LogLegStart), (rung, leg) as rung * 1000 + leg, once each: envs run on
+        /// map threads at once.
+        std::set<uint32> _legStartLogged;
+        std::mutex _legStartLock;
+        /// A leg's start, once a leg a rung: its gate's object and whether it is shut, and the bosses before it alive.
+        void LogLegStart(Env const& env, EnvInstance const& fight, Map* map);
         std::map<InstanceLadder, std::vector<BossRow const*>> _rows;   // per ladder, the rows the database fields
     };
 
@@ -481,6 +524,17 @@ namespace Animus::Curriculum
         /// The director's row's reward, from the seats' (StageScenario::Reward): their mean less the order terms
         /// paid them this decision, less the director's own churn and impossible orders.
         [[nodiscard]] float DirectorReward(Env& env, float const* seatRewards);
+        /// **The director's teacher** (TeacherTuning, Teacher.Director): a scripted director's call this decision --
+        /// on its turn, the most urgent order the party lacks (a heal for the one hurt, the gunpowder used, the barrel
+        /// looted, the tank's target focused, the next pack pulled, a straggler called back), its member addressed
+        /// first -- written into the director's hint columns after its row (`obs`, `mask` final), and played with
+        /// probability `tau` (segments as the seats'). Nothing at tau 0.
+        void Teach(Env& env, float* obs, uint8 const* mask, float tau);
+        [[nodiscard]] bool TeacherPlays(Env const& env) const { return _envs[env.Index].TeacherPlays; }
+        [[nodiscard]] int32 TeacherAction(Env const& env) const
+        {
+            return std::max(_envs[env.Index].TeacherAction, int32(DirectorLayout::ACTION_HOLD));
+        }
 
     private:
         struct EnvDirector
@@ -504,6 +558,14 @@ namespace Animus::Curriculum
             /// Orders priced by their number (Director.OrderIssued, DonePerMinute): the orders charged so far, each
             /// seat's tokens for OrderDone pay, and the orders carried out that no token paid.
             uint32 OrdersCharged = 0;
+            /// The director's teacher (Teach): its call this decision (-1 none), whether it plays it, its segment, and
+            /// the episode's tallies.
+            int32 TeacherAction = -1;
+            bool TeacherPlays = false;
+            uint32 TeacherSegmentLeft = 0;
+            bool TeacherSegmentPlays = false;
+            uint32 TeacherDecisions = 0;
+            uint32 TeacherPlayed = 0;
             std::array<float, MAX_SEATS> DoneTokens{};
             uint32 DoneUnpaid = 0;
             RewardLedger Rewards;               // the director's own terms, for its columns

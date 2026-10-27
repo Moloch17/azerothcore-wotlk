@@ -1094,6 +1094,24 @@ namespace Animus::Curriculum
             float DonePerMinute = 4.0f;
         } Director;
 
+        /// **The teacher** (dm_clear, the user 2026-10-27: "a teacher again that slowly withdraws"; WingTeacher): in a
+        /// stage with the hint block, every training decision of a seat (and the director, with Director) carries the
+        /// teacher's press and heading as a hint the learner imitates, weighted by tau, and with probability tau the
+        /// teacher plays the seat for a segment of SegmentDecisions decisions. tau is per leg, from the policy's own
+        /// success there: FreeShare of each leg's training trips are teacher-free and measure it, and
+        /// tau = Max x clamp(1 - rate / Target, 0, 1), moved at most Step a measured trip -- so it withdraws slowly
+        /// where the policy succeeds alone and comes back where it regresses. The evaluation never has a teacher.
+        struct TeacherTuning
+        {
+            uint32 Enable = 0;
+            float Max = 0.8f;
+            float Target = 0.85f;
+            float Step = 0.05f;
+            float FreeShare = 0.2f;
+            uint32 SegmentDecisions = 8;
+            uint32 Director = 1;
+        } Teacher;
+
         /// The "human" stand-in seat of the party stages (StandIn.h: a frozen learned partner in one seat, its style
         /// leading or following, in the role it wants). Off unless StandIn.Share (or an arena's own share) is set.
         StandIn::Tuning StandIn;
@@ -1198,6 +1216,13 @@ namespace Animus::Curriculum
             f("Director.PullMs", tuning.Director.PullMs);
             f("Director.OrderIssued", tuning.Director.OrderIssued);
             f("Director.DonePerMinute", tuning.Director.DonePerMinute);
+            f("Teacher.Enable", tuning.Teacher.Enable);
+            f("Teacher.Max", tuning.Teacher.Max);
+            f("Teacher.Target", tuning.Teacher.Target);
+            f("Teacher.Step", tuning.Teacher.Step);
+            f("Teacher.FreeShare", tuning.Teacher.FreeShare);
+            f("Teacher.SegmentDecisions", tuning.Teacher.SegmentDecisions);
+            f("Teacher.Director", tuning.Teacher.Director);
             f("Instance.WingOffLineYards", tuning.Instance.WingOffLineYards);
 
             f("Actions.RepeatMs", tuning.Actions.RepeatMs);

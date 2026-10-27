@@ -179,7 +179,9 @@ namespace
         arena.InstanceRow = 1;
         arena.EpisodeSeconds = 5400;
         arena.StandInShare = 0;
-        arena.LevelLadder = { 60, 50, 40, 32, 26, 22, 20, 18 };
+        // Rung 0 is level 40 (the user, 2026-10-27: "go back to rung 0 at the level 40 level so all nodes get
+        // checked"): the recording was a level 60's, which the party out-levels; 60 and 50 are gone.
+        arena.LevelLadder = { 40, 32, 26, 22, 20, 18 };
         arena.WingLegs = true;
         arena.LegSeconds = 300;
         arena.LiveObjects = false;
@@ -369,9 +371,10 @@ namespace
             .Name = "dm_clear",
             .Suffix = "_dmclear",
             .Summary = "the live Deadmines on a recorded clear way, a proper party of five, legs then the run at each "
-                "rung of a level ladder from 60 down to 18; the bar at 18 is 70% clears with at most one wipe",
+                "rung of a level ladder from 40 down to 18, a teacher withdrawing per leg; the bar at 18 is 70% "
+                "clears with at most one wipe",
             .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Vision, Map, MemoryEntities, Sight, PartyFrames,
-                Combat, Order, Goal },
+                Combat, Order, Hint, Goal },
             .Arenas = { DeadminesLadder() },
             .MapId = MAP_DEADMINES,
             .SpawnPoints = { Position(-16.4f, -383.07f, 61.78f, 1.86f) },

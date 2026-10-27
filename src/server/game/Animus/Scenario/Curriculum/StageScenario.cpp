@@ -42,6 +42,7 @@
 #include "GoalBlock.h"
 #include "Encounters.h"
 #include "DirectorLayout.h"
+#include "HintBlock.h"
 #include "SeekEncounter.h"
 #include "SightEncounter.h"
 #include "InteractEncounter.h"
@@ -384,10 +385,9 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     if (_stage.Directed)
     {
         _directorLayout = uint32(_layouts.size());
-        _spec.ObsDim = std::max<uint32>(_spec.ObsDim, DirectorLayout::OBS_COUNT);
+        _spec.ObsDim = std::max<uint32>(_spec.ObsDim, DirectorObs());
         _spec.NumActions = std::max<uint32>(_spec.NumActions, DirectorLayout::ACTION_COUNT);
-        _spec.Layouts.push_back(LayoutSpec{ DirectorLayout::Name(), DirectorLayout::OBS_COUNT,
-            DirectorLayout::ACTION_COUNT });
+        _spec.Layouts.push_back(LayoutSpec{ DirectorLayout::Name(), DirectorObs(), DirectorLayout::ACTION_COUNT });
     }
 
     _spec.StateDim = STATE_GLOBAL_COUNT + MAX_SEATS * STATE_SEAT_FEATURES + PACK_SLOTS * STATE_ENEMY_FEATURES;
@@ -594,6 +594,29 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         return std::pair<float, uint32>(total > 0.0f ? best / total : 0.0f, which);
     };
     _info.Add("reward_top_share", [top](Env const& env, uint32 seat) { return top(env, seat).first; });
+    // The teacher (TeacherTuning): the share of the seat's decisions it played and hinted, its share at the leg, and
+    // whether the trip was a teacher-free one.
+    if (_stage.Has(BlockId::Hint))
+    {
+        _info.Add("teacher_played_share", [this](Env const& env, uint32 seat)
+        {
+            SeatState const& state = Data(env).Seats[seat];
+            return state.TeacherDecisions ? float(state.TeacherPlayed) / float(state.TeacherDecisions) : 0.0f;
+        });
+        _info.Add("teacher_hinted_share", [this](Env const& env, uint32 seat)
+        {
+            SeatState const& state = Data(env).Seats[seat];
+            return state.TeacherDecisions ? float(state.TeacherHinted) / float(state.TeacherDecisions) : 0.0f;
+        });
+        _info.Add("teacher_tau", [this](Env const& env, uint32)
+        {
+            return _instance ? _instance->TeacherTau(env) : 0.0f;
+        });
+        _info.Add("teacher_free", [this](Env const& env, uint32)
+        {
+            return _instance && _instance->TeacherFree(env) ? 1.0f : 0.0f;
+        });
+    }
     _info.Add("reward_top_term", [top](Env const& env, uint32 seat) { return float(top(env, seat).second); });
     // The width this episode's camera frames were cast at (AnimusForge.Vision.RenderSizes), before they were scaled
     // up to the canonical image: the learner can split its measures by render tier.
@@ -1559,6 +1582,9 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
                 block["revision"] = revision;
             if (id == BlockId::Core)
                 block["action_features"] = CoreBlock::ACTION_FEATURES;
+            // The teacher's suggestion (HintBlock): read for imitation, kept out of the networks.
+            if (id == BlockId::Hint)
+                block["hint"] = true;
             // The camera's image, as the layout's manifest describes it: the learner gives a layout whose vision block
             // has one its image encoder (camera-vision).
             if (id == BlockId::Vision)
@@ -1621,7 +1647,7 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
     if (_director)
     {
         boost::json::object& entry = layouts[DirectorLayout::Name()].emplace_object();
-        entry["obs_dim"] = uint32(DirectorLayout::OBS_COUNT);
+        entry["obs_dim"] = DirectorObs();
         entry["num_actions"] = uint32(DirectorLayout::ACTION_COUNT);
         boost::json::array& actionNames = entry["action_names"].emplace_array();
         for (std::string const& name : DirectorLayout::ActionNames())
@@ -1638,6 +1664,16 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
         for (std::string const& name : DirectorLayout::ColumnNames())
             names.push_back(boost::json::string(name));
         block["obs_names"] = std::move(names);
+        // The teacher's suggestion after its row (HintBlock's columns, the heading left out): for the learner's
+        // imitation terms only, kept out of the director's networks.
+        if (_stage.Has(BlockId::Hint))
+        {
+            boost::json::object& hint = spans.emplace_back(boost::json::object()).get_object();
+            hint["name"] = BlockName(BlockId::Hint);
+            hint["obs"] = Span(DirectorLayout::OBS_COUNT, DIRECTOR_HINT_COUNT);
+            hint["actions"] = Span(0, 0);
+            hint["hint"] = true;
+        }
     }
 
     boost::json::array& episodeInfo = stageFile["episode_info"].emplace_array();
@@ -3251,6 +3287,9 @@ void Animus::Curriculum::StageScenario::ApplyLook(Env& env, int32 const* look)
         // the row carries there -- the policy's 0, a placeholder's hold -- is rate 0.
         std::array<int32, Vision::FreeLook::HEADS> choice;
         std::copy_n(look + std::size_t(agent) * Vision::FreeLook::HEADS, Vision::FreeLook::HEADS, choice.begin());
+        // A decision the teacher plays holds the camera: its heading turns the body (ApplyContinuous).
+        if (seat.TeacherPlays)
+            choice = Vision::FreeLook::NEUTRAL;
         if (_stage.LevelCamera)
             choice[Vision::FreeLook::HEAD_PITCH_RATE] = int32(Vision::FreeLook::PITCH_STOP_INDEX);
         float const turn = Vision::FreeLook::Apply(seat.Look, choice.data(), settings);
@@ -3285,6 +3324,9 @@ void Animus::Curriculum::StageScenario::ApplyContinuous(Env& env, float const* c
         if (!seat.L || !seat.L->Has(BlockId::Move))
             return;
         float theta = continuous[std::size_t(agent) * _spec.ContinuousCount];
+        // A decision the teacher plays heads where the teacher heads (0 holds the facing).
+        if (seat.TeacherPlays)
+            theta = seat.TeacherHasHeading ? seat.TeacherHeading : 0.0f;
         if (!std::isfinite(theta))
             theta = 0.0f;
         theta = std::remainder(theta, TWO_PI);
@@ -3398,7 +3440,7 @@ void Animus::Curriculum::StageScenario::ApplyActions(Env& env, int32 const* acti
 {
     // The director speaks first: a call made this decision is one the seats can already read when they act on it.
     if (_director)
-        _director->Call(env, actions[DirectorAgent()]);
+        _director->Call(env, _director->TeacherPlays(env) ? _director->TeacherAction(env) : actions[DirectorAgent()]);
     // Env upkeep first (linked pulls, the owner, the next pull, the scripted opponent), so the targets below are
     // current.
     for (Encounter* encounter : ActiveEncounters(env))
@@ -3414,7 +3456,11 @@ void Animus::Curriculum::StageScenario::ApplyActions(Env& env, int32 const* acti
     AcceptResurrections(env);
 
     for (uint32 seat = 0; seat < _seatCount; ++seat)
-        ApplySeatAction(env, seat, actions[seat]);
+    {
+        // A decision the teacher plays is its press (none: the no-op, the keys held carry on).
+        SeatState const& state = Data(env).Seats[seat];
+        ApplySeatAction(env, seat, state.TeacherPlays ? std::max(state.TeacherAction, 0) : actions[seat]);
+    }
 
     if (CastOwnerActive(env))
         ApplySeatAction(env, OwnerAgent(), actions[OwnerAgent()]);
@@ -4308,6 +4354,11 @@ void Animus::Curriculum::StageScenario::Observe(Env& env, float* obs, float* sta
     WriteState(env, state);
 }
 
+uint32 Animus::Curriculum::StageScenario::DirectorObs() const
+{
+    return DirectorLayout::OBS_COUNT + (_stage.Has(BlockId::Hint) ? DIRECTOR_HINT_COUNT : 0);
+}
+
 void Animus::Curriculum::StageScenario::ObserveDirector(Env& env, float* obs, uint8* mask)
 {
     // The row is padded to the widest layout's, so clear all of it and let the director's own part fill the front.
@@ -4325,6 +4376,9 @@ void Animus::Curriculum::StageScenario::ObserveDirector(Env& env, float* obs, ui
         _director->ViewDirector(env, view);
     }
     DirectorLayout::Observe(view, obs, mask);
+    // The director's teacher, on its row and mask as they stand (its hint columns after the row).
+    if (_director && TeacherOn())
+        _director->Teach(env, obs, mask, _instance->TeacherTau(env));
 }
 
 void Animus::Curriculum::StageScenario::AgentLayouts(Env const& env, uint16* layout) const
@@ -4753,6 +4807,8 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
             if (mask[action] && Paced(env, seat, action))
                 mask[action] = 0;
 
+    // The teacher's choice for this decision, on the row and mask as they stand (its hint block; StageTeacher.cpp).
+    TeachSeat(env, seatIndex, view, bot, obs, mask);
 }
 
 bool Animus::Curriculum::StageScenario::Paced(Env const& env, SeatState const& seat, uint32 action) const
@@ -5638,21 +5694,6 @@ void Animus::Curriculum::StageScenario::SetNoSharedMemory(bool off)
         LOG_INFO("module.animus", "Animus forge: stage {}: {}", _stage.Name, off
             ? "the evaluation's seats start blank (no shared memory: the learner's no_shared_memory arm)"
             : "the evaluation's seats adopt the shared memory as the seed draws");
-}
-
-bool Animus::Curriculum::StageScenario::Probe(std::string const& what, std::string& reply)
-{
-    if (what != "doors")
-    {
-        reply = "no such probe: doors";
-        return false;
-    }
-    if (!_instance)
-    {
-        reply = "this stage has no dungeon to check doors in";
-        return false;
-    }
-    return _instance->ArmDoorCheck(reply);
 }
 
 void Animus::Curriculum::StageScenario::SetNoObjectMemory(bool off)

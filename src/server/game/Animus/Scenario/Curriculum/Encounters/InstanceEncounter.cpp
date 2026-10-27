@@ -404,21 +404,21 @@ void Animus::Curriculum::InstanceEncounter::ResetEpisode(Env& env)
             : fight.BossDead ? "cleared" : fight.Wiped ? "wiped" : "out of time");
     // A leg just ended counts toward its leg's rate at the rung (training only); a whole run just ended toward the
     // ladder's running share (the training runs only; the probes are the policy's own).
-    if (built && !fight.Evaluating && !fight.DoorCheck && fight.LegTrip && fight.LegCounted && fight.Leg >= 0)
+    // With the teacher on, only a teacher-free trip is the policy's own and counts (it is what the legs' learning and
+    // the teacher's share read).
+    bool const teacherOn = _scenario.Tuning().Teacher.Enable && _scenario.Stage().Has(BlockId::Hint);
+    if (built && !fight.Evaluating && fight.LegTrip && fight.LegCounted && fight.Leg >= 0
+        && (!teacherOn || fight.TeacherFree))
         if (PointNavEncounter* nav = _scenario.PointNav())
             nav->NoteLegAt(_scenario.Data(env).Arena, fight.Rung, uint32(fight.Leg), fight.LegDone);
     // A drawn start just ended counts toward its start's rate; the ladder's running share takes whole runs only.
-    if (built && !fight.Evaluating && !fight.DoorCheck && fight.StartDrawn)
+    if (built && !fight.Evaluating && fight.StartDrawn)
         if (PointNavEncounter* nav = _scenario.PointNav())
             nav->NoteStartAt(_scenario.Data(env).Arena, fight.Rung, uint32(std::max(fight.StartSite, 0)),
                 fight.BossDead || fight.GoalSite - fight.StartSite
                     >= int32(_scenario.Tuning().Instance.WingStartGoalSites));
-    if (built && !fight.Evaluating && !fight.DoorCheck && !fight.LegTrip && !fight.StartDrawn)
+    if (built && !fight.Evaluating && !fight.LegTrip && !fight.StartDrawn)
         _scenario.NoteWingRun(fight.Rung, fight.Probe, fight.BossDead ? 1.0f : ClearedShare(fight));
-    if (fight.DoorCheck)
-        for (uint32 index = 0; index < _scenario.Data(env).ActiveSeats; ++index)
-            if (Player* bot = _scenario.SeatBot(env, index))
-                bot->SetGameMaster(false);
     fight = EnvInstance();
 }
 
@@ -590,18 +590,6 @@ bool Animus::Curriculum::InstanceEncounter::Build(Env& env, Map* map, uint8 /*le
         PlanLeg(env, fight, map, seat);
     fight.GoalSite = fight.StartSite;
     fight.HasGoal = false;
-    // The door check (`forge probe doors`): the next spare episode -- a training one, or an evaluation's unseeded
-    // env -- in game mode, so the creatures leave the party to its checks.
-    if (_doorCheckArmed && fight.Way && map && env.EpisodeSeedIndex == NO_EPISODE_SEED)
-    {
-        _doorCheckArmed = false;
-        fight.DoorCheck = true;
-        fight.StartDrawn = false;
-        for (uint32 index = 0; index < data.ActiveSeats; ++index)
-            if (Player* bot = _scenario.SeatBot(env, index))
-                bot->SetGameMaster(true);
-        LOG_INFO("module.animus", "Probe doors: env {} checks the doors this episode", env.Index);
-    }
     // The party stays at the door with the trash alive (a backwards run: at its start, what lies behind it dead).
     // The creatures a full clear kills: every hostile one the instance holds, bosses among them (an instance loads
     // all its grids when it is created).
@@ -635,7 +623,6 @@ bool Animus::Curriculum::InstanceEncounter::Build(Env& env, Map* map, uint8 /*le
 void Animus::Curriculum::InstanceEncounter::StartReverse(Env& env, EnvInstance& fight, Map* map, Player* seat)
 {
     PointNavEncounter::ClearWay const& way = *fight.Way;
-    ArenaDefinition const& arena = _scenario.Arena(env);
     // The sites in order, and the rung's share of them to clear: the first rung the last ninth (the last boss's room),
     // the last rung the whole way from the entrance.
     std::vector<uint32> sites;
@@ -659,7 +646,6 @@ void Animus::Curriculum::InstanceEncounter::StartFrom(Env& env, EnvInstance& fig
     uint32 start, uint32 standAt)
 {
     PointNavEncounter::ClearWay const& way = *fight.Way;
-    ArenaDefinition const& arena = _scenario.Arena(env);
     if (start == 0 || start >= way.Points.size())
         return;
     fight.StartSite = int32(start);
@@ -753,6 +739,10 @@ void Animus::Curriculum::InstanceEncounter::PlanLeg(Env& env, EnvInstance& fight
         return;
     fight.LegTrip = true;
     fight.LegCounted = !env.Evaluating;
+    // A teacher-free trip (Teacher.FreeShare): the policy alone, the one that measures the leg for the teacher's share.
+    CurriculumTuning::TeacherTuning const& teacher = _scenario.Tuning().Teacher;
+    fight.TeacherFree = fight.LegCounted && teacher.Enable && _scenario.Stage().Has(BlockId::Hint)
+        && frand(0.0f, 1.0f) < teacher.FreeShare;
     fight.Leg = seeded ? int32((env.EpisodeSeedIndex / 2) % legs) : int32(nav->DrawLegAt(env, fight.Rung, legs));
     if (fight.Leg > 0)
         StartFrom(env, fight, map, seat, uint32(fight.Leg), uint32(fight.Leg) - 1);
@@ -763,6 +753,38 @@ void Animus::Curriculum::InstanceEncounter::PlanLeg(Env& env, EnvInstance& fight
     env.EpisodeLengthMs = std::max<uint32>(1000, uint32(seconds * 1000.0f));
     LOG_DEBUG("module.animus", "{}: env {} leg {} of {} at rung {} ({:.0f}% of the legs learned): {} creatures killed "
         "before it", _scenario.Name(), env.Index, fight.Leg, legs, fight.Rung, share * 100.0f, fight.Killed);
+    LogLegStart(env, fight, map);
+}
+
+void Animus::Curriculum::InstanceEncounter::LogLegStart(Env const& /*env*/, EnvInstance const& fight, Map* map)
+{
+    // Every node checked (the user, 2026-10-27): a leg that cannot be done -- a door its boss's death did not open --
+    // shows in the log with why, not as a leg slow to learn.
+    if (!fight.Way || !map || fight.Leg < 0)
+        return;
+    {
+        std::lock_guard lock(_legStartLock);
+        if (!_legStartLogged.insert(fight.Rung * 1000 + uint32(fight.Leg)).second)
+            return;
+    }
+    PointNavEncounter::ClearWay const& way = *fight.Way;
+    uint32 const k = uint32(fight.Leg);
+    std::string gate = "no gate";
+    if (k < way.GateSpawns.size() && way.GateSpawns[k])
+    {
+        gate = Acore::StringFormat("gate spawn {} not in the world", way.GateSpawns[k]);
+        auto const range = map->GetGameObjectBySpawnIdStore().equal_range(way.GateSpawns[k]);
+        for (auto it = range.first; it != range.second; ++it)
+            if (GameObject const* object = it->second; object && object->IsInWorld())
+            {
+                bool const door = object->GetGoType() == GAMEOBJECT_TYPE_DOOR;
+                bool const open = door ? object->GetGoState() != GO_STATE_READY : object->getLootState() != GO_READY;
+                gate = Acore::StringFormat("gate {} (entry {}, {}) {}", object->GetName(), object->GetEntry(),
+                    door ? "door" : "object", open ? "open" : "shut");
+            }
+    }
+    LOG_INFO("module.animus", "Leg start: rung {} leg {}: {} creatures killed before it; {}; {}", fight.Rung, k,
+        fight.Killed, gate, BossAliveBefore(way, k, map) ? "a boss before it alive" : "every boss before it dead");
 }
 
 void Animus::Curriculum::InstanceEncounter::PlanDrawnStart(Env& env, EnvInstance& fight, Map* map, Player* seat)
@@ -861,190 +883,6 @@ bool Animus::Curriculum::InstanceEncounter::BossAliveBefore(PointNavEncounter::C
                     return true;
         }
     return false;
-}
-
-bool Animus::Curriculum::InstanceEncounter::ArmDoorCheck(std::string& reply)
-{
-    _doorCheckArmed = true;
-    reply = "Probe doors armed: the next spare episode checks the Deadmines' doors; read the server log for "
-        "`Probe doors:` lines (a `forgectl probe doors` waits for them).";
-    return true;
-}
-
-void Animus::Curriculum::InstanceEncounter::RunDoorCheck(Env& env, EnvInstance& fight, Map* map)
-{
-    namespace Ea = EntityActions;
-    constexpr uint32 LEVER = 101831;            // the Door Lever past the Factory Door, wired to it
-    constexpr uint32 FACTORY_DOOR = 13965;
-    constexpr uint32 SNEED = 643;
-    constexpr uint32 MAST_ROOM_DOOR = 16400;
-    constexpr uint32 CANNON = 16398;
-    constexpr uint32 IRON_CLAD_DOOR = 16397;
-    constexpr uint32 GUNPOWDER = 5397;
-    constexpr uint32 SETTLE_DECISIONS = 2;      // after a teleport, for the client's view to catch up
-    constexpr uint32 DOOR_WAIT_DECISIONS = 12;  // 3 s for a script to swing a door
-    constexpr uint32 DONE = 1000;
-    if (fight.DoorStep == DONE)
-        return;
-    Player* seat = _scenario.SeatBot(env, 0);
-    if (!map || !seat || !seat->IsInWorld())
-    {
-        LOG_INFO("module.animus", "Probe doors: FAIL: no seat or map to check with; the episode ends");
-        fight.DoorStep = DONE;
-        env.EpisodeLengthMs = std::max<uint32>(1, env.EpisodeElapsedMs);
-        return;
-    }
-    auto const objectOf = [map](uint32 entry) -> GameObject*
-    {
-        for (auto const& [spawnId, object] : map->GetGameObjectBySpawnIdStore())
-            if (object && object->IsInWorld() && object->GetEntry() == entry)
-                return object;
-        return nullptr;
-    };
-    auto const creatureOf = [map](uint32 entry) -> Creature*
-    {
-        for (auto const& [spawnId, creature] : map->GetCreatureBySpawnIdStore())
-            if (creature && creature->IsInWorld() && creature->GetEntry() == entry)
-                return creature;
-        return nullptr;
-    };
-    auto const place = [this, &env](Position const& at)
-    {
-        EnvState const& data = _scenario.Data(env);
-        for (uint32 index = 0; index < data.ActiveSeats; ++index)
-            if (Player* bot = _scenario.SeatBot(env, index))
-            {
-                float const angle = float(index) * 2.0f * float(M_PI) / float(std::max<uint32>(1, data.ActiveSeats));
-                BotFactory::TeleportWithinMap(bot, Position(at.GetPositionX() + 0.7f * std::cos(angle),
-                    at.GetPositionY() + 0.7f * std::sin(angle), at.GetPositionZ(), at.GetOrientation()));
-            }
-    };
-    auto const press = [seat](Ea::Press kind, GameObject const* object)
-    {
-        ObjectGuid focus;
-        SeatActionResult result;
-        return object ? Ea::Apply(kind, seat, object->GetGUID().GetRawValue(), focus, result) : Ea::Refusal::Gone;
-    };
-    auto const open = [](GameObject const* door)
-    {
-        return !door || !door->IsInWorld() || door->GetGoState() != GO_STATE_READY;
-    };
-    auto const note = [&fight](bool ok, std::string const& what)
-    {
-        ++(ok ? fight.DoorOk : fight.DoorFail);
-        LOG_INFO("module.animus", "Probe doors: {}: {}", ok ? "OK" : "FAIL", what);
-    };
-    switch (fight.DoorStep)
-    {
-        case 0:
-            // The Factory Door's near side, the lever 4.7 yd off past the shut door.
-            place(Position(-190.0f, -455.8f, 54.4f, 4.7f));
-            fight.DoorWait = 0;
-            ++fight.DoorStep;
-            return;
-        case 1:
-        {
-            if (++fight.DoorWait < SETTLE_DECISIONS)
-                return;
-            Ea::Refusal const refusal = press(Ea::Press::Interact, objectOf(LEVER));
-            note(refusal == Ea::Refusal::Sight, Acore::StringFormat("the lever past the shut Factory Door: {}",
-                refusal == Ea::Refusal::Sight ? "refused for sight, as a click is"
-                : refusal == Ea::Refusal::None ? "PRESSED through the door"
-                : Acore::StringFormat("refused for {} (sight expected)", Ea::RefusalName(refusal))));
-            ++fight.DoorStep;
-            return;
-        }
-        case 2:
-            // The lever's own side.
-            place(Position(-189.0f, -461.5f, 54.5f, 1.6f));
-            fight.DoorWait = 0;
-            ++fight.DoorStep;
-            return;
-        case 3:
-        {
-            if (++fight.DoorWait < SETTLE_DECISIONS)
-                return;
-            Ea::Refusal const refusal = press(Ea::Press::Interact, objectOf(LEVER));
-            note(refusal == Ea::Refusal::None, Acore::StringFormat("the lever from its own side: {}",
-                refusal == Ea::Refusal::None ? "pressed" : Acore::StringFormat("refused for {}",
-                    Ea::RefusalName(refusal))));
-            fight.DoorWait = 0;
-            ++fight.DoorStep;
-            return;
-        }
-        case 4:
-            if (open(objectOf(FACTORY_DOOR)))
-            {
-                note(true, "the Factory Door swung by the lever");
-                ++fight.DoorStep;
-            }
-            else if (++fight.DoorWait >= DOOR_WAIT_DECISIONS)
-            {
-                note(false, "the Factory Door stayed shut 3 s after the lever");
-                ++fight.DoorStep;
-            }
-            return;
-        case 5:
-        {
-            Creature* sneed = creatureOf(SNEED);
-            if (sneed && sneed->IsAlive())
-                sneed->KillSelf(false);
-            note(sneed != nullptr, sneed ? "Sneed killed (his script opens the Mast Room Door)" : "Sneed not found");
-            fight.DoorWait = 0;
-            ++fight.DoorStep;
-            return;
-        }
-        case 6:
-            if (open(objectOf(MAST_ROOM_DOOR)))
-            {
-                note(true, "the Mast Room Door opened on Sneed's death");
-                ++fight.DoorStep;
-            }
-            else if (++fight.DoorWait >= DOOR_WAIT_DECISIONS)
-            {
-                note(false, "the Mast Room Door stayed shut 3 s after Sneed's death");
-                ++fight.DoorStep;
-            }
-            return;
-        case 7:
-            // The cannon, the gunpowder in seat 0's bags.
-            place(Position(-105.5f, -658.0f, 7.3f, 2.3f));
-            seat->AddItem(GUNPOWDER, 1);
-            fight.DoorWait = 0;
-            ++fight.DoorStep;
-            return;
-        case 8:
-        {
-            if (++fight.DoorWait < SETTLE_DECISIONS)
-                return;
-            Ea::Refusal const refusal = press(Ea::Press::UseItem, objectOf(CANNON));
-            note(refusal == Ea::Refusal::None, Acore::StringFormat("the gunpowder used on the cannon: {}",
-                refusal == Ea::Refusal::None ? "fired" : Acore::StringFormat("refused for {}",
-                    Ea::RefusalName(refusal))));
-            fight.DoorWait = 0;
-            ++fight.DoorStep;
-            return;
-        }
-        case 9:
-            if (open(objectOf(IRON_CLAD_DOOR)))
-            {
-                note(true, "the Iron Clad Door blown open by the cannon");
-                ++fight.DoorStep;
-            }
-            else if (++fight.DoorWait >= DOOR_WAIT_DECISIONS)
-            {
-                note(false, "the Iron Clad Door stayed shut 3 s after the cannon");
-                ++fight.DoorStep;
-            }
-            return;
-        default:
-            seat->DestroyItemCount(GUNPOWDER, 9999, true);
-            LOG_INFO("module.animus", "Probe doors: {} of {} checks passed; the episode ends", fight.DoorOk,
-                fight.DoorOk + fight.DoorFail);
-            fight.DoorStep = DONE;
-            env.EpisodeLengthMs = std::max<uint32>(1, env.EpisodeElapsedMs);
-            return;
-    }
 }
 
 void Animus::Curriculum::InstanceEncounter::LogLegMissed(Env const& env, EnvInstance const& fight, Map* map,
@@ -1233,11 +1071,6 @@ void Animus::Curriculum::InstanceEncounter::UpdateEnemies(Env& env)
 void Animus::Curriculum::InstanceEncounter::Update(Env& env)
 {
     EnvInstance& fight = _envs[env.Index];
-    if (fight.DoorCheck)
-    {
-        RunDoorCheck(env, fight, env.FindMap());
-        return;
-    }
     Player* seat = _scenario.SeatBot(env, 0);
     Creature* boss = seat && !fight.Boss.IsEmpty() ? Encoding::CreatureThrough(*seat, fight.Boss) : nullptr;
     // A leg goes on without the last boss in the world: a leg past it starts with it killed, and its corpse can
@@ -1503,6 +1336,10 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
                             : std::string("-");
                     };
                     presses = Acore::StringFormat(" pressed {}", name(state.Pressed));
+                    // The teacher's reading of the seat (StageTeacher.cpp): what it would do, and whether it played.
+                    if (!state.TeacherReason.empty())
+                        presses += Acore::StringFormat(" teacher{}: {}", state.TeacherPlays ? " playing" : "",
+                            state.TeacherReason);
                 }
                 seats += Acore::StringFormat("{}[{}{} hp {:.0f}% mana {} {:.0f}yd at ({:.0f} {:.0f} {:.0f}){}{}{}]",
                     seats.empty() ? "" : " ", index, bot == tank ? " tank" : "", bot->GetHealthPct(),

@@ -184,6 +184,8 @@ namespace Animus::Curriculum
         [[nodiscard]] PartyEncounter* Party() const { return _party; }
         /// The stage's instance (a dungeon's arenas: its objects, gates and keys), or null.
         [[nodiscard]] InstanceEncounter* Instance() const { return _instance; }
+        /// The director's row width: its own columns, and the teacher's hint after them in a stage with the hint block.
+        [[nodiscard]] uint32 DirectorObs() const;
         /// **The director** (StageDefinition::Directed, restored 2026-10-26): the learned agent over the party, its
         /// row after the seats (and the owner's), its layout after the class layouts. Null in a stage without one.
         [[nodiscard]] DirectorEncounter* Director() const { return _director; }
@@ -393,7 +395,6 @@ namespace Animus::Curriculum
         void SetShapingScale(float scale) override;
         void SetCostScale(float scale) override;
         bool PinEvaluationArena(uint32 pin) override;
-        bool Probe(std::string const& what, std::string& reply) override;
         void SetStandIn(bool standIn) override;
         void SetNoSharedMemory(bool off) override;
         void SetNoObjectMemory(bool off) override;
@@ -453,6 +454,12 @@ namespace Animus::Curriculum
         /// aimless presses, effort and fidgeting.
         void SettleIntent(Env& env, SeatState& seat, Player* bot, Unit* target);
         void ObserveSeat(Env& env, uint32 seat, float* obs, uint8* mask, uint8* image, uint8* map);
+        /// **The teacher** (TeacherTuning, StageTeacher.cpp): the seat's teacher choice this decision -- its press and
+        /// heading, whether it plays the decision (a segment drawn at the leg's tau) -- written into the seat's hint
+        /// block, after its row and mask are final. Nothing with the teacher off, in an evaluation or a free trip.
+        void TeachSeat(Env& env, uint32 seat, SeatView const& view, Player* bot, float* obs, uint8 const* mask);
+        /// Whether the teacher is on for this env's decisions (the stage has the hint block, the conf enables it).
+        [[nodiscard]] bool TeacherOn() const;
         /// The director's row: its turn decided, then its view written (DirectorLayout::Observe).
         void ObserveDirector(Env& env, float* obs, uint8* mask);
         /// The episode's stand-in, once its seats are built (StandInSeat.cpp): whether there is one (a party or raid

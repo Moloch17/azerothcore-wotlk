@@ -2607,6 +2607,27 @@ void Animus::Curriculum::PointNavEncounter::NoteLegAt(uint32 arena, uint32 rung,
     }
     rates[leg] += (1.0f / float(LEG_WINDOW)) * ((arrived ? 1.0f : 0.0f) - rates[leg]);
     ++tries[leg];
+    // The teacher's share at the leg follows the policy's own rate there (the teacher-free trips are the ones noted
+    // with the teacher on), slowly: at most Step a trip.
+    CurriculumTuning::TeacherTuning const& teacher = _scenario.Tuning().Teacher;
+    if (teacher.Enable)
+    {
+        std::vector<float>& tau = _legTau[LegKey(arena, rung)];
+        if (tau.size() <= leg)
+            tau.resize(leg + 1, teacher.Max);
+        float const target = teacher.Max * std::clamp(1.0f - rates[leg] / std::max(teacher.Target, 0.01f), 0.0f, 1.0f);
+        tau[leg] += std::clamp(target - tau[leg], -teacher.Step, teacher.Step);
+    }
+}
+
+float Animus::Curriculum::PointNavEncounter::LegTau(uint32 arena, uint32 rung, uint32 leg)
+{
+    CurriculumTuning::TeacherTuning const& teacher = _scenario.Tuning().Teacher;
+    if (!teacher.Enable)
+        return 0.0f;
+    std::lock_guard lock(_poolLock);
+    std::vector<float> const& tau = _legTau[LegKey(arena, rung)];
+    return leg < tau.size() ? tau[leg] : teacher.Max;
 }
 
 uint32 Animus::Curriculum::PointNavEncounter::DrawStartAt(Env const& env, uint32 rung, uint32 legs,

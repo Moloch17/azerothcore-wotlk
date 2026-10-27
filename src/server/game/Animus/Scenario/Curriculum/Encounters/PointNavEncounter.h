@@ -214,6 +214,10 @@ namespace Animus::Curriculum
         [[nodiscard]] bool LegsLearnedAt(uint32 arena, uint32 rung, uint32 legs, float* share = nullptr);
         [[nodiscard]] uint32 DrawLegAt(Env const& env, uint32 rung, uint32 legs);
         void NoteLegAt(uint32 arena, uint32 rung, uint32 leg, bool arrived);
+        /// **The teacher's share at a leg** (TeacherTuning): Teacher.Max until the leg has been measured, then moved at
+        /// most Teacher.Step a measured trip (NoteLegAt, the teacher-free trips) toward
+        /// Max x clamp(1 - rate / Target, 0, 1). 0 with the teacher off.
+        [[nodiscard]] float LegTau(uint32 arena, uint32 rung, uint32 leg);
         /// A drawn start (Instance.WingStarts): a checkpoint in [1, legs) not `blocked`, by its failure rate as
         /// DrawLegAt draws (untried first, LEG_FLOOR the least weight); 0 when none can be drawn. NoteStartAt counts
         /// a start's outcome toward its rate at the rung.
@@ -516,6 +520,8 @@ namespace Animus::Curriculum
         /// Per arena index, each leg's running success rate and its training trips counted (RunLegs), under _poolLock.
         std::map<uint32, std::vector<float>> _legRates;
         std::map<uint32, std::vector<uint32>> _legTries;
+        /// Each leg's teacher share (LegTau), keyed as the rates; a leg not yet here is at Teacher.Max.
+        std::map<uint32, std::vector<float>> _legTau;
         /// The drawn starts' (DrawStartAt), keyed as the legs' are.
         std::map<uint32, std::vector<float>> _startRates;
         std::map<uint32, std::vector<uint32>> _startTries;
