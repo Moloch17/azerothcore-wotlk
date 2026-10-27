@@ -132,16 +132,30 @@ Animus::Curriculum::InstanceEncounter::TeacherWay const& Animus::Curriculum::Ins
     view.Valid = true;
     view.Lower = lower;
     view.Target = goal;
+    EnvState const& data = _scenario.Data(env);
+    // Whether a living seat holds the way's key (the gunpowder): a key chest is done once it does -- the barrel resets
+    // after it is looted, and read shut again it sent seat after seat back to loot it while the gunpowder's holder
+    // never went to the cannon (2026-10-27, every cannon leg).
+    bool keyHeld = false;
+    for (uint32 index = 0; index < data.ActiveSeats && !keyHeld; ++index)
+        if (Player* bot = _scenario.SeatBot(env, index); bot && bot->IsInWorld() && bot->IsAlive())
+            keyHeld = EntityActions::CarriesKey(bot, map->GetId());
     // The first gate from the start to the goal still shut: the tank walks to it, and it is opened before anything.
     int32 shut = -1;
     for (uint32 k = lower; k <= goal && k < count; ++k)
-        if (way.IsGate(k) && !Open(GateObject(way, k, map)))
+    {
+        if (!way.IsGate(k))
+            continue;
+        GameObject* gate = GateObject(way, k, map);
+        bool const done = Open(gate) || (keyHeld && gate && gate->GetGoType() == GAMEOBJECT_TYPE_CHEST
+            && EntityActions::KeyChest(gate));
+        if (!done)
         {
             shut = int32(k);
             break;
         }
+    }
 
-    EnvState const& data = _scenario.Data(env);
     auto const living = [&](uint32 index) -> Player*
     {
         Player* bot = _scenario.SeatBot(env, index);
