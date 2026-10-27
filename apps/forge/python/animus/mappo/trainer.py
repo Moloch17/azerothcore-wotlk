@@ -98,8 +98,10 @@ class MappoConfig:
     epochs: int = 5
     minibatches: int = 4
     #: The slow goal update's rows (every goal choice of the rollout) scored this many at a time, the gradient
-    #: accumulated over the chunks; 0 scores them all at once (2026-10-27: that ran a 20 GB device out of memory).
-    goal_chunk_rows: int = 2048
+    #: accumulated over the chunks; 0 scores them all at once (2026-10-27: that ran a 20 GB device out of memory);
+    #: "auto" picks the chunk from the device's free memory (train.choose_goal_chunk_rows) and is replaced by a
+    #: number before the trainer is built.
+    goal_chunk_rows: int | str = "auto"
     max_grad_norm: float = 0.5
     use_value_norm: bool = True
     # How fast the value normaliser follows the returns, as the weight the running stats keep per update. The
@@ -1908,7 +1910,8 @@ class MappoTrainer:
         # losses add up to the one loss; each chunk's backward frees its graph, the slow GRU's (small) kept to the
         # last chunk's.
         rows_total = length * columns
-        chunk_rows = cfg.goal_chunk_rows if cfg.goal_chunk_rows > 0 else rows_total
+        chunk_rows = (cfg.goal_chunk_rows if isinstance(cfg.goal_chunk_rows, int) and cfg.goal_chunk_rows > 0
+                      else rows_total)
         chunks = [(start, min(start + chunk_rows, rows_total)) for start in range(0, rows_total, chunk_rows)]
         weight = counted.sum().clamp(min=1.0)
         # What the cell terms need of the whole batch before any chunk: which blocks each row's crop offers (a

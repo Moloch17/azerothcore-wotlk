@@ -129,10 +129,13 @@ eval:
   sampled_episodes: 16
   trace_episodes: 8
   trace_all: false   # 2026-10-26: the whole-run evaluation held every seat's trace of ~256 90-min runs in RAM; oomd killed the host
+  # 2026-10-27 (technique 5): the evaluation is shared across the ranks already; its wall time is rounds of 90-minute
+  # episodes with the leader blocked. Fewer arm episodes and the arms every other evaluation halve the rounds.
+  arms_every: 2
   arms:
-    no_map: 16
-    no_memory: 16
-    no_object_memory: 16
+    no_map: 8
+    no_memory: 8
+    no_object_memory: 8
   report:
   - bar_clear
   - cleared

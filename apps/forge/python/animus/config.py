@@ -827,6 +827,10 @@ class TrainConfig:
     # them, with {runs_dir} and {run_name} filled in. A best.pt that does not exist falls back to the latest.pt beside
     # it. Empty = train from scratch.
     init_from: str | list[str] = AUTO
+    # Layouts whose networks start fresh while the rest seed from the checkpoint (`forge start <stage> --reset
+    # director`, technique 8): the leader keeps the run's own latest.pt at runs/_reset/<run>/latest.pt before the
+    # run is archived, and it seeds the fresh run with these layouts left out (bootstrap.seed_trainer's reset).
+    reset_layouts: list[str] = field(default_factory=list)
     # Which of a parent run's checkpoints to seed from when both exist: "best" or "latest".
     #
     # "latest", because a queue advances on its own and has to hand the next stage what the last one actually

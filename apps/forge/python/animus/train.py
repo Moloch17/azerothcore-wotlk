@@ -25,6 +25,7 @@ import csv
 import dataclasses
 import json
 import random
+import shutil
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import nullcontext
@@ -588,6 +589,15 @@ VISION_CHUNK_RESERVE = 2 << 30
 #: 6,144-row minibatch with the map did not fit 21.5 GB).
 VISION_CHUNK_PEAK = 2.0
 VISION_CHUNK_STEPS = (4096, 3072, 2048, 1536, 1024, 768, 512, 256)
+#: mappo.goal_chunk_rows "auto" (technique 6, 2026-10-27): the slow goal update's rows a chunk, from the device's free
+#: memory. A row's cell scoring keeps about GOAL_CHUNK_PEAK x the hidden tensor (grid^2 x CELL_HIDDEN floats: the
+#: hidden features, the query sum, its tanh, the scores and their gradients); the update's own tensors share the
+#: device, so the goal update takes GOAL_CHUNK_SHARE of the room the vision chunking's budget leaves.
+GOAL_CHUNK_AUTO = "auto"
+GOAL_CHUNK_FALLBACK = 2048
+GOAL_CHUNK_PEAK = 6.0
+GOAL_CHUNK_SHARE = 0.125
+GOAL_CHUNK_STEPS = (8192, 6144, 4096, 3072, 2048, 1536, 1024, 768, 512)
 
 
 def choose_vision_chunk_rows(config: TrainConfig, spec, vision, device,
@@ -634,8 +644,37 @@ def choose_vision_chunk_rows(config: TrainConfig, spec, vision, device,
                     f"{held / gib:.1f} GiB of rollout on the device; room for {fits} rows)")
 
 
+def choose_goal_chunk_rows(device, free_bytes: int | None = None) -> tuple[int, str]:
+    """mappo.goal_chunk_rows for a device: (rows, the line to log). The largest of GOAL_CHUNK_STEPS whose rows' cell
+    scoring fits GOAL_CHUNK_SHARE of the room VISION_CHUNK_BUDGET leaves of the device's free memory after
+    VISION_CHUNK_RESERVE; GOAL_CHUNK_FALLBACK without a GPU or when the query fails."""
+    from .mappo.networks import CELL_GRID, CELL_HIDDEN
+
+    device = torch.device(device)
+    if free_bytes is None:
+        if device.type != "cuda":
+            return GOAL_CHUNK_FALLBACK, f"mappo.goal_chunk_rows auto on {device}: {GOAL_CHUNK_FALLBACK} (not a GPU)"
+        try:
+            free_bytes = int(torch.cuda.mem_get_info(device)[0])
+        except Exception as error:  # noqa: BLE001 - any failure of the query is the same answer
+            return GOAL_CHUNK_FALLBACK, (f"mappo.goal_chunk_rows auto: {GOAL_CHUNK_FALLBACK} (free memory of {device} "
+                                         f"unavailable: {error})")
+    per_row = CELL_GRID * CELL_GRID * CELL_HIDDEN * 4 * GOAL_CHUNK_PEAK
+    room = VISION_CHUNK_BUDGET * (free_bytes - VISION_CHUNK_RESERVE) * GOAL_CHUNK_SHARE
+    fits = int(room // per_row) if room > 0 else 0
+    chosen = next((rows for rows in GOAL_CHUNK_STEPS if rows <= fits), GOAL_CHUNK_STEPS[-1])
+    gib = 1 << 30
+    return chosen, (f"mappo.goal_chunk_rows auto: {chosen} ({free_bytes / gib:.1f} GiB free on {device}; "
+                    f"~{per_row / 2**20:.2f} MiB a row for the goal update; room for {fits} rows)")
+
+
 def make_trainer(config: TrainConfig, spec, inputs: TrainerInputs, ranks=None, device=None) -> MappoTrainer:
     """The stage's MappoTrainer. `device` overrides both devices."""
+    if config.mappo.goal_chunk_rows == GOAL_CHUNK_AUTO:
+        # Chosen once, here, so the config the checkpoint saves holds the number.
+        rows, line = choose_goal_chunk_rows(device or config.resolved_train_device())
+        config.mappo.goal_chunk_rows = rows
+        print(line, flush=True)
     if config.mappo.vision_chunk_rows == VISION_CHUNK_AUTO:
         # Chosen once, here, so the config the checkpoint saves holds the number.
         rows, line = choose_vision_chunk_rows(config, spec, inputs.vision, device or config.resolved_train_device())
@@ -698,8 +737,23 @@ class TrainingRun:
             except FileNotFoundError as error:
                 if leader:
                     raise SystemExit(str(error)) from None
-        elif (leader or remote) and not resume and (archived := archive_run(self.run_dir)):
-            print(f"Archived the earlier {config.run_name} run to {archived}; training from scratch", flush=True)
+        elif (leader or remote) and not resume:
+            # `--reset <layout>` (technique 8): the run's own latest.pt, kept aside before the run is archived, seeds
+            # the fresh run with the reset layouts left out (finetune_from; seed_trainer's reset).
+            if leader and config.reset_layouts:
+                latest = self.run_dir / "latest.pt"
+                if latest.is_file():
+                    kept = Path(config.runs_dir) / "_reset" / config.run_name / "latest.pt"
+                    kept.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(latest, kept)
+                    config.finetune_from = str(kept)
+                    print(f"Kept {latest} as {kept}: it seeds the fresh run with {', '.join(config.reset_layouts)} "
+                          f"reset", flush=True)
+                else:
+                    print(f"--reset {', '.join(config.reset_layouts)}: {latest} does not exist; the networks start "
+                          f"from the stage's usual seed", flush=True)
+            if archived := archive_run(self.run_dir):
+                print(f"Archived the earlier {config.run_name} run to {archived}; training from scratch", flush=True)
         self.ranks.barrier()  # the others read the run directory only once the leader has archived it
         self.finished_path = self.run_dir / FINISHED_FILE
         if self.resume_path and leader:
@@ -1171,7 +1225,7 @@ class TrainingRun:
 
         if not self.resume_path and base is not None:
             seeded = seed_trainer(self.trainer, base, spec, self.stage,
-                                  source=f"{spec.scenario} from {base_path}")
+                                  source=f"{spec.scenario} from {base_path}", reset=config.reset_layouts)
             print(f"Seeded the networks from {base_path}: trunk and {len(seeded)} of {len(spec.layouts)} layouts",
                   flush=True)
             # A fine-tune of the same stage returns on the scale its critic was trained on; a fresh normaliser reads
@@ -2557,6 +2611,11 @@ class TrainingRun:
         # The wall rate and the update-bound note ride in the timing part, so the " | N sps | rollout .." shape that
         # forgectl parses is unchanged.
         timing += f" wall {row['wall_steps_per_sec']:.0f} sps" + (" update-bound" if row["update_bound"] else "")
+        # The device's peak allocation over the update (technique 6): what an out-of-memory would be measured against.
+        train_device = torch.device(self.trainer.train_device)
+        if train_device.type == "cuda" and torch.cuda.is_available():
+            timing += f" gpu peak {torch.cuda.max_memory_allocated(train_device) / 2**30:.1f} GiB"
+            torch.cuda.reset_peak_memory_stats(train_device)
         print(f"update {self.update} | steps {self.env_steps} | {row['env_steps_per_sec']:.0f} sps | {timing} | "
               f"{summary}",
               flush=True)

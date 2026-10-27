@@ -910,7 +910,7 @@ def _layout_segments(old_stage: dict | None, stage: dict | None, layout: str, so
 
 
 def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, overlay: bool = False,
-                 source: str = "") -> list[str]:
+                 source: str = "", reset: list[str] | tuple[str, ...] = ()) -> list[str]:
     """Seed a fresh MappoTrainer for `spec` (whose stage.json is `stage`) from an earlier stage's checkpoint; returns
     the layouts seeded.
 
@@ -924,6 +924,15 @@ def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, ove
     # The shared movement (mappo.shared_blocks) in every layout's own weights, the checkpoint's and these networks':
     # the layouts are seeded whole, and the shared weights taken from them after (_reshare).
     old = {**old, "actor": materialised_state(old["actor"])}
+    # `reset` (technique 8): layouts whose networks stay as the fresh trainer has them. The director's set encoders
+    # and pointers live outside the layout tables (director_sets.*): dropped from the checkpoint here, so the shared
+    # copy below leaves them fresh too.
+    reset = [name for name in reset if name]
+    if "director" in reset:
+        old = {**old, "actor": {k: v for k, v in old["actor"].items() if not k.startswith("director_sets.")},
+               "critic": {k: v for k, v in old["critic"].items() if not k.startswith("director_sets.")}}
+    for name in reset:
+        print(f"  {name}: its networks start fresh (reset)", flush=True)
 
     actor = materialised_state({key: tensor.clone() for key, tensor in trainer.actor.state_dict().items()})
     critic = {key: tensor.clone() for key, tensor in trainer.critic.state_dict().items()}
@@ -975,7 +984,8 @@ def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, ove
     # exactly like a class that has simply not learned anything yet.
     # The director is the exception, and the only one: it is an agent the stage adds rather than a class the run
     # plays, so the first directed stage in a chain necessarily seeds from one without it (its weights start fresh).
-    missing = [layout.name for layout in spec.layouts if layout.name not in old_names and layout.name != "director"]
+    missing = [layout.name for layout in spec.layouts if layout.name not in old_names and layout.name != "director"
+               and layout.name not in reset]
     if missing and not overlay:
         raise ValueError(
             f"the checkpoint has no {', '.join(missing)}: it was trained on "
@@ -986,7 +996,7 @@ def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, ove
 
     seeded = []
     for index, layout in enumerate(spec.layouts):
-        if layout.name not in old_names:
+        if layout.name not in old_names or layout.name in reset:
             continue
         old_index = old_names.index(layout.name)
         seeded.append(layout.name)

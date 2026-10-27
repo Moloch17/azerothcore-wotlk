@@ -32,10 +32,12 @@ def check_names(names: list[str]) -> None:
             raise Failure(f"{name!r} is not a stage name (letters, digits and underscores only)")
 
 
-def console_line(action: str, stages: list[str]) -> str:
+def console_line(action: str, stages: list[str], reset: str | None = None) -> str:
     # pause and cancel act on the whole plan and take no names: the stage named to forgectl is only checked against
     # the host's status (run), and typed along it made the line a usage error the console answered without acting.
-    return " ".join(["forge", action, *([] if action in ("pause", "cancel") else stages)])
+    # `--reset <layout>` rides along a start: the stage restarts from its own last run with that layout fresh.
+    return " ".join(["forge", action, *([] if action in ("pause", "cancel") else stages),
+                     *(["--reset", reset] if reset and action == "start" else [])])
 
 
 def send_checked(config: Config, machine: Machine, line: str, timeout: float = 25) -> console.ConsoleResult:
@@ -186,8 +188,11 @@ def show(machine: Machine, result: console.ConsoleResult) -> None:
     say(result.text if result.lines else "(no reply text: the command was accepted silently)")
 
 
-def run(config: Config, action: str, stages: list[str], yes: bool, archive_ok: bool = False) -> int:
+def run(config: Config, action: str, stages: list[str], yes: bool, archive_ok: bool = False,
+        reset: str | None = None) -> int:
     check_names(stages)
+    if reset and action != "start":
+        raise Failure("--reset goes with start only")
     host = config.host
     if action == "status":
         show(host, send_checked(config, host, "forge status"))
@@ -204,7 +209,10 @@ def run(config: Config, action: str, stages: list[str], yes: bool, archive_ok: b
     plan = [EFFECT[action].format(stages=", ".join(stages) or "the plan")]
     if action == "start":
         plan += check_archives(config, stages, yes, archive_ok)
-    plan += [f"type `{console_line(action, stages)}` into the console of {config.worldserver} on "
+    if reset:
+        plan += [f"{reset}'s networks start fresh; the rest seeds from the stage's own last run, which the learner "
+                 f"keeps at runs/_reset/<stage>/latest.pt before archiving it"]
+    plan += [f"type `{console_line(action, stages, reset)}` into the console of {config.worldserver} on "
              f"{', '.join(m.name for m in targets)}"]
     try:
         confirm(plan, yes)
@@ -217,7 +225,7 @@ def run(config: Config, action: str, stages: list[str], yes: bool, archive_ok: b
     failed = []
     for machine in targets:
         try:
-            show(machine, send_checked(config, machine, console_line(action, stages)))
+            show(machine, send_checked(config, machine, console_line(action, stages, reset)))
         except Failure as failure:
             say(f"FAILED {failure}")
             failed.append(machine.name)
@@ -226,7 +234,7 @@ def run(config: Config, action: str, stages: list[str], yes: bool, archive_ok: b
     if failed:
         say(f"Not sent or not answered on: {', '.join(failed)}. Check `forgectl cluster`.")
         return 1
-    say(f"Done: `{console_line(action, stages)}` was accepted on {', '.join(m.name for m in targets)}.")
+    say(f"Done: `{console_line(action, stages, reset)}` was accepted on {', '.join(m.name for m in targets)}.")
     # The workers' share of the run (camera images, videos, logs) follows it home to the host while it trains.
     if action in ("start", "resume"):
         hold(config, False)

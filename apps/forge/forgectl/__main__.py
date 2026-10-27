@@ -5,8 +5,8 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import (audit, cluster, collect, config as config_module, confsync, deploy, doctor, logs, snapshot, stage,
-               videos, watch)
+from . import (audit, cluster, collect, config as config_module, confsync, deploy, doctor, logs, probe, snapshot,
+               stage, videos, watch)
 from .config import ConfigError
 from .ui import Failure, say
 
@@ -77,9 +77,18 @@ def parser() -> argparse.ArgumentParser:
     sg.add_argument("stages", nargs="*", metavar="stage", help="stage name(s); start needs one; pause and cancel take "
                                                               "none (they act on the whole plan)")
     sg.add_argument("--yes", action="store_true", help="do not ask")
+    sg.add_argument("--reset", metavar="LAYOUT",
+                    help="start: restart the stage from its own last run with this layout's networks fresh and the "
+                         "rest seeded (the learner's reset_layouts), e.g. --reset director")
     sg.add_argument("--archive-ok", action="store_true",
                     help="start: with --yes, allow archiving an existing run of more than 1M steps (or one whose "
                          "size cannot be read); without --yes the prompt shows the run and you answer it")
+
+    pb = add("probe", "arm a mechanic probe on the host's running stage and wait for its log lines",
+             "forgectl probe doors")
+    pb.add_argument("what", choices=probe.PROBES,
+                    help="what to check: doors (the Deadmines' doors, as players find them)")
+    pb.add_argument("--wait", type=int, default=240, help="seconds to wait for the probe's lines (default 240)")
 
     lg = add("logs", "the worldserver and learner logs of a machine, errors and warnings first",
              "forgectl logs thomas --errors")
@@ -147,7 +156,9 @@ def dispatch(args, config) -> int:
         return watch.run(config, args.once, args.interval, args.resume)
     if args.command == "stage":
         return stage.run(config, args.action, args.stages, getattr(args, "yes", False),
-                          getattr(args, "archive_ok", False))
+                          getattr(args, "archive_ok", False), reset=getattr(args, "reset", None))
+    if args.command == "probe":
+        return probe.run(config, args.what, args.wait)
     if args.command == "logs":
         return logs.run(config, args.machine, args.errors, args.lines, args.wide)
     if args.command == "build":
@@ -166,6 +177,8 @@ def changes_state(args) -> bool:
     if args.command == "stage":
         return args.action != "status"
     if args.command == "build":
+        return True
+    if args.command == "probe":
         return True
     if args.command == "conf-sync":
         return not args.check
