@@ -35,6 +35,7 @@
 #include "LootMgr.h"
 #include "ObjectMgr.h"
 #include <algorithm>
+#include <atomic>
 #include <map>
 #include <mutex>
 
@@ -608,7 +609,14 @@ Animus::Curriculum::EntityActions::Refusal Animus::Curriculum::EntityActions::Ap
             Movement::ScopedCastWatch watch(bot->GetSession());
             port.Send(bot, packet);
             if (watch.Watch().Failures)
+            {
+                // Which failure, for an item used on an object (a few a process: the gunpowder's cannon, 2026-10-27).
+                static std::atomic<uint32> logged{ 0 };
+                if (go && logged.fetch_add(1, std::memory_order_relaxed) < 24)
+                    LOG_INFO("module.animus", "Item use refused: item {} spell {} on {} (entry {}): SpellCastResult {}",
+                        item->GetEntry(), spell->Id, go->GetName(), go->GetEntry(), uint32(watch.Watch().Result));
                 return refuse(CastRefusal(uint32(watch.Watch().Result) + 1));
+            }
             ++result.ItemUses;
             ++result.Interactions;
             return Refusal::None;

@@ -389,6 +389,12 @@ namespace Animus::Curriculum
             /// (a few each: the gunpowder's chain, 2026-10-27, never got past the barrel).
             uint32 PressLogged = 0;
             uint32 LootLogged = 0;
+            /// A key used on an object, sent (the gunpowder on the cannon): when, by whom, and the object, looked at
+            /// again KEY_CHECK_MS later -- whether the key was spent and what the gate did.
+            uint32 KeyUsedMs = 0;
+            ObjectGuid KeyUsedBy;
+            ObjectGuid KeyUsedOn;
+            uint32 KeyLogged = 0;
             uint32 GatePaidBossAlive = 0;       // door gates paid with a boss spawned before them alive (invariant)
             uint32 Killed = 0;
             int32 GoalSite = 0;

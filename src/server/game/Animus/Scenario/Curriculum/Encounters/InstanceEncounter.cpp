@@ -1158,6 +1158,39 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
                     }
             }
     }
+    // A key used on an object, KEY_CHECK_MS on: was it spent (the cast landed), is the user still casting, and what
+    // did the way's gate do (the gunpowder on the cannon, which never opened the Iron Clad Door, 2026-10-27).
+    constexpr uint32 KEY_CHECK_MS = 6000;
+    if (fight.KeyUsedMs && env.EpisodeElapsedMs >= fight.KeyUsedMs + KEY_CHECK_MS)
+    {
+        Map* map = env.FindMap();
+        Player* by = nullptr;
+        for (uint32 index = 0; index < _scenario.Data(env).ActiveSeats && !by; ++index)
+            if (Player* bot = _scenario.SeatBot(env, index); bot && bot->GetGUID() == fight.KeyUsedBy)
+                by = bot;
+        GameObject const* on = map ? map->GetGameObject(fight.KeyUsedOn) : nullptr;
+        std::string gates;
+        if (fight.Way && map)
+            for (uint32 k = 0; k < fight.Way->GateSpawns.size(); ++k)
+                if (fight.Way->GateSpawns[k])
+                {
+                    auto const range = map->GetGameObjectBySpawnIdStore().equal_range(fight.Way->GateSpawns[k]);
+                    for (auto it = range.first; it != range.second; ++it)
+                        if (it->second && it->second->GetGoType() == GAMEOBJECT_TYPE_DOOR
+                            && it->second->GetExactDist(on ? static_cast<WorldObject const*>(on) : it->second) < 30.0f)
+                            gates += Acore::StringFormat(" {} go state {} in world {};", it->second->GetName(),
+                                uint32(it->second->GetGoState()), it->second->IsInWorld() ? 1 : 0);
+                }
+        if (fight.KeyLogged < 3 && _scenario.Tuning().Instance.WingTrace)
+        {
+            ++fight.KeyLogged;
+            LOG_INFO("module.animus", "Teacher key: env {} {}s after the key on {}: still holds it {}, casting {}, "
+                "in combat {};{}", env.Index, KEY_CHECK_MS / 1000, on ? on->GetName() : std::string("gone"),
+                by && EntityActions::CarriesKey(by, by->GetMapId()) ? "yes" : "no",
+                by && by->IsNonMeleeSpellCast(false) ? "yes" : "no", by && by->IsInCombat() ? "yes" : "no", gates);
+        }
+        fight.KeyUsedMs = 0;
+    }
     for (uint32 index = 0; index < _scenario.Data(env).ActiveSeats; ++index)
         if (Player* bot = _scenario.SeatBot(env, index); bot && bot->IsInWorld() && bot->IsAlive())
         {
@@ -1705,6 +1738,13 @@ void Animus::Curriculum::InstanceEncounter::OnSeatAction(Env& env, uint32 seat, 
         ++fight.PressLogged;
         Map* map = env.FindMap();
         GameObject const* object = map ? map->GetGameObject(result.ActedOn) : nullptr;
+        if (!result.ActRefused && result.ActPress == uint8(EntityActions::Press::UseItem) && !fight.KeyUsedMs)
+        {
+            fight.KeyUsedMs = std::max<uint32>(1, env.EpisodeElapsedMs);
+            fight.KeyUsedOn = result.ActedOn;
+            if (Player* by = _scenario.SeatBot(env, seat))
+                fight.KeyUsedBy = by->GetGUID();
+        }
         LOG_INFO("module.animus", "Teacher press: env {} seat {} {} on {} (entry {}, loot state {}, go state {}): {}",
             env.Index, seat, result.ActPress == uint8(EntityActions::Press::UseItem) ? "use item" : "interact",
             object ? object->GetName() : std::string("gone"), object ? object->GetEntry() : 0,
