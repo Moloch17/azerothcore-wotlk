@@ -121,7 +121,7 @@ style:
   dataset: /azerothcore/env/dist/etc/modules/animus/human/deadmines_motion_windows.npz
   reference: /azerothcore/env/dist/etc/modules/animus/human/deadmines_reference.json
 eval:
-  every_env_steps: 10000000
+  every_env_steps: 50000000   # 2026-10-27: a whole-run evaluation takes the host ~3 h, in which the workers put 25M steps on the counter; at 10M the host evaluated back to back
   # Sampled, as training plays: the argmax policy froze (0% of legs at 10-30M while the sampled evaluation did 81%).
   deterministic: false
   episodes: 64
