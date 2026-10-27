@@ -174,11 +174,23 @@ Animus::Curriculum::InstanceEncounter::TeacherWay const& Animus::Curriculum::Ins
                 for (uint32 index = 0; index < data.ActiveSeats; ++index)
                     if (Player* bot = living(index); bot && bot->GetGUID() == kept)
                         return bot;
+            // Not a druid, nor anyone in a form: a shapeshifted seat cannot use an item, and the gunpowder it loots
+            // never fires the cannon (2026-10-27: SPELL_FAILED_NOT_SHAPESHIFT on most uses, the druid tank looting
+            // as the seat nearest the barrel). Anyone, if every seat is one.
+            auto const handy = [](Player const* bot)
+            {
+                return bot->getClass() != CLASS_DRUID && !bot->GetShapeshiftForm();
+            };
             Player* best = nullptr;
-            for (uint32 index = 0; index < data.ActiveSeats; ++index)
-                if (Player* bot = living(index); bot
-                    && (!best || bot->GetExactDist(object) < best->GetExactDist(object)))
-                    best = bot;
+            for (bool const strict : { true, false })
+            {
+                for (uint32 index = 0; index < data.ActiveSeats; ++index)
+                    if (Player* bot = living(index); bot && (!strict || handy(bot))
+                        && (!best || bot->GetExactDist(object) < best->GetExactDist(object)))
+                        best = bot;
+                if (best)
+                    break;
+            }
             kept = best ? best->GetGUID() : ObjectGuid::Empty;
             return best;
         };
