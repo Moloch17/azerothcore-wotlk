@@ -89,8 +89,6 @@ namespace AnimusForge
         void CommandStatus(LineSink const& out);
         void CommandScenarios(LineSink const& out);
         bool CommandStart(std::vector<std::string> scenarios, LineSink const& out);
-        /// `forge probe <what>`: a mechanic probe in the running scenario's next spare episode (Scenario::Probe).
-        bool CommandProbe(std::string const& what, LineSink const& out);
         bool CommandFast(std::vector<std::string> scenarios, LineSink const& out);
         bool CommandResume(std::vector<std::string> scenarios, LineSink const& out);
         bool CommandPause(LineSink const& out);

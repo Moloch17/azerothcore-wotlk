@@ -1325,16 +1325,3 @@ void AnimusForge::Forge::CommandProgress(std::optional<uint32> seconds, LineSink
     out(_progressInterval ? Acore::StringFormat("Progress report every {} while a scenario runs.",
         Format::Duration(_progressInterval)) : "Periodic progress report off: `forge status` shows it on demand, and each stage's end prints it.");
 }
-
-bool AnimusForge::Forge::CommandProbe(std::string const& what, LineSink const& out)
-{
-    if (!_pool || _state == State::Idle)
-    {
-        out("Nothing is running: a probe takes a running stage (`forge start dm_clear`, then `forge probe doors`).");
-        return false;
-    }
-    std::string reply;
-    bool const armed = _pool->Probe(what, reply);
-    out(reply);
-    return armed;
-}

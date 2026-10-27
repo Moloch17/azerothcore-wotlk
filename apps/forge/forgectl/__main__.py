@@ -5,8 +5,8 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import (audit, cluster, collect, config as config_module, confsync, deploy, doctor, logs, probe, snapshot,
-               stage, videos, watch)
+from . import (audit, cluster, collect, config as config_module, confsync, deploy, doctor, logs, snapshot, stage,
+               videos, watch)
 from .config import ConfigError
 from .ui import Failure, say
 
@@ -84,12 +84,6 @@ def parser() -> argparse.ArgumentParser:
                     help="start: with --yes, allow archiving an existing run of more than 1M steps (or one whose "
                          "size cannot be read); without --yes the prompt shows the run and you answer it")
 
-    pb = add("probe", "arm a mechanic probe on the host's running stage and wait for its log lines",
-             "forgectl probe doors")
-    pb.add_argument("what", choices=probe.PROBES,
-                    help="what to check: doors (the Deadmines' doors, as players find them)")
-    pb.add_argument("--wait", type=int, default=240, help="seconds to wait for the probe's lines (default 240)")
-
     lg = add("logs", "the worldserver and learner logs of a machine, errors and warnings first",
              "forgectl logs thomas --errors")
     lg.add_argument("machine", nargs="?", help="default: the host")
@@ -157,8 +151,6 @@ def dispatch(args, config) -> int:
     if args.command == "stage":
         return stage.run(config, args.action, args.stages, getattr(args, "yes", False),
                           getattr(args, "archive_ok", False), reset=getattr(args, "reset", None))
-    if args.command == "probe":
-        return probe.run(config, args.what, args.wait)
     if args.command == "logs":
         return logs.run(config, args.machine, args.errors, args.lines, args.wide)
     if args.command == "build":
@@ -177,8 +169,6 @@ def changes_state(args) -> bool:
     if args.command == "stage":
         return args.action != "status"
     if args.command == "build":
-        return True
-    if args.command == "probe":
         return True
     if args.command == "conf-sync":
         return not args.check

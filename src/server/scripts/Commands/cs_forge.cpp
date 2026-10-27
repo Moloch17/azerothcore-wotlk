@@ -118,7 +118,6 @@ namespace
                 { "cancel",    HandleCancel,    SEC_ADMINISTRATOR, Console::Yes },
                 { "skip",      HandleSkip,      SEC_ADMINISTRATOR, Console::Yes },
                 { "run",       HandleRun,       SEC_ADMINISTRATOR, Console::Yes },
-                { "probe",     HandleProbe,     SEC_ADMINISTRATOR, Console::Yes },
                 { "controller", controllerCommandTable },
                 { "camera",    cameraCommandTable },
                 { "tasks",     HandleTasks,     SEC_ADMINISTRATOR, Console::Yes },
@@ -232,13 +231,6 @@ namespace
         static bool HandleRun(ChatHandler* handler, std::string scenario, std::string policy, Optional<uint32> episodes)
         {
             return sAnimusForge->CommandRun(scenario, policy, episodes.value_or(0), Reply(handler));
-        }
-
-        /// `forge probe doors`: the running stage's next spare episode checks the dungeon's doors behave as they do
-        /// for players (Scenario::Probe); the results are `Probe doors:` lines in the server log.
-        static bool HandleProbe(ChatHandler* handler, std::string what)
-        {
-            return sAnimusForge->CommandProbe(what, Reply(handler));
         }
 
         /// The grid a coordinate is in, counting up from 0: floor(coordinate / SIZE_OF_GRIDS).
