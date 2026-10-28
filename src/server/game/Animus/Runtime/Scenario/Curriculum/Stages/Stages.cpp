@@ -144,28 +144,6 @@ namespace
         return arena;
     }
 
-    /// The whole Deadmines, live (dm5, dm6): a fresh instance every run, its trash and bosses where the world
-    /// database stands them, its doors its bosses' scripts' and the Iron Clad Door the cannon's; the party at the
-    /// bar's levels (17-20). No stand-in (the user, 2026-10-07).
-    ArenaDefinition DeadminesWing(uint32 seconds, bool reverse)
-    {
-        ArenaDefinition arena = DeadminesGround("deadmines");
-        arena.Seats = SeatPlan::Party;
-        arena.Against = Opposition::Instance;
-        arena.PartyGroup = true;
-        arena.Instance = InstanceLadder::Wing;
-        arena.InstanceRow = 1;
-        arena.EpisodeSeconds = seconds;
-        arena.StandInShare = 0;
-        arena.LevelFirst = 17;
-        arena.LevelLast = 20;
-        arena.LiveObjects = false;
-        arena.LiveOpen = {};
-        arena.WingReverse = reverse;
-        arena.RespawnAtEntrance = false;
-        return arena;
-    }
-
     /// **The Deadmines by level** (dm_clear, 2026-10-26): the live dungeon, a proper party of five, the recorded clear
     /// way (PointNav.ClearWayFile: a person's run, with its pull sites, its doors, the barrel and the cannon), legs then
     /// the run at every rung of a level ladder from 60 down to the dungeon's own 18.
@@ -354,64 +332,20 @@ namespace
             .LeaderAnyRole = true,
         });
 
-        // DM5 -- wings: the live Deadmines run backwards (WingReverse): the wing ladder's first rung starts the party
-        // at the last ninth of the clear way, before VanCleef, each rung a ninth earlier, the last the entrance;
-        // everything spawned before the start killed (its bosses' doors open as their deaths open them), the Iron
-        // Clad Door open once the start is past it. No level lift: the bar's 17-20. The leader's way the next site
-        // with a living creature on it. Deaths rise at the entrance and walk back; the wipes the rung spares.
-        stages.push_back({
-            .Name = "dm5_wings",
-            .Suffix = "_wings",
-            .Extends = "dm4_roles",
-            .Summary = "the live Deadmines backwards: the party starts before VanCleef, then a wing earlier each rung, "
-                "to the entrance; leader and tank rules on",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Vision, Map, MemoryEntities, Sight, PartyFrames,
-                Combat, Goal },
-            .Arenas = { DeadminesWing(7200, true) },
-            .MapId = MAP_DEADMINES,
-            .SpawnPoints = { Position(-16.4f, -383.07f, 61.78f, 1.86f) },
-            .MapTiers = 2,
-            .SharedMemoryShare = 1.0f,
-            .NoBackpedal = true,
-            .Camera = false,
-            .MemoriseSpawns = true,
-            .LeaderAnyRole = true,
-        });
-
-        // DM6 -- the full clear: the entrance to VanCleef at 17-20, every pull and side boss, the doors by their
-        // bosses and the Iron Clad Door by the cannon and the gunpowder carried from the door; the wing ladder's level
-        // lift and spare wipes stepping down to none. **The bar: 70% or more of the evaluation's runs cleared with at
-        // most one wipe**, measured per leader role (leader_role).
-        stages.push_back({
-            .Name = "dm6_clear",
-            .Suffix = "_clear",
-            .Extends = "dm5_wings",
-            .Summary = "the Deadmines from the door to VanCleef at 17-20, a full clear; the bar is 70% clears with at "
-                "most one wipe, for every leader role",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Vision, Map, MemoryEntities, Sight, PartyFrames,
-                Combat, Goal },
-            .Arenas = { DeadminesWing(14400, false) },
-            .MapId = MAP_DEADMINES,
-            .SpawnPoints = { Position(-16.4f, -383.07f, 61.78f, 1.86f) },
-            .MapTiers = 2,
-            .SharedMemoryShare = 1.0f,
-            .NoBackpedal = true,
-            .Camera = false,
-            .MemoriseSpawns = true,
-            .LeaderAnyRole = true,
-        });
-
         // **Seats execute, the director orchestrates** (the user, 2026-10-28: "the agents learn to do the actions but
         // the director is what will actually learn to do the dungeon and orchestrate fights";
         // .agents/plans/party-combat/). party_orders trains the seats as a skill library: a proper party of five at
         // levels 15-30 on the Deadmines' own ground and creatures, every order issued by the sampler (Focus, Pull,
         // Heal, Follow, Rest, Control, Interrupt, Stay, Taunt, Assist on the roles grounds; Loot, Use and the way's
         // pulls on the dungeon ground), every seat paid for carrying its out fast, its role's micro kept, no
-        // strategy to learn; fresh networks. dm_clear then trains the director alone over the frozen seats (Extends
-        // party_orders). The blocks dm_clear's, so nothing re-lays out.
+        // strategy to learn. The seats come from dm4_roles (the user, 2026-10-28: "teach them to move and fight and
+        // carry out orders first and then move on to teaching the director": dm1 navigate, dm2 fight, dm3 packs,
+        // dm4 roles, then this); dm_clear then trains the director alone over the frozen seats (Extends
+        // party_orders). dm5_wings and dm6_clear are gone: the director's stage is the dungeon run.
         stages.push_back({
             .Name = "party_orders",
             .Suffix = "_porders",
+            .Extends = "dm4_roles",
             .Summary = "the seats as a skill library: a party of five on the Deadmines' packs, camps and the live "
                 "dungeon, every order a script's, each seat paid for carrying its out fast",
             .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Vision, Map, MemoryEntities, Sight, PartyFrames,
