@@ -705,11 +705,7 @@ void Animus::Curriculum::DirectorEncounter::Update(Env& env)
     uint32 const count = std::min<uint32>(data.ActiveSeats, DirectorLayout::DIRECTOR_SEATS);
     for (uint32 seat = 0; seat < count; ++seat)
         if (data.Seats[seat].L)
-        {
-            Player* bot = _scenario.SeatBot(env, seat);
-            Judge(env, seat, bot);
-            Bind(env, seat, bot);
-        }
+            Bind(env, seat, _scenario.SeatBot(env, seat));
 }
 
 void Animus::Curriculum::DirectorEncounter::Bind(Env& env, uint32 seat, Player* bot)
@@ -852,6 +848,16 @@ void Animus::Curriculum::DirectorEncounter::BeforeRewards(Env& env)
 {
     EnvDirector& director = _envs[env.Index];
     director.CompliancePaid.fill(0.0f);
+    // Judged after the world has ticked, while this decision's damage and healing are still tallied (StepStats and
+    // StepDamaged are cleared after the rewards): judged at the next decision's Update, Focus and Heal never read
+    // anything and were never carried out.
+    if (!Active(env))
+        return;
+    EnvState const& data = _scenario.Data(env);
+    uint32 const count = std::min<uint32>(data.ActiveSeats, DirectorLayout::DIRECTOR_SEATS);
+    for (uint32 seat = 0; seat < count; ++seat)
+        if (data.Seats[seat].L)
+            Judge(env, seat, _scenario.SeatBot(env, seat));
 }
 
 void Animus::Curriculum::DirectorEncounter::Reward(Env& env, uint32 seat, Player* /*bot*/, RewardLedger& ledger)
