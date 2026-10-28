@@ -232,6 +232,9 @@ namespace Animus::Curriculum
         Controlled,
         CCBroken,
         PartyWipe,
+        /// An order carried out quickly (OrderSpeed, Outcome: Director.OrderSpeed x the share of OrderTimeoutMs left
+        /// when it was done; the seats are a skill library, 2026-10-28, paid for executing fast). Appended.
+        OrderSpeed,
         Count
     };
 
@@ -300,6 +303,7 @@ namespace Animus::Curriculum
             // The party combat curriculum's (2026-10-27): kill order, crowd control held.
             case RewardTerm::KillOrder:
             case RewardTerm::Controlled:
+            case RewardTerm::OrderSpeed:
                 return RewardCategory::Outcome;
             // What the outcome costs: deaths (the seat's, a teammate's, the owner's; a wipe is paid as deaths), the
             // flag lost, the clock run out, the step cost a stage charges for time, the corpse run.
@@ -466,6 +470,7 @@ namespace Animus::Curriculum
                 _score += value;
             value *= _scale[std::size_t(term)] * tier * Shaped(term);
             _step += value;
+            _stepTerms[std::size_t(term)] += value;
             _episode[std::size_t(term)] += value;
             return value;
         }
@@ -478,6 +483,7 @@ namespace Animus::Curriculum
                 _score += value;
             value *= _scale[std::size_t(term)] * (PricesNoise(term) ? 1.0f : Shaped(term));
             _step += value;
+            _stepTerms[std::size_t(term)] += value;
             _episode[std::size_t(term)] += value;
             return value;
         }
@@ -520,10 +526,23 @@ namespace Animus::Curriculum
         {
             float const step = _step;
             _step = 0.0f;
+            _lastStepTerms = _stepTerms;
+            _stepTerms.fill(0.0f);
             return step;
         }
 
         [[nodiscard]] float Episode(RewardTerm term) const { return _episode[std::size_t(term)]; }
+        /// What the last taken step paid of a term, and of a whole category (the director's progress reward reads
+        /// the seats' Outcome terms after their steps are taken, DirectorEncounter::DirectorReward).
+        [[nodiscard]] float LastStep(RewardTerm term) const { return _lastStepTerms[std::size_t(term)]; }
+        [[nodiscard]] float LastStepOf(RewardCategory category) const
+        {
+            float total = 0.0f;
+            for (std::size_t term = 0; term < REWARD_TERM_COUNT; ++term)
+                if (RewardTermCategory(RewardTerm(term)) == category)
+                    total += _lastStepTerms[term];
+            return total;
+        }
 
         /// The episode's Outcome and Cost terms as tuned, before any rung's tier and any role's scale: the same
         /// kill is worth the same at every rung and in every seat, so the score compares across them.
@@ -532,12 +551,16 @@ namespace Animus::Curriculum
         void ResetEpisode()
         {
             _episode.fill(0.0f);
+            _stepTerms.fill(0.0f);
+            _lastStepTerms.fill(0.0f);
             _step = 0.0f;
             _score = 0.0f;
         }
 
     private:
         std::array<float, REWARD_TERM_COUNT> _episode{};
+        std::array<float, REWARD_TERM_COUNT> _stepTerms{};
+        std::array<float, REWARD_TERM_COUNT> _lastStepTerms{};
         std::array<float, REWARD_TERM_COUNT> _scale = MakeOnes();
         static std::array<float, REWARD_TERM_COUNT> MakeOnes()
         {

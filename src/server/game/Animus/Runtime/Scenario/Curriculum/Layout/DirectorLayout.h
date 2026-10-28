@@ -165,11 +165,16 @@ namespace Animus::Curriculum::DirectorLayout
         ACTION_REST,                                                            // ... told to rest
         ACTION_FOCUS_FIRST,                                                     // + enemy slot
         ACTION_PULL_FIRST       = ACTION_FOCUS_FIRST + DIRECTOR_ENEMIES,
-        ACTION_HEAL_FIRST       = ACTION_PULL_FIRST + DIRECTOR_ENEMIES,          // + member slot
+        ACTION_CONTROL_FIRST    = ACTION_PULL_FIRST + DIRECTOR_ENEMIES,
+        ACTION_INTERRUPT_FIRST  = ACTION_CONTROL_FIRST + DIRECTOR_ENEMIES,
+        ACTION_TAUNT_FIRST      = ACTION_INTERRUPT_FIRST + DIRECTOR_ENEMIES,
+        ACTION_HEAL_FIRST       = ACTION_TAUNT_FIRST + DIRECTOR_ENEMIES,         // + member slot
         ACTION_FOLLOW_FIRST     = ACTION_HEAL_FIRST + DIRECTOR_SEATS,
-        ACTION_LOOT_FIRST       = ACTION_FOLLOW_FIRST + DIRECTOR_SEATS,          // + object slot
+        ACTION_ASSIST_FIRST     = ACTION_FOLLOW_FIRST + DIRECTOR_SEATS,
+        ACTION_LOOT_FIRST       = ACTION_ASSIST_FIRST + DIRECTOR_SEATS,          // + object slot
         ACTION_USE_FIRST        = ACTION_LOOT_FIRST + DIRECTOR_OBJECTS,
-        ACTION_COUNT            = ACTION_USE_FIRST + DIRECTOR_OBJECTS
+        ACTION_STAY             = ACTION_USE_FIRST + DIRECTOR_OBJECTS,           // ... told to hold its spot
+        ACTION_COUNT
     };
 
     constexpr float DISTANCE_SCALE = 100.0f;

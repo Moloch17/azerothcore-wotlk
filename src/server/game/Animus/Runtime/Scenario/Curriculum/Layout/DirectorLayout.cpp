@@ -236,14 +236,19 @@ void Animus::Curriculum::DirectorLayout::Observe(DirectorView const& view, float
             mask[ACTION_ADDRESS_FIRST + slot] = 1;
             mask[ACTION_HEAL_FIRST + slot] = addressed ? 1 : 0;
             mask[ACTION_FOLLOW_FIRST + slot] = addressed ? 1 : 0;
+            mask[ACTION_ASSIST_FIRST + slot] = addressed ? 1 : 0;
         }
     mask[ACTION_CLEAR] = addressed ? 1 : 0;
     mask[ACTION_REST] = addressed ? 1 : 0;
+    mask[ACTION_STAY] = addressed ? 1 : 0;
     for (uint32 slot = 0; slot < DIRECTOR_ENEMIES; ++slot)
         if (view.Enemies[slot].Present && addressed)
         {
             mask[ACTION_FOCUS_FIRST + slot] = 1;
             mask[ACTION_PULL_FIRST + slot] = 1;
+            mask[ACTION_CONTROL_FIRST + slot] = 1;
+            mask[ACTION_INTERRUPT_FIRST + slot] = 1;
+            mask[ACTION_TAUNT_FIRST + slot] = 1;
         }
     for (uint32 slot = 0; slot < DIRECTOR_OBJECTS; ++slot)
         if (view.Objects[slot].Present && addressed)
@@ -264,13 +269,18 @@ std::vector<std::string> Animus::Curriculum::DirectorLayout::ActionNames()
         names[ACTION_ADDRESS_FIRST + slot] = Acore::StringFormat("address_member{}", slot);
         names[ACTION_HEAL_FIRST + slot] = Acore::StringFormat("order_heal_member{}", slot);
         names[ACTION_FOLLOW_FIRST + slot] = Acore::StringFormat("order_follow_member{}", slot);
+        names[ACTION_ASSIST_FIRST + slot] = Acore::StringFormat("order_assist_member{}", slot);
     }
     names[ACTION_CLEAR] = "order_clear";
     names[ACTION_REST] = "order_rest";
+    names[ACTION_STAY] = "order_stay";
     for (uint32 slot = 0; slot < DIRECTOR_ENEMIES; ++slot)
     {
         names[ACTION_FOCUS_FIRST + slot] = Acore::StringFormat("order_focus_enemy{}", slot);
         names[ACTION_PULL_FIRST + slot] = Acore::StringFormat("order_pull_enemy{}", slot);
+        names[ACTION_CONTROL_FIRST + slot] = Acore::StringFormat("order_control_enemy{}", slot);
+        names[ACTION_INTERRUPT_FIRST + slot] = Acore::StringFormat("order_interrupt_enemy{}", slot);
+        names[ACTION_TAUNT_FIRST + slot] = Acore::StringFormat("order_taunt_enemy{}", slot);
     }
     for (uint32 slot = 0; slot < DIRECTOR_OBJECTS; ++slot)
     {
@@ -333,8 +343,12 @@ boost::json::object Animus::Curriculum::DirectorLayout::SetDescriptor()
     pointers.push_back(pointer(ACTION_ADDRESS_FIRST, "seats", DIRECTOR_SEATS));
     pointers.push_back(pointer(ACTION_HEAL_FIRST, "seats", DIRECTOR_SEATS));
     pointers.push_back(pointer(ACTION_FOLLOW_FIRST, "seats", DIRECTOR_SEATS));
+    pointers.push_back(pointer(ACTION_ASSIST_FIRST, "seats", DIRECTOR_SEATS));
     pointers.push_back(pointer(ACTION_FOCUS_FIRST, "enemies", DIRECTOR_ENEMIES));
     pointers.push_back(pointer(ACTION_PULL_FIRST, "enemies", DIRECTOR_ENEMIES));
+    pointers.push_back(pointer(ACTION_CONTROL_FIRST, "enemies", DIRECTOR_ENEMIES));
+    pointers.push_back(pointer(ACTION_INTERRUPT_FIRST, "enemies", DIRECTOR_ENEMIES));
+    pointers.push_back(pointer(ACTION_TAUNT_FIRST, "enemies", DIRECTOR_ENEMIES));
     pointers.push_back(pointer(ACTION_LOOT_FIRST, "objects", DIRECTOR_OBJECTS));
     pointers.push_back(pointer(ACTION_USE_FIRST, "objects", DIRECTOR_OBJECTS));
     descriptor["pointers"] = std::move(pointers);

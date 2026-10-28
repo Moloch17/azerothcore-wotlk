@@ -198,7 +198,10 @@ namespace Animus::Curriculum
     /// Focus and Pull (fight this one; start the fight on this one -- the tank's to carry out, as the party's pull
     /// discipline has it), a member for Heal and Follow (keep this one up; stay with this one), an object for Loot and
     /// Use (loot this chest -- the gunpowder's barrel; use this door, lever or cannon, with the key item it takes when
-    /// the seat carries one), nothing for Rest (eat and drink until ready).
+    /// the seat carries one), nothing for Rest (eat and drink until ready). The fight's own verbs (2026-10-28, the
+    /// user: "the director is what will actually learn to ... orchestrate fights"): Control (hold this enemy out of
+    /// the fight by crowd control), Interrupt (stop this enemy's cast), Taunt (take this enemy onto yourself: the
+    /// tank's), Assist (attack what this member attacks), Stay (hold the spot you stand on; names nothing).
     enum class TeamPosture : uint8
     {
         Advance,
@@ -218,6 +221,11 @@ namespace Animus::Curriculum
         Loot,
         Use,
         Rest,
+        Control,
+        Interrupt,
+        Stay,
+        Taunt,
+        Assist,
         Count
     };
     constexpr uint32 ORDER_KIND_COUNT = uint32(OrderKind::Count);

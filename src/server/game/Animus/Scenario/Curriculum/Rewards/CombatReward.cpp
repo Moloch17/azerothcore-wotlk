@@ -83,6 +83,7 @@ std::string_view Animus::Curriculum::RewardTermName(RewardTerm term)
         case RewardTerm::Controlled:            return "controlled";
         case RewardTerm::CCBroken:              return "cc_broken";
         case RewardTerm::PartyWipe:             return "party_wipe";
+        case RewardTerm::OrderSpeed:            return "order_speed";
         case RewardTerm::WrongObject:           return "wrong_object";
         case RewardTerm::Regroup:               return "regroup";
         case RewardTerm::Blocking:              return "blocking";

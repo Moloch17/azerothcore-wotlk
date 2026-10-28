@@ -98,6 +98,11 @@ std::string_view Animus::Curriculum::OrderKindName(OrderKind kind)
         case OrderKind::Loot:    return "loot";
         case OrderKind::Use:     return "use";
         case OrderKind::Rest:    return "rest";
+        case OrderKind::Control: return "control";
+        case OrderKind::Interrupt: return "interrupt";
+        case OrderKind::Stay:    return "stay";
+        case OrderKind::Taunt:   return "taunt";
+        case OrderKind::Assist:  return "assist";
         case OrderKind::Count:   break;
     }
 

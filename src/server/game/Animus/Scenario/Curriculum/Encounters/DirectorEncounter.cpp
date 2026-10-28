@@ -17,18 +17,24 @@
  */
 
 #include "Encounters.h"
+#include "ActionCatalog.h"
 #include "Creature.h"
+#include "EncoderSupport.h"
 #include "EntityActions.h"
 #include "Env.h"
 #include "HintBlock.h"
 #include "GameObject.h"
 #include "Identity.h"
+#include "Layout.h"
 #include "Log.h"
 #include "Map.h"
 #include "MapVisionWorld.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
+#include "Random.h"
 #include "SeatView.h"
+#include "SpellInfo.h"
+#include "SpellMgr.h"
 #include "StageScenario.h"
 #include "StringFormat.h"
 #include <algorithm>
@@ -113,6 +119,14 @@ void Animus::Curriculum::DirectorEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
             [orders, kind](Env const& env, uint32) { return float(orders(env).Given[kind]); });
         table.Add(Acore::StringFormat("order_{}_done", OrderKindName(OrderKind(kind))),
             [orders, kind](Env const& env, uint32) { return float(orders(env).DoneOf[kind]); });
+        // How long a carried-out order of the kind took, on average (the seats' execution speed).
+        table.Add(Acore::StringFormat("order_{}_seconds", OrderKindName(OrderKind(kind))),
+            [this, kind](Env const& env, uint32)
+            {
+                EnvDirector const& director = _envs[env.Index];
+                uint32 const done = director.Orders.DoneOf[kind];
+                return done ? director.DoneAgeMs[kind] / 1000.0f / float(done) : 0.0f;
+            });
     }
     // The share of the orders given that were carried out: the one number to read the director's use by.
     table.Add("order_done_share", [orders](Env const& env, uint32)
@@ -148,6 +162,7 @@ void Animus::Curriculum::DirectorEncounter::ResetEpisode(Env& env)
     director.Rewards.ResetEpisode();
     // A full hand of OrderDone tokens to begin with (Director.DonePerMinute).
     director.DoneTokens.fill(_scenario.Tuning().Director.DonePerMinute);
+    director.SampleAtMs.fill(_scenario.Tuning().Director.SampleGapMs);
 }
 
 bool Animus::Curriculum::DirectorEncounter::Active(Env const& env) const
@@ -468,21 +483,40 @@ void Animus::Curriculum::DirectorEncounter::Call(Env& env, int32 action)
     {
         case OrderKind::Focus:
         case OrderKind::Pull:
+        case OrderKind::Control:
+        case OrderKind::Interrupt:
+        case OrderKind::Taunt:
         {
             target = call.Slot < DIRECTOR_ENEMIES ? director.EnemySlots[call.Slot] : ObjectGuid::Empty;
             Unit const* unit = bot && !target.IsEmpty() ? ObjectAccessor::GetUnit(*bot, target) : nullptr;
             impossible = impossible || DeadUnit(unit) || (call.Verb == OrderKind::Pull && unit->IsInCombat());
+            // Control: not what the tank fights, and only a seat with crowd control; Taunt: the tank's, of an enemy
+            // not on it already; Interrupt: a seat with an interrupt.
+            if (!impossible)
+            {
+                Player const* tank = _scenario.PartyTank(env);
+                if (call.Verb == OrderKind::Control)
+                    impossible = (tank && unit->GetVictim() == tank) || !SeatCan(env, member, Skill::Control);
+                else if (call.Verb == OrderKind::Taunt)
+                    impossible = bot != tank || unit->GetVictim() == bot || !SeatCan(env, member, Skill::Taunt);
+                else if (call.Verb == OrderKind::Interrupt)
+                    impossible = !SeatCan(env, member, Skill::Interrupt);
+            }
             break;
         }
         case OrderKind::Heal:
         case OrderKind::Follow:
+        case OrderKind::Assist:
         {
             Player const* other = call.Slot < count ? _scenario.SeatBot(env, call.Slot) : nullptr;
             target = other ? other->GetGUID() : ObjectGuid::Empty;
             impossible = impossible || !other || !other->IsAlive() || call.Slot == member
-                || (call.Verb == OrderKind::Heal && other->GetHealthPct() / 100.0f >= tuning.HealTo);
+                || (call.Verb == OrderKind::Heal && other->GetHealthPct() / 100.0f >= tuning.HealTo)
+                || (call.Verb == OrderKind::Assist && !other->GetVictim());
             break;
         }
+        case OrderKind::Stay:
+            break;
         case OrderKind::Loot:
         case OrderKind::Use:
         {
@@ -514,20 +548,251 @@ void Animus::Curriculum::DirectorEncounter::Call(Env& env, int32 action)
     // What was there is replaced, not failed (the seat is not charged for the director's change of mind); a
     // replacement within HoldDecisions is churn, the director's to pay.
     uint32 const churned = orders.Churned;
-    DirectorRules::Order(orders, director.Step, ms, member, call.Verb, target, tuning.HoldDecisions);
+    Issue(env, member, call.Verb, target);
     if (orders.Churned > churned)
         ++director.ChurnDue;
-    DirectorOrders::MemberOrder& order = orders.Members[member];
-    director.HadKey[member] = bot && InstanceEncounter::CarriesKey(bot, map ? map->GetId() : 0) ? 1 : 0;
-    director.ObjectStateAtIssue[member] = map && !target.IsEmpty() ? ObjectState(map->GetGameObject(target)) : 0;
-    director.Pressed[member] = 0;
-    if (call.Verb == OrderKind::Heal)
-        if (Player const* other = call.Slot < count ? _scenario.SeatBot(env, call.Slot) : nullptr)
-            order.WasLow = other->IsAlive() && other->GetHealthPct() / 100.0f < tuning.HealFrom;
     if (_scenario.Tuning().Instance.WingTrace && env.Index == 0)
         LOG_DEBUG("module.animus", "{}: env {} director orders seat {}: {} slot {} ({}{})", _scenario.Name(),
             env.Index, member, OrderKindName(call.Verb), call.Slot, target.ToString(),
             impossible ? ", impossible" : "");
+}
+
+void Animus::Curriculum::DirectorEncounter::Sample(Env& env)
+{
+    using namespace DirectorLayout;
+    EnvDirector& director = _envs[env.Index];
+    if (!Active(env))
+        return;
+    CurriculumTuning::DirectorTuning const& tuning = _scenario.Tuning().Director;
+    EnvState const& data = _scenario.Data(env);
+    uint32 const count = std::min<uint32>(data.ActiveSeats, DIRECTOR_SEATS);
+    uint32 const now = env.EpisodeElapsedMs;
+    Map* map = env.FindMap();
+
+    // The party as it stands.
+    std::array<Player*, DIRECTOR_SEATS> seats{};
+    Player* tank = nullptr;
+    int32 tankSeat = -1;
+    for (uint32 seat = 0; seat < count; ++seat)
+        if (Player* bot = _scenario.SeatBot(env, seat); bot && bot->IsInWorld() && bot->IsAlive() && data.Seats[seat].L)
+        {
+            seats[seat] = bot;
+            if (!tank && data.Seats[seat].DungeonRole == DUNGEON_TANK)
+            {
+                tank = bot;
+                tankSeat = int32(seat);
+            }
+        }
+    if (!tank)
+        return;
+
+    // The enemies: in a fight with the party, idle, casting, on whom.
+    std::vector<Unit*> fighting;
+    std::vector<Unit*> idle;
+    for (uint32 slot = 0; slot < env.Targets.size(); ++slot)
+        if (Unit* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive())
+            (enemy->IsInCombat() ? fighting : idle).push_back(enemy);
+    auto const nearest = [](std::vector<Unit*> const& units, Player const* bot) -> Unit*
+    {
+        Unit* best = nullptr;
+        for (Unit* unit : units)
+            if (!best || bot->GetExactDist(unit) < bot->GetExactDist(best))
+                best = unit;
+        return best;
+    };
+    // The way (the dungeon ground): its next object and opener, its next pull.
+    InstanceEncounter::TeacherWay const* way = nullptr;
+    if (InstanceEncounter* instance = _scenario.Instance())
+        if (InstanceEncounter::TeacherWay const& found = instance->Teacher(env, map); found.Valid)
+            way = &found;
+
+    for (uint32 seat = 0; seat < count; ++seat)
+    {
+        Player* bot = seats[seat];
+        if (!bot || director.Orders.Members[seat].Kind != OrderKind::None || now < director.SampleAtMs[seat])
+            continue;
+        bool const isTank = int32(seat) == tankSeat;
+        bool const isHealer = data.Seats[seat].DungeonRole == DUNGEON_HEALER;
+        struct Candidate
+        {
+            OrderKind Kind;
+            ObjectGuid Target;
+            float Weight;
+        };
+        std::vector<Candidate> candidates;
+        auto const offer = [&candidates, &tuning](OrderKind kind, ObjectGuid target)
+        {
+            float const weight = tuning.Sample[uint32(kind)];
+            if (weight > 0.0f)
+                candidates.push_back({ kind, target, weight });
+        };
+        Unit* const tankTarget = tank->GetVictim();
+        Unit* const front = tankTarget && tankTarget->IsAlive() && tankTarget->IsInCombat() ? tankTarget
+            : nearest(fighting, bot);
+        // Focus: a damage seat on what the tank fights (any fighting enemy when the tank fights nothing).
+        if (!isTank && !isHealer && front)
+            offer(OrderKind::Focus, front->GetGUID());
+        // Assist: a non-tank on the tank's enemy, through the tank.
+        if (!isTank && tankTarget && tankTarget->IsAlive())
+            offer(OrderKind::Assist, tank->GetGUID());
+        // Heal: the healer, the most hurt member below HealFrom.
+        if (isHealer)
+        {
+            Player* lowest = nullptr;
+            for (uint32 other = 0; other < count; ++other)
+                if (Player* mate = seats[other]; mate && mate != bot
+                    && mate->GetHealthPct() / 100.0f < tuning.HealFrom
+                    && (!lowest || mate->GetHealthPct() < lowest->GetHealthPct()))
+                    lowest = mate;
+            if (lowest)
+                offer(OrderKind::Heal, lowest->GetGUID());
+        }
+        // Follow: a non-tank far from the tank.
+        if (!isTank && bot->GetExactDist(tank) > tuning.FollowYards)
+            offer(OrderKind::Follow, tank->GetGUID());
+        // Pull: the tank, the way's next pack or the nearest idle enemy, while nothing fights.
+        if (isTank && fighting.empty())
+        {
+            Unit* pull = way && !way->Pull.IsEmpty() ? ObjectAccessor::GetUnit(*bot, way->Pull) : nullptr;
+            if (!pull || !pull->IsAlive() || pull->IsInCombat())
+                pull = nearest(idle, bot);
+            if (pull)
+                offer(OrderKind::Pull, pull->GetGUID());
+        }
+        // Rest: not ready, nothing fighting.
+        if (fighting.empty() && !Ready(bot))
+            offer(OrderKind::Rest, ObjectGuid::Empty);
+        // Control: a seat with crowd control, a fighting enemy that is not the tank's and not held already.
+        if (!fighting.empty() && SeatCan(env, seat, Skill::Control))
+            for (Unit* enemy : fighting)
+                if (enemy != tankTarget && !Encoding::IsCrowdControlled(enemy))
+                {
+                    offer(OrderKind::Control, enemy->GetGUID());
+                    break;
+                }
+        // Interrupt: a seat with an interrupt, a fighting enemy mid-cast.
+        if (!fighting.empty() && SeatCan(env, seat, Skill::Interrupt))
+            for (Unit* enemy : fighting)
+                if (enemy->IsNonMeleeSpellCast(false, false, true))
+                {
+                    offer(OrderKind::Interrupt, enemy->GetGUID());
+                    break;
+                }
+        // Taunt: the tank, a fighting enemy on somebody else.
+        if (isTank && SeatCan(env, seat, Skill::Taunt))
+            for (Unit* enemy : fighting)
+                if (Unit const* victim = enemy->GetVictim(); victim && victim != bot && victim->IsPlayer())
+                {
+                    offer(OrderKind::Taunt, enemy->GetGUID());
+                    break;
+                }
+        // Stay: anyone, out of a fight.
+        if (fighting.empty())
+            offer(OrderKind::Stay, ObjectGuid::Empty);
+        // Loot and Use: the way's object, by its opener.
+        if (way && !way->Object.IsEmpty() && way->ObjectOpens != WingTeacher::Opens::Click
+            && way->Opener == bot->GetGUID())
+            offer(way->ObjectOpens == WingTeacher::Opens::UseKey ? OrderKind::Use : OrderKind::Loot, way->Object);
+
+        if (candidates.empty())
+            continue;
+        float total = 0.0f;
+        for (Candidate const& candidate : candidates)
+            total += candidate.Weight;
+        float roll = frand(0.0f, total);
+        Candidate const* drawn = &candidates.back();
+        for (Candidate const& candidate : candidates)
+        {
+            roll -= candidate.Weight;
+            if (roll <= 0.0f)
+            {
+                drawn = &candidate;
+                break;
+            }
+        }
+        Issue(env, seat, drawn->Kind, drawn->Target);
+        if (_scenario.Tuning().Instance.WingTrace && env.Index == 0)
+            LOG_DEBUG("module.animus", "{}: env {} sampler orders seat {}: {} ({})", _scenario.Name(), env.Index,
+                seat, OrderKindName(drawn->Kind), drawn->Target.ToString());
+    }
+}
+
+void Animus::Curriculum::DirectorEncounter::Issue(Env& env, uint32 member, OrderKind kind, ObjectGuid target)
+{
+    EnvDirector& director = _envs[env.Index];
+    DirectorOrders& orders = director.Orders;
+    CurriculumTuning::DirectorTuning const& tuning = _scenario.Tuning().Director;
+    Player* bot = _scenario.SeatBot(env, member);
+    Map* map = env.FindMap();
+    DirectorRules::Order(orders, director.Step, env.EpisodeElapsedMs, member, kind, target, tuning.HoldDecisions);
+    DirectorOrders::MemberOrder& order = orders.Members[member];
+    director.HadKey[member] = bot && InstanceEncounter::CarriesKey(bot, map ? map->GetId() : 0) ? 1 : 0;
+    director.ObjectStateAtIssue[member] = map && !target.IsEmpty() && target.IsGameObject()
+        ? ObjectState(map->GetGameObject(target)) : 0;
+    director.Pressed[member] = 0;
+    director.PendingInterrupt[member].Clear();
+    if (kind == OrderKind::Heal && bot)
+        if (Player const* other = ObjectAccessor::GetPlayer(*bot, target))
+            order.WasLow = other->IsAlive() && other->GetHealthPct() / 100.0f < tuning.HealFrom;
+    if (kind == OrderKind::Stay && bot)
+        order.Spot = bot->GetPosition();
+}
+
+bool Animus::Curriculum::DirectorEncounter::SeatCan(Env const& env, uint32 seat, Skill skill) const
+{
+    EnvState const& data = _scenario.Data(env);
+    if (seat >= data.Seats.size() || !data.Seats[seat].L)
+        return false;
+    Player const* bot = _scenario.SeatBot(env, seat);
+    for (ActionCatalog::Action const& action : data.Seats[seat].L->Catalog().Tactical())
+    {
+        if (action.Type != ActionCatalog::Kind::Spell)
+            continue;
+        SpellInfo const* info = bot ? ActionCatalog::KnownRank(bot, action.FirstRank)
+            : sSpellMgr->GetSpellInfo(action.FirstRank);
+        if (!info)
+            continue;
+        bool taunt = false;
+        bool control = false;
+        for (SpellEffectInfo const& effect : info->Effects)
+        {
+            if (effect.Effect == SPELL_EFFECT_ATTACK_ME)
+                taunt = true;
+            if (effect.Effect != SPELL_EFFECT_APPLY_AURA && effect.Effect != SPELL_EFFECT_PERSISTENT_AREA_AURA)
+                continue;
+            switch (effect.ApplyAuraName)
+            {
+                case SPELL_AURA_MOD_TAUNT:
+                    taunt = true;
+                    break;
+                case SPELL_AURA_MOD_STUN:
+                case SPELL_AURA_MOD_CONFUSE:
+                case SPELL_AURA_MOD_FEAR:
+                case SPELL_AURA_MOD_ROOT:
+                case SPELL_AURA_TRANSFORM:
+                    control = !info->IsPositive();
+                    break;
+                default:
+                    break;
+            }
+        }
+        switch (skill)
+        {
+            case Skill::Control:
+                if (control)
+                    return true;
+                break;
+            case Skill::Interrupt:
+                if (ActionCatalog::IsInterruptingSpell(info))
+                    return true;
+                break;
+            case Skill::Taunt:
+                if (taunt)
+                    return true;
+                break;
+        }
+    }
+    return false;
 }
 
 void Animus::Curriculum::DirectorEncounter::Finish(Env& env, uint32 seat, bool done)
@@ -544,7 +809,10 @@ void Animus::Curriculum::DirectorEncounter::Finish(Env& env, uint32 seat, bool d
         order.DoneNow = true;
     else
         order.FailedNow = true;
-    director.Orders.Event = true;
+    // An event for the director's next turn only when the key changed hands (a looted barrel is the cannon's cue);
+    // anything else waits for the clock, so orders stand (2026-10-28).
+    if (done && order.Kind == OrderKind::Loot)
+        director.Orders.Event = true;
     (void)env;
 }
 
@@ -687,6 +955,107 @@ void Animus::Curriculum::DirectorEncounter::Judge(Env& env, uint32 seat, Player*
                 return;
             }
             break;
+        case OrderKind::Control:
+        {
+            // Carried out once the seat's own crowd control has held the enemy ControlMs; one that dies first was
+            // not held out.
+            Unit const* unit = ObjectAccessor::GetUnit(*bot, order.Target);
+            if (DeadUnit(unit))
+            {
+                Finish(env, seat, false);
+                return;
+            }
+            if (Encoding::CrowdControlledBy(unit, bot))
+            {
+                order.ControlledMs += stepMs;
+                if (order.ControlledMs >= tuning.ControlMs)
+                {
+                    Finish(env, seat, true);
+                    return;
+                }
+            }
+            break;
+        }
+        case OrderKind::Interrupt:
+        {
+            // Carried out when the seat's interrupt, sent at the named enemy, stopped its cast within InterruptMs.
+            Unit const* unit = ObjectAccessor::GetUnit(*bot, order.Target);
+            if (DeadUnit(unit))
+            {
+                Finish(env, seat, false);
+                return;
+            }
+            if (director.PendingInterrupt[seat] == order.Target && std::any_of(env.StepInterruptedTargets.begin(),
+                env.StepInterruptedTargets.end(),
+                [&order](Env::InterruptedCast const& cast) { return cast.Caster == order.Target; }))
+            {
+                director.PendingInterrupt[seat].Clear();
+                Finish(env, seat, true);
+                return;
+            }
+            if (age >= tuning.InterruptMs)
+            {
+                Finish(env, seat, false);
+                return;
+            }
+            break;
+        }
+        case OrderKind::Taunt:
+        {
+            // Carried out when the enemy turns on the seat within TauntMs.
+            Unit const* unit = ObjectAccessor::GetUnit(*bot, order.Target);
+            if (DeadUnit(unit))
+            {
+                Finish(env, seat, false);
+                return;
+            }
+            if (unit->GetVictim() == bot)
+            {
+                Finish(env, seat, true);
+                return;
+            }
+            if (age >= tuning.TauntMs)
+            {
+                Finish(env, seat, false);
+                return;
+            }
+            break;
+        }
+        case OrderKind::Assist:
+        {
+            // Carried out on the seat's damage to what the named member fights.
+            Player const* other = ObjectAccessor::GetPlayer(*bot, order.Target);
+            if (!other || !other->IsAlive())
+            {
+                Finish(env, seat, false);
+                return;
+            }
+            if (Unit const* victim = other->GetVictim(); victim && env.DamagedThisStep(seat, victim->GetGUID()))
+            {
+                Finish(env, seat, true);
+                return;
+            }
+            break;
+        }
+        case OrderKind::Stay:
+        {
+            // Carried out after StayMs within StayYards of the spot; leaving it is the order undone.
+            if (bot->GetExactDist(&order.Spot) <= tuning.StayYards)
+            {
+                order.NearMs += stepMs;
+                if (order.NearMs >= tuning.StayMs)
+                {
+                    Finish(env, seat, true);
+                    return;
+                }
+            }
+            else if (order.NearMs)
+            {
+                Finish(env, seat, false);
+                return;
+            }
+            break;
+        }
         default:
             break;
     }
@@ -713,24 +1082,35 @@ void Animus::Curriculum::DirectorEncounter::Bind(Env& env, uint32 seat, Player* 
     DirectorOrders::MemberOrder const& order = _envs[env.Index].Orders.Members[seat];
     if (order.Kind == OrderKind::None || order.Target.IsEmpty() || !bot || !bot->IsAlive() || !bot->IsInWorld())
         return;
+    auto const select = [bot](ObjectGuid guid)
+    {
+        Unit* unit = ObjectAccessor::GetUnit(*bot, guid);
+        if (!unit || !unit->IsAlive() || bot->GetTarget() == guid)
+            return;
+        WorldPacket packet = EntityActions::SetSelection(guid);
+        EntityActions::SessionPort().Send(bot, packet);
+        // Swinging already: the auto attack turns onto the named enemy, as a selection press does.
+        if (bot->GetVictim() && bot->GetVictim() != unit && bot->IsValidAttackTarget(unit))
+        {
+            WorldPacket swing = EntityActions::AttackSwing(guid);
+            EntityActions::SessionPort().Send(bot, swing);
+        }
+    };
     switch (order.Kind)
     {
         case OrderKind::Focus:
         case OrderKind::Pull:
-        {
-            Unit* unit = ObjectAccessor::GetUnit(*bot, order.Target);
-            if (!unit || !unit->IsAlive() || bot->GetTarget() == order.Target)
-                return;
-            WorldPacket packet = EntityActions::SetSelection(order.Target);
-            EntityActions::SessionPort().Send(bot, packet);
-            // Swinging already: the auto attack turns onto the named enemy, as a selection press does.
-            if (bot->GetVictim() && bot->GetVictim() != unit && bot->IsValidAttackTarget(unit))
-            {
-                WorldPacket swing = EntityActions::AttackSwing(order.Target);
-                EntityActions::SessionPort().Send(bot, swing);
-            }
+        case OrderKind::Control:
+        case OrderKind::Interrupt:
+        case OrderKind::Taunt:
+            select(order.Target);
             return;
-        }
+        case OrderKind::Assist:
+            // What the member fights, re-aimed as it changes.
+            if (Player const* other = ObjectAccessor::GetPlayer(*bot, order.Target))
+                if (Unit const* victim = other->GetVictim())
+                    select(victim->GetGUID());
+            return;
         case OrderKind::Heal:
             _scenario.Data(env).Seats[seat].Focus = order.Target;
             return;
@@ -744,6 +1124,11 @@ bool Animus::Curriculum::DirectorEncounter::RouteGoal(Env const& env, uint32 sea
     if (!Active(env) || seat >= DirectorLayout::DIRECTOR_SEATS)
         return false;
     DirectorOrders::MemberOrder const& order = _envs[env.Index].Orders.Members[seat];
+    if (order.Kind == OrderKind::Stay)
+    {
+        goal = order.Spot;
+        return true;
+    }
     if (order.Target.IsEmpty())
         return false;
     switch (order.Kind)
@@ -752,6 +1137,10 @@ bool Animus::Curriculum::DirectorEncounter::RouteGoal(Env const& env, uint32 sea
         case OrderKind::Pull:
         case OrderKind::Loot:
         case OrderKind::Use:
+        case OrderKind::Control:
+        case OrderKind::Interrupt:
+        case OrderKind::Taunt:
+        case OrderKind::Assist:
             break;
         default:
             return false;
@@ -760,6 +1149,10 @@ bool Animus::Curriculum::DirectorEncounter::RouteGoal(Env const& env, uint32 sea
     if (!bot)
         return false;
     WorldObject const* target = ObjectAccessor::GetWorldObject(*bot, order.Target);
+    // Assist: where the member's enemy stands.
+    if (order.Kind == OrderKind::Assist)
+        if (Player const* other = target ? target->ToPlayer() : nullptr)
+            target = other->GetVictim();
     if (!target || !target->IsInWorld() || target->GetMapId() != bot->GetMapId())
         return false;
     if (Unit const* unit = target->ToUnit(); unit && !unit->IsAlive())
@@ -771,7 +1164,11 @@ bool Animus::Curriculum::DirectorEncounter::RouteGoal(Env const& env, uint32 sea
 void Animus::Curriculum::DirectorEncounter::OnSeatAction(Env& env, uint32 seat, SeatActionResult const& result)
 {
     EnvDirector& director = _envs[env.Index];
-    if (!Active(env) || seat >= DirectorLayout::DIRECTOR_SEATS || result.ActedOn.IsEmpty() || result.ActRefused)
+    if (!Active(env) || seat >= DirectorLayout::DIRECTOR_SEATS)
+        return;
+    if (!result.PendingInterrupt.IsEmpty())
+        director.PendingInterrupt[seat] = result.PendingInterrupt;
+    if (result.ActedOn.IsEmpty() || result.ActRefused)
         return;
     if (result.ActPress != uint8(EntityActions::Press::Interact)
         && result.ActPress != uint8(EntityActions::Press::UseItem))
@@ -807,20 +1204,35 @@ void Animus::Curriculum::DirectorEncounter::View(Env const& env, uint32 seat, Se
         return;
     out.AgeSeconds = float(env.EpisodeElapsedMs - std::min(env.EpisodeElapsedMs, order.IssuedMs)) / 1000.0f;
     Player* bot = view.Bot;
-    if (order.Target.IsEmpty() || !bot || !bot->IsInWorld())
+    if (!bot || !bot->IsInWorld())
+        return;
+    if (order.Kind == OrderKind::Stay)
+    {
+        out.HasTarget = true;
+        out.TargetKnown = true;
+        out.Where = order.Spot;
+        out.TargetNear = bot->GetExactDist(&order.Spot) <= _scenario.Tuning().Director.StayYards;
+        return;
+    }
+    if (order.Target.IsEmpty())
         return;
     WorldObject const* target = ObjectAccessor::GetWorldObject(*bot, order.Target);
+    // Assist shows the member's enemy (the member itself while it fights nothing).
+    if (order.Kind == OrderKind::Assist)
+        if (Player const* other = target ? target->ToPlayer() : nullptr)
+            if (Unit const* victim = other->GetVictim())
+                target = victim;
     if (!target)
         return;
     out.HasTarget = true;
     // Where it is, only when the seat sees or remembers it (its sight list, SeatState::SightGuids).
     SeatState const& state = _scenario.Data(env).Seats[seat];
-    uint64 const raw = order.Target.GetRawValue();
+    uint64 const raw = target->GetGUID().GetRawValue();
     out.TargetKnown = std::find(state.SightGuids.begin(), state.SightGuids.end(), raw) != state.SightGuids.end()
         || target->IsPlayer();
     out.Where = target->GetPosition();
     out.TargetNear = bot->GetExactDist(target) <= ReachOf(target);
-    out.TargetIsSelection = bot->GetTarget() == order.Target;
+    out.TargetIsSelection = bot->GetTarget() == target->GetGUID();
     if (order.Kind == OrderKind::Loot || order.Kind == OrderKind::Use)
         if (target->ToGameObject())
             out.BoundObject = order.Target;
@@ -877,11 +1289,17 @@ void Animus::Curriculum::DirectorEncounter::Reward(Env& env, uint32 seat, Player
             + cap * float(_scenario.StepMs(env)) / 60000.0f);
     if (order.Kind != OrderKind::None && (order.DoneNow || order.FailedNow))
     {
+        uint32 const now = env.EpisodeElapsedMs;
+        uint32 const age = now - std::min(now, order.IssuedMs);
         if (order.DoneNow)
         {
             if (cap <= 0.0f || director.DoneTokens[seat] >= 1.0f)
             {
                 paid += ledger.Add(RewardTerm::OrderDone, tuning.OrderDone);
+                // ... and the faster the more (OrderSpeed: the share of the timeout left).
+                if (tuning.OrderSpeed > 0.0f && tuning.OrderTimeoutMs)
+                    paid += ledger.Add(RewardTerm::OrderSpeed, tuning.OrderSpeed
+                        * std::max(0.0f, 1.0f - float(age) / float(tuning.OrderTimeoutMs)));
                 if (cap > 0.0f)
                     director.DoneTokens[seat] -= 1.0f;
             }
@@ -889,6 +1307,7 @@ void Animus::Curriculum::DirectorEncounter::Reward(Env& env, uint32 seat, Player
                 ++director.DoneUnpaid;
             ++orders.Done;
             ++orders.DoneOf[uint32(order.Kind)];
+            director.DoneAgeMs[uint32(order.Kind)] += float(age);
             director.DoneFlash[seat] = 1;
         }
         else
@@ -897,6 +1316,9 @@ void Animus::Curriculum::DirectorEncounter::Reward(Env& env, uint32 seat, Player
             ++orders.Failed;
         }
         order = DirectorOrders::MemberOrder();
+        // The sampler's next order for the seat: a gap, jittered by half.
+        uint32 const gap = tuning.SampleGapMs;
+        director.SampleAtMs[seat] = now + (gap ? urand(gap / 2, gap + gap / 2) : 0);
     }
     if (director.LootUnorderedDue[seat])
     {
@@ -918,7 +1340,17 @@ float Animus::Curriculum::DirectorEncounter::DirectorReward(Env& env, float cons
     for (uint32 seat = 0; seat < data.ActiveSeats && seat < DirectorLayout::DIRECTOR_SEATS; ++seat)
         if (data.Seats[seat].L)
         {
-            total += seatRewards[seat] - director.CompliancePaid[seat];
+            if (tuning.ProgressReward)
+            {
+                // Progress only (2026-10-28): the party's Outcome terms less what its orders paid the seats, the
+                // seats' deaths, the clock run out, a wipe -- never their shaping, noise prices or role lessons.
+                RewardLedger const& ledger = data.Seats[seat].Rewards;
+                total += ledger.LastStepOf(RewardCategory::Outcome) - director.CompliancePaid[seat]
+                    + tuning.ProgressDeath * ledger.LastStep(RewardTerm::Death) + ledger.LastStep(RewardTerm::Timeout)
+                    + ledger.LastStep(RewardTerm::PartyWipe);
+            }
+            else
+                total += seatRewards[seat] - director.CompliancePaid[seat];
             ++seats;
         }
     // Its own prices, through its own ledger (the cost scale as the seats'), so they have columns.

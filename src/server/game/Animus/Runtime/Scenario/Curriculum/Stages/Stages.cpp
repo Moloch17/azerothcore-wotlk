@@ -202,6 +202,19 @@ namespace
     {
         ArenaDefinition arena = DeadminesRoles(std::move(name), seconds, drill);
         arena.StandInShare = 0;
+        arena.Weight = drill == RolesDrill::Camp ? 1 : 2;
+        return arena;
+    }
+
+    /// **The Deadmines for orders** (party_orders' dungeon ground, 2026-10-28): dm_clear's live dungeon and recorded
+    /// way in legs at three levels, where the sampler's Loot, Use and Pull orders have the barrel, the cannon, the
+    /// levers and the way's next pack to name.
+    ArenaDefinition DeadminesOrders()
+    {
+        ArenaDefinition arena = DeadminesLadder();
+        arena.Name = "dungeon";
+        arena.LevelLadder = { 40, 26, 18 };
+        arena.Weight = 2;
         return arena;
     }
 
@@ -397,6 +410,8 @@ namespace
         stages.push_back({
             .Name = "dm_clear",
             .Suffix = "_dmclear",
+            // The director's stage (2026-10-28): its seats are party_orders' frozen skill library (train_only: director).
+            .Extends = "party_orders",
             .Summary = "the live Deadmines on a recorded clear way, a proper party of five, legs then the run at each "
                 "rung of a level ladder from 40 down to 18, a teacher withdrawing per leg; the bar at 18 is 70% "
                 "clears with at most one wipe",
@@ -419,57 +434,63 @@ namespace
             .Teacher = true,
         });
 
-        // **The party combat curriculum** (the user, 2026-10-27: "design a curriculum that teaches combat so we can
-        // have them train on that for a bit then come back to dungeons", "party focused not solo", the director on,
-        // every boss, "wide band with levelled creatures"; .agents/plans/party-combat/). Four stages on the
-        // Deadmines' own ground and creatures, a proper party of five at levels 15-30 (no death knight), every seat
-        // paid its own role's lesson, the director on, no teacher. Each seeds from the one before, the first from
-        // dm_clear; dm_clear's next run seeds from the last. The blocks dm_clear's, so nothing re-lays out.
-        auto const party = [&](std::string name, std::string suffix, std::string extends, std::string summary,
-            std::vector<ArenaDefinition> arenas)
-        {
-            stages.push_back({
-                .Name = std::move(name),
-                .Suffix = std::move(suffix),
-                .Extends = std::move(extends),
-                .Summary = std::move(summary),
-                .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Vision, Map, MemoryEntities, Sight, PartyFrames,
-                    Combat, Order, Hint, Goal },
-                .Arenas = std::move(arenas),
-                .MapId = MAP_DEADMINES,
-                .SpawnPoints = { Position(-16.4f, -383.07f, 61.78f, 1.86f) },
-                .FocusLevelFirst = 15,
-                .FocusLevelLast = 30,
-                .FocusChance = 100,
-                .MapTiers = 2,
-                .SharedMemoryShare = 1.0f,
-                .NoBackpedal = true,
-                .Camera = false,
-                .MemoriseSpawns = true,
-                .LeaderAnyRole = true,
-                .Directed = true,
-            });
-        };
-        // P1 -- the three roles together: one pack of two to four at a time, the next further on; the tank holds,
-        // the healer keeps the party up within its mana, damage stays on the tank's target.
-        party("party_fight", "_pfight", "dm_clear", "a party of five on the Deadmines' own packs, one at a time, every "
-            "seat paid its role's lesson: the tank holds, the healer keeps them up, damage on the tank's target",
-            { DeadminesParty("party", 300, RolesDrill::Party) });
-        // P2 -- packs that need more than holding: three to five, a caster in every one (interrupts, kill order),
-        // ground fire to step out of, linked groups and elites; more than one tank holds (crowd control).
-        party("party_packs", "_ppacks", "party_fight", "a party of five on bigger Deadmines packs: casters to "
-            "interrupt and kill first, ground fire, linked groups and elites, more than the tank holds",
-            { DeadminesParty("packs", 360, RolesDrill::Packs) });
-        // P3 -- a camp of packs pulled one at a time (line-of-sight pulls), pull after pull: resting and mana,
-        // resurrecting the dead, recovering from a wipe.
-        party("party_pulls", "_ppulls", "party_packs", "a party of five on a camp of Deadmines packs, one pull at a "
-            "time, resting, resurrecting and recovering from a wipe",
-            { DeadminesParty("camp", 480, RolesDrill::Camp) });
-        // P4 -- the Deadmines' seven bosses in the live dungeon, each in its own room with its adds and its script,
-        // every creature levelled to the party.
-        party("party_bosses", "_pbosses", "party_pulls", "a party of five on the Deadmines' seven bosses in the live "
-            "dungeon, each with its adds and script, the creatures levelled to the party (15-30)",
-            { DeadminesBosses() });
+        // **Seats execute, the director orchestrates** (the user, 2026-10-28: "the agents learn to do the actions but
+        // the director is what will actually learn to do the dungeon and orchestrate fights";
+        // .agents/plans/party-combat/). party_orders trains the seats as a skill library: a proper party of five at
+        // levels 15-30 on the Deadmines' own ground and creatures, every order issued by the sampler (Focus, Pull,
+        // Heal, Follow, Rest, Control, Interrupt, Stay, Taunt, Assist on the roles grounds; Loot, Use and the way's
+        // pulls on the dungeon ground), every seat paid for carrying its out fast, its role's micro kept, no
+        // strategy to learn. dm_clear then trains the director alone over the frozen seats (Extends party_orders).
+        // The blocks dm_clear's, so nothing re-lays out.
+        stages.push_back({
+            .Name = "party_orders",
+            .Suffix = "_porders",
+            .Extends = "dm_clear",
+            .Summary = "the seats as a skill library: a party of five on the Deadmines' packs, camps and the live "
+                "dungeon, every order a script's, each seat paid for carrying its out fast",
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Vision, Map, MemoryEntities, Sight, PartyFrames,
+                Combat, Order, Hint, Goal },
+            .Arenas = { DeadminesParty("party", 300, RolesDrill::Party), DeadminesParty("packs", 360, RolesDrill::Packs),
+                DeadminesParty("camp", 480, RolesDrill::Camp), DeadminesOrders() },
+            .MapId = MAP_DEADMINES,
+            .SpawnPoints = { Position(-16.4f, -383.07f, 61.78f, 1.86f) },
+            .FocusLevelFirst = 15,
+            .FocusLevelLast = 30,
+            .FocusChance = 100,
+            .MapTiers = 2,
+            .SharedMemoryShare = 1.0f,
+            .NoBackpedal = true,
+            .Camera = false,
+            .MemoriseSpawns = true,
+            .LeaderAnyRole = true,
+            .Directed = true,
+            .OrderSampler = true,
+        });
+        // The Deadmines' seven bosses in the live dungeon, each in its own room with its adds and its script, every
+        // creature levelled to the party: a later seat stage (the bosses' mechanics), kept.
+        stages.push_back({
+            .Name = "party_bosses",
+            .Suffix = "_pbosses",
+            .Extends = "party_orders",
+            .Summary = "a party of five on the Deadmines' seven bosses in the live dungeon, each with its adds and "
+                "script, the creatures levelled to the party (15-30), every order the sampler's",
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Vision, Map, MemoryEntities, Sight, PartyFrames,
+                Combat, Order, Hint, Goal },
+            .Arenas = { DeadminesBosses() },
+            .MapId = MAP_DEADMINES,
+            .SpawnPoints = { Position(-16.4f, -383.07f, 61.78f, 1.86f) },
+            .FocusLevelFirst = 15,
+            .FocusLevelLast = 30,
+            .FocusChance = 100,
+            .MapTiers = 2,
+            .SharedMemoryShare = 1.0f,
+            .NoBackpedal = true,
+            .Camera = false,
+            .MemoriseSpawns = true,
+            .LeaderAnyRole = true,
+            .Directed = true,
+            .OrderSampler = true,
+        });
 
         return stages;
     }
@@ -500,6 +521,8 @@ namespace
             return "a directed stage needs the order block";
         if (!stage.Directed && stage.Has(BlockId::Order))
             return "the order block is a directed stage's";
+        if (stage.OrderSampler && !stage.Directed)
+            return "the order sampler issues a directed stage's orders";
         // A group running a dungeon: five learned seats.
         bool const dungeonGroup = arena.Against == Opposition::Instance && arena.Seats == SeatPlan::Party;
         // And a proper party drilling on a dungeon's ground (the roles stage, G1: Opposition::Roles).

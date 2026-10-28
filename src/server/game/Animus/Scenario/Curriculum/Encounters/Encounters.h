@@ -550,6 +550,12 @@ namespace Animus::Curriculum
         void ViewDirector(Env& env, DirectorLayout::DirectorView& view);
         /// One call, this decision's action of the director's row (ApplyActions, before the seats act on it).
         void Call(Env& env, int32 action);
+        /// **The order sampler** (StageDefinition::OrderSampler, 2026-10-28: "the agents learn to do the actions"): in
+        /// the seats' training stage a script issues the orders in the director's place -- each seat with none is
+        /// given one Director.SampleGapMs after its last ended, a kind drawn by Director.Sample.<Kind> among the kinds
+        /// with a feasible target right then (never an impossible one: the seats learn execution, not pricing). The
+        /// director's row is not an agent there (StageScenario presence).
+        void Sample(Env& env);
         /// The director's row's reward, from the seats' (StageScenario::Reward): their mean less the order terms
         /// paid them this decision, less the director's own churn and impossible orders.
         [[nodiscard]] float DirectorReward(Env& env, float const* seatRewards);
@@ -584,6 +590,12 @@ namespace Animus::Curriculum
             std::array<uint8, MAX_SEATS> HadKey{};
             std::array<uint32, MAX_SEATS> ObjectStateAtIssue{};
             std::array<uint8, MAX_SEATS> Pressed{};         // the seat pressed its order's object since the order
+            /// The casting enemy a seat's interrupt was sent at (SeatActionResult::PendingInterrupt), for Interrupt.
+            std::array<ObjectGuid, MAX_SEATS> PendingInterrupt{};
+            /// The sampler: when each seat may be given its next order; the ages at which orders were carried out,
+            /// per kind, for the order_<kind>_seconds columns.
+            std::array<uint32, MAX_SEATS> SampleAtMs{};
+            std::array<float, ORDER_KIND_COUNT> DoneAgeMs{};
             /// Orders priced by their number (Director.OrderIssued, DonePerMinute): the orders charged so far, each
             /// seat's tokens for OrderDone pay, and the orders carried out that no token paid.
             uint32 OrdersCharged = 0;
@@ -604,6 +616,11 @@ namespace Animus::Curriculum
         /// target); Follow, Pull, Loot and Use its route goal (RouteGoal), Loot and Use its object presses (View). The
         /// seat's policy still picks its spells and its moves.
         void Bind(Env& env, uint32 seat, Player* bot);
+        /// An order given (by a call or the sampler): the bookkeeping at issue.
+        void Issue(Env& env, uint32 member, OrderKind kind, ObjectGuid target);
+        /// What a seat's kit can do: crowd control, an interrupt, a taunt (its catalog's tactical spells).
+        enum class Skill : uint8 { Control, Interrupt, Taunt };
+        [[nodiscard]] bool SeatCan(Env const& env, uint32 seat, Skill skill) const;
         [[nodiscard]] static uint32 ObjectState(GameObject const* object);
         [[nodiscard]] bool Ready(Player const* bot) const;
         void Judge(Env& env, uint32 seat, Player* bot);

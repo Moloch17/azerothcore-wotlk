@@ -468,6 +468,7 @@ void Animus::Curriculum::RolesEncounter::UpdateEnemies(Env& env)
             pack.Engaged = true;
             pack.EngageMs = env.EpisodeElapsedMs;
             ++roles.Pulls;
+            roles.HeldPaidThisFight = 0.0f;
         }
         // A linked pack: one member in a fight brings the rest, on whoever it is fighting.
         if (pack.Linked && victim && victim->IsAlive())
@@ -757,8 +758,15 @@ void Animus::Curriculum::RolesEncounter::Reward(Env& env, uint32 seatIndex, Play
                 roles.Tally.Held += onSeat;
                 roles.Tally.OnParty += onSeat + onOthers;
                 Draw::Pay const pay = Draw::HoldPay(onSeat, onOthers, tuning, scale, w);
-                if (pay.Earned > 0.0f)
-                    ledger.Add(RewardTerm::DrillHold, pay.Earned);
+                // Capped per fight at what a clear pays (2026-10-28: 15.6 an episode uncapped made a long fight
+                // worth more than a finished one); the loss for enemies loose is never capped.
+                if (float const room = std::max(0.0f, tuning.Clear - roles.HeldPaidThisFight);
+                    pay.Earned > 0.0f && room > 0.0f)
+                {
+                    float const earned = std::min(pay.Earned, room);
+                    ledger.Add(RewardTerm::DrillHold, earned);
+                    roles.HeldPaidThisFight += earned;
+                }
                 if (pay.Lost < 0.0f)
                     ledger.Add(RewardTerm::DrillHold, pay.Lost);
                 break;

@@ -129,6 +129,7 @@ namespace Animus::Curriculum
             std::vector<Pack> Packs;            // the pack in front first, then the ones standing further on
             std::array<SeatRoles, GROUP_SEATS> Seats{};
             bool AllDown = false;               // the whole party dead at the last decision
+            float HeldPaidThisFight = 0.0f;     // DrillHold earned since the last pull (capped at Roles.Clear)
 
             // This decision.
             uint32 NewClears = 0;

@@ -3439,7 +3439,9 @@ bool Animus::Curriculum::StageScenario::GoalHeld(Env const& env, uint32 seatInde
 void Animus::Curriculum::StageScenario::ApplyActions(Env& env, int32 const* actions)
 {
     // The director speaks first: a call made this decision is one the seats can already read when they act on it.
-    if (_director)
+    if (_director && _stage.OrderSampler)
+        _director->Sample(env);
+    else if (_director)
         _director->Call(env, _director->TeacherPlays(env) ? _director->TeacherAction(env) : actions[DirectorAgent()]);
     // Env upkeep first (linked pulls, the owner, the next pull, the scripted opponent), so the targets below are
     // current.
@@ -4408,7 +4410,7 @@ void Animus::Curriculum::StageScenario::AgentPresence(Env const& env, uint8* pre
     // The director is an agent only in the episodes it commands (a party to command); elsewhere it has nothing to
     // say and earns nothing, so the learner should not train on its row.
     if (_director)
-        present[DirectorAgent()] = _director->Active(env) ? 1 : 0;
+        present[DirectorAgent()] = _director->Active(env) && !_stage.OrderSampler ? 1 : 0;
 }
 
 void Animus::Curriculum::StageScenario::AgentKinematics(Env const& env, float* kinematics) const

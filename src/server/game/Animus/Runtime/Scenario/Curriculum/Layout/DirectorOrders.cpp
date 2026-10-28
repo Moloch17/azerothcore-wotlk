@@ -48,10 +48,10 @@ Animus::Curriculum::DirectorRules::Call Animus::Curriculum::DirectorRules::Decod
     }
     else if (local == ACTION_CLEAR)
         call.Kind = Call::Clear;
-    else if (local == ACTION_REST)
+    else if (local == ACTION_REST || local == ACTION_STAY)
     {
         call.Kind = Call::Order;
-        call.Verb = OrderKind::Rest;
+        call.Verb = local == ACTION_REST ? OrderKind::Rest : OrderKind::Stay;
     }
     else
     {
@@ -60,10 +60,18 @@ Animus::Curriculum::DirectorRules::Call Animus::Curriculum::DirectorRules::Decod
             call.Verb = OrderKind::Focus;
         else if (in(ACTION_PULL_FIRST, DIRECTOR_ENEMIES, index))
             call.Verb = OrderKind::Pull;
+        else if (in(ACTION_CONTROL_FIRST, DIRECTOR_ENEMIES, index))
+            call.Verb = OrderKind::Control;
+        else if (in(ACTION_INTERRUPT_FIRST, DIRECTOR_ENEMIES, index))
+            call.Verb = OrderKind::Interrupt;
+        else if (in(ACTION_TAUNT_FIRST, DIRECTOR_ENEMIES, index))
+            call.Verb = OrderKind::Taunt;
         else if (in(ACTION_HEAL_FIRST, DIRECTOR_SEATS, index))
             call.Verb = OrderKind::Heal;
         else if (in(ACTION_FOLLOW_FIRST, DIRECTOR_SEATS, index))
             call.Verb = OrderKind::Follow;
+        else if (in(ACTION_ASSIST_FIRST, DIRECTOR_SEATS, index))
+            call.Verb = OrderKind::Assist;
         else if (in(ACTION_LOOT_FIRST, DIRECTOR_OBJECTS, index))
             call.Verb = OrderKind::Loot;
         else if (in(ACTION_USE_FIRST, DIRECTOR_OBJECTS, index))

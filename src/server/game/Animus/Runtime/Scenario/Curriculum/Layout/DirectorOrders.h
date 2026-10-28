@@ -49,6 +49,9 @@ namespace Animus::Curriculum
             uint32 NearMs = 0;
             bool DoneNow = false;
             bool FailedNow = false;
+            /// Stay: the spot the seat stood on when told; Control: how long its crowd control has held the enemy.
+            Position Spot;
+            uint32 ControlledMs = 0;
         };
         std::array<MemberOrder, DirectorLayout::DIRECTOR_SEATS> Members{};
 

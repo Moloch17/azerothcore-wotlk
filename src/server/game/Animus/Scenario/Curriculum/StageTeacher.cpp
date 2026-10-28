@@ -178,7 +178,8 @@ void Animus::Curriculum::StageScenario::TeachSeat(Env& env, uint32 seatIndex, Se
     seat.TeacherHasHeading = false;
     seat.TeacherHeading = 0.0f;
     seat.TeacherPlays = false;
-    if (!TeacherOn() || !seat.L || !seat.L->Has(BlockId::Hint) || !bot || !bot->IsInWorld() || !mask)
+    if (!TeacherOn() || _tuning.Teacher.SeatsOff || !seat.L || !seat.L->Has(BlockId::Hint) || !bot
+        || !bot->IsInWorld() || !mask)
         return;
     float const tau = _instance->TeacherTau(env);
     if (tau <= 0.0f)

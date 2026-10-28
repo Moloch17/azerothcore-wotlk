@@ -466,6 +466,11 @@ namespace Animus::Curriculum
         /// observes the party, the enemies and the objects near it as sets and edits a standing order on its turns
         /// (DirectorLayout, DirectorEncounter); every seat layout carries the order block. Needs a party group.
         bool Directed = false;
+        /// **The order sampler** (2026-10-28, the seats' training stage: "the agents learn to do the actions but the
+        /// director is what will actually learn to do the dungeon"): a script issues the orders in the director's
+        /// place (DirectorEncounter::Sample), every seat paid for carrying its out fast; the director's row is no
+        /// agent. Needs Directed (the order block).
+        bool OrderSampler = false;
         /// **The scripted teacher** (TeacherTuning, StageTeacher.cpp: hints and played segments withdrawing per leg):
         /// dm_clear's alone. The combat curriculum has none (the user, 2026-10-27: "I don't want the teacher to force
         /// abilities yet"); the hint block stays in its layouts for the seeding, unwritten.

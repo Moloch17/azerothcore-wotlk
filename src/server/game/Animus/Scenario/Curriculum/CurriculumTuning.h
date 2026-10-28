@@ -21,7 +21,9 @@
 
 #include "Define.h"
 #include "ActionTuning.h"
+#include "Block.h"
 #include "StandIn.h"
+#include <array>
 #include <boost/json/fwd.hpp>
 #include <string>
 
@@ -1107,6 +1109,46 @@ namespace Animus::Curriculum
             /// director cannot farm compliance pay through its seats. 0 switches either off.
             float OrderIssued = 0.005f;
             float DonePerMinute = 4.0f;
+            /// **The fight's verbs** (2026-10-28): Control is carried out once the seat's own crowd control has held
+            /// the enemy ControlMs; Interrupt when the seat's interrupt stopped the enemy's cast within InterruptMs;
+            /// Taunt when the enemy turns on the seat within TauntMs; Stay after StayMs within StayYards of the spot
+            /// the seat stood on when told; Assist on the seat's damage to what the member fights.
+            uint32 ControlMs = 4000;
+            uint32 InterruptMs = 15000;
+            uint32 TauntMs = 10000;
+            uint32 StayMs = 15000;
+            float StayYards = 5.0f;
+            /// **Orders paid for speed** (OrderSpeed, Outcome): a carried-out order pays OrderSpeed x the share of
+            /// OrderTimeoutMs that was left -- the seats are a skill library, paid for executing fast.
+            float OrderSpeed = 1.0f;
+            /// **The order sampler** (StageDefinition::OrderSampler, DirectorEncounter::Sample: the seats' training
+            /// stage, where a script issues the orders): a seat with no order is given one SampleGapMs (+-50%) after
+            /// its last ended, a kind drawn by Sample.<Kind> weight among the kinds with a feasible target right then.
+            uint32 SampleGapMs = 3000;
+            std::array<float, ORDER_KIND_COUNT> Sample = MakeSampleWeights();
+            static std::array<float, ORDER_KIND_COUNT> MakeSampleWeights()
+            {
+                std::array<float, ORDER_KIND_COUNT> weights{};
+                weights[uint32(OrderKind::Focus)] = 0.2f;
+                weights[uint32(OrderKind::Pull)] = 0.1f;
+                weights[uint32(OrderKind::Heal)] = 0.15f;
+                weights[uint32(OrderKind::Follow)] = 0.1f;
+                weights[uint32(OrderKind::Loot)] = 0.15f;
+                weights[uint32(OrderKind::Use)] = 0.15f;
+                weights[uint32(OrderKind::Rest)] = 0.05f;
+                weights[uint32(OrderKind::Control)] = 0.1f;
+                weights[uint32(OrderKind::Interrupt)] = 0.1f;
+                weights[uint32(OrderKind::Stay)] = 0.05f;
+                weights[uint32(OrderKind::Taunt)] = 0.05f;
+                weights[uint32(OrderKind::Assist)] = 0.1f;
+                return weights;
+            }
+            /// **The director paid for progress** (2026-10-28, "the director is what will actually learn to do the
+            /// dungeon"): with ProgressReward, its row is paid the party's mean Outcome terms less the compliance pay
+            /// its orders earned the seats, plus ProgressDeath x the seats' Death terms and their Timeout and PartyWipe
+            /// -- never the seats' shaping, costs of noise or role lessons. 0 keeps the old mean of everything.
+            uint32 ProgressReward = 1;
+            float ProgressDeath = 1.0f;
         } Director;
 
         /// **The teacher** (dm_clear, the user 2026-10-27: "a teacher again that slowly withdraws"; WingTeacher): in a
@@ -1125,6 +1167,9 @@ namespace Animus::Curriculum
             float FreeShare = 0.2f;
             uint32 SegmentDecisions = 8;
             uint32 Director = 1;
+            /// The seats' teacher off (SeatsOff): only the director's plays (the director's stage over frozen seats,
+            /// 2026-10-28 -- a script must not play seats trained without it).
+            uint32 SeatsOff = 0;
         } Teacher;
 
         /// The "human" stand-in seat of the party stages (StandIn.h: a frozen learned partner in one seat, its style
@@ -1231,6 +1276,28 @@ namespace Animus::Curriculum
             f("Director.PullMs", tuning.Director.PullMs);
             f("Director.OrderIssued", tuning.Director.OrderIssued);
             f("Director.DonePerMinute", tuning.Director.DonePerMinute);
+            f("Director.ControlMs", tuning.Director.ControlMs);
+            f("Director.InterruptMs", tuning.Director.InterruptMs);
+            f("Director.TauntMs", tuning.Director.TauntMs);
+            f("Director.StayMs", tuning.Director.StayMs);
+            f("Director.StayYards", tuning.Director.StayYards);
+            f("Director.OrderSpeed", tuning.Director.OrderSpeed);
+            f("Director.SampleGapMs", tuning.Director.SampleGapMs);
+            f("Director.Sample.Focus", tuning.Director.Sample[uint32(OrderKind::Focus)]);
+            f("Director.Sample.Pull", tuning.Director.Sample[uint32(OrderKind::Pull)]);
+            f("Director.Sample.Heal", tuning.Director.Sample[uint32(OrderKind::Heal)]);
+            f("Director.Sample.Follow", tuning.Director.Sample[uint32(OrderKind::Follow)]);
+            f("Director.Sample.Loot", tuning.Director.Sample[uint32(OrderKind::Loot)]);
+            f("Director.Sample.Use", tuning.Director.Sample[uint32(OrderKind::Use)]);
+            f("Director.Sample.Rest", tuning.Director.Sample[uint32(OrderKind::Rest)]);
+            f("Director.Sample.Control", tuning.Director.Sample[uint32(OrderKind::Control)]);
+            f("Director.Sample.Interrupt", tuning.Director.Sample[uint32(OrderKind::Interrupt)]);
+            f("Director.Sample.Stay", tuning.Director.Sample[uint32(OrderKind::Stay)]);
+            f("Director.Sample.Taunt", tuning.Director.Sample[uint32(OrderKind::Taunt)]);
+            f("Director.Sample.Assist", tuning.Director.Sample[uint32(OrderKind::Assist)]);
+            f("Director.ProgressReward", tuning.Director.ProgressReward);
+            f("Director.ProgressDeath", tuning.Director.ProgressDeath);
+            f("Teacher.SeatsOff", tuning.Teacher.SeatsOff);
             f("Teacher.Enable", tuning.Teacher.Enable);
             f("Teacher.Max", tuning.Teacher.Max);
             f("Teacher.Target", tuning.Teacher.Target);
