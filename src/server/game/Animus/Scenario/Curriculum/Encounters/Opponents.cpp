@@ -277,7 +277,9 @@ Animus::Curriculum::Opponents::DungeonPool::DungeonPool(uint32 mapId)
             || (info->flags_extra & UNUSABLE_EXTRA_FLAGS) || info->rank > CREATURE_ELITE_ELITE)
             continue;
         (info->rank == CREATURE_ELITE_ELITE ? _elite : _normal).push_back(entry);
-        if (casters.contains(entry))
+        // A caster is one of a casting class (a mage's, or a paladin's that heals): the one RolesEncounter marks to
+        // kill first. A warrior whose cast-time spell is a shot is no caster.
+        if (casters.contains(entry) && (info->unit_class == CLASS_MAGE || info->unit_class == CLASS_PALADIN))
             _casters.push_back(entry);
     }
     LOG_INFO("module.animus", "Dungeon pool of map {}: {} normal, {} elite, {} casting creature entries", mapId,
