@@ -34,6 +34,8 @@ status:
   headline: [won, survived, kills, kill_seconds, hurt_share, deaths, rejoin_seconds, difficulty, at_top_rung,
              target_in_view, selected_share, won_no_map, won_no_memory, won_no_object_memory]
   targets:
+    leg_arrived: null
+    full_arrived: null
     arrived: null
     spl: null
     timed_out: null
