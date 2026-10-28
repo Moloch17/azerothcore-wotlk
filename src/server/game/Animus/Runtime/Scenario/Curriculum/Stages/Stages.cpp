@@ -401,6 +401,37 @@ namespace
             .LeaderAnyRole = true,
         });
 
+        // **Seats execute, the director orchestrates** (the user, 2026-10-28: "the agents learn to do the actions but
+        // the director is what will actually learn to do the dungeon and orchestrate fights";
+        // .agents/plans/party-combat/). party_orders trains the seats as a skill library: a proper party of five at
+        // levels 15-30 on the Deadmines' own ground and creatures, every order issued by the sampler (Focus, Pull,
+        // Heal, Follow, Rest, Control, Interrupt, Stay, Taunt, Assist on the roles grounds; Loot, Use and the way's
+        // pulls on the dungeon ground), every seat paid for carrying its out fast, its role's micro kept, no
+        // strategy to learn; fresh networks. dm_clear then trains the director alone over the frozen seats (Extends
+        // party_orders). The blocks dm_clear's, so nothing re-lays out.
+        stages.push_back({
+            .Name = "party_orders",
+            .Suffix = "_porders",
+            .Summary = "the seats as a skill library: a party of five on the Deadmines' packs, camps and the live "
+                "dungeon, every order a script's, each seat paid for carrying its out fast",
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Vision, Map, MemoryEntities, Sight, PartyFrames,
+                Combat, Order, Hint, Goal },
+            .Arenas = { DeadminesParty("party", 300, RolesDrill::Party), DeadminesParty("packs", 360, RolesDrill::Packs),
+                DeadminesParty("camp", 480, RolesDrill::Camp), DeadminesOrders() },
+            .MapId = MAP_DEADMINES,
+            .SpawnPoints = { Position(-16.4f, -383.07f, 61.78f, 1.86f) },
+            .FocusLevelFirst = 15,
+            .FocusLevelLast = 30,
+            .FocusChance = 100,
+            .MapTiers = 2,
+            .SharedMemoryShare = 1.0f,
+            .NoBackpedal = true,
+            .Camera = false,
+            .MemoriseSpawns = true,
+            .LeaderAnyRole = true,
+            .Directed = true,
+            .OrderSampler = true,
+        });
         // DM_CLEAR -- the Deadmines by level (the user, 2026-10-26): the route is a person's recording, so there is no
         // navigation stage; a proper party (a tank and a healer every rung, never a death knight below 55) learns the
         // dungeon at 60, where the sequence -- the route, the pulls, the doors, the cannon -- is all there is to learn,
@@ -434,38 +465,6 @@ namespace
             .Teacher = true,
         });
 
-        // **Seats execute, the director orchestrates** (the user, 2026-10-28: "the agents learn to do the actions but
-        // the director is what will actually learn to do the dungeon and orchestrate fights";
-        // .agents/plans/party-combat/). party_orders trains the seats as a skill library: a proper party of five at
-        // levels 15-30 on the Deadmines' own ground and creatures, every order issued by the sampler (Focus, Pull,
-        // Heal, Follow, Rest, Control, Interrupt, Stay, Taunt, Assist on the roles grounds; Loot, Use and the way's
-        // pulls on the dungeon ground), every seat paid for carrying its out fast, its role's micro kept, no
-        // strategy to learn. dm_clear then trains the director alone over the frozen seats (Extends party_orders).
-        // The blocks dm_clear's, so nothing re-lays out.
-        stages.push_back({
-            .Name = "party_orders",
-            .Suffix = "_porders",
-            .Extends = "dm_clear",
-            .Summary = "the seats as a skill library: a party of five on the Deadmines' packs, camps and the live "
-                "dungeon, every order a script's, each seat paid for carrying its out fast",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Vision, Map, MemoryEntities, Sight, PartyFrames,
-                Combat, Order, Hint, Goal },
-            .Arenas = { DeadminesParty("party", 300, RolesDrill::Party), DeadminesParty("packs", 360, RolesDrill::Packs),
-                DeadminesParty("camp", 480, RolesDrill::Camp), DeadminesOrders() },
-            .MapId = MAP_DEADMINES,
-            .SpawnPoints = { Position(-16.4f, -383.07f, 61.78f, 1.86f) },
-            .FocusLevelFirst = 15,
-            .FocusLevelLast = 30,
-            .FocusChance = 100,
-            .MapTiers = 2,
-            .SharedMemoryShare = 1.0f,
-            .NoBackpedal = true,
-            .Camera = false,
-            .MemoriseSpawns = true,
-            .LeaderAnyRole = true,
-            .Directed = true,
-            .OrderSampler = true,
-        });
         // The Deadmines' seven bosses in the live dungeon, each in its own room with its adds and its script, every
         // creature levelled to the party: a later seat stage (the bosses' mechanics), kept.
         stages.push_back({
