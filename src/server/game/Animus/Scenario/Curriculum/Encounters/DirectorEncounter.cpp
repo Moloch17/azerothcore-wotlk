@@ -86,8 +86,8 @@ Animus::Curriculum::DirectorEncounter::DirectorEncounter(StageScenario& scenario
 
 std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::DirectorEncounter::RewardTerms() const
 {
-    return { RewardTerm::OrderDone, RewardTerm::OrderFailed, RewardTerm::LootUnordered, RewardTerm::OrderChurn,
-        RewardTerm::OrderImpossible, RewardTerm::OrderIssued };
+    return { RewardTerm::OrderDone, RewardTerm::OrderSpeed, RewardTerm::OrderFailed, RewardTerm::LootUnordered,
+        RewardTerm::OrderChurn, RewardTerm::OrderImpossible, RewardTerm::OrderIssued };
 }
 
 void Animus::Curriculum::DirectorEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
