@@ -1,0 +1,69 @@
+# party_orders: the seats as a skill library (the user, 2026-10-28: "the agents learn to do the actions but the director
+# is what will actually learn to do the dungeon and orchestrate fights"). A proper party of five at levels 15-30 on the
+# Deadmines' own packs, camps and the live dungeon; every order is the sampler's (AnimusForge.Curriculum.Director.Sample.*),
+# every seat paid for carrying its out fast (order_done, order_speed) with its role's micro kept; no teacher, no
+# director row (the sampler stands in). Converged when every sampled order kind is carried out most of the time.
+# Everything else as dm_clear's.
+extends: dm_clear.yaml
+run_name: party_orders
+total_env_steps: 400000000
+
+mappo:
+  hint_coef: 0.0
+  heading_hint_coef: 0.0
+
+eval:
+  every_env_steps: 20000000
+  episodes: 64
+  arms_every: 2
+  arms:
+    no_map: 8
+    no_memory: 8
+    no_object_memory: 8
+  report: [order_done_share, order_focus_given, order_focus_done, order_focus_seconds,
+           order_pull_given, order_pull_done, order_pull_seconds, order_heal_given, order_heal_done,
+           order_heal_seconds, order_follow_given, order_follow_done, order_follow_seconds, order_loot_given,
+           order_loot_done, order_loot_seconds, order_use_given, order_use_done, order_use_seconds, order_rest_given,
+           order_rest_done, order_rest_seconds, order_control_given, order_control_done, order_control_seconds,
+           order_interrupt_given, order_interrupt_done, order_interrupt_seconds, order_stay_given, order_stay_done,
+           order_stay_seconds, order_taunt_given, order_taunt_done, order_taunt_seconds, order_assist_given,
+           order_assist_done, order_assist_seconds, director_orders, director_orders_done, director_orders_failed,
+           director_orders_per_minute, won, drill_party, drill_packs, drill_camp, hold_share, kept_share,
+           focus_share, pulled_seconds, packs_cleared, party_deaths, wipes, interrupts, kill_orders,
+           controlled_seconds, cc_broken, fire_taken, roles_rung, at_top_rung, threat_on_teammates, wing_is_leg,
+           wing_leg_arrived, wing_gates_opened, level, died, reward_order_done, reward_order_speed,
+           reward_order_failed, reward_clear, reward_drill_hold, reward_drill_keep, reward_drill_focus,
+           reward_interrupt_landed, reward_kill_order, reward_controlled, reward_survived, reward_death,
+           reward_away, reward_step_cost, reward_damage_dealt]
+
+status:
+  headline: [order_done_share, order_focus_done, order_pull_done, order_heal_done, order_follow_done,
+             order_loot_done, order_use_done, order_control_done, order_interrupt_done, order_taunt_done,
+             order_assist_done, order_stay_done, order_rest_done, won, wing_leg_arrived, party_deaths, wipes]
+  targets:
+    dk_guard: null
+    wing_leg_arrived: null
+    bar_clear: null
+    bar_clear_leader_tank: null
+    bar_clear_leader_healer: null
+    bar_clear_leader_damage: null
+    cleared: null
+    full_clear: null
+    wing_wipes: null
+    boss_vancleef: null
+    order_done_share: '>= 0.8'
+    wipes: '<= 0.05'
+
+convergence:
+  measure: order_done_share
+
+fade:
+  gate_metric: order_done_share
+  gate_value: 0.6
+
+costs:
+  gate_metric: order_done_share
+  gate_value: 0.6
+
+layout_sampling:
+  metric: order_done_share

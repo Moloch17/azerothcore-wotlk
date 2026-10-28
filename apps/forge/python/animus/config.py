@@ -489,7 +489,7 @@ MAX_HINDSIGHT_LOOKBACK = 256
 #: The evaluation arms beside the plain one ("all bots"): eval.arms names them (dungeon-curriculum I7).
 EVAL_ARMS = ("with_human", "with_partners", "no_flag", "no_camera", "no_compass", "no_map", "no_memory", "no_goal",
              "random_goal", "random_cell", "no_plan", "no_searched", "no_coverage", "no_party", "no_recall",
-             "no_planner", "no_school", "no_shared_memory", "no_object_memory", "no_global")
+             "no_planner", "no_school", "no_shared_memory", "no_object_memory", "no_global", "no_director")
 
 
 @dataclass
@@ -831,6 +831,16 @@ class TrainConfig:
     # director`, technique 8): the leader keeps the run's own latest.pt at runs/_reset/<run>/latest.pt before the
     # run is archived, and it seeds the fresh run with these layouts left out (bootstrap.seed_trainer's reset).
     reset_layouts: list[str] = field(default_factory=list)
+    # **Frozen layouts** (2026-10-28, "the director is what will actually learn to do the dungeon"): layouts whose
+    # adapters and heads take no gradient and whose rows are no samples (they still act, from the seeded weights),
+    # for the whole run -- on top of the classes that converge (animus.stage). `train_only` names the layouts that
+    # train and freezes every other one AND the shared trunk, memory, goal, vision and slow parameters, so that
+    # only the named layouts' own parts (the director's set encoders, adapter and head) move: the seats are a
+    # skill library the director learns over. mappo.train_only_shared_lr_mult > 0 lets the shared parameters move
+    # at that fraction of the actor's rate instead of freezing them (the seats drift: a seat retrain follows).
+    # Both need mappo.rank_sync "gradients", the one sync that leaves frozen parameters alone.
+    freeze_layouts: list[str] = field(default_factory=list)
+    train_only: list[str] = field(default_factory=list)
     # Which of a parent run's checkpoints to seed from when both exist: "best" or "latest".
     #
     # "latest", because a queue advances on its own and has to hand the next stage what the last one actually
@@ -878,6 +888,14 @@ class TrainConfig:
         # Anything else would read as "best" (animus.train.init_from_checkpoint), which a typo must not do quietly.
         if self.seed_from not in ("best", "latest"):
             raise ValueError(f"seed_from: expected \"best\" or \"latest\", got {self.seed_from!r}")
+        if (self.freeze_layouts or self.train_only) and self.mappo.rank_sync != "gradients":
+            raise ValueError(f"freeze_layouts / train_only need mappo.rank_sync \"gradients\" (the weights and "
+                             f"async syncs average frozen parameters too), got {self.mappo.rank_sync!r}")
+        if self.train_only and self.freeze_layouts:
+            raise ValueError("train_only and freeze_layouts: one or the other (train_only freezes every other layout)")
+        if self.mappo.train_only_shared_lr_mult < 0.0 or (self.mappo.train_only_shared_lr_mult > 0.0
+                                                          and not self.train_only):
+            raise ValueError("mappo.train_only_shared_lr_mult: 0 or more, and only with train_only")
         # The planner's hindsight (mappo.goal_cell_hindsight_*): a window of decisions is a count, and a window with no
         # coefficient behind it would train nothing and say nothing.
         lookback, coef = self.mappo.goal_cell_hindsight_lookback, self.mappo.goal_cell_hindsight_coef

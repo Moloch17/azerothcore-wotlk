@@ -173,6 +173,9 @@ class MappoConfig:
     # unequal machines needs.
     rank_sync: str = "gradients"
     weight_sync_every: int = 1
+    # With train_only (TrainConfig): the shared parameters (trunk, memory, goal, vision, slow loop) at this fraction
+    # of actor_lr instead of frozen (0). See TrainConfig.train_only.
+    train_only_shared_lr_mult: float = 0.0
     # A goal head (0 = off): the actor chooses one of goal_count goals every goal_every_decisions and keeps it in
     # between, and its action head is conditioned on it. The chooser then decides on a clock that many times slower
     # than the actions, so the horizon it has to reason over is that many times shorter. The goal is part of the
@@ -1080,9 +1083,33 @@ class MappoTrainer:
         apart = {id(parameter) for parameter in self.slow_parameters() + self.vision_parameters()}
         return [p for p in self.actor.parameters() if id(p) not in apart and p.requires_grad]
 
+    #: The actor's parameters that are a layout's own: everything else is shared by every layout (train_only).
+    OWN_PREFIXES = ("adapters.", "heads.", "norms.", "director_sets.")
+
+    def freeze_shared(self, lr_mult: float = 0.0) -> None:
+        """train_only (TrainConfig): the actor's shared parameters -- the trunk, the memory, the goal head and
+        embedding, the foresight, the sight pointers, the look and heading heads, the shared adapter and head, the
+        camera -- take no gradient (lr_mult 0), or move at lr_mult x actor_lr (a second parameter group). The critic
+        is left alone: it only scores. Call reset_optimizers after it (the optimizers filter on requires_grad)."""
+        self.shared_lr_mult = float(lr_mult)
+        for name, parameter in self.actor.named_parameters():
+            if not name.startswith(self.OWN_PREFIXES):
+                parameter.requires_grad_(lr_mult > 0.0)
+
     def reset_optimizers(self) -> None:
         """Fresh Adam state: after a restart the step sizes are no longer shrunk by the old gradient history."""
-        self.actor_opt = torch.optim.Adam(self._actor_parameters(), lr=self.config.actor_lr, eps=1e-5)
+        mult = float(getattr(self, "shared_lr_mult", 0.0) or 0.0)
+        if mult > 0.0:
+            own, shared = [], []
+            names = {id(p): n for n, p in self.actor.named_parameters()}
+            for parameter in self._actor_parameters():
+                (own if names[id(parameter)].startswith(self.OWN_PREFIXES) else shared).append(parameter)
+            groups = [{"params": own}]
+            if shared:
+                groups.append({"params": shared, "lr": self.config.actor_lr * mult})
+            self.actor_opt = torch.optim.Adam(groups, lr=self.config.actor_lr, eps=1e-5)
+        else:
+            self.actor_opt = torch.optim.Adam(self._actor_parameters(), lr=self.config.actor_lr, eps=1e-5)
         # The camera at the actor's rate: it is the actor's encoder that the critic also reads.
         self.vision_opt = (torch.optim.Adam(self.vision_parameters(), lr=self.config.actor_lr, eps=1e-5)
                            if self.vision_parameters() else None)
@@ -3156,8 +3183,11 @@ class MappoTrainer:
             flat_obs = data["obs"].reshape(-1, data["obs"].shape[-1])[rows]
             sampled_layout = flat_layout[rows]
             groups = None if self.ranks.active else _per_layout(sampled_layout, len(self.actor.norms))
-            update_norms(self.actor.norms, flat_obs, sampled_layout, self.actor.obs_dims, self.ranks, groups)
-            update_norms(self.critic.norms, flat_obs, sampled_layout, self.critic.obs_dims, self.ranks, groups)
+            # A frozen layout's statistics stay as seeded: its seats act on the seed's normalisation.
+            update_norms(self.actor.norms, flat_obs, sampled_layout, self.actor.obs_dims, self.ranks, groups,
+                         skip=self.frozen_layouts)
+            update_norms(self.critic.norms, flat_obs, sampled_layout, self.critic.obs_dims, self.ranks, groups,
+                         skip=self.frozen_layouts)
             states = data["state"][:, :, None, :].expand(steps, envs, agents, data["state"].shape[-1])
             self.critic.state_norm.update(states.reshape(-1, data["state"].shape[-1])[rows], self.ranks)
 

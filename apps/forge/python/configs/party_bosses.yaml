@@ -1,8 +1,7 @@
-# P4 party_bosses: the Deadmines' seven bosses in the live dungeon, each in its own room with its adds and script, the
-# creatures levelled to the party (15-30). The party combat curriculum (the user, 2026-10-27;
-# .agents/plans/party-combat/): every boss leg, the director on, no teacher (the hint columns unwritten). dm_clear's
-# report and columns (it is dm_clear's instance arena, its legs the bosses').
-extends: dm_clear.yaml
+# party_bosses: the Deadmines' seven bosses in the live dungeon, each in its own room with its adds and script, the
+# creatures levelled to the party (15-30): a later seat stage (the bosses' mechanics), every order the sampler's as
+# party_orders has it. dm_clear's report and columns (it is dm_clear's instance arena, its legs the bosses').
+extends: party_orders.yaml
 run_name: party_bosses
 total_env_steps: 600000000
 

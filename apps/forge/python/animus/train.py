@@ -668,6 +668,24 @@ def choose_goal_chunk_rows(device, free_bytes: int | None = None) -> tuple[int, 
                     f"~{per_row / 2**20:.2f} MiB a row for the goal update; room for {fits} rows)")
 
 
+def no_director_chooser(choose, director_index: int, envs: int, agents: int):
+    """The "no_director" eval arm's chooser: the learner's actions with the director's rows held (action 0, HOLD:
+    nothing is ever ordered), and those rows to leave unscored (run_evaluation's `excluded`)."""
+    rows = np.zeros((envs, agents), dtype=bool)
+
+    def chooser(step):
+        chosen = choose(step)
+        parts = list(chosen) if isinstance(chosen, tuple) else [chosen]
+        mine = np.asarray(step.layout) == director_index
+        rows[: mine.shape[0], : mine.shape[1]] = mine
+        actions = np.asarray(parts[0]).copy()
+        actions[mine] = 0
+        parts[0] = actions
+        return tuple(parts) if isinstance(chosen, tuple) else parts[0]
+
+    return chooser, (lambda env: rows[env])
+
+
 def make_trainer(config: TrainConfig, spec, inputs: TrainerInputs, ranks=None, device=None) -> MappoTrainer:
     """The stage's MappoTrainer. `device` overrides both devices."""
     if config.mappo.goal_chunk_rows == GOAL_CHUNK_AUTO:
@@ -839,6 +857,7 @@ class TrainingRun:
 
         names = [layout.name for layout in spec.layouts]
         inputs = trainer_inputs(config, spec, self.stage)
+        self.inputs = inputs
         vision = inputs.vision
         if vision is not None:
             image = next(entry for entry in vision if entry is not None)
@@ -1124,12 +1143,36 @@ class TrainingRun:
             self.shaping_scale_now = self.link.control.get("shaping_scale", self.shaping_scale_now)
             self.cost_scale_now = self.link.control.get("cost_scale", self.cost_scale_now)
         self.frozen = np.zeros(0, dtype=np.int64)
+        # The run's own frozen layouts (freeze_layouts / train_only), by index, validated against the spec.
+        layout_names = [layout.name for layout in self.spec.layouts]
+        for key, named in (("freeze_layouts", config.freeze_layouts), ("train_only", config.train_only)):
+            if unknown := sorted(set(named) - set(layout_names)):
+                raise ValueError(f"{key}: unknown layout(s) {unknown}; this run fields {layout_names}")
+        if config.train_only:
+            self.config_frozen = {index for index, name in enumerate(layout_names) if name not in config.train_only}
+        else:
+            self.config_frozen = {index for index, name in enumerate(layout_names) if name in config.freeze_layouts}
         self.layout_allowed: dict[int, float] = {}
         self.last_layout_stats: dict[str, dict[str, float]] = {}
         self.difficulty_column = names.index("difficulty") if "difficulty" in names else None
         # Whether a training episode was at the top of its class's ladder (convergence.top_rung).
         self.top_rung_column = names.index("at_top_rung") if "at_top_rung" in names else None
         self.apply_holds()
+        if config.train_only:
+            # Only the named layouts' own parts train: the shared parameters frozen (or at a fraction of the rate),
+            # the optimizers rebuilt over what is left.
+            mult = config.mappo.train_only_shared_lr_mult
+            self.trainer.freeze_shared(mult)
+            self.trainer.reset_optimizers()
+            self.apply_holds(force=True)
+            total = sum(p.numel() for p in self.trainer.actor.parameters())
+            live = sum(p.numel() for p in self.trainer.actor.parameters() if p.requires_grad)
+            frozen = ", ".join(layout_names[i] for i in sorted(self.config_frozen))
+            print(f"train_only {config.train_only}: {live:,} of {total:,} actor parameters train "
+                  f"({'shared at x' + str(mult) if mult > 0 else 'shared frozen'}); frozen layouts: {frozen}",
+                  flush=True)
+        elif config.freeze_layouts:
+            print(f"freeze_layouts: {', '.join(config.freeze_layouts)} act from the seed and never train", flush=True)
 
     # ------------------------------------------------------------------ setup
 
@@ -1692,16 +1735,19 @@ class TrainingRun:
         if line:
             print(f"Motion: {'; '.join(line)}", flush=True)
 
-    def apply_holds(self, converged: list[str] | None = None) -> None:
-        """Freeze the classes that have converged (animus.stage) and keep them out of the rollout's samples. An
-        asynchronous follower is handed the leader's `converged`."""
+    def apply_holds(self, converged: list[str] | None = None, force: bool = False) -> None:
+        """Freeze the classes that have converged (animus.stage) -- and the run's own frozen layouts (freeze_layouts,
+        train_only) -- and keep them out of the rollout's samples. An asynchronous follower is handed the leader's
+        `converged`. `force` re-applies the freeze even when the set is unchanged (after reset_optimizers)."""
         if converged is None:
             converged = self.ranks.broadcast(sorted(self.controller.converged_layouts()))
             if self.hub is not None:
                 self.hub.set(converged=sorted(converged))
         converged = set(converged)
-        frozen = [index for index, layout in enumerate(self.spec.layouts) if layout.name in converged]
-        if set(frozen) != set(int(index) for index in self.frozen):
+        frozen = sorted({index for index, layout in enumerate(self.spec.layouts) if layout.name in converged}
+                        | set(getattr(self, "config_frozen", ())))
+        converged = {self.spec.layouts[i].name for i in frozen}
+        if set(frozen) != set(int(index) for index in self.frozen) or force:
             entering = sorted(converged - {self.spec.layouts[i].name for i in self.frozen})
             leaving = sorted({self.spec.layouts[i].name for i in self.frozen} - converged)
             if entering:
@@ -1831,6 +1877,15 @@ class TrainingRun:
                     print(f"Arm {arm}: no layout of the stage has a {OBJECT_MEMORY_BLOCK} block; skipped", flush=True)
                     continue
                 options["no_object_memory"] = True
+            elif arm == "no_director":
+                # The director held silent (its row's action HOLD every decision: no order is ever given), its row
+                # unscored: what the director's orders are worth to the party (2026-10-28).
+                director = self.inputs.director
+                if director is None:
+                    print(f"Arm {arm}: the stage has no director; skipped", flush=True)
+                    continue
+                choose, options["excluded"] = no_director_chooser(choose, director[0], self.spec.num_envs,
+                                                                   self.spec.agents_per_env)
             elif arm == GLOBAL_ARM:
                 # The sim told to route on its window plan alone (MODE_FLAG_NO_GLOBAL): the same seeds and trips, the
                 # route scalars and the labels from the plan round the body. A stage with no global route: skipped.

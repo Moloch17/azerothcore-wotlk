@@ -285,16 +285,20 @@ def skip_distribution_checks() -> None:
 
 @torch.no_grad()
 def update_norms(norms: nn.ModuleList, obs: torch.Tensor, layout: torch.Tensor, obs_dims, ranks=None,
-                 groups=None) -> None:
+                 groups=None, skip=()) -> None:
     """Fold a rollout's observations into each layout's statistics, each from its own rows and own features. With
     data-parallel `ranks` every layout is visited on every rank, rows or none: each is a collective. `groups` is
-    _per_layout(layout) when the caller has it already (the actor's and the critic's norms read the same rows)."""
+    _per_layout(layout) when the caller has it already (the actor's and the critic's norms read the same rows).
+    `skip` names frozen layouts, whose statistics stay as they are (the same set on every rank)."""
+    skipped = set(int(index) for index in skip)
     if ranks is not None and ranks.active:
         for index, norm in enumerate(norms):
-            norm.update(obs[layout == index, : obs_dims[index]], ranks)
+            if index not in skipped:
+                norm.update(obs[layout == index, : obs_dims[index]], ranks)
         return
     for index, rows in groups if groups is not None else _per_layout(layout, len(norms)):
-        norms[index].update(obs[rows, : obs_dims[index]])
+        if index not in skipped:
+            norms[index].update(obs[rows, : obs_dims[index]])
 
 
 def per_layout(layout: torch.Tensor, count: int) -> list[tuple[int, torch.Tensor]]:

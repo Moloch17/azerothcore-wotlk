@@ -15,6 +15,11 @@ socket: /tmp/animus-forge.sock
 seed: 1
 init_from: auto
 seed_from: latest
+# The director's stage (2026-10-28, "the director is what will actually learn to do the dungeon"): its seats are
+# party_orders' skill library, seeded and frozen (their adapters, heads and statistics, and the shared trunk, memory,
+# goal, vision and slow loop); only the director's own parts train. Start it with `--reset director`.
+train_only:
+- director
 total_env_steps: 3000000000
 rollout_length: 128
 overlap_updates: true
@@ -141,6 +146,7 @@ eval:
     no_map: 8
     no_memory: 8
     no_object_memory: 8
+    no_director: 8
   report:
   - bar_clear
   - cleared
@@ -257,6 +263,25 @@ eval:
   - order_use_done
   - order_rest_given
   - order_rest_done
+  - order_control_given
+  - order_control_done
+  - order_interrupt_given
+  - order_interrupt_done
+  - order_stay_given
+  - order_stay_done
+  - order_taunt_given
+  - order_taunt_done
+  - order_assist_given
+  - order_assist_done
+  - order_focus_seconds
+  - order_pull_seconds
+  - order_heal_seconds
+  - order_follow_seconds
+  - order_loot_seconds
+  - order_use_seconds
+  - director_reward_order_issued
+  - director_orders_per_minute
+  - reward_order_speed
 status:
   headline:
   - ladder_level
