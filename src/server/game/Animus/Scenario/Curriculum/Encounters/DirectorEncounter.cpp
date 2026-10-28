@@ -686,13 +686,14 @@ void Animus::Curriculum::DirectorEncounter::Sample(Env& env)
                     offer(OrderKind::Taunt, enemy->GetGUID());
                     break;
                 }
-        // Stay: anyone, out of a fight.
-        if (fighting.empty())
-            offer(OrderKind::Stay, ObjectGuid::Empty);
         // Loot and Use: the way's object, by its opener.
         if (way && !way->Object.IsEmpty() && way->ObjectOpens != WingTeacher::Opens::Click
             && way->Opener == bot->GetGUID())
             offer(way->ObjectOpens == WingTeacher::Opens::UseKey ? OrderKind::Use : OrderKind::Loot, way->Object);
+        // Stay: anyone, out of a fight -- never the only choice (2026-10-28: as the one feasible order out of a
+        // fight it was 40% of all orders, paying standing still; a script that stands still teaches it).
+        if (fighting.empty() && !candidates.empty())
+            offer(OrderKind::Stay, ObjectGuid::Empty);
 
         if (candidates.empty())
             continue;
