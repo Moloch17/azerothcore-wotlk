@@ -14,7 +14,7 @@ eval:
   episodes: 64
 
 status:
-  headline: [wing_leg_arrived, boss_rhahkzor, boss_sneed_shredder, boss_sneed, boss_gilnid, boss_smite,
+  headline: [order_done_share, wing_leg_arrived, boss_rhahkzor, boss_sneed_shredder, boss_sneed, boss_gilnid, boss_smite,
              boss_greenskin, boss_cookie, boss_vancleef, wing_wipes, seat_deaths, deaths_tank, deaths_healer,
              deaths_damage, wing_level]
   targets:

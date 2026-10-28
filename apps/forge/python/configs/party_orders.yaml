@@ -7,6 +7,9 @@
 extends: dm_clear.yaml
 run_name: party_orders
 total_env_steps: 400000000
+# Every layout trains here (dm_clear's train_only is the director's stage alone), and there is no director row to
+# hold silent.
+train_only: []
 
 mappo:
   hint_coef: 0.0
@@ -20,6 +23,7 @@ eval:
     no_map: 8
     no_memory: 8
     no_object_memory: 8
+    no_director: 0
   report: [order_done_share, order_focus_given, order_focus_done, order_focus_seconds,
            order_pull_given, order_pull_done, order_pull_seconds, order_heal_given, order_heal_done,
            order_heal_seconds, order_follow_given, order_follow_done, order_follow_seconds, order_loot_given,
