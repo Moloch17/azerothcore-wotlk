@@ -1,5 +1,10 @@
 """Reading capture files (FORMAT.md §1-2): framing, record types, gzip members, the hourly layout and its index.
 
+Format 5 (2026-10-28) is one tier: the hourly files hold every player and every map's surroundings; the manual
+recordings of format 4 (`recordings/<id>/`, manifests, notes, raw packets) are gone, and so is this module's API for
+them. Format 4 files still read: their record types stay known (60-62, 70 reserved), and the fields format 5
+appended (`instance` on the session rows) read as 0 from them.
+
 A capture directory holds `<yyyy-mm-dd>/<hh>/<stream>-<map>.bin.gz` files, each a sequence of gzip members whose
 concatenated payload is a sequence of framed records (`u16 type, u16 length, payload`). The realm may have many
 players and the files are kept forever, so nothing here loads more than a bounded block of one file at a time:
@@ -35,14 +40,14 @@ from typing import Iterator
 
 import numpy as np
 
-FORMAT_VERSION = 4
+FORMAT_VERSION = 5
 MAGIC = b"ANCAP\0\0\0"
 FRAME = struct.Struct("<HH")
 BLOCK_BYTES = 32 << 20          # decompressed bytes framed and parsed at once
 READ_BYTES = 1 << 20            # compressed bytes read from disk at once
 
 STREAMS = {1: "session", 2: "move", 3: "action", 4: "snapshot", 5: "outcome", 6: "companion", 7: "note",
-           8: "packet"}
+           8: "packet"}       # 8: format 4's raw packets, never written since format 5
 
 
 class CaptureError(ValueError):
@@ -52,7 +57,7 @@ class CaptureError(ValueError):
 # Record types (FORMAT.md §2).
 FILE_HEADER = 0
 SESSION_START, SESSION_CONTEXT, SESSION_END, GROUP_STATE, KNOWN_SPELLS, LATENCY = 1, 2, 3, 4, 5, 6
-INVENTORY, ACTION_BUTTONS, TALENTS = 7, 8, 9                    # format 4, a recording's
+INVENTORY, ACTION_BUTTONS, TALENTS = 7, 8, 9                    # format 4; every player's since 5
 MOVE, SPEEDS, MOTION_EVENT, MOVER_STATE, MOVE_TALLY, MAP_UPDATE = 10, 11, 12, 13, 14, 15
 
 # Move `source` (FORMAT.md §2.3): a player's client packet; format 1's synthesised companion sample (never written by
@@ -64,8 +69,8 @@ UNIT_STATE, GAME_OBJECT_STATE, PLAYER_DETAIL, MAP_SPAWNS, INSTANCE_CREATURES = 3
 DAMAGE, HEAL, KILL, DEATH, QUEST, ENCOUNTER, PVP, AREA = 40, 41, 42, 43, 44, 45, 46, 47
 COMBAT_EDGE = 48                                                # format 4
 COMPANION_DECISION, COMPANION_COMMAND, COMPANION_RATING = 50, 51, 52
-ANNOTATION, RECORDING_START, RECORDING_END, CHAT = 60, 61, 62, 63     # format 4, the note stream
-RAW_PACKET = 70                                                 # format 4, the packet stream
+ANNOTATION, RECORDING_START, RECORDING_END, CHAT = 60, 61, 62, 63     # the note stream; 60-62 reserved since 5
+RAW_PACKET = 70                                                 # format 4's packet stream, reserved since 5
 
 # Interact `what` (FORMAT.md §2.4).
 IA_GOSSIP, IA_LOOT, IA_QUEST_ACCEPT, IA_QUEST_TURN_IN, IA_GAME_OBJECT_USE = 1, 2, 3, 4, 5
@@ -74,8 +79,10 @@ EDGE_ENTER, EDGE_EXIT, EDGE_EVADE = 0, 1, 2
 GO_SEEN, GO_CHANGED, GO_GONE = 0, 1, 2
 END_STOP, END_LOGOUT, END_DISCONNECT, END_SHUTDOWN, END_DISK, END_MAX_MINUTES = 0, 1, 2, 3, 4, 5
 VERDICT_NONE, VERDICT_KEEP, VERDICT_DISCARD = 0, 1, 2
-# UnitState `flags` and Annotation `state` bits.
+# UnitState `flags` (format 5: 4 in the observer's group, 8 a player's pet, 32 engaged with players, 64 tapped by a
+# player, 128 the unit's last record -- gone from the map) and Annotation `state` bits.
 US_COMBAT, US_EVADING, US_PARTY, US_MY_PET, US_COMPANION, US_ENGAGED, US_TAPPED = 1, 2, 4, 8, 16, 32, 64
+US_GONE = 128
 AN_COMBAT, AN_DEAD, AN_MOUNTED, AN_CASTING, AN_SWIMMING, AN_FALLING, AN_GOD = 1, 2, 4, 8, 16, 32, 64
 
 # MotionEvent `event` (FORMAT.md §2.3).
@@ -87,7 +94,7 @@ EV_VEHICLE_ENTER, EV_VEHICLE_EXIT, EV_TRANSPORT_BOARD, EV_TRANSPORT_LEAVE = 18, 
 _SESSION = [("ms", "<u8"), ("player", "<u8"), ("session", "<u8"), ("class_", "u1"), ("race", "u1"),
             ("gender", "u1"), ("level", "u1"), ("tree_points", "u1", (3,)), ("item_level", "<u2"),
             ("map", "<u4"), ("zone", "<u4"), ("area", "<u4"), ("latency_ms", "<u2"), ("client_build", "<u4"),
-            ("kind", "u1")]
+            ("kind", "u1"), ("instance", "<u4")]
 _SELF = [("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("o", "<f4"), ("pitch", "<f4"), ("map", "<u4"),
          ("health_pct", "<f4"), ("power_pct", "<f4"), ("power_type", "u1"), ("flags", "u1"),
          ("casting_spell", "<u4"), ("breath_pct", "<f4"), ("target", "<u8"), ("shapeshift_form", "<u4")]
@@ -98,7 +105,7 @@ PREFIX: dict[int, tuple[str, np.dtype]] = {
                                  ("module_revision", "S40"), ("realm_build", "S40")]),
     SESSION_START: ("SessionStart", _SESSION),
     SESSION_CONTEXT: ("SessionContext", _SESSION),
-    SESSION_END: ("SessionEnd", [("ms", "<u8"), ("player", "<u8"), ("session", "<u8"), ("reason", "u1")]),
+    SESSION_END: ("SessionEnd", [("ms", "<u8"), ("player", "<u8"), ("session", "<u8"), ("reason", "u1"), ("map", "<u4"), ("instance", "<u4")]),
     GROUP_STATE: ("GroupState", [("ms", "<u8"), ("player", "<u8"), ("kind", "u1"), ("count", "u1")]),
     KNOWN_SPELLS: ("KnownSpells", [("ms", "<u8"), ("player", "<u8"), ("count", "<u2")]),
     LATENCY: ("Latency", [("ms", "<u8"), ("player", "<u8"), ("latency_ms", "<u2")]),
@@ -211,7 +218,9 @@ PREFIX = {rtype: (name, np.dtype(fields)) for rtype, (name, fields) in PREFIX.it
 # Fields a later format appended to a record, which an older file's record lacks: read as 0 there. The record's
 # shortest valid payload is its prefix without them.
 APPENDED: dict[int, tuple[str, ...]] = {MOVE: ("server_ms",),                                   # format 3
-                                        KILL: ("victim_spawn_id",), INTERACT: ("spawn_id",)}    # format 4
+                                        KILL: ("victim_spawn_id",), INTERACT: ("spawn_id",),    # format 4
+                                        SESSION_START: ("instance",), SESSION_CONTEXT: ("instance",),   # format 5
+                                        SESSION_END: ("map", "instance")}
 MIN_LENGTH = {rtype: PREFIX[rtype][1].itemsize - sum(PREFIX[rtype][1].fields[name][0].itemsize for name in names)
               for rtype, names in APPENDED.items()}
 
@@ -290,7 +299,7 @@ class Batch:
         return b"" if span is None else self._raw[span[0]:span[1]]
 
     def tail_text(self, rtype: int, index: int) -> str:
-        """The text of a TEXT_TAILS record (an Annotation's note, a Chat line, a RecordingStart's name, a
+        """The text of a TEXT_TAILS record (a Chat line; a format 4 Annotation's note, RecordingStart's name or
         RecordingEnd's title), cut to the length its prefix says."""
         rows = self.records.get(rtype)
         if rows is None or index >= len(rows):
@@ -339,13 +348,6 @@ class Batch:
         threats = min(raw[size], (len(raw) - size - 1) // UNIT_STATE_THREAT.itemsize)
         out["threats"] = np.frombuffer(raw, dtype=UNIT_STATE_THREAT, count=threats, offset=size + 1).copy()
         return out
-
-    def packet_payload(self, index: int) -> bytes:
-        """The bytes of the batch's `index`-th RawPacket chunk (see iter_packets for whole packets)."""
-        rows = self.records.get(RAW_PACKET)
-        if rows is None or index >= len(rows):
-            return b""
-        return self.tail_bytes(RAW_PACKET, index)[:int(rows[index]["length"])]
 
     def snapshot_details(self, index: int) -> dict[str, np.ndarray]:
         """The units, auras and cooldowns of the batch's `index`-th Snapshot (a malformed tail reads as empty)."""
@@ -701,174 +703,15 @@ def stream_map(path: Path) -> tuple[str, str]:
     return stream, shard
 
 
-RECORDINGS_DIR = "recordings"
-
-
-@dataclass
-class RecordingDir(HourDir):
-    """One manual recording (FORMAT.md §1): `<Dir>/recordings/<id>/`, its `<stream>-<map>.bin.gz` files and its
-    manifest.json. `hour` is its start (from the manifest, else the directory's mtime), so it can stand among the
-    hours of a CaptureDir."""
-
-    @classmethod
-    def open(cls, path: str | Path) -> "RecordingDir":
-        path = Path(path)
-        manifest = None
-        try:
-            manifest = json.loads((path / "manifest.json").read_text())
-        except (OSError, json.JSONDecodeError):
-            pass
-        when = None
-        if manifest and manifest.get("start_utc"):
-            try:
-                when = dt.datetime.strptime(str(manifest["start_utc"])[:19], "%Y-%m-%dT%H:%M:%S")
-            except ValueError:
-                when = None
-        if when is None:
-            when = dt.datetime.utcfromtimestamp(path.stat().st_mtime)
-        out = cls(when, path)
-        out._manifest = manifest
-        return out
-
-    _manifest: dict | None = None
-
-    @property
-    def id(self) -> str:
-        return self.path.name
-
-    @property
-    def label(self) -> str:
-        return self.id
-
-    @property
-    def manifest(self) -> dict | None:
-        """The manifest, or None while the recording is still open (or its manifest is unreadable)."""
-        return self._manifest
-
-    @property
-    def status(self) -> str:
-        return str((self._manifest or {}).get("status") or "recording")
-
-    @property
-    def verdict(self) -> str | None:
-        return (self._manifest or {}).get("verdict")
-
-    @property
-    def title(self) -> str:
-        return str((self._manifest or {}).get("title") or "")
-
-    def index(self) -> dict | None:
-        return self._manifest
-
-    def read(self, stream: str, stats: list[FileStats] | None = None) -> Iterator[Batch]:
-        """Every batch of one of the recording's streams, file by file (map order by name)."""
-        for path in self.files(stream):
-            file_stats = FileStats(path)
-            yield from read_file(path, file_stats)
-            if stats is not None:
-                stats.append(file_stats)
-
-    def load(self, stream: str) -> Batch:
-        """One of the recording's streams as a single batch. Tails are lost in the merge: read batch by batch
-        (`read`) for a Snapshot's units, a UnitState's threat list, a note's text or a packet's bytes."""
-        return merge(list(self.read(stream)))
-
-
-def list_recordings(root: str | Path) -> list[RecordingDir]:
-    """Every recording under `<root>/recordings/`, oldest first."""
-    folder = Path(root) / RECORDINGS_DIR
-    if not folder.is_dir():
-        return []
-    out = [RecordingDir.open(path) for path in sorted(folder.iterdir()) if path.is_dir()]
-    out.sort(key=lambda rec: (rec.hour, rec.id))
-    return out
-
-
-def find_recording(root_or_path: str | Path, name: str | None = None) -> RecordingDir:
-    """A recording by its directory, or by `name` (its id, or a unique prefix or substring of one) under a capture
-    root."""
-    path = Path(root_or_path)
-    if name is None:
-        if (path / "manifest.json").is_file() or path.name and path.parent.name == RECORDINGS_DIR:
-            return RecordingDir.open(path)
-        raise FileNotFoundError(f"{path}: not a recording directory")
-    found = [rec for rec in list_recordings(path) if rec.id == name]
-    if not found:
-        found = [rec for rec in list_recordings(path) if name in rec.id]
-    if len(found) != 1:
-        raise FileNotFoundError(f"{name}: {'no' if not found else len(found)} recordings under {path}")
-    return found[0]
-
-
-SMSG_COMPRESSED_UPDATE_OBJECT = 0x1F6
-
-
-def iter_packets(rec: RecordingDir, inflate: bool = True) -> Iterator[dict]:
-    """The recording's packets (the packet stream) whole again, in file order: {ms, player, direction, opcode,
-    server_ms, total, truncated, payload}. Chunks of one packet (flag 2 on all but the last) are joined by their
-    (player, direction, opcode, server_ms, total); a compressed update object is inflated (`inflated` set) when
-    `inflate`."""
-    import zlib
-    partial: dict[tuple, bytearray] = {}
-    for batch in rec.read("packet"):
-        rows = batch.get(RAW_PACKET)
-        for i, row in enumerate(rows):
-            key = (int(row["player"]), int(row["direction"]), int(row["opcode"]), int(row["server_ms"]),
-                   int(row["total"]))
-            chunk = batch.packet_payload(i)
-            if int(row["flags"]) & 2 or key in partial:
-                buf = partial.setdefault(key, bytearray())
-                offset = int(row["offset"])
-                if len(buf) < offset:
-                    buf.extend(b"\0" * (offset - len(buf)))
-                buf[offset:offset + len(chunk)] = chunk
-                if int(row["flags"]) & 2:
-                    continue
-                payload = bytes(partial.pop(key))
-            else:
-                payload = chunk
-            out = {"ms": int(row["ms"]), "player": key[0], "direction": key[1], "opcode": key[2],
-                   "server_ms": key[3], "total": key[4], "truncated": bool(int(row["flags"]) & 1),
-                   "payload": payload, "inflated": False}
-            if inflate and key[2] == SMSG_COMPRESSED_UPDATE_OBJECT and key[1] == 1 and len(payload) > 4 \
-                    and not out["truncated"]:
-                try:
-                    out["payload"] = zlib.decompress(payload[4:])
-                    out["inflated"] = True
-                except zlib.error:
-                    pass
-            yield out
-
-
 class CaptureDir:
-    """A capture directory, walked hour by hour within an optional [start, end] range (inclusive, UTC). With
-    `include_recordings`, the manual recordings (FORMAT.md §1, `recordings/<id>/`) whose start falls in the range
-    stand among the hours, each as one RecordingDir."""
+    """A capture directory, walked hour by hour within an optional [start, end] range (inclusive, UTC)."""
 
-    def __init__(self, root: str | Path, start: str | None = None, end: str | None = None,
-                 include_recordings: bool = False):
+    def __init__(self, root: str | Path, start: str | None = None, end: str | None = None):
         self.root = Path(root)
         self.start = parse_hour(start)
         self.end = parse_hour(end, end=True)
-        self.include_recordings = include_recordings
-
-    def recordings(self) -> list[RecordingDir]:
-        """The manual recordings whose start falls in the range."""
-        out = []
-        for rec in list_recordings(self.root):
-            if (self.start and rec.hour < self.start) or (self.end and rec.hour > self.end + dt.timedelta(hours=1)):
-                continue
-            out.append(rec)
-        return out
 
     def hours(self) -> list[HourDir]:
-        out = self._hours()
-        if self.include_recordings:
-            out.extend(self.recordings())
-            out.sort(key=lambda h: h.hour)
-        return out
-
-    def _hours(self) -> list[HourDir]:
         out = []
         if not self.root.is_dir():
             return out

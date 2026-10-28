@@ -8,10 +8,9 @@
     prices           proposed noise prices: human_prices.json + human_prices.md (never writes config)
     companions       per-model companion feedback: human_companions.json
     realism          a bot run's eval_motion.npz against human_reference.json: realism.json
-    recordings       the manual recordings under <capture>/recordings (status, verdict, title, files)
-    notes            one recording's notes, each with where the player stood and the state of the moment
-    chat             one recording's chat lines
-    dungeon-run      a dungeon run read off one recording: packs, pulls, rests, doors, bosses, skipped, the
+    spans            the visits of map instances in a range (who was there, when), numbered for dungeon-run
+    chat             the chat lines of a range
+    dungeon-run      a dungeon run read off one span party-wide: packs, pulls, rests, doors, bosses, skipped, the
                      clear way (<out>.json and <out>.clearway.csv for AnimusForge.Curriculum.PointNav.ClearWayFile)
 
 `--from` / `--to` take `yyyy-mm-dd` or `yyyy-mm-ddThh` (UTC, inclusive). See README.md beside this file.
@@ -28,10 +27,9 @@ import numpy as np
 
 from animus.human import build as build_mod
 from animus.human import companions, dataset, dungeon_run, fit, mapper, motion, parity, prices, realism
-from animus.human import recordings as recordings_mod
 from animus.human import reader as r
 from animus.human import reference as ref
-from animus.human import segment, tracks
+from animus.human import segment, spans, tracks
 
 FIT_STEP = 0.125
 
@@ -44,10 +42,8 @@ def _common(parser: argparse.ArgumentParser, capture: bool = True) -> None:
 
 
 def cmd_summary(args) -> dict:
-    cap = r.CaptureDir(args.capture, args.start, args.end, include_recordings=getattr(args, "recordings", False))
-    out: dict = {"hours": len(cap.hours()), "streams": {}, "index": cap.index_report(), "revisions": set(),
-                 "recordings": [{"id": rec.id, "status": rec.status, "verdict": rec.verdict, "title": rec.title}
-                                for rec in cap.recordings()]}
+    cap = r.CaptureDir(args.capture, args.start, args.end)
+    out: dict = {"hours": len(cap.hours()), "streams": {}, "index": cap.index_report(), "revisions": set()}
     for hour in cap.hours():
         for path in hour.files():
             stream, _ = r.stream_map(path)
@@ -76,50 +72,61 @@ def cmd_summary(args) -> dict:
     return out
 
 
-def _recording(args) -> r.RecordingDir:
-    """The recording a command names: `--recording <dir>` or `--capture <root> --recording <id or part of one>`."""
-    if args.recording and Path(args.recording).is_dir():
-        return r.RecordingDir.open(args.recording)
-    if not args.capture:
-        raise SystemExit("--recording must be a recording directory, or --capture <root> --recording <id>")
-    if args.recording:
-        return r.find_recording(args.capture, args.recording)
-    found = r.list_recordings(args.capture)
-    if not found:
-        raise SystemExit(f"no recordings under {args.capture}/recordings")
-    return found[-1]
+def _range(args) -> r.CaptureDir:
+    """The capture range a command names: --date (one day) or --from/--to."""
+    date = getattr(args, "date", None)
+    return r.CaptureDir(args.capture, date or args.start, date or args.end)
 
 
-def cmd_recordings(args) -> dict:
-    rows = recordings_mod.list_recordings(args.capture, count_records=args.records)
-    return {"recordings": rows, "count": len(rows), "root": str(Path(args.capture) / r.RECORDINGS_DIR)}
-
-
-def cmd_notes(args) -> dict:
-    rec = _recording(args)
-    return {"recording": rec.id, "title": rec.title, "notes": recordings_mod.notes(rec)}
+def cmd_spans(args) -> dict:
+    cap = _range(args)
+    maps = set(args.map) if args.map else None
+    found = spans.list_spans(cap, maps=maps)
+    rows = []
+    for span in found:
+        row = span.describe()
+        if args.records:
+            row["records"] = spans.count_records(cap, span)
+        rows.append(row)
+    return {"capture": str(cap.root), "spans": rows, "count": len(rows)}
 
 
 def cmd_chat(args) -> dict:
-    rec = _recording(args)
-    return {"recording": rec.id, "chat": recordings_mod.chat(rec)}
+    cap = _range(args)
+    lines = []
+    for _, _, batch in cap.iter_stream("note"):
+        rows = batch.get(r.CHAT)
+        for i, row in enumerate(rows):
+            if args.player and int(row["player"]) not in args.player:
+                continue
+            lines.append({"ms": int(row["ms"]), "player": int(row["player"]),
+                          "direction": "sent" if int(row["direction"]) == 0 else "received",
+                          "chat_type": int(row["chat_type"]), "language": int(row["language"]),
+                          "sender": int(row["sender"]), "sender_kind": int(row["sender_kind"]),
+                          "sender_entry": int(row["sender_entry"]), "receiver": int(row["receiver"]),
+                          "text": batch.tail_text(r.CHAT, i)})
+    lines.sort(key=lambda c: c["ms"])
+    return {"capture": str(cap.root), "chat": lines, "count": len(lines)}
 
 
 def cmd_dungeon_run(args) -> dict:
-    rec = _recording(args)
-    report = dungeon_run.analyse(rec, site_yards=args.site_yards, map_id=args.map)
+    cap = _range(args)
+    listing = spans.list_spans(cap)
+    span = spans.find_span(listing, index=args.span, map_id=args.map, instance=args.instance, from_ms=args.from_ms,
+                           to_ms=args.to_ms)
+    report = dungeon_run.analyse(cap, span, site_yards=args.site_yards)
     out = Path(args.out)
     if out.is_dir() or not out.suffix:
-        out = out / f"{rec.id}.dungeon_run.json"
+        out = out / f"{span.label}.dungeon_run.json"
     files = dungeon_run.write(report, out)
-    return {"recording": rec.id, "files": files, "counts": report["counts"], "map": report["map"],
+    return {"span": span.describe(), "files": files, "counts": report["counts"], "map": report["map"],
+            "players": report["players"],
             "checkpoints": [{k: cp[k] for k in ("k", "kind", "x", "y", "z", "t_ms")} for cp in report["checkpoints"]]}
 
 
 def cmd_build(args) -> dict:
     result = build_mod.build(args.capture, args.out, args.start, args.end, stride=args.stride,
-                             max_windows=args.max_windows, trips_per_map=args.trips_per_map, seed=args.seed,
-                             recordings=args.recording)
+                             max_windows=args.max_windows, trips_per_map=args.trips_per_map, seed=args.seed)
     return {"files": {k: str(v) for k, v in result.paths.items()}, "tracks": result.tracks, "clips": result.clips,
             "windows_seen": result.windows, "trips": result.trips, "units": result.units}
 
@@ -245,7 +252,6 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("summary", help="what a capture range holds")
     _common(p)
-    p.add_argument("--recordings", action="store_true", help="count the manual recordings' files among the hours")
     p.add_argument("--index-only", action="store_true", help="sizes and index.json only, no records read")
     p.set_defaults(func=cmd_summary)
 
@@ -255,9 +261,6 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--max-windows", type=int, default=2_000_000)
     p.add_argument("--trips-per-map", type=int, default=5000)
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--recording", action="append", default=None,
-                   help="build from this manual recording alone (an id under --capture, or its directory); "
-                        "repeatable")
     p.set_defaults(func=cmd_build)
 
     p = sub.add_parser("fit", help="the executor-fit study")
@@ -311,32 +314,40 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--seed", type=int, default=0)
     p.set_defaults(func=cmd_parity)
 
-    p = sub.add_parser("recordings", help="the manual recordings under <capture>/recordings")
-    p.add_argument("--capture", required=True, help="Animus.Capture.Dir (or a copy of it)")
-    p.add_argument("--records", action="store_true", help="also count every recording's records per type (slow)")
-    p.set_defaults(func=cmd_recordings)
+    def _span_range(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--capture", required=True, help="Animus.Capture.Dir (or a copy of it)")
+        p.add_argument("--date", default=None, help="one day, yyyy-mm-dd UTC (instead of --from/--to)")
+        p.add_argument("--from", dest="start", default=None, help="first hour, yyyy-mm-dd[Thh] UTC")
+        p.add_argument("--to", dest="end", default=None, help="last hour, yyyy-mm-dd[Thh] UTC")
 
-    for name, func, help_text in (("notes", cmd_notes, "one recording's notes, with where the player stood"),
-                                  ("chat", cmd_chat, "one recording's chat lines")):
-        p = sub.add_parser(name, help=help_text)
-        p.add_argument("--capture", default=None, help="Animus.Capture.Dir (with --recording <id>)")
-        p.add_argument("--recording", default=None, help="a recording directory, or its id under --capture "
-                                                         "(default: the latest)")
-        p.set_defaults(func=func)
+    p = sub.add_parser("spans", help="the visits of map instances in a range, numbered for dungeon-run")
+    _span_range(p)
+    p.add_argument("--map", type=int, action="append", default=None, help="only this map id (repeatable)")
+    p.add_argument("--records", action="store_true", help="also count each span's records per type (slow)")
+    p.set_defaults(func=cmd_spans)
 
-    p = sub.add_parser("dungeon-run", help="a dungeon run read off one recording, and its clear way")
-    p.add_argument("--capture", default=None, help="Animus.Capture.Dir (with --recording <id>)")
-    p.add_argument("--recording", default=None, help="a recording directory, or its id under --capture "
-                                                     "(default: the latest)")
+    p = sub.add_parser("chat", help="the chat lines of a range")
+    _span_range(p)
+    p.add_argument("--player", type=int, action="append", default=None, help="only this player id (repeatable)")
+    p.set_defaults(func=cmd_chat)
+
+    p = sub.add_parser("dungeon-run", help="a dungeon run read off one span party-wide, and its clear way")
+    _span_range(p)
+    p.add_argument("--span", type=int, default=None, help="the span's index in `spans` over the same range")
+    p.add_argument("--map", type=int, default=None, help="the dungeon map (with --instance; else its longest span)")
+    p.add_argument("--instance", type=int, default=None, help="the map instance id")
+    p.add_argument("--from-ms", type=int, default=None, help="cut the span to start at this unix ms")
+    p.add_argument("--to-ms", type=int, default=None, help="cut the span to end at this unix ms")
     p.add_argument("--out", required=True, help="the report (.json; its .clearway.csv goes beside it) or a directory")
     p.add_argument("--site-yards", type=float, default=dungeon_run.SITE_YARDS,
                    help="spawns this close are one pack when no formation or co-engagement says otherwise")
-    p.add_argument("--map", type=int, default=None, help="the dungeon map (default: the last map entered)")
     p.set_defaults(func=cmd_dungeon_run)
 
     args = parser.parse_args(argv)
     if args.command == "realism" and not (args.run or args.bot):
         parser.error("realism needs --run or --bot")
+    if args.command == "dungeon-run" and args.span is None and args.map is None:
+        parser.error("dungeon-run needs --span <index> or --map <id>")
     result = args.func(args)
     json.dump(result, sys.stdout, indent=1, default=str)
     sys.stdout.write("\n")

@@ -1,7 +1,7 @@
 # animus.human — offline tools over human play captures
 
-mod-animus records every player on the live realm, and a player's own play on request (FORMAT.md is the contract);
-these tools read the files and produce what the forge trains and judges with. Plan: `.agents/plans/human-play-data/`. `motion.py` is the one
+mod-animus records every player on the live realm and every map's surroundings, all the time (FORMAT.md is the
+contract; format 5, one tier); these tools read the files and produce what the forge trains and judges with. Plan: `.agents/plans/human-play-data/`. `motion.py` is the one
 definition of motion features: nothing here computes them any other way.
 
 ```
@@ -18,19 +18,19 @@ python -m animus.human <command> --capture <Animus.Capture.Dir> --out <dir> [--f
 | `prices` | `human_prices.json`, `human_prices.md` | proposed Jitter/Effort/Repeat/Fidget/JitterDecayMs/SettleGraceMs (`--budget`); never writes config |
 | `companions` | `human_companions.json` | per-model ratings, dismissals, overrides, deaths |
 | `realism` | `realism.json` | a run's `eval_motion.npz` (`--run <dir>` or `--bot <npz>`) against `human_reference.json` (`--reference`, default `<out>/`): EMD per context per histogram feature and the mean |
-| `recordings` | stdout | the manual recordings under `<capture>/recordings`: status, verdict, title, character, duration, notes, files (`--records` counts every record type) |
-| `notes` / `chat` | stdout | one recording's notes (with where the player stood, their target, the state of the moment) or chat lines; `--recording <dir or id>` (default: the latest under `--capture`) |
-| `dungeon-run` | `<out>.json`, `<out>.clearway.csv` | a dungeon run read off one recording: packs, pulls (first creature, pull_from, fight_spot, kills, deaths), rests, door interactions, bosses, skipped creatures, notes, and the clear way (`index,kind,x,y,z,spawn_ids`) a PointNav stage loads through `AnimusForge.Curriculum.PointNav.ClearWayFile` (`--site-yards`, `--map`) |
+| `spans` | stdout | the visits of map instances in a range (`--date` or `--from`/`--to`): map, instance, start, end, the human players and companions present, numbered for `dungeon-run --span` (`--map` filters, `--records` counts each span's records per type) |
+| `chat` | stdout | the chat lines of a range (`--player` filters) |
+| `dungeon-run` | `<out>.json`, `<out>.clearway.csv`, `<out>.path.csv` | a dungeon run read off one span party-wide (`--span <index>`, or `--map` [`--instance`] [`--from-ms`/`--to-ms`]): players, packs, pulls (first creature, the puller's pull_from, fight_spot over every player, kills, deaths), rests (every player still), door interactions (any player's), bosses, skipped creatures, and the clear way (`index,kind,x,y,z,spawn_ids`) a PointNav stage loads through `AnimusForge.Curriculum.PointNav.ClearWayFile` (`--site-yards`) |
 
 ## Modules
 
 - `reader.py` — framing, record prefixes as numpy structured dtypes (vectorised per batch), gzip members read one
   at a time, the hourly layout and `index.json`. Unknown record types and longer records are skipped by length; a
   truncated final gzip member is dropped whole and counted; records may straddle members.
-- `recordings.py` — the manual recordings (`RecordingDir`, manifests), notes joined to the move stream, chat.
-- `dungeon_run.py` — a recorded dungeon run: packs (formations, co-engagement, proximity), pulls from CombatEdge and
-  threat lists, rests from standing still out of combat, interactions from Interact joined to object changes,
-  bosses, skipped creatures, the clear way CSV the core loads.
+- `spans.py` — the visits of map instances, from the session stream's (map, instance) rows: who was where when.
+- `dungeon_run.py` — one span's dungeon run, party-wide: packs (formations, co-engagement, proximity), pulls from
+  CombatEdge and threat lists, rests from every player standing still out of combat, interactions from any player's
+  Interact joined to object changes, bosses, skipped creatures, the clear way CSV the core loads.
 - `tracks.py` — move packets to tracks on the 250 ms grid: mode from flags, mount, speed in force, combat; cuts at
   taxi, death, loading, vehicle, transport, teleport, map change; involuntary spans flagged; stands filled.
 - `segment.py` — clips (with context tags), trips with hindsight destinations, fights, deaths and corpse runs,
@@ -43,6 +43,11 @@ python -m animus.human <command> --capture <Animus.Capture.Dir> --out <dir> [--f
 
 - **Companions are never human data.** A session of kind 1 or a Move with source 1 is a bot; every `human_*` output
   leaves them out.
+- **Snapshots at 100 ms** (format 5; 250 ms before) change nothing here: tracks are resampled from the movement
+  packets (`motion.resample`, `DECISION_SECONDS` = 0.25 s), and the snapshot's combat and mount flags are joined to
+  them by time, so a denser snapshot stream only answers more precisely. UnitState and GameObjectState are
+  change-driven (FORMAT.md §2.5): a unit with no record at a time is as its last record said; `dungeon_run` reads
+  them that way.
 - **Tracks are cut at the end of each hour shard** (files are processed one hour of one map at a time) and use server
   receive time (`ms`), the clock every stream shares. Latency is handled by down-weighting windows (1 up to 150 ms,
   falling to 0.25 at 500 ms), not by re-timing packets.
