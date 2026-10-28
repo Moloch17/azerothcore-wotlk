@@ -539,6 +539,9 @@ namespace Animus::Curriculum
         void View(Env const& env, uint32 seat, SeatView& view) const override;
         void BeforeRewards(Env& env) override;
         void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
+        /// A standing Follow, Pull, Loot or Use order is the seat's goal: the member, the enemy, the object.
+        [[nodiscard]] bool RouteGoal(Env const& env, uint32 seat, Position& goal) const override;
+        [[nodiscard]] bool RouteGoalFirst() const override { return true; }
 
         /// Whether the director commands this episode: the arena is a party group's, with a seat to command.
         [[nodiscard]] bool Active(Env const& env) const;
@@ -596,6 +599,11 @@ namespace Animus::Curriculum
             uint32 DoneUnpaid = 0;
             RewardLedger Rewards;               // the director's own terms, for its columns
         };
+        /// **Orders bind** (the user, 2026-10-27: "They should always be carried out"): each decision a standing order
+        /// sets what the seat works toward -- Focus and Pull its selection, Heal its focus (a beneficial spell's
+        /// target); Follow, Pull, Loot and Use its route goal (RouteGoal), Loot and Use its object presses (View). The
+        /// seat's policy still picks its spells and its moves.
+        void Bind(Env& env, uint32 seat, Player* bot);
         [[nodiscard]] static uint32 ObjectState(GameObject const* object);
         [[nodiscard]] bool Ready(Player const* bot) const;
         void Judge(Env& env, uint32 seat, Player* bot);

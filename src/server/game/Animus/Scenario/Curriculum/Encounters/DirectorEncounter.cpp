@@ -570,11 +570,10 @@ void Animus::Curriculum::DirectorEncounter::Judge(Env& env, uint32 seat, Player*
     {
         case OrderKind::Focus:
         {
-            // Carried out on the seat's first damage to the named enemy; one that dies untouched by the seat
-            // was not.
+            // Carried out on the seat's first damage to the named enemy (its selection is bound to it, so damage
+            // anywhere else is not it); one that dies untouched by the seat was not.
             Unit const* unit = ObjectAccessor::GetUnit(*bot, order.Target);
-            if (unit && unit->IsAlive() && (bot->GetVictim() == unit || bot->GetTarget() == order.Target)
-                && env.StepStats[seat].Damage)
+            if (unit && env.DamagedThisStep(seat, order.Target))
             {
                 order.Damaged = true;
                 Finish(env, seat, true);
@@ -706,7 +705,71 @@ void Animus::Curriculum::DirectorEncounter::Update(Env& env)
     uint32 const count = std::min<uint32>(data.ActiveSeats, DirectorLayout::DIRECTOR_SEATS);
     for (uint32 seat = 0; seat < count; ++seat)
         if (data.Seats[seat].L)
-            Judge(env, seat, _scenario.SeatBot(env, seat));
+        {
+            Player* bot = _scenario.SeatBot(env, seat);
+            Judge(env, seat, bot);
+            Bind(env, seat, bot);
+        }
+}
+
+void Animus::Curriculum::DirectorEncounter::Bind(Env& env, uint32 seat, Player* bot)
+{
+    DirectorOrders::MemberOrder const& order = _envs[env.Index].Orders.Members[seat];
+    if (order.Kind == OrderKind::None || order.Target.IsEmpty() || !bot || !bot->IsAlive() || !bot->IsInWorld())
+        return;
+    switch (order.Kind)
+    {
+        case OrderKind::Focus:
+        case OrderKind::Pull:
+        {
+            Unit* unit = ObjectAccessor::GetUnit(*bot, order.Target);
+            if (!unit || !unit->IsAlive() || bot->GetTarget() == order.Target)
+                return;
+            WorldPacket packet = EntityActions::SetSelection(order.Target);
+            EntityActions::SessionPort().Send(bot, packet);
+            // Swinging already: the auto attack turns onto the named enemy, as a selection press does.
+            if (bot->GetVictim() && bot->GetVictim() != unit && bot->IsValidAttackTarget(unit))
+            {
+                WorldPacket swing = EntityActions::AttackSwing(order.Target);
+                EntityActions::SessionPort().Send(bot, swing);
+            }
+            return;
+        }
+        case OrderKind::Heal:
+            _scenario.Data(env).Seats[seat].Focus = order.Target;
+            return;
+        default:
+            return;
+    }
+}
+
+bool Animus::Curriculum::DirectorEncounter::RouteGoal(Env const& env, uint32 seat, Position& goal) const
+{
+    if (!Active(env) || seat >= DirectorLayout::DIRECTOR_SEATS)
+        return false;
+    DirectorOrders::MemberOrder const& order = _envs[env.Index].Orders.Members[seat];
+    if (order.Target.IsEmpty())
+        return false;
+    switch (order.Kind)
+    {
+        case OrderKind::Follow:
+        case OrderKind::Pull:
+        case OrderKind::Loot:
+        case OrderKind::Use:
+            break;
+        default:
+            return false;
+    }
+    Player* bot = _scenario.SeatBotInWorld(env, seat);
+    if (!bot)
+        return false;
+    WorldObject const* target = ObjectAccessor::GetWorldObject(*bot, order.Target);
+    if (!target || !target->IsInWorld() || target->GetMapId() != bot->GetMapId())
+        return false;
+    if (Unit const* unit = target->ToUnit(); unit && !unit->IsAlive())
+        return false;
+    goal = target->GetPosition();
+    return true;
 }
 
 void Animus::Curriculum::DirectorEncounter::OnSeatAction(Env& env, uint32 seat, SeatActionResult const& result)
@@ -762,6 +825,9 @@ void Animus::Curriculum::DirectorEncounter::View(Env const& env, uint32 seat, Se
     out.Where = target->GetPosition();
     out.TargetNear = bot->GetExactDist(target) <= ReachOf(target);
     out.TargetIsSelection = bot->GetTarget() == order.Target;
+    if (order.Kind == OrderKind::Loot || order.Kind == OrderKind::Use)
+        if (target->ToGameObject())
+            out.BoundObject = order.Target;
     if (Unit const* unit = target->ToUnit())
         out.TargetHealth = unit->IsAlive() ? unit->GetHealthPct() / 100.0f : 0.0f;
     if (GameObject const* object = target->ToGameObject())

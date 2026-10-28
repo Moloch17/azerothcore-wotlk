@@ -96,6 +96,9 @@ namespace Animus::Curriculum
         {
             return false;
         }
+        /// Whether this encounter's RouteGoal is asked before every other's (and before a party follow's leader):
+        /// the director's standing orders bind the seat's goal (DirectorEncounter).
+        [[nodiscard]] virtual bool RouteGoalFirst() const { return false; }
 
         [[nodiscard]] virtual int32 AchievedGoal(Env const& /*env*/, uint32 /*seat*/) const { return -1; }
 

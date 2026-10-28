@@ -21,6 +21,7 @@
 
 #include "Define.h"
 #include "ObjectGuid.h"
+#include <algorithm>
 #include <array>
 #include <vector>
 
@@ -165,6 +166,19 @@ namespace Animus
         };
 
         std::vector<InterruptedCast> StepInterruptedTargets;
+        /// Which agent's damage (its pets' too) landed on which target since the last decision: a Focus order is
+        /// carried out on damage to the enemy it names, not on any damage (DirectorEncounter::Judge).
+        struct DamagedTarget
+        {
+            uint32 Agent = 0;
+            ObjectGuid Victim;
+        };
+        std::vector<DamagedTarget> StepDamaged;
+        [[nodiscard]] bool DamagedThisStep(uint32 agent, ObjectGuid victim) const
+        {
+            return std::any_of(StepDamaged.begin(), StepDamaged.end(),
+                [agent, victim](DamagedTarget const& hit) { return hit.Agent == agent && hit.Victim == victim; });
+        }
 
         [[nodiscard]] Map* FindMap() const;
         [[nodiscard]] Player* FindBot(uint32 agent) const;

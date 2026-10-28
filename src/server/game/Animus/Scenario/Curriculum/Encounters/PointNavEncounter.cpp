@@ -892,14 +892,21 @@ void Animus::Curriculum::PointNavEncounter::UpdateGoals(Env& env, EnvNav& nav)
     {
         Position goal;
         bool named = false;
-        if (leader)
+        // A goal that binds (a director's standing order) first, then the leader, then the rest in order.
+        for (Encounter* encounter : _scenario.ActiveEncounters(env))
+            if (encounter != this && encounter->RouteGoalFirst() && encounter->RouteGoal(env, seat, goal))
+            {
+                named = true;
+                break;
+            }
+        if (!named && leader)
         {
             goal.Relocate(x, y, z, 0.0f);
             named = true;
         }
-        else
+        else if (!named)
             for (Encounter* encounter : _scenario.ActiveEncounters(env))
-                if (encounter != this && encounter->RouteGoal(env, seat, goal))
+                if (encounter != this && !encounter->RouteGoalFirst() && encounter->RouteGoal(env, seat, goal))
                 {
                     named = true;
                     break;

@@ -497,6 +497,9 @@ namespace Animus::Curriculum
             bool CarriesKey = false;                // ... and the seat carries it
             float AgeSeconds = 0.0f;
             bool DoneNow = false;                   // carried out this decision
+            /// A Loot or Use order's object: the seat's Interact and UseItem presses act on it, whatever slot they
+            /// name (the order binds; DirectorEncounter::View).
+            ObjectGuid BoundObject;
         } Order;
 
         // Travel: where the seat is going, and whether it may ride there.

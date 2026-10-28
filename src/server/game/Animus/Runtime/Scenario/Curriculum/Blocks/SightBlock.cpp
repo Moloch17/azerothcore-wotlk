@@ -297,13 +297,18 @@ void Animus::Curriculum::SightBlock::Apply(SeatView& view, uint32 local, SeatAct
         ++result.Selections;
         return;
     }
-    uint64 const guid = (*view.SightGuids)[SlotOf(local)];
+    uint64 guid = (*view.SightGuids)[SlotOf(local)];
+    // A standing Loot or Use order binds the seat's presses on objects to the object it names.
+    EntityActions::Press const press = PressOf(local);
+    if (!view.Order.BoundObject.IsEmpty()
+        && (press == EntityActions::Press::Interact || press == EntityActions::Press::UseItem))
+        guid = view.Order.BoundObject.GetRawValue();
     if (!guid)
         return;
     ObjectGuid scratch;
     ObjectGuid& focus = view.Focus ? *view.Focus : scratch;
     EntityActions::ClientPort& port = view.Port ? *view.Port : EntityActions::SessionPort();
-    EntityActions::Apply(PressOf(local), view.Bot, guid, focus, result, port);
+    EntityActions::Apply(press, view.Bot, guid, focus, result, port);
 }
 
 std::string Animus::Curriculum::SightBlock::ActionName(Layout const& /*layout*/, uint32 local) const

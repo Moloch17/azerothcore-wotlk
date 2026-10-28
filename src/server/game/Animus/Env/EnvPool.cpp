@@ -264,6 +264,7 @@ void Animus::EnvPool::ObserveEnv(Env& env, bool onMapThread)
         env.StepStats[agent] = AgentStats();
     }
     env.StepInterruptedTargets.clear();
+    env.StepDamaged.clear();
 
     bool const terminal = _scenario.IsTerminal(env);
     bool const done = terminal || env.EpisodeElapsedMs >= env.EpisodeLengthMs;
@@ -628,6 +629,8 @@ void Animus::EnvPool::RecordDamage(Unit const* attacker, Unit const* victim, uin
 
     AgentStats& stats = env.StepStats[itr->second.Agent];
     stats.Damage += damage;
+    if (damage && !env.DamagedThisStep(itr->second.Agent, victim->GetGUID()))
+        env.StepDamaged.push_back({ itr->second.Agent, victim->GetGUID() });
     if (attacker->GetGUID() != itr->first)
         stats.PetDamage += damage;
     // The agent's own, by damage class. A player's ranged auto-attack is a spell (Auto Shot, Shoot), so a white hit
@@ -762,6 +765,7 @@ void Animus::EnvPool::ResetEnv(Env& env)
         env.EpisodeStats[agent] = AgentStats();
     }
     env.StepInterruptedTargets.clear();
+    env.StepDamaged.clear();
 
     // A scenario may rebuild its bots and allies on reset. The indexes are read by every map's damage and heal
     // hooks, so they change only while no map is updating: at once on the world thread, after the join for a
