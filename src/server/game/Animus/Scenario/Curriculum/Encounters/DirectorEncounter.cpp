@@ -1283,7 +1283,8 @@ void Animus::Curriculum::DirectorEncounter::Reward(Env& env, uint32 seat, Player
     float paid = 0.0f;
     // The seat's tokens for OrderDone pay (Director.DonePerMinute): one each 60 / DonePerMinute seconds, DonePerMinute
     // held.
-    float const cap = tuning.DonePerMinute;
+    // ... none under the sampler (its orders cannot be farmed, and the pay is the stage's whole signal).
+    float const cap = _scenario.Stage().OrderSampler ? 0.0f : tuning.DonePerMinute;
     if (cap > 0.0f)
         director.DoneTokens[seat] = std::min(cap, director.DoneTokens[seat]
             + cap * float(_scenario.StepMs(env)) / 60000.0f);

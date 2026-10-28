@@ -1069,18 +1069,18 @@ namespace Animus::Curriculum
         /// less its own churn and impossible orders.
         struct DirectorTuning
         {
-            uint32 ClockDecisions = 20;         // a turn on the clock every so many decisions (2 s at 100 ms)
+            uint32 ClockDecisions = 40;         // a turn on the clock every so many decisions (10 s at 250 ms; 2026-10-28: orders stand)
             uint32 Calls = 4;                   // calls a turn
             /// An order replaced within HoldDecisions of being given is churn (OrderChurn a replacement): a seat
             /// cannot carry out an order that moves under it.
-            uint32 HoldDecisions = 30;
-            float OrderChurn = 0.1f;
+            uint32 HoldDecisions = 100;         // 25 s at 250 ms (2026-10-28: an order stands)
+            float OrderChurn = 0.3f;
             /// An order the director could see was impossible when it gave it (OrderImpossible each).
             float OrderImpossible = 0.2f;
             /// An order carried out pays the seat (OrderDone, an Outcome); one that lapses -- replaced or timed out
             /// (OrderTimeoutMs) undone -- costs it (OrderFailed, small: a bad early order must not teach silence).
             float OrderDone = 1.0f;
-            float OrderFailed = 0.15f;
+            float OrderFailed = 0.3f;
             uint32 OrderTimeoutMs = 90000;
             /// A key chest looted by a seat not ordered to (LootUnordered).
             float LootUnordered = 0.5f;

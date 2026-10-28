@@ -213,7 +213,7 @@ namespace
     {
         ArenaDefinition arena = DeadminesLadder();
         arena.Name = "dungeon";
-        arena.LevelLadder = { 40, 26, 18 };
+        arena.LevelLadder = { 30, 24, 18 };     // within the stage's level band (FocusLevel 15-30)
         arena.Weight = 2;
         return arena;
     }
