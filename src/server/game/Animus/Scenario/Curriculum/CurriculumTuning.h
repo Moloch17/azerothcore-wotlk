@@ -921,7 +921,7 @@ namespace Animus::Curriculum
         /// Respawn.RejoinYards of the fight (ArenaDefinition::RespawnAtEntrance).
         struct CombatTuning
         {
-            float Kill = 1.0f;
+            float Kill = 3.0f;                  // a kill outweighs a fight's clock and risk (2026-10-28, was 1)
             float Clear = 2.0f;
             float Survived = 1.0f;
             float SurviveSurvived = 2.0f;

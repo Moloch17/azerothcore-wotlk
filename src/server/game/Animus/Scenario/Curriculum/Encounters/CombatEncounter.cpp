@@ -730,7 +730,9 @@ void Animus::Curriculum::CombatEncounter::Reward(Env& env, uint32 seatIndex, Pla
     if (timeIsUp && !combat.Recorded)
     {
         combat.Recorded = true;
-        if (combat.Deaths == 0)
+        // Survived the fight, not the episode: paid only when something was killed (dm2, 2026-10-28: a seat that
+        // never engaged collected it for free and learned not to fight -- wins 43% to 7% in twenty minutes).
+        if (combat.Deaths == 0 && combat.Kills + combat.Clears > 0)
             ledger.Add(RewardTerm::Survived,
                 (drill == CombatDrill::Survive ? tuning.SurviveSurvived : tuning.Survived) * w);
         if (combat.Counts)
