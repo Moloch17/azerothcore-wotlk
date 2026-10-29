@@ -106,6 +106,14 @@ namespace Animus::Curriculum
         virtual void BeforeRewards(Env& /*env*/) { }
         virtual void Reward(Env& /*env*/, uint32 /*seat*/, Player* /*bot*/, RewardLedger& /*ledger*/) { }
 
+        /// **The reward structure** (2026-10-29, FightTracker): this encounter's fights are paid by the env's fight
+        /// tracker -- kills, fights won, packs cleared, the kill, hold and keep potentials -- in every arena it is in.
+        [[nodiscard]] virtual bool TracksFights() const { return false; }
+        /// The factor the tracker's wins carry for the episode's rung (a ladder's tier weight); 1 without a ladder.
+        [[nodiscard]] virtual float FightTier(Env const& /*env*/) const { return 1.0f; }
+        /// What killing `enemy` is worth in units (RewardUnits); negative: by its rank (FightTracker::RankValue).
+        [[nodiscard]] virtual float KillValue(Env const& /*env*/, Unit const* /*enemy*/) const { return -1.0f; }
+
         /// Write the encounter's part of the critic state (the whole buffer, already zeroed).
         virtual void WriteState(Env const& /*env*/, float* /*state*/) const { }
 

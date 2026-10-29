@@ -166,14 +166,27 @@ namespace Animus
         };
 
         std::vector<InterruptedCast> StepInterruptedTargets;
-        /// Which agent's damage (its pets' too) landed on which target since the last decision: a Focus order is
-        /// carried out on damage to the enemy it names, not on any damage (DirectorEncounter::Judge).
+        /// Which agent's damage (its pets' too) landed on which creature since the last decision, and how much: a
+        /// Focus order is carried out on damage to the enemy it names, not on any damage (DirectorEncounter::Judge),
+        /// and a kill is shared by the damage each seat put on it (Curriculum::FightTracker). Every creature an agent
+        /// hits, not only the target slots: a dungeon's fight can hold more enemies than the slots.
         struct DamagedTarget
         {
             uint32 Agent = 0;
             ObjectGuid Victim;
+            uint64 Damage = 0;
         };
         std::vector<DamagedTarget> StepDamaged;
+        /// Adds `damage` to the agent's entry for the victim this decision, opening one for a first hit.
+        void NoteDamaged(uint32 agent, ObjectGuid victim, uint64 damage)
+        {
+            auto const same = std::find_if(StepDamaged.begin(), StepDamaged.end(),
+                [agent, victim](DamagedTarget const& hit) { return hit.Agent == agent && hit.Victim == victim; });
+            if (same != StepDamaged.end())
+                same->Damage += damage;
+            else
+                StepDamaged.push_back({ agent, victim, damage });
+        }
         [[nodiscard]] bool DamagedThisStep(uint32 agent, ObjectGuid victim) const
         {
             return std::any_of(StepDamaged.begin(), StepDamaged.end(),

@@ -25,6 +25,7 @@
 #include "Client.h"
 #include "EntityActions.h"
 #include "EntityMemory.h"
+#include "FightTracker.h"
 #include "GlobalPlanner.h"
 #include "Identity.h"
 #include "MentalMap.h"
@@ -866,6 +867,9 @@ namespace Animus::Curriculum
         /// Whether any enemy in the target slots is alive and in combat, taken once at the start of the reward
         /// (StageScenario::Reward) for every seat's terms that ask it: the combat clock, the wing's stall.
         bool StepEngaged = false;
+        /// The env's fights as the reward structure pays them (FightTracker, StageScenario::Reward): kills, fights
+        /// won, packs, potentials. Reset with the episode.
+        FightTracker Fights;
         uint32 ActiveSeats = 1;                 // seats with a character this episode (the first ones)
         bool Fresh = false;                     // built by Setup, not yet reset
         bool BuildFailed = false;               // the last reset could not build the episode: end it and retry

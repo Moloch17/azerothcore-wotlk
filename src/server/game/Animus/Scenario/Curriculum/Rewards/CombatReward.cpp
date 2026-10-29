@@ -117,6 +117,13 @@ std::string_view Animus::Curriculum::RewardTermName(RewardTerm term)
         case RewardTerm::FallHurt:              return "fall_hurt";
         case RewardTerm::Drowned:               return "drowned";
         case RewardTerm::Turning:               return "turning";
+        case RewardTerm::KillProgress:          return "kill_progress";
+        case RewardTerm::HoldPotential:         return "hold_potential";
+        case RewardTerm::KeepPotential:         return "keep_potential";
+        case RewardTerm::FightWon:              return "fight_won";
+        case RewardTerm::PackClear:             return "pack_clear";
+        case RewardTerm::StandingClock:         return "standing_clock";
+        case RewardTerm::EngagedClock:          return "engaged_clock";
         case RewardTerm::Count:                 break;
     }
 

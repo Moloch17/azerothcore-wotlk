@@ -22,6 +22,7 @@
 #include "Define.h"
 #include "ActionTuning.h"
 #include "Block.h"
+#include "RewardUnits.h"
 #include "StandIn.h"
 #include <array>
 #include <boost/json/fwd.hpp>
@@ -110,7 +111,10 @@ namespace Animus::Curriculum
         } Party;
 
         /// Raids (a raid's seat plan): the synthetic pulls sized to the raid, and each role paid for its own part
-        /// -- a forty-seat raid paid only as a party learned to leave the fight to the others.
+        /// -- a forty-seat raid paid only as a party learned to leave the fight to the others. Since the reward
+        /// structure (2026-10-29) TankHold, TankLoose, TankTarget, PulledOff, KeepUp, Overheal and TankStance are
+        /// unread (the fight tracker's role potentials); EarlyPull and Idle are paid. Of PartyTuning, PulledThreat,
+        /// TeammateDamageTaken*, TeammateHealing, HealOffGoal, TankLoseTeammate and TeammateDeath are unread too.
         struct RaidTuning
         {
             /// Tanks, party and raid: per enemy on the tank, per decision. 0.006 was drowned by the charges for loose
@@ -197,6 +201,8 @@ namespace Animus::Curriculum
             /// Raised 2026-09-30 so a wing pays for itself: over a 1,200 s run the per-press costs (jitter, repeat,
             /// effort, the combat clock) came to about -75, against 7.5 for 25 trash kills and 10 for a last boss
             /// no party reached. A dungeon takes long to learn; every step of it has to be worth taking.
+            // WingTrashKill, WingBoss, WingMidBoss, WingDeath, WingWipe: unread since 2026-10-29 (Reward.Kill*, Death*,
+            // Wipe*; the fight tracker pays the kills).
             float WingTrashKill = 1.0f;
             float WingBoss = 25.0f;
             float WingMidBoss = 8.0f;           // each dungeon boss killed on the way to the last
@@ -229,7 +235,7 @@ namespace Animus::Curriculum
             /// A leg of the clear way done (ArenaDefinition::WingLegs: its pack dead, its gate open, the party at its
             /// checkpoint), to every seat, times the tier scale.
             float WingLeg = 8.0f;
-            float WingClock = 0.002f;
+            float WingClock = 0.002f;           // unread since 2026-10-29 (Reward.Clock, Reward.StandingClock)
             /// The difficulty ladder (StageScenario::WING_RUNGS): each rung fixes the level lift and the wipes to
             /// spare. WingProbe of training runs are probes, and only they measure the policy: once WingRungRuns
             /// probes at a rung have made, on average, WingRungTarget
@@ -919,6 +925,10 @@ namespace Animus::Curriculum
         /// NextFurthest on from the current one, further from the seat. C1's next creature comes NextFightMs after a
         /// kill. **Death** (I4, EntranceRespawn): Respawn.DelayMs out, then alive at the entrance; back once within
         /// Respawn.RejoinYards of the fight (ArenaDefinition::RespawnAtEntrance).
+        ///
+        /// **Since the reward structure** (2026-10-29) the pay is Reward.*'s (RewardUnits, FightTracker): Kill, Clear,
+        /// Survived, SurviveSurvived, InterruptLanded, Away, Death, AllyDeath, Hurt, FireHurt, ExtraPull, Clock and
+        /// Damage here are no longer read; the ladder, placement and AwayYards are.
         struct CombatTuning
         {
             float Kill = 3.0f;                  // a kill outweighs a fight's clock and risk (2026-10-28, was 1)
@@ -991,6 +1001,11 @@ namespace Animus::Curriculum
         /// **Death** (I4): Respawn.DelayMs out, then alive at the entrance, walking back. StandInShare percent of the
         /// training episodes put the "human" stand-in (StandIn.*: a frozen learned partner) in one seat other than the
         /// drilled one.
+        ///
+        /// **Since the reward structure** (2026-10-29) the pay is Reward.*'s (RewardUnits, FightTracker): Clear,
+        /// Hold, Loose, Focus, PulledOff, Keep, KeepLow, Overheal, PullClean, PullExtra, Survived, Death, Away, Clock,
+        /// Damage, Interrupt, FireHurt and Wipe are no longer read; PullOthers, KillOrder, Controlled, CCBroken, the
+        /// ladder, placement, AwayYards and the Win* rules are.
         struct RolesTuning
         {
             float Clear = 1.0f;
@@ -1062,8 +1077,13 @@ namespace Animus::Curriculum
             /// Per second an engaged enemy lives, charged to every seat of the side -- a dead one too, so dying
             /// never stops it -- in every arena but a raid's, whose wipe would. At 0.03 a 30 s fight costs 0.9,
             /// and doubling the seat's damage saves half of it.
+            /// Paid only in the PointNav arenas (dm1, as before) since the reward structure: elsewhere Reward.Clock.
             float Clock = 0.01f;                // per second in combat (2026-10-29: 0.03 made a fight a loss)
         } Output;
+
+        /// The reward structure's one table of units (RewardUnits.h, Reward.*): the fight tracker's outcomes and
+        /// potentials, the fight encounters' costs, the two clocks.
+        RewardUnits Reward;
 
         /// **The director** (restored 2026-10-26: "we do want a director for long term planning and group
         /// coordination"): one learned agent a party, speaking on its turns -- its clock and the fight's events -- up
@@ -1692,6 +1712,30 @@ namespace Animus::Curriculum
             f("PointNav.RouteKeep", tuning.PointNav.RouteKeep);
             f("PointNav.RouteKeepShare", tuning.PointNav.RouteKeepShare);
             f("PointNav.RouteKeepYards", tuning.PointNav.RouteKeepYards);
+            f("Reward.KillNormal", tuning.Reward.KillNormal);
+            f("Reward.KillElite", tuning.Reward.KillElite);
+            f("Reward.KillMidBoss", tuning.Reward.KillMidBoss);
+            f("Reward.KillBoss", tuning.Reward.KillBoss);
+            f("Reward.FightWon", tuning.Reward.FightWon);
+            f("Reward.PackClear", tuning.Reward.PackClear);
+            f("Reward.PartyShare", tuning.Reward.PartyShare);
+            f("Reward.ContributorFloor", tuning.Reward.ContributorFloor);
+            f("Reward.Interrupt", tuning.Reward.Interrupt);
+            f("Reward.DeathSolo", tuning.Reward.DeathSolo);
+            f("Reward.DeathParty", tuning.Reward.DeathParty);
+            f("Reward.WipeSolo", tuning.Reward.WipeSolo);
+            f("Reward.WipeParty", tuning.Reward.WipeParty);
+            f("Reward.TeammateDeath", tuning.Reward.TeammateDeath);
+            f("Reward.Clock", tuning.Reward.Clock);
+            f("Reward.StandingClock", tuning.Reward.StandingClock);
+            f("Reward.ExtraPull", tuning.Reward.ExtraPull);
+            f("Reward.Hurt", tuning.Reward.Hurt);
+            f("Reward.Fire", tuning.Reward.Fire);
+            f("Reward.Away", tuning.Reward.Away);
+            f("Reward.Progress", tuning.Reward.Progress);
+            f("Reward.Hold", tuning.Reward.Hold);
+            f("Reward.Keep", tuning.Reward.Keep);
+            f("Reward.Focus", tuning.Reward.Focus);
         }
 
         /// The values of the config keys <prefix><key>, each defaulting to the value above; min/max pairs are

@@ -624,13 +624,16 @@ void Animus::EnvPool::RecordDamage(Unit const* attacker, Unit const* victim, uin
     auto const victimAgent = _agents.find(victim->GetGUID());
     bool const onOtherAgent = victimAgent != _agents.end() && victimAgent->second.Env == itr->second.Env
         && victimAgent->second.Agent != itr->second.Agent;
+    // Per (agent, creature) this decision, on any creature, in a target slot or not (the fight tracker's kill shares).
+    if (victim->IsCreature())
+        env.NoteDamaged(itr->second.Agent, victim->GetGUID(), damage);
     if (!onOtherAgent && std::find(env.Targets.begin(), env.Targets.end(), victim->GetGUID()) == env.Targets.end())
         return;
 
     AgentStats& stats = env.StepStats[itr->second.Agent];
     stats.Damage += damage;
-    if (damage && !env.DamagedThisStep(itr->second.Agent, victim->GetGUID()))
-        env.StepDamaged.push_back({ itr->second.Agent, victim->GetGUID() });
+    if (!victim->IsCreature())
+        env.NoteDamaged(itr->second.Agent, victim->GetGUID(), damage);
     if (attacker->GetGUID() != itr->first)
         stats.PetDamage += damage;
     // The agent's own, by damage class. A player's ranged auto-attack is a spell (Auto Shot, Shoot), so a white hit

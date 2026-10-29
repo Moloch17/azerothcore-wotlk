@@ -22,12 +22,22 @@
 #include "Define.h"
 #include <algorithm>
 #include <array>
+#include <set>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace Animus::Curriculum
 {
     /// What a seat is paid for. Every term's episode sum is reported as the episode info column reward_<name>, so
     /// the curves show what the policy is actually rewarded for.
+    ///
+    /// **The reward structure** (2026-10-29, Rewards/RewardUnits.h, FightTracker): the fight stages' kills, fights won,
+    /// packs cleared and the potentials are the fight tracker's (KillProgress .. EngagedClock below). Terms it
+    /// replaced are no longer paid by the fight encounters and keep their numbers: DamageDealt, Survived, DrillHold,
+    /// DrillFocus, DrillKeep, PullClean, TeammateHealing, TeammateThreat, TeammateDamageTaken (none paid anywhere
+    /// now), CombatClock (paid only in the PointNav arenas, dm1's, unchanged), StepCost (only the movement stages'
+    /// encounters: PointNav, Sight, Seek, Interact), Threat (only the dungeon's WingCrowd).
     enum class RewardTerm : uint8
     {
         DamageDealt,
@@ -235,6 +245,20 @@ namespace Animus::Curriculum
         /// An order carried out quickly (OrderSpeed, Outcome: Director.OrderSpeed x the share of OrderTimeoutMs left
         /// when it was done; the seats are a skill library, 2026-10-28, paid for executing fast). Appended.
         OrderSpeed,
+        /// **The reward structure's** (2026-10-29, FightTracker, Reward.*). Shaping, potential-based (phi' - phi
+        /// with the membership rule, so it guides without paying a fight not won): kill progress (the engaged
+        /// enemies' health left, times their kill values), the tank's hold (enemies on another seat) and the
+        /// healer's keep (its teammates' missing health in a fight). Outcome, once each: a fight won (every engaged
+        /// enemy dead, no party death) and a pack cleared. Cost: the standing clock (every decision, every stage but
+        /// dm1's) and the engaged clock (every second an engaged enemy lives; CombatClock and the encounters'
+        /// StepCost clocks before). Appended.
+        KillProgress,
+        HoldPotential,
+        KeepPotential,
+        FightWon,
+        PackClear,
+        StandingClock,
+        EngagedClock,
         Count
     };
 
@@ -304,6 +328,9 @@ namespace Animus::Curriculum
             case RewardTerm::KillOrder:
             case RewardTerm::Controlled:
             case RewardTerm::OrderSpeed:
+            // The reward structure's (2026-10-29): a fight won, a pack cleared.
+            case RewardTerm::FightWon:
+            case RewardTerm::PackClear:
                 return RewardCategory::Outcome;
             // What the outcome costs: deaths (the seat's, a teammate's, the owner's; a wipe is paid as deaths), the
             // flag lost, the clock run out, the step cost a stage charges for time, the corpse run.
@@ -365,6 +392,9 @@ namespace Animus::Curriculum
             // ... and crowd control broken by the party, a wipe (2026-10-27).
             case RewardTerm::CCBroken:
             case RewardTerm::PartyWipe:
+            // ... and the reward structure's two clocks (2026-10-29): never noise, so no cost ladder takes them.
+            case RewardTerm::StandingClock:
+            case RewardTerm::EngagedClock:
                 return RewardCategory::Cost;
             // The seek stage's room goals: a teaching aid on the progress-linear aid scale.
             case RewardTerm::RoomGoal:
@@ -404,6 +434,10 @@ namespace Animus::Curriculum
             case RewardTerm::Facing:
             case RewardTerm::Sighting:
             case RewardTerm::NewGround:
+            // The reward structure's potentials (2026-10-29).
+            case RewardTerm::KillProgress:
+            case RewardTerm::HoldPotential:
+            case RewardTerm::KeepPotential:
                 return RewardCategory::Shaping;
             case RewardTerm::Count:
                 break;
@@ -488,6 +522,30 @@ namespace Animus::Curriculum
             return value;
         }
 
+        /// An Outcome paid once per thing (the reward structure's free-money guard): `key` names what is paid for -- an
+        /// enemy's guid, a pack's or a fight's index -- and a key already paid for this term this episode is refused
+        /// (nothing paid, false). As Add otherwise, tier and all.
+        bool AddOnce(RewardTerm term, uint64 key, float value, float tier = 1.0f)
+        {
+            if (!_paidOnce.emplace(uint8(term), key).second)
+                return false;
+            Add(term, value, tier);
+            return true;
+        }
+
+        /// A potential-based term (phi' - phi): pays `phi` less the last phi stored for (term, slot) and stores `phi`.
+        /// Paid through Add, so a Shaping potential takes the fade and stays out of the score. Returns what was paid.
+        float AddPotential(RewardTerm term, uint32 slot, float phi)
+        {
+            float& last = Potential(term, slot);
+            float const change = phi - last;
+            last = phi;
+            return change != 0.0f ? Add(term, change) : 0.0f;
+        }
+        /// Store `phi` for (term, slot) without paying: the membership rule's re-baselining, when what the potential
+        /// is taken over changes (an enemy enters or leaves the fight, a teammate dies or rises).
+        void Rebase(RewardTerm term, uint32 slot, float phi) { Potential(term, slot) = phi; }
+
         /// What this seat is paid of a term, whichever encounter adds it: 0 for a party healer's damage, a share
         /// for a party tank's. 1 unless set.
         void Scale(RewardTerm term, float factor) { _scale[std::size_t(term)] = factor; }
@@ -548,6 +606,25 @@ namespace Animus::Curriculum
         /// kill is worth the same at every rung and in every seat, so the score compares across them.
         [[nodiscard]] float Score() const { return _score; }
 
+        /// The episode's terms summed by category (as paid, every scale on), and the noise prices (PricesNoise, Cost
+        /// terms themselves): the reward structure's budget columns.
+        [[nodiscard]] float EpisodeOf(RewardCategory category) const
+        {
+            float total = 0.0f;
+            for (std::size_t term = 0; term < REWARD_TERM_COUNT; ++term)
+                if (RewardTermCategory(RewardTerm(term)) == category)
+                    total += _episode[term];
+            return total;
+        }
+        [[nodiscard]] float EpisodeNoise() const
+        {
+            float total = 0.0f;
+            for (std::size_t term = 0; term < REWARD_TERM_COUNT; ++term)
+                if (PricesNoise(RewardTerm(term)))
+                    total += _episode[term];
+            return total;
+        }
+
         void ResetEpisode()
         {
             _episode.fill(0.0f);
@@ -555,6 +632,8 @@ namespace Animus::Curriculum
             _lastStepTerms.fill(0.0f);
             _step = 0.0f;
             _score = 0.0f;
+            _paidOnce.clear();
+            _potentials.clear();
         }
 
     private:
@@ -580,6 +659,24 @@ namespace Animus::Curriculum
             return PricesNoise(term) ? _costs : 1.0f;
         }
 
+        struct PotentialSlot
+        {
+            RewardTerm Term;
+            uint32 Slot;
+            float Phi;
+        };
+        float& Potential(RewardTerm term, uint32 slot)
+        {
+            for (PotentialSlot& potential : _potentials)
+                if (potential.Term == term && potential.Slot == slot)
+                    return potential.Phi;
+            _potentials.push_back({ term, slot, 0.0f });
+            return _potentials.back().Phi;
+        }
+
+        /// The (term, key) pairs AddOnce has paid this episode, and the potentials' last phi.
+        std::set<std::pair<uint8, uint64>> _paidOnce;
+        std::vector<PotentialSlot> _potentials;
         float _step = 0.0f;
         float _score = 0.0f;
         float _shaping = 1.0f;
