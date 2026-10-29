@@ -193,7 +193,13 @@ std::array<float, 3> Animus::Curriculum::FightTracker::PhiOf(uint32 seat, std::v
         float const weight = party && !me.Tank && !focus.IsEmpty() && _enemies[e].Guid == focus ? units.Focus : 1.0f;
         left += _enemies[e].Value * health[e] * weight;
     }
-    phi[KILL] = -units.Progress * left;
+    // In a party the progress is split among the party's seats (as the kills are shared), so the party's whole
+    // progress over a fight equals the enemies' value once, not once a seat (2026-10-29: shaping 2-3x the outcomes).
+    uint32 members = 0;
+    for (Seat const& other : seats)
+        members += other.Bot ? 1 : 0;
+    float const split = party && members ? 1.0f / float(members) : 1.0f;
+    phi[KILL] = -units.Progress * split * left;
     // The tank's hold: enemies on another seat while a fight is on.
     if (me.Tank && fighting)
     {

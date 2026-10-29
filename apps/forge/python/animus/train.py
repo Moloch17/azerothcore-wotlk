@@ -688,8 +688,10 @@ def no_director_chooser(choose, director_index: int, envs: int, agents: int):
 
 #: The "idle" eval arm (the reward structure's idle check, 2026-10-29): a null baseline that must score below 0.
 IDLE_ARM = "idle"
-#: A training-episode shaping_share (shaping over max(outcome, 1)) above this is warned on after an evaluation.
-MAX_TRAIN_SHAPING_SHARE = 0.5
+#: A training-episode shaping_share (shaping over max(outcome, 1)) above this is warned on after an evaluation. 1.0, not
+#: 0.5: the kill-progress potential telescopes to the enemies' value, so a solo won fight already sits at 0.5 (kill 1 +
+#: fight won 1 against progress 1); shaping larger than the outcomes is the warning sign.
+MAX_TRAIN_SHAPING_SHARE = 1.0
 
 
 def idle_chooser(choose, director_index: int | None):
