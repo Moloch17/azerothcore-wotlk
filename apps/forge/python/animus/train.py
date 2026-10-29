@@ -686,6 +686,41 @@ def no_director_chooser(choose, director_index: int, envs: int, agents: int):
     return chooser, (lambda env: rows[env])
 
 
+#: The "idle" eval arm (the reward structure's idle check, 2026-10-29): a null baseline that must score below 0.
+IDLE_ARM = "idle"
+#: A training-episode shaping_share (shaping over max(outcome, 1)) above this is warned on after an evaluation.
+MAX_TRAIN_SHAPING_SHARE = 0.5
+
+
+def idle_chooser(choose, director_index: int | None):
+    """The "idle" eval arm's chooser: every row but the director's held at its first legal action (the sim's mask; the
+    no-op where it is legal) with the heading and the look held, every decision, and every row scored. The reward
+    structure's null baseline (2026-10-29): a seat that does nothing must score below 0 -- not a scripted policy,
+    nothing is played."""
+
+    def chooser(step):
+        chosen = choose(step)
+        parts = list(chosen) if isinstance(chosen, tuple) else [chosen]
+        layout = np.asarray(step.layout)
+        seats = layout != director_index if director_index is not None else np.ones(layout.shape, dtype=bool)
+        first = np.argmax(np.asarray(host(step.mask)), axis=-1)
+        actions = np.asarray(parts[0]).copy()
+        actions[seats] = first[seats]
+        parts[0] = actions
+        if len(parts) > 2 and parts[2] is not None:
+            look = np.asarray(parts[2]).copy()
+            held = protocol.look_hold(look.shape[0], look.shape[1], look.shape[2])
+            look[seats] = held[seats]
+            parts[2] = look
+        if len(parts) > 3 and parts[3] is not None:
+            heading = np.asarray(parts[3]).copy()
+            heading[seats] = protocol.HEADING_HOLD
+            parts[3] = heading
+        return tuple(parts) if isinstance(chosen, tuple) else parts[0]
+
+    return chooser
+
+
 def make_trainer(config: TrainConfig, spec, inputs: TrainerInputs, ranks=None, device=None) -> MappoTrainer:
     """The stage's MappoTrainer. `device` overrides both devices."""
     if config.mappo.goal_chunk_rows == GOAL_CHUNK_AUTO:
@@ -1611,6 +1646,13 @@ class TrainingRun:
                   f" [learner/baseline]\n{format_summary(summary, baseline_summary, self.report)}", flush=True)
             if excluded := config.status.excluded_line():
                 print(excluded, flush=True)
+            # The reward structure's guard 2 (2026-10-29): the training episodes' shaping over their outcome (the
+            # last update's mean of shaping_share). A line, never a stop.
+            share = getattr(self, "train_shaping_share", None)
+            if share is not None and share > MAX_TRAIN_SHAPING_SHARE:
+                print(f"{config.run_name}: WARNING shaping_share {share:.3g} > {MAX_TRAIN_SHAPING_SHARE:g} on the "
+                      f"training episodes: shaping outweighs half the outcome (reward_shaping vs reward_outcome)",
+                      flush=True)
 
             if controller.unread_message:
                 print(f"{config.run_name}: WARNING {controller.unread_message}", flush=True)
@@ -1886,6 +1928,10 @@ class TrainingRun:
                     continue
                 choose, options["excluded"] = no_director_chooser(choose, director[0], self.spec.num_envs,
                                                                    self.spec.agents_per_env)
+            elif arm == IDLE_ARM:
+                # Every seat holding its no-op (the director, if any, as it plays): the reward structure's idle check.
+                director = self.inputs.director
+                choose = idle_chooser(choose, director[0] if director is not None else None)
             elif arm == GLOBAL_ARM:
                 # The sim told to route on its window plan alone (MODE_FLAG_NO_GLOBAL): the same seeds and trips, the
                 # route scalars and the labels from the plan round the body. A stage with no global route: skipped.
@@ -1952,6 +1998,11 @@ class TrainingRun:
             print(f"Arm {arm}: score {result.score:.4g} +/- {result.stderr:.2g} (all bots "
                   f"{(plain or {}).get('score', float('nan')):.4g}) over {result.episodes} episodes in "
                   f"{result.seconds:.0f} s" + (f"; {shown}" if shown else ""), flush=True)
+            if arm == IDLE_ARM:
+                # The reward structure's guard 3: doing nothing must cost. The margin is how far below 0 it stands.
+                verdict = "ok" if result.score < 0.0 else "FAILED: idle is not below 0, the stage pays for nothing"
+                print(f"Idle arm: score {result.score:.4g} (must be < 0; margin {-result.score:.4g}) -- {verdict}",
+                      flush=True)
 
     def eval_partners(self, arm: str = "with_partners", share: float = 1.0) -> Partners | None:
         """An arm's fixed partner set (cast.partners.eval_partners, else its stage and path members), argmax, its draws
@@ -2655,6 +2706,9 @@ class TrainingRun:
         if "entropy" in row:
             self.controller.observe_entropy(row["entropy"], self.rollout_allowed_actions)
 
+        # The reward structure's guard 2 reads the training episodes' shaping share at each evaluation.
+        if "episode_shaping_share" in row:
+            self.train_shaping_share = row["episode_shaping_share"]
         self.audit_reward(row)
         self.audit_progress(row)
         self.logger.log(self.update, row)

@@ -6,9 +6,10 @@
 # there now is line of sight in the view cone and memory; the seat's way to its fight is the route its own map plans
 # (a labels-only PointNav). A death rises at the entrance and walks back.
 #
-# Outcome (tier-scaled): Kill per creature, Survived with no death. Cost: Death, Hurt, the kill clock. Shaping (faded):
-# DamageDealt. Seeded from dm1_navigate by block name (the movement, the map, the sight list); the duel, pet and combat
-# blocks start fresh.
+# Paid by the reward structure (2026-10-29, .agents/plans/reward-structure/): Outcome (tier-scaled) Kill per creature
+# and FightWon per fight won; Cost Death, Hurt, the engaged and standing clocks; Shaping (faded) the kill-progress
+# potential. The idle arm (every seat holding its no-op) must score below 0. Seeded from dm1_navigate by block name
+# (the movement, the map, the sight list); the duel, pet and combat blocks start fresh.
 extends: dm1_navigate.yaml
 run_name: dm2_fight
 
@@ -25,10 +26,15 @@ potential:
 
 eval:
   episodes: 240
+  # The reward structure's idle check (2026-10-29): every seat holds its first legal action (the no-op) for the episode;
+  # it must score below 0. Inherited by the stages that extend this one.
+  arms:
+    idle: 8
   report: [won, survived, kills, kill_seconds, hurt_share, deaths, rejoins, rejoin_seconds, difficulty, at_top_rung,
-           target_in_view, selected_share, pulls, caster_pulls, start_walk, died,
-           reward_kill, reward_survived, reward_hurt, reward_death, reward_step_cost, reward_damage_dealt,
-           reward_potential, reward_repeat, reward_effort, reward_jitter]
+           target_in_view, selected_share, pulls, caster_pulls, start_walk, died, reward_kill, reward_hurt,
+           reward_death, reward_potential, reward_repeat, reward_effort, reward_jitter, reward_fight_won,
+           reward_pack_clear, reward_kill_progress, reward_engaged_clock, reward_standing_clock, reward_outcome,
+           reward_shaping, reward_cost, reward_noise, shaping_share, fights, fights_won]
 
 status:
   headline: [won, survived, kills, kill_seconds, hurt_share, deaths, rejoin_seconds, difficulty, at_top_rung,

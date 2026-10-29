@@ -48,12 +48,17 @@ def outcome_terms(stage: dict | None) -> tuple[str, ...]:
     return tuple(term for term, category in categories.items() if category in ("outcome", "cost"))
 
 
+#: The reward_* episode columns that are sums or readings over the terms, not terms: the reward structure's budget
+#: (2026-10-29: reward_outcome, reward_shaping, reward_cost, reward_noise) and the largest term's share and index.
+AGGREGATE_COLUMNS = ("outcome", "shaping", "cost", "noise", "top_share", "top_term")
+
+
 def reward_mix(row: dict) -> dict[str, float]:
-    """{term: mean earned an episode} from a metrics row's episode_reward_* columns."""
+    """{term: mean earned an episode} from a metrics row's episode_reward_* columns (AGGREGATE_COLUMNS left out)."""
     prefix = "episode_reward_"
     mix = {}
     for key, value in row.items():
-        if not key.startswith(prefix):
+        if not key.startswith(prefix) or key[len(prefix):] in AGGREGATE_COLUMNS:
             continue
         try:
             mix[key[len(prefix):]] = float(value)

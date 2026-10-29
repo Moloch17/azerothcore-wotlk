@@ -24,21 +24,22 @@ eval:
     no_memory: 8
     no_object_memory: 8
     no_director: 0
-  report: [order_done_share, order_focus_given, order_focus_done, order_focus_seconds,
-           order_pull_given, order_pull_done, order_pull_seconds, order_heal_given, order_heal_done,
-           order_heal_seconds, order_follow_given, order_follow_done, order_follow_seconds, order_loot_given,
-           order_loot_done, order_loot_seconds, order_use_given, order_use_done, order_use_seconds, order_rest_given,
-           order_rest_done, order_rest_seconds, order_control_given, order_control_done, order_control_seconds,
-           order_interrupt_given, order_interrupt_done, order_interrupt_seconds, order_stay_given, order_stay_done,
-           order_stay_seconds, order_taunt_given, order_taunt_done, order_taunt_seconds, order_assist_given,
-           order_assist_done, order_assist_seconds, director_orders, director_orders_done, director_orders_failed,
-           director_orders_per_minute, won, drill_party, drill_packs, drill_camp, hold_share, kept_share,
-           focus_share, pulled_seconds, packs_cleared, party_deaths, wipes, interrupts, kill_orders,
-           controlled_seconds, cc_broken, fire_taken, roles_rung, at_top_rung, threat_on_teammates, wing_is_leg,
-           wing_leg_arrived, wing_gates_opened, level, died, reward_order_done, reward_order_speed,
-           reward_order_failed, reward_clear, reward_drill_hold, reward_drill_keep, reward_drill_focus,
-           reward_interrupt_landed, reward_kill_order, reward_controlled, reward_survived, reward_death,
-           reward_away, reward_step_cost, reward_damage_dealt]
+  report: [order_done_share, order_focus_given, order_focus_done, order_focus_seconds, order_pull_given,
+           order_pull_done, order_pull_seconds, order_heal_given, order_heal_done, order_heal_seconds,
+           order_follow_given, order_follow_done, order_follow_seconds, order_loot_given, order_loot_done,
+           order_loot_seconds, order_use_given, order_use_done, order_use_seconds, order_rest_given, order_rest_done,
+           order_rest_seconds, order_control_given, order_control_done, order_control_seconds, order_interrupt_given,
+           order_interrupt_done, order_interrupt_seconds, order_stay_given, order_stay_done, order_stay_seconds,
+           order_taunt_given, order_taunt_done, order_taunt_seconds, order_assist_given, order_assist_done,
+           order_assist_seconds, director_orders, director_orders_done, director_orders_failed,
+           director_orders_per_minute, won, drill_party, drill_packs, drill_camp, hold_share, kept_share, focus_share,
+           pulled_seconds, packs_cleared, party_deaths, wipes, interrupts, kill_orders, controlled_seconds, cc_broken,
+           fire_taken, roles_rung, at_top_rung, threat_on_teammates, wing_is_leg, wing_leg_arrived, wing_gates_opened,
+           level, died, reward_order_done, reward_order_speed, reward_order_failed, reward_clear,
+           reward_interrupt_landed, reward_kill_order, reward_controlled, reward_death, reward_away, reward_kill,
+           reward_fight_won, reward_pack_clear, reward_kill_progress, reward_engaged_clock, reward_standing_clock,
+           reward_hold_potential, reward_keep_potential, reward_outcome, reward_shaping, reward_cost, reward_noise,
+           shaping_share, fights, fights_won]
 
 status:
   headline: [order_done_share, order_focus_done, order_pull_done, order_heal_done, order_follow_done,

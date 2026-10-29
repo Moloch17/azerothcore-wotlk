@@ -13,18 +13,18 @@ total_env_steps: 80000000   # 2026-10-29: good enough to move on, not perfect (t
 
 eval:
   episodes: 384
-  report: [won, won_hold, won_keep, won_focus, won_pull, drill_hold, drill_keep, drill_focus, drill_pull,
-           hold_share, kept_share, low_mana_seconds, focus_share, pulled_seconds, clean_share, packs_cleared,
-           clean_pulls, extra_pulls, pulls, party_deaths, wipes, rises, rejoins, rejoin_seconds, rejoined,
-           is_leader, leader_role, pulls_started, out_of_turn_pulls, kept_with_leader_share, leader_tank,
-           leader_healer, leader_damage, won_leader_tank, won_leader_healer, won_leader_damage, kept_with_leader_tank,
-           kept_with_leader_healer, kept_with_leader_damage, out_of_turn_leader_tank, out_of_turn_leader_healer,
-           out_of_turn_leader_damage,
+  report: [won, won_hold, won_keep, won_focus, won_pull, drill_hold, drill_keep, drill_focus, drill_pull, hold_share,
+           kept_share, low_mana_seconds, focus_share, pulled_seconds, clean_share, packs_cleared, clean_pulls,
+           extra_pulls, pulls, party_deaths, wipes, rises, rejoins, rejoin_seconds, rejoined, is_leader, leader_role,
+           pulls_started, out_of_turn_pulls, kept_with_leader_share, leader_tank, leader_healer, leader_damage,
+           won_leader_tank, won_leader_healer, won_leader_damage, kept_with_leader_tank, kept_with_leader_healer,
+           kept_with_leader_damage, out_of_turn_leader_tank, out_of_turn_leader_healer, out_of_turn_leader_damage,
            roles_rung, difficulty, at_top_rung, tank_hold_share, group_kept_share, tank_target_share, teammates_died,
-           died, reward_clear, reward_drill_hold, reward_drill_keep, reward_drill_focus, reward_pull_clean,
-           reward_pull_extra, reward_out_of_turn_pull, reward_leader_away, reward_survived, reward_death, reward_away,
-           reward_step_cost, reward_damage_dealt, reward_teammate_death, reward_potential, reward_repeat,
-           reward_effort, reward_jitter]
+           died, reward_pull_extra, reward_out_of_turn_pull, reward_leader_away, reward_death, reward_away,
+           reward_teammate_death, reward_potential, reward_repeat, reward_effort, reward_jitter, reward_kill,
+           reward_fight_won, reward_pack_clear, reward_kill_progress, reward_engaged_clock, reward_standing_clock,
+           reward_hold_potential, reward_keep_potential, reward_outcome, reward_shaping, reward_cost, reward_noise,
+           shaping_share, fights, fights_won]
   arms:
     with_partners: 64
 

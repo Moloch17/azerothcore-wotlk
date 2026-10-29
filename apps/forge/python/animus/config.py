@@ -489,7 +489,7 @@ MAX_HINDSIGHT_LOOKBACK = 256
 #: The evaluation arms beside the plain one ("all bots"): eval.arms names them (dungeon-curriculum I7).
 EVAL_ARMS = ("with_human", "with_partners", "no_flag", "no_camera", "no_compass", "no_map", "no_memory", "no_goal",
              "random_goal", "random_cell", "no_plan", "no_searched", "no_coverage", "no_party", "no_recall",
-             "no_planner", "no_school", "no_shared_memory", "no_object_memory", "no_global", "no_director")
+             "no_planner", "no_school", "no_shared_memory", "no_object_memory", "no_global", "no_director", "idle")
 
 
 @dataclass
