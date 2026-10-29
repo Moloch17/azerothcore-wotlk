@@ -401,6 +401,9 @@ namespace Animus::Curriculum
         void SetNoGlobal(bool off) override;
         /// The encounters arena `arena` uses, in build order and in reward order.
         [[nodiscard]] std::vector<Encounter*> const& ActiveRewardOrder(Env const& env) const;
+        /// The first of the episode's encounters whose fights the fight tracker pays (Encounter::TracksFights), or
+        /// null: the arena has no tracked fights.
+        [[nodiscard]] Encounter const* FightEncounter(Env const& env) const;
         /// Create and place seat `seat`'s next character (its layout is set). `map` is null for the env's first bot.
         Player* BuildSeat(Env& env, uint32 seat, Map*& map, uint8 level, Position const& start);
         /// The seat's current character made ready for a new episode in place of a rebuild (Characters.ReuseEpisodes):

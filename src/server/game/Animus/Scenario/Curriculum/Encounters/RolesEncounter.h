@@ -59,9 +59,12 @@ namespace Animus::Curriculum
     ///   tank;
     /// - **Pull** (pull): a camp of packs closer each rung; PullClean for a pack cleared with no other pack in the
     ///   fight, PullExtra for each pack drawn in beside another (the puller in full, the others Roles.PullOthers).
-    /// Every seat: Clear per pack the party clears and Survived with no death of its own (Outcome, times the rung's w);
-    /// Death, Away and the Clock (Cost); DamageDealt (Shaping, faded). PartyEncounter's role shaping stays for every
-    /// seat but the drilled one, whose lesson is this encounter's.
+    /// **Paid since the reward structure** (2026-10-29, Reward.* units): the fight tracker's (TracksFights) Kill,
+    /// FightWon, PackClear and the kill, hold and keep potentials for every seat -- the drills' lessons are now the
+    /// role potentials and their measures (held, focus, kept, clean) only tallies for the Won rule and the columns;
+    /// DrillHold, DrillKeep, DrillFocus, PullClean, Clear, Survived, DamageDealt and the StepCost clock are no longer
+    /// paid. Wins times the rung's w through Add's tier, losses over it: PullExtra, Death (Reward.DeathParty),
+    /// PartyWipe (Reward.WipeParty), FireHurt, CCBroken; InterruptLanded, KillOrder and Controlled stay; Away.
     ///
     /// **Death** (I4, EntranceRespawn): never the end. A seat that dies is out Respawn.DelayMs, then alive at the
     /// entrance and walks back to the party; it has rejoined once within Respawn.RejoinYards of the living party. A
@@ -83,6 +86,8 @@ namespace Animus::Curriculum
         [[nodiscard]] bool RouteGoal(Env const& env, uint32 seat, Position& goal) const override;
         void BeforeRewards(Env& env) override;
         void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
+        [[nodiscard]] bool TracksFights() const override { return true; }
+        [[nodiscard]] float FightTier(Env const& env) const override;
         /// An interrupt the seat sent: paid when the cast it was aimed at stops (the party curriculum's Interrupt).
         void OnSeatAction(Env& env, uint32 seat, SeatActionResult const& result) override;
         void WriteState(Env const& env, float* state) const override;
@@ -129,7 +134,6 @@ namespace Animus::Curriculum
             std::vector<Pack> Packs;            // the pack in front first, then the ones standing further on
             std::array<SeatRoles, GROUP_SEATS> Seats{};
             bool AllDown = false;               // the whole party dead at the last decision
-            float HeldPaidThisFight = 0.0f;     // DrillHold earned since the last pull (capped at Roles.Clear)
 
             // This decision.
             uint32 NewClears = 0;

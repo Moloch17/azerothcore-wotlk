@@ -566,13 +566,55 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // Repeats, self-healing, goals and ground effects are paid in every stage, by the scenario rather than an
     // encounter, so they are listed here: a term no encounter claims has no column, and a charge with no column is
     // invisible in exactly the run where it matters.
+    // The reward structure's (2026-10-29): the two clocks, every stage but dm1's (whose arena still pays
+    // CombatClock), and the fight tracker's terms, wherever an encounter has its fights tracked.
     for (RewardTerm term : { RewardTerm::Repeat, RewardTerm::Jitter, RewardTerm::Aimless, RewardTerm::Effort,
         RewardTerm::Fidget, RewardTerm::SelfHealing, RewardTerm::GoalReached,
-        RewardTerm::GoalSwitch, RewardTerm::Hazard, RewardTerm::HealingMana, RewardTerm::CombatClock })
-        _info.Add("reward_" + std::string(RewardTermName(term)), [this, term](Env const& env, uint32 seat)
+        RewardTerm::GoalSwitch, RewardTerm::Hazard, RewardTerm::HealingMana, RewardTerm::CombatClock,
+        RewardTerm::StandingClock, RewardTerm::EngagedClock, RewardTerm::Kill, RewardTerm::FightWon,
+        RewardTerm::PackClear, RewardTerm::KillProgress, RewardTerm::HoldPotential, RewardTerm::KeepPotential })
+    {
+        std::string name = "reward_" + std::string(RewardTermName(term));
+        if (_info.Contains(name))
+            continue;
+        _info.Add(std::move(name), [this, term](Env const& env, uint32 seat)
         {
             return Data(env).Seats[seat].Rewards.Episode(term);
         });
+    }
+    // The reward structure's budget (its guard 1): the episode's terms summed by category as paid -- outcome, shaping
+    // (Shaping, Aid and Exploring: everything outside the score), cost (the Cost terms but the noise prices) and noise
+    // (PricesNoise; cost + noise is every Cost term) -- and shaping_share, shaping over max(outcome, 1), which the
+    // learner warns on above 0.5. And the fight tracker's fights, and those won.
+    _info.Add("reward_outcome", [this](Env const& env, uint32 seat)
+    {
+        return Data(env).Seats[seat].Rewards.EpisodeOf(RewardCategory::Outcome);
+    });
+    auto const shapingOf = [](RewardLedger const& ledger)
+    {
+        return ledger.EpisodeOf(RewardCategory::Shaping) + ledger.EpisodeOf(RewardCategory::Aid)
+            + ledger.EpisodeOf(RewardCategory::Exploring);
+    };
+    _info.Add("reward_shaping", [this, shapingOf](Env const& env, uint32 seat)
+    {
+        return shapingOf(Data(env).Seats[seat].Rewards);
+    });
+    _info.Add("reward_cost", [this](Env const& env, uint32 seat)
+    {
+        RewardLedger const& ledger = Data(env).Seats[seat].Rewards;
+        return ledger.EpisodeOf(RewardCategory::Cost) - ledger.EpisodeNoise();
+    });
+    _info.Add("reward_noise", [this](Env const& env, uint32 seat)
+    {
+        return Data(env).Seats[seat].Rewards.EpisodeNoise();
+    });
+    _info.Add("shaping_share", [this, shapingOf](Env const& env, uint32 seat)
+    {
+        RewardLedger const& ledger = Data(env).Seats[seat].Rewards;
+        return shapingOf(ledger) / std::max(1.0f, ledger.EpisodeOf(RewardCategory::Outcome));
+    });
+    _info.Add("fights", [this](Env const& env, uint32) { return float(Data(env).Fights.Fights()); });
+    _info.Add("fights_won", [this](Env const& env, uint32) { return float(Data(env).Fights.FightsWon()); });
     // The largest term's share of a seat's episode reward, by magnitude, and which term (RewardTerm's index): a
     // reward-hacking detector (technique 2, 2026-10-27) -- a run whose return is mostly one term is being farmed.
     auto const top = [this](Env const& env, uint32 seat)
@@ -727,6 +769,14 @@ std::vector<Animus::Curriculum::Encounter*> const& Animus::Curriculum::StageScen
     static std::vector<Encounter*> const none;
     uint32 const arena = Data(env).Arena;
     return arena < _arenaRewardOrder.size() ? _arenaRewardOrder[arena] : none;
+}
+
+Animus::Curriculum::Encounter const* Animus::Curriculum::StageScenario::FightEncounter(Env const& env) const
+{
+    for (Encounter const* encounter : ActiveRewardOrder(env))
+        if (encounter->TracksFights())
+            return encounter;
+    return nullptr;
 }
 
 uint32 Animus::Curriculum::StageScenario::TrainableArenaCount() const
@@ -2252,6 +2302,7 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     // A new episode starts from clean totals, in every encounter: those this arena does not use report 0.
     for (SeatState& seat : data.Seats)
         seat.ResetEpisode();
+    data.Fights.ResetEpisode();
     // Each seat's camera draws the size it casts this episode's frames at (AnimusForge.Vision.RenderSizes), from the
     // world thread's random numbers as the rest of the reset does, by the sizes' weights (every size alike in a stage
     // with EvenRenderSizes); one size draws nothing, and a stage without a camera draws nothing at all, so its random
@@ -5791,6 +5842,32 @@ void Animus::Curriculum::StageScenario::Reward(Env& env, float* reward)
     if (_castOwner)
         Data(env).Seats[OwnerAgent()].DecisionTargetKnown = false;
 
+    // The fight tracker (the reward structure, FightTracker): once a decision, after the encounters' BeforeRewards
+    // (the packs they cleared) and before any seat is paid. A party's healer's damage weighs nothing in a kill's
+    // shares and its tank's Party.TankDamageShare, as the damage pay they replace did.
+    if (Encounter const* tracking = FightEncounter(env))
+    {
+        EnvState& data = Data(env);
+        bool const party = data.ActiveSeats > 1;
+        std::vector<FightTracker::Seat> seats(_seatCount);
+        for (uint32 index = 0; index < _seatCount; ++index)
+        {
+            SeatState const& state = data.Seats[index];
+            Player* bot = state.L ? env.FindBot(index) : nullptr;
+            if (!bot || !bot->IsInWorld())
+                continue;
+            FightTracker::Seat& seat = seats[index];
+            seat.Bot = bot;
+            seat.Healer = party && (GroupHealer(env, state) || state.DungeonRole == DUNGEON_HEALER);
+            seat.Tank = party && !seat.Healer && (GroupTank(env, state) || IsPartyTank(state));
+            seat.DamageWeight = seat.Healer ? 0.0f : seat.Tank ? _tuning.Party.TankDamageShare : 1.0f;
+        }
+        data.Fights.Update(env, seats, [tracking, &env](Unit const* enemy)
+        {
+            return tracking->KillValue(env, enemy);
+        }, _tuning.Reward);
+    }
+
     for (uint32 seat = 0; seat < _seatCount; ++seat)
         reward[seat] = SeatReward(env, seat);
 
@@ -6028,6 +6105,10 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
     // Party.TankDamageShare. The group's kills, clears and wipes are still theirs, as every seat's are.
     seat.Rewards.Scale(RewardTerm::DamageDealt, GroupHealer(env, seat) ? 0.0f
         : GroupTank(env, seat) ? _tuning.Party.TankDamageShare : 1.0f);
+    // The same rule on the kill-progress potential that replaced the damage pay (the reward structure, 2026-10-29):
+    // a party healer's none of it, a tank's a share. Its kill shares weigh the same (StageScenario::Reward).
+    seat.Rewards.Scale(RewardTerm::KillProgress, GroupHealer(env, seat) ? 0.0f
+        : GroupTank(env, seat) ? _tuning.Party.TankDamageShare : 1.0f);
 
     // Before any encounter's reward, which read them: the step's damage dealt and taken (the pulls' and duel's damage
     // taken, the owner's tank refund), who this seat is actually fighting (asked of the encounters once a decision
@@ -6091,15 +6172,29 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
 
     LogDeath(env, seat, bot);
 
-    // The combat clock (Output.Clock): every second an engaged enemy lives costs every seat, dead or alive.
-    if (_tuning.Output.Clock > 0.0f)
+    // The clocks. dm1's PointNav arena keeps what it had (Output.Clock as CombatClock; its rewards are out of the
+    // reward structure). Everywhere else the reward structure's two (2026-10-29), never noise so no cost ladder takes
+    // them: one engaged clock (Reward.Clock, every second an engaged enemy lives, every seat dead or alive: what
+    // CombatClock and the encounters' StepCost clocks were) and the standing clock (Reward.StandingClock, every
+    // decision, every seat), so a seat that does nothing never scores zero.
+    if (Arena(env).Against == Opposition::PointNav)
     {
-        if (Data(env).StepEngaged)
+        if (_tuning.Output.Clock > 0.0f && Data(env).StepEngaged)
             seat.Rewards.Add(RewardTerm::CombatClock, -_tuning.Output.Clock * float(StepMs(env)) / 1000.0f);
+    }
+    else
+    {
+        if (Data(env).StepEngaged || Data(env).Fights.Fighting())
+            seat.Rewards.Add(RewardTerm::EngagedClock, -_tuning.Reward.Clock * float(StepMs(env)) / 1000.0f);
+        seat.Rewards.Add(RewardTerm::StandingClock, -_tuning.Reward.StandingClock);
     }
 
     for (Encounter* encounter : ActiveRewardOrder(env))
         encounter->Reward(env, seatIndex, bot, seat.Rewards);
+    // The fight tracker's pay (StageScenario::Reward updated it): kills, fights won, packs, potentials; wins at the
+    // tracking encounter's rung factor.
+    if (Encounter const* tracking = FightEncounter(env))
+        Data(env).Fights.Pay(seatIndex, seat.Rewards, tracking->FightTier(env), _tuning.Reward);
 
     seat.Rewards.Add(RewardTerm::Repeat, -_tuning.Actions.Repeat * float(seat.StepRepeats));
     seat.StepRepeats = 0;

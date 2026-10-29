@@ -62,9 +62,12 @@ namespace Animus::Curriculum
     /// every second of the walk back beyond Combat.AwayYards of the fight, is charged (Away). The episode ends on its
     /// clock alone.
     ///
-    /// **Outcome** (times the tier's w): Kill, Clear, Survived; InterruptLanded. **Cost**, at full price from the
-    /// first step: Away, Death and AllyDeath (over w), Hurt, FireHurt, ExtraPull, Clock (StepCost: per second a
-    /// pull's creature lives engaged). **Shaping**: DamageDealt (Combat.Damage), faded.
+    /// **Paid** (the reward structure, 2026-10-29, Reward.* units): the fight tracker's (TracksFights) Kill,
+    /// FightWon, PackClear (C2, C3: a pack's last member dead) and the kill-progress potential, wins times the tier's
+    /// w; InterruptLanded (times w). **Cost**, at full price from the first step: Away, Death (Reward.DeathSolo) and
+    /// the guard's ally's death (TeammateDeath), both over w, Hurt, FireHurt, ExtraPull; the engaged clock is
+    /// StageScenario's. Kill, Clear, Survived, DamageDealt and the StepCost clock are no longer paid here (Combat.Kill,
+    /// Clear, Survived, Damage, Clock and the Combat.* prices are unread).
     class CombatEncounter final : public Encounter
     {
     public:
@@ -82,6 +85,8 @@ namespace Animus::Curriculum
         [[nodiscard]] bool RouteGoal(Env const& env, uint32 seat, Position& goal) const override;
         void BeforeRewards(Env& env) override;
         void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
+        [[nodiscard]] bool TracksFights() const override { return true; }
+        [[nodiscard]] float FightTier(Env const& env) const override;
         void WriteState(Env const& env, float* state) const override;
         [[nodiscard]] bool IsTerminal(Env const& env) const override;
         void Teardown(Env& env) override;
@@ -143,8 +148,6 @@ namespace Animus::Curriculum
             uint32 Interrupts = 0;
             uint32 Deaths = 0;
             float AwaySeconds = 0.0f;
-            float InterruptPaid = 0.0f;         // InterruptLanded paid this episode ...
-            float OutcomePaid = 0.0f;           // ... against Kill and Clear paid (the watch on its scale)
             uint32 AllyDeaths = 0;
             uint32 HazardPulls = 0;
             uint32 LinkedPulls = 0;

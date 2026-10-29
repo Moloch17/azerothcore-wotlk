@@ -43,12 +43,16 @@ namespace Animus::Curriculum
         /// A stance, form, presence, aspect, aura, seal, armor or pet stance holds this long before another change
         /// of its kind: warrior tanks changed stance 22 times a fight, hunters their aspect 12.
         uint32 ModeLockMs = 5000;
+        /// **The noise prices** (Repeat, Jitter, Aimless and its causes, ModeSwitch, Effort, SupplySpent, Fidget):
+        /// halved by the reward structure (2026-10-29) so they stay small beside its units -- never capped, a cap makes
+        /// spam free once spent; the episode column reward_noise watches them.
+        ///
         /// Pressing the same action over and over. Pacing caps how often an action can be pressed, not how many
         /// times in a row: stage1_duel's warlocks gave their pet 93 orders an episode, a second apart, and the
         /// pet dealt 1% of their damage. Each press of an action counts the presses of that same action within
         /// the last RepeatWindowMs; past the free ones, each costs Repeat. How often the seat acts overall is not
         /// charged, only the same button again, and movement orders never are: steering is always free.
-        float Repeat = 0.03f;
+        float Repeat = 0.015f;
         uint32 RepeatWindowMs = 10000;
         uint32 RepeatFree = 3;              // presses of one action within the window that cost nothing
         /// Steering that does not commit, per quarter turn a turn, a pitch or a bearing takes back of the one
@@ -61,7 +65,7 @@ namespace Animus::Curriculum
         /// outweighs it.
         /// Raised from 0.02 after the next-run trial, where bearing flips ran twice the last run's and did not
         /// fall over 20M steps (2026-09-30).
-        float Jitter = 0.05f;
+        float Jitter = 0.025f;
         /// **Presses with intent** (StageScenario::JudgePress). Every spell and movement press is judged against
         /// the goal the seat holds: it serves it (damage on the focus under Fight, a heal on someone else under
         /// Protect, a step that closes on the wanted range under Position), is neutral (an interrupt, a
@@ -69,55 +73,55 @@ namespace Animus::Curriculum
         /// the goal the seat itself chose. Aimless presses cost Aimless. In-game testing of the second run's
         /// models found ~180 actions a minute with 18-21% of decisions serving the chosen goal (2026-09-28):
         /// abilities pressed without intent. The goal is the reason for a press; this is what makes it one.
-        float Aimless = 0.02f;
+        float Aimless = 0.01f;
         /// Aimless by its cause (StageState's AimlessCause), each its own price so the trial can raise one
         /// without the rest. The ones in-game testing of the four-phase models saw most start higher: a
         /// companion drinking at full mana, laying traps with nothing near, dancing between aspects, and
         /// moving about a fight it could stand and shoot in (2026-09-29); switching targets and sending the
         /// pet at enemies the goal does not name (6.5 times over-represented in the aimless-heavy episodes).
-        float AimlessOffFocus = 0.02f;
-        float AimlessAoeMissed = 0.02f;
-        float AimlessInRangeCast = 0.02f;
-        float AimlessUnprovokedHarm = 0.02f;
-        float AimlessHelpOffGoal = 0.02f;
-        float AimlessStepAway = 0.02f;
-        float AimlessTargetSwitch = 0.04f;
-        float AimlessPetOffGoal = 0.04f;
-        float AimlessConsumeNotNeeded = 0.03f;
-        float AimlessTrapNoEnemy = 0.03f;
-        float AimlessModeFlip = 0.03f;
-        float AimlessModeReverse = 0.06f;
-        float AimlessNeedlessMove = 0.02f;
+        float AimlessOffFocus = 0.01f;
+        float AimlessAoeMissed = 0.01f;
+        float AimlessInRangeCast = 0.01f;
+        float AimlessUnprovokedHarm = 0.01f;
+        float AimlessHelpOffGoal = 0.01f;
+        float AimlessStepAway = 0.01f;
+        float AimlessTargetSwitch = 0.02f;
+        float AimlessPetOffGoal = 0.02f;
+        float AimlessConsumeNotNeeded = 0.015f;
+        float AimlessTrapNoEnemy = 0.015f;
+        float AimlessModeFlip = 0.015f;
+        float AimlessModeReverse = 0.03f;
+        float AimlessNeedlessMove = 0.01f;
         /// A taunt from a healer or damage dealer beside a living tank (holy paladins taunted four times a fight
         /// from the healer's seat, 2026-10-03). At 0.04 Hand of Reckoning from the healer's seat rose through
         /// stage6, 3.3 to 4.1 a fight between 20M and 62M steps, while Righteous Fury at the same price halved.
-        float AimlessTauntOffRole = 0.15f;
+        float AimlessTauntOffRole = 0.075f;
         /// A tank's stance, form, aura or presence from a seat that is not the tank, beside a living one (holy
         /// paladins took up Righteous Fury three and a half times a fight from the healer's seat, 2026-10-03).
-        float AimlessTankModeOffRole = 0.04f;
+        float AimlessTankModeOffRole = 0.02f;
         /// A press that failed for something the seat controls: facing away (or not behind), out of range or too
         /// close, out of sight, a cast time pressed on the move, short of power. Offered rather than masked, so
         /// the seat learns to put each right before it presses (2026-10-04).
-        float AimlessCastFailed = 0.02f;
+        float AimlessCastFailed = 0.01f;
         /// A sight block press the world refused (dungeon-curriculum I1, EntityActions::Refusal): an entity gone or
         /// out of reach, a thing the press does not take, no key item, a cast refused. Offered, never masked: a
         /// press on a remembered entity is the world's to judge.
-        float AimlessActRefused = 0.02f;
+        float AimlessActRefused = 0.01f;
         /// Every aspect, stance, form or presence changed, justified or not: a change has to be worth something.
-        float ModeSwitch = 0.01f;
+        float ModeSwitch = 0.005f;
         /// Every food or drink consumed: a supply spent at full health is gone when it is needed.
-        float SupplySpent = 0.02f;
+        float SupplySpent = 0.01f;
         /// Resource at or above which eating (health) or drinking (mana) is ConsumeNotNeeded.
         float ConsumeFullPct = 85.0f;
         /// A small price on every press but the no-op, a tenth of an aimless one: when nothing needs doing,
         /// doing nothing wins. A held bearing keeps walking and a cast keeps casting without another press. Raised
         /// from 0.002 after the next-run trial (2026-09-30): with the per-cause prices, combat APM still ended at
         /// 99 in the gauntlet and 89 in the pack, against a band of 30-70.
-        float Effort = 0.004f;
+        float Effort = 0.002f;
         /// In a fight, per second spent moving while already at the range the spec wants, with nothing on the
         /// ground to step out of: the shuffle that reads as a bot. Moving to reach range, to dodge, or out of a
         /// fight is untouched.
-        float Fidget = 0.01f;
+        float Fidget = 0.005f;
         /// How long Fidget's and NeedlessMove's conditions must hold before they are charged (ms): a seat that
         /// runs into the band it wants and stops within it is not fidgeting, and a range that flickers at its
         /// edge is not charged on every flicker (movement-smooth C).

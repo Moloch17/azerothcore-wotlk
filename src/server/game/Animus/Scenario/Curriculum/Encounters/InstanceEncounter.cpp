@@ -161,9 +161,18 @@ CreatureData const* Animus::Curriculum::InstanceEncounter::FindSpawn(BossRow con
 
 std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::InstanceEncounter::RewardTerms() const
 {
-    return { RewardTerm::StepCost, RewardTerm::Kill, RewardTerm::Death, RewardTerm::Timeout, RewardTerm::Threat,
+    return { RewardTerm::Kill, RewardTerm::FightWon, RewardTerm::KillProgress, RewardTerm::HoldPotential,
+        RewardTerm::KeepPotential, RewardTerm::Death, RewardTerm::PartyWipe, RewardTerm::Timeout, RewardTerm::Threat,
         RewardTerm::Clear, RewardTerm::ReadyPull, RewardTerm::Idle, RewardTerm::Lost, RewardTerm::Away,
         RewardTerm::OffLine, RewardTerm::GateOpened };
+}
+
+float Animus::Curriculum::InstanceEncounter::KillValue(Env const& env, Unit const* enemy) const
+{
+    // The run's last boss; anything else by its rank (a dungeon boss on the way is a mid-boss).
+    EnvInstance const& fight = _envs[env.Index];
+    return enemy && !fight.Boss.IsEmpty() && enemy->GetGUID() == fight.Boss ? _scenario.Tuning().Reward.KillBoss
+        : -1.0f;
 }
 
 void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
@@ -2192,8 +2201,8 @@ void Animus::Curriculum::InstanceEncounter::Reward(Env& env, uint32 seatIndex, P
     float const seconds = float(_scenario.StepMs(env)) / 1000.0f;
     if (env.EpisodeElapsedMs > fight.ProgressMs + tuning.WingStallGraceMs)
         ledger.Add(RewardTerm::Idle, -tuning.WingStall * (tankSeat ? 1.0f : tuning.WingStallOthers) * seconds);
-    // The clock (Instance.WingClock): a run that clears sooner is better, at its full price from the first step.
-    ledger.Add(RewardTerm::StepCost, -tuning.WingClock * seconds);
+    // The clock is the reward structure's (StageScenario: the engaged and standing clocks); Instance.WingClock is no
+    // longer paid (2026-10-29).
     // The party's rest discipline -- pull, fight, rest, ready, next: every seat paid for a fight started with every
     // living member ready, at most once a run (ReadyPull, an Outcome; it was the tank's Threat, Shaping).
     uint32 const ready = std::min(fight.ReadyEngages, READY_PULLS_PAID);
@@ -2239,22 +2248,20 @@ void Animus::Curriculum::InstanceEncounter::Reward(Env& env, uint32 seatIndex, P
         ledger.Add(RewardTerm::GateOpened, _scenario.Tuning().Director.GateOpened
             * float(fight.GatesOpened - paid.GatesPaid), tierScale);
     paid.GatesPaid = fight.GatesOpened;
-    if (bot && bot->IsAlive())
-    {
-        ledger.Add(RewardTerm::Kill, tuning.WingTrashKill * float(fight.TrashKills - paid.KillsPaid), tierScale);
-        ledger.Add(RewardTerm::Kill, tuning.WingMidBoss * float(fight.BossKills - paid.BossKillsPaid), tierScale);
-    }
-    paid.KillsPaid = fight.TrashKills;
-    paid.BossKillsPaid = fight.BossKills;
+    // The kills -- trash by rank, a dungeon boss on the way, the last boss -- are the fight tracker's, shared by
+    // damage with the party's share (the reward structure, 2026-10-29: Instance.WingTrashKill, WingMidBoss and
+    // WingBoss are no longer read). A death and a wipe at the table's party prices (Instance.WingDeath, WingWipe
+    // before; a wipe is PartyWipe now, Death before).
+    RewardUnits const& units = _scenario.Tuning().Reward;
     if (bot && !bot->IsAlive() && !paid.DeathPaid)
     {
         paid.DeathPaid = true;
         ++paid.Deaths;
-        ledger.Add(RewardTerm::Death, -tuning.WingDeath, 1.0f / tierScale);
+        ledger.Add(RewardTerm::Death, -units.DeathParty, 1.0f / tierScale);
     }
     if (fight.Wipes > paid.WipesPaid)
     {
-        ledger.Add(RewardTerm::Death, -tuning.WingWipe * float(fight.Wipes - paid.WipesPaid), 1.0f / tierScale);
+        ledger.Add(RewardTerm::PartyWipe, -units.WipeParty * float(fight.Wipes - paid.WipesPaid), 1.0f / tierScale);
         paid.WipesPaid = fight.Wipes;
     }
 
@@ -2273,8 +2280,8 @@ void Animus::Curriculum::InstanceEncounter::Reward(Env& env, uint32 seatIndex, P
     }
     if (fight.BossDead)
     {
-        ledger.Add(RewardTerm::Kill, tuning.WingBoss, tierScale);
-        // The full clear (D2, D3: every pull and side boss on the way), times the tier scale.
+        // The boss's kill is the fight tracker's (Reward.KillBoss, KillValue). The full clear (D2, D3: every pull and
+        // side boss on the way), times the tier scale.
         if (FullClear(fight) && !paid.FullClearPaid)
         {
             paid.FullClearPaid = true;

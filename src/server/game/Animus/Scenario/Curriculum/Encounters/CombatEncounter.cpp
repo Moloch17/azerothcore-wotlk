@@ -59,9 +59,14 @@ Animus::Curriculum::CombatEncounter::CombatEncounter(StageScenario& scenario, ui
 
 std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::CombatEncounter::RewardTerms() const
 {
-    return { RewardTerm::Kill, RewardTerm::Clear, RewardTerm::Survived, RewardTerm::InterruptLanded,
-        RewardTerm::Away, RewardTerm::Death, RewardTerm::TeammateDeath, RewardTerm::Hurt, RewardTerm::FireHurt,
-        RewardTerm::PullExtra, RewardTerm::StepCost, RewardTerm::DamageDealt };
+    return { RewardTerm::Kill, RewardTerm::FightWon, RewardTerm::PackClear, RewardTerm::KillProgress,
+        RewardTerm::InterruptLanded, RewardTerm::Away, RewardTerm::Death, RewardTerm::TeammateDeath, RewardTerm::Hurt,
+        RewardTerm::FireHurt, RewardTerm::PullExtra };
+}
+
+float Animus::Curriculum::CombatEncounter::FightTier(Env const& env) const
+{
+    return Draw::TierWeight(_scenario.Tuning().Difficulty.TierScale, _envs[env.Index].Tier);
 }
 
 Animus::Curriculum::CombatDrill Animus::Curriculum::CombatEncounter::Drill(Env const& env) const
@@ -94,13 +99,21 @@ void Animus::Curriculum::CombatEncounter::AddEpisodeInfo(EpisodeInfoTable& table
     table.Add("rejoined", of([](EnvCombat const& c) { return c.Clock.Rises ? c.Clock.RejoinedShare() : 0.0f; }));
     table.Add("dead_seconds", of([](EnvCombat const& c) { return float(c.Clock.OutMsTotal) / 1000.0f; }));
     table.Add("away_seconds", of([](EnvCombat const& c) { return c.AwaySeconds; }));
-    // The watch on InterruptLanded's scale (C2): what interrupts earned over what kills and clears earned. Per event on
-    // outcome_paid, so the evaluation's mean is the ratio of the sums; to be scaled down if it reads above ~0.3.
-    table.Add("outcome_paid", of([](EnvCombat const& c) { return c.OutcomePaid; }));
-    table.Add("interrupt_earnings", of([](EnvCombat const& c)
+    // The watch on InterruptLanded's scale (C2): what interrupts earned over what kills, fights won and packs cleared
+    // earned (the fight tracker's, read off the seat's ledger as paid). Per event on outcome_paid, so the evaluation's
+    // mean is the ratio of the sums; to be scaled down if it reads above ~0.3.
+    auto const outcomePaid = [this](Env const& env)
     {
-        return c.OutcomePaid > 0.0f ? c.InterruptPaid / c.OutcomePaid : 0.0f;
-    }));
+        RewardLedger const& ledger = _scenario.Data(env).Seats[0].Rewards;
+        return ledger.Episode(RewardTerm::Kill) + ledger.Episode(RewardTerm::FightWon)
+            + ledger.Episode(RewardTerm::PackClear);
+    };
+    table.Add("outcome_paid", [outcomePaid](Env const& env, uint32) { return outcomePaid(env); });
+    table.Add("interrupt_earnings", [this, outcomePaid](Env const& env, uint32)
+    {
+        float const paid = outcomePaid(env);
+        return paid > 0.0f ? _scenario.Data(env).Seats[0].Rewards.Episode(RewardTerm::InterruptLanded) / paid : 0.0f;
+    });
     // Per kill (PER_EVENT on kills): seconds from a creature's engage to its death, C1's.
     table.Add("kill_seconds", of([](EnvCombat const& c) { return c.KillSeconds; }));
     table.Add("ally_deaths", of([](EnvCombat const& c) { return c.AllyDeaths; }));
@@ -607,6 +620,8 @@ void Animus::Curriculum::CombatEncounter::BeforeRewards(Env& env)
     {
         ++combat.NewClears;
         ++combat.Clears;
+        // PackClear, the fight tracker's (once a pack: its clear's index this episode).
+        _scenario.Data(env).Fights.PackCleared(combat.Clears);
     }
     Position const cleared = front.Spot;
     combat.Packs.erase(combat.Packs.begin());
@@ -623,23 +638,16 @@ void Animus::Curriculum::CombatEncounter::Reward(Env& env, uint32 seatIndex, Pla
         return;
     EnvCombat& combat = _envs[env.Index];
     CurriculumTuning::CombatTuning const& tuning = _scenario.Tuning().Combat;
+    RewardUnits const& units = _scenario.Tuning().Reward;
     CombatDrill const drill = Drill(env);
-    float const w = Draw::TierWeight(_scenario.Tuning().Difficulty.TierScale, combat.Tier);
+    // The rung's factor through Add's tier (a win times it, a loss over it), never into the value: the score sees the
+    // value as tuned.
+    float const w = FightTier(env);
     AgentStats const& step = env.StepStats[seatIndex];
     float const maxHealth = float(std::max<uint32>(1, bot->GetMaxHealth()));
     float const decision = float(_scenario.StepMs(env)) / 1000.0f;
 
-    // Outcome: what was taken down.
-    if (combat.NewKills)
-    {
-        ledger.Add(RewardTerm::Kill, tuning.Kill * w * float(combat.NewKills));
-        combat.OutcomePaid += tuning.Kill * w * float(combat.NewKills);
-    }
-    if (combat.NewClears)
-    {
-        ledger.Add(RewardTerm::Clear, tuning.Clear * w * float(combat.NewClears));
-        combat.OutcomePaid += tuning.Clear * w * float(combat.NewClears);
-    }
+    // Outcome: the kills, fights won and packs cleared are the fight tracker's (StageScenario pays them).
 
     // An interrupt that stopped the cast it was aimed at.
     if (!combat.PendingInterrupt.IsEmpty())
@@ -650,44 +658,26 @@ void Animus::Curriculum::CombatEncounter::Reward(Env& env, uint32 seatIndex, Pla
         {
             ++combat.Interrupts;
             if (drill != CombatDrill::Fight)
-            {
-                ledger.Add(RewardTerm::InterruptLanded, tuning.InterruptLanded);
-                combat.InterruptPaid += tuning.InterruptLanded;
-            }
+                ledger.AddOnce(RewardTerm::InterruptLanded, combat.Interrupts, units.Interrupt, w);
         }
         combat.PendingInterrupt.Clear();
     }
 
     // Cost: an extra pull, an ally lost, health taken (ground fire at its own price), the time a kill takes.
     if (combat.NewExtra)
-        ledger.Add(RewardTerm::PullExtra, -tuning.ExtraPull * float(combat.NewExtra));
+        ledger.Add(RewardTerm::PullExtra, -units.ExtraPull * float(combat.NewExtra));
     if (combat.NewAllyDeath)
-        ledger.Add(RewardTerm::TeammateDeath, -tuning.AllyDeath / w);
+        ledger.Add(RewardTerm::TeammateDeath, -units.TeammateDeath, 1.0f / w);
     float const fire = float(step.HazardDamage) / maxHealth;
     float const hurt = float(step.DamageTaken - std::min(step.DamageTaken, step.HazardDamage)) / maxHealth;
     combat.HurtShare += hurt + fire;
     combat.FireShare += fire;
     if (hurt > 0.0f)
-        ledger.Add(RewardTerm::Hurt, -tuning.Hurt * hurt);
+        ledger.Add(RewardTerm::Hurt, -units.Hurt * hurt);
     if (fire > 0.0f)
-        ledger.Add(RewardTerm::FireHurt, -tuning.FireHurt * fire);
-    if (FrontFighting(env))
-        ledger.Add(RewardTerm::StepCost, -tuning.Clock * decision);
-
-    // Shaping: damage dealt, in the front pull's creature healths.
-    if (step.Damage && !combat.Packs.empty())
-    {
-        float health = 0.0f;
-        uint32 members = 0;
-        for (ObjectGuid const& guid : combat.Packs.front().Members)
-            if (Creature* member = Member(env, guid))
-            {
-                health += float(member->GetMaxHealth());
-                ++members;
-            }
-        if (members && health > 0.0f)
-            ledger.Add(RewardTerm::DamageDealt, tuning.Damage * float(step.Damage) / (health / float(members)));
-    }
+        ledger.Add(RewardTerm::FireHurt, -units.Fire * fire);
+    // The time a kill takes is the engaged clock (StageScenario), the damage dealt the kill-progress potential (the
+    // fight tracker): no StepCost or DamageDealt here any more.
 
     // Death: charged once a death; the episode goes on (the respawn is Update's).
     SeatState& seat = _scenario.Data(env).Seats[seatIndex];
@@ -700,7 +690,7 @@ void Animus::Curriculum::CombatEncounter::Reward(Env& env, uint32 seatIndex, Pla
         tally.DeathCounted = true;
         tally.DeathMs = env.EpisodeElapsedMs;
         ++tally.Deaths;
-        ledger.Add(RewardTerm::Death, -tuning.Death / w);
+        ledger.Add(RewardTerm::Death, -units.DeathSolo, 1.0f / w);
     }
 
     // Dead, or away from the fight: charged by the second (never a reward for coming back, which would pay dying).
@@ -708,7 +698,7 @@ void Animus::Curriculum::CombatEncounter::Reward(Env& env, uint32 seatIndex, Pla
     if (Draw::AwayCharged(bot->IsAlive(), combat.Clock.Rejoining, FrontFighting(env), fightYards, tuning.AwayYards))
     {
         combat.AwaySeconds += decision;
-        ledger.Add(RewardTerm::Away, -tuning.Away * decision);
+        ledger.Add(RewardTerm::Away, -units.Away * decision);
     }
 
     // What the seat did with its view, measured.
@@ -725,16 +715,12 @@ void Animus::Curriculum::CombatEncounter::Reward(Env& env, uint32 seatIndex, Pla
             combat.RestMs += _scenario.StepMs(env);
     }
 
-    // The episode's end: survived it, and the rung's window.
+    // The episode's end: the rung's window. Survived is no longer paid (the reward structure: FightWon, a fight's
+    // own, needs its kills; dm2, 2026-10-28, a seat that never engaged collected the episode's for free).
     bool const timeIsUp = env.EpisodeLengthMs && env.EpisodeElapsedMs >= env.EpisodeLengthMs;
     if (timeIsUp && !combat.Recorded)
     {
         combat.Recorded = true;
-        // Survived the fight, not the episode: paid only when something was killed (dm2, 2026-10-28: a seat that
-        // never engaged collected it for free and learned not to fight -- wins 43% to 7% in twenty minutes).
-        if (combat.Deaths == 0 && combat.Kills + combat.Clears > 0)
-            ledger.Add(RewardTerm::Survived,
-                (drill == CombatDrill::Survive ? tuning.SurviveSurvived : tuning.Survived) * w);
         if (combat.Counts)
             _ladder.Record(combat.Layout, combat.Spec, combat.Tier, Draw::Won(combat.Kills + combat.Clears,
                 combat.Deaths), tuning.MaxTier);

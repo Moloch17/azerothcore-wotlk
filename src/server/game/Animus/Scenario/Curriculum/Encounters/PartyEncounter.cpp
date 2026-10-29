@@ -38,9 +38,11 @@ Animus::Curriculum::PartyEncounter::PartyEncounter(StageScenario& scenario, uint
 
 std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::PartyEncounter::RewardTerms() const
 {
-    std::vector<RewardTerm> terms = { RewardTerm::TeammateDamageTaken, RewardTerm::TeammateHealing,
-        RewardTerm::TeammateThreat, RewardTerm::TeammateDeath, RewardTerm::Threat, RewardTerm::Revive,
-        RewardTerm::DamageDealt, RewardTerm::Stall, RewardTerm::EarlyPull };
+    // The reward structure (2026-10-29): the role pay -- Threat (pulled, stance, hold, loose, pulled off),
+    // TeammateHealing (kept up, overheal), TeammateThreat, TeammateDamageTaken and the tank's-target DamageDealt --
+    // is the fight tracker's hold and keep potentials and focus weight now; the readings behind it stay columns.
+    std::vector<RewardTerm> terms = { RewardTerm::TeammateDeath, RewardTerm::Revive, RewardTerm::Stall,
+        RewardTerm::EarlyPull };
     if (_scenario.Stage().LeaderAnyRole)
     {
         terms.push_back(RewardTerm::OutOfTurnPull);
@@ -185,14 +187,6 @@ void Animus::Curriculum::PartyEncounter::ResetEpisode(Env& env)
 namespace
 {
     using namespace Animus::Curriculum;
-
-    /// Whether this build is one the group leans on to keep people standing -- it can hold the pull, or it can
-    /// heal. The reward for a teammate's damage taken is smaller for one of these, because taking hits and
-    /// spending health is part of what they are there to do.
-    bool Protects(Aptitude const& aptitude)
-    {
-        return AptitudeDemand::HoldsThePull().MetBy(aptitude) || AptitudeDemand::KeepsThemUp().MetBy(aptitude);
-    }
 
     bool Heals(Aptitude const& aptitude) { return AptitudeDemand::KeepsThemUp().MetBy(aptitude); }
     bool HoldsThePull(Aptitude const& aptitude) { return AptitudeDemand::HoldsThePull().MetBy(aptitude); }
@@ -461,33 +455,12 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
     if (!bot)
         return;
 
-    CurriculumTuning::PartyTuning const& tuning = _scenario.Tuning().Party;
     EnvState const& data = _scenario.Data(env);
     SeatParty& seat = _envs[env.Index].Seats[seatIndex];
     AgentStats const& step = env.StepStats[seatIndex];
-    Aptitude const& apt = data.Seats[seatIndex].Apt;
-    float const healShare = HealShare(data.Seats[seatIndex]);
 
-    // Taking aggro while a teammate is there to hold it (Party.PulledThreat): the enemies on a damage dealer or a
-    // healer are the tank's to take, and the seat that draws them is the one to charge.
-    if (!IsTank(data.Seats[seatIndex]) && bot->IsAlive())
-    {
-        bool tankNearby = false;
-        for (uint32 other = 0; other < _scenario.SeatCount() && !tankNearby; ++other)
-            if (Player* mate = other == seatIndex ? nullptr : _scenario.SeatBotInWorld(env, other);
-                mate && mate->IsAlive() && data.Seats[other].L && IsTank(data.Seats[other]))
-                tankNearby = true;
-
-        if (tankNearby)
-        {
-            uint32 onBot = 0;
-            for (uint32 enemySlot = 0; enemySlot < env.Targets.size(); ++enemySlot)
-                if (Unit* enemy = env.FindTargetUnit(enemySlot);
-                    enemy && enemy->IsAlive() && enemy->IsInCombat() && enemy->GetVictim() == bot)
-                    ++onBot;
-            ledger.Add(RewardTerm::Threat, -tuning.PulledThreat * float(onBot) * _scenario.StepScale(env));
-        }
-    }
+    // Taking aggro off the tank (Party.PulledThreat until 2026-10-29) is the tank's hold potential's now: no charge
+    // here.
 
     uint32 const groupFirst = GroupFirstSeat(seatIndex);
 
@@ -510,24 +483,13 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
         if (!teammate || !data.Seats[teammateSeat].L)
             continue;
 
-        float const health = float(std::max<uint32>(1, teammate->GetMaxHealth()));
         uint64 const taken = env.StepStats[teammateSeat].DamageTaken;
         // Healing, and what the seat's absorbs soaked and its reductions prevented on the teammate, count alike.
         uint64 const healed = step.AgentHealingBy[teammateSeat] + step.AgentProtectionBy[teammateSeat];
 
+        // Measured, no longer paid (the reward structure: the healer's keep potential, 2026-10-29).
         seat.TeammateDamageTaken += taken;
         seat.TeammateHealing += healed;
-
-        // Somebody who can hold the pull is there to be hit; everyone else being hit is what the party wants to
-        // avoid. And the charge is lighter on a build that protects, because keeping people up is its job.
-        if (!IsTank(data.Seats[teammateSeat]))
-            ledger.Add(RewardTerm::TeammateDamageTaken,
-                -(Protects(apt) ? tuning.TeammateDamageTakenProtector : tuning.TeammateDamageTakenDps)
-                * float(taken) / health);
-
-        if (Heals(apt))
-            ledger.Add(RewardTerm::TeammateHealing, healShare * tuning.TeammateHealing * float(healed)
-                / health);
 
         if (!IsTank(data.Seats[teammateSeat]) && teammate->IsAlive())
         {
@@ -538,9 +500,6 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
                     ++onTeammate;
 
             seat.ThreatOnTeammates += onTeammate;
-            if (IsTank(data.Seats[seatIndex]))
-                ledger.Add(RewardTerm::TeammateThreat,
-                    -tuning.TankLoseTeammate * float(onTeammate) * _scenario.StepScale(env));
         }
 
         if (teammate->IsAlive())
@@ -549,7 +508,9 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
         {
             seat.TeammateDeathSeen[teammateSeat] = true;
             ++seat.TeammatesDied;
-            ledger.Add(RewardTerm::TeammateDeath, -tuning.TeammateDeath);
+            // Each living seat's (Reward.TeammateDeath): the dead one pays its own Death.
+            if (bot->IsAlive())
+                ledger.Add(RewardTerm::TeammateDeath, -_scenario.Tuning().Reward.TeammateDeath);
         }
     }
 
@@ -585,8 +546,8 @@ bool Animus::Curriculum::PartyEncounter::InTankingStance(Player const* bot)
 
 void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, Player* bot, RewardLedger& ledger)
 {
-    // Each role paid for its own part (Raid.*): the tank for what it holds, the healer for its group kept up, and
-    // every seat charged for standing idle in a fight.
+    // Each role measured for its own part (the tank what it holds, damage its focus; paid by the fight tracker's role
+    // potentials since 2026-10-29), and every seat charged for an early pull and for standing idle in a fight.
     CurriculumTuning::RaidTuning const& tuning = _scenario.Tuning().Raid;
     EnvState const& data = _scenario.Data(env);
     SeatParty& seat = _envs[env.Index].Seats[seatIndex];
@@ -613,17 +574,9 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
     // their fights with two of eight enemies on the tank (2026-10-01). A dungeon's drawn tank is the tank.
     bool const tank = IsTank(state);
     bool const healer = state.DungeonRole == DUNGEON_HEALER || (state.DungeonRole == DUNGEON_ANY && Heals(apt));
-    ArenaDefinition const& arena = _scenario.Arena(env);
-    // A roles arena's drilled seat (G1, Opposition::Roles) is paid its whole lesson by RolesEncounter -- as Outcome,
-    // tier-scaled -- so its hold, focus and keep terms are not paid here as well: the readings below are still taken.
-    bool const rolesDrilled = arena.Against == Opposition::Roles && ((seatIndex == 0 && arena.DrillRole
-        && arena.DrillRole == state.DungeonRole) || AllRoles(arena.Roles));
-    // What this ledger pays the seat for its role: nothing for a roles arena's drilled seat (RolesEncounter does).
-    float const rolePay = rolesDrilled ? 0.0f : 1.0f;
-    // The tank in its tanking stance, form or aura while it fights: what a protection warrior, a bear or a paladin with
-    // Righteous Fury takes far less from, and holds a pull with.
-    if (tank && bot->IsInCombat() && InTankingStance(bot))
-        ledger.Add(RewardTerm::Threat, tuning.TankStance * scale);
+    // The role pay (Raid.TankStance, TankHold, TankLoose, TankTarget, PulledOff, KeepUp, Overheal) is the reward
+    // structure's role potentials since 2026-10-29 (the fight tracker's hold and keep, the focus weight): what is
+    // below only measures the roles, for the columns, and charges the early pull and standing idle.
     if (tank && bot->IsAlive() && bot->IsInCombat())
     {
         SeatParty& reading = _envs[env.Index].Seats[seatIndex];
@@ -634,13 +587,11 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
     {
         seat.EnemiesHeld += onBot;
         seat.EnemiesOnParty += onBot + onOthers;
-        ledger.Add(RewardTerm::Threat, rolePay * tuning.TankHold * float(onBot) * scale);
-        ledger.Add(RewardTerm::Threat, -rolePay * tuning.TankLoose * float(onOthers) * scale);
     }
 
-    // A damage dealer of a party with a tank: paid for the damage it puts on the tank's target, charged for each
-    // enemy it has taken off the tank (Raid.TankTarget, Raid.PulledOff). The Deadmines' damage dealers hit whatever
-    // was nearest and died with the enemies on them (2026-10-01).
+    // A damage dealer of a party with a tank: the damage it puts on the tank's target, and the time it has enemies
+    // taken off the tank (measured; the focus weight and the tank's hold pay it now). The Deadmines' damage dealers
+    // hit whatever was nearest and died with the enemies on them (2026-10-01).
     if (!tank && !healer)
         if (Player* partyTank = Tank(env); partyTank && partyTank != bot && partyTank->IsAlive())
         {
@@ -648,13 +599,9 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
             Unit const* own = bot->GetVictim();
             seat.DamageDealt += step.Damage;
             if (tankTarget && own == tankTarget)
-            {
                 seat.TankTargetDamage += step.Damage;
-                ledger.Add(RewardTerm::DamageDealt, rolePay * tuning.TankTarget * state.LastStepDamage);
-            }
             if (onBot)
                 seat.PulledOffMs += _scenario.StepMs(env);
-            ledger.Add(RewardTerm::Threat, -rolePay * tuning.PulledOff * float(onBot) * scale);
         }
 
     // A damage dealer or the healer with enemies on it while the party's tank is alive and has not engaged: the pull
@@ -665,31 +612,8 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
             && !partyTank->IsInCombat())
             ledger.Add(RewardTerm::EarlyPull, -tuning.EarlyPull * float(onBot) * scale);
 
-    // The healer keeps its group up: in the Deadmines a level-20 healer cast about five
-    // heals a run and its party wiped at the first packs (2026-09-30).
-    if (healer)
-    {
-        uint32 const first = GroupFirstSeat(seatIndex);
-        int32 kept = 0;
-        for (uint32 member = first; member < first + GROUP_SEATS && member < _scenario.SeatCount(); ++member)
-            if (Player* mate = _scenario.SeatBotInWorld(env, member); mate && data.Seats[member].L && mate->IsAlive())
-                kept += mate->GetHealthPct() > 50.0f ? 1 : mate->GetHealthPct() < 35.0f ? -1 : 0;
-        // Members kept above half pay at the protecting share (Party.HealOffGoal); those let fall below 35% are
-        // charged in full whatever the goal.
-        float const keptPay = kept > 0 ? HealShare(state) * float(kept) : float(kept);
-        ledger.Add(RewardTerm::TeammateHealing, rolePay * tuning.KeepUp * keptPay * scale);
-
-        // Healing that landed on no missing health: what it cast, less what it healed on itself, its allies and the
-        // other seats. Charged at a share of what effective healing pays (Raid.Overheal), so it discounts a heal
-        // rather than outweighing it: at 2.0 against the pay's 0.5 a heal half wasted cost more than it earned.
-        uint64 effective = step.SelfHealing + step.AllyHealing;
-        for (uint64 healed : step.AgentHealingBy)
-            effective += healed;
-        if (step.HealingRaw > effective)
-            ledger.Add(RewardTerm::TeammateHealing,
-                -rolePay * _scenario.Tuning().Party.TeammateHealing * tuning.Overheal
-                * float(step.HealingRaw - effective) / float(std::max<uint32>(1, bot->GetMaxHealth())));
-    }
+    // The healer keeping its group up (Raid.KeepUp) and its overheal (Raid.Overheal) were paid here until
+    // 2026-10-29: the healer's keep potential (the fight tracker) pays it now.
 
     // Idle: in a fight, an enemy in reach, and nothing done -- no press that served or was neutral, no damage, no
     // healing -- for IdleMs.

@@ -81,10 +81,15 @@ Animus::Curriculum::RolesEncounter::RolesEncounter(StageScenario& scenario, uint
 
 std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::RolesEncounter::RewardTerms() const
 {
-    return { RewardTerm::Clear, RewardTerm::DrillHold, RewardTerm::DrillKeep, RewardTerm::DrillFocus,
-        RewardTerm::PullClean, RewardTerm::PullExtra, RewardTerm::Survived, RewardTerm::Death, RewardTerm::Away,
-        RewardTerm::StepCost, RewardTerm::DamageDealt, RewardTerm::InterruptLanded, RewardTerm::FireHurt,
-        RewardTerm::KillOrder, RewardTerm::Controlled, RewardTerm::CCBroken, RewardTerm::PartyWipe };
+    return { RewardTerm::Kill, RewardTerm::FightWon, RewardTerm::PackClear, RewardTerm::KillProgress,
+        RewardTerm::HoldPotential, RewardTerm::KeepPotential, RewardTerm::PullExtra, RewardTerm::Death,
+        RewardTerm::Away, RewardTerm::InterruptLanded, RewardTerm::FireHurt, RewardTerm::KillOrder,
+        RewardTerm::Controlled, RewardTerm::CCBroken, RewardTerm::PartyWipe };
+}
+
+float Animus::Curriculum::RolesEncounter::FightTier(Env const& env) const
+{
+    return Draw::TierWeight(_scenario.Tuning().Difficulty.TierScale, _envs[env.Index].Tier);
 }
 
 void Animus::Curriculum::RolesEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
@@ -468,7 +473,6 @@ void Animus::Curriculum::RolesEncounter::UpdateEnemies(Env& env)
             pack.Engaged = true;
             pack.EngageMs = env.EpisodeElapsedMs;
             ++roles.Pulls;
-            roles.HeldPaidThisFight = 0.0f;
         }
         // A linked pack: one member in a fight brings the rest, on whoever it is fighting.
         if (pack.Linked && victim && victim->IsAlive())
@@ -685,6 +689,8 @@ void Animus::Curriculum::RolesEncounter::BeforeRewards(Env& env)
         }
         ++roles.NewClears;
         ++roles.Tally.Clears;
+        // PackClear, the fight tracker's (once a pack: its clear's index this episode).
+        _scenario.Data(env).Fights.PackCleared(roles.Tally.Clears);
         if (it->Fight.Clean)
         {
             ++roles.NewClean;
@@ -707,35 +713,34 @@ void Animus::Curriculum::RolesEncounter::Reward(Env& env, uint32 seatIndex, Play
     SeatRoles& seat = roles.Seats[seatIndex];
     CurriculumTuning const& all = _scenario.Tuning();
     CurriculumTuning::RolesTuning const& tuning = all.Roles;
-    float const w = Draw::TierWeight(all.Difficulty.TierScale, roles.Tier);
+    RewardUnits const& units = all.Reward;
+    // The rung's factor through Add's tier (a win times it, a loss over it), never into the value.
+    float const w = FightTier(env);
     float const scale = _scenario.StepScale(env);
     float const decision = float(_scenario.StepMs(env)) / 1000.0f;
     AgentStats const& step = env.StepStats[seatIndex];
     // The drilled seat: seat 0, playing the drill's role (a makeup that could not fit it pays no drill).
     bool const drilledSeat = seatIndex == Draw::DRILLED_SEAT && state.DungeonRole == Draw::DrilledRole(roles.Drill);
     bool const fighting = FrontFighting(env);
-    // The lesson this seat is paid: the drill's, for the drilled seat; in the party curriculum every seat its own
-    // role's (the tank's Hold, the healer's Keep, damage's Focus).
+    // The lesson this seat is measured on: the drill's, for the drilled seat; in the party curriculum every seat its
+    // own role's (the tank's Hold, the healer's Keep, damage's Focus). Measured only (the Won rule, the columns): the
+    // reward structure pays the roles by the fight tracker's hold and keep potentials and the focus weight.
     RolesDrill lesson = drilledSeat ? (roles.Drill == RolesDrill::Pull ? RolesDrill::Hold : roles.Drill)
         : RolesDrill::None;
     if (AllRoles(roles.Drill))
         lesson = state.DungeonRole == DUNGEON_TANK ? RolesDrill::Hold : state.DungeonRole == DUNGEON_HEALER
             ? RolesDrill::Keep : state.DungeonRole == DUNGEON_DAMAGE ? RolesDrill::Focus : RolesDrill::None;
 
-    // Outcome: the party's packs cleared.
-    if (roles.NewClears)
-        ledger.Add(RewardTerm::Clear, tuning.Clear * w * float(roles.NewClears));
+    // Outcome: the packs cleared, the kills and the fights won are the fight tracker's (PackClear, Kill, FightWon).
+    // A clean pull is a fight won with no second pack (PullClean, no longer paid; counted as clean_clears).
 
-    // The pull drill's lesson, the puller's in full and the others' at PullOthers; a second pack in a fight is every
-    // drill's cost.
-    bool const camp = roles.Drill == RolesDrill::Pull || roles.Drill == RolesDrill::Camp;
+    // A second pack in a fight is every drill's cost: the pull drill's puller (the camp's tank) in full, the others
+    // at Roles.PullOthers.
     bool const puller = (roles.Drill == RolesDrill::Pull && drilledSeat)
         || (roles.Drill == RolesDrill::Camp && state.DungeonRole == DUNGEON_TANK);
     float const pullShare = puller ? 1.0f : tuning.PullOthers;
-    if (camp && roles.NewClean)
-        ledger.Add(RewardTerm::PullClean, tuning.PullClean * pullShare * w * float(roles.NewClean));
     if (roles.NewExtra)
-        ledger.Add(RewardTerm::PullExtra, -tuning.PullExtra * pullShare * float(roles.NewExtra) / w);
+        ledger.Add(RewardTerm::PullExtra, -units.ExtraPull * pullShare * float(roles.NewExtra), 1.0f / w);
 
     // Who the living enemies in a fight are on (the critic's world, never the seat's observation).
     uint32 onSeat = 0;
@@ -748,29 +753,15 @@ void Animus::Curriculum::RolesEncounter::Reward(Env& env, uint32 seatIndex, Play
             onOthers += victim && victim != bot && (victim->IsPlayer() || victim->IsPet()) ? 1 : 0;
         }
 
-    // The seat's lesson, its own Outcome (losses its Cost), only while it stands.
+    // The seat's lesson, measured while it stands.
     if (lesson != RolesDrill::None && bot->IsAlive())
     {
         switch (lesson)
         {
             case RolesDrill::Hold:
-            {
                 roles.Tally.Held += onSeat;
                 roles.Tally.OnParty += onSeat + onOthers;
-                Draw::Pay const pay = Draw::HoldPay(onSeat, onOthers, tuning, scale, w);
-                // Capped per fight at what a clear pays (2026-10-28: 15.6 an episode uncapped made a long fight
-                // worth more than a finished one); the loss for enemies loose is never capped.
-                if (float const room = std::max(0.0f, tuning.Clear - roles.HeldPaidThisFight);
-                    pay.Earned > 0.0f && room > 0.0f)
-                {
-                    float const earned = std::min(pay.Earned, room);
-                    ledger.Add(RewardTerm::DrillHold, earned);
-                    roles.HeldPaidThisFight += earned;
-                }
-                if (pay.Lost < 0.0f)
-                    ledger.Add(RewardTerm::DrillHold, pay.Lost);
                 break;
-            }
             case RolesDrill::Focus:
             {
                 Player* tank = _scenario.PartyTank(env);
@@ -779,12 +770,6 @@ void Animus::Curriculum::RolesEncounter::Reward(Env& env, uint32 seatIndex, Play
                 roles.Tally.Damage += state.LastStepDamage;
                 roles.Tally.FocusDamage += onTarget ? state.LastStepDamage : 0.0f;
                 roles.Tally.PulledOffSeconds += onSeat ? decision : 0.0f;
-                Draw::Pay const pay = Draw::FocusPay(onTarget ? state.LastStepDamage : 0.0f, onSeat, tuning, scale,
-                    w);
-                if (pay.Earned > 0.0f)
-                    ledger.Add(RewardTerm::DrillFocus, pay.Earned);
-                if (pay.Lost < 0.0f)
-                    ledger.Add(RewardTerm::DrillFocus, pay.Lost);
                 break;
             }
             case RolesDrill::Keep:
@@ -802,17 +787,6 @@ void Animus::Curriculum::RolesEncounter::Reward(Env& env, uint32 seatIndex, Play
                 if (uint32 const mana = bot->GetMaxPower(POWER_MANA);
                     mana && float(bot->GetPower(POWER_MANA)) < LOW_MANA * float(mana))
                     roles.LowManaSeconds += decision;
-                // Healing that landed on no missing health: what it cast, less what it healed on anyone.
-                uint64 effective = step.SelfHealing + step.AllyHealing;
-                for (uint64 healed : step.AgentHealingBy)
-                    effective += healed;
-                float const wasted = step.HealingRaw > effective
-                    ? float(step.HealingRaw - effective) / float(std::max<uint32>(1, bot->GetMaxHealth())) : 0.0f;
-                Draw::Pay const pay = Draw::KeepPay(kept, wasted, all.Party.TeammateHealing, tuning, scale, w);
-                if (pay.Earned > 0.0f)
-                    ledger.Add(RewardTerm::DrillKeep, pay.Earned);
-                if (pay.Lost < 0.0f)
-                    ledger.Add(RewardTerm::DrillKeep, pay.Lost);
                 break;
             }
             default:
@@ -831,7 +805,7 @@ void Animus::Curriculum::RolesEncounter::Reward(Env& env, uint32 seatIndex, Play
             if (stopped)
             {
                 ++roles.Tally.Interrupts;
-                ledger.Add(RewardTerm::InterruptLanded, tuning.Interrupt * w);
+                ledger.AddOnce(RewardTerm::InterruptLanded, roles.Tally.Interrupts, units.Interrupt, w);
             }
             pending.Clear();
         }
@@ -839,37 +813,20 @@ void Animus::Curriculum::RolesEncounter::Reward(Env& env, uint32 seatIndex, Play
         if (fire > 0.0f)
         {
             roles.Tally.FireTaken += fire;
-            ledger.Add(RewardTerm::FireHurt, -tuning.FireHurt * fire / w);
+            ledger.Add(RewardTerm::FireHurt, -units.Fire * fire, 1.0f / w);
         }
         if (roles.NewKillOrder)
-            ledger.Add(RewardTerm::KillOrder, tuning.KillOrder * w * float(roles.NewKillOrder));
+            ledger.Add(RewardTerm::KillOrder, tuning.KillOrder * float(roles.NewKillOrder), w);
         if (roles.NewControlled)
-            ledger.Add(RewardTerm::Controlled, tuning.Controlled * scale * w * float(roles.NewControlled));
+            ledger.Add(RewardTerm::Controlled, tuning.Controlled * scale * float(roles.NewControlled), w);
         if (roles.NewBroken)
-            ledger.Add(RewardTerm::CCBroken, -tuning.CCBroken * float(roles.NewBroken) / w);
+            ledger.Add(RewardTerm::CCBroken, -tuning.CCBroken * float(roles.NewBroken), 1.0f / w);
         if (roles.NewWipe)
-            ledger.Add(RewardTerm::PartyWipe, -tuning.Wipe / w);
+            ledger.Add(RewardTerm::PartyWipe, -units.WipeParty, 1.0f / w);
     }
 
-    // Cost: the clock while a pack fights.
-    if (fighting)
-        ledger.Add(RewardTerm::StepCost, -tuning.Clock * decision);
-
-    // Shaping: damage dealt, in the creatures' healths.
-    if (step.Damage && !roles.Packs.empty())
-    {
-        float health = 0.0f;
-        uint32 members = 0;
-        for (Pack const& pack : roles.Packs)
-            for (ObjectGuid const& guid : pack.Members)
-                if (Creature* member = Member(env, guid))
-                {
-                    health += float(member->GetMaxHealth());
-                    ++members;
-                }
-        if (members && health > 0.0f)
-            ledger.Add(RewardTerm::DamageDealt, tuning.Damage * float(step.Damage) / (health / float(members)));
-    }
+    // The clock while a pack fights is the engaged clock (StageScenario), the damage dealt the kill-progress
+    // potential (the fight tracker): no StepCost or DamageDealt here any more.
 
     // Death: charged once a death; the episode goes on (the rise is Update's).
     if (!bot->IsAlive() && !seat.DeathPaid)
@@ -882,7 +839,7 @@ void Animus::Curriculum::RolesEncounter::Reward(Env& env, uint32 seatIndex, Play
         tally.DeathCounted = true;
         tally.DeathMs = env.EpisodeElapsedMs;
         ++tally.Deaths;
-        ledger.Add(RewardTerm::Death, -tuning.Death / w);
+        ledger.Add(RewardTerm::Death, -(data.ActiveSeats > 1 ? units.DeathParty : units.DeathSolo), 1.0f / w);
     }
 
     // Dead, or away from a fight: charged by the second (never a reward for coming back, which would pay dying).
@@ -890,13 +847,12 @@ void Animus::Curriculum::RolesEncounter::Reward(Env& env, uint32 seatIndex, Play
     if (CombatDraw::AwayCharged(bot->IsAlive(), seat.Clock.Rejoining, fighting, fightYards, tuning.AwayYards))
     {
         seat.AwaySeconds += decision;
-        ledger.Add(RewardTerm::Away, -tuning.Away * decision);
+        ledger.Add(RewardTerm::Away, -units.Away * decision);
     }
 
-    // The episode's end: survived it, and the rung's window (the drilled seat's class and build, once).
+    // The episode's end: the rung's window (the drilled seat's class and build, once). Survived is no longer paid
+    // (the reward structure's FightWon needs the fight's kills; this one had no kill gate).
     bool const timeIsUp = env.EpisodeLengthMs && env.EpisodeElapsedMs >= env.EpisodeLengthMs;
-    if (timeIsUp && seat.Deaths == 0 && !seat.Clock.Out)
-        ledger.Add(RewardTerm::Survived, tuning.Survived * w);
     if (timeIsUp && !roles.Recorded && seatIndex == Draw::DRILLED_SEAT)
     {
         roles.Recorded = true;

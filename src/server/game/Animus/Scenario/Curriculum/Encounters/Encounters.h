@@ -232,6 +232,12 @@ namespace Animus::Curriculum
         /// way's end. The leader's (the others' is the leader, PartyEncounter's, asked first).
         [[nodiscard]] bool RouteGoal(Env const& env, uint32 seat, Position& goal) const override;
         void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
+        /// The reward structure (2026-10-29): the run's kills, fights won and the role potentials are the fight
+        /// tracker's, at the wing's tier scale; the run's last boss is worth Reward.KillBoss, a dungeon boss on the
+        /// way Reward.KillMidBoss (its rank).
+        [[nodiscard]] bool TracksFights() const override { return true; }
+        [[nodiscard]] float FightTier(Env const& env) const override { return TierScale(env); }
+        [[nodiscard]] float KillValue(Env const& env, Unit const* enemy) const override;
         void WriteState(Env const& env, float* state) const override;
         [[nodiscard]] bool IsTerminal(Env const& env) const override;
 
@@ -239,9 +245,7 @@ namespace Animus::Curriculum
         struct SeatInstance
         {
             bool OutcomePaid = false;
-            // A wing's terms paid so far (kills, wipes), and whether its death has been.
-            uint32 KillsPaid = 0;
-            uint32 BossKillsPaid = 0;
+            // A wing's terms paid so far (wipes; its kills are the fight tracker's), and whether its death has been.
             uint32 GatesPaid = 0;               // gates of the way opened by the party's hand, paid (GateOpened)
             uint32 WipesPaid = 0;
             bool DeathPaid = false;
