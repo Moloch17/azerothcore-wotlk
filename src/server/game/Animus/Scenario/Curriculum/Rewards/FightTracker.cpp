@@ -259,7 +259,12 @@ void Animus::Curriculum::FightTracker::Update(Env const& env, std::vector<Seat> 
     {
         Unit* unit = Resolve(map, _enemies[e].Guid);
         enemyUnits[e] = unit;
-        health[e] = unit ? HealthShare(unit) : _enemies[e].Health;
+        // An enemy leaving alive -- out of combat (evading, reset) or gone from the world unkilled -- counts full
+        // health in the state part, so the progress paid on it is taken back before it leaves; only a dead one
+        // leaves at 0 (2026-10-29: otherwise hit, back off until it evades, keep the pay, repeat).
+        bool const killed = _killed.count(_enemies[e].Guid.GetRawValue()) != 0;
+        health[e] = unit ? (unit->IsAlive() && !unit->IsInCombat() ? 1.0f : HealthShare(unit))
+            : (killed ? 0.0f : 1.0f);
         victims[e] = unit && unit->IsAlive() && unit->IsInCombat() ? SeatOf(unit->GetVictim(), seats)
             : _enemies[e].Victim;
     }

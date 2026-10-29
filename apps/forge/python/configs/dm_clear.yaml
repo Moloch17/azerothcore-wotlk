@@ -147,6 +147,7 @@ eval:
     no_memory: 8
     no_object_memory: 8
     no_director: 8
+    idle: 8
   report:
   - bar_clear
   - cleared
