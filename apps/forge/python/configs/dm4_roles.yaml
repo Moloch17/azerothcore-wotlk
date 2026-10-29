@@ -9,7 +9,7 @@
 extends: dm3_packs.yaml
 run_name: dm4_roles
 
-total_env_steps: 400000000
+total_env_steps: 80000000   # 2026-10-29: good enough to move on, not perfect (the user)
 
 eval:
   episodes: 384

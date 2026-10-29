@@ -6,7 +6,7 @@
 extends: dm2_fight.yaml
 run_name: dm3_packs
 
-total_env_steps: 300000000
+total_env_steps: 60000000   # 2026-10-29: good enough to move on, not perfect (the user)
 
 mappo:
   # A pack's fight and the pull that made it winnable take 30-60 s.

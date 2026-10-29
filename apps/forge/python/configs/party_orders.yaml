@@ -6,7 +6,7 @@
 # Everything else as dm_clear's.
 extends: dm_clear.yaml
 run_name: party_orders
-total_env_steps: 400000000
+total_env_steps: 100000000   # 2026-10-29: good enough to move on, not perfect (the user)
 # Every layout trains here (dm_clear's train_only is the director's stage alone), and there is no director row to
 # hold silent.
 train_only: []
