@@ -129,8 +129,10 @@ namespace Animus::Curriculum
         /// `cell` is the point a cell goal (GOAL_CELL_JOINT) holds, where the scenario keeps one (SeatView::HeldCell of
         /// the hold's slot): a cell goal is possible while its point was latched, and reached within
         /// WorldView::CellReach of it. Other goals ignore it.
+        /// `killedSince`: the seat was paid a kill since it chose the goal (Fight about no one needs one: an enemy
+        /// out of view is not an enemy dead).
         static void Status(SeatView const& view, int32 goal, bool& reached, bool& possible,
-            CellPoint const* cell = nullptr);
+            CellPoint const* cell = nullptr, bool killedSince = false);
 
         /// Whether a goal Status calls reached was *reached* -- made true -- rather than true already when it was
         /// chosen (Fight about no one with nothing to fight, Recover at full health). One true on choice is held,

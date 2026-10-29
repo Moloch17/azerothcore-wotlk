@@ -3213,6 +3213,7 @@ void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
                 bool const advance = cellGoal && slot == 0 && from[0] >= 2 && hold.Ended && hold.WasReached;
                 hold = GoalHold();
                 hold.Goal = goal;
+                hold.KillPaidAtChoice = state.Rewards.Episode(RewardTerm::Kill);
                 // A cell goal is not held unpaid when it is true on choice (a cell at the seat's feet is reached and
                 // ends at once; the next choice costs the planner a step): Earned is for goals that can be true
                 // without anything done.
@@ -4640,7 +4641,8 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
             continue;
         bool reached = false;
         bool possible = false;
-        GoalBlock::Status(view, hold.Goal, reached, possible, &view.HeldCell[slot]);
+        GoalBlock::Status(view, hold.Goal, reached, possible, &view.HeldCell[slot],
+            seat.Rewards.Episode(RewardTerm::Kill) > hold.KillPaidAtChoice);
         // True already when chosen: nothing was done to reach it, so it is held unpaid (ending on its clock) until
         // it stops being true. Without this a goal that is true on choice -- Fight about no one where there is
         // nothing to fight -- was paid at every choice: the first fast pass of stage1_move earned ~14 an episode.

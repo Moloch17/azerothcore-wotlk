@@ -78,6 +78,10 @@ namespace Animus::Curriculum
         bool Ended = false;
         bool WasReached = false;            // it ended by being reached (not lost)
         bool Rewarded = false;              // paid for (once per goal)
+        /// What the seat had been paid in kills when the goal was chosen: Fight about no one is reached only once a
+        /// kill came after it (2026-10-29: letting the enemy drop out of view read as "no enemy", and the head
+        /// re-chose and re-reached the goal 80 times an episode for 24 of pay against 5 for the kills themselves).
+        float KillPaidAtChoice = 0.0f;
         /// A goal is paid for reaching it, not for choosing it: one already true when chosen -- Fight about no one
         /// with nothing to fight, Recover at full health -- is held unpaid until it stops being true and is then
         /// reached again. Fresh asks the next observation to check.

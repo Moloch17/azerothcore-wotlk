@@ -206,7 +206,7 @@ bool Animus::Curriculum::GoalBlock::PlaceOf(SeatView const& view, uint32 t, Posi
 }
 
 void Animus::Curriculum::GoalBlock::Status(SeatView const& view, int32 goal, bool& reached, bool& possible,
-    CellPoint const* cell)
+    CellPoint const* cell, bool killedSince)
 {
     reached = false;
     possible = false;
@@ -244,7 +244,9 @@ void Animus::Curriculum::GoalBlock::Status(SeatView const& view, int32 goal, boo
                 bool any = view.Target && view.Target->IsAlive();
                 for (uint32 slot = 0; slot < view.EnemyCount && !any; ++slot)
                     any = view.Enemies[slot] && view.Enemies[slot]->IsAlive();
-                reached = !any && bot->IsInCombat() == false;
+                // ... and only once something was killed since the goal was chosen: an enemy that dropped out of
+                // view is not a fight won (2026-10-29, the goal farmed 80 times an episode).
+                reached = !any && bot->IsInCombat() == false && killedSince;
             }
             else if (Unit* enemy = enemyAt(target - GOAL_TARGET_ENEMY_FIRST))
                 reached = !enemy->IsAlive();
