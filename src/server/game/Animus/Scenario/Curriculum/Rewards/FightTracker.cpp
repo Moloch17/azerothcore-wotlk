@@ -51,13 +51,17 @@ namespace
         return unit->IsAlive() && unit->GetMaxHealth() ? float(unit->GetHealth()) / float(unit->GetMaxHealth()) : 0.0f;
     }
 
-    /// An enemy a fight can hold: hostile to a seat, and no critter (a rat stepped on is no kill).
-    bool Hostile(Unit const* unit, std::vector<Animus::Curriculum::FightTracker::Seat> const& seats)
+    /// No critter: a rat stepped on is no kill.
+    bool Fightable(Unit const* unit)
     {
         Creature const* creature = unit->ToCreature();
         CreatureTemplate const* info = creature ? creature->GetCreatureTemplate() : nullptr;
-        if (info && info->type == CREATURE_TYPE_CRITTER)
-            return false;
+        return !info || info->type != CREATURE_TYPE_CRITTER;
+    }
+
+    /// Hostile to a seat by faction.
+    bool Hostile(Unit const* unit, std::vector<Animus::Curriculum::FightTracker::Seat> const& seats)
+    {
         return std::any_of(seats.begin(), seats.end(), [unit](Animus::Curriculum::FightTracker::Seat const& seat)
         {
             return seat.Bot && unit->IsHostileTo(seat.Bot);
@@ -290,7 +294,7 @@ void Animus::Curriculum::FightTracker::Update(Env const& env, std::vector<Seat> 
     // Kills: an engaged enemy dead, and an enemy hit this decision and already dead (killed before it was engaged).
     for (ObjectGuid const& guid : hit)
         if (Unit* unit = Resolve(map, guid); unit && !unit->IsAlive() && !_killed.count(guid.GetRawValue())
-            && Hostile(unit, seats))
+            && Fightable(unit) && Hostile(unit, seats))
         {
             if (!_fighting)
                 StartFight(count);
@@ -344,10 +348,13 @@ void Animus::Curriculum::FightTracker::Update(Env const& env, std::vector<Seat> 
             [guid](Enemy const& one) { return one.Guid == guid; }))
             return;
         Unit* unit = Resolve(map, guid);
-        if (!unit || !unit->IsAlive() || !unit->IsInCombat() || !Hostile(unit, seats))
+        if (!unit || !unit->IsAlive() || !unit->IsInCombat())
             return;
         int32 const victim = SeatOf(unit->GetVictim(), seats);
-        if (victim < 0 && !wasHit)
+        // On a seat, or hit by one and hostile (a neutral one fighting a seat is on it: an enemy all the same).
+        if (victim < 0 && (!wasHit || !Hostile(unit, seats)))
+            return;
+        if (!Fightable(unit))
             return;
         if (!_fighting)
             StartFight(count);
