@@ -934,7 +934,10 @@ namespace Animus::Curriculum
             float FireHurt = 1.0f;
             float ExtraPull = 1.0f;
             float Clock = 0.01f;                // per second
-            float Damage = 0.3f;                // shaping, per creature health
+            /// Shaping, per creature health dealt: the dense signal that makes engaging pay while the policy cannot
+            /// yet kill (dm2, 2026-10-29: at 0.3 a fight cost ~4.5 in clocks and noise prices against ~1.5 earned,
+            /// and the seats stopped fighting altogether within 45 minutes; the fade takes it away later).
+            float Damage = 2.0f;
             // The Deadmines' level dial (dm2, 2026-10-23): six levels under the seat at the first rung, even at the
             // last; its elites (most of the dungeon's trash) from rung 3.
             uint32 MaxTier = 6;
@@ -1059,7 +1062,7 @@ namespace Animus::Curriculum
             /// Per second an engaged enemy lives, charged to every seat of the side -- a dead one too, so dying
             /// never stops it -- in every arena but a raid's, whose wipe would. At 0.03 a 30 s fight costs 0.9,
             /// and doubling the seat's damage saves half of it.
-            float Clock = 0.03f;
+            float Clock = 0.01f;                // per second in combat (2026-10-29: 0.03 made a fight a loss)
         } Output;
 
         /// **The director** (restored 2026-10-26: "we do want a director for long term planning and group
